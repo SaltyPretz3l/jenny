@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import itertools
 import json
+import logging
 import queue
 import threading
 import time
@@ -22,6 +23,7 @@ from sidecar.runtime.multiplexer import (
     TurnCancellationHandle,
 )
 
+_LOGGER = logging.getLogger(__name__)
 _APPROVAL_REQUEST_IDS = itertools.count(1_000_000)
 _APPROVAL_CORRELATION_MAX_CHARS = 160
 _EDITED_PLAN_MAX_BYTES = 16 * 1024
@@ -317,35 +319,75 @@ def _fallback_response_reader(
     read_timeout_seconds: float,
     cancel_handle: TurnCancellationHandle | None,
 ) -> _ResponseReader:
-    # Fallback path for tests and single-threaded mode; the daemon reader keeps
-    # the caller free to poll cancellation and timeout state.
-    stop_event = threading.Event()
-    q: queue.Queue[tuple[dict[str, Any] | None, BaseException | None]] = queue.Queue()
+    # Fallback path for tests and single-threaded mode (no multiplexer); the
+    # daemon reader keeps the caller free to poll cancellation and timeout.
+    # Reads happen strictly on demand, one per waiting call: a free-running
+    # reader re-entered the blocking read_message as soon as it delivered the
+    # answer and swallowed the NEXT stdin frame into a queue nobody drained.
+    # Now no read is in flight once a response was consumed, so close() can
+    # join the thread. A read abandoned by a timeout or cancel cannot be
+    # interrupted; its late frame has no consumer and is logged, not dropped
+    # silently.
+    return _FallbackReader(
+        read_message=read_message,
+        read_timeout_seconds=read_timeout_seconds,
+        cancel_handle=cancel_handle,
+    )
 
-    def _bg_reader() -> None:
-        try:
-            while not stop_event.is_set():
-                try:
-                    msg = read_message(read_timeout_seconds)
-                    q.put((msg, None))
-                except Exception as error:  # noqa: BLE001
-                    q.put((None, error))
-                    break
-        except Exception:  # noqa: BLE001
-            pass
 
-    threading.Thread(target=_bg_reader, daemon=True).start()
+class _FallbackReader:
+    """Callable ``_ResponseReader`` that reads one frame per waiting call."""
 
-    def _fallback_reader(timeout: float) -> dict[str, Any]:
+    def __init__(
+        self,
+        *,
+        read_message: Callable[[float], dict[str, Any]],
+        read_timeout_seconds: float,
+        cancel_handle: TurnCancellationHandle | None,
+    ) -> None:
+        self._read_message = read_message
+        self._read_timeout_seconds = read_timeout_seconds
+        self._cancel_handle = cancel_handle
+        self._stop = threading.Event()
+        self._demand = threading.Semaphore(0)
+        self._results: queue.Queue[
+            tuple[dict[str, Any] | None, BaseException | None]
+        ] = queue.Queue()
+        self._read_pending = False
+        self._thread = threading.Thread(
+            target=self._run, name="approval-fallback-reader", daemon=True
+        )
+        self._thread.start()
+
+    def _run(self) -> None:
+        while True:
+            self._demand.acquire()
+            if self._stop.is_set():
+                return
+            try:
+                message = self._read_message(self._read_timeout_seconds)
+            except Exception as error:  # noqa: BLE001 - handed to the waiter
+                self._results.put((None, error))
+                return
+            if self._stop.is_set():
+                _log_orphaned_fallback_frame(message)
+                return
+            self._results.put((message, None))
+
+    def __call__(self, timeout: float) -> dict[str, Any]:
+        if not self._read_pending:
+            self._read_pending = True
+            self._demand.release()
         step = 0.05
         elapsed = 0.0
         while elapsed < timeout:
-            _raise_if_approval_cancelled(cancel_handle)
+            _raise_if_approval_cancelled(self._cancel_handle)
             try:
-                response, error = q.get(timeout=min(step, timeout - elapsed))
+                response, error = self._results.get(timeout=min(step, timeout - elapsed))
             except queue.Empty:
                 elapsed += step
                 continue
+            self._read_pending = False
             if error is not None:
                 raise error
             if response is None:
@@ -353,8 +395,21 @@ def _fallback_response_reader(
             return response
         raise TimeoutError("timed out waiting for response")
 
-    _fallback_reader.close = stop_event.set  # type: ignore[attr-defined]
-    return _fallback_reader
+    def close(self) -> None:
+        self._stop.set()
+        self._demand.release()
+        if not self._read_pending:
+            self._thread.join(timeout=1.0)
+
+
+def _log_orphaned_fallback_frame(message: Any) -> None:
+    frame = message if isinstance(message, dict) else {}
+    _LOGGER.warning(
+        "approval fallback reader consumed a frame after the wait ended; it has no "
+        "consumer (method=%s, id=%s)",
+        sanitize_diagnostic_text(str(frame.get("method") or ""), limit=80),
+        sanitize_diagnostic_text(str(frame.get("id") or ""), limit=80),
+    )
 
 
 def _raise_if_approval_cancelled(cancel_handle: TurnCancellationHandle | None) -> None:
@@ -391,7 +446,7 @@ def _wait_for_approval_resolution(
             )
         except ApprovalResponseCancelledError:
             return _approval_cancelled(context, "tool approval request cancelled")
-        except Exception:  # noqa: BLE001
+        except Exception:
             context.logger.exception("tool approval request/response failed")
             return ApprovalResolution(approved=False, status="runtime_error")
 

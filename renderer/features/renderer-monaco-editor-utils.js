@@ -231,6 +231,8 @@
       // for the single typography MutationObserver that drives them.
       fontConsumers: null,
       typographyObserverInstalled: false,
+      // Explicit editor font size in px; 0 = follow Text size.
+      codeFontPx: 0,
     };
     if (typeof window === 'undefined') {
       return fallback;
@@ -519,12 +521,80 @@
     }
   }
 
+  // -- Code font size: one Text size axis for every code surface --
+  // The code role is 13px at Text size Default (--font-size-code). An explicit
+  // editor font size (Settings > Editor, px > 0) wins everywhere - main editor,
+  // both diff sides, artifact editors, and the PTY terminal; 0 means "Match
+  // text size" and follows --font-scale. The preference lives in shared state
+  // so every consumer (and resolveCodeFontPx callers outside Monaco) agree.
+  const CODE_FONT_BASE_PX = 13;
+  const CODE_FONT_SIZE_EVENT = 'jenny:code-font-size';
+
+  function resolveFontScale(doc) {
+    const target = doc || (typeof document !== 'undefined' ? document : null);
+    const root = target?.documentElement || null;
+    const view = target?.defaultView || (typeof window !== 'undefined' ? window : null);
+    let raw;
+    try {
+      raw = root?.style?.getPropertyValue?.('--font-scale')
+        || (typeof view?.getComputedStyle === 'function' ? view.getComputedStyle(root).getPropertyValue('--font-scale') : '');
+    } catch (_error) {
+      raw = '';
+    }
+    const scale = Number.parseFloat(String(raw || '').trim());
+    return Number.isFinite(scale) && scale > 0 ? scale : 1;
+  }
+
+  function resolveCodeFontPx(doc, explicitPx) {
+    const explicit = Number(explicitPx === undefined ? getSharedMonacoState().codeFontPx : explicitPx);
+    if (Number.isFinite(explicit) && explicit > 0) {
+      return explicit;
+    }
+    return Math.round(CODE_FONT_BASE_PX * resolveFontScale(doc));
+  }
+
+  function applyCodeFontSizeToConsumers(doc) {
+    const fontSize = resolveCodeFontPx(doc);
+    const consumers = getSharedMonacoState().fontConsumers;
+    consumers?.forEach((editor) => {
+      try {
+        editor.updateOptions({ fontSize });
+      } catch (_error) {
+        // A disposed editor rejects updateOptions; its unregister prunes it.
+      }
+    });
+    return fontSize;
+  }
+
+  // Records the editor font-size preference (0/'match' = follow Text size),
+  // retunes registered editors when it changed, and tells non-Monaco code
+  // surfaces (the terminal). New editors pick it up through
+  // withMonacoFontFamily.
+  function setCodeFontSizePreference(value, doc) {
+    const px = Number(value);
+    const shared = getSharedMonacoState();
+    const next = Number.isFinite(px) && px > 0 ? px : 0;
+    const changed = shared.codeFontPx !== next;
+    shared.codeFontPx = next;
+    // A changed preference reaches every registered editor (artifact editors
+    // included), not only the caller's own.
+    const fontSize = changed ? applyCodeFontSizeToConsumers(doc) : resolveCodeFontPx(doc);
+    const target = doc || (typeof document !== 'undefined' ? document : null);
+    const EventCtor = target?.defaultView?.CustomEvent || (typeof CustomEvent === 'function' ? CustomEvent : null);
+    if (target && typeof target.dispatchEvent === 'function' && EventCtor) {
+      target.dispatchEvent(new EventCtor(CODE_FONT_SIZE_EVENT, { detail: { fontSize } }));
+    }
+    return fontSize;
+  }
+
   // Spreads fontFamily onto an options object only when the token resolves, so
-  // the '' case leaves Monaco's own default in place untouched.
+  // the '' case leaves Monaco's own default in place untouched. fontSize always
+  // comes from the shared code-size resolution.
   function withMonacoFontFamily(options, doc) {
     const base = options && typeof options === 'object' ? options : {};
     const fontFamily = resolveMonacoFontFamily(doc);
-    return fontFamily ? { ...base, fontFamily } : { ...base };
+    const sized = { ...base, fontSize: resolveCodeFontPx(doc) };
+    return fontFamily ? { ...sized, fontFamily } : sized;
   }
 
   function applyMonacoFontFamily(editor, fontFamily) {
@@ -557,13 +627,16 @@
     if (!root || typeof ObserverCtor !== 'function') {
       return;
     }
-    const observer = new ObserverCtor(() => {
-      const fontFamily = resolveMonacoFontFamily(target);
-      if (!fontFamily) {
-        return;
+    const observer = new ObserverCtor((records) => {
+      // Text size (data-font-scale) retunes the code size; the typography
+      // preset (data-typography) retunes the face. Each touches only its option.
+      const changed = new Set((records || []).map((record) => record.attributeName));
+      if (changed.has('data-font-scale')) {
+        applyCodeFontSizeToConsumers(target);
       }
+      const fontFamily = changed.has('data-typography') ? resolveMonacoFontFamily(target) : '';
       const consumers = sharedState.fontConsumers;
-      if (consumers?.size) {
+      if (fontFamily && consumers?.size) {
         consumers.forEach((editor) => applyMonacoFontFamily(editor, fontFamily));
       }
       try {
@@ -572,7 +645,7 @@
         // Monaco may be mid-teardown; the next create picks the face up anyway.
       }
     });
-    observer.observe(root, { attributes: true, attributeFilter: ['data-typography'] });
+    observer.observe(root, { attributes: true, attributeFilter: ['data-typography', 'data-font-scale'] });
     sharedState.typographyObserverInstalled = true;
   }
 
@@ -837,6 +910,9 @@
     createArtifactEditor,
     ensureMonacoEditorApi,
     resolveMonacoFontFamily,
+    resolveCodeFontPx,
+    setCodeFontSizePreference,
+    CODE_FONT_SIZE_EVENT,
     withMonacoFontFamily,
     registerMonacoFontConsumer,
     createIdeFontBinding,

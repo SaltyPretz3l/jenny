@@ -26,6 +26,22 @@ function createWorkspaceRoot() {
   return createTrackedTempDir('jenny-artifacts-branch-');
 }
 
+test('branch clone refuses an artifacts junction outside the workspace', async () => {
+  const workspaceRoot = createWorkspaceRoot();
+  const external = createWorkspaceRoot();
+  fs.mkdirSync(path.join(workspaceRoot, '.jenny'));
+  fs.mkdirSync(path.join(external, 'source'));
+  fs.writeFileSync(path.join(external, 'source', 'keep.md'), 'external');
+  fs.symlinkSync(external, path.join(workspaceRoot, SESSION_ARTIFACT_ROOT), 'junction');
+  const service = new ArtifactWorkspaceService({ configService: {
+    getState: () => ({ toolsWorkspaceRoot: workspaceRoot }),
+  } });
+  const result = await service.cloneSessionArtifactsForBranch('source', 'target');
+  assert.equal(result.cloned, false);
+  assert.equal(fs.existsSync(path.join(external, 'target')), false);
+  assert.equal(fs.readFileSync(path.join(external, 'source', 'keep.md'), 'utf8'), 'external');
+});
+
 test.afterEach(async () => {
   await cleanupTrackedResources();
 });

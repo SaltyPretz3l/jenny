@@ -22,14 +22,8 @@
   var MIN_OPTIONS = 2;
   var MAX_OPTIONS = 4;
 
-  function escapeHtml(value) {
-    return String(value || '')
-      .replaceAll('&', '&amp;')
-      .replaceAll('<', '&lt;')
-      .replaceAll('>', '&gt;')
-      .replaceAll('"', '&quot;')
-      .replaceAll("'", '&#39;');
-  }
+  const escapeHtml = ((typeof globalThis !== 'undefined' && globalThis.stringUtils)
+    || (typeof require === 'function' ? require('../shared/string-utils') : null)).escapeHtml;
 
   function sanitizeToken(value, fallback) {
     var normalized = String(value || '').trim();
@@ -51,6 +45,7 @@
    * @param {Object} opts
    * @param {string} [opts.id] - Emitted as data-inv-segmented="<id>" (sanitized token)
    * @param {string} [opts.ariaLabel] - Accessible radiogroup label
+   * @param {string} [opts.describedBy] - Id of the help text, written as aria-describedby on the group
    * @param {string} [opts.value] - Currently selected option value
    * @param {Array<{value:string,label:string,disabled?:boolean,tooltip?:string}>} opts.options - 2..4 options
    * @param {boolean} [opts.disabled] - Disables the whole group
@@ -132,6 +127,7 @@
       + ' class="' + cls + '"'
       + ' role="radiogroup"'
       + (o.ariaLabel ? ' aria-label="' + escapeHtml(o.ariaLabel) + '"' : '')
+      + (o.describedBy ? ' aria-describedby="' + escapeHtml(String(o.describedBy)) + '"' : '')
       + (id ? ' data-inv-segmented="' + id + '"' : '')
       + (disabled ? ' aria-disabled="true"' : '')
       + dataset
@@ -244,8 +240,10 @@
       if (targetIndex === -1 || targetIndex === currentIndex) return;
 
       event.preventDefault();
-      select(group, buttons[targetIndex].getAttribute('data-value'));
+      // Focus first: a change listener may lock the group while it saves, and
+      // a locked option cannot take focus afterwards.
       buttons[targetIndex].focus();
+      select(group, buttons[targetIndex].getAttribute('data-value'));
     });
   }
 

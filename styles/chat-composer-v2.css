@@ -72,7 +72,7 @@
  * remains visible when triggered) but it recedes into the chrome. */
 .composer-wayfinder-host .chat-wayfinder-button {
   min-height: calc(var(--composer-secondary-control-size) - 4px);
-  font-size: 10.5px;
+  font-size: var(--font-size-caption);
   border-color: color-mix(in srgb, var(--composer-wayfinder-accent) 18%, var(--composer-secondary-control-border));
 }
 
@@ -80,7 +80,7 @@
   flex-basis: 14px;
   width: 14px;
   height: 14px;
-  font-size: 11px;
+  font-size: var(--font-size-caption);
 }
 
 .composer-skill-chip {
@@ -102,7 +102,7 @@
   overflow: hidden;
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-lg);
-  background: var(--bg-elevated);
+  background: var(--surface-popover-background);
   box-shadow: var(--shadow-elevation-3);
 }
 
@@ -112,7 +112,7 @@
   padding: var(--space-2) var(--space-3);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-md);
-  background: var(--bg-elevated);
+  background: var(--surface-popover-row);
   color: var(--text-primary);
 }
 
@@ -127,10 +127,8 @@
 .slash-autocomplete-group {
   padding: var(--space-2) var(--space-3) var(--space-1);
   color: var(--text-muted);
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+  font-size: var(--font-size-caption);
+  font-weight: 500;
 }
 
 .slash-autocomplete-row {
@@ -158,8 +156,8 @@
 .slash-autocomplete-command {
   overflow-wrap: anywhere;
   font-family: var(--font-family-mono);
-  font-size: var(--font-size-sm);
-  font-weight: 650;
+  font-size: var(--font-size-code);
+  font-weight: 500;
 }
 
 .slash-autocomplete-copy {
@@ -167,19 +165,19 @@
   grid-row: 2;
   overflow-wrap: anywhere;
   color: var(--text-secondary);
-  font-size: var(--font-size-xs);
+  font-size: var(--font-size-footnote);
 }
 
 .slash-autocomplete-tag {
   color: var(--text-muted);
-  font-size: 10px;
-  font-weight: 650;
+  font-size: var(--font-size-caption);
+  font-weight: 500;
 }
 
 .slash-autocomplete-empty,
 .slash-autocomplete-footer {
   color: var(--text-muted);
-  font-size: var(--font-size-xs);
+  font-size: var(--font-size-caption);
 }
 
 .slash-autocomplete-empty {

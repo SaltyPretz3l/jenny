@@ -207,5 +207,7 @@ button:disabled, textarea:disabled, input:disabled, select:disabled { cursor: no
 .browser-runtime { padding: 1rem; max-height: 70vh; overflow: auto; border-bottom: 1px solid var(--border-color, #444); }
 .browser-runtime .settings-group { margin-block: 1rem; }
 .browser-runtime .settings-list { display: grid; gap: .5rem; padding-inline-start: 1.5rem; }
-.browser-runtime .inv-text-field { max-width: 44rem; margin-block: .5rem; }
+.browser-runtime .settings-field--row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: .5rem 1rem; padding: .5rem 0; border-top: 1px solid var(--border-color, #444); }
+.browser-runtime .inv-number-input input { width: 6rem; }
+.browser-runtime .settings-field-error[hidden], .browser-runtime .limits-note:empty { display: none; }
 .browser-runtime button { margin-inline-end: .5rem; margin-block: .25rem; }

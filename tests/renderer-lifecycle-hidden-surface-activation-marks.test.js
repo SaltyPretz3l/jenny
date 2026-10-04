@@ -53,8 +53,8 @@ function buildController(t) {
     constants: { SIDEBAR_STORAGE_KEY: 'k', APPEARANCE_STORAGE_KEY: 'k2', TOAST_SOURCE: {}, INTERACTIVE_SEQUENCE_IDLE: 'idle' },
     dom: {
       chatInput: el(),
-      composerSettingsPopover: el(),
-      composerSettingsButton: el(),
+      composerAttachMenu: el(),
+      composerAttachShortcut: el(),
       composerTerminalShortcut: el(),
     },
     callbacks: { refreshSettingsSection: () => Promise.resolve(null) },

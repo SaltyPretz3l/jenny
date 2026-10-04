@@ -545,6 +545,37 @@ test('electron session store round-trips validated subagent report metadata', ()
   assert.equal(Object.hasOwn(report, 'raw_usage'), false);
 });
 
+test('electron session store round-trips subagent steps and answer and drops unknown step keys', () => {
+  const userDataPath = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-subagent-steps-roundtrip-'));
+  trackDirectory(userDataPath);
+  const storePath = path.join(userDataPath, 'sessions.json');
+  const store = new ElectronSessionStore(storePath);
+  const created = store.createSession({ title: 'Subagent steps' });
+  store.appendMessage(created.id, {
+    id: 'tool_result_subagent_steps', role: 'tool', content: '',
+    tool_result: {
+      call_id: 'call-steps', tool_name: 'subagent_run', output_text: '{}',
+      metadata: { subagent_report: {
+        task_id: 'child-steps', label: 'Inspect persistence', status: 'completed', summary: 'Done.',
+        evidence: [], tools_used: [], uncertainties: [], budget: { elapsed_ms: 900 },
+        answer: '## Findings\n\nThe store persists reports.',
+        steps: [
+          { tool: 'read_file', display: 'Read File', ok: true, target: 'services/store.js', raw: 'drop' },
+          { tool: 'read_file', display: 'Read File', ok: false, error_code: 'CMP-TOOL-0001', detail: 'Denied' },
+        ],
+      } },
+    },
+  });
+
+  const reloaded = new ElectronSessionStore(storePath);
+  const report = reloaded.getSessionMessages(created.id)[0].tool_result.metadata.subagent_report;
+  assert.equal(report.answer, '## Findings\n\nThe store persists reports.');
+  assert.deepEqual(report.steps, [
+    { tool: 'read_file', display: 'Read File', ok: true, target: 'services/store.js' },
+    { tool: 'read_file', display: 'Read File', ok: false, error_code: 'CMP-TOOL-0001', detail: 'Denied' },
+  ]);
+});
+
 // CTL-010: compaction drops oldest WHOLE turns (never a raw event tail — a
 // bisected turn orphans its messages onto the legacy-markup canary path).
 // The whole-turn boundary mechanics are pinned in

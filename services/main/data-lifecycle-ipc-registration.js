@@ -76,7 +76,7 @@ function createRemovalPreparation({
   cleanupData = cleanupJennyData,
   cleanupOptions = {},
 } = {}) {
-  return async ({ choice, removeWorkspaceData, workspaceRoot }) => {
+  return async ({ choice, removeWorkspaceData, workspaceRemovalScope, workspaceRoot }) => {
     await flush();
     await stop();
     if (choice === REMOVAL_CHOICES.APP_ONLY) return { ok: true, status: 'data_preserved' };
@@ -84,6 +84,7 @@ function createRemovalPreparation({
       ...cleanupOptions,
       workspaceRoot,
       removeWorkspaceData,
+      workspaceRemovalScope,
       includeUserData: false,
     });
   };
@@ -209,10 +210,12 @@ function registerDataLifecycleRuntime(ipcMainLike, {
   getMainWindow,
   sendBridgeEvent,
   log,
+  // Tests pass a temp home: a removal run here deletes the runtime children.
+  homeDir = os.homedir(),
 } = {}) {
   const { shell } = require('electron');
   const userDataPath = app.getPath('userData');
-  const runtimePath = path.join(os.homedir(), '.companion');
+  const runtimePath = path.join(homeDir, '.companion');
   const service = new DataLifecycleService({
     userDataPath,
     documentsPath: app.getPath('documents'),
@@ -230,7 +233,6 @@ function registerDataLifecycleRuntime(ipcMainLike, {
       cleanupOptions: {
         userDataPath,
         runtimePath,
-        secureStore: backendService.secureStore,
       },
     }),
   });

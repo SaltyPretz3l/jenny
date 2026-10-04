@@ -18,7 +18,6 @@ from sidecar.protocol import CHAT_TOKEN_METHOD, TOOL_RESULT_METHOD
 from sidecar.runtime import automation_runner
 from sidecar.runtime.chat_models import ChatRequestError, ChatResponse
 
-
 # ---------------------------------------------------------------------------
 # Shared helpers
 # ---------------------------------------------------------------------------
@@ -365,8 +364,6 @@ def test_write_json_atomic_swallows_oserror_on_temp_unlink(
         if self.name.startswith(".run.result.json."):
             raise OSError("replace boom")
         return original_replace(self, target)
-
-    original_unlink = Path.unlink
 
     unlink_calls: list[str] = []
 

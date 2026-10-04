@@ -98,7 +98,7 @@ def _load_pil():
     # vision_input) and crashes the packaged sidecar at startup.
     try:
         from PIL import Image, UnidentifiedImageError
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         raise VisionInputError(
             "dependency_missing",
             "Vision attachments require the optional Pillow dependency (media extra).",

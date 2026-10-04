@@ -11,6 +11,11 @@
   root.rendererRenderPipelineArticleMarkupUtils = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
+  // source_citations: strip settled [web:N] markers like the row-model bubble.
+  const resolveCitationChipsUtils = () => globalThis.rendererCitationChipsUtils
+    || (typeof require === 'function' ? require('./renderer-citation-chips-utils') : null) || {};
+  const resolveArticlePredictionUtils = () => globalThis.rendererRenderPipelineArticlePrediction
+    || (typeof require === 'function' ? require('./renderer-render-pipeline-article-prediction') : null);
   function createArticleMarkupPipeline(deps) {
     const {
       state = {},
@@ -21,7 +26,6 @@
     } = deps || {};
     const { MESSAGE_STATUS = {} } = constants;
     const { chatTimeline = null, chatThreadColumn = null } = dom;
-    const { reducedMotionQuery = { matches: false } } = controllers;
     const {
       // Upstream pipeline methods (projection-cache C1, hydration C2,
       // projection-context C3, thread-state B1, thinking B3):
@@ -43,7 +47,6 @@
       buildTurnRowId = () => '',
       // streaming-reveal helper:
       buildStreamingBubbleMarkup = (message) => ({
-        entryReveal: false,
         bubbleInnerHtml: '',
         streamUnits: null,
         streamChangedStart: -1,
@@ -66,6 +69,12 @@
       renderSlashCommandOutput = () => '',
       formatMessageTerminalTimestamp = () => '',
       isArtifactReviewVisible = () => false,
+      // Split view W1-4a: the session this pane shows (one pane: currentSessionId).
+      getPaneSessionId = () => String(state.currentSessionId || '').trim(),
+      // Transcript view of the session this pane shows (renderer-render-pipeline-utils.js).
+      getPaneTranscriptView = () => 'thinking',
+      // Split view W3-1: does THIS pane own selection mode (a bag without one is pane 0)?
+      isPaneSelecting = () => state?.ui?.selectionModePaneId === 0,
     } = callbacks;
 
     // F4/F5/F6: per-render selection-state probes. Hot path (selectionMode
@@ -75,12 +84,12 @@
     let cachedSelectionSet = null;
     let cachedSelectionSetSessionId = '';
     function resolveSelectionState(messageId) {
-      if (!state || !state.ui || state.ui.selectionMode !== true) {
+      if (!state || !state.ui || isPaneSelecting() !== true) {
         cachedSelectionSet = null;
         cachedSelectionSetSessionId = '';
         return SELECTION_STATE_OFF;
       }
-      const sessionId = String(state.currentSessionId || '').trim();
+      const sessionId = getPaneSessionId();
       const idsBySession = state.ui.selectedMessageIdsBySession;
       if (!sessionId || !(idsBySession instanceof Map)) {
         return SELECTION_STATE_ON_UNSELECTED;
@@ -171,7 +180,7 @@
       // Fallback if inventory isn't loaded yet — keep the bubble usable.
       const id = String(messageId || '');
       const draft = String(draftText == null ? '' : draftText);
-      return `<div class="chat-bubble chat-bubble-editing" data-message-id="${escapeHtml(id)}" data-pin-fade-trigger="user">${escapeHtml(draft)}</div>`;
+      return `<div class="chat-bubble chat-bubble-editing" dir="auto" data-message-id="${escapeHtml(id)}" data-pin-fade-trigger="user">${escapeHtml(draft)}</div>`;
     }
 
     function buildMessageInnerMarkup(
@@ -192,7 +201,9 @@
       );
       const agentStatusMarkup = message.role === 'assistant' ? renderAgentStatusWidget(message) : '';
       const contextCompactedMarkup = message.role === 'assistant' ? renderContextCompactedNotice(message) : '';
-      const thinkingMarkup = message.role === 'assistant' ? renderThinkingWidget(message, latestAssistantMessageId) : '';
+      const thinkingMarkup = message.role === 'assistant'
+        ? renderThinkingWidget(message, latestAssistantMessageId, { transcriptView: getPaneTranscriptView() })
+        : '';
       const failureMarkup = message.role === 'assistant' ? renderAssistantFailureNotice(message) : '';
       const editingMessageId = state.ui && typeof state.ui.editingMessageId === 'string'
         ? state.ui.editingMessageId
@@ -204,7 +215,6 @@
         regenerateRequest,
         editingMessageId,
       };
-      let entryReveal = false;
       let bubbleInnerHtml = null;
       let streamUnits = null;
       let streamChangedStart = -1;
@@ -213,7 +223,7 @@
         const recapModel = buildInteractiveRecapModel(message);
         messageMarkup = renderInteractiveRoundRecap(message, {
           recapModel,
-          sessionId: state.currentSessionId,
+          sessionId: getPaneSessionId(),
         });
       } else if (message.kind === 'proactive_suggestion') {
         messageMarkup = renderProactiveSuggestionBlock(message);
@@ -224,17 +234,16 @@
       } else if (message.role === 'assistant' && status === MESSAGE_STATUS.STREAMING && message.id === latestAssistantMessageId) {
         if (String(message.content || '').trim()) {
           const revealModel = buildStreamingBubbleMarkup(message);
-          entryReveal = revealModel.entryReveal;
           bubbleInnerHtml = revealModel.bubbleInnerHtml;
           streamUnits = revealModel.streamUnits;
           streamChangedStart = revealModel.streamChangedStart;
-          messageMarkup = `<div class="chat-bubble chat-bubble-markdown chat-bubble-streaming" data-streaming-bubble="true" role="status" aria-live="polite" aria-atomic="false" aria-label="${escapeHtml(jt('chat.article.streamingAssistantResponse', 'Assistant response (streaming)'))}">${revealModel.bubbleInnerHtml}</div>`;
+          messageMarkup = `<div class="chat-bubble chat-bubble-markdown chat-bubble-streaming" dir="auto" data-streaming-bubble="true" role="status" aria-live="polite" aria-atomic="false" aria-label="${escapeHtml(jt('chat.article.streamingAssistantResponse', 'Assistant response (streaming)'))}">${revealModel.bubbleInnerHtml}</div>`;
         } else {
           messageMarkup = '';
         }
       } else if (message.role === 'assistant') {
         messageMarkup = String(message.content || '').trim()
-          ? `<div class="chat-bubble chat-bubble-markdown">${renderMarkdown(message.content)}</div>`
+          ? `<div class="chat-bubble chat-bubble-markdown" dir="auto">${renderMarkdown((resolveCitationChipsUtils().stripCitationMarkersForFlags || String)(message.content, state?.features?.featureFlags))}</div>`
           : '';
       } else if (message.role === 'user') {
         // F2: when this user message is the active edit target, swap the
@@ -259,10 +268,10 @@
           ? '<span class="chat-bubble-send-status" role="status">' + escapeHtml(jt('chat.article.failedToSend', 'Failed to send')) + '</span>'
             : '';
           const sendStateAttr = sendFailureActive ? ' data-send-state="failed"' : '';
-          messageMarkup = `<div class="chat-bubble chat-bubble-markdown" data-pin-fade-trigger="user"${sendStateAttr}>${renderMarkdown(message.content, { breaks: true })}${failureChip}</div>`;
+          messageMarkup = `<div class="chat-bubble chat-bubble-markdown" dir="auto" data-pin-fade-trigger="user"${sendStateAttr}>${renderMarkdown(message.content, { breaks: true })}${failureChip}</div>`;
         }
       } else {
-        messageMarkup = `<div class="chat-bubble">${escapeHtml(message.content)}</div>`;
+        messageMarkup = `<div class="chat-bubble" dir="auto">${escapeHtml(message.content)}</div>`;
       }
       const predictionHtml = `
             <div class="chat-role sr-only">${escapeHtml(message.role)}</div>
@@ -274,7 +283,6 @@
             ${renderMessageAttachments(message)}
           `;
       return {
-        entryReveal,
         status,
         pending: status === MESSAGE_STATUS.STREAMING,
         finalizedAt: escapeHtml(message.finalizedAt || ''),
@@ -297,104 +305,21 @@
       return buildMessageBodyShell(message?.id, innerHtml, rowOptions);
     }
 
-    function getPretextUtils() {
-      const pretextUtils = typeof rendererPretextUtils !== 'undefined' ? rendererPretextUtils : null;
-      return pretextUtils && pretextUtils.isEnabled(state) ? pretextUtils : null;
-    }
-
-    function resolveTranscriptPredictionFont(pretextUtils) {
-      return pretextUtils ? pretextUtils.resolveDefaultFontString('.chat-bubble') : null;
-    }
-
-    function resolveUserPredictionWidth(pretextUtils) {
-      if (!pretextUtils) {
-        return 0;
-      }
-      const bubble = chatTimeline ? chatTimeline.querySelector('.chat-entry.user .chat-bubble') : null;
-      const entry = chatTimeline ? chatTimeline.querySelector('.chat-entry.user') : null;
-      return pretextUtils.resolveElementWidth(bubble)
-        || pretextUtils.resolveElementWidth(entry)
-        || 560;
-    }
-
-    function resolveAssistantPredictionWidth(pretextUtils) {
-      if (!pretextUtils) {
-        return 0;
-      }
-      const content = chatTimeline ? chatTimeline.querySelector('.chat-entry.assistant .chat-message-content') : null;
-      return pretextUtils.resolveElementWidth(content)
-        || pretextUtils.resolveElementWidth(chatThreadColumn)
-        || 760;
-    }
-    const COLLAPSED_BODY_PREDICTION_OPTIONS = Object.freeze({
-      excludeSelector: '.tool-call-row[data-expanded="false"] .tool-call-row-body, .reasoning-row-panel:not(.expanded) .reasoning-row-panel-body',
+    // Height prediction and the predicted-height cleanup live in
+    // renderer-render-pipeline-article-prediction.js (split at the line cap).
+    const {
+      maybePredictArticleHeight,
+      maybePredictTurnHeight,
+      schedulePredictedHeightCleanup,
+      syncPatchedArticlePrediction,
+    } = resolveArticlePredictionUtils().createArticlePrediction({
+      state,
+      chatTimeline,
+      chatThreadColumn,
+      resolveArticlePredictionCacheKey,
+      resolveVisibleTurnArticleTarget,
+      buildTurnRowListMarkup,
     });
-    function resolveHtmlPredictionOptions(htmlString) {
-      const markup = String(htmlString || '');
-      return markup.includes('tool-call-row-body') || markup.includes('reasoning-row-panel-body')
-        ? COLLAPSED_BODY_PREDICTION_OPTIONS
-        : undefined;
-    }
-    function maybePredictArticleHeight(message, htmlString, textContent, projectionContext) {
-      const pretextUtils = getPretextUtils();
-      if (!pretextUtils || !message) {
-        return null;
-      }
-      const cacheKey = resolveArticlePredictionCacheKey(message, projectionContext);
-      if (!cacheKey || cacheKey === 'article:') {
-        return null;
-      }
-      const font = resolveTranscriptPredictionFont(pretextUtils);
-      if (!font) {
-        return null;
-      }
-      const isUserMessage = String(message.role || '').trim() === 'user';
-      const maxWidth = isUserMessage
-        ? resolveUserPredictionWidth(pretextUtils)
-        : resolveAssistantPredictionWidth(pretextUtils);
-      if (!maxWidth) {
-        return null;
-      }
-      const prediction = isUserMessage
-        ? pretextUtils.predictTextHeight(cacheKey, textContent, font, maxWidth, 15 * 1.6)
-        : pretextUtils.predictHtmlContentHeight(
-            cacheKey, htmlString, font, maxWidth, 15 * 1.6, resolveHtmlPredictionOptions(htmlString)
-          );
-      return prediction && prediction.height > 0
-        ? Math.ceil(prediction.height)
-        : null;
-    }
-
-    function maybePredictTurnHeight(turn, rows, messages, options) {
-      const pretextUtils = getPretextUtils();
-      if (!pretextUtils || !turn || !Array.isArray(rows) || rows.length < 1) {
-        return null;
-      }
-      const font = resolveTranscriptPredictionFont(pretextUtils);
-      const maxWidth = resolveAssistantPredictionWidth(pretextUtils);
-      if (!font || !maxWidth) {
-        return null;
-      }
-      const sourceRows = rows.filter(function includeRow(row) {
-        return row && String(row.kind || '') !== 'user_bubble';
-      });
-      if (!sourceRows.length) {
-        return null;
-      }
-      // Predict the exact assembled row list so tool-call/result pairing and
-      // collapsed-body visibility match the DOM rather than measuring each
-      // projected row as if it rendered independently.
-      const turnMarkup = buildTurnRowListMarkup(sourceRows, messages, options || {});
-      const prediction = pretextUtils.predictHtmlContentHeight(
-        `turn:${String(turn.turn_id || '').trim()}`,
-        turnMarkup,
-        font,
-        maxWidth,
-        15 * 1.6,
-        resolveHtmlPredictionOptions(turnMarkup)
-      );
-      return prediction && prediction.height > 0 ? Math.ceil(prediction.height) : null;
-    }
 
     const COALESCED_TURN_ROW_KINDS = new Set([
       'assistant_text',
@@ -420,7 +345,7 @@
 
     // turn_activity_envelope (coalesced turn articles): flag is reflected onto
     // the root dataset by renderMessages (renderer-render-pipeline-message-
-    // renderer.js) — same channel as responseLoopDisplay. The coalesce helpers
+    // renderer.js) — same channel as reasoningPrettify. The coalesce helpers
     // load as their own script; resolve lazily so script order stays free.
     function resolveTurnActivityEnvelopeEnabled() {
       return typeof document !== 'undefined'
@@ -469,84 +394,6 @@
       return visibleRows.length > 0 && visibleRows.every(function hasSupportedKind(row) {
         return COALESCED_TURN_ROW_KINDS.has(String(row?.kind || '').trim());
       });
-    }
-
-    let predictedHeightCleanupFrame = 0;
-    let predictedHeightCleanupTimer = 0;
-
-    function clearPredictedHeightStyles() {
-      if (!chatTimeline) {
-        return;
-      }
-      chatTimeline.querySelectorAll('[data-predicted-height]').forEach(function clearMinHeight(node) {
-        if (!node || !node.style) return;
-        // DOM-window placeholders use the same inline property to preserve
-        // scroll geometry while their article body is detached. Clearing it
-        // here collapses the placeholder and lets the virtualizer restore the
-        // old prediction on remount. The entry store discards prediction-owned
-        // values from its restore snapshot, so mounted entries remain safe to
-        // clear while virtualized entries retain their measured placeholder.
-        if (node.getAttribute?.('data-virtualized') === 'true') return;
-        node.style.minHeight = '';
-      });
-    }
-
-    function schedulePredictedHeightCleanup() {
-      if (!chatTimeline) {
-        return;
-      }
-      const windowRef = typeof window !== 'undefined' ? window : null;
-      if (!windowRef) {
-        clearPredictedHeightStyles();
-        return;
-      }
-      if (predictedHeightCleanupFrame && typeof windowRef.cancelAnimationFrame === 'function') {
-        windowRef.cancelAnimationFrame(predictedHeightCleanupFrame);
-      }
-      const runCleanup = function runCleanup() {
-        predictedHeightCleanupFrame = 0;
-        if (predictedHeightCleanupTimer && typeof windowRef.clearTimeout === 'function') {
-          windowRef.clearTimeout(predictedHeightCleanupTimer);
-        }
-        predictedHeightCleanupTimer = 0;
-        clearPredictedHeightStyles();
-      };
-      if (typeof windowRef.requestAnimationFrame === 'function') {
-        predictedHeightCleanupFrame = windowRef.requestAnimationFrame(runCleanup);
-      } else {
-        runCleanup();
-        return;
-      }
-      if (!predictedHeightCleanupTimer && typeof windowRef.setTimeout === 'function') {
-        predictedHeightCleanupTimer = windowRef.setTimeout(function forcePredictedHeightCleanup() {
-          if (predictedHeightCleanupFrame && typeof windowRef.cancelAnimationFrame === 'function') {
-            windowRef.cancelAnimationFrame(predictedHeightCleanupFrame);
-          }
-          runCleanup();
-        }, 48);
-      }
-    }
-
-    function syncPatchedArticlePrediction(messageId, predictedHeight) {
-      if (!chatTimeline) {
-        return;
-      }
-      const normalizedMessageId = String(messageId || '').trim();
-      if (!normalizedMessageId) {
-        return;
-      }
-      const article = resolveVisibleTurnArticleTarget(normalizedMessageId);
-      if (!article) {
-        return;
-      }
-      const nextHeight = Number(predictedHeight) || 0;
-      if (nextHeight > 0) {
-        article.dataset.predictedHeight = String(nextHeight);
-        article.style.minHeight = `${nextHeight}px`;
-        return;
-      }
-      article.style.minHeight = '';
-      article.removeAttribute('data-predicted-height');
     }
 
     function buildTurnArticleMarkup(turn, rows, messages, options) {
@@ -635,31 +482,34 @@
       ) {
         turnPhaseForMarkup = 'review_artifact';
       }
+      // The transcript view rides the row-list options (expansion defaults are
+      // baked into row markup); the prediction below must see the same value.
+      const transcriptView = renderOptions.transcriptView || getPaneTranscriptView();
+      // Answers live-turn marker: the whole in-flight turn, tool gaps included
+      // (isStreaming and activeTurnId both drop there); shared with the prediction.
+      const liveTurnId = String(projectionContext?.liveTurnId || '').trim();
+      const turnLive = liveTurnId !== '' && liveTurnId === String(turn?.turn_id || '').trim();
       const rowListHtml = buildTurnRowListMarkup(sourceRows, messages, {
         ...renderOptions,
+        transcriptView,
         isStreaming,
          projectionContext,
          messageById: projectionContext?.messageById,
          turnIdByMessageId: projectionContext?.turnIdByMessageId,
-         // The turn-article callers do not pass sessionId, and the Resume
-         // affordance stamps it onto the button for the activation-time
-         // revalidation -- an empty value makes every button inert. The rendered
-         // messages always come from the current session (queueSessionRender's
-         // hidden path still requires `current`), so this mirrors the legacy
-         // article path's own state.currentSessionId read.
-         sessionId: renderOptions.sessionId || String(state.currentSessionId || '').trim(),
+         // Resume stamps sessionId for its activation-time revalidation (empty
+         // = inert button); callers omit it, so read this pane's session (W1-4a).
+         sessionId: renderOptions.sessionId || getPaneSessionId(),
          retryMessageId: isLatestTurn ? latestAssistantMessageId : '',
          resumeTailMessageId: renderOptions.resumeTailMessageId || '',
          resumeSendBusy: Boolean(renderOptions.followUpDisabledReason),
         timelineDividerByMessageId: projectionContext?.timelineDividerByMessageId || null,
         dividerHostMessageId: articleMessageId,
-        reducedMotion: reducedMotionQuery.matches === true,
         streamingRowId: renderOptions.streamingRowId || '',
         streamingMessageId,
         streamUnits: streamingRevealModel?.streamUnits || null,
-        streamChangedStart: streamingRevealModel?.streamChangedStart,
         turnPhase: turnPhaseForMarkup,
-        // response_loop_display_v2 grouped steps: the expand-state Map is keyed by
+        turnLive,
+        // Response-loop grouped steps: the expand-state Map is keyed by
         // turn id (the single-row patch path falls back to the row's own turn_id).
         turnId: String(turn?.turn_id || ''),
       });
@@ -671,7 +521,18 @@
         ? renderMessageHoverRow(actionTargetMessage, actionOptions, metaLabel)
         : '';
       const finalizedAt = String(actionTargetMessage?.finalizedAt || primaryMessage?.finalizedAt || '').trim();
-      const predictedHeight = maybePredictTurnHeight(turn, sourceRows, messages, renderOptions);
+      // skipHeightPrediction: the stream-reveal row-list builder keeps only the
+      // row list, so a prediction is waste there (timeline-perf 2026-09-30).
+      // A settled article predicts from the rowListHtml above (one build, one
+      // sink feed); a streaming one keeps a separate build because its row
+      // list carries streaming-bubble markup the prediction never measured, and
+      // that build must not feed the caller's segment sink a second time.
+      const predictedHeight = renderOptions.skipHeightPrediction === true
+        ? null
+        : maybePredictTurnHeight(turn, sourceRows, messages, {
+          ...renderOptions, transcriptView, turnPhase: turnPhaseForMarkup, turnLive, rowListSegmentSink: null,
+          sessionId: renderOptions.sessionId || getPaneSessionId(),
+        }, isStreaming ? null : rowListHtml);
       const extraAttributes = [
         `data-turn-id="${escapeHtml(String(turn?.turn_id || ''))}"`,
       ];
@@ -689,7 +550,7 @@
         return String(row?.kind || '').trim() === 'approval_gap';
       });
       return buildMessageShellArticle({
-        className: `assistant${isStreaming ? ' pending' : ''}${streamingRevealModel?.entryReveal ? ' stream-reveal-entry' : ''}`,
+        className: `assistant${isStreaming ? ' pending' : ''}`,
         messageId: articleMessageId,
         messageRole: 'assistant',
         messageStatus: isStreaming ? MESSAGE_STATUS.STREAMING : String(primaryMessage?.status || 'complete'),
@@ -708,25 +569,15 @@
       });
     }
 
-    // @legacy-fallback (compat-scaffolding flavor — NOT dead code, NOT a
-    // post-Stage-E removal candidate): reachable from the PROJECTED dispatch
-    // path when buildMessageArticleMarkup detects a non-primary sibling inside
-    // a coalesced turn-article; keeps updateThreadRailExtents() able to find a
-    // per-row node-dot for nested tool-parent compat nodes with no
-    // thread-toggle. Tagged @legacy-fallback only because it shares the
-    // thread-compat scaffolding with the legacy article path — see
-    // docs/plans/RENDER_PIPELINE_SPLIT_PLAN.md §4.
-    // The orphan-dot guard (renderer-turn-row-list-utils.js
-    // isBodyMarkupVisuallyEmpty) intentionally does NOT apply: this anchor is
-    // *always* empty/aria-hidden by design — the dot IS the rail landmark the
-    // row exists to provide, so suppressing it on "empty body" grounds would
-    // reintroduce the rail-gap defect for every such compat node.
-    // EXCEPTION — envelope siblings (options.envelopeSibling): in a coalesced
-    // turn_activity_envelope article every row paints its own rail dot, so a
-    // sibling's landmark dot would strand a lone dot below the turn (the
-    // trailing rail-dot defect). Those anchors render dotless and carry
-    // data-thread-compat-enveloped so the thread-DOM layer can also drop the
-    // matching collapse toggle for compat-only subtrees.
+    // @legacy-fallback (compat scaffolding, NOT dead code; see
+    // docs/plans/RENDER_PIPELINE_SPLIT_PLAN.md §4): the projected dispatch
+    // renders a non-primary sibling inside a coalesced turn-article here, so
+    // updateThreadRailExtents() finds a per-row node-dot for nested compat
+    // nodes. The orphan-dot guard (isBodyMarkupVisuallyEmpty) does NOT apply:
+    // the always-empty anchor's dot IS the rail landmark. Envelope siblings
+    // (options.envelopeSibling) render dotless, since their article's rows
+    // paint the dots, and carry data-thread-compat-enveloped so the thread-DOM
+    // layer can drop the matching collapse toggle for compat-only subtrees.
     function buildThreadCompatAnchor(message, options) {
       const messageId = String(message?.id || '').trim();
       const envelopeSibling = !!(options && options.envelopeSibling);
@@ -755,17 +606,11 @@
       return !!coalesceUtils.deriveTurnArticleAnchorMessageId(turnId, rows, projectionContext);
     }
 
-    // @legacy-fallback
-    // buildMessageArticleMarkupLegacy is invoked by the dispatcher
-    // (buildMessageArticleMarkup) when canRenderProjectedTurnArticle returns
-    // false — i.e. when the turn has not yet been coalesced into a projected
-    // turn-article shape, or when a row kind outside COALESCED_TURN_ROW_KINDS
-    // is present. It is NOT dead code and must remain reachable. Do not
-    // delete — see docs/plans/RENDER_PIPELINE_SPLIT_PLAN.md §4 for the
-    // post-split audit batch that decides removal. Signal
-    // `legacy_message_article_markup_render` is the post-Stage-E gate: if it
-    // stays at zero across one full sprint, the legacy branch + dispatcher
-    // fallback can be deleted.
+    // @legacy-fallback (NOT dead code): the dispatcher lands here when
+    // canRenderProjectedTurnArticle is false (turn not yet coalesced, or a row
+    // kind outside COALESCED_TURN_ROW_KINDS). Removal is gated on the
+    // `legacy_message_article_markup_render` signal staying at zero for a
+    // sprint (docs/plans/RENDER_PIPELINE_SPLIT_PLAN.md §4).
     function buildMessageArticleMarkupLegacy(
       message,
       messages,
@@ -783,17 +628,10 @@
           messageRole,
         });
       }
-      // tool_result is intentionally suppressed as a standalone article.
-      // Its data is coalesced into the paired tool_use shell's ToolStepRow,
-      // keyed by tool_call_id (see renderer/chat/renderer-turn-row-projector.js — ToolStepRow
-      // accumulates both the tool_use and tool_result events for one call).
-      // Consumers that need tool result data must either:
-      //   (a) call resolveProjectedPrimaryRow(toolUseMessage, projectionContext)
-      //       and read ToolStepRow.tool_result_payload / ToolStepRow.status, or
-      //   (b) use rendererTranscriptToolCallUtils.createTranscriptToolCallRenderer()
-      //       which internally resolves paired results via tool_call_id lookup.
-      // Never query the DOM for a [data-message-kind="tool_result"] article —
-      // no such element exists in the rendered output.
+      // tool_result never renders a standalone article: its data lives on the
+      // paired tool_use's ToolStepRow (renderer-turn-row-projector.js). Read it
+      // via resolveProjectedPrimaryRow(...).tool_result_payload or the transcript
+      // tool-call renderer; no [data-message-kind="tool_result"] article exists.
       if (message.kind === 'tool_result') {
         return '';
       }
@@ -820,7 +658,7 @@
       return buildMessageShellArticle({
         className: message.kind === 'tool_use'
           ? 'assistant tool-entry'
-          : `${String(message.role || '')}${messageModel.status === MESSAGE_STATUS.STREAMING ? ' pending' : ''}${messageModel.entryReveal ? ' stream-reveal-entry' : ''}`,
+          : `${String(message.role || '')}${messageModel.status === MESSAGE_STATUS.STREAMING ? ' pending' : ''}`,
         messageId: message.id,
         messageRole: message.role,
         messageStatus: message.kind === 'tool_use' ? String(message.status || '') : messageModel.status,
@@ -841,6 +679,9 @@
       });
     }
 
+    // `renderOptions` (optional, eighth): { skipHeightPrediction,
+    // rowListSegmentSink } for callers that keep only the row list of the
+    // returned markup (renderer-turn-row-list-utils.js documents the sink).
     function buildMessageArticleMarkup(
       message,
       messages,
@@ -848,8 +689,11 @@
       latestReplyAssistantMessageId,
       followUpDisabledReason,
       regenerateRequest,
-      projectionContext
+      projectionContext,
+      renderOptions
     ) {
+      const skipHeightPrediction = renderOptions?.skipHeightPrediction === true;
+      const rowListSegmentSink = Array.isArray(renderOptions?.rowListSegmentSink) ? renderOptions.rowListSegmentSink : null;
       const messageId = String(message?.id || '').trim();
       const turnId = String(projectionContext?.turnIdByMessageId?.get?.(messageId) || '').trim();
       if (message.kind === 'tool_result') {
@@ -910,6 +754,8 @@
               if (coalescedRows.length) {
                 return buildTurnArticleMarkup(turn, coalescedRows, messages, {
                   projectionContext,
+                  skipHeightPrediction,
+                  rowListSegmentSink,
                   renderMessageId: messageId,
                   latestReplyAssistantMessageId,
                   resumeTailMessageId,
@@ -943,6 +789,8 @@
           }
           return buildTurnArticleMarkup(turn, visibleRenderRows, messages, {
             projectionContext,
+            skipHeightPrediction,
+            rowListSegmentSink,
             renderMessageId: messageId,
             latestReplyAssistantMessageId,
             resumeTailMessageId,

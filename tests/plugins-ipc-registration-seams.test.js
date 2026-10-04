@@ -92,7 +92,7 @@ function register({
     sendBridgeEvent,
     log: () => {},
   });
-  return { ipcMain, handle, backendService };
+  return { ipcMain, handle, backendService, userData };
 }
 
 describe('registerPluginsRuntime composition', () => {
@@ -105,9 +105,25 @@ describe('registerPluginsRuntime composition', () => {
       ...Object.keys(PLUGIN_STAGE7_INVOKE_METHODS),
       'plugins.viewBridge',
     ].map((methodPath) => getBridgeChannel(methodPath, 'invoke'));
-    assert.equal(expected.length, 32);
+    assert.equal(expected.length, 18);
     assert.deepEqual([...ipcMain.invoke.keys()].sort(), [...expected].sort());
     assert.deepEqual([...handle.channels].sort(), [...expected].sort());
+  });
+
+  test('the retired catalog, offline mirror and rollback surface is neither composed nor exposed', () => {
+    const { handle } = register();
+    assert.equal(Object.hasOwn(handle, 'catalogService'), false);
+    for (const retired of ['getCatalogState', 'refreshCatalogs', 'installFromCatalog', 'updateFromCatalog',
+      'listRollbackCandidates', 'rollback', 'selectOfflineMirror']) {
+      assert.equal(Object.hasOwn(PLUGIN_STAGE5_INVOKE_METHODS, `plugins.${retired}`), false, retired);
+      assert.equal(typeof handle.stage5Service[retired], 'undefined', retired);
+    }
+    assert.equal(Object.hasOwn(PLUGIN_STAGE5_INVOKE_METHODS, 'plugins.getDistributionState'), true);
+    assert.equal(Object.hasOwn(PLUGIN_STAGE5_INVOKE_METHODS, 'plugins.installLocalPackageFromPath'), true);
+    const loaded = Object.keys(require.cache).map((key) => key.split(path.sep).join('/'))
+      .filter((key) => /\/services\/plugins\/(catalog|network)\//.test(key));
+    assert.deepEqual(loaded, [], 'no catalog or network-broker module may load');
+    handle.dispose();
   });
 
   test('every handled method path is a real invoke descriptor and maps to a service method', () => {
@@ -118,8 +134,7 @@ describe('registerPluginsRuntime composition', () => {
     }
     for (const [methodPath, methodName] of Object.entries(PLUGIN_STAGE5_INVOKE_METHODS)) {
       assert.equal(typeof getBridgeChannel(methodPath, 'invoke'), 'string');
-      assert.equal(typeof handle.catalogService[methodName] === 'function'
-        || typeof handle.stage5Service[methodName] === 'function', true, `${methodPath} -> ${methodName}`);
+      assert.equal(typeof handle.stage5Service[methodName], 'function', `${methodPath} -> ${methodName}`);
     }
     for (const [methodPath, registrar] of Object.entries(PLUGIN_SUBSCRIBE_METHODS)) {
       assert.equal(typeof getBridgeChannel(methodPath, 'subscribe'), 'string');
@@ -133,51 +148,99 @@ describe('registerPluginsRuntime composition', () => {
     assert.equal(register().handle.safeMode.active, false);
   });
 
-  test('the privileged kill switch keeps cleanup-only Stage 8 registration alive', async () => {
-    const { handle, backendService } = register();
-    assert.equal(handle.stage8Service.enabled, false);
-    assert.equal(backendService._pluginStage8ControlPlane, handle.stage8Service);
-    assert.deepEqual(await handle.stage8Service.acquireHost({}), {
-      ok: false, reason: 'privileged_plugins_disabled',
+  test('the retired privileged tier is not composed even with the old flag and a session store', () => {
+    const { handle, backendService } = register({ backendServiceOverrides: {
+      featureFlags: { plugins: true, privileged_plugins: true },
+      sessionStore: { listSessions: () => [], getSession: () => null },
+      attachmentAssetStore: {},
+      exclusiveGpuCoordinator: {},
+    } });
+    const loaded = Object.keys(require.cache).map((key) => key.split(path.sep).join('/'))
+      .filter((key) => /\/services\/plugins\/(full-host|session-provider|artifacts)\/|\/services\/plugins\/stage8-control-plane|plugin-stage8-registration|plugin-consent-window|attachment-ticket-broker/.test(key));
+    assert.deepEqual(loaded, [], 'no privileged-tier module may load');
+    assert.equal(Object.hasOwn(handle, 'stage8Service'), false);
+    assert.equal(Object.hasOwn(handle, 'sessionProviderBroker'), false);
+    for (const key of ['_pluginStage8ControlPlane', '_pluginStage8Lifecycle', '_pluginSessionProviderBroker']) {
+      assert.equal(backendService[key], undefined, key);
+    }
+    assert.equal(globalThis.__jennyStage8OwnerDrill, undefined);
+    handle.dispose();
+  });
+
+  test('startup drops leftover privileged-tier state once and still settles per-plugin cleanup', async () => {
+    const seed = (userData) => {
+      const pluginsDir = path.join(userData, 'plugins');
+      fs.mkdirSync(path.join(pluginsDir, 'runtime'), { recursive: true });
+      fs.mkdirSync(path.join(pluginsDir, 'session-provider-staging', 'op-1'), { recursive: true });
+      fs.writeFileSync(path.join(pluginsDir, 'runtime', 'hook-outbox-v6.json'), '{}');
+      fs.writeFileSync(path.join(pluginsDir, 'runtime', 'full-host-cleanup-v6.json'), '{}');
+      fs.writeFileSync(path.join(pluginsDir, 'runtime', 'keep-me.json'), '{}');
+      fs.writeFileSync(path.join(pluginsDir, 'session-provider-staging', 'op-1', 'x.png'), 'x');
+      return pluginsDir;
+    };
+    const logs = [];
+    const ipcMain = createFakeIpcMain();
+    const userData = makeUserData();
+    const pluginsDir = seed(userData);
+    const handle = registerPluginsRuntime(ipcMain, {
+      backendService: { featureFlags: { plugins: true } },
+      app: { getPath: () => userData, getAppPath: () => process.cwd(), once: () => {}, isPackaged: false },
+      dialog: { showOpenDialog: async () => ({ canceled: true, filePaths: [] }) },
+      processRef: { argv: [], env: {}, resourcesPath: '' },
+      getMainWindow: () => null,
+      log: (level, event, data) => logs.push({ level, event, data }),
     });
-    const cleanup = await handle.stage8Service.cleanupOnly([]);
-    assert.equal(cleanup.ok, true);
+    await handle.startupReady;
+    assert.equal(fs.existsSync(path.join(pluginsDir, 'runtime', 'hook-outbox-v6.json')), false);
+    assert.equal(fs.existsSync(path.join(pluginsDir, 'runtime', 'full-host-cleanup-v6.json')), false);
+    assert.equal(fs.existsSync(path.join(pluginsDir, 'session-provider-staging')), false);
+    assert.equal(fs.existsSync(path.join(pluginsDir, 'runtime', 'keep-me.json')), true);
+    const swept = logs.find((entry) => entry.event === 'plugins.privileged_tier_retired');
+    assert.deepEqual(swept.data, { removed_count: 3, failed_count: 0 });
+    assert.ok(!JSON.stringify(logs).includes(userData), 'no user data path is logged');
+    await handle.dispose();
   });
 
-  test('session-provider drain wires actor barriers and tolerates an absent registry', async () => {
-    const sessionStore = { listSessions: () => [], getSession: () => null };
-    let barrierReads = 0;
-    const withRegistry = register({ backendServiceOverrides: {
-      sessionStore,
-      attachmentAssetStore: {},
-      exclusiveGpuCoordinator: {},
-      activeStreams: new Map(),
-      sessionTurnActors: {
-        pendingUnattachedLeaseSettlementBarriers: () => {
-          barrierReads += 1;
-          return [];
-        },
-      },
-    } }).handle;
-    assert.deepEqual(await withRegistry.sessionProviderBroker.drainChat(),
-      { ok: true, stream_count: 0 });
-    assert.equal(barrierReads, 1);
-
-    const withoutRegistry = register({ backendServiceOverrides: {
-      sessionStore,
-      attachmentAssetStore: {},
-      exclusiveGpuCoordinator: {},
-      activeStreams: new Map(),
-    } }).handle;
-    assert.deepEqual(await withoutRegistry.sessionProviderBroker.drainChat(),
-      { ok: true, stream_count: 0 });
+  test('plugins safe mode leaves the leftover privileged-tier state untouched', async () => {
+    const ipcMain = createFakeIpcMain();
+    const userData = makeUserData();
+    const staging = path.join(userData, 'plugins', 'session-provider-staging');
+    fs.mkdirSync(staging, { recursive: true });
+    const handle = registerPluginsRuntime(ipcMain, {
+      backendService: { featureFlags: { plugins: true } },
+      app: { getPath: () => userData, getAppPath: () => process.cwd(), once: () => {}, isPackaged: false },
+      dialog: { showOpenDialog: async () => ({ canceled: true, filePaths: [] }) },
+      processRef: { argv: ['--plugins-safe-mode'], env: {}, resourcesPath: '' },
+      getMainWindow: () => null,
+      log: () => {},
+    });
+    await handle.startupReady;
+    assert.equal(fs.existsSync(staging), true);
+    await handle.dispose();
   });
 
-  test('Stage 7 composes provider auth before later auxiliary IPC registration', () => {
+  test('plugin IPC no longer owns the ChatGPT auth service (core registrars create it)', () => {
     const { backendService } = register({
       env: { JENNY_AGENT_DEV: '1', JENNY_STAGE7_SYNTHETIC_OAUTH: '1' },
     });
-    assert.equal(backendService.chatgptAuthService.getStatus().state, 'signed_out');
+    assert.equal(backendService.chatgptAuthService, undefined);
+  });
+
+  test('the retired restricted (Wasm) tier is not composed or attached', () => {
+    const { backendService, handle } = register();
+    assert.equal(backendService._pluginStage6ControlPlane, undefined);
+    assert.equal(Object.hasOwn(handle, 'stage6Service'), false);
+    handle.dispose();
+  });
+
+  test('the retired managed (enterprise) policy is not composed, polled or exposed', () => {
+    const { handle } = register();
+    const loaded = Object.keys(require.cache).map((key) => key.split(path.sep).join('/'))
+      .filter((key) => /\/services\/plugins\/policy\/|plugin-managed-policy-source|managed-policy-state-store/.test(key));
+    assert.deepEqual(loaded, [], 'no managed-policy module may load (it polled reg.exe every 30s)');
+    assert.equal(Object.hasOwn(PLUGIN_INVOKE_METHODS, 'plugins.getPolicyStatus'), false);
+    assert.equal(typeof handle.service.getPolicyStatus, 'undefined');
+    handle.dispose();
   });
 
   test('the returned handle disposes subscriptions and the service idempotently', () => {
@@ -236,7 +299,7 @@ describe('plugins.* IPC authorization', () => {
     const state = await ipcMain.invoke.get(getBridgeChannel('plugins.getState', 'invoke'))(trusted.event, {});
     assert.equal(state.ok, true);
     assert.equal(state.stage, 8);
-    assert.equal(state.restricted_host_scope, 'stage6_restricted_host');
+    assert.equal(state.restricted_host_scope, 'unavailable');
     assert.equal(state.enabled, true);
     assert.equal(state.installed_count, 0);
   });

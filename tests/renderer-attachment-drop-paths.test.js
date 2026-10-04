@@ -59,6 +59,59 @@ test('getDroppedFilePaths fails soft when the preload bridge is unavailable', ()
   assert.deepEqual(paths, []);
 });
 
+test('dropped Files go to the preload prepareDroppedFiles bridge, not the root-checked prepare', async () => {
+  const calls = [];
+  const state = { currentSessionId: 's1', attachments: { queued: [], dragDepth: 0 } };
+  const file = createFileWithoutPath('D:\\outside\\notes.txt');
+  const controller = createAttachmentQueueController({
+    state,
+    windowRef: {
+      jennyShell: {
+        attachments: {
+          prepare: async (...args) => { calls.push(['prepare', ...args]); return { accepted: [], rejected: [] }; },
+          prepareDroppedFiles: async (...args) => {
+            calls.push(['prepareDroppedFiles', ...args]);
+            return { accepted: [{ id: 'notes', kind: 'text', path: 'D:\\outside\\notes.txt' }], rejected: [] };
+          },
+        },
+      },
+    },
+    constants: { TOAST_SOURCE: {} },
+    callbacks: {},
+  });
+
+  await controller.prepareDroppedAttachments([file], controller.beginAttachmentToken());
+
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0][0], 'prepareDroppedFiles');
+  assert.equal(calls[0][1][0], file);
+  assert.deepEqual(calls[0][2], { session_id: 's1' });
+  assert.deepEqual(state.attachments.queued.map((entry) => entry.id), ['notes']);
+});
+
+test('without the Files bridge a drop resolves paths and keeps the root-checked prepare', async () => {
+  const calls = [];
+  const controller = createAttachmentQueueController({
+    state: { currentSessionId: 's1', attachments: { queued: [], dragDepth: 0 } },
+    windowRef: {
+      jennyShell: {
+        attachments: {
+          getPathForFile: (file) => file.__resolvedPath || '',
+          prepare: async (paths) => { calls.push(paths); return { accepted: [], rejected: [] }; },
+        },
+      },
+    },
+    constants: { TOAST_SOURCE: {} },
+    callbacks: {},
+  });
+
+  await controller.prepareDroppedAttachments([createFileWithoutPath('C:\\workspace\\one.txt'), createFileWithoutPath('')]);
+  await controller.prepareDroppedAttachments(['C:\\workspace\\two.md']);
+  await controller.prepareDroppedAttachments([createFileWithoutPath('')]);
+
+  assert.deepEqual(calls, [['C:\\workspace\\one.txt'], ['C:\\workspace\\two.md']]);
+});
+
 test('disposing an attachment queue releases a managed asset returned by an in-flight save', async () => {
   let resolveSave;
   const released = [];

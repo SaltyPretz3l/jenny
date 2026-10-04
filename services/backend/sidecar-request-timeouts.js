@@ -20,13 +20,11 @@ const REQUEST_TIMEOUT_MS_BY_METHOD = Object.freeze({
   'memory.pending.delete': 10_000,
   'memory.update': 10_000,
   'memory.delete': 10_000,
+  'memory.move_project': 10_000,
   'memory.recall': 1_500,
   'memory.recall_recent': 1_500,
   'suggestions.generate': 8_000,
   'commit.generate_message': 30_000,
-  'inline.complete': 4_000, // short cap; renderer debounces + cancels stale rounds
-  'inline.loaded_models': 3_000, // cheap /api/ps read for the completion menu
-  'inline.unload': 10_000, // keep_alive:0 evict of a specific FIM model
   'hardware.profile': 10_000,
   'hardware.vram_usage': 5_000,
   'models.resident': 3_000,

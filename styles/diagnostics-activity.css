@@ -126,10 +126,8 @@
 
 .diagnostics-activity-scope span {
   color: var(--text-muted);
-  font-size: var(--font-size-xs);
-  font-weight: 700;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
+  font-size: var(--font-size-caption);
+  font-weight: 500;
 }
 
 .diagnostics-activity-scope strong,
@@ -141,7 +139,7 @@
 
 .diagnostics-activity-scope strong {
   font-family: var(--font-family-mono);
-  font-size: var(--font-size-base);
+  font-size: var(--font-size-code);
 }
 
 .diagnostics-activity-scope small {
@@ -185,10 +183,8 @@
   border-bottom: 1px solid var(--border-default);
   background: var(--surface-toolbar-background);
   color: var(--text-muted);
-  font-size: var(--font-size-xs);
-  font-weight: 700;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
+  font-size: var(--font-size-caption);
+  font-weight: 500;
 }
 
 .diagnostics-activity .log-list {
@@ -262,9 +258,8 @@
 
 .log-entry-level {
   color: var(--text-secondary);
-  font-size: var(--font-size-sm);
-  font-weight: 800;
-  letter-spacing: 0.03em;
+  font-size: var(--font-size-caption);
+  font-weight: 500;
 }
 
 .log-entry[data-level="warn"] .log-entry-level {
@@ -329,9 +324,8 @@
 .diagnostics-detail-header-level {
   flex: 0 0 auto;
   color: var(--text-secondary);
-  font-size: var(--font-size-sm);
-  font-weight: 800;
-  letter-spacing: 0.03em;
+  font-size: var(--font-size-caption);
+  font-weight: 500;
 }
 
 .diagnostics-detail-header-level[data-level="warn"] {
@@ -346,7 +340,8 @@
   min-width: 0;
   margin: 0;
   overflow: hidden;
-  font-size: var(--font-size-base);
+  font-size: var(--font-size-heading);
+  font-weight: 500;
   overflow-wrap: anywhere;
 }
 
@@ -374,10 +369,8 @@
 .diagnostics-detail-section h4 {
   margin: 0 0 var(--space-2);
   color: var(--text-muted);
-  font-size: var(--font-size-xs);
-  font-weight: 800;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
+  font-size: var(--font-size-caption);
+  font-weight: 500;
 }
 
 .diagnostics-detail-section > p {
@@ -428,7 +421,7 @@
 
 .diagnostics-detail-list code {
   font-family: var(--font-family-mono);
-  font-size: var(--font-size-sm);
+  font-size: var(--font-size-code);
 }
 
 .diagnostics-detail-code {
@@ -546,10 +539,8 @@
     content: attr(data-label);
     color: var(--text-muted);
     font-family: var(--font-family-body);
-    font-size: var(--font-size-xs);
-    font-weight: 700;
-    letter-spacing: 0.04em;
-    text-transform: uppercase;
+    font-size: var(--font-size-caption);
+    font-weight: 500;
   }
 
   .log-entry-event {

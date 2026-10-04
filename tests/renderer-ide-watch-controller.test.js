@@ -33,7 +33,6 @@ function makeWatch({ dirty = false } = {}) {
     watchStop: async () => {},
     onChange: (fn) => { listener = fn; return () => {}; },
     readText: async () => ({ content: '' }),
-    readFileBase64: async () => ({ data: '' }),
   };
   const editorHost = {
     hasDocument: () => true,
@@ -286,4 +285,122 @@ test('a truncated batch revalidates every open FILE tab, not just the paths that
   );
   assert.ok(!reloaded.includes('map://x'), 'synthetic (non-file) tabs are never revalidated as real paths');
   watch.stop();
+});
+
+// IDE-019: reconciliation is serialized per document path. Two external updates
+// to one file used to capture the same baseline concurrently; the first commit
+// made the second go stale and the clean-text path dropped it silently.
+function makeSerialWatch(t, paths, { initial = 'v0' } = {}) {
+  const { createIdeFileOperations } = require('../renderer/features/renderer-ide-file-operations');
+  const ide = ideState.createIdeUiState();
+  const disk = {};
+  const editor = {};
+  const readCalls = [];
+  const opened = [];
+  const gates = [];
+  let listener = null;
+  const api = {
+    watchStart: async () => {},
+    watchStop: async () => {},
+    onChange: (fn) => { listener = fn; return () => {}; },
+    readText: async ({ path }) => {
+      readCalls.push(path);
+      return {
+        ok: true, path, pathKey: path, requestedPathKey: path, rootId: 'root-a', generation: 1,
+        fileVersion: disk[path].version, content: disk[path].content, editable: true,
+      };
+    },
+  };
+  const ops = createIdeFileOperations({ getWorkspaceFsApi: () => api, platform: 'linux' });
+  ops.reset({ rootId: 'root-a', generation: 1 });
+  for (const path of paths) {
+    disk[path] = { version: 'fv0', content: initial };
+    const intent = ops.beginOpen(path);
+    ops.commitOpen(intent, {
+      ok: true, path, pathKey: path, requestedPathKey: path, rootId: 'root-a', generation: 1,
+      fileVersion: 'fv0', content: initial, editable: true,
+    });
+    editor[path] = initial;
+    ide.openTabs.push({ path, kind: 'file' });
+  }
+  const editorHost = {
+    hasDocument: () => true,
+    isDirty: () => false,
+    getDocumentKind: () => 'file',
+    async openDocument(payload) {
+      const gate = deferred();
+      gates.push(gate);
+      opened.push(payload.path);
+      await gate.promise;
+      if (payload.shouldApply?.() === false) return null;
+      payload.onApplied?.();
+      editor[payload.path] = payload.content;
+      return {};
+    },
+    activateDocument: () => {},
+  };
+  const watch = createIdeWatchController({
+    getIde: () => ide,
+    getWorkspaceFsApi: () => api,
+    editorHost,
+    fileOperations: ops,
+    ideStateUtils: ideState,
+    renderTabs: () => {},
+    appendClientLog: () => {},
+  });
+  t.after(() => { watch.stop(); ops.dispose(); });
+  watch.start();
+  const setDisk = (path, version, content) => { disk[path] = { version, content }; };
+  const emit = (path) => listener({ context: { rootId: 'root-a', generation: 1 }, changes: [{ relPath: path, kind: 'changed' }] });
+  const drain = async () => {
+    for (let round = 0; round < 12; round += 1) {
+      for (const gate of gates) { gate.resolve(); await tick(); }
+      await tick();
+    }
+  };
+  return { ide, watch, editor, readCalls, opened, gates, setDisk, emit, drain };
+}
+
+test('two overlapping external updates to one file leave the editor on the newest disk text, not stale', async (t) => {
+  const ctx = makeSerialWatch(t, ['note.txt']);
+  ctx.setDisk('note.txt', 'fv1', 'v1');
+  ctx.emit('note.txt');
+  await tick(); await tick();
+  assert.equal(ctx.opened.length, 1, 'the first apply is in flight and deferred');
+  ctx.setDisk('note.txt', 'fv2', 'v2');
+  ctx.emit('note.txt');
+  await tick(); await tick();
+  await ctx.drain();
+
+  assert.equal(ctx.editor['note.txt'], 'v2');
+  assert.notEqual(ctx.ide.staleByPath['note.txt'], true);
+});
+
+test('external updates to two different paths still reconcile concurrently', async (t) => {
+  const ctx = makeSerialWatch(t, ['a.txt', 'b.txt']);
+  ctx.setDisk('a.txt', 'fv1', 'a1');
+  ctx.setDisk('b.txt', 'fv1', 'b1');
+  ctx.emit('a.txt');
+  ctx.emit('b.txt');
+  await tick(); await tick(); await tick();
+
+  assert.deepEqual(ctx.opened.slice().sort(), ['a.txt', 'b.txt'], 'both applies are in flight before either settles');
+  await ctx.drain();
+  assert.equal(ctx.editor['a.txt'], 'a1');
+  assert.equal(ctx.editor['b.txt'], 'b1');
+});
+
+test('stop() during an in-flight reconcile drops the pending rerun', async (t) => {
+  const ctx = makeSerialWatch(t, ['note.txt']);
+  ctx.setDisk('note.txt', 'fv1', 'v1');
+  ctx.emit('note.txt');
+  await tick(); await tick();
+  ctx.setDisk('note.txt', 'fv2', 'v2');
+  ctx.emit('note.txt');
+  await tick(); await tick();
+  ctx.watch.stop();
+  await ctx.drain();
+
+  assert.equal(ctx.readCalls.length, 1, 'no second disk read starts after stop()');
+  assert.equal(ctx.opened.length, 1, 'no rerun apply starts after stop()');
 });

@@ -23,7 +23,6 @@
   // them CSP-safe, currentColor tinted per data-diag-severity).
   const ERROR_ICON = '<svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" aria-hidden="true"><circle cx="8" cy="8" r="6"></circle><path d="M10 6 6 10M6 6l4 4"></path></svg>';
   const WARNING_ICON = '<svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 2.5 14 13H2L8 2.5Z"></path><path d="M8 6.4v3"></path><path d="M8 11.2v.1"></path></svg>';
-  const PAUSE_ICON = '<svg viewBox="0 0 16 16" width="12" height="12" fill="currentColor" aria-hidden="true"><rect x="4" y="3" width="3" height="10" rx=".7"></rect><rect x="9" y="3" width="3" height="10" rx=".7"></rect></svg>';
 
   // Bottom-panel toggle glyph: a framed editor with a divider near the bottom
   // edge (the panel). Inline SVG keeps it CSP-safe and currentColor-tinted.
@@ -33,13 +32,6 @@
   // CSP-safe, currentColor). Paired with a small stop square for the kill action.
   const RUN_ICON = '<svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" aria-hidden="true"><circle cx="8" cy="8" r="6"></circle><path d="M6.6 5.4 11 8l-4.4 2.6Z" fill="currentColor"></path></svg>';
   const STOP_ICON = '<svg viewBox="0 0 16 16" width="11" height="11" fill="currentColor" aria-hidden="true"><rect x="3.5" y="3.5" width="9" height="9" rx="1.2"></rect></svg>';
-
-  // Inline-suggestions toggle glyph: a sparkle (the conventional "AI assist"
-  // mark). Inline SVG keeps it CSP-safe and currentColor-tinted; the --active
-  // class lights it up when suggestions are on.
-  const INLINE_SUGGEST_ICON = '<svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true"><path d="M8 2.5l1.3 3.2L12.5 7 9.3 8.3 8 11.5 6.7 8.3 3.5 7l3.2-1.3Z"></path><path d="M12.6 11.4l.4 1.1 1.1.4-1.1.4-.4 1.1-.4-1.1-1.1-.4 1.1-.4Z"></path></svg>';
-  // Chevron-down caret: opens the completion-model + load/unload menu.
-  const INLINE_SUGGEST_CARET_ICON = '<svg viewBox="0 0 16 16" width="9" height="9" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true"><path d="M4 6l4 4 4-4"></path></svg>';
 
   function resolveModule(globalName, requirePath) {
     if (globalRef[globalName]) {
@@ -81,14 +73,6 @@
       isDiffTab = () => false,
       getDocumentKind = () => 'file',
       isLargeFile = () => false,
-      // Inline autocomplete: visible only when the workspace_inline_suggest
-      // feature is on; enabled mirrors the per-user quick toggle; degraded is
-      // true when the FIM backend last failed (model not loaded / sidecar down).
-      getInlineSuggestVisible = () => false,
-      getInlineSuggestEnabled = () => false,
-      getInlineSuggestDegraded = () => false,
-      getInlineSuggestPaused = () => false,
-      getInlineSuggestComputeStatus = () => null,
       onGoToLine = noop,
       onToggleWordWrap = noop,
       onPickTabSize = noop,
@@ -96,8 +80,6 @@
       onSwitchBranch = noop,
       onOpenProblems = noop,
       onToggleBottomPanel = noop,
-      onToggleInlineSuggest = noop,
-      onOpenInlineSuggestMenu = noop,
       onKillRun = noop,
     } = callbacks;
     const actionButton = resolveModule('inventoryActionButton', '../inventory/action-button');
@@ -177,56 +159,6 @@
           + 'title="' + escapeHtml(jt('ide.statusbar.minimapDisabledTitle', 'Minimap is disabled for this large file to protect editor performance')) + '">'
           + escapeHtml(jt('ide.statusbar.minimapDisabled', 'Minimap: Off (large file)')) + '</span>'
         : '';
-      // Inline-suggestions quick toggle + caret (only when the feature is on).
-      // The toggle keeps the instant on/off click (pressed state mirrors the
-      // per-user inlineSuggestEnabled flag); the adjacent caret opens the
-      // completion-model + load/unload menu. Both sit in one inline-flex group
-      // so they read as a single control. A non-interactive status glyph tells
-      // normal chat-stream pauses from genuine FIM degradation; a remembered
-      // degraded warning outranks the transient paused state.
-      const inlineSuggestEnabledNow = getInlineSuggestEnabled() === true;
-      const inlineSuggestDegradedNow =
-        inlineSuggestEnabledNow && getInlineSuggestDegraded() === true;
-      const inlineSuggestPausedNow =
-        inlineSuggestEnabledNow && getInlineSuggestPaused() === true;
-      const computeStatus = getInlineSuggestComputeStatus() || {};
-      const computeTarget = String(computeStatus.target || 'automatic').trim() || 'automatic';
-      const computeReason = String(computeStatus.reason || '').trim();
-      const computeTitle = jt('ide.statusbar.compute', 'Compute: {target}{reason}', { target: computeTarget, reason: computeReason ? ` — ${computeReason}` : '' });
-      const FIM_DEGRADED_TITLE =
-        jt('ide.statusbar.inlineSuggestionsUnavailable', 'Inline suggestions unavailable — the completion model may not be loaded or the sidecar is down');
-      const FIM_PAUSED_TITLE = jt('ide.statusbar.inlineSuggestionsPaused', 'Inline suggestions paused while chat is responding.');
-      const inlineSuggestStatusTitle = inlineSuggestDegradedNow ? FIM_DEGRADED_TITLE : FIM_PAUSED_TITLE;
-      const inlineSuggestWarn = inlineSuggestPausedNow || inlineSuggestDegradedNow
-        ? `<span class="ide-statusbar-inline-suggest-warn" data-diag-severity="${inlineSuggestDegradedNow ? 'warning' : 'info'}" role="img" title="${escapeHtml(inlineSuggestStatusTitle)}" aria-label="${escapeHtml(inlineSuggestStatusTitle)}">${inlineSuggestDegradedNow ? WARNING_ICON : PAUSE_ICON}</span>`
-        : '';
-      const inlineSuggestSegment = getInlineSuggestVisible() === true
-        ? `<span class="ide-statusbar-inline-suggest-group">${inlineSuggestWarn}${
-          actionButton({
-            plain: true,
-            className: `ide-statusbar-item ide-statusbar-action ide-statusbar-inline-suggest${inlineSuggestEnabledNow ? ' ide-statusbar-action--active' : ''}${inlineSuggestDegradedNow ? ' ide-statusbar-inline-suggest--warn' : (inlineSuggestPausedNow ? ' ide-statusbar-inline-suggest--paused' : '')}`,
-            title: inlineSuggestDegradedNow || inlineSuggestPausedNow
-              ? inlineSuggestStatusTitle
-              : (inlineSuggestEnabledNow
-                ? jt('ide.statusbar.inlineSuggestionsOn', 'Inline suggestions: On (click to turn off). {compute}', { compute: computeTitle })
-                : jt('ide.statusbar.inlineSuggestionsOff', 'Inline suggestions: Off (click to turn on)')),
-            ariaLabel: jt('ide.statusbar.toggleInlineSuggestions', 'Toggle inline suggestions'),
-            ariaPressed: inlineSuggestEnabledNow,
-            trustedHtml: INLINE_SUGGEST_ICON,
-            dataset: { 'ide-status-action': 'toggle-inline-suggest' },
-          })
-        }${
-          actionButton({
-            plain: true,
-            className: 'ide-statusbar-item ide-statusbar-action ide-statusbar-inline-suggest-caret',
-            title: jt('ide.statusbar.completionModelAndLoad', 'Completion model & load'),
-            ariaLabel: jt('ide.statusbar.openCompletionModelMenu', 'Open completion model menu'),
-            ariaHaspopup: 'dialog',
-            trustedHtml: INLINE_SUGGEST_CARET_ICON,
-            dataset: { 'ide-status-action': 'inline-suggest-menu' },
-          })
-        }</span>`
-        : '';
       return branchSegment
         + problemsSegment
         + runSegment
@@ -262,7 +194,6 @@
           dataset: { 'ide-status-action': 'eol' },
         })
         + `<span class="ide-statusbar-item">${escapeHtml(language)}</span>`
-        + inlineSuggestSegment
         // Far-right layout control: an always-present bottom-panel toggle so the
         // panel is discoverable without knowing the Ctrl+` shortcut. Pressed
         // state mirrors bottomPanelOpen.
@@ -366,10 +297,6 @@
         onOpenProblems();
       } else if (action.dataset.ideStatusAction === 'toggle-panel') {
         onToggleBottomPanel();
-      } else if (action.dataset.ideStatusAction === 'toggle-inline-suggest') {
-        onToggleInlineSuggest();
-      } else if (action.dataset.ideStatusAction === 'inline-suggest-menu') {
-        onOpenInlineSuggestMenu(action);
       } else if (action.dataset.ideStatusAction === 'kill-run') {
         onKillRun();
       }

@@ -61,6 +61,7 @@ function setup(opts = {}) {
     requestRender: () => { calls.render += 1; sidebar.render(); },
     schedulePersist: () => { calls.persist += 1; },
     onMovePanel: (id, target) => { calls.moves.push([id, target]); },
+    ...(opts.getMaxWidth ? { getMaxWidth: opts.getMaxWidth } : {}),
   });
   sidebar.bindEvents();
   sidebar.render();
@@ -310,4 +311,63 @@ test('pointer drag (rail right -> sidebar left): drag RIGHT widens', (t) => {
   assert.equal(h.ide.secondaryWidth, 300, 'wider by the drag delta on the opposite side');
   win.dispatchEvent(new win.MouseEvent('pointerup', { clientX: 540 }));
   assert.ok(h.calls.persist >= 1, 'drag release persisted on the rail-right side');
+});
+
+test('the header tablist is horizontal: aria-orientation + ArrowRight/ArrowLeft switch tabs', (t) => {
+  const h = setup({ secondaryPanel: 'search' }); // search + changes located secondary
+  t.after(() => h.dispose());
+  const header = h.byId('ideSecondarySidebarHeader');
+  assert.equal(header.querySelector('[role="tablist"]').getAttribute('aria-orientation'), 'horizontal');
+  const arrowOn = (el, key) => el.dispatchEvent(new h.dom.window.KeyboardEvent('keydown', { key, bubbles: true }));
+  arrowOn(header.querySelector('[data-ide-secondary-panel="search"]'), 'ArrowRight');
+  assert.equal(h.ide.secondaryPanel, 'changes', 'ArrowRight activates the next tab');
+  assert.equal(h.doc.activeElement?.dataset?.ideSecondaryPanel, 'changes', 'focus follows');
+  arrowOn(h.doc.activeElement, 'ArrowLeft');
+  assert.equal(h.ide.secondaryPanel, 'search', 'ArrowLeft activates the previous tab');
+});
+
+test('drag and keyboard resize start from the SHOWN (viewport-clamped) width, not the saved one', (t) => {
+  // Saved 600, viewport affords 320: the sidebar shows 320. Rail left -> sidebar
+  // right, so dragging RIGHT (or ArrowRight) shrinks it.
+  const h = setup({ width: 600, railSide: 'left', getMaxWidth: () => 320 });
+  t.after(() => h.dispose());
+  const win = h.dom.window;
+  const resizer = h.byId('ideSecondarySidebarResizer');
+  assert.equal(h.byId('ideShell').style.getPropertyValue('--ide-secondary-sidebar-width'), '320px');
+
+  // A press without movement never rewrites the saved preference.
+  resizer.dispatchEvent(new win.MouseEvent('pointerdown', { clientX: 500, bubbles: true }));
+  win.dispatchEvent(new win.MouseEvent('pointerup', { clientX: 500 }));
+  assert.equal(h.ide.secondaryWidth, 600, 'saved width untouched by a click');
+
+  // The first 40px of drag shrinks the shown 320 -> 280 (no dead zone).
+  resizer.dispatchEvent(new win.MouseEvent('pointerdown', { clientX: 500, bubbles: true }));
+  win.dispatchEvent(new win.MouseEvent('pointermove', { clientX: 540 }));
+  assert.equal(h.ide.secondaryWidth, 280, 'drag responds immediately from the shown width');
+  win.dispatchEvent(new win.MouseEvent('pointerup', { clientX: 540 }));
+
+  // Keyboard: saved 600 again, one shrink step lands at 320 - 24.
+  h.ide.secondaryWidth = 600;
+  resizer.dispatchEvent(new win.KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+  assert.equal(h.ide.secondaryWidth, 296, 'a keyboard step moves from the shown width');
+});
+
+test('secondary tabs name the sidebar panel host, a tabpanel labelled by the active tab', (t) => {
+  const h = setup();
+  t.after(() => h.dispose());
+  const header = h.byId('ideSecondarySidebarHeader');
+  const host = h.byId('ideSecondarySidebarPanel');
+  const tabs = [...header.querySelectorAll('[role="tab"]')];
+  assert.equal(tabs.length, 2);
+  assert.equal(new Set(tabs.map((tab) => tab.id)).size, 2, 'every tab has a unique id');
+  assert.ok(tabs.every((tab) => tab.id && tab.getAttribute('aria-controls') === 'ideSecondarySidebarPanel'));
+  assert.equal(host.getAttribute('role'), 'tabpanel');
+  const activeTab = () => header.querySelector('[role="tab"][aria-selected="true"]');
+  assert.equal(activeTab().dataset.ideSecondaryPanel, 'search');
+  assert.equal(host.getAttribute('aria-labelledby'), activeTab().id);
+
+  h.sidebar.setPanel('changes');
+  assert.equal(activeTab().dataset.ideSecondaryPanel, 'changes');
+  assert.equal(host.getAttribute('aria-labelledby'), activeTab().id, 'follows the tab switch');
+  assert.equal(h.doc.getElementById(activeTab().getAttribute('aria-controls')), host);
 });

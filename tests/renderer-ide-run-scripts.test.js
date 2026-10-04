@@ -108,6 +108,7 @@ function fakeEditorHost(overrides = {}) {
     getActivePath() { return overrides.path !== undefined ? overrides.path : 'src/app.js'; },
     getActiveLanguageId() { return overrides.language !== undefined ? overrides.language : 'javascript'; },
     focus() {},
+    isDirty() { return overrides.dirty === true; },
   };
 }
 
@@ -115,7 +116,7 @@ function harness(opts = {}) {
   const runTask = opts.noRunTask ? null : (opts.runTask || fakeRunTask(opts.runTaskOverrides));
   const fs = opts.noFs ? null : (opts.fs || fakeFs(opts.fsOverrides));
   const toasts = [];
-  const calls = { openRunPanel: 0, runStateChange: 0 };
+  const calls = { openRunPanel: 0, runStateChange: 0, saveFile: [] };
   const engine = createIdeRunScripts({
     getDom: opts.getDom || (() => ({})),
     isActivePanel: opts.isActivePanel || (() => false),
@@ -123,6 +124,10 @@ function harness(opts = {}) {
     getWorkspaceFsApi: () => fs,
     getWorkspaceRunTaskApi: () => runTask,
     isDiffTabId: opts.isDiffTabId || (() => false),
+    saveFile: async (path) => {
+      calls.saveFile.push({ path, startedSoFar: runTask ? runTask.calls.start : 0 });
+      return opts.saveResult === undefined ? true : opts.saveResult;
+    },
     openRunPanel: () => { calls.openRunPanel += 1; },
     onRunStateChange: () => { calls.runStateChange += 1; },
     appendClientLog: () => {},
@@ -645,7 +650,7 @@ test('with no getWorkspaceRunTaskApi injected, falls back to window.jennyShell.w
 
 /* ---- UIUX-035 follow-up: ANSI stripping + output backpressure ------------- */
 // The run panel carried its own copy-pasted stateless ANSI_PATTERN regex (the
-// exact defect class fixed in renderer-ide-terminal-panel by the shared
+// exact defect class fixed in the since-retired line terminal panel by the shared
 // incremental stripper) AND re-ran that regex over the FULL accumulated buffer
 // plus a full pre.textContent DOM rewrite on EVERY incoming chunk (no frame
 // coalescing at all — the audit's "repeatedly rewrites full scrollback").
@@ -924,4 +929,57 @@ test('a stale kill answer cannot stamp its warning onto a later, cleanly-exited 
   const status = runPanelStatus(h.host);
   assert.equal(status.textContent, 'idle', 'a superseded run cannot repaint the row of a later run');
   assert.equal(status.classList.contains('ide-terminal-status--warn'), false);
+});
+
+/* ---- IDE-008: save-then-run ------------------------------------------------ */
+
+test('IDE-008: a dirty buffer is saved before the run task starts', async () => {
+  const h = harness({ hostOverrides: { dirty: true } });
+  await h.engine.runActiveFile();
+  assert.deepEqual(h.calls.saveFile, [{ path: 'src/app.js', startedSoFar: 0 }], 'saved first, before any task started');
+  assert.equal(h.runTask.calls.start, 1, 'the task started after the save');
+  assert.equal(h.runTask.lastCommand, "node 'src/app.js'");
+});
+
+test('IDE-008: a failed save starts nothing and toasts', async () => {
+  const h = harness({ hostOverrides: { dirty: true }, saveResult: false });
+  await h.engine.runActiveFile();
+  assert.equal(h.runTask.calls.start, 0, 'no task started');
+  assert.equal(h.calls.openRunPanel, 0, 'run panel not opened');
+  assert.equal(h.engine.isRunning(), false);
+  assert.match(h.toasts.join(' | '), /Could not save src\/app\.js, so it was not run\./);
+});
+
+test('IDE-008: a clean buffer never calls saveFile and still dispatches synchronously', async () => {
+  const h = harness();
+  const pending = h.engine.runActiveFile();
+  assert.equal(h.runTask.calls.start, 1, 'the clean path starts the task before any await');
+  await pending;
+  assert.equal(h.calls.saveFile.length, 0);
+});
+
+test('the npm script picker exposes its keyboard selection to assistive technology', () => {
+  const dom = new JSDOM('<!doctype html><body><div id="stage"></div></body>');
+  const prevWindow = globalThis.window;
+  globalThis.window = dom.window;
+  try {
+    const stage = dom.window.document.getElementById('stage');
+    const h = harness({ getDom: () => ({ ideEditorStage: stage }) });
+    h.engine.openScriptPicker([{ name: 'build', command: 'tsc' }, { name: 'lint', command: 'eslint .' }]);
+    const input = stage.querySelector('input');
+    const list = stage.querySelector('[role="listbox"]');
+    assert.equal(input.getAttribute('role'), 'combobox');
+    assert.equal(input.getAttribute('aria-controls'), list.id);
+    assert.equal(input.getAttribute('aria-expanded'), 'true');
+    const activeName = () => dom.window.document
+      .getElementById(input.getAttribute('aria-activedescendant'))?.dataset.ideRunScript;
+    assert.equal(activeName(), 'build');
+    input.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true }));
+    assert.equal(activeName(), 'lint', 'ArrowDown moves the announced row');
+    input.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+    assert.equal(input.getAttribute('aria-expanded'), 'false');
+    assert.equal(input.hasAttribute('aria-activedescendant'), false);
+  } finally {
+    globalThis.window = prevWindow;
+  }
 });

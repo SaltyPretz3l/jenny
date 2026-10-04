@@ -27,6 +27,17 @@ from sidecar.ai.engines.http_utils import register_cancel_callback
 from sidecar.ai.engines.response_format import ResponseFormat
 from sidecar.ai.tools.inband_parser import extract_inband_tool_calls_detailed
 from sidecar.ai.tools.models import GenerationResult, StreamChunk
+from sidecar.runtime.local_engine.request_context import (
+    clear_request_context as _clear_request_context,
+)
+from sidecar.runtime.local_engine.request_context import (
+    consume_provider_call_purpose,
+    current_diagnostics_store,
+    install_request_context,
+)
+from sidecar.runtime.local_engine.request_context import (
+    request_id as active_request_id,
+)
 from sidecar.runtime.process_containment import log_containment_degraded
 from sidecar.runtime.process_job import WindowsJobObject
 from sidecar.runtime.worker_payload import build_background_env as build_child_env
@@ -147,6 +158,8 @@ class _ToolEventTripwire:
 class CodexCliEngine(BaseEngine):
     """Run one noninteractive Codex CLI request per generation."""
 
+    MODEL_RESIDENCY = "cli"
+
     def __init__(
         self,
         *,
@@ -160,6 +173,29 @@ class CodexCliEngine(BaseEngine):
         self.request_timeout_seconds = int(request_timeout_seconds or 300)
         self._run_process = run_process or _run_codex_process
         self._loaded_model = _DEFAULT_MODEL
+        self._turn_diagnostics_store: Any = None
+
+    @property
+    def model_name(self) -> str:
+        return self._loaded_model
+
+    def set_turn_diagnostics_store(self, store: Any | None) -> None:
+        self._turn_diagnostics_store = store
+
+    def begin_request_context(self, *, request_id: str, **kwargs: Any) -> None:
+        install_request_context(self, request_id=request_id, **kwargs)
+
+    def clear_request_context(self, *, request_id: str | None = None) -> None:
+        _clear_request_context(self, request_id=request_id)
+
+    @staticmethod
+    def _record_diagnostic(store: Any, request_id: str, method: str, **kwargs: Any) -> None:
+        if store is None or not request_id:
+            return
+        try:
+            getattr(store, method)(request_id=request_id, **kwargs)
+        except Exception:  # noqa: BLE001 - diagnostics never break inference.
+            pass
 
     @property
     def supports_inband_tool_calling(self) -> bool:
@@ -204,28 +240,76 @@ class CodexCliEngine(BaseEngine):
         response_format: ResponseFormat | None = None,
         cancel_handle: Any = None,
         wall_clock_deadline: float | None = None,
+        tools: list[dict[str, Any]] | None = None,
     ) -> str:
         _ = max_tokens, temperature, prompt_cache_enabled, response_format
         runtime_root = self._ensure_runtime_root()
         args = self._build_args(runtime_root, reasoning_effort=reasoning_effort)
         input_text = _assemble_prompt(prompt=prompt, system=system, messages=messages)
         _raise_if_cancelled(cancel_handle)
-        result = self._run_process(
-            command=self.command,
-            args=args,
-            input_text=input_text,
-            cwd=runtime_root,
-            timeout_seconds=clamp_timeout_to_deadline(
-                self.request_timeout_seconds,
-                wall_clock_deadline,
-            ),
-            cancel_handle=cancel_handle,
+        store = current_diagnostics_store(self)
+        request_id = active_request_id(self)
+        purpose = consume_provider_call_purpose(self) or "turn"
+        outcome = "failed"
+        finish_reason: str | None = "error"
+
+        def record_event(event: dict[str, Any]) -> None:
+            self._record_diagnostic(store, request_id, "record_first_chunk")
+            usage = event.get("usage")
+            if isinstance(usage, dict):
+                self._record_diagnostic(
+                    store, request_id, "record_provider_usage",
+                    prompt_eval_count=usage.get("input_tokens"),
+                    eval_count=usage.get("output_tokens"),
+                    cached_tokens=usage.get("cached_input_tokens"), provider_label="codex-cli",
+                )
+
+        self._record_diagnostic(
+            store, request_id, "record_provider_request", think_enabled=bool(reasoning_effort),
+            num_predict=None, temperature=temperature, message_count=len(messages or []),
+            tool_count=len(tools or []), tool_capable=tools is not None, purpose=purpose,
+            provider_reasoning_effort=reasoning_effort,
         )
-        _raise_if_cancelled(cancel_handle)
-        if result.exit_code != 0:
-            detail = _bounded_text(result.stderr or result.stdout)
-            raise RuntimeError(f"Codex CLI exited with status {result.exit_code}: {detail}")
-        return _parse_jsonl_output(result.stdout)
+        try:
+            result = self._run_process(
+                command=self.command,
+                args=args,
+                input_text=input_text,
+                cwd=runtime_root,
+                timeout_seconds=clamp_timeout_to_deadline(
+                    self.request_timeout_seconds,
+                    wall_clock_deadline,
+                ),
+                cancel_handle=cancel_handle,
+            )
+            _raise_if_cancelled(cancel_handle)
+            if result.exit_code != 0:
+                with suppress(RuntimeError):
+                    _parse_jsonl_output(result.stdout, on_event=record_event)
+                raise RuntimeError(f"Codex CLI exited with status {result.exit_code}.")
+            content = _parse_jsonl_output(result.stdout, on_event=record_event)
+            if content:
+                self._record_diagnostic(store, request_id, "record_first_chunk")
+            # In-band tool-call markup is not visible output; count only what the user sees.
+            parsed = self._tool_result(content, tools) if tools is not None else None
+            visible = parsed.content if parsed is not None else content
+            self._record_diagnostic(
+                store, request_id, "record_buffered_visible_output",
+                text=visible, reason="codex_cli",
+            )
+            if visible:
+                self._record_diagnostic(store, request_id, "mark_buffered_visible_output_flushed")
+            outcome = "completed"
+            finish_reason = parsed.finish_reason if parsed is not None else "stop"
+            return content
+        finally:
+            if getattr(cancel_handle, "cancelled", False) is True:
+                outcome = "cancelled"
+                finish_reason = None
+            self._record_diagnostic(
+                store, request_id, "complete_provider_request",
+                outcome=outcome, finish_reason=finish_reason,
+            )
 
     def stream(  # noqa: PLR0913 - matches BaseEngine transport contract.
         self,
@@ -263,7 +347,7 @@ class CodexCliEngine(BaseEngine):
         messages: list[EngineMessage] | None = None,
         response_format: ResponseFormat | None = None,
     ) -> GenerationResult:
-        content = self.generate(
+        content = self._generate(
             prompt=prompt,
             max_tokens=max_tokens,
             temperature=temperature,
@@ -272,7 +356,13 @@ class CodexCliEngine(BaseEngine):
             system=system,
             messages=messages,
             response_format=response_format,
+            cancel_handle=None,
+            tools=tools,
         )
+        return self._tool_result(content, tools)
+
+    @staticmethod
+    def _tool_result(content: str, tools: list[dict[str, Any]]) -> GenerationResult:
         known_tool_names = frozenset(
             str(tool.get("name") or tool.get("tool_id") or "").strip()
             for tool in tools
@@ -316,28 +406,12 @@ class CodexCliEngine(BaseEngine):
             response_format=response_format,
             cancel_handle=cancel_handle,
             wall_clock_deadline=wall_clock_deadline,
+            tools=tools,
         )
-        known_tool_names = frozenset(
-            str(tool.get("name") or tool.get("tool_id") or "").strip()
-            for tool in tools
-            if isinstance(tool, dict)
-        )
-        extraction = extract_inband_tool_calls_detailed(content, known_tool_names)
-        if extraction.calls:
-            if extraction.remaining_text:
-                yield extraction.remaining_text
-            return GenerationResult(
-                content=extraction.remaining_text,
-                tool_calls=extraction.calls,
-                finish_reason="tool_calls",
-            )
-        if content:
-            yield content
-        return GenerationResult(
-            content=content,
-            finish_reason="stop",
-            inband_tool_call_parse_failed=extraction.failed_attempt,
-        )
+        result = self._tool_result(content, tools)
+        if result.content:
+            yield result.content
+        return result
 
     def _build_args(
         self,
@@ -356,6 +430,16 @@ class CodexCliEngine(BaseEngine):
         # that could escalate out of read-only, MCP servers the user configured
         # for some other project, and the CLI's own web search. Jenny owns
         # tools; the CLI is a model transport.
+        #
+        # Only flags `codex exec` itself parses belong here; clap rejects an
+        # unknown flag and the whole turn fails. `--ask-for-approval` is a
+        # TUI-only flag (codex-cli 0.153.3 rejects it on exec). Exec defaults
+        # to approval "never" but drops that default when the user's config
+        # sets `approvals_reviewer = "auto_review"`, so the policy is pinned
+        # with `-c` instead. `--ignore-user-config` is deliberately not used:
+        # Jenny sets no minimum CLI version and older CLIs reject the flag, and
+        # `codex-cli/default` means the model the user's config selects. The
+        # per-key `-c` overrides work on every CLI version.
         args = [
             "exec",
             "--json",
@@ -365,8 +449,8 @@ class CodexCliEngine(BaseEngine):
             str(runtime_root),
             "--sandbox",
             "read-only",
-            "--ask-for-approval",
-            "never",
+            "-c",
+            'approval_policy="never"',
             "-c",
             "mcp_servers={}",
             "-c",
@@ -804,7 +888,9 @@ def _message_content_to_text(content: Any) -> str:
     return "" if content is None else str(content).strip()
 
 
-def _parse_jsonl_output(stdout: str) -> str:
+def _parse_jsonl_output(
+    stdout: str, *, on_event: Callable[[dict[str, Any]], None] | None = None,
+) -> str:
     parts: list[str] = []
     saw_json = False
     for raw_line in str(stdout or "").splitlines():
@@ -818,6 +904,8 @@ def _parse_jsonl_output(stdout: str) -> str:
         saw_json = True
         if not isinstance(event, dict):
             continue
+        if on_event is not None:
+            on_event(event)
         _reject_cli_tool_event(event)
         text = _extract_text(event)
         if text:

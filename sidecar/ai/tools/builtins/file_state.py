@@ -118,9 +118,9 @@ def _verify_authorized_handle(handle: Any, resolved: Path, authorized_root: Path
 
 
 def _windows_final_path(fd: int) -> Path:
-    import ctypes  # noqa: PLC0415 - unavailable Windows APIs are loaded only on Windows.
-    import msvcrt  # noqa: PLC0415 - unavailable on POSIX.
-    from ctypes import wintypes  # noqa: PLC0415 - Windows-only definitions.
+    import ctypes  # unavailable Windows APIs are loaded only on Windows.
+    import msvcrt  # unavailable on POSIX.
+    from ctypes import wintypes  # Windows-only definitions.
 
     get_final_path = ctypes.WinDLL("kernel32", use_last_error=True).GetFinalPathNameByHandleW
     get_final_path.argtypes = [

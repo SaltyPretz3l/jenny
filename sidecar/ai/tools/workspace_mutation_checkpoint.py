@@ -141,7 +141,7 @@ def checkpoint_transition(  # noqa: PLR0913 - explicit owner identity and transi
 ) -> Any:
     """Serialize capture/bind/validate/claim/release with the existing owner locks."""
     # Local import avoids making the store's reconciliation helper cyclic.
-    from sidecar.ai.tools.workspace_mutation_journal_store import _store_failure  # noqa: PLC0415
+    from sidecar.ai.tools.workspace_mutation_journal_store import _store_failure
     try:
         identity = workspace_identity(workspace_root)
         workspace_id, change_set_id = reference["workspace_id"], reference["change_set_id"]
@@ -166,7 +166,7 @@ def checkpoint_transition(  # noqa: PLR0913 - explicit owner identity and transi
 
 
 def checkpoint_update_forbidden(current: Mapping[str, Any], incoming: Mapping[str, Any]) -> bool:
-    from sidecar.ai.tools.workspace_mutation_journal_store import (  # noqa: PLC0415 - owner cycle
+    from sidecar.ai.tools.workspace_mutation_journal_store import (  # owner cycle
         _is_retention_only_update,
     )
     prior, next_extensions = current["extensions"], incoming["extensions"]

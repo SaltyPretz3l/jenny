@@ -14,8 +14,10 @@ from sidecar.ai.context.builder_shared import (
     RuntimeToolStatus,
     format_tool_arguments_example,
     format_tool_call_example,
+    loadable_tool_names,
     looks_like_current_info_request,
     looks_like_source_architecture_request,
+    render_not_loaded_tools_line,
     requested_tool_families,
     status_matches_tool_family,
 )
@@ -121,6 +123,8 @@ class _BuilderRenderMixin:
             "## Requested Tool Availability",
             "Use the request-scoped executable-tool contract as the source of truth.",
         ]
+        loadable = frozenset(loadable_tool_names(tool_statuses))
+        rendered_loadable = False
         for family in families:
             family_statuses = [
                 status
@@ -139,6 +143,14 @@ class _BuilderRenderMixin:
                         "If it is needed, call it directly; do not simulate tool use in prose."
                     )
                     continue
+                if status.name in loadable:
+                    rendered_loadable = True
+                    lines.append(
+                        f"- `{status.name}` is not loaded this turn, but it is available: "
+                        f"call `tool_search` with `select:{status.name}` to load it, "
+                        "then call it directly."
+                    )
+                    continue
                 reason = str(status.reason or "runtime/backend unavailable").strip()
                 lines.append(f"- `{status.name}` is unavailable for this request: {reason}.")
         if len(lines) <= 2:
@@ -150,9 +162,19 @@ class _BuilderRenderMixin:
             "Tool names are Jenny tool IDs, not shell commands; do not use `run_command` "
             "with `which`, `where`, or `Get-Command` to check a listed tool."
         )
-        lines.append(
-            "If the requested tool is unavailable, state the exact blocker from this block."
-        )
+        if rendered_loadable:
+            lines.append(
+                "A tool marked not loaded is not a blocker: load it with `tool_search`; "
+                "do not work around it with `run_command` or `run_temp_script`."
+            )
+            lines.append(
+                "If a requested tool is unavailable (not merely not loaded), "
+                "state the exact blocker from this block."
+            )
+        else:
+            lines.append(
+                "If the requested tool is unavailable, state the exact blocker from this block."
+            )
         lines.append(
             "Do not mentally run, simulate, pretend, or describe using unavailable tools."
         )
@@ -296,7 +318,16 @@ class _BuilderRenderMixin:
     @staticmethod
     def _render_executable_tools(
         tool_statuses: list[RuntimeToolStatus] | tuple[RuntimeToolStatus, ...] | None,
+        *,
+        native_tool_schemas: bool = False,
     ) -> str:
+        """Render the request's capability digest.
+
+        With *native_tool_schemas* the provider ``tools`` payload already
+        carries every description and parameter, so available tools are listed
+        by name only. Prompt-based (in-band) engines get no schemas and keep
+        the full descriptions and example arguments.
+        """
         if tool_statuses is None:
             return ""
         available = [
@@ -319,7 +350,14 @@ class _BuilderRenderMixin:
             "Do not use `run_command` with `which`, `where`, or `Get-Command` "
             "to check a listed tool; call the listed tool directly when needed.",
         ]
-        if available:
+        if available and native_tool_schemas:
+            lines.append(
+                "Full descriptions and parameters come with the tool schemas."
+            )
+            lines.append(
+                "Available now: " + ", ".join(status.name for status in available)
+            )
+        elif available:
             lines.append("Available now:")
             for status in available:
                 description = status.description.strip() if status.description else ""
@@ -344,9 +382,19 @@ class _BuilderRenderMixin:
                 lines.append(f"- `{status.name}` — {reason} Fix: {fix}")
         if not available and not blocked:
             lines.append("No executable tools are available for this request.")
-        lines.append(
-            "Any tool not listed as available in this block is unavailable for this request."
-        )
+        loadable = loadable_tool_names(tool_statuses)
+        if loadable:
+            # MQ-013: name the budget-deferred tools so the model knows they exist
+            # and how to load them; the leading system message survives compaction.
+            lines.append(render_not_loaded_tools_line(loadable))
+            lines.append(
+                "Any tool not listed in this block as available or not loaded "
+                "is unavailable for this request."
+            )
+        else:
+            lines.append(
+                "Any tool not listed as available in this block is unavailable for this request."
+            )
         return "\n".join(lines)
 
     @staticmethod
@@ -432,6 +480,19 @@ class _BuilderRenderMixin:
                 "when those tools are available; do not claim you lack access to source files. "
                 "`jenny_status` is only for runtime capability diagnostics; it is not a substitute "
                 "for reading source files."
+            )
+        loadable = frozenset(loadable_tool_names(tool_statuses))
+        loadable_filesystem = [
+            name
+            for name in ("read_file", "grep_search", "glob_files", "list_dir")
+            if name in loadable
+        ]
+        if loadable_filesystem:
+            return (
+                "## Workspace Source Access\n"
+                "Filesystem source tools are not loaded this turn: call `tool_search` with "
+                f"`select:{','.join(loadable_filesystem)}` to load them, then inspect the "
+                "workspace. Do not substitute `jenny_status` for source-code inspection."
             )
         reason = "filesystem tools unavailable"
         for status in filesystem_statuses:

@@ -17,9 +17,7 @@
   align-items: center;
   gap: var(--space-3);
   color: var(--text-muted);
-  font-size: calc(11px * var(--chat-zoom-factor, 1));
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+  font-size: var(--font-size-caption);
 }
 
 .user-questions-eyebrow {
@@ -48,7 +46,7 @@
   margin: var(--space-7) 0 var(--space-2);
   padding: 0;
   color: var(--text-primary);
-  font-size: calc(14px * var(--chat-zoom-factor, 1));
+  font-size: var(--font-size-body);
   font-weight: 500;
   line-height: 1.45;
 }
@@ -74,7 +72,7 @@
   padding: var(--space-3) var(--space-4);
   border-radius: var(--radius-sm);
   color: var(--text-secondary);
-  font-size: calc(14px * var(--chat-zoom-factor, 1));
+  font-size: var(--font-size-body);
   line-height: 1.45;
   cursor: pointer;
 }
@@ -172,7 +170,7 @@
   background: transparent;
   color: var(--text-primary);
   font: inherit;
-  font-size: calc(14px * var(--chat-zoom-factor, 1));
+  font-size: var(--font-size-body);
   line-height: 1.45;
 }
 
@@ -181,14 +179,22 @@
   padding: 0 0 var(--space-1);
 }
 
+/* A question with no options is answered only here, so it reads as a field
+   (a bare subtle underline was nearly invisible, dogfood HB-001). */
 .user-questions-free-text {
   width: 100%;
-  padding: var(--space-3) 0;
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-base);
+  background: var(--surface-input-background);
 }
 
-.user-questions-other-input:focus,
-.user-questions-free-text:focus {
+.user-questions-other-input:focus {
   border-bottom-color: var(--focus-ring-color);
+}
+
+.user-questions-free-text:focus {
+  border-color: var(--focus-ring-color);
 }
 
 .user-questions-other-input:disabled {
@@ -208,7 +214,7 @@
   min-height: 30px;
   border: 0;
   font: inherit;
-  font-size: calc(13px * var(--chat-zoom-factor, 1));
+  font-size: var(--font-size-footnote);
   font-weight: 500;
   cursor: pointer;
 }
@@ -249,7 +255,7 @@
 .user-questions-enter-hint {
   margin-inline-start: auto;
   color: color-mix(in srgb, var(--text-muted) 68%, transparent);
-  font-size: calc(12px * var(--chat-zoom-factor, 1));
+  font-size: var(--font-size-caption);
 }
 
 .user-questions-block[aria-busy="true"] {
@@ -268,7 +274,7 @@
 
 .user-questions-receipt-status {
   color: var(--text-muted);
-  font-size: calc(12px * var(--chat-zoom-factor, 1));
+  font-size: var(--font-size-caption);
   line-height: 1.45;
 }
 
@@ -276,7 +282,7 @@
   min-width: 0;
   overflow: hidden;
   color: var(--text-secondary);
-  font-size: calc(13px * var(--chat-zoom-factor, 1));
+  font-size: var(--font-size-footnote);
   line-height: 1.45;
   text-overflow: ellipsis;
   white-space: nowrap;

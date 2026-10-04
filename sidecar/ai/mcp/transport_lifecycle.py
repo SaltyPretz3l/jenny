@@ -17,6 +17,7 @@ from sidecar.ai.tools.sanitization import sanitize_tool_output
 
 TOOL_STARTED_NOTIFICATION_METHOD = "tool/started"
 MCP_STDERR_TAIL_MAX_CHARS = 4096
+_LIFECYCLE_ID_MAX_CHARS = 256
 ProcessContainment = _MCPProcessContainment
 
 
@@ -81,13 +82,15 @@ class ToolLifecycleTracker:
         request_id = params.get("request_id") if isinstance(params, dict) else None
         operation_id = params.get("operation_id") if isinstance(params, dict) else None
         generation_id = params.get("generation_id") if isinstance(params, dict) else None
-        if isinstance(request_id, int):
-            event = self._events.get(request_id)
-            if isinstance(operation_id, str) and operation_id.strip():
-                self._operation_ids[request_id] = operation_id.strip()
-            if event is not None:
-                event.set()
-        if isinstance(generation_id, str) and generation_id.strip():
+        event = self._events.get(request_id) if type(request_id) is int else None
+        if event is None or not isinstance(request_id, int):
+            return True
+        if (isinstance(operation_id, str)
+                and 0 < len(operation_id.strip()) <= _LIFECYCLE_ID_MAX_CHARS):
+            self._operation_ids[request_id] = operation_id.strip()
+        event.set()
+        if (isinstance(generation_id, str)
+                and 0 < len(generation_id.strip()) <= _LIFECYCLE_ID_MAX_CHARS):
             self.generation_id = generation_id.strip()
         return True
 

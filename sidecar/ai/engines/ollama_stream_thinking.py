@@ -5,6 +5,11 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from sidecar.ai.thinking_guard import (
+    THINKING_STATUS_EVENT_KIND,
+    guard_log_data,
+    take_hidden_reasoning_notice,
+)
 from sidecar.runtime.ollama_support import StreamingEvent, ThinkingRepetitionGuard
 
 logger = logging.getLogger("sidecar.ai.engines.ollama_runtime")
@@ -38,25 +43,21 @@ def _emit_thinking(
                 extra={
                     "model": engine.model_name,
                     "reason": _thinking_stop_reason(thinking_guard),
+                    "data": guard_log_data(thinking_guard, model=engine.model_name),
                 },
             )
             suppression_state[0] = True
+        # Only the tool-loop stream passes ``thinking_parts``; its consumer (the
+        # router) turns the status kind into a status row. The plain stream's
+        # consumer would render an unknown kind as visible text.
+        if thinking_parts is not None:
+            notice = take_hidden_reasoning_notice(thinking_guard)
+            if notice:
+                yield StreamingEvent(kind=THINKING_STATUS_EVENT_KIND, text=notice)
         return
     if thinking_parts is not None:
         thinking_parts.append(text)
     yield StreamingEvent(kind="thinking", text=text)
-
-
-def _thinking_delta(accumulated: str, chunk: str) -> tuple[str, str]:
-    """Append an incremental thinking chunk verbatim.
-
-    Ollama streams ``message.thinking`` per token, so a chunk equal to or
-    prefixed by earlier text is a real repeat (``"0","0"``, ``" is"," island"``),
-    never a cumulative snapshot; any dedupe here silently corrupts numbers.
-    """
-    if not chunk:
-        return "", accumulated
-    return chunk, accumulated + chunk
 
 
 _MALFORMED_LINE_LOG_CAP = 3

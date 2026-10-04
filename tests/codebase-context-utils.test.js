@@ -437,3 +437,48 @@ describe('getCodebaseContext — candidate-file cache', () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// getCodebaseContext — containment of cached candidates (CMC-003)
+// ---------------------------------------------------------------------------
+
+describe('getCodebaseContext — cached candidates stay inside the workspace', () => {
+  test('a scanned directory replaced by a junction/symlink to an outside directory is never read or cited', async () => {
+    const base = makeTempDir('junction');
+    const workspace = path.join(base, 'workspace');
+    const outside = path.join(base, 'outside');
+    const nested = path.join(workspace, 'nested');
+    const moved = path.join(workspace, 'moved-away');
+    try {
+      writeFile(workspace, 'nested/a.js', 'const zephyrquartz = 1;\n');
+      writeFile(outside, 'a.js', 'const obsidianflux = 2;\n');
+
+      // Populate the candidate cache (default TTL) with nested/a.js.
+      const first = await getCodebaseContext(workspace, 'zephyrquartz');
+      assert.ok(first.includes('nested/a.js:1'), `setup read missed nested/a.js:\n${first}`);
+
+      // Swap the scanned directory for a junction to the outside directory.
+      fs.renameSync(nested, moved);
+      fs.symlinkSync(outside, nested, 'junction');
+
+      const escaped = await getCodebaseContext(workspace, 'obsidianflux');
+      assert.ok(
+        escaped === null || (!escaped.includes('obsidianflux') && !escaped.includes('nested/a.js')),
+        `outside content or a workspace citation for it leaked:\n${escaped}`
+      );
+
+      // The failed check dropped the cached listing: an in-workspace file is
+      // still found by the next (fresh) walk.
+      const after = await getCodebaseContext(workspace, 'zephyrquartz');
+      assert.ok(after.includes('moved-away/a.js:1'), `in-workspace file lost after the swap:\n${after}`);
+      assert.ok(!after.includes('obsidianflux'), `outside content leaked:\n${after}`);
+    } finally {
+      try {
+        fs.unlinkSync(nested); // remove the link itself so the recursive delete cannot follow it
+      } catch {
+        try { fs.rmdirSync(nested); } catch { /* not a link/dir */ }
+      }
+      removeTempDir(base);
+    }
+  });
+});

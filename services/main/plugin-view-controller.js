@@ -6,6 +6,31 @@ const { installPluginViewSessionPolicy, clearPluginViewSession } = require('./pl
 const { STAGE7_LIMITS } = require('../plugins/view/stage7-budgets');
 const { getBridgeChannel } = require('../ipc-contract');
 
+const PARTITION_POOL_SIZE = 4;
+// Electron retains these contexts for the process lifetime, including quarantine.
+const partitionPools = new WeakMap();
+
+function partitionPoolFor(session) {
+  if (!partitionPools.has(session)) {
+    partitionPools.set(session, {
+      nextRelease: PARTITION_POOL_SIZE,
+      slots: Array.from({ length: PARTITION_POOL_SIZE }, (_, index) => ({
+        name: `plugin-view-pool-${index}`, owner: null, quarantined: false, releasedAt: index,
+      })),
+    });
+  }
+  return partitionPools.get(session);
+}
+
+function takePartition(pool) {
+  const slot = pool.slots.filter((entry) => !entry.owner && !entry.quarantined)
+    .sort((a, b) => a.releasedAt - b.releasedAt)[0];
+  if (!slot) return null;
+  const lease = { slot, retirement: null, quarantined: false };
+  slot.owner = lease;
+  return lease;
+}
+
 function refusal(reason) { return { ok: false, reason }; }
 function clamp(value, min, max) { return Math.min(max, Math.max(min, value)); }
 function withDeadline(promise, timeoutMs, timeoutValue = null) {
@@ -21,7 +46,6 @@ function withDeadline(promise, timeoutMs, timeoutValue = null) {
 
 class PluginViewController {
   constructor({ WebContentsView, session, preloadPath, getMainWindow, resolveAsset,
-    resolveAttachmentTicket = null,
     onQuarantine = () => {}, log = () => {}, now = () => Date.now(),
     setIntervalFn = setInterval, clearIntervalFn = clearInterval, memoryPollMs = 1000 } = {}) {
     if (typeof WebContentsView !== 'function' || !session?.fromPartition
@@ -30,12 +54,11 @@ class PluginViewController {
     }
     this.WebContentsView = WebContentsView;
     this.session = session;
+    this.partitionPool = partitionPoolFor(session);
     this.preloadPath = preloadPath;
     this.getMainWindow = getMainWindow;
     this.resolveAsset = typeof resolveAsset === 'function'
       ? resolveAsset : ({ artifactDigest, path }) => this.generation?.assets?.get(`${artifactDigest}/${path}`) || null;
-    this.resolveAttachmentTicket = typeof resolveAttachmentTicket === 'function'
-      ? resolveAttachmentTicket : null;
     this.onQuarantine = onQuarantine;
     this.log = log;
     this.now = now;
@@ -61,78 +84,94 @@ class PluginViewController {
     if (!prepared || !Number.isSafeInteger(prepared.commit_epoch)) return refusal('view_generation_invalid');
     const destroyed = await this.destroyAll('generation_changed');
     if (destroyed?.ok === false) return destroyed;
+    // A live recovery window survives the commit; uninstalled plugins drop out.
+    this._pruneCrashes();
+    const installed = new Set(Array.from(prepared.descriptors?.values?.() || [],
+      (item) => `${item.publisher_id}/${item.plugin_id}`));
+    for (const key of this.crashes.keys()) if (!installed.has(key)) this.crashes.delete(key);
     this.generation = prepared;
     return { ok: true };
   }
 
-  async open(descriptor, { bounds, lifecycleEpoch = 0, sessionId = '', sessionIncarnation = '',
+  async open(descriptor, { bounds, lifecycleEpoch = 0,
     replacementReason = 'view_replaced' } = {}) {
     if (this.disposed || !this.generation) return refusal('view_host_unavailable');
     if (!descriptor || descriptor.commit_epoch !== this.generation.commit_epoch) return refusal('view_authority_stale');
-    const replaced = await this.destroyAll(replacementReason);
+    const replacing = this.destroyAll(replacementReason);
+    const replacementToken = this.lifecycleToken;
+    const replaced = await replacing;
     if (replaced?.ok === false) return replaced;
+    if (this.lifecycleToken !== replacementToken || this.disposed
+      || this.generation?.commit_epoch !== descriptor.commit_epoch) return refusal('view_lifecycle_superseded');
     const lifecycleToken = ++this.lifecycleToken;
     const viewInstanceId = `view_${crypto.randomBytes(12).toString('hex')}`;
-    const partition = `plugin-view-${viewInstanceId}`;
-    const isolatedSession = this.session.fromPartition(partition, { cache: false });
-    installPluginViewSessionPolicy(isolatedSession, descriptor.artifact_digest);
+    const lease = takePartition(this.partitionPool);
+    if (!lease) {
+      this.log('plugin.view.partition_pool_exhausted', { reason_code: 'view_host_unavailable' });
+      return refusal('view_host_unavailable');
+    }
+    let isolatedSession;
+    let view;
     const devToolsEnabled = process.env.NODE_ENV === 'development'
       && process.env.JENNY_PLUGIN_VIEW_DEVTOOLS === '1';
     if (devToolsEnabled) {
       this.log('plugin.view.devtools_enabled', { warning_code: 'sandbox_inspection_mode' });
     }
-    const view = new this.WebContentsView({ webPreferences: {
-      session: isolatedSession,
-      preload: this.preloadPath,
-      sandbox: true,
-      contextIsolation: true,
-      nodeIntegration: false,
-      webSecurity: true,
-      allowRunningInsecureContent: false,
-      spellcheck: false,
-      devTools: devToolsEnabled,
-    } });
     try {
+      isolatedSession = this.session.fromPartition(lease.slot.name, { cache: false });
+      installPluginViewSessionPolicy(isolatedSession, descriptor.artifact_digest);
+      view = new this.WebContentsView({ webPreferences: {
+        session: isolatedSession,
+        preload: this.preloadPath,
+        sandbox: true,
+        contextIsolation: true,
+        nodeIntegration: false,
+        webSecurity: true,
+        allowRunningInsecureContent: false,
+        spellcheck: false,
+        devTools: devToolsEnabled,
+      } });
       await withDeadline(
         installPluginViewProtocol(isolatedSession, {
           resolveAsset: (identity) => identity.artifactDigest === descriptor.artifact_digest
             ? this.resolveAsset(identity) : null,
-          resolveAttachment: this.resolveAttachmentTicket
-            ? (identity) => this.resolveAttachmentTicket({ ...identity,
-              viewInstanceId, generationId: descriptor.generation_id,
-              webContentsId: view.webContents.id })
-            : null,
           log: this.log,
         }),
         STAGE7_LIMITS.create_deadline_ms,
       );
     } catch (_error) {
-      await this._discardUncommittedView(view, isolatedSession);
+      // A late protocol install must never mutate a session owned by a later view.
+      lease.quarantined = true;
+      await this._discardUncommittedView(view, isolatedSession, lease);
       return refusal('view_create_failed');
     }
     if (this.lifecycleToken !== lifecycleToken || this.disposed) {
-      await this._discardUncommittedView(view, isolatedSession);
+      await this._discardUncommittedView(view, isolatedSession, lease);
       return refusal('view_lifecycle_superseded');
     }
     const mainWindow = this.getMainWindow();
     if (!mainWindow || mainWindow.isDestroyed?.()) {
-      await this._discardUncommittedView(view, isolatedSession);
+      await this._discardUncommittedView(view, isolatedSession, lease);
       return refusal('main_window_unavailable');
     }
-    view.webContents.setWindowOpenHandler?.(() => ({ action: 'deny' }));
-    view.webContents.on?.('will-navigate', (event, url) => {
-      if (!url.startsWith(`${PLUGIN_VIEW_SCHEME}://${descriptor.artifact_digest}/`)) event.preventDefault();
-    });
-    view.webContents.on?.('will-redirect', (event) => event.preventDefault());
-    view.webContents.on?.('before-input-event', (event, input) => this._handleInput(event, input));
-    view.webContents.on?.('render-process-gone', () => this._recordCrash(descriptor, view));
-    view.webContents.on?.('will-attach-webview', (event) => event.preventDefault());
-    mainWindow.contentView.addChildView(view);
-    view.setVisible?.(false);
+    try {
+      view.webContents.setWindowOpenHandler?.(() => ({ action: 'deny' }));
+      view.webContents.on?.('will-navigate', (event, url) => {
+        if (!url.startsWith(`${PLUGIN_VIEW_SCHEME}://${descriptor.artifact_digest}/`)) event.preventDefault();
+      });
+      view.webContents.on?.('will-redirect', (event) => event.preventDefault());
+      view.webContents.on?.('before-input-event', (event, input) => this._handleInput(event, input));
+      view.webContents.on?.('render-process-gone', () => this._recordCrash(descriptor, view));
+      view.webContents.on?.('will-attach-webview', (event) => event.preventDefault());
+      mainWindow.contentView.addChildView(view);
+      view.setVisible?.(false);
+    } catch (_error) {
+      try { mainWindow.contentView.removeChildView?.(view); } catch (_detachError) { /* never attached */ }
+      await this._discardUncommittedView(view, isolatedSession, lease);
+      return refusal('view_create_failed');
+    }
     this.active = {
-      view, session: isolatedSession, descriptor, viewInstanceId, lifecycleEpoch,
-      sessionId: String(sessionId || '').trim(),
-      sessionIncarnation: String(sessionIncarnation || '').trim(),
+      view, session: isolatedSession, lease, descriptor, viewInstanceId, lifecycleEpoch,
       zoomFactor: 1, bounds: null, memoryWarningEmitted: false, memoryTimer: null,
       restarting: false,
     };
@@ -148,12 +187,12 @@ class PluginViewController {
       );
     } catch (_error) {
       if (this.active?.view === view) await this.destroyAll('view_load_failed');
-      else await this._discardUncommittedView(view, isolatedSession);
+      else await this._discardUncommittedView(view, isolatedSession, lease);
       return refusal('view_load_failed');
     }
     if (this.lifecycleToken !== lifecycleToken || this.active?.view !== view
       || this.generation?.commit_epoch !== descriptor.commit_epoch) {
-      await this._discardUncommittedView(view, isolatedSession);
+      await this._discardUncommittedView(view, isolatedSession, lease);
       return refusal('view_lifecycle_superseded');
     }
     view.setVisible?.(true);
@@ -161,20 +200,55 @@ class PluginViewController {
     return { ok: true, view_instance_id: viewInstanceId };
   }
 
-  async _discardUncommittedView(view, isolatedSession) {
-    try { view?.webContents?.close?.({ waitForBeforeUnload: false }); } catch (_error) {
-      view?.webContents?.destroy?.();
-    }
-    await clearPluginViewSession(isolatedSession).catch(() => {});
+  async _discardUncommittedView(view, isolatedSession, lease) {
+    if (lease.retirement) return lease.retirement;
+    if (lease.slot.owner !== lease) return;
+    lease.retirement = (async () => {
+      const webContents = view?.webContents;
+      let onDestroyed;
+      try {
+        const closed = new Promise((resolve, reject) => {
+          if (!webContents) { reject(new Error('view closure unconfirmed')); return; }
+          if (webContents.isDestroyed?.() === true) { resolve(); return; }
+          onDestroyed = () => { if (webContents.isDestroyed?.() === true) resolve(); };
+          webContents.once?.('destroyed', onDestroyed);
+          try { webContents.close?.({ waitForBeforeUnload: false }); } catch (_error) {
+            webContents.destroy?.();
+          }
+          onDestroyed();
+        });
+        const cleared = await withDeadline(
+          closed.then(() => clearPluginViewSession(isolatedSession)).then(() => true),
+          STAGE7_LIMITS.dispose_deadline_ms,
+          false,
+        ).catch(() => false);
+        if (lease.slot.owner !== lease) return;
+        lease.slot.quarantined = lease.quarantined || !cleared;
+        lease.slot.owner = null;
+        if (lease.slot.quarantined) {
+          this.log('plugin.view.partition_quarantined', { reason_code: 'view_teardown_failed' });
+        } else {
+          lease.slot.releasedAt = this.partitionPool.nextRelease++;
+        }
+      } finally {
+        if (onDestroyed) webContents?.removeListener?.('destroyed', onDestroyed);
+      }
+    })();
+    return lease.retirement;
   }
 
   setBounds(raw) {
     if (!this.active || !raw) return refusal('view_not_open');
     const main = this.getMainWindow();
     const content = main?.getContentBounds?.() || { width: 0, height: 0 };
-    const values = [raw.x ?? 0, raw.y ?? 0, raw.width ?? 0, raw.height ?? 0].map(Number);
+    // The renderer measures its host slot in CSS px of a zoomed frame (the app
+    // zoom defaults to 110% since v57); WebContentsView.setBounds takes DIP, so
+    // the slot is scaled by the frame's zoom factor before the DIP clamps.
+    const zoom = Number(main?.webContents?.getZoomFactor?.());
+    const scale = Number.isFinite(zoom) && zoom > 0 ? zoom : 1;
+    const values = [raw.x ?? 0, raw.y ?? 0, raw.width ?? 0, raw.height ?? 0].map((value) => Number(value) * scale);
     if (!values.every(Number.isFinite)) return refusal('view_bounds_invalid');
-    const [rawX, rawY, rawWidth, rawHeight] = values;
+    const [rawX, rawY, rawWidth, rawHeight] = values.map(Math.round);
     const x = clamp(Math.trunc(rawX), 0, content.width);
     const y = clamp(Math.trunc(rawY), 0, content.height);
     const width = clamp(Math.trunc(rawWidth), 0, content.width - x);
@@ -260,11 +334,6 @@ class PluginViewController {
       generationId: descriptor.generation_id,
       publisherId: descriptor.publisher_id,
       pluginId: descriptor.plugin_id,
-      sessionId: this.active.sessionId,
-      sessionIncarnation: this.active.sessionIncarnation,
-      sessionProviderAuthorized: Boolean(
-        this.active.sessionId && this.active.sessionIncarnation
-      ),
       allowedOperations: descriptor.content.allowed_bridge_operations,
       allowedEventTopics: descriptor.content.allowed_event_topics,
     };
@@ -310,12 +379,21 @@ class PluginViewController {
     );
   }
 
+  _pruneCrashes() {
+    const cutoff = this.now() - STAGE7_LIMITS.crash_window_ms;
+    for (const [key, timestamps] of this.crashes) {
+      const current = timestamps.filter((time) => time >= cutoff);
+      if (current.length) this.crashes.set(key, current);
+      else this.crashes.delete(key);
+    }
+  }
+
   _recordCrash(descriptor, view) {
+    this._pruneCrashes();
     const active = this.active;
     if (!active || active.view !== view || active.restarting) return;
     const key = `${descriptor.publisher_id}/${descriptor.plugin_id}`;
-    const cutoff = this.now() - STAGE7_LIMITS.crash_window_ms;
-    const crashes = (this.crashes.get(key) || []).filter((time) => time >= cutoff);
+    const crashes = this.crashes.get(key) || [];
     crashes.push(this.now());
     this.crashes.set(key, crashes);
     this.log('plugin.view.crashed', { publisher_id: descriptor.publisher_id,
@@ -332,7 +410,6 @@ class PluginViewController {
     active.view.setVisible?.(false);
     this._sendHostCommand('view_state', { state: 'restarting', crash_count: crashes.length });
     const restart = { descriptor, bounds: active.bounds, lifecycleEpoch: active.lifecycleEpoch,
-      sessionId: active.sessionId, sessionIncarnation: active.sessionIncarnation,
       zoomFactor: active.zoomFactor };
     void this._restartAfterCrash(restart);
   }
@@ -341,8 +418,6 @@ class PluginViewController {
     const result = await this.open(restart.descriptor, {
       bounds: restart.bounds,
       lifecycleEpoch: restart.lifecycleEpoch,
-      sessionId: restart.sessionId,
-      sessionIncarnation: restart.sessionIncarnation,
       replacementReason: 'view_crash_restart',
     });
     if (!result?.ok) {
@@ -365,6 +440,7 @@ class PluginViewController {
   }
 
   async destroyAll(reason = 'closed') {
+    this._pruneCrashes();
     this.lifecycleToken += 1;
     const pendingResult = await this._retryPendingTeardown();
     if (pendingResult?.ok === false) return pendingResult;
@@ -374,18 +450,11 @@ class PluginViewController {
     if (current.memoryTimer !== null) this.clearIntervalFn(current.memoryTimer);
     current.view.setVisible?.(false);
     try { this.getMainWindow()?.contentView?.removeChildView?.(current.view); } catch (_error) { /* already detached */ }
-    try { current.view.webContents.close?.({ waitForBeforeUnload: false }); } catch (_error) { current.view.webContents.destroy?.(); }
-    await withDeadline(
-      clearPluginViewSession(current.session),
-      STAGE7_LIMITS.dispose_deadline_ms,
-      false,
-    ).catch(() => {});
+    await this._discardUncommittedView(current.view, current.session, current.lease);
     this.pendingTeardown = {
       viewInstanceId: current.viewInstanceId,
       reason,
       context: {
-        sessionId: current.sessionId,
-        sessionIncarnation: current.sessionIncarnation,
         generationId: current.descriptor.generation_id,
         publisherId: current.descriptor.publisher_id,
         pluginId: current.descriptor.plugin_id,

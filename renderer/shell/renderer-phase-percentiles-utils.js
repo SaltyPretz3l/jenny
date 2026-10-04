@@ -31,6 +31,32 @@
     completion_to_terminal_persist: jt('diagnostics.phases.completionToTerminalPersist', 'Completion to terminal persist'),
   };
 
+  function classifyBackendPhase(phase) {
+    switch (String(phase || '').trim().toLowerCase()) {
+      case 'ready':
+      case 'initialized': return 'ready';
+      case 'starting':
+      case 'retrying':
+      case 'sidecar_spawned': return 'starting';
+      case 'acquiring':
+      case 'model_acquiring': return 'acquiring';
+      case 'loading':
+      case 'model_loading': return 'loading';
+      case 'model_unavailable': return 'model_unavailable';
+      case 'failed':
+      case 'unavailable':
+      case 'stopping':
+      case 'stopped':
+      case 'error':
+      case 'crashed': return 'unavailable';
+      default: return 'unknown';
+    }
+  }
+
+  function isLocalEngine(engine) {
+    return !['chatgpt', 'codex-cli'].includes(String(engine || '').trim().toLowerCase());
+  }
+
   function defaultEscapeHtml(value) {
     return String(value == null ? '' : value)
       .replace(/&/g, '&amp;')
@@ -41,6 +67,7 @@
   }
 
   function formatMs(value) {
+    if (value == null || String(value).trim() === '') return 'TBD';
     const numeric = Number(value);
     if (!Number.isFinite(numeric)) {
       return 'TBD';
@@ -54,6 +81,10 @@
   function deriveVerdict(stats, target) {
     const count = Number(stats?.count || 0);
     if (!count) {
+      return 'empty';
+    }
+    const measurements = [stats?.p50, stats?.p95, target?.p50, target?.p95];
+    if (measurements.some((value) => value == null || String(value).trim() === '' || !Number.isFinite(Number(value)))) {
       return 'empty';
     }
     const p50 = Number(stats?.p50);
@@ -139,7 +170,7 @@
       return summary;
     }
     const phase7Summary = String(phase7.summary || '').trim();
-    const badge = summary.badge === 'Unavailable' && tone === 'warning'
+    const badge = ['Unavailable', jt('diagnostics.phases.modelUnavailable', 'Model unavailable')].includes(summary.badge)
       ? summary.badge
       : tone === 'danger' ? 'Blocked' : 'Degraded';
     return Object.assign({}, summary, {
@@ -162,17 +193,24 @@
     const status = runtime.status && typeof runtime.status === 'object' ? runtime.status : {};
     const modelList = runtime.modelList && typeof runtime.modelList === 'object' ? runtime.modelList : {};
     const offline = runtime.offline && typeof runtime.offline === 'object' ? runtime.offline : {};
-    const engine = firstNonEmpty(status.engine, status.active_engine, backend.engine, modelList.engine, 'local');
+    const engine = firstNonEmpty(status.active_engine, status.engine, backend.engine, modelList.engine, 'local');
+    const backendPhase = firstNonEmpty(backend.phase, status.phase, 'unknown');
+    const phaseClass = classifyBackendPhase(backendPhase);
+    const modelUnavailable = phaseClass === 'model_unavailable';
+    const backendUnavailable = modelUnavailable || phaseClass === 'unavailable';
+    const backendReady = phaseClass === 'ready';
+    // While acquiring, loading or failed, name the requested model; once ready, the loaded one.
+    const requestedModel = firstNonEmpty(
+      backend.model_acquisition?.requested_model,
+      backend.model_lifecycle?.requested_model
+    );
+    const activeModel = firstNonEmpty(status.active_model, status.model, modelList.active_model);
     const model = firstNonEmpty(
-      status.model,
-      status.active_model,
-      modelList.active_model,
+      backendReady ? activeModel : requestedModel,
+      backendReady ? requestedModel : activeModel,
       offline.preferredLocalModel,
       jt('diagnostics.phases.noActiveModel', 'no active model')
     );
-    const backendPhase = firstNonEmpty(backend.phase, status.phase, 'unknown');
-    const backendUnavailable = ['failed', 'unavailable', 'stopped', 'error', 'crashed']
-      .includes(backendPhase.toLowerCase());
     const offlineActive = offline.mode === 'local_only' || offline.mode === 'offline';
     const offlineUnavailableReason = offlineActive ? offline.unavailableReason : '';
     const lastError = firstNonEmpty(
@@ -203,26 +241,41 @@
     const baseSummary = {
       badge: state.loading
         ? 'Refreshing'
-        : backendUnavailable
-          ? 'Unavailable'
-          : degraded
-            ? 'Degraded'
-            : backendPhase === 'ready' || backendPhase === 'initialized' || offline.localChatReady === true
-              ? 'Healthy'
-              : sampleCount > 0
-                ? 'Live'
-                : 'Pending',
-      summary: jt('diagnostics.phases.runtimeHealthSummary', 'Runtime health: {engine} / {model}; backend {phase}.', { engine, model, phase: backendPhase }),
-      status: lastError
-        ? jt('diagnostics.phases.lastError', 'Last error: {error}', { error: lastError })
-        : sampleCount > 0
-          ? jt('diagnostics.phases.snapshotSummary', 'Snapshot {generatedAt}. Provider start to first chunk P50 {providerP50}; first chunk to first visible token P50 {visibleP50}.', { generatedAt, providerP50, visibleP50 })
+        : modelUnavailable
+          ? jt('diagnostics.phases.modelUnavailable', 'Model unavailable')
           : backendUnavailable
-            ? jt('diagnostics.phases.latencyUnavailableUntilRecovery', 'Latency evidence is unavailable until the backend recovers.')
-            : jt('diagnostics.phases.noSamplesRecorded', 'No latency samples recorded for this run.'),
-      sampleHint: backendUnavailable
-        ? jt('diagnostics.phases.samplingUnavailableUntilRecovery', 'Latency sampling is unavailable until the backend recovers.')
-        : jt('diagnostics.phases.sendLocalChatHint', 'Send a local chat to populate the live ring buffers.'),
+            ? 'Unavailable'
+            : degraded
+              ? 'Degraded'
+              : backendReady
+                ? 'Healthy'
+                : phaseClass === 'acquiring'
+                  ? jt('healthPill.downloadingModel', 'Downloading model')
+                  : phaseClass === 'loading'
+                    ? jt('healthPill.loadingModel', 'Loading model')
+                    : sampleCount > 0
+                      ? jt('diagnostics.phases.retained', 'Retained')
+                      : 'Pending',
+      summary: jt('diagnostics.phases.runtimeHealthSummary', 'Runtime health: {engine} / {model}; backend {phase}.', { engine, model, phase: backendPhase }),
+      status: sampleCount > 0 && !backendReady
+        ? jt('diagnostics.phases.retainedSamples', 'Retained latency samples; backend {phase}.', { phase: backendPhase })
+          + (lastError ? ' ' + jt('diagnostics.phases.lastError', 'Last error: {error}', { error: lastError }) : '')
+        : lastError
+          ? jt('diagnostics.phases.lastError', 'Last error: {error}', { error: lastError })
+          : sampleCount > 0
+            ? jt('diagnostics.phases.snapshotSummary', 'Snapshot {generatedAt}. Provider start to first chunk P50 {providerP50}; first chunk to first visible token P50 {visibleP50}.', { generatedAt, providerP50, visibleP50 })
+            : backendUnavailable
+              ? jt('diagnostics.phases.latencyUnavailableUntilRecovery', 'Latency evidence is unavailable until the backend recovers.')
+              : jt('diagnostics.phases.noSamplesRecorded', 'No latency samples recorded for this run.'),
+      sampleHint: modelUnavailable
+        ? jt('diagnostics.phases.modelSamplingUnavailable', 'Model {model} is unavailable. Load an available model before collecting latency samples.', { model })
+        : backendUnavailable
+          ? jt('diagnostics.phases.samplingUnavailableUntilRecovery', 'Latency sampling is unavailable until the backend recovers.')
+          : !backendReady
+            ? jt('diagnostics.phases.samplingWaitForReady', 'Latency sampling will resume when the backend is ready.')
+            : isLocalEngine(engine)
+              ? jt('diagnostics.phases.sendLocalChatHint', 'Send a local chat to populate the live ring buffers.')
+              : jt('diagnostics.phases.sendChatHint', 'Send a chat to populate the live ring buffers.'),
       recoveryLabel: degraded ? jt('diagnostics.phases.retryBackendStatus', 'Retry backend status') : jt('diagnostics.phases.openModels', 'Open Models'),
       recoverySection: 'models',
     };
@@ -270,6 +323,8 @@
         blocked: 'danger',
         error: 'danger',
         unavailable: 'danger',
+        'model unavailable': 'danger',
+        retained: 'warning',
         refreshing: 'pending',
         pending: 'pending',
       })[String(badgeText).toLowerCase()] || 'pending';
@@ -316,6 +371,8 @@
   return {
     PHASE_LABELS,
     PHASE_ORDER,
+    classifyBackendPhase,
+    isLocalEngine,
     buildRuntimeHealthSummary,
     deriveVerdict,
     formatMs,

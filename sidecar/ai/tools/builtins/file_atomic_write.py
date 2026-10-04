@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import codecs
+import hashlib
 import os
 import stat as stat_module
 import tempfile
@@ -338,17 +340,57 @@ def mutation_failure_metadata(error: ToolExecutionFailure, relative_path: str,
     return metadata
 
 
+def build_written_snapshot(
+    resolved: Path,
+    *,
+    relative_path: str,
+    written_bytes: bytes,
+) -> dict[str, object] | None:
+    """Full read-snapshot metadata for the bytes a write or edit just committed.
+
+    Dogfood TR-007: the tool knows exactly what it wrote, so rewriting a file the
+    model itself just wrote needs no forced re-read. Same shape as
+    ``file_state.ReadSnapshot.to_metadata()`` for a full read: the digest covers
+    the written bytes, size/mtime come from a stat after the write. If that stat
+    already disagrees with the written length, something else touched the file
+    first and no snapshot is vouched for; any later external change fails the
+    digest check.
+    """
+    try:
+        stat_result = resolved.stat()
+    except (OSError, ValueError):
+        return None
+    if int(stat_result.st_size) != len(written_bytes):
+        return None
+    return {
+        "path": relative_path,
+        "scope": "full",
+        "size_bytes": len(written_bytes),
+        "mtime_ns": max(int(stat_result.st_mtime_ns), 0),
+        "sha256": hashlib.sha256(written_bytes).hexdigest(),
+        "encoding": "utf-8-sig" if written_bytes.startswith(codecs.BOM_UTF8) else "utf-8",
+    }
+
+
 def build_write_metadata(
     *,
     path: str,
     bytes_written: int,
     checkpoint: CheckpointInfo | None = None,
+    written: tuple[Path, bytes] | None = None,
 ) -> dict[str, object]:
     metadata: dict[str, object] = {
         "path": path,
         "bytes_written": bytes_written,
         "checkpoint_created": False,
     }
+    if written is not None:
+        # The router records this as the path's read snapshot (TR-007).
+        snapshot = build_written_snapshot(
+            written[0], relative_path=path, written_bytes=written[1],
+        )
+        if snapshot is not None:
+            metadata["written_snapshot"] = snapshot
     if checkpoint and checkpoint.created:
         metadata["checkpoint_created"] = True
         metadata["checkpoint_version"] = checkpoint.version

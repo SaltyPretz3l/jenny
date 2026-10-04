@@ -22,12 +22,16 @@ function fakeEditorHost(overrides = {}) {
     },
     getActivePath() { return overrides.path !== undefined ? overrides.path : 'src/app.js'; },
     getActiveLanguageId() { return overrides.language !== undefined ? overrides.language : 'javascript'; },
+    isDirty() { return overrides.dirty === true; },
   };
 }
 
-// Single-session terminal bridge fake mirroring workspace-terminal-service:
-// onData registers an independent listener + returns an unsubscribe; start() is
-// idempotent; emitData fans a { sessionId, stream, chunk } event to listeners.
+// Fake of the two terminal seams the inspector uses: the workspacePty bridge's
+// onData stream ({ sessionId, data } events; independent listeners, each with
+// an unsubscribe) and the PTY panel's sendCommand(builder), which starts the
+// single session when needed, builds the command for the live shell and writes
+// one CRLF line, resolving false (nothing written) when the start fails or the
+// builder throws - exactly the renderer-ide-pty-terminal-panel contract.
 function fakeTerminal(overrides = {}) {
   let seq = 0;
   const listeners = [];
@@ -42,27 +46,37 @@ function fakeTerminal(overrides = {}) {
         if (i >= 0) listeners.splice(i, 1);
       };
     },
-    async start() {
+    async sendCommand(builder) {
       this.calls.start.push(true);
       if (typeof overrides.start === 'function') {
-        return overrides.start();
+        await overrides.start();
       }
-      if (overrides.startThrows) {
-        throw new Error('No workspace root is configured.');
+      if (overrides.startFails) {
+        return false;
       }
-      return { sessionId: 'term-1', shell: overrides.shell || 'powershell.exe', cwd: 'C:/ws', alreadyRunning: false };
-    },
-    async write(payload) {
+      let command;
+      try {
+        command = builder(overrides.shell || 'powershell.exe', 'C:/ws');
+      } catch (_error) {
+        return false;
+      }
       this.calls.writeSeq = (seq += 1);
-      this.calls.write.push(payload);
+      this.calls.write.push({ sessionId: 'pty-1', data: `${command}\r\n` });
+      return true;
     },
-    emitData(chunk, stream = 'stderr', sessionId = 'term-1') {
+    emitData(data, sessionId = 'pty-1') {
       for (const fn of listeners.slice()) {
-        fn({ sessionId, stream, chunk });
+        fn({ sessionId, data });
       }
     },
   };
 }
+
+// node prints a v4 UUID target; the scrape requires the full UUID.
+const UUID_A = '0f2c936f-b1cd-4ac9-aab3-f63b0f33d55e';
+const UUID_B = '7d1e2f3a-4b5c-4d6e-8f90-a1b2c3d4e5f6';
+const banner = (hostPort, uuid = UUID_A) => `Debugger listening on ws://${hostPort}/${uuid}\n`;
+const escapeRe = (text) => text.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&');
 
 function fakeClipboard() {
   return { written: [], async writeText(text) { this.written.push(text); } };
@@ -84,14 +98,20 @@ function harness(opts = {}) {
   const terminal = opts.terminal || fakeTerminal();
   const clipboard = opts.clipboard === null ? null : (opts.clipboard || fakeClipboard());
   const toasts = [];
-  const calls = { startTerminalSession: 0, openTerminalPanel: 0 };
+  const calls = { openTerminalPanel: 0, saveFile: [] };
+  const rootContext = opts.rootContext !== undefined ? opts.rootContext : { rootPath: '/home/u/ws', phase: 'ready' };
   const inspector = createIdeDebugInspector({
     editorHost: opts.editorHost || fakeEditorHost(opts.hostOverrides),
     isDiffTabId: opts.isDiffTabId || (() => false),
-    getWorkspaceTerminalApi: () => (opts.noTerminal ? null : terminal),
+    getWorkspacePtyApi: () => (opts.noTerminal ? null : terminal),
     getClipboardApi: () => clipboard,
     openTerminalPanel: () => { calls.openTerminalPanel += 1; },
-    startTerminalSession: () => { calls.startTerminalSession += 1; return Promise.resolve(true); },
+    sendTerminalCommand: (builder) => terminal.sendCommand(builder),
+    getWorkspaceRootApi: () => (opts.noRootApi ? null : { captureContext: async () => rootContext }),
+    saveFile: async (path) => {
+      calls.saveFile.push({ path, sentSoFar: terminal.calls.write.length });
+      return opts.saveResult === undefined ? true : opts.saveResult;
+    },
     showToastMessage: (message, meta) => toasts.push({ message, meta }),
     appendClientLog: () => {},
     inspectTimeoutMs: opts.inspectTimeoutMs,
@@ -139,19 +159,17 @@ test('writes node --inspect-brk with the quoted active path and reveals the term
   const h = harness();
   await h.inspector.debugActiveFile();
 
-  assert.equal(h.terminal.calls.start.length, 1, 'started the session once');
+  assert.equal(h.terminal.calls.start.length, 1, 'sent through the panel once (it owns the session)');
   const data = h.terminal.calls.write.map((w) => w.data).join('');
-  assert.match(data, /node\s+--inspect-brk\s+'src\/app\.js'/);
+  assert.match(data, /node\s+--inspect-brk\s+'\/home\/u\/ws\/src\/app\.js'/);
   assert.match(data, /\r\n$/, 'command is submitted with a trailing newline');
-  assert.equal(h.terminal.calls.write[0].sessionId, 'term-1', 'writes to the started session');
-  assert.equal(h.calls.startTerminalSession, 1, 'panel adopts the session (terminal echo)');
-  assert.equal(h.calls.openTerminalPanel, 1, 'opens the bottom panel on the terminal tab');
+  assert.equal(h.calls.openTerminalPanel, 1, 'opens the bottom panel on the terminal tab (terminal echo)');
 });
 
 test('scrapes the ws:// banner and copies the raw devtools attach URL', async () => {
   const h = harness();
   await h.inspector.debugActiveFile();
-  h.terminal.emitData('Debugger listening on ws://127.0.0.1:9229/0f2c936f-b1cd-4ac9-aab3-f63b0f33d55e\n');
+  h.terminal.emitData(banner('127.0.0.1:9229'));
   await flush();
 
   assert.equal(h.clipboard.written.length, 1, 'one URL copied');
@@ -165,13 +183,24 @@ test('scrapes the ws:// banner and copies the raw devtools attach URL', async ()
   assert.match(toastText(h.toasts), /copied/i, 'a success toast fired');
 });
 
-test('scrapes the banner from stderr (the stream Node prints it to)', async () => {
+test('scrapes the banner through ConPTY VT sequences (colors, cursor moves, titles), even split across chunks', async () => {
   const h = harness();
   await h.inspector.debugActiveFile();
-  h.terminal.emitData('Debugger listening on ws://127.0.0.1:9229/abc-123\n', 'stderr');
+  const ESC = '\u001b';
+  h.terminal.emitData(`${ESC}]0;node\u0007${ESC}[?25l${ESC}[31mDebugger listening on ws://127.0.0.1:9229/${UUID_B.slice(0, 10)}${ESC}[`);
+  h.terminal.emitData(`0m${UUID_B.slice(10)}${ESC}[K\r\n`);
   await flush();
   assert.equal(h.clipboard.written.length, 1);
-  assert.match(h.clipboard.written[0], /ws=127\.0\.0\.1:9229\/abc-123$/);
+  assert.ok(h.clipboard.written[0].endsWith(`ws=127.0.0.1:9229/${UUID_B}`), h.clipboard.written[0]);
+});
+
+test('a hard-wrapped (truncated) banner is never copied as if it were the real target', async () => {
+  const h = harness({ inspectTimeoutMs: 20 });
+  await h.inspector.debugActiveFile();
+  h.terminal.emitData(`Debugger listening on ws://127.0.0.1:9229/${UUID_A.slice(0, 20)}\r\n${UUID_A.slice(20)}\r\n`);
+  await flush(60);
+  assert.equal(h.clipboard.written.length, 0, 'no truncated URL on the clipboard');
+  assert.match(toastText(h.toasts), /timed out.*terminal panel/i, 'the user is pointed at the visible banner');
 });
 
 test('reassembles a banner split across two onData chunks (no truncated URL)', async () => {
@@ -181,32 +210,17 @@ test('reassembles a banner split across two onData chunks (no truncated URL)', a
   // No newline yet -> must NOT match the truncated "ws://127.0.0.1:92".
   await flush();
   assert.equal(h.clipboard.written.length, 0, 'partial line is not matched');
-  h.terminal.emitData('29/split-uuid\nFor help, see: https://nodejs.org\n');
+  h.terminal.emitData(`29/${UUID_A}\nFor help, see: https://nodejs.org\n`);
   await flush();
   assert.equal(h.clipboard.written.length, 1);
-  assert.match(h.clipboard.written[0], /ws=127\.0\.0\.1:9229\/split-uuid$/);
-});
-
-test('ignores a banner from a different session and scrapes only its own', async (t) => {
-  const h = harness({ inspectTimeoutMs: 5000 });
-  t.after(() => h.inspector.dispose());
-  await h.inspector.debugActiveFile(); // launch owns session 'term-1'
-  // A banner from a stray/restarted session must NOT be scraped.
-  h.terminal.emitData('Debugger listening on ws://127.0.0.1:9229/other-session\n', 'stderr', 'term-2');
-  await flush();
-  assert.equal(h.clipboard.written.length, 0, 'cross-session banner ignored');
-  // The launch's own session settles it.
-  h.terminal.emitData('Debugger listening on ws://127.0.0.1:9229/own-session\n', 'stderr', 'term-1');
-  await flush();
-  assert.equal(h.clipboard.written.length, 1, 'own-session banner scraped');
-  assert.match(h.clipboard.written[0], /ws=127\.0\.0\.1:9229\/own-session$/);
+  assert.ok(h.clipboard.written[0].endsWith(`ws=127.0.0.1:9229/${UUID_A}`));
 });
 
 test('does not launch for non-JavaScript files', async () => {
   const h = harness({ hostOverrides: { path: 'README.md', language: 'markdown' } });
   await h.inspector.debugActiveFile();
   assert.equal(h.terminal.calls.start.length, 0, 'no session started');
-  assert.equal(h.calls.startTerminalSession, 0);
+  assert.equal(h.calls.openTerminalPanel, 0);
   assert.match(toastText(h.toasts), /javascript/i);
 });
 
@@ -214,7 +228,7 @@ test('treats .mjs / .cjs by extension even without a language id', async () => {
   const h = harness({ hostOverrides: { path: 'scripts/tool.mjs', language: '' } });
   await h.inspector.debugActiveFile();
   assert.equal(h.terminal.calls.start.length, 1);
-  assert.match(h.terminal.calls.write.map((w) => w.data).join(''), /'scripts\/tool\.mjs'/);
+  assert.match(h.terminal.calls.write.map((w) => w.data).join(''), /'\/home\/u\/ws\/scripts\/tool\.mjs'/);
 });
 
 test('single-quotes the path so a crafted file name cannot inject shell commands', async () => {
@@ -223,7 +237,7 @@ test('single-quotes the path so a crafted file name cannot inject shell commands
   const h = harness({ hostOverrides: { path: 'src/$(calc).js', language: 'javascript' } });
   await h.inspector.debugActiveFile();
   const data = h.terminal.calls.write.map((w) => w.data).join('');
-  assert.match(data, /node --inspect-brk 'src\/\$\(calc\)\.js'/, 'metachars stay inside single quotes');
+  assert.match(data, /node --inspect-brk '\/home\/u\/ws\/src\/\$\(calc\)\.js'/, 'metachars stay inside single quotes');
   assert.ok(!data.includes('"'), 'no double quotes that would allow expansion');
 });
 
@@ -231,11 +245,11 @@ test('escapes apostrophes for the terminal shell on PowerShell and POSIX', async
   const path = "src/o'neil.js";
   const powershell = harness({ terminal: fakeTerminal({ shell: 'powershell.exe' }), hostOverrides: { path } });
   await powershell.inspector.debugActiveFile();
-  assert.equal(powershell.terminal.calls.write[0].data, "node --inspect-brk 'src/o''neil.js'\r\n");
+  assert.equal(powershell.terminal.calls.write[0].data, "node --inspect-brk '/home/u/ws/src/o''neil.js'\r\n");
 
   const bash = harness({ terminal: fakeTerminal({ shell: 'bash' }), hostOverrides: { path } });
   await bash.inspector.debugActiveFile();
-  assert.equal(bash.terminal.calls.write[0].data, "node --inspect-brk 'src/o'\\''neil.js'\r\n");
+  assert.equal(bash.terminal.calls.write[0].data, "node --inspect-brk '/home/u/ws/src/o'\\''neil.js'\r\n");
 });
 
 test('does not launch for diff / preview tabs', async () => {
@@ -265,11 +279,12 @@ test('a delayed terminal start cannot write after the inspector launch times out
   const h = harness({ terminal, inspectTimeoutMs: 5 });
   const launch = h.inspector.debugActiveFile();
   await flush(20);
-  resolveStart({ sessionId: 'term-late', shell: 'powershell.exe' });
+  resolveStart();
   await launch;
 
   assert.equal(terminal.calls.write.length, 0, 'a timed-out launch never writes a late command');
-  assert.equal(h.calls.openTerminalPanel, 0, 'a timed-out launch never reveals the terminal late');
+  assert.equal(h.toasts.filter((entry) => /could not launch/i.test(entry.message)).length, 0,
+    'the stale refusal settles silently (the timeout already spoke)');
 });
 
 test('disposing during a delayed terminal start prevents every late launch side effect', async () => {
@@ -279,11 +294,11 @@ test('disposing during a delayed terminal start prevents every late launch side 
   const launch = h.inspector.debugActiveFile();
   await Promise.resolve();
   h.inspector.dispose();
-  resolveStart({ sessionId: 'term-late', shell: 'powershell.exe' });
+  resolveStart();
   await launch;
 
   assert.equal(terminal.calls.write.length, 0, 'dispose prevents a late command write');
-  assert.equal(h.calls.openTerminalPanel, 0, 'dispose prevents a late terminal reveal');
+  assert.equal(h.toasts.length, 0, 'a disposed launch surfaces nothing');
 });
 
 test('guards against a concurrent launch while one is in flight', async () => {
@@ -304,18 +319,18 @@ test('reports a missing terminal bridge without throwing', async () => {
 test('surfaces the URL inline when the clipboard is unavailable', async () => {
   const h = harness({ clipboard: null });
   await h.inspector.debugActiveFile();
-  h.terminal.emitData('Debugger listening on ws://127.0.0.1:9229/no-clip\n');
+  h.terminal.emitData(banner('127.0.0.1:9229'));
   await flush();
-  assert.match(toastText(h.toasts), /devtools:\/\/.*ws=127\.0\.0\.1:9229\/no-clip/);
+  assert.match(toastText(h.toasts), new RegExp(`devtools://.*${escapeRe(`ws=127.0.0.1:9229/${UUID_A}`)}`));
 });
 
 test('falls back to an inline toast when the clipboard write rejects', async () => {
   const rejecting = { written: [], async writeText() { throw new Error('clipboard blocked'); } };
   const h = harness({ clipboard: rejecting });
   await h.inspector.debugActiveFile();
-  h.terminal.emitData('Debugger listening on ws://127.0.0.1:9229/reject-uuid\n');
+  h.terminal.emitData(banner('127.0.0.1:9229'));
   await flush();
-  assert.match(toastText(h.toasts), /devtools:\/\/.*ws=127\.0\.0\.1:9229\/reject-uuid/);
+  assert.match(toastText(h.toasts), new RegExp(`devtools://.*${escapeRe(`ws=127.0.0.1:9229/${UUID_A}`)}`));
   // busy must clear so a later launch still works.
   await h.inspector.debugActiveFile();
   assert.equal(h.terminal.calls.start.length, 2);
@@ -324,16 +339,16 @@ test('falls back to an inline toast when the clipboard write rejects', async () 
 test('settles cleanly across two back-to-back successful launches', async () => {
   const h = harness();
   await h.inspector.debugActiveFile();
-  h.terminal.emitData('Debugger listening on ws://127.0.0.1:9229/first\n');
+  h.terminal.emitData(banner('127.0.0.1:9229', UUID_A));
   await flush();
   assert.equal(h.clipboard.written.length, 1);
-  assert.match(h.clipboard.written[0], /\/first$/);
+  assert.ok(h.clipboard.written[0].endsWith(`/${UUID_A}`));
 
   await h.inspector.debugActiveFile();
-  h.terminal.emitData('Debugger listening on ws://127.0.0.1:9230/second\n');
+  h.terminal.emitData(banner('127.0.0.1:9230', UUID_B));
   await flush();
   assert.equal(h.clipboard.written.length, 2, 'second launch settles too (settled reset)');
-  assert.match(h.clipboard.written[1], /ws=127\.0\.0\.1:9230\/second$/);
+  assert.ok(h.clipboard.written[1].endsWith(`ws=127.0.0.1:9230/${UUID_B}`));
   assert.equal(h.terminal.listeners.length, 0, 'no listener leak across launches');
 });
 
@@ -341,13 +356,13 @@ test('unsubscribes the onData listener after a successful settle (no leak)', asy
   const h = harness();
   await h.inspector.debugActiveFile();
   assert.equal(h.terminal.listeners.length, 1, 'subscribed during the launch');
-  h.terminal.emitData('Debugger listening on ws://127.0.0.1:9229/leak-check\n');
+  h.terminal.emitData(banner('127.0.0.1:9229'));
   await flush();
   assert.equal(h.terminal.listeners.length, 0, 'listener removed after the banner settles');
 });
 
 test('a launch error settles cleanly and toasts', async () => {
-  const h = harness({ terminal: fakeTerminal({ startThrows: true }) });
+  const h = harness({ terminal: fakeTerminal({ startFails: true }) });
   await h.inspector.debugActiveFile();
   await flush();
   assert.match(toastText(h.toasts), /could not launch/i);
@@ -361,7 +376,64 @@ test('dispose cancels an in-flight launch and removes the listener', async () =>
   h.inspector.dispose();
   assert.equal(h.terminal.listeners.length, 0, 'dispose unsubscribed the in-flight listener');
   // A banner arriving after dispose is ignored (no copy).
-  h.terminal.emitData('Debugger listening on ws://127.0.0.1:9229/after-dispose\n');
+  h.terminal.emitData(banner('127.0.0.1:9229'));
   await flush();
   assert.equal(h.clipboard.written.length, 0);
+});
+
+// IDE-017: the shared interactive shell's cwd may have moved, so the launch
+// targets an ABSOLUTE path built from the LIVE workspace root.
+test('IDE-017: builds an absolute target from a POSIX root and from a Windows root', async () => {
+  const posix = harness({ rootContext: { rootPath: '/home/u/ws', phase: 'ready' }, terminal: fakeTerminal({ shell: 'bash' }) });
+  await posix.inspector.debugActiveFile();
+  assert.equal(posix.terminal.calls.write[0].data, "node --inspect-brk '/home/u/ws/src/app.js'\r\n");
+
+  const win = harness({ rootContext: { root_path: 'C:\\ws', phase: 'ready' } });
+  await win.inspector.debugActiveFile();
+  assert.equal(win.terminal.calls.write[0].data, "node --inspect-brk 'C:\\ws\\src\\app.js'\r\n",
+    'a backslash root joins with backslashes and converts the relative separators');
+});
+
+test('IDE-017: a missing, unavailable or not-ready live root writes nothing and toasts launch-failed', async () => {
+  for (const options of [
+    { noRootApi: true },
+    { rootContext: null },
+    { rootContext: { rootPath: '', phase: 'ready' } },
+    { rootContext: { rootPath: '/home/u/ws', phase: 'switching' } },
+  ]) {
+    const h = harness(options);
+    await h.inspector.debugActiveFile();
+    assert.equal(h.terminal.calls.write.length, 0, `nothing written for ${JSON.stringify(options)}`);
+    assert.match(toastText(h.toasts), /could not launch the debug session/i);
+    assert.equal(h.terminal.listeners.length, 0, 'listener cleaned up');
+    // busy cleared: a fresh launch is not stuck behind "already starting".
+    await h.inspector.debugActiveFile();
+    assert.doesNotMatch(toastText(h.toasts), /already starting/i);
+  }
+});
+
+// IDE-008: the launched process reads the file from disk, so a dirty buffer is
+// saved first (save-then-run, no dialog).
+test('IDE-008: a dirty buffer is saved before the debug command is sent', async () => {
+  const h = harness({ hostOverrides: { dirty: true } });
+  await h.inspector.debugActiveFile();
+  assert.deepEqual(h.calls.saveFile, [{ path: 'src/app.js', sentSoFar: 0 }], 'saved first, before any write');
+  assert.equal(h.terminal.calls.write.length, 1, 'the command was sent after the save');
+});
+
+test('IDE-008: a failed save sends nothing, toasts, and leaves the inspector reusable', async () => {
+  const h = harness({ hostOverrides: { dirty: true }, saveResult: false });
+  await h.inspector.debugActiveFile();
+  assert.equal(h.terminal.calls.start.length, 0, 'no terminal session started');
+  assert.equal(h.terminal.calls.write.length, 0);
+  assert.match(toastText(h.toasts), /Could not save src\/app\.js, so the debug session was not started\./);
+  await h.inspector.debugActiveFile();
+  assert.doesNotMatch(toastText(h.toasts), /already starting/i, 'busy was released after the failed save');
+});
+
+test('IDE-008: a clean buffer never calls saveFile', async () => {
+  const h = harness();
+  await h.inspector.debugActiveFile();
+  assert.equal(h.calls.saveFile.length, 0);
+  assert.equal(h.terminal.calls.write.length, 1);
 });

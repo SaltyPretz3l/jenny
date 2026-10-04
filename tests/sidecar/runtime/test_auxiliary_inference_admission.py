@@ -18,11 +18,9 @@ from sidecar.ai.engines.admitted import (
     InferenceAttemptContext,
     InferenceAttemptOutcome,
 )
-from sidecar.protocol import API_VERSION, INLINE_COMPLETE_METHOD, RUNTIME_OPERATION_METHOD
+from sidecar.protocol import API_VERSION, COMMIT_GENERATE_MESSAGE_METHOD, RUNTIME_OPERATION_METHOD
 from sidecar.runtime import (
-    inline_completion,
     request_dispatch_commit,
-    request_dispatch_inline,
     request_dispatch_suggestions,
     server_auxiliary_workers,
 )
@@ -63,7 +61,7 @@ def _attempt(*, provider: str = "ollama") -> InferenceAttemptContext:
 def _bridge(statuses: list[str]) -> tuple[list[dict[str, Any]], Any]:
     sent: list[dict[str, Any]] = []
 
-    def factory(rpc_id: int, **_kwargs: Any):  # noqa: ANN202
+    def factory(rpc_id: int, **_kwargs: Any):
         status = statuses.pop(0)
 
         def reader(_timeout: float) -> dict[str, Any]:
@@ -279,50 +277,13 @@ def test_background_generator_uses_stack_captured_before_admission(
     assert outcomes == [InferenceAttemptOutcome(status="succeeded", cleanup="confirmed")]
 
 
-@pytest.mark.parametrize("active_fim", [True, False])
-def test_inline_admits_active_or_ollama_fallback_attempt(
-    monkeypatch: pytest.MonkeyPatch,
-    active_fim: bool,
-) -> None:
-    fim = MagicMock(return_value="completed()")
-    active_engine = SimpleNamespace(generate_inline_completion=fim) if active_fim else object()
-    container = SimpleNamespace(stack=SimpleNamespace(
-        engine=active_engine,
-        config=SimpleNamespace(engine_type="ollama" if active_fim else "openai"),
-    ))
-    if not active_fim:
-        monkeypatch.setattr(
-            inline_completion,
-            "_build_ollama_fallback_engine",
-            lambda: SimpleNamespace(generate_inline_completion=fim),
-        )
-    attempts: list[InferenceAttemptContext] = []
-    outcomes: list[InferenceAttemptOutcome] = []
-
-    result = inline_completion.generate_inline_completion(
-        container,
-        prefix="def f(",
-        suffix=")",
-        model="trusted-model",
-        max_tokens=64,
-        logger=LOG,
-        request_id="request_aux_1",
-        inference_admission=_recording_admission(attempts, outcomes),
-    )
-
-    assert result == "completed()"
-    assert len(attempts) == 1
-    assert attempts[0].provider == "ollama"
-    assert outcomes == [InferenceAttemptOutcome(status="succeeded", cleanup="confirmed")]
-
-
 def _invoke_and_settle(admission: Any, request_id: str) -> None:
     assert request_id == "request_aux_1"
     lease = admission(_attempt())
     lease.settle(InferenceAttemptOutcome(status="succeeded", cleanup="confirmed"))
 
 
-@pytest.mark.parametrize("dispatcher", ["suggestions", "commit", "inline"])
+@pytest.mark.parametrize("dispatcher", ["suggestions", "commit"])
 def test_dispatchers_build_callback_from_closed_context(
     monkeypatch: pytest.MonkeyPatch,
     dispatcher: str,
@@ -344,7 +305,7 @@ def test_dispatchers_build_callback_from_closed_context(
             "suggestions.generate", 1, params, True, MagicMock(), LOG,
             write_message=sent.append, response_reader_factory=factory,
         )
-    elif dispatcher == "commit":
+    else:
         monkeypatch.setattr(
             request_dispatch_commit,
             "generate_commit_message",
@@ -357,20 +318,6 @@ def test_dispatchers_build_callback_from_closed_context(
             "commit.generate_message", 1, params, True, MagicMock(), LOG,
             write_message=sent.append, response_reader_factory=factory,
         )
-    else:
-        monkeypatch.setattr(
-            request_dispatch_inline,
-            "generate_inline_completion",
-            lambda *_args, **kwargs: _invoke_and_settle(
-                kwargs["inference_admission"], kwargs["request_id"]
-            ) or "completed()",
-        )
-        params["model"] = "trusted-model"
-        outcome = request_dispatch_inline.process_inline_method(
-            "inline.complete", 1, params, True, MagicMock(), LOG,
-            write_message=sent.append, response_reader_factory=factory,
-        )
-
     assert outcome is not None
     assert "result" in outcome.response
     assert [message["params"]["phase"] for message in sent] == ["admit", "settle"]
@@ -477,11 +424,11 @@ def test_server_wrapper_forwards_auxiliary_transport(
     assert captured["response_reader_factory"] is reader_factory
 
 
-def test_server_wrapper_maps_inline_admission_refusal_without_exiting(
+def test_server_wrapper_maps_auxiliary_admission_refusal_without_exiting(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     def refuse(*_args: Any, **_kwargs: Any) -> ProcessOutcome:
-        raise InferenceAdmissionRefused("inline_route_busy")
+        raise InferenceAdmissionRefused("auxiliary_route_busy")
 
     monkeypatch.setattr(server, "runtime_process_message", refuse)
 
@@ -490,10 +437,10 @@ def test_server_wrapper_maps_inline_admission_refusal_without_exiting(
     assert outcome.initialized is True
     assert outcome.shutdown_requested is False
     assert outcome.response["error"]["code"] == -32000
-    assert outcome.response["error"]["data"]["reason"] == "inline_route_busy"
+    assert outcome.response["error"]["data"]["reason"] == "auxiliary_route_busy"
 
 
-def test_inline_worker_completes_real_multiplexer_admit_and_settle_roundtrip(  # noqa: PLR0915 -- one end-to-end transport lifecycle
+def test_commit_worker_completes_real_multiplexer_admit_and_settle_roundtrip(  # noqa: PLR0915 -- one end-to-end transport lifecycle
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     incoming: queue.Queue[dict[str, Any] | BaseException] = queue.Queue()
@@ -521,13 +468,17 @@ def test_inline_worker_completes_real_multiplexer_admit_and_settle_roundtrip(  #
 
     def provider(*_args: Any, **_kwargs: Any) -> str:
         provider_called.set()
-        return "completed()"
+        return "feat: admitted"
 
-    engine = SimpleNamespace(generate_inline_completion=provider)
+    engine = SimpleNamespace(generate=provider)
     monkeypatch.setattr(server, "_BRAIN_CONTAINER", SimpleNamespace(
         stack=SimpleNamespace(
             engine=engine,
-            config=SimpleNamespace(engine_type="ollama"),
+            config=SimpleNamespace(
+                engine_type="ollama",
+                model="trusted-model",
+                feature_flags={},
+            ),
         )
     ))
     multiplexer = StdioTransportMultiplexer(
@@ -540,17 +491,15 @@ def test_inline_worker_completes_real_multiplexer_admit_and_settle_roundtrip(  #
         message = {
             "jsonrpc": "2.0",
             "id": 501,
-            "method": INLINE_COMPLETE_METHOD,
+            "method": COMMIT_GENERATE_MESSAGE_METHOD,
             "params": {
                 "accept_version": API_VERSION,
-                "prefix": "def f(",
-                "suffix": ")",
-                "model": "trusted-model",
+                "diff": "diff --git a/a b/a",
                 "inference_context": _context(),
             },
         }
         assert server_auxiliary_workers.route_auxiliary_request(
-            method=INLINE_COMPLETE_METHOD,
+            method=COMMIT_GENERATE_MESSAGE_METHOD,
             message=message,
             multiplexer=multiplexer,
             direct_transport=SimpleNamespace(send_control=lambda _message: None),
@@ -616,7 +565,7 @@ def test_inline_worker_completes_real_multiplexer_admit_and_settle_roundtrip(  #
 
         with written_lock:
             response = next(item for item in written if item.get("id") == 501)
-        assert response["result"]["completion"] == "completed()"
+        assert response["result"]["message"] == "feat: admitted"
         assert admit["params"]["operation_id"] == settle["params"]["operation_id"]
     finally:
         multiplexer.close()

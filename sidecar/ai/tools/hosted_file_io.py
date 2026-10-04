@@ -176,6 +176,33 @@ def _parent(path: Path, *, create: bool = False) -> Iterator[tuple[int, str]]:
         os.close(fd)
 
 
+@contextmanager
+def open_hosted_directory(path: Path) -> Iterator[int]:
+    """Yield a directory fd reached by no-follow descriptor-relative traversal."""
+    operation = _active()
+    root, root_fd = operation.root, operation.root_fd
+    if root is None or root_fd is None:
+        raise _failure()
+    try:
+        parts = path.relative_to(root).parts
+    except ValueError as error:
+        raise _failure() from error
+    if any(part in {".", "..", ""} for part in parts):
+        raise _failure()
+    fd = os.dup(root_fd)
+    try:
+        try:
+            for segment in parts:
+                child = os.open(segment, os.O_RDONLY | _O_DIRECTORY | _O_NOFOLLOW, dir_fd=fd)
+                os.close(fd)
+                fd = child
+        except (OSError, ValueError) as error:
+            raise _failure() from error
+        yield fd
+    finally:
+        os.close(fd)
+
+
 def _regular(status: os.stat_result) -> None:
     if not stat.S_ISREG(status.st_mode) or status.st_nlink != 1:
         raise _failure()

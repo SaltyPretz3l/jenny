@@ -63,6 +63,14 @@ const LEDGER_EXTRA_NAMES = Object.freeze(['chatView']);
 // the pattern knew only the plain form and pinned 26, which review caught).
 // Grouped by owning feature rather than sorted, because the grouping is the
 // point of the ledger; it is sorted at the comparison and pinned unique.
+// 2026-09-26, W3-2: `subagentInspector` became a pane node name (the template
+// carries pane 1's inspector), which surfaced ONE pre-existing lookup the
+// ledger could not see before: the chat path-open roots in
+// renderer-shell-runtime-utils.js (41 pairs, still 23 files). W3-2 migrated the
+// other two (the render pipeline and the monitor controller's fallback).
+// 2026-09-28, Subagent Monitor v2: the monitor moved into the artifact panel's
+// `subagents` rail and stopped measuring its pane, so the controller's
+// `chatView` lookup was deleted, not migrated (40 pairs, 22 files).
 const REMAINING_LOOKUP_SITES = Object.freeze([
   // Wave 2 -- composer + wayfinder
   'renderer/app/renderer-app-controller-composition.js|composerWayfinderHost',
@@ -74,14 +82,16 @@ const REMAINING_LOOKUP_SITES = Object.freeze([
   'renderer/chat/renderer-slash-autocomplete.js|composerTerminalShortcut',
   'renderer/chat/renderer-stream-handler-terminal.js|composerWrap',
   // Wave 2 -- chat chrome (timeline utility cluster, transcript bindings,
-  // subagent monitor, shell runtime helpers)
+  // shell runtime helpers)
   'renderer/app/renderer-app-lifecycle-composition.js|artifactSplitViewToggle',
-  'renderer/chat/renderer-chat-event-transcript-bindings.js|chatInput',
-  'renderer/chat/renderer-chat-event-transcript-bindings.js|timelineCollapseExpandToggle',
-  'renderer/chat/renderer-chat-keyboard-utils.js|chatSelectionOverlayHost',
-  'renderer/chat/renderer-chat-keyboard-utils.js|chatView',
-  'renderer/chat/renderer-subagent-monitor-controller.js|chatView',
+  'renderer/chat/renderer-approval-focus-restore.js|chatInput',
+  'renderer/chat/renderer-chat-accessibility-wiring.js|chatSelectionOverlayHost',
+  'renderer/chat/renderer-chat-accessibility-wiring.js|chatView',
   'renderer/shell/renderer-shell-runtime-utils.js|chatTimeline',
+  // W3-2 -- chat path open over the subagent inspector (pane 0's; pane 1's
+  // timeline and inspector are found per event under the document since the
+  // inspector-scope fixes, tests/renderer-pane-inspector-scope.test.js)
+  'renderer/shell/renderer-shell-runtime-utils.js|subagentInspector',
   // Wave 2 -- chat search (its HOST_ID constant lookup is in INDIRECT_LOOKUP_SITES)
   'renderer/chat/renderer-chat-search-overlay.js|chatTimeline',
   'renderer/chat/renderer-chat-search-overlay.js|chatView',
@@ -323,13 +333,15 @@ test('the Wave 2 burn-down ledger of un-migrated getElementById lookups is exact
   );
   assert.equal(
     REMAINING_LOOKUP_SITES.length,
-    40,
-    'the ledger was pinned at 40 pairs on 2026-09-16 (26 plain-form, 14 optional-call-form)'
+    39,
+    'the ledger was pinned at 40 pairs on 2026-09-16 (26 plain-form, 14 optional-call-form); '
+    + 'W3-2 (2026-09-26) added the subagentInspector name and its one un-migrated path-open lookup: 41; '
+    + 'Subagent Monitor v2 (2026-09-28) deleted the monitor controller chatView lookup: 40; transcript views (2026-09-29) retired the bulk toggle lookup in the transcript bindings: 39'
   );
   assert.equal(
     new Set(REMAINING_LOOKUP_SITES.map((pair) => pair.split('|')[0])).size,
-    23,
-    'across 23 files, each named with the Wave 2 feature that owns its migration'
+    22,
+    'across 22 files, each named with the Wave 2 feature that owns its migration'
   );
 
   // The constant-argument lookups the pattern cannot see: same equality, same

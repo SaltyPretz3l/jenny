@@ -107,6 +107,9 @@
     let preparedSessionTransition = null;
     let pendingAnchorRestore = null;
     let disposed = false;
+    // Split view W1-4c: the pane root the transcript and composer were taken
+    // from, remembered at dock time so the restore puts them back THERE.
+    let restoreHost = null;
 
     function isFlagOn() {
       const flags = (state.features && state.features.featureFlags) || {};
@@ -127,6 +130,17 @@
 
     function effectiveWidth() {
       return clampWidth(getIde().chatDockWidth, dynamicMaxWidth());
+    }
+
+    // The width a drag or keyboard step SAVES (the rail's rule): a request past
+    // the viewport ceiling keeps the saved preference (or raises it to the
+    // ceiling) instead of overwriting it with the clamp.
+    function resolveSavedWidth(requested) {
+      const bounded = clampWidth(requested);
+      const ceiling = dynamicMaxWidth();
+      const shown = clampWidth(bounded, ceiling);
+      // At the ceiling (past it, or exactly on it) the saved preference is kept.
+      return shown >= ceiling ? Math.max(clampWidth(getIde().chatDockWidth), shown) : shown;
     }
 
     function syncUiMirror() {
@@ -208,6 +222,16 @@
     // directly follows the moved pair in the static markup).
     function shouldDock() {
       return isFlagOn() && state.ui?.activeView === 'ide' && getIde().chatDockOpen === true;
+    }
+
+    // The remembered pane root; else the pane root the nodes still sit in (never
+    // docked: nothing to move); else the focused pane's root; else #chatView.
+    function resolveRestoreHost(nodes, dockBody, movable) {
+      if (restoreHost && restoreHost.isConnected && restoreHost !== dockBody) return restoreHost;
+      const chatView = nodes.chatView || nodes.artifactReviewResizer?.parentNode || null;
+      const home = movable[0]?.parentNode || null;
+      if (home && home !== dockBody && home.parentNode === chatView && home.classList?.contains?.('chat-pane')) return home;
+      return chatView?.querySelector?.(':scope > .chat-pane[data-pane-focused="true"]') || chatView;
     }
 
     function movableNodes(nodes) {
@@ -380,6 +404,21 @@
       return movable.some((node) => node === active || node.contains?.(active)) ? active : null;
     }
 
+    // The Subagent Monitor is hosted by the artifact panel in Chat but by the
+    // stage's own aside in the dock; each move re-picks its host.
+    // Pane 0's composer settings fit rechecks after #composerWrap moves between
+    // hosts (renderer-app-shell-bindings.js listens): a move between equal
+    // widths fires no ResizeObserver.
+    function notifyComposerRehost(surface) {
+      if (typeof windowRef.CustomEvent !== 'function' || typeof windowRef.dispatchEvent !== 'function') return;
+      windowRef.dispatchEvent(new windowRef.CustomEvent('chat-surface:rehost', { detail: { surface } }));
+    }
+
+    function notifySubagentMonitorRehost() {
+      if (typeof windowRef.Event !== 'function') return;
+      windowRef.dispatchEvent?.(new windowRef.Event('subagent-monitor:rehost'));
+    }
+
     function reconcile() {
       if (disposed) return false;
       syncUiMirror();
@@ -415,11 +454,15 @@
           return false;
         }
         const focusedBeforeMove = captureMovableFocus(movable, doc);
+        const origin = movable[0].parentNode;
+        if (origin && origin !== dockBody) restoreHost = origin;
         for (const node of movable) {
           dockBody.appendChild(node); // fixed order: transcript | composer
         }
         layoutIdeEditor();
         onHostChanged(true);
+        notifySubagentMonitorRehost();
+        notifyComposerRehost('workspace');
         const wantsComposerFocus = focusComposerOnDock;
         focusComposerOnDock = false;
         if (wantsComposerFocus) {
@@ -436,8 +479,13 @@
         );
         return true;
       }
-      const anchor = nodes.artifactReviewResizer || null;
-      const host = anchor?.parentNode || nodes.chatView || null;
+      const host = resolveRestoreHost(nodes, dockBody, movable);
+      // A pane root keeps its fixed order (thread stage before the utility
+      // cluster, composer last); #chatView itself keeps the artifact anchor.
+      const paneRoot = host?.classList?.contains?.('chat-pane') === true;
+      const anchor = paneRoot
+        ? host.querySelector(':scope > [data-chat-node="chatTimelineUtilityCluster"]')
+        : nodes.artifactReviewResizer || null;
       if (!host) {
         return false;
       }
@@ -454,15 +502,19 @@
       const shouldRestoreEditorFocus = focusIsInside(dom.ideChatDock, doc);
       const focusedBeforeMove = captureMovableFocus(movable, doc);
       for (const node of movable) {
-        host.insertBefore(node, anchor);
+        if (paneRoot && node === nodes.composerWrap) host.appendChild(node);
+        else host.insertBefore(node, anchor && anchor.parentNode === host ? anchor : null);
       }
       layoutIdeEditor();
-      onHostChanged(false);
       if (focusedBeforeMove?.isConnected) {
         focusedBeforeMove.focus?.();
       } else if (shouldRestoreEditorFocus) {
         nodes.ideEditorHost?.focus?.();
       }
+      // After the focus restore: split view hands pane focus back from here.
+      onHostChanged(false);
+      notifySubagentMonitorRehost();
+      notifyComposerRehost('chat');
       appendClientLog('INFO', 'ide_chat_dock.host_reconciled', { host: 'chat' });
       if (anchorTransition) scheduleAnchorRestore(
         anchorTransition.sessionId,
@@ -579,7 +631,7 @@
       const delta = (dockSide() === 'left') !== rtl
         ? event.clientX - dragState.startX
         : dragState.startX - event.clientX;
-      getIde().chatDockWidth = clampWidth(dragState.startWidth + delta, dynamicMaxWidth());
+      getIde().chatDockWidth = resolveSavedWidth(dragState.startWidth + delta);
       applyWidthVar();
     }
 
@@ -616,7 +668,7 @@
       }
       const growKey = dockSide() === 'left' ? 'ArrowRight' : 'ArrowLeft';
       const step = event.key === growKey ? KEYBOARD_RESIZE_STEP : -KEYBOARD_RESIZE_STEP;
-      getIde().chatDockWidth = clampWidth(effectiveWidth() + step, dynamicMaxWidth());
+      getIde().chatDockWidth = resolveSavedWidth(effectiveWidth() + step);
       applyWidthVar();
       schedulePersist();
       event.preventDefault();
@@ -664,6 +716,8 @@
       reconcile,
       prepareSessionTransition,
       render,
+      // Re-apply the shown width through the live clamp (a side panel moved).
+      syncWidth: applyWidthVar,
       toggle,
     };
   }

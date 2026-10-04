@@ -5,6 +5,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const { BackendService } = require('../services/backend/backend-service');
+const { normalizeToolsStatus } = require('../services/backend/managed-sidecar-status');
 const {
   DEFAULT_MANAGED_OLLAMA_FALLBACK_MODEL,
   DEFAULT_MANAGED_SHELL_CONTEXT_LENGTH,
@@ -24,6 +25,22 @@ const {
 } = require('./helpers/resource-cleanup');
 
 const LEGACY_MANAGED_VLLM_MODEL = 'Qwen/Qwen3.5-9B';
+
+test('managed tool status preserves connection identity and explicit side effects in both casings', () => {
+  for (const camel of [false, true]) {
+    const raw = camel
+      ? { connectionId: 'plugin:pub:tools', serverName: 'electron_tool_bridge', sideEffecting: true }
+      : { connection_id: 'plugin:pub:tools', server_name: 'electron_tool_bridge', side_effecting: true };
+    const status = normalizeToolsStatus({ plugin_tool: { available: false, ...raw } }).plugin_tool;
+    assert.equal(status.connection_id, 'plugin:pub:tools');
+    assert.equal(status.server_name, 'electron_tool_bridge');
+    assert.equal(status.side_effecting, true);
+    const read = normalizeToolsStatus({ read_file: camel
+      ? { sideEffecting: false } : { side_effecting: false } }).read_file;
+    assert.equal(read.side_effecting, false);
+  }
+  assert.equal(normalizeToolsStatus({ legacy: true }).legacy.side_effecting, undefined);
+});
 
 test.afterEach(async () => {
   await cleanupTrackedResources();

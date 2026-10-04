@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -46,6 +47,8 @@ from sidecar.ai.tools.builtins.web_http import (
     RedirectPolicyBlockedError,
     RedirectTargetInvalidError,
     _NoRedirectHandler,
+    _remaining_seconds,
+    _set_response_timeout,
     read_url_response,
     validate_public_url,
 )
@@ -260,21 +263,24 @@ class _ProviderRequestError(Exception):
 _VENDOR_OPENER = urllib.request.build_opener(_NoRedirectHandler())
 
 
-def _vendor_urlopen(request: urllib.request.Request, *, timeout_s: int) -> Any:
+def _vendor_urlopen(request: urllib.request.Request, *, timeout_s: float) -> Any:
     return _VENDOR_OPENER.open(request, timeout=timeout_s)
 
 
 def _request_json(
     request_spec: str | _ProviderHttpRequest,
     *,
-    timeout_s: int,
+    timeout_s: float,
     provider: str,
+    deadline: float | None = None,
 ) -> dict[str, Any]:
     """Issue one blocking HTTP request and parse a JSON object response.
 
     Error messages never include the request URL or headers — vendor URLs and
     headers can carry API keys, and these messages flow into tool output/logs.
     """
+    if deadline is None:
+        deadline = time.monotonic() + timeout_s
     spec = (
         request_spec
         if isinstance(request_spec, _ProviderHttpRequest)
@@ -286,8 +292,10 @@ def _request_json(
     for header, value in (spec.headers or {}).items():
         request.add_header(header, value)
     try:
-        with _vendor_urlopen(request, timeout_s=timeout_s) as response:
+        with _vendor_urlopen(request, timeout_s=_remaining_seconds(deadline)) as response:
+            _set_response_timeout(response, _remaining_seconds(deadline))
             raw = response.read(_MAX_PROVIDER_RESPONSE_BYTES + 1)
+            _remaining_seconds(deadline)
     except urllib.error.HTTPError as exc:
         status = int(getattr(exc, "code", 0) or 0)
         if _HTTP_REDIRECT_MIN <= status < _HTTP_CLIENT_ERROR_MIN:
@@ -482,7 +490,8 @@ class _JsonApiProvider:
         validated: Any,
         request: _ProviderHttpRequest,
         *,
-        timeout_s: int,
+        timeout_s: float,
+        deadline: float,
     ) -> dict[str, Any]:
         """Issue the search request and parse the JSON object response.
 
@@ -495,6 +504,7 @@ class _JsonApiProvider:
             request,
             timeout_s=timeout_s,
             provider=self.name,
+            deadline=deadline,
         )
 
     def _extract(self, data: dict[str, Any]) -> tuple[str, list[tuple[str, str, str]]]:
@@ -509,6 +519,7 @@ class _JsonApiProvider:
         allowed_domains: list[str] | None,
         blocked_domains: list[str] | None,
     ) -> dict[str, object]:
+        deadline = time.monotonic() + timeout_s
         try:
             request = self._build_request(query)
         except Exception:  # noqa: BLE001 — providers never raise across the boundary
@@ -522,6 +533,13 @@ class _JsonApiProvider:
             validated = validate_public_url(
                 self._validation_target(request.url),
                 allow_private=self._allow_private_addresses,
+                deadline=deadline,
+            )
+        except TimeoutError:
+            return _error_payload(
+                query=query,
+                provider=self.name,
+                error=f"{self.name} search failed: network error",
             )
         except (PermissionError, ValueError) as error:
             # Fail closed without issuing any request; keep the message
@@ -544,7 +562,8 @@ class _JsonApiProvider:
             data = self._fetch_json(
                 validated,
                 request,
-                timeout_s=timeout_s,
+                timeout_s=_remaining_seconds(deadline),
+                deadline=deadline,
             )
             answer, raw_sources = self._extract(data)
         except _ProviderRequestError as exc:
@@ -599,7 +618,8 @@ class SearXNGProvider(_JsonApiProvider):
         validated: Any,
         request: _ProviderHttpRequest,
         *,
-        timeout_s: int,
+        timeout_s: float,
+        deadline: float,
     ) -> dict[str, Any]:
         # SearXNG is the one user-supplied-host provider, so it uses the same
         # DNS-pinned, redirect-revalidating, size-bounded fetch as fetch_url
@@ -611,6 +631,7 @@ class SearXNGProvider(_JsonApiProvider):
                 timeout_s=timeout_s,
                 max_bytes=_MAX_PROVIDER_RESPONSE_BYTES,
                 allow_private=self._allow_private_addresses,
+                deadline=deadline,
             )
         # A redirect hop the safety policy rejects gets the same wording as the
         # first-hop rejection above — a settled policy block, not the retryable

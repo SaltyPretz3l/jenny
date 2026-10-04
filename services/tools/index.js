@@ -71,6 +71,9 @@ function createDefaultRegistry(options = {}) {
   if (options.toolsVerifyEnabled === true) {
     registry.registerTool(withManifestSchema(verifyTool));
   }
+  if (options.toolsImageGenerateEnabled === true) {
+    registry.registerTool(withManifestSchema(require('./builtin/image-generate-tool')));
+  }
   if (options.toolsHomeEnabled === true) {
     registry.registerTool(withManifestSchema(homeTool));
   }

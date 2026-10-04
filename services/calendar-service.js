@@ -3,7 +3,7 @@
 const path = require('path');
 const { EventEmitter } = require('events');
 const { FileJsonStore } = require('./backend/file-json-store');
-const { requestWithTimeout } = require('./http-fetch-util');
+const { requestWithTimeout, readBoundedResponseText } = require('./http-fetch-util');
 const { listHomeCalendarFeeds } = require('./home-config-schema');
 const {
   HOME_CALENDAR_CATEGORIES,
@@ -14,13 +14,15 @@ const {
   formatLocalDateTime,
   normalizeCalendarEvent,
   normalizeCalendarEventList,
+  parseLocalDateTime,
+  addLocalDays,
 } = require('./home-calendar-schema');
 const { extractIcsInstances } = require('./ics-parse-util');
 
 // Home dashboard calendar service: owns local events (dedicated store —
 // events grow and write on user action, so they stay out of the hot
 // shell-config blob) and polls read-only ICS feed subscriptions from
-// shell-config `home.calendar.feeds`, mirroring the weather/link-status
+// shell-config `home.calendar.feeds`, mirroring the link-status
 // poller conventions (EventEmitter + unref'd interval + JSON-deduped emits).
 //
 // Local events are re-expanded on every getState (cheap, capped store), so
@@ -59,6 +61,34 @@ function buildFeedWarning(entry) {
   return parts.join('; ');
 }
 
+const MAX_RANGE_DAYS = 180;
+
+// Tool ranges arrive as local date-times, bare dates or timestamps with a zone
+// suffix; all are read as local wall-clock values like the stored events.
+function parseRangeBound(value) {
+  const text = String(value || '').trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(text)) return parseLocalDateTime(`${text}T00:00`);
+  return parseLocalDateTime(text.replace(/(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})$/i, ''));
+}
+
+// A missing bound comes from the dashboard window, or sits one window away
+// from the given bound when that window would be empty; spans are clamped.
+function resolveRangeWindow(range, dashboardWindow) {
+  let windowStart = parseRangeBound(range.start);
+  let windowEnd = parseRangeBound(range.end);
+  if (!windowStart) {
+    windowStart = windowEnd > dashboardWindow.windowStart ? dashboardWindow.windowStart : addLocalDays(windowEnd, -60);
+  }
+  if (!windowEnd) {
+    windowEnd = windowStart < dashboardWindow.windowEnd ? dashboardWindow.windowEnd : addLocalDays(windowStart, 60);
+  }
+  if (windowEnd <= windowStart) {
+    throw new Error('Calendar range end must be after its start.');
+  }
+  const limit = addLocalDays(windowStart, MAX_RANGE_DAYS);
+  return windowEnd > limit ? { windowStart, windowEnd: limit, clamped: true } : { windowStart, windowEnd };
+}
+
 class CalendarService extends EventEmitter {
   constructor({
     userDataPath,
@@ -88,7 +118,10 @@ class CalendarService extends EventEmitter {
     this.pollIntervalMs = Math.max(Number(pollIntervalMs) || DEFAULT_CALENDAR_POLL_INTERVAL_MS, 60_000);
     this.setIntervalImpl = setIntervalImpl;
     this.clearIntervalImpl = clearIntervalImpl;
-    this.events = normalizeCalendarEventList(this.store.read({})?.events);
+    const initial = this.store.readWithStatus?.({}) || { value: this.store.read({}) };
+    this._storageReadFailed = initial.corrupted === true
+      || (initial.missing === false && !Array.isArray(initial.value?.events));
+    this.events = normalizeCalendarEventList(initial.value?.events);
     /** @type {Map<string, Object>} feedId -> last fetch outcome (instances kept on failure) */
     this._feedCache = new Map();
     this._timer = null;
@@ -127,14 +160,20 @@ class CalendarService extends EventEmitter {
     }
   }
 
-  getState() {
+  getState(range = {}) {
     const now = this.nowProvider();
-    const window = computeCalendarWindow(now);
+    const dashboardWindow = computeCalendarWindow(now);
+    const ranged = Boolean(parseRangeBound(range.start) || parseRangeBound(range.end));
+    const window = ranged ? resolveRangeWindow(range, dashboardWindow) : dashboardWindow;
     const feeds = this._readConfiguredFeeds();
     const instances = expandCalendarEvents(this.events, window);
     const feedsMeta = [];
+    const uncoveredFeeds = [];
     for (const feed of feeds) {
       const entry = this._feedCache.get(feed.id);
+      // A ranged read re-expands the last good body; a feed that has never
+      // fetched is reported as uncovered instead of failing the local events.
+      if (ranged && typeof entry?.body !== 'string') uncoveredFeeds.push(feed.name || feed.id);
       feedsMeta.push({
         id: feed.id,
         name: feed.name,
@@ -144,10 +183,11 @@ class CalendarService extends EventEmitter {
         warning: entry ? buildFeedWarning(entry) : '',
         skippedCount: entry?.skippedCount || 0,
       });
-      if (!entry) {
+      if (!entry || (ranged && typeof entry.body !== 'string')) {
         continue;
       }
-      for (const instance of entry.instances) {
+      const feedInstances = ranged ? extractIcsInstances(entry.body, window).instances : entry.instances;
+      for (const instance of feedInstances) {
         instances.push({
           instanceId: `feed:${feed.id}:${instance.uid || 'event'}:${instance.start}`,
           eventId: '',
@@ -177,30 +217,35 @@ class CalendarService extends EventEmitter {
       // from the SERIES anchor (recurrence/notes), not the clicked occurrence.
       events: this.events.map((event) => ({ ...event })),
       feeds: feedsMeta,
+      ...(ranged ? { rangeClamped: window.clamped === true, uncoveredFeeds } : {}),
     };
   }
 
-  createEvent(payload = {}) {
+  createEvent(payload = {}, { restore = false } = {}) {
+    this._assertStorageReadable();
     if (this.events.length >= MAX_CALENDAR_EVENTS) {
       throw new Error(`calendar store is full (${MAX_CALENDAR_EVENTS} events)`);
     }
     const nowIso = this.nowProvider().toISOString();
     const event = normalizeCalendarEvent({
       ...payload,
-      id: this._generateEventId(),
-      createdAt: nowIso,
-      updatedAt: nowIso,
+      id: restore ? payload.id : this._generateEventId(),
+      createdAt: restore ? payload.createdAt : nowIso,
+      updatedAt: restore ? payload.updatedAt : nowIso,
     });
     if (!event) {
       throw new Error('calendar event requires a valid start time');
     }
-    this.events = [...this.events, event];
-    this._persistEvents();
+    if (this.events.some((existing) => existing.id === event.id)) {
+      throw new Error(`calendar event already exists: ${event.id}`);
+    }
+    this._persistEvents([...this.events, event]);
     this._emitChangedIfNeeded();
     return this.getState();
   }
 
   updateEvent(id, patch = {}) {
+    this._assertStorageReadable();
     const eventId = String(id || '').trim();
     const existing = this.events.find((event) => event.id === eventId);
     if (!existing) {
@@ -225,8 +270,7 @@ class CalendarService extends EventEmitter {
     if (!updated) {
       throw new Error('calendar event update requires a valid start time');
     }
-    this.events = this.events.map((event) => (event.id === eventId ? updated : event));
-    this._persistEvents();
+    this._persistEvents(this.events.map((event) => (event.id === eventId ? updated : event)));
     this._emitChangedIfNeeded();
     return this.getState();
   }
@@ -258,21 +302,20 @@ class CalendarService extends EventEmitter {
     if (!anchorUpdated || !standalone) {
       throw new Error('calendar occurrence edit requires a valid start time');
     }
-    this.events = [
+    this._persistEvents([
       ...this.events.map((event) => (event.id === anchor.id ? anchorUpdated : event)),
       standalone,
-    ];
-    this._persistEvents();
+    ]);
     this._emitChangedIfNeeded();
     return this.getState();
   }
 
   deleteEvent(id) {
+    this._assertStorageReadable();
     const eventId = String(id || '').trim();
     const next = this.events.filter((event) => event.id !== eventId);
     if (next.length !== this.events.length) {
-      this.events = next;
-      this._persistEvents();
+      this._persistEvents(next);
       this._emitChangedIfNeeded();
     }
     return this.getState();
@@ -314,14 +357,17 @@ class CalendarService extends EventEmitter {
     await Promise.all(feeds.map(async (feed) => {
       const previous = this._feedCache.get(feed.id);
       try {
-        const response = await requestWithTimeout(feed.url, { fetchImpl: this.fetchImpl });
-        if (!response?.ok) {
-          throw new Error(`feed responded ${Number(response?.status) || 0}`);
-        }
-        const body = await response.text();
+        const body = await requestWithTimeout(feed.url, {
+          fetchImpl: this.fetchImpl,
+          consumeResponse: (response, signal) => {
+            if (!response?.ok) throw new Error(`feed responded ${Number(response?.status) || 0}`);
+            return readBoundedResponseText(response, { maxBytes: 2_000_000, signal });
+          },
+        });
         const { instances, skippedCount, unsupportedRruleCount } = extractIcsInstances(body, window);
         this._feedCache.set(feed.id, {
           instances,
+          body,
           skippedCount,
           unsupportedRruleCount,
           ok: true,
@@ -336,6 +382,7 @@ class CalendarService extends EventEmitter {
         // Keep the last good instances visible; surface the failure.
         this._feedCache.set(feed.id, {
           instances: previous?.instances || [],
+          body: previous?.body,
           skippedCount: previous?.skippedCount || 0,
           unsupportedRruleCount: previous?.unsupportedRruleCount || 0,
           ok: false,
@@ -361,12 +408,30 @@ class CalendarService extends EventEmitter {
   }
 
   _generateEventId() {
-    this._idCounter += 1;
-    return `evt_${this.nowProvider().getTime().toString(36)}_${this._idCounter.toString(36)}`;
+    let id;
+    do {
+      this._idCounter += 1;
+      id = `evt_${this.nowProvider().getTime().toString(36)}_${this._idCounter.toString(36)}`;
+    } while (this.events.some((event) => event.id === id));
+    return id;
   }
 
-  _persistEvents() {
-    this.store.writeImmediate({ version: CALENDAR_STORE_VERSION, events: this.events });
+  _assertStorageReadable() {
+    const status = this.store.readWithStatus?.({});
+    if (!status) return;
+    if (status.corrupted || (!status.missing && !Array.isArray(status.value?.events))) {
+      this._storageReadFailed = true;
+      throw new Error('Calendar storage is unreadable or malformed. Restore it before saving changes.');
+    }
+    if (this._storageReadFailed) {
+      this.events = normalizeCalendarEventList(status.value?.events);
+      this._storageReadFailed = false;
+    }
+  }
+
+  _persistEvents(events) {
+    this.store.writeImmediate({ version: CALENDAR_STORE_VERSION, events });
+    this.events = events;
   }
 
   // Emit key covers everything that changes what the renderer would paint:

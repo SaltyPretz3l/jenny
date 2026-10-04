@@ -18,6 +18,7 @@
   function start() {
     var api = root.jennyShell && root.jennyShell.dataLifecycle;
     var mount = root.document.getElementById('dataLifecycleSettingsMount');
+    var removeMount = root.document.getElementById('dataLifecycleRemoveMount');
     var actionButton = root.inventoryActionButton;
     var textField = root.inventoryTextField;
     var toggle = root.inventoryToggleSwitch;
@@ -41,9 +42,8 @@
       return !disposed && modal === context.element && modalEpoch === context.epoch;
     }
 
-    function escapeHtml(value) {
-      return actionButton.escapeHtml(String(value == null ? '' : value));
-    }
+    const escapeHtml = ((typeof globalThis !== 'undefined' && globalThis.stringUtils)
+      || (typeof require === 'function' ? require('../shared/string-utils') : null)).escapeHtml;
 
     function button(id, label, variant, extra) {
       return actionButton(Object.assign({ id: id, label: label, variant: variant || 'secondary' }, extra || {}));
@@ -53,26 +53,32 @@
       var status = root.document.getElementById('dataLifecycleSettingsStatus');
       if (!status) return;
       status.textContent = String(message || '');
+      status.hidden = !status.textContent;
       status.dataset.tone = String(tone || 'muted');
     }
 
+    // The text runs the group's width with the archive actions in a row under it;
+    // Uninstall renders into its own group at the end of the page.
     function renderSettings() {
-      mount.innerHTML = '<div class="settings-setup-row data-lifecycle-settings-row">'
-        + '<div><h4 class="settings-setup-row-title">' + jt('dataLifecycle.settings.title', 'Data & removal') + '</h4>'
-        + '<p class="settings-group-copy">' + jt('dataLifecycle.settings.description', 'Archive, restore, or remove Jenny without touching shared models or ordinary project files.') + '</p>'
+      mount.innerHTML = '<div class="data-lifecycle-settings-row">'
+        + '<div><p class="settings-group-copy">' + jt('dataLifecycle.settings.description', 'Archive, restore, or remove Jenny without touching shared models or ordinary project files.') + '</p>'
         + '<p class="settings-group-copy">' + jt('dataLifecycle.settings.localDataDescription', 'Chats, attachments, preferences, personality, calendar, and memory remain local until you delete or remove them. Usage diagnostics retain at most 30 days and 500 turns. Optional workspace archives include only reviewed portable data under the current .jenny folder.') + '</p>'
         + '<div class="data-lifecycle-settings-counts">'
         + '<span>' + escapeHtml(jtn('dataLifecycle.settings.chatCount', normalizeCount(overview.chats), countParams(normalizeCount(overview.chats)), '{count} chat', '{count} chats')) + '</span>'
         + '<span>' + escapeHtml(jtn('dataLifecycle.settings.attachmentCount', normalizeCount(overview.attachments), countParams(normalizeCount(overview.attachments)), '{count} attachment', '{count} attachments')) + '</span>'
         + '<span>' + escapeHtml(jt('dataLifecycle.settings.preferencesIncluded', 'Preferences included · {memory}', { memory: jtn('dataLifecycle.settings.memoryStoreCount', normalizeCount(overview.memory), countParams(normalizeCount(overview.memory)), '{count} memory store', '{count} memory stores') })) + '</span>'
         + '<span>' + escapeHtml(overview.workspaceAvailable ? jtn('dataLifecycle.settings.workspaceItemCount', Math.max(0, Math.floor(Number(overview.workspace) || 0)), { count: Math.max(0, Math.floor(Number(overview.workspace) || 0)).toLocaleString(globalThis.jennyI18n?.tag?.()) }, '{count} workspace item', '{count} workspace items') : jt('dataLifecycle.settings.noCurrentWorkspace', 'No current workspace')) + '</span>'
-        + '</div><div class="settings-note" id="dataLifecycleSettingsStatus" aria-live="polite">' + jt('dataLifecycle.settings.summaryReady', 'Data summary is ready.') + '</div></div>'
+        + '</div><div class="settings-note" id="dataLifecycleSettingsStatus" aria-live="polite" hidden></div></div>'
         + '<div class="settings-actions data-lifecycle-settings-actions">'
         + button('settings-create-archive', jt('dataLifecycle.actions.createArchive', 'Create archive'), 'secondary')
         + button('settings-restore-archive', jt('dataLifecycle.actions.restoreProfile', 'Restore profile'), 'secondary')
         + (overview.workspaceAvailable ? button('settings-restore-workspace', jt('dataLifecycle.actions.restoreWorkspaceData', 'Restore workspace data'), 'secondary') : '')
-        + button('settings-uninstall', jt('dataLifecycle.actions.uninstallJenny', 'Uninstall Jenny'), 'danger')
+        + (removeMount ? '' : button('settings-uninstall', jt('dataLifecycle.actions.uninstallJenny', 'Uninstall Jenny'), 'danger'))
         + '</div></div>';
+      if (removeMount) {
+        removeMount.innerHTML = '<p class="settings-group-copy">' + escapeHtml(jt('dataLifecycle.settings.removeDescription', 'Uninstall Jenny from this computer. You choose what to keep, and can make an archive first.')) + '</p>'
+          + '<div class="settings-actions">' + button('settings-uninstall', jt('dataLifecycle.actions.uninstallJenny', 'Uninstall Jenny'), 'danger') + '</div>';
+      }
     }
 
     function closeModal() {
@@ -252,6 +258,10 @@
         if (isCurrentModal(context)) modalBusy = false;
       }
       if (!isCurrentModal(context)) return;
+      if (result && !result.ok && result.retainedPartial && result.retainedPartial.path) {
+        setModalStatus(jt('dataLifecycle.archive.failedPartialRetained', 'Archive failed: {reason}. An unfinished copy could not be removed and is still at {path}. Delete that folder to remove the data.', { reason: String(result.error && result.error.reason || 'operation_failed'), path: String(result.retainedPartial.path) }), 'danger');
+        return;
+      }
       if (!result || !result.ok) {
         setModalStatus(jt('dataLifecycle.archive.failed', 'Archive failed safely: {reason}', { reason: String(result && result.error && result.error.reason || 'operation_failed') }), 'danger');
         return;
@@ -415,9 +425,11 @@
           : jt('dataLifecycle.uninstall.usePlatformHelper', 'Use your platform uninstall helper to continue.'), launch && launch.ok ? 'warning' : 'danger');
       }
     }
-    mount.addEventListener('click', function (event) {
-      void handleSettingsClick(event).catch(function () {
-        if (!disposed) setStatus(jt('dataLifecycle.errors.actionUnavailable', 'Data action is temporarily unavailable.'), 'danger');
+    [mount, removeMount].filter(Boolean).forEach(function (host) {
+      host.addEventListener('click', function (event) {
+        void handleSettingsClick(event).catch(function () {
+          if (!disposed) setStatus(jt('dataLifecycle.errors.actionUnavailable', 'Data action is temporarily unavailable.'), 'danger');
+        });
       });
     });
 
@@ -452,10 +464,13 @@
     });
 
     function syncPortablePreferences() {
-      var appearance = root.appearanceUtils?.loadAppearancePreferences?.(root.localStorage) || {};
-      var chatZoomPercent = Number(root.document.documentElement.dataset.chatZoom || 100);
+      var appearanceUtils = root.appearanceUtils;
+      var appearance = appearanceUtils?.loadAppearancePreferences?.(root.localStorage) || {};
+      // The portable copy is re-projected into storage on every launch, so it
+      // must carry the type-scale stamp or it would be migrated again.
+      if (typeof appearanceUtils?.stampTypeScale === 'function') appearance = appearanceUtils.stampTypeScale(appearance);
       var preferredModel = String(root.document.getElementById('composerModelSelect')?.value || '').trim();
-      var preferences = { appearance: appearance, chatZoomPercent: chatZoomPercent };
+      var preferences = { appearance: appearance };
       if (preferredModel) preferences.preferredModel = preferredModel;
       void Promise.resolve(api.syncPortablePreferences(preferences)).catch(function () {});
     }
@@ -469,9 +484,8 @@
       attributes: true,
       attributeFilter: [
         'data-palette', 'data-typography', 'data-motion', 'data-surface-effect',
-        'data-composer-holo', 'data-sprite-holo', 'data-thread-style',
-        'data-timeline-style', 'data-font-scale', 'data-chat-zoom',
-        'data-chat-width',
+        'data-composer-holo', 'data-thread-style',
+        'data-font-scale', 'data-chat-width', 'data-startup-animation', 'data-titlebar-load', 'data-artifact-auto-open',
       ],
     });
     function dispose() {

@@ -533,7 +533,7 @@ def test_exec_find_stops_after_visited_path_budget_without_matches(
         calls += 1
         return False
 
-    collector = exec_ops_module._EntryCollector(  # noqa: SLF001
+    collector = exec_ops_module._EntryCollector(
         [], 1, 1, "*.md", True, max_visited_paths=3
     )
     root = SimpleNamespace(label="kb", path=corpus["root_a"], guard=SimpleNamespace())
@@ -546,7 +546,7 @@ def test_exec_find_stops_after_visited_path_budget_without_matches(
     )
     monkeypatch.setattr(exec_ops_module.fnmatch, "fnmatch", never_matches)
 
-    truncated = exec_ops_module._collect_entries(  # noqa: SLF001
+    truncated = exec_ops_module._collect_entries(
         root, corpus["root_a"], collector=collector
     )
 

@@ -32,3 +32,14 @@ test('modelsList omits inspection metadata for existing callers', async () => {
 
   assert.equal(Object.hasOwn(params, 'inspect_model_id'), false);
 });
+
+
+test('modelsList forwards the host catalog and an empty catalog clears prior discovery', async () => {
+  const client = new SidecarClient();
+  const requests = [];
+  client.request = async (method, params) => { requests.push({ method, params }); return { models: [] }; };
+  const rows = [{ id: 'gpt-6.1-sol' }];
+  await client.modelsList('chatgpt', { chatgptModelCatalog: rows });
+  await client.modelsList('chatgpt', { chatgptModelCatalog: [] });
+  assert.deepEqual(requests.map((request) => request.params.chatgpt_model_catalog), [rows, []]);
+});

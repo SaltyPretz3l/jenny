@@ -45,6 +45,47 @@ class SnapshotTests(unittest.TestCase):
             with self.assertRaises(SnapshotError):
                 snapshot_inputs(source, destination)
 
+    def test_subpath_copies_only_project_and_counts_subtree_limits(self):
+        with tempfile.TemporaryDirectory(dir=".") as root:
+            source, destination = Path(root) / "in", Path(root) / "out"
+            (source / "a" / "nested").mkdir(parents=True)
+            (source / "b").mkdir()
+            (source / "a" / "nested" / "ok").write_bytes(b"ok")
+            (source / "b" / "secret").write_bytes(b"secret" * 100)
+            stats = snapshot_inputs(source, destination, subpath="a", max_bytes=2,
+                                    max_files=2, max_depth=1)
+            self.assertEqual((stats.files, stats.bytes), (1, 2))
+            self.assertEqual(list(destination.iterdir()), [destination / "nested"])
+            self.assertEqual((destination / "nested" / "ok").read_bytes(), b"ok")
+            nested = Path(root) / "nested-out"
+            snapshot_inputs(source, nested, subpath="a/nested", max_depth=0, max_files=1)
+            self.assertEqual(list(nested.iterdir()), [nested / "ok"])
+            with self.assertRaises(SnapshotLimit):
+                snapshot_inputs(source, Path(root) / "limited", subpath="a", max_bytes=1)
+
+    def test_missing_or_non_directory_subpath_fails(self):
+        with tempfile.TemporaryDirectory(dir=".") as root:
+            source = Path(root) / "in"
+            source.mkdir()
+            (source / "file").write_bytes(b"x")
+            for subpath in ("missing", "file", "file/child"):
+                with self.subTest(subpath=subpath), self.assertRaises(SnapshotError):
+                    snapshot_inputs(source, Path(root) / "out", subpath=subpath)
+
+    def test_symlinked_subpath_component_fails(self):
+        with tempfile.TemporaryDirectory(dir=".") as root:
+            source = Path(root) / "in"
+            (source / "a" / "nested").mkdir(parents=True)
+            try:
+                (source / "link").symlink_to((source / "a").resolve(), target_is_directory=True)
+                (source / "a" / "link").symlink_to((source / "a" / "nested").resolve(),
+                                                  target_is_directory=True)
+            except (OSError, NotImplementedError):
+                self.skipTest("symlinks unavailable")
+            for subpath in ("link", "link/nested", "a/link"):
+                with self.subTest(subpath=subpath), self.assertRaises(SnapshotError):
+                    snapshot_inputs(source, Path(root) / "out", subpath=subpath)
+
 
 if __name__ == "__main__":
     unittest.main()

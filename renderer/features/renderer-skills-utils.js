@@ -113,13 +113,14 @@
           label: jt('skills.settings.skillEnabled', '{name} enabled', { name: entry.name }), className: 'skills-settings-row-toggle' }) || '') + '</div>';
     }
 
+    // Resolved at render time: the settings field modules load after this one.
     function autoIndexRowMarkup(skillsState) {
-      const autoCopy = jt('skills.autoIndex.description', 'Adds a short skill index to every turn (~900 tokens). Auto: on for cloud models, off for local models.');
-      return '<div class="settings-field-row skills-settings-row" data-skills-auto-index-row>'
-        + '<span class="settings-field-row-text"><strong>' + jt('skills.settings.autoChoose', 'Let Jenny choose skills automatically') + '</strong><small>'
-        + escapeHtml(autoCopy) + '</small></span>'
-        + (toggleSwitch?.({ id: 'skillsAutoIndexToggle', checked: skillsState.settings.autoIndex === 'on',
-          label: jt('skills.settings.autoChoose', 'Let Jenny choose skills automatically'), className: 'skills-settings-row-toggle' }) || '') + '</div>';
+      const load = (path) => (typeof require === 'function' ? require(path) : null);
+      const binding = windowRef.rendererSettingsFieldBinding || load('../shell/renderer-settings-field-binding');
+      const descriptors = windowRef.rendererSettingsFieldDescriptors || load('../shell/renderer-settings-field-descriptors');
+      const descriptor = descriptors?.getSettingDescriptor?.('skillsAutoIndexToggle');
+      if (!binding || !descriptor) return '';
+      return binding.renderSettingRow(descriptor, descriptors.normalizeSettingValue(descriptor, skillsState.settings.autoIndex));
     }
 
     function warningMarkup(skillsState, scopes) {
@@ -196,6 +197,7 @@
         const payload = await windowRef.jennyShell.skills.updateSettings(patch);
         applySkillsPayload(payload);
         renderSettings();
+        return payload;
       } catch (error) {
         showShellErrorToast(toErrorMessage(error, jt('skills.errors.updateFailed', 'Could not update skills settings.')), {
           title: jt('skills.errors.updateTitle', 'Skills Update Failed'),

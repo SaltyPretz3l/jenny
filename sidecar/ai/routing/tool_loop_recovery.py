@@ -15,7 +15,6 @@ context nudge).
 from __future__ import annotations
 
 import logging
-import re
 from dataclasses import dataclass, replace
 from typing import Any, Callable
 
@@ -32,28 +31,65 @@ _TOOL_BUDGET_EXHAUSTED_MESSAGE = (
 
 
 def _is_tool_call_markup(text: str, loop: Any) -> bool:
-    """Return whether visible text is an in-band or native tool-call attempt.
-
-    Native XML markup counts only when the whole response starts with it, and
-    the in-band JSON / ``name({...})`` shapes count only for the turn's real
-    tool names, so prose that merely mentions a tag or a tool is untouched.
-    (The in-band parser is not imported: this module sits at the leaf import
-    fan-out cap, and these two shapes are what it would recognise here.)
-    """
+    """Thin delegate: is the visible text nothing but a call to the turn's tools?"""
     import sidecar.ai.routing.tool_loop as _tl_hub
 
-    stripped = str(text or "").strip()
-    if not stripped:
-        return False
-    lowered = stripped.lower()
-    if lowered.startswith("<tool_call") or lowered.startswith("<function="):
+    names = _tl_hub.text_tool_calls.contract_tool_names(loop.tool_contract)
+    return _tl_hub.text_tool_calls.is_tool_call_only(str(text or ""), names)
+
+
+def _tool_cap_spent(loop: Any) -> bool:
+    # HB-031: a resumed leg is a new run without the flag; a spent runtime budget counts.
+    if getattr(loop, "tool_cap_tools_stripped", False):
         return True
-    body = re.sub(r"^```[a-z]*\s*", "", stripped, flags=re.IGNORECASE).lstrip()
-    json_like = body.startswith("{") and '"arguments"' in body
-    for name in _tl_hub._available_tool_names(loop.tool_contract):
-        if body.startswith(f"{name}(") or (json_like and f'"{name}"' in body):
-            return True
-    return False
+    return int(loop.runtime.tool_call_limit or 0) > 0 and loop.runtime.remaining_tool_calls == 0
+
+
+_UNRUN_TEXT_CALL = (
+    "My {names} call was written as text after tool use ended for this turn, "
+    "so it did not run."
+)
+
+
+def _drop_text_tool_calls(loop: Any, text: str, *, reason: str) -> str:
+    """Strip known-tool calls written as text on a tools-less leg; they never run."""
+    import sidecar.ai.routing.tool_loop as _tl_hub
+
+    names = _tl_hub.text_tool_calls.contract_tool_names(loop.tool_contract)
+    prose, calls = _tl_hub.text_tool_calls.strip_text_tool_calls(text, names)
+    if not calls:
+        return text
+    tools = list(dict.fromkeys(call.name for call in calls))
+    complete = all(call.complete for call in calls)
+    _tl_hub.log_event(
+        logger,
+        logging.INFO,
+        component="ai.router",
+        event="ai.router.text_tool_call_dropped",
+        message="Dropped a tool call the model wrote as text on a tools-less leg.",
+        status="degraded",
+        data={"tools": tools, "complete": complete, "reason": reason, "shape": calls[0].shape},
+        request_id=loop.request_id,
+        session_id=loop.session_id,
+    )
+    if prose:  # The markup already streamed: replace it in the live row, with the reason.
+        names_text = ", ".join(f"`{tool}`" for tool in tools)
+        prose = f"{prose}\n\n{_UNRUN_TEXT_CALL.format(names=names_text)}"
+        _restream_response(loop, prose)
+    return prose
+
+
+def _restream_response(loop: Any, response_text: str) -> None:
+    """The live row still shows earlier text: reset it so it matches the persisted answer."""
+    import sidecar.ai.routing.tool_loop as _tl_hub
+
+    _tl_hub.loop_event_emit.emit_stream_reset_for_retry(
+        loop.runtime, loop.streamed_event_types, reason="deterministic_replacement"
+    )
+    _tl_hub._emit_deterministic_response_tokens(
+        runtime=loop.runtime, streamed_event_types=loop.streamed_event_types,
+        response_text=response_text,
+    )
 
 
 def admit_tool_calls_for_turn(
@@ -107,7 +143,9 @@ def admit_tool_calls_for_turn(
             },
         )
     if loop.runtime.remaining_tool_calls == 0:
-        loop.tool_payload = []
+        # F15: keep the tools at the cap (prefix cache); drop them only after a post-cap call.
+        if getattr(loop, "tool_cap_tools_stripped", False) and not admitted_calls:
+            loop.tool_payload = []
         loop.tool_cap_tools_stripped = True
         if not loop.tool_budget_exhausted_notified:
             loop.working_messages.append(
@@ -120,7 +158,6 @@ def admit_tool_calls_for_turn(
         return result, False
     finish_all_blocked_iteration(loop, requested_calls, last_error_output)
     return result, True
-
 
 
 def reject_malformed_argument_calls(
@@ -559,6 +596,22 @@ _BUDGET_EXHAUSTED_WIND_DOWN = (
     "and what is blocking further progress. Do not mention this note."
 )
 
+# Mirrors token_budget._DIMINISHING_RETURNS_WINDOW (not imported: this module
+# sits at the leaf import fan-out cap); pinned by the tests.
+_NO_PROGRESS_WINDOW = 3
+# TR-011: the no-progress stop is not a budget; calling it one made the model
+# tell the user its tool budget was exhausted after three failed reads.
+_NO_PROGRESS_WIND_DOWN = (
+    "System note, not a message from the user: the harness ended this turn's tool "
+    f"phase because your last {_NO_PROGRESS_WINDOW} rounds of tool calls made no "
+    "progress (for example, they failed or returned nothing new). This is a "
+    "no-progress safeguard, not a tool budget, quota or limit: nothing ran out. "
+    "Do not call any more tools. Reply to the user now with what you completed, "
+    "which calls failed and why, and what you would try next. The user can reply "
+    "'resume' to continue; a line saying so is appended to your reply. Do not "
+    "mention this note."
+)
+
 
 def _max_iterations_fallback_response(outcomes: list[Any]) -> str:
     """Summarize every terminal outcome class when final synthesis is blank."""
@@ -591,9 +644,7 @@ def wind_down_response(
     import sidecar.ai.routing.tool_loop as _tl_hub
 
     _tl_hub.loop_event_emit.emit_stream_reset_for_retry(
-        loop.runtime,
-        loop.streamed_event_types,
-        reason="model_winddown",
+        loop.runtime, loop.streamed_event_types, reason="model_winddown"
     )
     diagnostic_data = {"outcome_count": len(loop.outcomes)}
     diagnostic_data.update(spec.log_data or {})
@@ -609,9 +660,7 @@ def wind_down_response(
     )
     response_text = ""
     try:
-        loop.working_messages.append(
-            {"role": "system", "content": spec.system_message}
-        )
+        loop.working_messages.append({"role": "system", "content": spec.system_message})
         result, streamed_generation_types = loop.kernel._generate_step(
             latest_user_content=loop.latest_user_content,
             working_messages=_tl_hub.build_generation_messages(loop.working_messages),
@@ -627,9 +676,10 @@ def wind_down_response(
         loop.streamed_event_types.update(streamed_generation_types)
         loop.usage_totals = _tl_hub._merge_generation_usage(loop.usage_totals, result.usage)
         response_text = _tl_hub.sanitize_assistant_output(
-            str(result.content or ""),
-            max_chars=_tl_hub.MAX_RESPONSE_CHARS,
+            str(result.content or ""), max_chars=_tl_hub.MAX_RESPONSE_CHARS
         ).strip()
+        # This leg offered no tools, so a call written as text cannot run.
+        response_text = _drop_text_tool_calls(loop, response_text, reason="tools_stripped")
     except _tl_hub.TerminalChatStateError:
         raise
     except Exception:  # noqa: BLE001 - deterministic fallback below.
@@ -638,16 +688,7 @@ def wind_down_response(
     if not response_text:
         response_text = spec.fallback_response()
         completion_source = "deterministic_tool_fallback"
-        _tl_hub.loop_event_emit.emit_stream_reset_for_retry(
-            loop.runtime,
-            loop.streamed_event_types,
-            reason="deterministic_replacement",
-        )
-        _tl_hub._emit_deterministic_response_tokens(
-            runtime=loop.runtime,
-            streamed_event_types=loop.streamed_event_types,
-            response_text=response_text,
-        )
+        _restream_response(loop, response_text)
     return response_text, completion_source
 
 
@@ -658,6 +699,9 @@ def empty_final_wind_down(loop: Any) -> Any:
     response_text, completion_source = wind_down_response(
         loop,
         WindDownSpec(
+            # HB-022: thinking is what this tools-stripped "reply now" leg must not spend; the
+            # engine maps "none" to enable_thinking=False (openai_compatible._build_payload).
+            reasoning_effort="none",
             system_message=_EMPTY_FINAL_WIND_DOWN,
             event="ai.router.empty_final_winddown",
             message="Post-tool completion was empty; winding down with a summary.",
@@ -699,9 +743,7 @@ def _budget_stop_details(loop: Any, reason: str) -> tuple[str, str, dict[str, in
             {"limit": limit, "tool_calls_used": tool_calls_used},
         )
     if reason == "diminishing_returns":
-        # Mirrors token_budget._DIMINISHING_RETURNS_WINDOW (not imported: this
-        # module sits at the leaf import fan-out cap); pinned by the tests.
-        window_size = 3
+        window_size = _NO_PROGRESS_WINDOW
         footer = (
             f"Stopped after {window_size} tool calls in a row made no progress. "
             "Reply 'resume' to continue."
@@ -734,8 +776,7 @@ def budget_exhausted_wind_down(loop: Any, result: Any, *, reason: str) -> Any:
 
     raw_content = str(result.content or "")
     response_text = _tl_hub.sanitize_assistant_output(
-        raw_content,
-        max_chars=_tl_hub.MAX_RESPONSE_CHARS,
+        raw_content, max_chars=_tl_hub.MAX_RESPONSE_CHARS
     ).strip()
     footer, event, log_data = _budget_stop_details(loop, reason)
     fallback_sentence = {
@@ -750,23 +791,19 @@ def budget_exhausted_wind_down(loop: Any, result: Any, *, reason: str) -> Any:
             _tl_hub._empty_post_tool_context_response(loop.outcomes) or fallback_sentence
         )
         completion_source = "deterministic_tool_fallback"
-        # The live row still shows the pre-tool text: reset it and stream the
-        # replacement so the renderer and the persisted answer agree.
-        _tl_hub.loop_event_emit.emit_stream_reset_for_retry(
-            loop.runtime,
-            loop.streamed_event_types,
-            reason="deterministic_replacement",
-        )
-        _tl_hub._emit_deterministic_response_tokens(
-            runtime=loop.runtime,
-            streamed_event_types=loop.streamed_event_types,
-            response_text=response_text,
-        )
+        _restream_response(loop, response_text)
     elif reason != "tool_cap" or not response_text or _is_tool_call_markup(raw_content, loop):
         response_text, completion_source = wind_down_response(
             loop,
             WindDownSpec(
-                system_message=_BUDGET_EXHAUSTED_WIND_DOWN,
+                # HB-022: thinking is what this tools-stripped "reply now" leg must not spend; the
+                # engine maps "none" to enable_thinking=False (openai_compatible._build_payload).
+                reasoning_effort="none",
+                system_message=(
+                    _NO_PROGRESS_WIND_DOWN
+                    if reason == "diminishing_returns"
+                    else _BUDGET_EXHAUSTED_WIND_DOWN
+                ),
                 event="ai.router.budget_exhausted_winddown",
                 message="Tool-loop budget was exhausted; winding down with a summary.",
                 fallback_response=lambda: (
@@ -776,15 +813,12 @@ def budget_exhausted_wind_down(loop: Any, result: Any, *, reason: str) -> Any:
                 log_data={"reason": reason},
             ),
         )
+    else:
+        # HB-031: prose then a call written as text keeps the prose; no regeneration.
+        response_text = _drop_text_tool_calls(loop, response_text, reason="tool_cap")
     if footer not in response_text:
         response_text = f"{response_text.rstrip()}\n\n{footer}"
-    emit_degradation_status(
-        loop,
-        text=footer,
-        event=event,
-        data=log_data,
-        log_level=logging.INFO,
-    )
+    emit_degradation_status(loop, text=footer, event=event, data=log_data, log_level=logging.INFO)
     return loop._finish(
         _tl_hub.ToolLoopResult(
             thinking_text="Budget exhausted or diminishing returns detected.",
@@ -810,7 +844,7 @@ def maybe_wind_down_tool_cap_final(loop: Any, result: Any) -> Any | None:
     thinking-budget checkpoint, a failed in-band parse) is left to the base
     finalization ladder, which owns the retry and terminal-error contracts.
     """
-    if not getattr(loop, "tool_cap_tools_stripped", False):
+    if not _tool_cap_spent(loop):
         return None
     # A thinking-budget checkpoint always carries finish_reason "thinking_budget"
     # or "length" (thinking_checkpoint.is_thinking_budget_checkpoint), so the
@@ -839,6 +873,9 @@ def max_iterations_summary(loop: Any) -> Any:
     response_text, completion_source = wind_down_response(
         loop,
         WindDownSpec(
+            # HB-022: thinking is what this tools-stripped "reply now" leg must not spend; the
+            # engine maps "none" to enable_thinking=False (openai_compatible._build_payload).
+            reasoning_effort="none",
             system_message=_MAX_ITERATIONS_WIND_DOWN,
             event="ai.router.max_iterations_summary",
             message=(
@@ -914,7 +951,7 @@ def approval_with_recovery(
                 loop,
                 result,
                 (call,),
-                error_code=CMP_LOOP_TOOL_INPUT_VALIDATION,
+                error_code=prevalidation.get("error_code", CMP_LOOP_TOOL_INPUT_VALIDATION),
                 output_for_call=lambda _call, _message=prevalidation["message"]: _message,
                 metadata=prevalidation["metadata"],
             )

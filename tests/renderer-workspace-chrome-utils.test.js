@@ -29,7 +29,6 @@ test('workspace chrome controller renders the rail with active, streaming, appro
   registerDomCleanup(t, dom);
   const activated = [];
   const closed = [];
-  const linked = [];
   const controller = createWorkspaceChromeController({
     containerEl: dom.window.document.getElementById('rail'),
     getSessionSummary(sessionId) {
@@ -47,9 +46,7 @@ test('workspace chrome controller renders the rail with active, streaming, appro
     onSessionClosed(sessionId) {
       closed.push(sessionId);
     },
-    onLinkSessionsRequested(sessionId) {
-      linked.push(sessionId);
-    },
+    onLinkSessionsRequested() {},
   });
 
   controller.renderRail(
@@ -64,18 +61,26 @@ test('workspace chrome controller renders the rail with active, streaming, appro
   const tabs = [...doc.querySelectorAll('.workspace-rail-tab')];
   assert.equal(tabs.length, 2);
   assert.equal(tabs[1].classList.contains('active'), true);
-  assert.equal(tabs[0].querySelector('.workspace-rail-indicator').textContent, 'Streaming');
-  assert.equal(tabs[1].querySelector('.workspace-rail-indicator').textContent, 'Approval needed');
-  assert.equal(doc.querySelector('[data-workspace-close="session-2"]').disabled, true);
-  assert.ok(doc.querySelector('[data-workspace-links="session-2"]'));
+  // Tab anatomy A: [state dot][title][x]; the state word lives only in the
+  // tooltip and the accessible name.
+  assert.equal(doc.querySelector('.workspace-rail-indicator'), null, 'no state word renders in a tab');
+  const dots = tabs.map((tab) => tab.querySelector('.workspace-rail-state-dot'));
+  assert.ok(dots.every(Boolean), 'every tab carries a state dot');
+  assert.equal(dots[0].dataset.sessionDominantState, 'streaming');
+  assert.equal(dots[1].dataset.sessionDominantState, 'approval');
+  assert.equal(dots[0].getAttribute('aria-hidden'), 'true');
+  const firstButton = doc.querySelector('[data-workspace-activate="session-1"]');
+  assert.equal(firstButton.title, 'Streaming · Alpha Notes');
+  assert.equal(firstButton.getAttribute('aria-label'), 'Alpha Notes. Status: Streaming');
+  assert.equal(doc.querySelector('[data-workspace-close="session-2"]'), null, 'a busy tab renders no close button');
+  assert.equal(doc.querySelector('[data-workspace-links]'), null, 'the per-tab link button is retired');
+  assert.equal(doc.querySelector('.workspace-rail-link-button'), null);
 
-  doc.querySelector('[data-workspace-activate="session-1"]').click();
-  doc.querySelector('[data-workspace-links="session-2"]').click();
+  firstButton.click();
   doc.querySelector('[data-workspace-close="session-1"]').click();
   await Promise.resolve();
 
   assert.deepEqual(activated, ['session-1']);
-  assert.deepEqual(linked, ['session-2']);
   assert.deepEqual(closed, ['session-1']);
 });
 
@@ -223,11 +228,11 @@ test('runtime rail labels coalesce an overflow-arrow refresh', (t) => {
   });
   controller.renderRail(['s1'], 's1', [{ id: 's1', title: 'Alpha' }], [], []);
   const rail = doc.querySelector('.workspace-rail');
-  const indicator = doc.querySelector('.workspace-rail-indicator');
+  const tab = doc.querySelector('.workspace-rail-tab');
   Object.defineProperty(rail, 'clientWidth', { configurable: true, value: 100 });
   Object.defineProperty(rail, 'scrollWidth', {
     configurable: true,
-    get: () => (indicator.textContent === 'Streaming' ? 140 : 80),
+    get: () => (tab.dataset.sessionDominantState === 'streaming' ? 140 : 80),
   });
   Object.defineProperty(rail, 'scrollLeft', { configurable: true, writable: true, value: 0 });
   controller.renderRail(['s1'], 's1', [{ id: 's1', title: 'Alpha' }], [], []);
@@ -237,7 +242,7 @@ test('runtime rail labels coalesce an overflow-arrow refresh', (t) => {
 
   controller.patchRailRuntime('s1', ['s1'], []);
   controller.patchRailRuntime('s1', ['s1'], []);
-  assert.equal(indicator.textContent, 'Streaming');
+  assert.equal(tab.dataset.sessionDominantState, 'streaming');
   assert.equal(frames.length, 1, 'rapid runtime patches schedule one measurement frame');
   frames.shift()();
   assert.equal(leftArrow.hidden, true, 'the left arrow stays hidden at the leading edge');
@@ -446,12 +451,12 @@ test('workspace chrome controller filters the linked-session popover by title an
 
   const popover = doc.querySelector('.workspace-linked-popover');
   assert.ok(popover);
-  assert.match(popover.textContent, /Linked sessions: 1/);
+  assert.match(popover.textContent, /Linked: 1 · In recall: 1/);
 
   const searchInput = popover.querySelector('input[type="search"]');
   searchInput.value = 'beta';
   searchInput.dispatchEvent(new dom.window.Event('input', { bubbles: true }));
-  assert.equal(popover.querySelectorAll('label').length, 1);
+  assert.equal(popover.querySelectorAll('.workspace-linked-row').length, 1);
   assert.match(popover.textContent, /Beta Project/);
 
   const checkbox = popover.querySelector('input[type="checkbox"]');
@@ -525,7 +530,7 @@ test('a rejected onLinksChanged rolls the optimistic toggle back and reconciles 
 
   const reconciled = popover.querySelector('input[data-linked-session-id="session-2"]');
   assert.equal(reconciled.checked, false, 'failed persistence rolls the optimistic check back off');
-  assert.match(popover.textContent, /Linked sessions: 0/);
+  assert.match(popover.textContent, /Linked: 0 · In recall: 0/);
 });
 
 /* ── Phase D: middle-click close ── */
@@ -951,4 +956,53 @@ test('the rail new-chat button matches the naming of the other new-chat affordan
   const newBtn = doc.querySelector('[data-workspace-new]');
   assert.equal(newBtn.getAttribute('aria-label'), 'New chat');
   assert.match(newBtn.title, /Ctrl\+N/, 'the button should surface the same shortcut the collapsed strip does');
+});
+
+/* ── Split view W1-4c: "Open beside" ── */
+
+test('context menu offers "Open beside" first when the split callback is wired, and it opens the tab beside', async (t) => {
+  const dom = setupDom();
+  registerDomCleanup(t, dom);
+  const doc = dom.window.document;
+  const opened = [];
+  const controller = createWorkspaceChromeController({
+    containerEl: doc.getElementById('rail'),
+    isSessionBusy: () => false,
+    isSessionInPane: (id) => id === 's1',
+    onOpenBeside(id) { opened.push(id); },
+    onSessionClosed() {},
+    onCloseOtherSessions() {},
+    onCloseSessionsToRight() {},
+    onCloseAllSessions() {},
+  });
+  controller.renderRail(['s1', 's2'], 's1', [{ id: 's1', title: 'A' }, { id: 's2', title: 'B' }], [], []);
+  doc.querySelector('[data-session-id="s2"]').dispatchEvent(new dom.window.MouseEvent('contextmenu', { clientX: 10, clientY: 10, bubbles: true }));
+  const items = [...doc.querySelectorAll('.workspace-tab-context-menu-item')];
+  assert.deepEqual(items.map((item) => item.textContent), ['Open beside', 'Close', 'Close Others', 'Close to the Right', 'Close All']);
+  assert.equal(items[0].disabled, false, 'a tab not shown in a pane can open beside');
+  assert.ok(items[0].title.includes('Ctrl+Shift+' + String.fromCharCode(92)), 'the item carries the chord hint');
+  items[0].click();
+  await Promise.resolve();
+  assert.deepEqual(opened, ['s2']);
+  assert.equal(doc.querySelector('.workspace-tab-context-menu'), null, 'menu removed after action');
+});
+
+test('"Open beside" is disabled for a tab whose session is already in a pane', (t) => {
+  const dom = setupDom();
+  registerDomCleanup(t, dom);
+  const doc = dom.window.document;
+  const opened = [];
+  const controller = createWorkspaceChromeController({
+    containerEl: doc.getElementById('rail'),
+    isSessionInPane: (id) => id === 's1',
+    onOpenBeside(id) { opened.push(id); },
+    onSessionClosed() {},
+  });
+  controller.renderRail(['s1', 's2'], 's1', [{ id: 's1', title: 'A' }, { id: 's2', title: 'B' }], [], []);
+  doc.querySelector('[data-session-id="s1"]').dispatchEvent(new dom.window.MouseEvent('contextmenu', { clientX: 10, clientY: 10, bubbles: true }));
+  const first = doc.querySelector('.workspace-tab-context-menu-item');
+  assert.equal(first.textContent, 'Open beside');
+  assert.equal(first.disabled, true);
+  first.click();
+  assert.deepEqual(opened, []);
 });

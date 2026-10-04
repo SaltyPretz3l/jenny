@@ -92,7 +92,7 @@ def activate_media_site() -> Path | None:
             data={"directory": directory_text},
         )
         return directory
-    except Exception:
+    except Exception:  # noqa: BLE001  # fail-soft
         return None
 
 
@@ -148,7 +148,7 @@ def activate_pdf_addon() -> Path | None:
             data={"directory": directory_text},
         )
         return directory
-    except Exception:
+    except Exception:  # noqa: BLE001  # fail-soft
         return None
 
 

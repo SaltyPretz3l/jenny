@@ -20,6 +20,8 @@
   let modelObserver = null;
   let pointerdownHandler = null;
   let lastUncatalogedRefreshKey = '';
+  // Split view W2-2a: carrier pairs beyond pane 0's (attachCarriers).
+  const attachedPairs = new Set();
 
   function modelListEntries(payload) {
     if (Array.isArray(payload?.data)) return payload.data;
@@ -169,6 +171,10 @@
     const composerSelect = document.getElementById('composerEffortSelect');
     refreshForUncatalogedModel(composerModelControl);
     reconcileSelect(composerSelect, composerModelControl);
+    for (const pair of attachedPairs) {
+      refreshForUncatalogedModel(pair.modelSelect);
+      reconcileSelect(pair.effortSelect, pair.modelSelect);
+    }
   }
 
   function queueReconcile() {
@@ -216,8 +222,48 @@
     bind();
   }
 
+  // A second pane's model/effort carriers: the same capture listeners, options
+  // observer and pointerdown reconcile as pane 0's pair, bound to that pair and
+  // its pill slot. Returns the detach function; dispose() detaches every pair.
+  function attachCarriers({ modelSelect = null, effortSelect = null, pillSlot = null } = {}) {
+    if (disposed || (!modelSelect && !effortSelect)) return () => {};
+    const onModelChange = () => {
+      queueReconcile();
+      void refreshModelCapabilities();
+    };
+    const onEffortChange = () => {
+      const selected = selectedModelEntry(modelSelect);
+      const normalized = profiles.normalizeReasoningEffortForModel(
+        effortSelect.value,
+        selected.modelId,
+        capabilitiesFor(selected.modelId, selected.engineType),
+      );
+      if (effortSelect.value !== normalized) effortSelect.value = normalized;
+    };
+    const onPointerdown = (event) => {
+      if (pillSlot && event.target && pillSlot.contains(event.target)) reconcile();
+    };
+    modelSelect?.addEventListener('change', onModelChange, { capture: true });
+    effortSelect?.addEventListener('change', onEffortChange, { capture: true });
+    const observer = new MutationObserver(queueReconcile);
+    if (modelSelect) observer.observe(modelSelect, { childList: true, subtree: true });
+    document.addEventListener('pointerdown', onPointerdown, { capture: true });
+    const pair = { modelSelect, effortSelect, detach: null };
+    pair.detach = () => {
+      if (!attachedPairs.delete(pair)) return;
+      modelSelect?.removeEventListener('change', onModelChange, { capture: true });
+      effortSelect?.removeEventListener('change', onEffortChange, { capture: true });
+      observer.disconnect();
+      document.removeEventListener('pointerdown', onPointerdown, { capture: true });
+    };
+    attachedPairs.add(pair);
+    queueReconcile();
+    return pair.detach;
+  }
+
   function dispose() {
     disposed = true;
+    for (const pair of [...attachedPairs]) pair.detach();
     modelObserver?.disconnect();
     modelObserver = null;
     if (pointerdownHandler) {
@@ -230,6 +276,7 @@
     applyModelCatalog,
     refreshModelCapabilities,
     reconcile,
+    attachCarriers,
     dispose,
   });
 })(typeof globalThis !== 'undefined' ? globalThis : this);

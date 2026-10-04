@@ -98,12 +98,12 @@ def _make_manager(tmp_path: Path) -> MonitorManager:
     manager = MonitorManager(runtime_root=tmp_path / "runtime")
     # The salience gate otherwise spawns a real subprocess worker per monitor;
     # these dark-path tests assert the gate's decisions, not its isolation.
-    manager._salience_worker_factory = _InProcessSalienceWorker  # noqa: SLF001
+    manager._salience_worker_factory = _InProcessSalienceWorker
     return manager
 
 
 def _record_path(manager: MonitorManager, monitor_id: str) -> Path:
-    return manager._status_store.record_path(monitor_id)  # noqa: SLF001
+    return manager._status_store.record_path(monitor_id)
 
 
 def _make_active(
@@ -272,11 +272,11 @@ def test_reserve_monitor_start_when_closed_marks_failed_and_raises(
     tmp_path: Path,
 ) -> None:
     manager = _make_manager(tmp_path)
-    manager._closed = True  # noqa: SLF001
+    manager._closed = True
     active = _make_active(manager)
 
     with pytest.raises(ToolExecutionFailure, match="closed") as exc:
-        manager._reserve_monitor_start(active)  # noqa: SLF001
+        manager._reserve_monitor_start(active)
 
     assert exc.value.retryable is False
     # _mark_start_failed ran: terminal state + event set + status persisted.
@@ -299,7 +299,7 @@ def test_spawn_monitor_process_failure_marks_failed_and_decrements(
 ) -> None:
     manager = _make_manager(tmp_path)
     active = _make_active(manager)
-    manager._starting_count = 1  # noqa: SLF001 - reserved one start slot
+    manager._starting_count = 1  # reserved one start slot
 
     def boom(*_a: object, **_k: object) -> object:
         raise OSError("cannot exec")
@@ -309,10 +309,10 @@ def test_spawn_monitor_process_failure_marks_failed_and_decrements(
     )
 
     with pytest.raises(ToolExecutionFailure, match="failed to start: OSError") as exc:
-        manager._spawn_monitor_process(active)  # noqa: SLF001
+        manager._spawn_monitor_process(active)
 
     assert exc.value.retryable is True
-    assert manager._starting_count == 0  # noqa: SLF001 - decremented on failure
+    assert manager._starting_count == 0  # decremented on failure
     assert active.state == "failed"
     assert active.terminal_reason == "spawn_failed"
 
@@ -327,7 +327,7 @@ def test_recover_stale_monitors_iterdir_oserror_returns_zero(
     manager = _make_manager(tmp_path)
 
     monkeypatch.setattr(
-        manager._status_store,  # noqa: SLF001
+        manager._status_store,
         "list_record_ids",
         lambda: (_ for _ in ()).throw(MonitorStatusError("scan failed")),
     )
@@ -373,7 +373,7 @@ def test_recover_stale_monitors_write_oserror_is_logged_not_raised(
     def boom_write(_monitor_id: object, _payload: dict[str, object]) -> None:
         raise MonitorStatusError("disk full")
 
-    monkeypatch.setattr(manager._status_store, "write", boom_write)  # noqa: SLF001
+    monkeypatch.setattr(manager._status_store, "write", boom_write)
 
     recovered = manager.recover_stale_monitors()
 
@@ -396,11 +396,11 @@ def test_close_terminates_active_monitor_with_no_job(tmp_path: Path) -> None:
         notification_writer=notifications.append,
         job=None,
     )
-    manager._active[active.monitor_id] = active  # noqa: SLF001
+    manager._active[active.monitor_id] = active
 
     manager.close()
 
-    assert manager._closed is True  # noqa: SLF001
+    assert manager._closed is True
     # _terminate_active(reason="shutdown") -> _finish_active -> terminal notify.
     assert active.state == "failed"
     assert active.terminal_reason == "shutdown"
@@ -432,9 +432,9 @@ def test_run_monitor_nonzero_exit_marks_failed(tmp_path: Path) -> None:
         notification_writer=notifications.append,
         job=job,
     )
-    manager._active[active.monitor_id] = active  # noqa: SLF001
+    manager._active[active.monitor_id] = active
 
-    manager._run_monitor(active)  # noqa: SLF001
+    manager._run_monitor(active)
 
     assert active.state == "failed"
     assert active.terminal_reason == "exit"
@@ -473,9 +473,9 @@ def test_run_monitor_wait_raises_marks_process_error(
     )
     job = SimpleNamespace(process=process)
     active = _make_active(manager, monitor_id="mon_00000000000a", job=job)
-    manager._active[active.monitor_id] = active  # noqa: SLF001
+    manager._active[active.monitor_id] = active
 
-    manager._run_monitor(active)  # noqa: SLF001
+    manager._run_monitor(active)
 
     assert terminated == [job]  # the generic-exception branch terminates the job
     assert active.state == "failed"
@@ -492,7 +492,7 @@ def test_read_stream_none_is_noop(tmp_path: Path) -> None:
     active = _make_active(manager)
 
     # Should not raise and should not record anything.
-    manager._read_stream(active, "stdout", None)  # noqa: SLF001
+    manager._read_stream(active, "stdout", None)
 
     assert active.events == []
     assert active.sequence == 0
@@ -517,7 +517,7 @@ def test_read_stream_iteration_error_is_logged(
         def __next__(self) -> str:
             raise OSError("stream broke")
 
-    manager._read_stream(active, "stderr", ExplodingStream())  # noqa: SLF001
+    manager._read_stream(active, "stderr", ExplodingStream())
 
     assert any(
         entry.get("event") == "monitor.stream_read_failed"
@@ -533,7 +533,7 @@ def test_record_output_event_empty_text_is_dropped(tmp_path: Path) -> None:
     manager = _make_manager(tmp_path)
     active = _make_active(manager)
 
-    manager._record_output_event(active, stream="stdout", text="\r\n")  # noqa: SLF001
+    manager._record_output_event(active, stream="stdout", text="\r\n")
 
     assert active.events == []
     assert active.sequence == 0
@@ -565,7 +565,7 @@ def test_record_output_event_drops_oldest_beyond_cap_and_flushes_synchronously(
     # because batch is taken first). This drives 547-549 (cap drop) and the
     # synchronous-flush path 552/563-564 deterministically.
     for i in range(MAX_MONITOR_OUTPUT_BATCH):
-        manager._record_output_event(  # noqa: SLF001
+        manager._record_output_event(
             active, stream="stdout", text=f"line-{i}"
         )
 
@@ -608,9 +608,9 @@ def test_terminate_active_with_job_calls_terminate(
     process = SimpleNamespace(returncode=7)
     job = SimpleNamespace(process=process)
     active = _make_active(manager, monitor_id="mon_00000000000c", job=job)
-    manager._active[active.monitor_id] = active  # noqa: SLF001
+    manager._active[active.monitor_id] = active
 
-    manager._terminate_active(active, reason="cancelled")  # noqa: SLF001
+    manager._terminate_active(active, reason="cancelled")
 
     assert terminated == [(job, 1.0)]
     assert active.state == "cancelled"
@@ -631,7 +631,7 @@ def test_finish_active_returns_early_when_already_terminal(tmp_path: Path) -> No
     active.terminal_event.set()
     active.state = "completed"
 
-    manager._finish_active(  # noqa: SLF001
+    manager._finish_active(
         active,
         state="failed",
         terminal_reason="should_not_apply",
@@ -659,7 +659,7 @@ def test_finish_active_cancels_pending_flush_timer(tmp_path: Path) -> None:
 
     active.output_flush_timer = FakeTimer()  # type: ignore[assignment]
 
-    manager._finish_active(  # noqa: SLF001
+    manager._finish_active(
         active,
         state="completed",
         terminal_reason="exit",
@@ -679,7 +679,7 @@ def test_finish_active_claims_terminal_once_and_rejects_late_output(
 ) -> None:
     manager = _make_manager(tmp_path)
     active = _make_active(manager, monitor_id="mon_00000000001d")
-    manager._active[active.monitor_id] = active  # noqa: SLF001
+    manager._active[active.monitor_id] = active
     persisted: list[str] = []
     notifications: list[dict[str, object]] = []
     monkeypatch.setattr(
@@ -697,7 +697,7 @@ def test_finish_active_claims_terminal_once_and_rejects_late_output(
 
     def finish(state: str, reason: str) -> None:
         barrier.wait()
-        manager._finish_active(  # noqa: SLF001
+        manager._finish_active(
             active,
             state=state,
             terminal_reason=reason,
@@ -721,9 +721,9 @@ def test_finish_active_claims_terminal_once_and_rejects_late_output(
     terminal_events = [event for event in notifications if event.get("kind") == "terminal"]
     assert len(terminal_events) == 1
     assert active.sequence == 1
-    assert active.monitor_id not in manager._active  # noqa: SLF001
+    assert active.monitor_id not in manager._active
 
-    manager._record_output_event(  # noqa: SLF001
+    manager._record_output_event(
         active,
         stream="stdout",
         text="late output",
@@ -757,7 +757,7 @@ def test_notify_no_writer_is_noop(
     monkeypatch.setattr(monitor_manager_module, "notification", spy_notification)
 
     # No writer -> returns early without building or dispatching anything.
-    result = manager._notify(active, {"kind": "terminal"})  # noqa: SLF001
+    result = manager._notify(active, {"kind": "terminal"})
 
     assert result is None
     assert built == []
@@ -781,7 +781,7 @@ def test_notify_writer_exception_is_logged(
         monitor_manager_module, "log_event", lambda *a, **k: logged.append(k)
     )
 
-    manager._notify(active, {"kind": "output_batch"})  # noqa: SLF001
+    manager._notify(active, {"kind": "output_batch"})
 
     assert any(
         entry.get("event") == "monitor.notification_failed" for entry in logged
@@ -796,7 +796,7 @@ def test_notify_builds_expected_params_for_real_writer(tmp_path: Path) -> None:
     )
     active.state = "running"
 
-    manager._notify(active, {"kind": "output_batch", "sequence": 5})  # noqa: SLF001
+    manager._notify(active, {"kind": "output_batch", "sequence": 5})
 
     assert len(notifications) == 1
     note = notifications[0]
@@ -837,7 +837,7 @@ def test_safe_write_status_oserror_is_logged_and_skips_prune(
         manager, "_prune_terminal_status_dirs", lambda: pruned.append(True)
     )
 
-    manager._safe_write_status(active)  # noqa: SLF001
+    manager._safe_write_status(active)
 
     assert any(
         entry.get("event") == "monitor.status_persist_failed" for entry in logged
@@ -851,10 +851,10 @@ def test_safe_write_status_oserror_is_logged_and_skips_prune(
 # --------------------------------------------------------------------------
 def test_raise_if_closed_raises_when_closed(tmp_path: Path) -> None:
     manager = _make_manager(tmp_path)
-    manager._closed = True  # noqa: SLF001
+    manager._closed = True
 
     with pytest.raises(ToolExecutionFailure, match="closed") as exc:
-        manager._raise_if_closed()  # noqa: SLF001
+        manager._raise_if_closed()
     assert exc.value.retryable is False
 
 
@@ -865,7 +865,7 @@ def test_read_status_empty_id_is_typed_failure(tmp_path: Path) -> None:
     manager = _make_manager(tmp_path)
 
     with pytest.raises(ToolExecutionFailure, match="invalid or unsafe"):
-        manager._read_status("")  # noqa: SLF001
+        manager._read_status("")
 
 
 def test_read_status_bad_json_is_typed_failure(tmp_path: Path) -> None:
@@ -876,7 +876,7 @@ def test_read_status_bad_json_is_typed_failure(tmp_path: Path) -> None:
     (monitor_dir / "status.json").write_text("{broken", encoding="utf-8")
 
     with pytest.raises(ToolExecutionFailure, match="invalid or unsafe"):
-        manager._read_status(monitor_id)  # noqa: SLF001
+        manager._read_status(monitor_id)
 
 
 def test_read_status_non_dict_payload_is_typed_failure(tmp_path: Path) -> None:
@@ -887,7 +887,7 @@ def test_read_status_non_dict_payload_is_typed_failure(tmp_path: Path) -> None:
     (monitor_dir / "status.json").write_text("[1, 2, 3]", encoding="utf-8")
 
     with pytest.raises(ToolExecutionFailure, match="invalid or unsafe"):
-        manager._read_status(monitor_id)  # noqa: SLF001
+        manager._read_status(monitor_id)
 
 
 # --------------------------------------------------------------------------
@@ -910,7 +910,7 @@ def test_prune_limit_zero_is_noop(
         encoding="utf-8",
     )
 
-    manager._prune_terminal_status_dirs()  # noqa: SLF001
+    manager._prune_terminal_status_dirs()
 
     # limit<=0 short-circuits before scanning, so the dir survives.
     assert monitor_dir.exists()
@@ -945,9 +945,9 @@ def test_prune_rmtree_oserror_is_logged(
     def boom_delete(_monitor_id: object) -> None:
         raise MonitorStatusError("delete denied")
 
-    monkeypatch.setattr(manager._status_store, "delete_record", boom_delete)  # noqa: SLF001
+    monkeypatch.setattr(manager._status_store, "delete_record", boom_delete)
 
-    manager._prune_terminal_status_dirs()  # noqa: SLF001
+    manager._prune_terminal_status_dirs()
 
     assert any(
         entry.get("event") == "monitor.status_prune_failed" for entry in logged
@@ -964,12 +964,12 @@ def test_monitor_record_dirs_oserror_returns_empty(
     manager = _make_manager(tmp_path)
 
     monkeypatch.setattr(
-        manager._status_store,  # noqa: SLF001
+        manager._status_store,
         "list_record_ids",
         lambda: (_ for _ in ()).throw(MonitorStatusError("listing failed")),
     )
 
-    assert manager._monitor_record_dirs() == []  # noqa: SLF001
+    assert manager._monitor_record_dirs() == []
 
 
 # --------------------------------------------------------------------------
@@ -980,7 +980,7 @@ def test_prune_candidate_non_dir_returns_none(tmp_path: Path) -> None:
     stray = _record_path(manager, "mon_000000000015").parent / "plain.txt"
     stray.write_text("x", encoding="utf-8")
 
-    candidate = manager._terminal_status_prune_candidate(stray, set())  # noqa: SLF001
+    candidate = manager._terminal_status_prune_candidate(stray, set())
 
     assert candidate is None
 
@@ -999,12 +999,12 @@ def test_prune_candidate_stat_oserror_returns_none(
     )
 
     monkeypatch.setattr(
-        manager._status_store,  # noqa: SLF001
+        manager._status_store,
         "read_with_mtime",
         lambda _monitor_id: (_ for _ in ()).throw(MonitorStatusError("stat denied")),
     )
 
-    candidate = manager._terminal_status_prune_candidate(  # noqa: SLF001
+    candidate = manager._terminal_status_prune_candidate(
         monitor_dir, set()
     )
 
@@ -1027,7 +1027,7 @@ def test_gate_match_patterns_emits_only_matches(tmp_path: Path) -> None:
     active.match_patterns = [re.compile("ERROR", re.IGNORECASE)]
 
     for line in ["ERROR boom", "info ok", "another error", "debug noise"]:
-        manager._record_output_event(active, stream="stdout", text=line)  # noqa: SLF001
+        manager._record_output_event(active, stream="stdout", text=line)
     _drain_timer(active)
 
     assert [event["text"] for event in active.events] == ["ERROR boom", "another error"]
@@ -1044,7 +1044,7 @@ def test_gate_ignore_patterns_suppress_matches(tmp_path: Path) -> None:
     active.ignore_patterns = [re.compile("heartbeat")]
 
     for line in ["start", "heartbeat 1", "heartbeat 2", "done"]:
-        manager._record_output_event(active, stream="stdout", text=line)  # noqa: SLF001
+        manager._record_output_event(active, stream="stdout", text=line)
     _drain_timer(active)
 
     assert [event["text"] for event in active.events] == ["start", "done"]
@@ -1059,7 +1059,7 @@ def test_gate_ignore_beats_match(tmp_path: Path) -> None:
     active.ignore_patterns = [re.compile("skip")]
 
     for line in ["task go", "task skip", "other", "task again"]:
-        manager._record_output_event(active, stream="stdout", text=line)  # noqa: SLF001
+        manager._record_output_event(active, stream="stdout", text=line)
     _drain_timer(active)
 
     # "task skip" suppressed by ignore; "other" suppressed by match-miss.
@@ -1073,7 +1073,7 @@ def test_gate_dedupe_collapses_consecutive(tmp_path: Path) -> None:
     active.dedupe = True
 
     for line in ["a", "a", "a", "b", "a"]:
-        manager._record_output_event(active, stream="stdout", text=line)  # noqa: SLF001
+        manager._record_output_event(active, stream="stdout", text=line)
     _drain_timer(active)
 
     # Consecutive identical emitted lines collapse; the trailing "a" follows "b".
@@ -1086,9 +1086,9 @@ def test_gate_dedupe_is_per_stream(tmp_path: Path) -> None:
     active = _make_active(manager)
     active.dedupe = True
 
-    manager._record_output_event(active, stream="stdout", text="x")  # noqa: SLF001
-    manager._record_output_event(active, stream="stderr", text="x")  # noqa: SLF001
-    manager._record_output_event(active, stream="stdout", text="x")  # noqa: SLF001
+    manager._record_output_event(active, stream="stdout", text="x")
+    manager._record_output_event(active, stream="stderr", text="x")
+    manager._record_output_event(active, stream="stdout", text="x")
     _drain_timer(active)
 
     # stdout-x and stderr-x both emit; the second stdout-x is a per-stream dup.
@@ -1103,9 +1103,9 @@ def test_gate_suppressed_not_counted_as_dropped(tmp_path: Path) -> None:
 
     emitted = MAX_MONITOR_EVENTS + 5
     for index in range(emitted):
-        manager._record_output_event(active, stream="stdout", text=f"keep {index}")  # noqa: SLF001
+        manager._record_output_event(active, stream="stdout", text=f"keep {index}")
     for index in range(3):
-        manager._record_output_event(active, stream="stdout", text=f"drop {index}")  # noqa: SLF001
+        manager._record_output_event(active, stream="stdout", text=f"drop {index}")
     _drain_timer(active)
 
     assert active.sequence == emitted                      # emitted lines
@@ -1121,17 +1121,17 @@ def test_gate_counts_surface_in_metadata_and_terminal(tmp_path: Path) -> None:
     active.ignore_patterns = [re.compile("noise")]
 
     for line in ["keep", "noise", "noise"]:
-        manager._record_output_event(active, stream="stdout", text=line)  # noqa: SLF001
+        manager._record_output_event(active, stream="stdout", text=line)
     _drain_timer(active)
 
-    assert manager._metadata(active)["suppressed_event_count"] == 2  # noqa: SLF001
-    assert manager._terminal_status(active)["suppressed_event_count"] == 2  # noqa: SLF001
+    assert manager._metadata(active)["suppressed_event_count"] == 2
+    assert manager._terminal_status(active)["suppressed_event_count"] == 2
 
 
 def test_build_active_monitor_rejects_catastrophic_pattern(tmp_path: Path) -> None:
     manager = _make_manager(tmp_path)
     with pytest.raises(ToolExecutionFailure, match="catastrophic"):
-        manager._build_active_monitor(  # noqa: SLF001
+        manager._build_active_monitor(
             command="echo hi",
             description="d",
             timeout_ms=1_000,
@@ -1150,7 +1150,7 @@ def test_build_active_monitor_rejects_catastrophic_pattern(tmp_path: Path) -> No
 def test_build_active_monitor_rejects_invalid_regex(tmp_path: Path) -> None:
     manager = _make_manager(tmp_path)
     with pytest.raises(ToolExecutionFailure, match="invalid regex"):
-        manager._build_active_monitor(  # noqa: SLF001
+        manager._build_active_monitor(
             command="echo hi",
             description="d",
             timeout_ms=1_000,
@@ -1203,9 +1203,9 @@ def test_poll_monitor_unknown_id_returns_not_found(tmp_path: Path) -> None:
 def test_poll_monitor_incremental_cursor(tmp_path: Path) -> None:
     manager = _make_manager(tmp_path)
     active = _make_active(manager, monitor_id="mon_000000000019")
-    manager._active[active.monitor_id] = active  # noqa: SLF001
+    manager._active[active.monitor_id] = active
     for line in ["a", "b"]:
-        manager._record_output_event(active, stream="stdout", text=line)  # noqa: SLF001
+        manager._record_output_event(active, stream="stdout", text=line)
     _drain_timer(active)
 
     first = manager.poll_monitor(active.monitor_id, since_sequence=0)
@@ -1213,7 +1213,7 @@ def test_poll_monitor_incremental_cursor(tmp_path: Path) -> None:
     assert [event["text"] for event in first["new_events"]] == ["a", "b"]
     assert first["cursor"] == 2
 
-    manager._record_output_event(active, stream="stdout", text="c")  # noqa: SLF001
+    manager._record_output_event(active, stream="stdout", text="c")
     _drain_timer(active)
     second = manager.poll_monitor(active.monitor_id, since_sequence=first["cursor"])
     assert second["new_event_count"] == 1
@@ -1224,7 +1224,7 @@ def test_poll_monitor_incremental_cursor(tmp_path: Path) -> None:
 def test_poll_monitor_nonblocking_empty(tmp_path: Path) -> None:
     manager = _make_manager(tmp_path)
     active = _make_active(manager, monitor_id="mon_00000000001a")
-    manager._active[active.monitor_id] = active  # noqa: SLF001
+    manager._active[active.monitor_id] = active
 
     digest = manager.poll_monitor(active.monitor_id, since_sequence=0, wait_ms=0)
 
@@ -1236,7 +1236,7 @@ def test_poll_monitor_nonblocking_empty(tmp_path: Path) -> None:
 def test_poll_monitor_wait_times_out_without_events(tmp_path: Path) -> None:
     manager = _make_manager(tmp_path)
     active = _make_active(manager, monitor_id="mon_00000000001b")
-    manager._active[active.monitor_id] = active  # noqa: SLF001
+    manager._active[active.monitor_id] = active
 
     # Exercises the blocking-wait loop; returns an empty digest once the deadline
     # passes (no events arrive, never terminal) without hanging or raising.
@@ -1250,11 +1250,11 @@ def test_poll_monitor_after_finish_serves_terminal_from_disk(tmp_path: Path) -> 
     manager = _make_manager(tmp_path)
     active = _make_active(manager, monitor_id="mon_00000000001c")
     active.match_patterns = [re.compile("keep")]
-    manager._active[active.monitor_id] = active  # noqa: SLF001
+    manager._active[active.monitor_id] = active
     for line in ["keep 1", "skip", "keep 2"]:
-        manager._record_output_event(active, stream="stdout", text=line)  # noqa: SLF001
+        manager._record_output_event(active, stream="stdout", text=line)
 
-    manager._finish_active(  # noqa: SLF001
+    manager._finish_active(
         active,
         state="completed",
         terminal_reason="exit",
@@ -1264,7 +1264,7 @@ def test_poll_monitor_after_finish_serves_terminal_from_disk(tmp_path: Path) -> 
 
     # The monitor is popped from the active map; the digest must come from the
     # status.json written by _finish_active (the riskiest poll path).
-    assert active.monitor_id not in manager._active  # noqa: SLF001
+    assert active.monitor_id not in manager._active
     digest = manager.poll_monitor(active.monitor_id, since_sequence=0)
     assert digest["terminal"] is True
     assert digest["state"] == "completed"
@@ -1279,7 +1279,7 @@ def test_poll_monitor_after_finish_serves_terminal_from_disk(tmp_path: Path) -> 
 def test_is_terminal_status_payload_none_is_false(tmp_path: Path) -> None:
     manager = _make_manager(tmp_path)
 
-    assert manager._is_terminal_status_payload(None) is False  # noqa: SLF001
+    assert manager._is_terminal_status_payload(None) is False
 
 
 def test_is_terminal_status_payload_running_but_terminal_flag_true(
@@ -1289,7 +1289,7 @@ def test_is_terminal_status_payload_running_but_terminal_flag_true(
 
     # state still "running" but terminal flag set -> treated as terminal (844).
     assert (
-        manager._is_terminal_status_payload(  # noqa: SLF001
+        manager._is_terminal_status_payload(
             {"state": "running", "terminal": True}
         )
         is True
@@ -1302,8 +1302,41 @@ def test_is_terminal_status_payload_running_not_terminal_is_false(
     manager = _make_manager(tmp_path)
 
     assert (
-        manager._is_terminal_status_payload(  # noqa: SLF001
+        manager._is_terminal_status_payload(
             {"state": "running", "terminal": False}
         )
         is False
     )
+
+
+def test_recovery_reconciles_nonpersistent_running_records(tmp_path) -> None:
+    manager = _make_manager(tmp_path)
+    monitor_id = "mon_000000000123"
+    manager._status_store.write(monitor_id, _status_payload(monitor_id, state="running", persistent=False))
+    assert manager.recover_stale_monitors() == 1
+    assert manager._status_store.read(monitor_id)["terminal"] is True
+
+
+def test_status_write_holds_snapshot_lock_through_replacement(tmp_path, monkeypatch) -> None:
+    manager = _make_manager(tmp_path)
+    active = _make_active(manager)
+    entered = threading.Event()
+    contender_finished = threading.Event()
+    observed = []
+
+    def contender():
+        entered.wait(1)
+        with active.lock:
+            contender_finished.set()
+
+    def write(monitor_id, payload):
+        entered.set()
+        observed.append(contender_finished.wait(0.1))
+
+    monkeypatch.setattr(manager, "_write_status_payload", write)
+    thread = threading.Thread(target=contender)
+    thread.start()
+    manager._write_status(active)
+    thread.join(1)
+    assert observed == [False], "snapshot lock released before replacement"
+    assert contender_finished.is_set()

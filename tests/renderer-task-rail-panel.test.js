@@ -66,7 +66,7 @@ function bootOptions(board, overrides = {}) {
     persistedActiveView: 'chat',
     shell: {
       companion: { state: companionState(board) },
-      features: { state: { featureFlags: { tools_task_board_enabled: true, artifact_panel_v2: true, artifact_panel_v3: true } } },
+      features: { state: { featureFlags: { tools_task_board_enabled: true } } },
     },
     ...overrides,
   };
@@ -311,13 +311,35 @@ test('overflow exposes task actions and delete invokes companion IPC', async (t)
   panel.querySelector('[data-action="task-rail-overflow"]').click();
   const menu = app.window.document.querySelector('.inv-context-menu');
   assert.match(menu.textContent, /Edit/);
-  assert.match(menu.textContent, /Defer until tomorrow/);
   assert.match(menu.textContent, /Archive/);
   const deleteButton = Array.from(menu.querySelectorAll('.inv-context-menu-item'))
     .find((button) => button.textContent.includes('Delete'));
   deleteButton.click();
   await waitForUi(app.window, 30);
   assert.deepEqual(app.shell.__state.companionCalls.deleteFollowUp, ['menu-task']);
+});
+
+test('overflow offers Reopen instead of defer on a done task and keeps defer on an open one', async (t) => {
+  const app = await boot({
+    active: [row('open-task', 'Open task')],
+    recentResolved: [row('done-task', 'Done task', { status: 'resolved' })],
+  });
+  t.after(() => app.dispose());
+  const panel = await openTasks(app);
+  panel.querySelector('[data-action="task-rail-overflow"]').click();
+  assert.ok(menuItem(app, 'Defer until tomorrow'), 'an open task can still be deferred');
+  assert.equal(menuItem(app, 'Reopen'), undefined);
+  app.window.document.dispatchEvent(new app.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  await waitForUi(app.window, 10);
+
+  panel.querySelector('.inv-segmented-option[data-value="done"]').click();
+  await waitForUi(app.window, 10);
+  panel.querySelector('[data-action="task-rail-overflow"]').click();
+  assert.equal(menuItem(app, 'Defer until tomorrow'), undefined);
+  menuItem(app, 'Reopen').click();
+  await waitForUi(app.window, 30);
+  assert.deepEqual(app.shell.__state.companionCalls.activateFollowUp, ['done-task']);
+  assert.deepEqual(app.shell.__state.companionCalls.deferFollowUp || [], []);
 });
 
 test('checklist refresh is exposed, rerenders visible content, and contributes open items to the count', async (t) => {
@@ -387,4 +409,69 @@ test('mutation refreshes rows and the count badge hides at zero', async (t) => {
   assert.match(panel.textContent, /Fresh task/);
   assert.equal(count.textContent, '1');
   assert.equal(count.hidden, false);
+});
+
+// Area 3 strip: the Tasks toggle names its count, closing Tasks never touches
+// the artifact dismissal, and Tasks shares the panel header and its Close.
+test('the Tasks toggle reads "Tasks, N open" in its name and tooltip, plain "Tasks" at zero', async (t) => {
+  const app = await boot({ active: [row('a', 'A'), row('b', 'B'), row('c', 'C')] });
+  t.after(() => app.dispose());
+  await openTasks(app);
+  const toggle = app.window.document.getElementById('chatTimelineTasksToggle');
+  assert.equal(toggle.getAttribute('aria-label'), 'Tasks, 3 open');
+  assert.equal(toggle.getAttribute('title'), 'Tasks, 3 open');
+
+  const empty = await boot({});
+  t.after(() => empty.dispose());
+  await openTasks(empty);
+  const emptyToggle = empty.window.document.getElementById('chatTimelineTasksToggle');
+  assert.equal(emptyToggle.getAttribute('aria-label'), 'Tasks');
+  assert.equal(emptyToggle.getAttribute('title'), 'Tasks');
+});
+
+test('closing Tasks, from the strip or the header Close, leaves the artifact prefs untouched', async (t) => {
+  const app = await boot({ active: [row('open-1', 'Open one')] });
+  t.after(() => app.dispose());
+  const panel = await openTasks(app);
+  const prefs = () => app.window.__rendererState.ui.artifactReview;
+  const before = JSON.stringify(prefs().dismissedForSession || {});
+  app.window.document.getElementById('chatTimelineTasksToggle').click();
+  await waitForUi(app.window, 20);
+  assert.equal(panel.classList.contains('hidden'), true, 'the strip toggle closes Tasks');
+  assert.equal(JSON.stringify(prefs().dismissedForSession || {}), before, 'no artifact dismissal');
+
+  await openTasks(app);
+  const close = panel.querySelector('#artifactReviewCollapseButton');
+  assert.ok(close, 'Tasks mode keeps the shared header Close');
+  close.click();
+  await waitForUi(app.window, 20);
+  assert.equal(panel.classList.contains('hidden'), true, 'the header Close closes Tasks');
+  assert.equal(JSON.stringify(prefs().dismissedForSession || {}), before, 'still no artifact dismissal');
+});
+
+test('Tasks mode shows the shared 36px header with its Close and no second "Tasks" title', async (t) => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const taskRailCss = fs.readFileSync(path.join(__dirname, '..', 'styles', 'task-rail.css'), 'utf8');
+  assert.doesNotMatch(taskRailCss, /\[data-artifact-review-mode="tasks"\] \.artifact-panel-header[,\s{]/, 'the header is not hidden in Tasks mode');
+  const app = await boot({ active: [row('open-1', 'Open one')] });
+  t.after(() => app.dispose());
+  const panel = await openTasks(app);
+  const header = panel.querySelector('.artifact-panel-header');
+  assert.equal(header.querySelector('.artifact-panel-title-text').textContent, 'Tasks');
+  assert.equal(header.querySelector('#artifactReviewCollapseButton').getAttribute('aria-label'), 'Close panel');
+  assert.equal(panel.querySelector('.task-rail-title-text'), null, 'the rail body does not repeat the title');
+  assert.ok(panel.querySelector('.task-rail-summary'), 'the summary stays');
+});
+
+test('the strip Artifacts toggle is named Artifacts with its own glyph', async (t) => {
+  const app = await boot({});
+  t.after(() => app.dispose());
+  const doc = app.window.document;
+  const artifacts = doc.getElementById('artifactSplitViewToggle');
+  assert.equal(artifacts.getAttribute('aria-label'), 'Artifacts panel');
+  assert.equal(artifacts.getAttribute('title'), 'Artifacts');
+  const context = doc.getElementById('contextPanelToggle');
+  if (context) assert.notEqual(artifacts.querySelector('svg').innerHTML, context.querySelector('svg')?.innerHTML, 'distinct from the context toggle');
+  assert.equal(artifacts.querySelector('svg rect'), null, 'not a split rectangle');
 });

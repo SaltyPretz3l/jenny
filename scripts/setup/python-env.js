@@ -26,6 +26,27 @@ function venvExists(repoRoot, { platform = process.platform, fileExists = fs.exi
   return fileExists(venvPythonPath(repoRoot, platform));
 }
 
+const QUARANTINE_PREFIX = '.venv.invalid-';
+
+// Remove older .venv.invalid-* quarantines from the repo root, keeping the one
+// just created. Best effort: a locked or unreadable leftover must not block setup.
+function pruneQuarantines(repoRoot, keepName, { readdir, rm }) {
+  try {
+    for (const entry of readdir(repoRoot, { withFileTypes: true })) {
+      if (!entry.isDirectory() || !entry.name.startsWith(QUARANTINE_PREFIX) || entry.name === keepName) {
+        continue;
+      }
+      try {
+        rm(path.join(repoRoot, entry.name), { recursive: true, force: true });
+      } catch {
+        /* best effort */
+      }
+    }
+  } catch {
+    /* best effort */
+  }
+}
+
 // Create <repoRoot>/.venv using the resolved interpreter launcher (from
 // prereqs.checkPython). Idempotent: returns { created: false } when present.
 function ensureVenv(repoRoot, launcher, {
@@ -33,6 +54,8 @@ function ensureVenv(repoRoot, launcher, {
   platform = process.platform,
   fileExists = fs.existsSync,
   rename = fs.renameSync,
+  readdir = fs.readdirSync,
+  rm = fs.rmSync,
   nowProvider = () => new Date(),
 } = {}) {
   const venvDir = path.join(repoRoot, '.venv');
@@ -50,9 +73,9 @@ function ensureVenv(repoRoot, launcher, {
       return { created: false, venvPython: interpreter };
     }
     const stamp = nowProvider().toISOString().replace(/[:.]/g, '-');
-    const recoveredPath = path.join(repoRoot, `.venv.invalid-${stamp}`);
+    const recoveredName = `${QUARANTINE_PREFIX}${stamp}`;
     try {
-      rename(venvDir, recoveredPath);
+      rename(venvDir, path.join(repoRoot, recoveredName));
     } catch (error) {
       return {
         created: false,
@@ -61,13 +84,16 @@ function ensureVenv(repoRoot, launcher, {
         venvPython: interpreter,
       };
     }
+    pruneQuarantines(repoRoot, recoveredName, { readdir, rm });
   } else if (fileExists(venvDir)) {
     const stamp = nowProvider().toISOString().replace(/[:.]/g, '-');
+    const recoveredName = `${QUARANTINE_PREFIX}${stamp}`;
     try {
-      rename(venvDir, path.join(repoRoot, `.venv.invalid-${stamp}`));
+      rename(venvDir, path.join(repoRoot, recoveredName));
     } catch (error) {
       return { created: false, error: 'venv_recovery_failed', detail: String(error?.message || error), venvPython: interpreter };
     }
+    pruneQuarantines(repoRoot, recoveredName, { readdir, rm });
   }
   if (!launcher || !launcher.cmd) {
     return { created: false, error: 'no_python_launcher', venvPython: venvPythonPath(repoRoot, platform) };

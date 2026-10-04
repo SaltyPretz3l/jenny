@@ -436,6 +436,7 @@
       handleInteractiveSkipAll,
       handleInteractiveOtherInputChange,
       handleComposerToggleChange,
+      openSettingsSection,
       showComposerActionError,
       state,
     } = options || {};
@@ -546,40 +547,69 @@
         handleComposerToggleChange(event);
       }, listenerOptions);
 
-      // Rail chips (Tools, Model): each toggles its popover. The chips are
-      // innerHTML-rendered into their slots, so delegation (not direct
-      // binding) is required; aria-controls names the popover to toggle.
+      const doc = composerWrap.ownerDocument;
+      const panel = doc?.getElementById('composerChatPanel');
+      const panelApi = () => panel?.__jennyChatPanel;
+      const inventory = () => doc?.defaultView?.inventory || globalThis.inventory;
+      // Settings navigation is shell chrome, so it stays open while composer preferences are locked.
+      const openSettings = (section) => {
+        inventory()?.popover?.close(panel);
+        openSettingsSection?.(section, { source: 'composer_chat_panel' });
+      };
+      if (panel) {
+        registerListener(panel, 'keydown', (event) => {
+          if (event.key === 'Escape' && !panel.querySelector('[data-chat-panel-view="all"]').hidden) {
+            event.preventDefault();
+            event.stopPropagation();
+            panelApi()?.view('main');
+          }
+        }, { ...listenerOptions, capture: true });
+        registerListener(panel, 'keydown', (event) => {
+          if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) panelApi()?.rove(event);
+        }, listenerOptions);
+        registerListener(panel, 'focusin', (event) => {
+          const chip = event.target.closest('.composer-family-chip');
+          if (chip) panelApi()?.remember(chip);
+        }, listenerOptions);
+        registerListener(panel, 'input', (event) => {
+          if (event.target.matches('[data-chat-panel-filter]')) panelApi()?.render();
+        }, listenerOptions);
+      }
       registerListener(composerWrap, 'click', (event) => {
-        const planMeter = composerWrap.ownerDocument?.defaultView?.rendererPlanUsageMeter || globalThis.rendererPlanUsageMeter;
+        const planMeter = doc?.defaultView?.rendererPlanUsageMeter || globalThis.rendererPlanUsageMeter;
         if (planMeter?.handleClick?.({ event, composerWrap, state })) return;
-        if (globalThis.rendererContextMeterDetails?.handleClick?.({ event, composerWrap, state })) {
-          return;
-        }
+        if (globalThis.rendererContextMeterDetails?.handleClick?.({ event, composerWrap, state })) return;
         const chip = event.target.closest('[data-inv-chip="composer-tools"], [data-inv-chip="composer-model"]');
         if (chip) {
-          const inv = typeof globalThis !== 'undefined' ? globalThis.inventory : null;
-          const popoverApi = inv && inv.popover;
-          const doc = composerWrap.ownerDocument;
-          const popoverId = chip.getAttribute('aria-controls') || '';
-          const popoverEl = doc && popoverId ? doc.getElementById(popoverId) : null;
-          if (popoverApi && popoverEl) {
-            popoverApi.toggle(popoverEl, { trigger: chip });
+          const popoverEl = doc?.getElementById(chip.getAttribute('aria-controls') || '');
+          inventory()?.popover?.toggle(popoverEl, { trigger: chip, focus: popoverEl !== panel });
+          if (popoverEl === panel && !panel.hidden) panelApi()?.focusChips();
+          return;
+        }
+        if (!panel?.contains(event.target)) return;
+        const family = event.target.closest('.composer-family-chip');
+        if (family) { panelApi()?.clickFamily(family.dataset.toolTarget); return; }
+        const expand = event.target.closest('[data-chat-panel-expand]');
+        if (expand) {
+          const open = expand.getAttribute('aria-expanded') !== 'true';
+          expand.setAttribute('aria-expanded', String(open));
+          doc.getElementById(expand.getAttribute('aria-controls')).hidden = !open;
+          return;
+        }
+        const fix = event.target.closest('[data-tool-fix]');
+        if (fix) {
+          if (fix.dataset.toolFix === 'settings') openSettings('tools');
+          if (fix.dataset.toolFix === 'project') {
+            panelApi()?.view('main', false);
+            panel.querySelector('#composerProjectPillSlot button')?.click();
           }
           return;
         }
-
-        // Full-row clickability for the tools popover: a click anywhere on a
-        // toggle row (icon, label, empty space) flips its switch. Clicks that
-        // land on the switch button itself already flow through the
-        // document-level toggle handler, so bail to avoid a double toggle.
-        const row = event.target.closest('.inv-composer-toggle-item');
-        if (!row || event.target.closest('[data-inv-toggle]')) {
-          return;
-        }
-        const track = row.querySelector('[data-inv-toggle]');
-        if (track && !track.disabled) {
-          track.click();
-        }
+        const action = event.target.closest('[data-chat-panel-action]')?.dataset.chatPanelAction;
+        if (action === 'all-tools') panelApi()?.view('all');
+        if (action === 'back') panelApi()?.view('main');
+        if (action === 'reset') panelApi()?.reset();
+        if (action === 'settings') openSettings('tools');
       }, listenerOptions);
     }
   }

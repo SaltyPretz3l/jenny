@@ -241,7 +241,7 @@ def _compute_delay_seconds(*, attempt: int, retry_after_seconds: float | None) -
     if retry_after_seconds is not None:
         return max(0.0, min(float(retry_after_seconds), MAX_RETRY_AFTER_SECONDS))
     base_delay = min(BASE_DELAY_SECONDS * (2 ** (attempt - 1)), MAX_DELAY_SECONDS)
-    return base_delay + (random.random() * 0.25 * base_delay)  # noqa: S311
+    return base_delay + (random.random() * 0.25 * base_delay)
 
 
 def _adjust_max_tokens_for_retry(

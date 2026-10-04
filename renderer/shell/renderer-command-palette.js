@@ -390,6 +390,8 @@
     }
 
     function isAnotherOverlayOpen() {
+      // The startup curtain owns the screen until removed.
+      if (documentRef && documentRef.getElementById('startupOverlay')) return true;
       const ui = (state && state.ui) || {};
       return Boolean(
         ui.composerPopoverOpen

@@ -22,7 +22,8 @@
 
 .reasoning-row-header,
 .tool-call-header,
-.tool-call-row--minimal .tool-call-row-toggle {
+.tool-call-row--minimal .tool-call-row-toggle,
+.tool-run-toggle {
   display: flex;
   align-items: center;
   width: 100%;
@@ -70,14 +71,16 @@
 
 .reasoning-row-header:hover,
 .tool-call-header:hover,
-.tool-call-row--minimal .tool-call-row-toggle:hover {
+.tool-call-row--minimal .tool-call-row-toggle:hover,
+.tool-run-toggle:hover {
   background: var(--tl-row-hover);
   color: var(--text-primary);
 }
 
 .reasoning-row-header:focus-visible,
 .tool-call-header:focus-visible,
-.tool-call-row--minimal .tool-call-row-toggle:focus-visible {
+.tool-call-row--minimal .tool-call-row-toggle:focus-visible,
+.tool-run-toggle:focus-visible {
   outline: 2px solid var(--focus-outline);
   outline-offset: -2px;
 }
@@ -85,7 +88,8 @@
 /* Leading status dot: the row's state signal. */
 .reasoning-row-header > .status-dot,
 .tool-call-header > .status-dot,
-.tool-call-row--minimal .tool-call-row-toggle > .status-dot {
+.tool-call-row--minimal .tool-call-row-toggle > .status-dot,
+.tool-run-toggle > .status-dot {
   flex: none;
   width: var(--tl-dot-size);
   height: var(--tl-dot-size);
@@ -120,7 +124,8 @@
   color: var(--text-muted);
 }
 
-.reasoning-row-main.shimmer-active {
+.reasoning-row-main.shimmer-active,
+.tool-run-summary.shimmer-active {
   animation: shimmer-text var(--motion-duration-sheen) var(--motion-ease-standard) infinite;
 }
 
@@ -231,10 +236,6 @@
 /* Live liveness on a running row: the badge word breathes gently (opacity
    only — the retired raised-card pulse stays retired) and the per-tool
    elapsed timer keeps its digits from jittering. */
-@keyframes tool-call-running-breathe {
-  from { opacity: 1; }
-  to { opacity: 0.55; }
-}
 [data-tool-status="running"] .tool-call-status-label {
   animation: tool-call-running-breathe var(--motion-duration-pulse) var(--motion-ease-standard) infinite alternate;
 }
@@ -304,8 +305,31 @@
 .tool-call-header[aria-expanded="true"] .tool-call-disclosure {
   transform: rotate(-135deg);
 }
-.tool-call-row--minimal .tool-call-row-toggle[aria-expanded="true"] .tool-call-disclosure {
+.tool-call-row--minimal .tool-call-row-toggle[aria-expanded="true"] .tool-call-disclosure,
+.tool-run-toggle[aria-expanded="true"] .tool-call-disclosure {
   transform: rotate(-135deg);
+}
+
+/* Answers tool run summary (renderer-turn-row-list-utils): the one-liner
+   grammar without a bold name. The sentence reads as a summary of work in the
+   secondary tone; a failed step adds its count in the error tone. */
+.tool-run-summary {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--tl-font-ui);
+  font-weight: var(--tl-weight-body);
+  color: var(--text-secondary);
+}
+
+.tool-run-failed {
+  flex: none;
+  white-space: nowrap;
+  font-size: var(--tl-font-ui);
+  font-weight: var(--tl-weight-body);
+  color: var(--tl-status-error);
 }
 /* ── Container rest state: transparent, railless ── */
 
@@ -354,10 +378,6 @@
   box-shadow: none;
   border: none;
 }
-.tool-call-row[data-tool-status="running"] {
-  animation: none;
-}
-
 /* Tool accent variable: consumed by kv-grid/io tints below; single source. */
 .tool-call-block,
 .tool-call-row,
@@ -388,6 +408,7 @@
   padding-block: 0;
   padding-inline-start: var(--space-4);
   padding-inline-end: 0;
+  /* Owner exception to the no-side-bars law (2026-09-29): the hairline marks the panel's extent on long bodies and aligns with the status dot. */
   border-inline-start: 1px solid var(--tl-panel-border);
   opacity: 0;
   transform: translateY(-2px);
@@ -407,6 +428,15 @@
   /* Generous fallback; the renderer's height-sync pass overrides with the
    * measured scrollHeight when available. */
   max-height: 5000px;
+}
+/* A collapsing panel is a pure clip (owner pick A1): .expanded stays until the
+ * hide timer, so its block padding is zeroed here or max-height:0 would bottom
+ * out at padding height and snap shut at the timer. Padding is not in the
+ * transition list, so this snaps at the start, as it did when .expanded left
+ * on the first frame. */
+.reasoning-row-panel.expanded[data-collapsing="true"] {
+  padding-top: 0;
+  padding-bottom: 0;
 }
 /* Once the expand transition has settled, the renderer drops the pinned
  * measured height in favor of max-height:none — a late reflow (fonts/layout
@@ -440,12 +470,6 @@
 .reasoning-row-panel-body > .reasoning-stream-unit[data-su-fp="elided-note"] > :first-child { margin-top: 0; }
 .reasoning-row-panel-body > .reasoning-stream-unit:last-child > :last-child { margin-bottom: 0; }
 
-/* Tool detail bodies: align with the header text edge, quiet section labels. */
-.tool-call-details.expanded {
-  padding-inline-start: 0;
-  border-inline-start: none;
-}
-
 .tool-call-section-kicker {
   /* The label text and an optional error-code chip render as siblings with no
      markup separator — the flex gap IS the spacing between them. */
@@ -466,6 +490,9 @@
 
 .tool-call-input,
 .tool-call-output {
+  font-family: var(--font-family-mono);
+  cursor: text;
+  -webkit-user-select: text;
   background: none;
   border: none;
   border-radius: 0;
@@ -522,101 +549,6 @@
   color: var(--text-muted);
 }
 
-/* Phantom activity row: ephemeral tail row for silent arg-generation phases
-   (renderer-stream-activity-row.js). Wears the machinery one-liner grammar so
-   typed events update it in place until authoritative content takes over. */
-.turn-activity-row {
-  display: flex;
-  align-items: center;
-  width: 100%;
-  min-height: var(--tl-row-h);
-  column-gap: var(--space-3);
-  margin: 0;
-  padding: var(--space-1) var(--space-3);
-  color: var(--text-secondary);
-  line-height: 1.3;
-}
-.turn-activity-row > .status-dot {
-  flex: none;
-  width: var(--tl-dot-size);
-  height: var(--tl-dot-size);
-  animation: tool-call-running-breathe var(--motion-duration-pulse) var(--motion-ease-standard) infinite alternate;
-}
-.turn-activity-row[data-turn-activity-kind="compaction"] > .status-dot {
-  position: relative;
-  /* The trailing fold dot sits 1.6 dots past this one; reserve that space so
-     it never paints over the label. */
-  margin-inline-end: calc(var(--tl-dot-size) * 1.6);
-  background: var(--tl-status-active);
-  animation: none;
-}
-.turn-activity-row[data-turn-activity-kind="compaction"] > .status-dot::before,
-.turn-activity-row[data-turn-activity-kind="compaction"] > .status-dot::after {
-  content: "";
-  position: absolute;
-  inset-block-start: 0;
-  width: var(--tl-dot-size);
-  height: var(--tl-dot-size);
-  border-radius: 50%;
-  background: var(--tl-status-active);
-}
-.turn-activity-row[data-turn-activity-kind="compaction"] > .status-dot::before {
-  inset-inline-start: calc(var(--tl-dot-size) * -1.6);
-  animation: turn-activity-fold-left var(--motion-duration-pulse-slow) var(--motion-ease-standard) infinite;
-}
-.turn-activity-row[data-turn-activity-kind="compaction"] > .status-dot::after {
-  inset-inline-start: calc(var(--tl-dot-size) * 1.6);
-  animation: turn-activity-fold-right var(--motion-duration-pulse-slow) var(--motion-ease-standard) infinite;
-}
-[dir="rtl"] .turn-activity-row[data-turn-activity-kind="compaction"] > .status-dot::before {
-  animation-name: turn-activity-fold-right;
-}
-[dir="rtl"] .turn-activity-row[data-turn-activity-kind="compaction"] > .status-dot::after {
-  animation-name: turn-activity-fold-left;
-}
-.turn-activity-name {
-  flex: none;
-  font-size: var(--tl-font-ui);
-  font-weight: var(--tl-weight-label);
-  color: var(--text-secondary);
-  white-space: nowrap;
-}
-.turn-activity-name[hidden] { display: none; }
-.turn-activity-label {
-  flex: 0 1 auto;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: var(--tl-font-ui);
-  font-weight: var(--tl-weight-body);
-  color: var(--text-muted);
-  animation: shimmer-text var(--motion-duration-sheen) var(--motion-ease-standard) infinite;
-}
-.turn-activity-label--path { font-family: var(--font-family-mono); }
-.turn-activity-elapsed {
-  flex: none;
-  margin-inline-start: auto;
-  font-size: var(--tl-font-meta);
-  font-weight: var(--tl-weight-body);
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-  color: var(--tl-status-active);
-}
-/* Rare mount fallback: directly on the timeline (no live article to join). */
-.chat-timeline > .turn-activity-row {
-  max-width: var(--content-column-width);
-  margin-inline: auto;
-}
-@media (prefers-reduced-motion: reduce) {
-  .turn-activity-row > .status-dot,
-  .turn-activity-row[data-turn-activity-kind="compaction"] > .status-dot::before,
-  .turn-activity-row[data-turn-activity-kind="compaction"] > .status-dot::after,
-  .turn-activity-label {
-    animation: none;
-  }
-}
-
 /* W2-2 background-job chip strip: one chip per backgrounded run_command job,
    rendered above the composer (renderer-background-jobs.js). */
 .background-jobs-strip {
@@ -633,7 +565,7 @@
   padding: var(--space-1) var(--space-2);
   background: var(--tl-code-bg);
   border: 1px solid var(--tl-panel-border);
-  border-radius: 999px;
+  border-radius: var(--tl-radius-chip);
   font-size: var(--tl-font-meta);
   color: var(--text-secondary);
 }
@@ -701,18 +633,14 @@
   /* Soft-landing reveal for streaming reasoning units. Motion is intentionally
    * softer/longer than the answer bubble's (removed) reveal; tune
    * --reasoning-reveal-blur (0 = pure fade+lift, 4px = dreamier) without
-   * touching JS. Duration/ease ride the shared motion tokens so the reveal
-   * follows data-motion calm/expressive and zeroes under reduced motion. */
+   * touching JS. Durations follow --motion-duration-* tokens, which zero
+   * under OS reduced motion. */
   --reasoning-reveal-duration: var(--motion-duration-emphasis);
   --reasoning-reveal-ease: var(--motion-ease-emphasis);
   --reasoning-reveal-blur: 2.5px;
   --reasoning-reveal-lift: 6px;
 }
 
-@keyframes shimmer-text {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.55; }
-}
 
 /* Each newly appended reasoning unit drifts up out of a light blur as it
  * arrives. Only the trailing <=2 units get .is-revealed (the patch layer's
@@ -748,14 +676,21 @@
   .reasoning-row-header,
   .tool-call-header,
   .tool-call-row--minimal .tool-call-row-toggle,
+  .tool-run-toggle,
   .reasoning-row-caret,
   .tool-call-disclosure,
   .reasoning-row-panel {
     transition: none;
   }
   .reasoning-row-main.shimmer-active,
+  .tool-run-summary.shimmer-active {
+    animation: none;
+  }
   .reasoning-stream-unit.is-revealed {
     animation: none;
+    opacity: 1;
+    filter: none;
+    transform: none;
   }
 }
 
@@ -787,9 +722,8 @@
   align-items: center;
   gap: var(--space-3);
   color: var(--text-muted);
-  font-size: 11px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+  font-size: var(--tl-font-meta);
+  font-weight: var(--tl-weight-label);
 }
 
 .plan-document__rule {
@@ -799,9 +733,9 @@
 
 .plan-document__title {
   margin: 0;
-  font-size: clamp(20px, 2.4vw, 30px);
-  font-weight: 560;
-  border-radius: var(--radius-sm);
+  font-size: var(--font-size-title);
+  font-weight: var(--tl-weight-label);
+  border-radius: var(--tl-radius-control);
   cursor: text;
 }
 
@@ -819,7 +753,7 @@
   width: 100%;
   min-width: 0;
   border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-sm);
+  border-radius: var(--tl-radius-control);
   background: var(--surface-input-background);
   color: var(--text-primary);
   font: inherit;
@@ -851,7 +785,7 @@
 
 .plan-document__step-text {
   display: block;
-  border-radius: var(--radius-sm);
+  border-radius: var(--tl-radius-control);
   cursor: text;
 }
 
@@ -874,7 +808,7 @@
   width: 28px;
   height: 28px;
   border: 0;
-  border-radius: var(--radius-sm);
+  border-radius: var(--tl-radius-control);
   background: transparent;
   color: var(--text-muted);
   cursor: pointer;
@@ -911,9 +845,8 @@
 
 .plan-document__verification > span {
   color: var(--text-muted);
-  font-size: 11px;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
+  font-size: var(--tl-font-meta);
+  font-weight: var(--tl-weight-label);
 }
 
 .plan-document__decision [data-plan-actions] {
@@ -941,9 +874,9 @@
 .plan-document__edited-chip {
   padding: 2px var(--space-2);
   border: 1px solid var(--border-subtle);
-  border-radius: 999px;
+  border-radius: var(--tl-radius-chip);
   color: var(--text-secondary);
-  font-size: 11px;
+  font-size: var(--tl-font-meta);
 }
 
 .plan-document__decision .inv-text-field {
@@ -954,7 +887,7 @@
   color: var(--text-danger-emphasis);
   content: attr(data-error);
   display: block;
-  font-size: 12px;
+  font-size: var(--tl-font-meta);
   margin-top: 8px;
 }
 
@@ -973,8 +906,8 @@
 
 .plan-document-receipt__state {
   color: var(--text-muted);
-  font-size: 11px;
-  text-transform: uppercase;
+  font-size: var(--tl-font-meta);
+  font-weight: var(--tl-weight-label);
 }
 
 .plan-document-receipt__meta {
@@ -998,7 +931,7 @@
 
 .tool-call-row--minimal .tool-call-row-link {
   color: var(--accent);
-  font-size: var(--font-size-sm);
+  font-size: var(--tl-font-ui);
   text-decoration: underline;
   text-underline-offset: 2px;
   cursor: pointer;

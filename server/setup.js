@@ -9,7 +9,8 @@ const { FileSecretStore } = require('./file-secret-store');
 const { acquireProfile } = require('../services/host/profile-ownership');
 const { assertImportComplete } = require('../services/host/maintenance-commands');
 const { readSetup, saveSetup, revokeBrowserSessionsForAccessChange } = require('../services/host/setup-config');
-const { probeModels, probePrivateHttps, probeLocalHost } = require('../services/host/setup-model-probe');
+const { probeModels, probePrivateHttps, probeLocalHost,
+  probePrivateReady, probeLocalReady } = require('../services/host/setup-model-probe');
 
 const CONFIG_PATH = '/etc/jenny/host.json';
 const COMPOSE = 'docker compose -p jenny-host -f compose.host.easy.yml';
@@ -38,6 +39,7 @@ const REASONS = Object.freeze({
   setup_incomplete: 'Setup was interrupted. Stop Jenny and rerun the setup launcher to revalidate the settings and key.',
   config_schema_future: 'This configuration was created by a newer Jenny version. Use that version; do not overwrite it.',
   guided_volume_mismatch: 'This configuration uses custom paths. Keep using the manual Compose workflow.',
+  guided_workspace_mismatch: 'This configuration uses a custom workspace location. Keep using the manual Compose workflow.',
   AUTH_PASSWORD_INVALID: 'Use an owner password of at least 12 bytes and no more than 1024 bytes.',
   AUTH_PASSWORD_MISMATCH: 'The owner passwords did not match. Rerun setup; the model settings have been saved.',
   setup_cancelled: 'Setup cancelled. Existing conversations and login remain unchanged.',
@@ -98,10 +100,12 @@ async function chooseSettings(previous, prompts, { probeModelsImpl = probeModels
   const candidate = normalizeHostConfig(source);
   let apiKey = null;
   if (nextEngine === 'openai-compatible') {
-    const reuse = sameEndpoint && previous.apiKey && !previous.pending
+    const reuse = sameEndpoint && previous.apiKey && !previous.pending && !previous.credentialUnavailable
       && await prompts.yes('Keep the existing model API key', true);
     if (reuse) apiKey = previous.apiKey;
-    else if (await prompts.yes('Does this model server require an API key')) apiKey = await prompts.secret('Model API key (hidden): ');
+    else if (previous.credentialUnavailable || await prompts.yes('Does this model server require an API key')) {
+      apiKey = await prompts.secret('Model API key (hidden): ');
+    }
   }
   const result = await probeModelsImpl(candidate.modelEndpoint, { apiKey: apiKey || '' });
   if (!result.ok) throw new Error(result.reason);
@@ -138,8 +142,12 @@ async function configure(command, {
       || previous.source.secrets_dir !== template.secrets_dir)) {
       throw new Error('guided_volume_mismatch');
     }
+    if (previous.source && previous.source.workspace_root !== null
+      && previous.source.workspace_root !== template.workspace_root) {
+      throw new Error('guided_workspace_mismatch');
+    }
     if (previous.pending) prompts.say(REASONS.setup_incomplete);
-    if (previous.source && !previous.pending && command === 'init') prompts.say('Keeping the existing configuration.');
+    if (previous.source && !previous.pending && !previous.credentialUnavailable && command === 'init') prompts.say('Keeping the existing configuration.');
     else {
       const { source, apiKey } = await chooseSettings(previous, prompts, { template, probeModelsImpl });
       if (source.user_data_path !== template.user_data_path || source.secrets_dir !== template.secrets_dir) {
@@ -162,7 +170,8 @@ async function configure(command, {
 
 async function doctor({ configPath = CONFIG_PATH, say = console.log,
   probeModelsImpl = probeModels, probePrivateHttpsImpl = probePrivateHttps,
-  probeLocalHostImpl = probeLocalHost, probeWorkerImpl = null } = {}) {
+  probeLocalHostImpl = probeLocalHost, probePrivateReadyImpl = probePrivateReady,
+  probeLocalReadyImpl = probeLocalReady, probeWorkerImpl = null } = {}) {
   const config = loadHostConfig(configPath);
   say('Configuration: valid');
   let owner = false;
@@ -189,6 +198,13 @@ async function doctor({ configPath = CONFIG_PATH, say = console.log,
   const accessReady = local ? await probeLocalHostImpl(config) : await probePrivateHttpsImpl(config.canonicalOrigin);
   say((local ? 'Localhost service: ' : 'Private HTTPS: ') + (accessReady ? 'Jenny health response received'
     : local ? 'not reachable from the setup container; check Jenny logs' : 'not reachable from this container; check DNS and the HTTPS proxy'));
+  // Liveness alone is not readiness: a live server can still refuse work.
+  let appReady = false;
+  if (accessReady) {
+    appReady = local ? await probeLocalReadyImpl(config) : await probePrivateReadyImpl(config.canonicalOrigin);
+    say('Application readiness: ' + (appReady ? 'ready'
+      : 'not ready; the server is reachable but reports it cannot serve requests yet. Check Jenny logs and rerun doctor'));
+  } else say('Application readiness: not checked because the service is not reachable');
   let workerReady = true;
   if (config.execution) {
     try {
@@ -199,7 +215,7 @@ async function doctor({ configPath = CONFIG_PATH, say = console.log,
     } catch (_error) { workerReady = false; say('Command sandbox: unavailable; inspect sandbox container logs'); }
   }
   printAccess(config, say);
-  return { ok: owner && keyReady && modelReady && accessReady && workerReady };
+  return { ok: owner && keyReady && modelReady && accessReady && appReady && workerReady };
 }
 
 async function run(argv = process.argv.slice(2), dependencies = {}) {

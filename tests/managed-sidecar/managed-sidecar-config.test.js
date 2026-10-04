@@ -426,3 +426,21 @@ test('canonical text primary requires its opt-in and both resolved Electron flag
     }
   }
 });
+
+
+test('ChatGPT runtime config forwards only the current catalog metadata snapshot', () => {
+  const userDataPath = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-chatgpt-catalog-config-'));
+  trackDirectory(userDataPath);
+  const service = createManagedService(userDataPath);
+  service.currentEngineType = 'chatgpt';
+  service.currentModel = 'gpt-6.1-sol';
+  service.chatgptAuthService = { getAccountId: () => 'fixture-account' };
+  const rows = [{ id: 'gpt-6.1-sol', label: 'GPT-6.1 Sol', context_length: 128000,
+    reasoning_efforts: ['low', 'medium'], default_reasoning_effort: 'medium', vision: false }];
+  service.chatgptModelCatalogService = { snapshot: () => ({ models: rows }) };
+  const config = service._buildManagedSidecarConfig();
+  assert.deepEqual(config.chatgpt_model_catalog, rows);
+  assert.equal(config.chatgpt_access_token, undefined);
+  service.chatgptModelCatalogService = { snapshot: () => ({ models: null }) };
+  assert.deepEqual(service._buildManagedSidecarConfig().chatgpt_model_catalog, []);
+});

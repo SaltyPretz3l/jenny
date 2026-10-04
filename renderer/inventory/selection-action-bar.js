@@ -8,7 +8,7 @@
  *   - one <ul role="menu"> for the export-format submenu (markdown / plain / json)
  *
  * The chat-side wrapper (renderer-chat-bulk-actions-utils.js, mounted from
- * wireChatAccessibility in renderer-chat-keyboard-utils.js) subscribes to:
+ * wireChatAccessibility in renderer-chat-accessibility-wiring.js) subscribes to:
  *   'copy-md'          — Copy as Markdown button pressed
  *   'copy-plain'       — Copy as Plain Text button pressed
  *   'export:markdown'  — Export submenu pick: Markdown

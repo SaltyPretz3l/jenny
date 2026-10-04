@@ -246,3 +246,16 @@ test('validator catches a wrong plural category set', () => {
     strings['count#few'] = '{count} Elemente';
   }, /de\.json:count: plural categories .* expected one, other/);
 });
+
+for (const invalid of [[], { tag: 'wrong', strings: {} }, { strings: [] }, { key: 2 }]) {
+  test(`builder and validator reject the same catalog schema: ${JSON.stringify(invalid)}`, () => {
+    const root = fixture();
+    fs.writeFileSync(path.join(root, 'en.json'), JSON.stringify(invalid));
+    const built = run(BUILD_CLI, root);
+    const validated = run(VALIDATE_CLI, root);
+    assert.equal(built.status, 1);
+    assert.equal(validated.status, 1);
+    assert.match(built.stderr, /must (?:be|match)/);
+    assert.match(validated.stdout + validated.stderr, /must (?:be|match)/);
+  });
+}

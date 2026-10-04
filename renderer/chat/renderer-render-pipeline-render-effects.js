@@ -101,6 +101,12 @@
         prepareForStructuralMorph() {},
         refreshScope() {},
       },
+      // Split view W1-4a: the session this pane shows (one pane: currentSessionId).
+      getPaneSessionId = () => String(state.currentSessionId || '').trim(),
+      // Transcript view of the session this pane shows (renderer-render-pipeline-utils.js).
+      getPaneTranscriptView = () => 'thinking',
+      // Split view W3-1: does THIS pane own selection mode (a bag without one is pane 0)?
+      isPaneSelecting = () => state?.ui?.selectionModePaneId === 0,
     } = callbacks;
     let pendingVirtualizerRebuildFrame = null;
     let latestVirtualizedArticleContext = null;
@@ -122,13 +128,16 @@
         return;
       }
       recordChatTimelineRolloutSignal(
-        String(state.currentSessionId || ''),
+        getPaneSessionId(),
         'timeline_dom_write',
         describe(lane, outcome, stats)
       );
     }
 
-    function setTimelineMarkup(html) {
+    // `rowList` (optional): { hostId, segments } of the active turn's row list
+    // (captureRowListSegments), reconciled per row so its rows keep or gain
+    // their reconcile stamps instead of being stripped by this morph.
+    function setTimelineMarkup(html, rowList) {
       // The whole-transcript write -- the largest of the four lanes. It now
       // shares the children-scope fallback policy with every other caller of
       // setInnerHtmlPreservingCodeScroll, so a morph that does not take still
@@ -143,6 +152,8 @@
       ) {
         const result = streamRevealUtils.setInnerHtmlPreservingCodeScroll(chatTimeline, html, {
           collectStats: state.features?.featureFlags?.chat_timeline_render_telemetry === true,
+          rowListSegments: rowList?.segments,
+          rowListHostId: rowList?.hostId,
           onError(error) {
             appendClientLog('WARN', 'timeline.keyed_morph_fallback', {
               target: 'chatTimeline',
@@ -167,7 +178,9 @@
       latestRegenerateRequest,
       projectionContext,
     }) {
-      return (message) => {
+      // `renderOptions` (optional) passes through to buildMessageArticleMarkup
+      // (the active-turn-root lane hands each article its row-segment sink).
+      return (message, renderOptions) => {
         const regenerateRequest =
           String(message?.id || '') === latestReplyAssistantMessageId
             ? latestRegenerateRequest
@@ -179,9 +192,45 @@
           latestReplyAssistantMessageId,
           followUpDisabledReason,
           regenerateRequest,
-          projectionContext
+          projectionContext,
+          renderOptions
         );
       };
+    }
+
+    // timeline-perf 2026-10-04: each captured article gets its own segment
+    // sink. When exactly one captured article fed its sink and holds one turn
+    // row list, resolve() names it so the morph reconciles that list per row
+    // (settled rows keep their stamps); every other node, the user shell's
+    // own row list included, morphs as before.
+    function captureRowListSegments(buildArticle, shouldCapture) {
+      const builds = [];
+      return {
+        buildArticle(message, renderOptions) {
+          if (!shouldCapture(message)) return buildArticle(message, renderOptions);
+          const sink = [];
+          const html = buildArticle(message, { ...renderOptions, rowListSegmentSink: sink });
+          if (sink.length) {
+            const lists = String(html || '').split('data-turn-row-list').length - 1;
+            builds.push({ hostId: String(message?.id || ''), segments: lists === 1 ? sink : null });
+          }
+          return html;
+        },
+        resolve: () => (builds.length === 1 && builds[0].segments ? builds[0] : null),
+      };
+    }
+
+    // The message ids rendered under the active turn root (its whole subtree).
+    function collectActiveTurnMessageIds(threadTree, projectionContext) {
+      const ids = new Set();
+      const pending = [threadTree?.nodeById?.get?.(String(projectionContext?.activeTurnRootMessageId || '').trim())];
+      while (pending.length) {
+        const node = pending.pop();
+        if (!node) continue;
+        ids.add(String(node.message?.id || node.id || '').trim());
+        if (Array.isArray(node.children)) pending.push(...node.children);
+      }
+      return ids;
     }
 
     // Finding 3: fingerprint the regenerate-request object into a short,
@@ -237,6 +286,7 @@
       timelineDividerByMessageId,
       messageFingerprints
     ) {
+      const paneSessionId = getPaneSessionId();
       const buildArticle = makeBuildArticle({
         messages,
         latestAssistantMessageId,
@@ -280,7 +330,7 @@
       //  - editingMessageId: the edited USER root swaps its bubble for the
       //    inline editor (article-markup buildMessageInnerMarkup) — exclude
       //    that one root from memo eligibility (it is a root: role==='user').
-      //  - selectionMode: every settled root grows a selection checkbox/handle
+      //  - selection mode (this pane owns it): every settled root grows a selection checkbox/handle
       //    (resolveSelectionState) — suspend the whole cache while selection
       //    mode is active (rare, short); no root memoizes this render.
       //  - review_artifact: isArtifactReviewVisible() flips the latest settled
@@ -290,16 +340,19 @@
       const editingMessageId = state.ui && typeof state.ui.editingMessageId === 'string'
         ? state.ui.editingMessageId
         : '';
-      const selectionModeActive = Boolean(state.ui && state.ui.selectionMode === true);
+      const selectionModeActive = isPaneSelecting() === true;
       const artifactReviewVisible = typeof isArtifactReviewVisible === 'function'
         ? isArtifactReviewVisible() === true
         : false;
       const sessionGlobals = {
-        sessionId: state.currentSessionId,
+        sessionId: paneSessionId,
         latestReplyAssistantMessageId,
         followUpDisabledReason,
         regenerateRequestFingerprint: fingerprintRegenerateRequest(latestRegenerateRequest),
         artifactReviewVisible,
+        // Expansion defaults differ per view, so a memoized root must not
+        // serve another view's markup (renderer-render-pipeline-thread-dom.js key).
+        transcriptView: getPaneTranscriptView(),
       };
       // A projection-state revision bump means projection ROWS changed without
       // any message content changing (terminal reconcile consumption,
@@ -324,7 +377,10 @@
       ) {
         uiRuntime.threadRootMarkupCache?.clear();
       }
-      const html = renderThreadTree(threadTree, state.currentSessionId, forcedOpenIds, buildArticle, {
+      const activeTurnMessageIds = collectActiveTurnMessageIds(threadTree, projectionContext);
+      const activeRowList = captureRowListSegments(buildArticle,
+        (message) => activeTurnMessageIds.has(String(message?.id || '').trim()));
+      const html = renderThreadTree(threadTree, paneSessionId, forcedOpenIds, activeRowList.buildArticle, {
         dividerByMessageId: timelineDividerByMessageId,
         markupCache: (memoEnabled && messageFingerprintById) ? uiRuntime.threadRootMarkupCache : null,
         activeTurnRootMessageId: String(projectionContext?.activeTurnRootMessageId || ''),
@@ -351,12 +407,12 @@
         state.ui.longThreadBudgetStats = longThreadBudgetStats;
       }
       virtualizerFacade.prepareForStructuralMorph?.();
-      setTimelineMarkup(html);
+      setTimelineMarkup(html, activeRowList.resolve());
       updateStreamRevealTailState([], computeTailFingerprint);
       const streamingRowTarget = resolveProjectionStreamingRowTarget(projectionContext);
 
       commitStreamRevealFullRender({
-        currentSessionId: state.currentSessionId,
+        currentSessionId: paneSessionId,
         structureSignature,
         latestAssistantMessageId,
         messages,
@@ -419,6 +475,7 @@
         return false;
       }
       const activeRootId = String(projectionContext.activeTurnRootMessageId || '').trim();
+      const paneSessionId = getPaneSessionId();
       const activeRootNode = threadTree?.nodeById?.get?.(activeRootId) || null;
       if (!activeRootNode) {
         return false;
@@ -435,17 +492,21 @@
         latestRegenerateRequest,
         projectionContext,
       });
+      // timeline-perf 2026-10-04: every tool-gap event repaints this root, and
+      // morphing every node of every settled row made a long turn quadratic.
+      const rowListCapture = captureRowListSegments(buildArticle, () => true);
       const patched = patchStreamRevealActiveTurnRoot({
-        currentSessionId: state.currentSessionId,
+        currentSessionId: paneSessionId,
         structureSignature,
         activeTurnRootMessageId: activeRootId,
         turnStructureHash: projectionContext.activeTurnStructureHash,
         turnTailFingerprint: projectionContext.activeTurnTailFingerprint,
         expectedRootOrder: Array.isArray(threadTree?.roots) ? threadTree.roots.map((node) => String(node?.id || '').trim()).filter(Boolean) : [],
-        buildTurnRootMarkup: () => renderThreadNode(activeRootNode, 0, state.currentSessionId, forcedOpenIds, buildArticle, {
+        buildTurnRootMarkup: () => renderThreadNode(activeRootNode, 0, paneSessionId, forcedOpenIds, rowListCapture.buildArticle, {
           dividerByMessageId: timelineDividerByMessageId,
           suppressOwnLeadingDivider: true,
         }),
+        resolveRowListSegments: rowListCapture.resolve,
       });
 
       if (patched) {
@@ -700,10 +761,6 @@
       return thinkingPipeline.hideAssistantSprite?.(options);
     }
 
-    function applyAssistantSprite(targetMessage, targetY) {
-      return thinkingPipeline.applyAssistantSprite?.(targetMessage, targetY);
-    }
-
     function updateAssistantSpritePosition(messages, derivedState, options) {
       return thinkingPipeline.updateAssistantSpritePosition?.(messages, derivedState, options);
     }
@@ -727,7 +784,6 @@
       runPostTimelineRenderEffects,
       renderLiveThinkingChip,
       hideAssistantSprite,
-      applyAssistantSprite,
       updateAssistantSpritePosition,
       renderLayout,
       dispose,

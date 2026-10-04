@@ -4,7 +4,7 @@ const { JSDOM } = require('jsdom');
 const actionButton = require('../renderer/inventory/action-button');
 const inventoryPopover = require('../renderer/inventory/popover');
 const { createChatsStripController } = require('../renderer/shell/renderer-chats-strip');
-const { loadRendererApp, waitForUi } = require('./helpers/renderer-shell-harness');
+const { loadRendererApp, waitForStartupCurtainRemoval, waitForUi } = require('./helpers/renderer-shell-harness');
 
 async function loadRendererTestApp(t, options) {
   const app = await loadRendererApp(options);
@@ -61,6 +61,10 @@ async function collapseChatPanel(window) {
 function getChips(window) {
   return [...window.document.querySelectorAll('#chatsStripChips [data-strip-session-id]')];
 }
+
+// The inventory tooltip may also describe a chip once its hover delay passes
+// (a slow machine reaches it), so the peek is one token of the list.
+const describedBy = (element) => String(element.getAttribute('aria-describedby') || '').split(/\s+/);
 
 test('collapsing the chat panel shows the strip: pinned-first chips, cap, and 56px width', async (t) => {
   const { window, shell } = await loadRendererTestApp(t);
@@ -299,7 +303,7 @@ test('hovering a chip opens the quick-peek with title/time/model and leaving clo
   assert.ok(meta.includes('gpt-test'), 'peek meta carries the model');
   assert.equal(doc.getElementById('chatsStripPeekState').textContent, 'Pinned', 'idle pinned chips peek as Pinned');
   assert.equal(doc.activeElement === chip, false, 'hover never steals focus');
-  assert.equal(chip.getAttribute('aria-describedby'), 'chatsStripPeek');
+  assert.ok(describedBy(chip).includes('chatsStripPeek'));
 
   chip.dispatchEvent(new window.MouseEvent('mouseout', { bubbles: true }));
   await waitForUi(window, 20);
@@ -352,7 +356,7 @@ test('a focused quick-peek refresh preserves keyboard focus when canonical sessi
   );
   assert.notEqual(refreshedChip, initialChip, 'canonical fact changes replace the rendered chip');
   assert.equal(doc.activeElement, refreshedChip, 'the replacement reclaims keyboard focus');
-  assert.equal(refreshedChip.getAttribute('aria-describedby'), 'chatsStripPeek');
+  assert.ok(describedBy(refreshedChip).includes('chatsStripPeek'));
   const refreshedMeta = doc.getElementById('chatsStripPeekMeta').textContent;
   assert.match(refreshedMeta, /model-after/);
   assert.match(refreshedMeta, /2 messages/);
@@ -370,7 +374,7 @@ test('Escape dismissal clears quick-peek ownership and later refreshes do not re
   await waitForUi(window, 20);
   const peek = doc.getElementById('chatsStripPeek');
   assert.equal(peek.hidden, false);
-  assert.equal(chip.getAttribute('aria-describedby'), 'chatsStripPeek');
+  assert.ok(describedBy(chip).includes('chatsStripPeek'));
 
   chip.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
   await waitForUi(window, 20);
@@ -475,7 +479,8 @@ test('the palette gains session hygiene commands: pin/unpin and the archived vie
     shell: { features: { state: { featureFlags: { command_palette: true } } } },
   });
   const doc = window.document;
-  await waitForUi(window, 60);
+  // Ctrl+K stands down while the startup curtain is mounted.
+  await waitForStartupCurtainRemoval(window);
   await seedSessions(window, shell, [
     buildSidebarSession('session-a', 'Alpha', minutesAgoIso(2)),
     buildSidebarSession('session-b', 'Beta', minutesAgoIso(10)),

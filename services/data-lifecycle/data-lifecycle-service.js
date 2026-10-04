@@ -8,9 +8,14 @@ const path = require('path');
 const { DATA_ERROR_CODES } = require('../backend/error-codes');
 const { createArchive, buildDefaultArchiveRoot } = require('./archive-service');
 const { KNOWN_RUNTIME_CHILDREN } = require('./cleanup-service');
-const { collectDataInventory, countSessionAttachments } = require('./data-inventory');
+const { collectDataInventory, collectWorkspaceInventory, countSessionAttachments } = require('./data-inventory');
 const { PortablePreferencesStore, projectPortableShellConfig } = require('./portable-preferences-store');
-const { boundedDataError, dataLifecycleFailure, dataLifecycleResult } = require('./data-lifecycle-result');
+const {
+  boundedDataError,
+  dataLifecycleFailure,
+  dataLifecycleResult,
+  retainedPartial,
+} = require('./data-lifecycle-result');
 const {
   findRestoreCandidates,
   isMeaningfullyFresh,
@@ -182,12 +187,14 @@ class DataLifecycleService extends EventEmitter {
 
   _failure(operationId, error) {
     const safeError = boundedDataError(error);
+    const partial = retainedPartial(error);
     this.logger?.('WARN', 'data_lifecycle.operation_failed', {
       operationId,
       code: safeError.code,
       reason: safeError.reason,
+      ...(partial ? { partialRetained: true, partialName: path.basename(partial.path) } : {}),
     });
-    return dataLifecycleFailure(safeError, operationId);
+    return dataLifecycleFailure(error, operationId);
   }
 
   async _run(type, task) {
@@ -199,6 +206,7 @@ class DataLifecycleService extends EventEmitter {
       type,
       cancelRequested: false,
       committed: false,
+      abortController: new AbortController(),
     };
     this.activeOperation = operation;
     try {
@@ -260,6 +268,7 @@ class DataLifecycleService extends EventEmitter {
       portablePreferences: this.preferencesStore.read(),
       portableShellConfig: projectPortableShellConfig(this.shellConfigService?.getState?.()),
       runtimeArchivePort: this.runtimeArchivePort,
+      includeMemoryDatabases: options.includeMemoryDatabases !== false,
     });
   }
 
@@ -322,7 +331,9 @@ class DataLifecycleService extends EventEmitter {
         appVersion: this.appVersion,
         onProgress: (payload) => this._progress(operation, payload),
         shouldCancel: () => operation.cancelRequested && !operation.committed,
+        signal: operation.abortController.signal,
         onCommit: () => { operation.committed = true; },
+        stagingRoot: path.join(this.userDataPath, 'data-lifecycle'),
       });
       if (lease && lease.isCurrent?.() !== true) {
         throw Object.assign(new Error('The workspace changed during archive creation.'), {
@@ -349,7 +360,6 @@ class DataLifecycleService extends EventEmitter {
       await this._ensureWorkspaceRecovery();
       const lease = this._acquireWorkspaceLease();
       try {
-        await this._flushCanonicalStores();
         const workspaceRoot = String(lease?.context?.rootPath || this._workspaceRoot());
         if (!workspaceRoot) {
           throw Object.assign(new Error('No safe workspace is available.'), {
@@ -357,7 +367,7 @@ class DataLifecycleService extends EventEmitter {
             reason: 'workspace_unavailable',
           });
         }
-        const inventory = this._collectInventory({ includeWorkspace: true }, workspaceRoot);
+        const inventory = collectWorkspaceInventory({ workspaceRoot });
         const summary = await workspaceInventorySummary(inventory, workspaceRoot);
         const reviewId = crypto.randomUUID();
         this.workspaceArchiveReview = {
@@ -571,6 +581,9 @@ class DataLifecycleService extends EventEmitter {
         choice,
         operationId: operation.id,
         removeWorkspaceData,
+        // Only a permanent removal may take all of .jenny; an archived removal
+        // deletes just the children the archive carries.
+        workspaceRemovalScope: choice === REMOVAL_CHOICES.PERMANENT ? 'all' : 'archived',
         workspaceRoot: this._workspaceRoot(),
       });
       const cleanupResults = Array.isArray(preparation?.results)
@@ -622,6 +635,7 @@ class DataLifecycleService extends EventEmitter {
       });
     }
     operation.cancelRequested = true;
+    operation.abortController.abort();
     return this._result(operation.id, 'cancel_requested');
   }
 }

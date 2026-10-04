@@ -6,9 +6,8 @@ const budgets = require('../../../config/plugins/budgets.json');
 const { validate } = require('../../../services/plugins/contracts/generated-plugin-contracts');
 const { validateDeclarativeContent,
   MAX_ITEM_CONTEXT_BYTES } = require('../../../services/plugins/data/declarative-content-validator');
-const { validateRestrictedContent } = require(
-  '../../../services/plugins/restricted-host/contribution-compiler'
-);
+const { RESTRICTED_KIND_SET: RESTRICTED_KINDS,
+  validateRestrictedContent } = require('../../../services/plugins/package/restricted-content-validator');
 const { contractForManifest,
   verifyDistributionPackage } = require('../../../services/plugins/package/distribution-package-intake');
 const {
@@ -30,9 +29,6 @@ const { HINTS } = require('./plugin-source-report');
 // Kind sets mirror the (unexported) ones in both package intakes; keep them in lockstep.
 const VIEW_KINDS = new Set(['setup_scene', 'panel', 'artifact_renderer']);
 const PRIVILEGED_KINDS = new Set(['native_mcp', 'session_provider', 'engine_adapter', 'hook']);
-const RESTRICTED_KINDS = new Set([
-  'restricted_transform', 'restricted_formatter', 'restricted_renderer', 'restricted_compute',
-]);
 
 function digest(bytes) {
   return crypto.createHash('sha256').update(bytes).digest('hex');

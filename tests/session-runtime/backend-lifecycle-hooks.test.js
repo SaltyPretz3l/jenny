@@ -9,9 +9,6 @@ const {
   startBackendService,
   stopBackendService,
 } = require('../../services/backend/local-engine-lifecycle');
-const {
-  reopenBackendRuntimeAfterStart,
-} = require('../../services/backend/backend-runtime-lifecycle');
 
 function deferred() {
   let resolve;
@@ -69,14 +66,7 @@ function makeService() {
 
 test('backend stop drains runtime before generic stream abort', async () => {
   const service = makeService();
-  const stage8Gate = deferred();
   const runtimeGate = deferred();
-  service._pluginStage8Lifecycle = {
-    beginBackendShutdown(options) {
-      service.calls.push(['stage8:begin', options]);
-      return stage8Gate.promise;
-    },
-  };
   service.sessionRuntime = {
     beginShutdown(options) {
       service.calls.push(['runtime:begin', options]);
@@ -86,25 +76,15 @@ test('backend stop drains runtime before generic stream abort', async () => {
 
   const stopping = stopBackendService(service, {});
   await tick();
-  assert.deepEqual(service.calls.slice(0, 2), [
-    ['stage8:begin', { reason: 'backend_stop' }],
-    ['runtime:begin', { reason: 'service_stop', timeoutMs: 4500 }],
-  ]);
-  runtimeGate.resolve({ ok: true });
-  await tick();
+  assert.deepEqual(service.calls[0], ['runtime:begin', { reason: 'service_stop', timeoutMs: 4500 }]);
   assert.equal(service.calls.some(call => Array.isArray(call) && call[0] === 'streams:abort'), false);
-  stage8Gate.resolve({ ok: true });
+  runtimeGate.resolve({ ok: true });
   await stopping;
   assert.ok(service.calls.some(call => Array.isArray(call) && call[0] === 'streams:abort'));
 });
 
-test('unconfirmed Stage 8 and runtime cleanup are logged without skipping process cleanup', async () => {
+test('unconfirmed runtime cleanup is logged without skipping process cleanup', async () => {
   const service = makeService();
-  service._pluginStage8Lifecycle = {
-    beginBackendShutdown: () => Promise.resolve({
-      ok: false, reason: 'stage8_cleanup_uncertain', timedOut: true,
-    }),
-  };
   service.sessionRuntime = {
     beginShutdown: () => ({ requested: true, completion: Promise.resolve({
       ok: false, reason: 'runtime_cleanup_uncertain', timedOut: true,
@@ -115,87 +95,36 @@ test('unconfirmed Stage 8 and runtime cleanup are logged without skipping proces
 
   assert.ok(service.calls.includes('sidecar:stop'));
   assert.ok(service.calls.includes('vllm:stop'));
-  assert.ok(service.logs.some(entry => entry[1] === 'plugin_stage8.shutdown_unconfirmed'
-    && entry[2].reason === 'stage8_cleanup_uncertain' && entry[2].timedOut === true));
   assert.ok(service.logs.some(entry => entry[1] === 'session_runtime.shutdown_unconfirmed'
     && entry[2].reason === 'runtime_cleanup_uncertain' && entry[2].timedOut === true));
 });
 
-test('Stage 8 begin failure still closes the session runtime', async () => {
+test('work parked for the next start is logged as information, not as unconfirmed cleanup', async () => {
   const service = makeService();
-  service._pluginStage8Lifecycle = {
-    beginBackendShutdown() {
-      service.calls.push('stage8:begin');
-      throw new Error('stage8 begin failed');
-    },
-  };
   service.sessionRuntime = {
-    beginShutdown() {
-      service.calls.push('runtime:begin');
-      return { requested: true, completion: Promise.resolve({ ok: true }) };
-    },
+    beginShutdown: () => ({ requested: true, completion: Promise.resolve({
+      ok: false, reason: 'runtime_cleanup_awaits_backend_restart',
+    }) }),
   };
 
   await stopBackendService(service, {});
 
-  assert.ok(service.calls.indexOf('stage8:begin') < service.calls.indexOf('runtime:begin'));
-  assert.ok(service.logs.some(entry => entry[1] === 'plugin_stage8.shutdown_unconfirmed'
-    && entry[2].reason === 'stage8 begin failed'));
+  assert.ok(service.calls.includes('sidecar:stop'));
+  assert.ok(service.logs.some(entry => entry[0] === 'INFO' && entry[1] === 'session_runtime.shutdown_awaits_restart'));
+  assert.equal(service.logs.some(entry => entry[1] === 'session_runtime.shutdown_unconfirmed'), false);
 });
 
-test('late Stage 8 helper cleanup completes before stop and ordered restart reopen', async () => {
+test('a throwing runtime shutdown is logged and process cleanup still runs', async () => {
   const service = makeService();
-  const stage8Gate = deferred();
-  const runtimeGate = deferred();
-  service._pluginStage8Lifecycle = {
-    beginBackendShutdown() { service.calls.push('stage8:begin'); return stage8Gate.promise; },
-    reopenAfterBackendStart() { service.calls.push('stage8:reopen'); return { ok: true }; },
-  };
   service.sessionRuntime = {
-    beginShutdown() {
-      service.calls.push('runtime:begin');
-      return { requested: true, completion: runtimeGate.promise };
-    },
-    reopenAfterShutdown() { service.calls.push('runtime:reopen'); return { ok: true }; },
+    beginShutdown() { throw new Error('runtime begin failed'); },
   };
 
-  const stopping = stopBackendService(service, {});
-  runtimeGate.resolve({ ok: true });
-  await tick();
-  assert.equal(service.calls.includes('sidecar:stop'), false);
-  stage8Gate.resolve({ ok: true });
-  await stopping;
-  await startBackendService(service, {});
+  await stopBackendService(service, {});
 
-  assert.ok(service.calls.indexOf('runtime:reopen') < service.calls.indexOf('stage8:reopen'));
-});
-
-test('Stage 8 reopen refusal re-latches the session runtime before failing', () => {
-  const service = makeService();
-  service._pluginStage8Lifecycle = {
-    beginBackendShutdown(options) { service.calls.push(['stage8:begin', options]); return { ok: true }; },
-    reopenAfterBackendStart() {
-      service.calls.push('stage8:reopen');
-      return { ok: false, reason: 'stage8_cleanup_unconfirmed' };
-    },
-  };
-  service.sessionRuntime = {
-    reopenAfterShutdown() { service.calls.push('runtime:reopen'); return { ok: true }; },
-    beginShutdown(options) {
-      service.calls.push(['runtime:begin', options]);
-      return { requested: true, completion: Promise.resolve({ ok: true }) };
-    },
-  };
-
-  assert.throws(() => reopenBackendRuntimeAfterStart(service), {
-    code: 'stage8_cleanup_unconfirmed',
-  });
-  assert.deepEqual(service.calls.slice(0, 4), [
-    'runtime:reopen',
-    'stage8:reopen',
-    ['stage8:begin', { reason: 'stage8_reopen_refused' }],
-    ['runtime:begin', { reason: 'stage8_reopen_refused', timeoutMs: 4500 }],
-  ]);
+  assert.ok(service.calls.includes('sidecar:stop'));
+  assert.ok(service.logs.some(entry => entry[1] === 'session_runtime.shutdown_unconfirmed'
+    && entry[2].reason === 'runtime begin failed'));
 });
 
 test('successful backend start reopens runtime after reconciliation without pumping work', async () => {
@@ -223,7 +152,8 @@ test('backend start reclaims abandoned runtime work before reopening and logs it
     reclaimAbandonedAfterBackendRestart(options) {
       service.calls.push(['runtime:reclaim', options]);
       return { reclaimed: [{ work_id: 'work-1', session_id: 'session-1', status: 'failed' }],
-        retained: [{ work_id: 'work-2', reason: 'runtime_producer_pending' }], resources_confirmed: 2 };
+        retained: [{ work_id: 'work-2', reason: 'runtime_producer_pending' }], resources_confirmed: 2,
+        leases_confirmed: 1 };
     },
     reopenAfterShutdown() { service.calls.push('runtime:reopen'); return { ok: true }; },
   };
@@ -237,7 +167,8 @@ test('backend start reclaims abandoned runtime work before reopening and logs it
   assert.deepEqual(service.calls[reclaimIndex][1], { reason: 'backend_restart' });
   assert.deepEqual(service.logs.filter(([, event]) => event === 'session_runtime.abandoned_work_reclaimed'), [[
     'WARN', 'session_runtime.abandoned_work_reclaimed',
-    { reason: 'backend_restart', reclaimed: ['work-1'], retained: ['work-2'], resourcesConfirmed: 2 },
+    { reason: 'backend_restart', reclaimed: ['work-1'], recovering: [], actorLeasesDropped: [],
+      retained: ['work-2'], resourcesConfirmed: 2, leasesConfirmed: 1 },
   ]]);
 });
 
@@ -256,27 +187,26 @@ test('backend start stays silent when the runtime had nothing to reclaim', async
   assert.deepEqual(service.logs.filter(([, event]) => event === 'session_runtime.abandoned_work_reclaimed'), []);
 });
 
-test('backend start logs a resources-only reclaim at INFO', async () => {
-  const service = makeService();
-  service.sessionRuntime = {
-    reclaimAbandonedAfterBackendRestart() {
-      return { reclaimed: [], retained: [], resources_confirmed: 1 };
-    },
-    reopenAfterShutdown() { return { ok: true }; },
-  };
+for (const [label, report] of [['resources', { resources_confirmed: 1 }], ['orphaned-lease', { leases_confirmed: 1 }]]) {
+  test(`backend start logs a ${label}-only reclaim at INFO`, async () => {
+    const service = makeService();
+    service.sessionRuntime = {
+      reclaimAbandonedAfterBackendRestart() {
+        return { reclaimed: [], retained: [], ...report };
+      },
+      reopenAfterShutdown() { return { ok: true }; },
+    };
 
-  await startBackendService(service, {});
+    await startBackendService(service, {});
 
-  const logs = service.logs.filter(([, event]) => event === 'session_runtime.abandoned_work_reclaimed');
-  assert.equal(logs.length, 1);
-  assert.equal(logs[0][0], 'INFO');
-});
+    const logs = service.logs.filter(([, event]) => event === 'session_runtime.abandoned_work_reclaimed');
+    assert.equal(logs.length, 1);
+    assert.equal(logs[0][0], 'INFO');
+  });
+}
 
 test('backend start fails closed when reconciled runtime cannot reopen', async () => {
   const service = makeService();
-  service._pluginStage8Lifecycle = {
-    reopenAfterBackendStart() { service.calls.push('stage8:reopen'); return { ok: true }; },
-  };
   service.sessionRuntime = {
     reopenAfterShutdown: () => ({ ok: false, reason: 'runtime_cleanup_unsettled' }),
   };
@@ -285,7 +215,6 @@ test('backend start fails closed when reconciled runtime cannot reopen', async (
     code: 'runtime_cleanup_unsettled',
   });
   assert.equal(service.calls.includes('migrations:schedule'), false);
-  assert.equal(service.calls.includes('stage8:reopen'), false);
 });
 
 test('retry startup reconciles and reopens after a downgraded model failure', async () => {
@@ -374,10 +303,6 @@ test('start and retry cannot reopen during an earlier stop model teardown', asyn
     beginShutdown: () => ({ completion: Promise.resolve({ ok: true }) }),
     reopenAfterShutdown() { service.calls.push('runtime:reopen'); return { ok: true }; },
   };
-  service._pluginStage8Lifecycle = {
-    beginBackendShutdown: () => Promise.resolve({ ok: true }),
-    reopenAfterBackendStart() { service.calls.push('stage8:reopen'); return { ok: true }; },
-  };
   const stopping = stopBackendService(service, {});
   await unloading.promise;
   assert.equal(stopBackendService(service, {}), stopping);
@@ -390,5 +315,79 @@ test('start and retry cannot reopen during an earlier stop model teardown', asyn
   await stopping;
   await startBackendService(service, {});
   assert.ok(service.calls.indexOf('sidecar:stop') < service.calls.indexOf('sidecar:start'));
-  assert.ok(service.calls.indexOf('sidecar:start') < service.calls.indexOf('stage8:reopen'));
+  assert.ok(service.calls.indexOf('sidecar:start') < service.calls.indexOf('runtime:reopen'));
+});
+
+// An in-process restart recovers reclaimed work parked for recovery before the
+// runtime reopens, as a new process recovers it before ready.
+function recoveringRuntime(service, { reconcile = async () => ({ confirmed: 1 }), reopen = () => ({ ok: true }) } = {}) {
+  service.sessionRuntime = {
+    store: { get: () => null },
+    reclaimAbandonedAfterBackendRestart() {
+      return { reclaimed: [{ work_id: 'work-r', session_id: 'session-r', status: 'needs_attention' }], retained: [] };
+    },
+    async reconcileMutationPreparations() {
+      service.calls.push('runtime:mutation-reconcile');
+      return reconcile();
+    },
+    async recoverPausedCancellations() {
+      service.calls.push('runtime:paused-cancellation');
+      return { requested: 1, completed: 1, blocked: 0 };
+    },
+    reopenAfterShutdown() { service.calls.push('runtime:reopen'); return reopen(); },
+  };
+}
+
+for (const [label, begin] of [['start', service => startBackendService(service, {})],
+  ['retry start', service => retryStartBackendService(service)]]) {
+  test(`${label} reopens only after reclaimed work's reconcile and cancellation retry finish`, async () => {
+    const service = makeService();
+    const gate = deferred();
+    recoveringRuntime(service, { reconcile: () => gate.promise });
+    let settled = false;
+    const starting = begin(service).then(() => { settled = true; });
+    while (!service.calls.includes('runtime:mutation-reconcile')) await tick();
+    await tick();
+    assert.equal(service.calls.includes('runtime:reopen'), false);
+    assert.equal(settled, false);
+    gate.resolve({ confirmed: 1 });
+    await starting;
+    assert.deepEqual(service.calls.filter(call => /^runtime:(mutation|paused|reopen)/.test(call)),
+      ['runtime:mutation-reconcile', 'runtime:paused-cancellation', 'runtime:reopen']);
+  });
+}
+
+test('a refused reopen after recovery still rejects start with the same error', async () => {
+  const service = makeService();
+  recoveringRuntime(service, { reopen: () => ({ ok: false, reason: 'runtime_cleanup_unsettled' }) });
+
+  await assert.rejects(() => startBackendService(service, {}), { code: 'runtime_cleanup_unsettled' });
+  assert.ok(service.calls.indexOf('runtime:paused-cancellation') < service.calls.indexOf('runtime:reopen'));
+  assert.equal(service.calls.includes('migrations:schedule'), false);
+});
+
+test('a failing reconcile is logged and start still reopens', async () => {
+  const service = makeService();
+  recoveringRuntime(service, { reconcile: async () => { throw new Error('sidecar_gone'); } });
+
+  await startBackendService(service, {});
+
+  assert.equal(service.calls.includes('runtime:reopen'), true);
+  assert.ok(service.logs.some(([level, event]) => level === 'ERROR'
+    && event === 'session_runtime.paused_cancellation_recovery_failed'));
+});
+
+test('a stop landing during recovery keeps the older start from reopening', async () => {
+  const service = makeService();
+  const gate = deferred();
+  recoveringRuntime(service, { reconcile: () => gate.promise });
+  service.sessionRuntime.beginShutdown = () => ({ requested: true, completion: Promise.resolve({ ok: true }) });
+  const starting = startBackendService(service, {});
+  while (!service.calls.includes('runtime:mutation-reconcile')) await tick();
+  const stopping = stopBackendService(service, {});
+  await tick();
+  gate.resolve({ confirmed: 1 });
+  await starting;
+  await stopping;
+  assert.equal(service.calls.includes('runtime:reopen'), false);
 });

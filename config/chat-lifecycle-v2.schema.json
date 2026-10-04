@@ -34,7 +34,6 @@
       "approvalMode",
       "debugOptions",
       "clientTiming",
-      "pluginCommandInvocation",
       "skillInvocation",
       "editedMessageId",
       "failureRetry"
@@ -48,7 +47,6 @@
       "toolPreferences",
       "debugOptions",
       "clientTiming",
-      "pluginCommandInvocation",
       "skillInvocation"
     ],
     "array_fields": ["attachments", "mentionContents"]

@@ -26,7 +26,9 @@ async function createWorkspaceSnapshot(options) {
   try { return await stageWorkspaceSnapshot({ ...options, closeHandle }); }
   finally { options.onSettled?.({ cleanupConfirmed }); }
 }
-async function stageWorkspaceSnapshot({ root, stagingRoot, forbiddenRoots = [], signal, limits = LIMITS, closeHandle }) {
+// posixNames: a Linux-only consumer (hosted staging) may keep '\' and ':' in names,
+// which the Linux worker accepts; desktop keeps rejecting them for Windows hosts.
+async function stageWorkspaceSnapshot({ root, stagingRoot, forbiddenRoots = [], signal, limits = LIMITS, closeHandle, posixNames = false, id: requestedId = null }) {
   root = path.resolve(root);
   const rootInfo = await assertDirectory(root);
   const rootIdentity = digest([root, rootInfo.dev, rootInfo.ino]);
@@ -38,7 +40,9 @@ async function stageWorkspaceSnapshot({ root, stagingRoot, forbiddenRoots = [], 
   await fs.mkdir(stagingRoot, { recursive: true, mode: 0o700 });
   await assertDirectory(stagingRoot);
   if (inside(root, stagingRoot)) throw sandboxError('snapshot_stage_inside_workspace');
-  const id = randomUUID();
+  // A caller that must name the copy before staging (hosted admission) passes its own UUID.
+  const id = requestedId === null ? randomUUID() : String(requestedId);
+  if (!/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/u.test(id)) throw sandboxError('snapshot_id_invalid');
   const directory = path.join(stagingRoot, id);
   await fs.mkdir(directory, { mode: 0o755 });
   let entries = 0;
@@ -56,7 +60,8 @@ async function stageWorkspaceSnapshot({ root, stagingRoot, forbiddenRoots = [], 
       entries += 1;
       const relative = prefix ? prefix + '/' + entry.name : entry.name;
       if (entries > limits.entries || depth > limits.depth
-        || Buffer.byteLength(relative) > limits.pathBytes || /[\\:]/u.test(entry.name) || entry.name.includes(String.fromCharCode(0))) {
+        || Buffer.byteLength(relative) > limits.pathBytes || (!posixNames && /[\\:]/u.test(entry.name))
+        || entry.name.includes(String.fromCharCode(0))) {
         throw sandboxError('snapshot_limit');
       }
       const input = path.join(source, entry.name);

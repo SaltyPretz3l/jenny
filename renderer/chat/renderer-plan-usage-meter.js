@@ -23,7 +23,6 @@
   var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   var jtn = (globalThis.jennyI18n && globalThis.jennyI18n.tn) || function (k, count, params, one, other) { return jt.call(null, k, count === 1 ? one : other, params); };
   var PLAN_METER_ENGINE_TYPE = 'chatgpt';
-  var PLAN_METER_FLAG = 'chatgpt_plan_meter';
   var PLAN_WARNING_THRESHOLD = 0.75;
   var PLAN_DANGER_THRESHOLD = 0.9;
   var RING_RADIUS = 8;
@@ -53,11 +52,8 @@
   var pendingLeaveTimer = null;
   var pendingLeaveHandler = null;
 
-  function escapeHtml(value) {
-    return String(value == null ? '' : value)
-      .replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;')
-      .replaceAll('"', '&quot;').replaceAll("'", '&#39;');
-  }
+  const escapeHtml = ((typeof globalThis !== 'undefined' && globalThis.stringUtils)
+    || (typeof require === 'function' ? require('../shared/string-utils') : null)).escapeHtml;
 
   function finiteNumber(value) {
     var numeric = Number(value);
@@ -160,17 +156,7 @@
       .trim().toLowerCase();
   }
 
-  function flagEnabled(appState) {
-    var flags = appState && appState.features && appState.features.featureFlags;
-    if (!flags || typeof flags !== 'object') return true;
-    /* DEFAULT-ON: only an explicit false (the JENNY_ENABLE_CHATGPT_PLAN_METER=0
-       kill switch) hides the meter; an older feature payload without the key
-       behaves like production's default. */
-    return flags[PLAN_METER_FLAG] !== false;
-  }
-
   function isPlanMeterActive(appState) {
-    if (!flagEnabled(appState)) return false;
     var selected = selectedEngineType(appState);
     // Product decision: plan usage tracks the selected model, not the still-loaded engine.
     // This hides before the next turn swaps engines; an unknown selection preserves the
@@ -319,6 +305,30 @@
       + '</svg>';
   }
 
+  /* Collapsed settings popover row (2026-09-26 spec §4 step 3): the same thin
+     bar the context ring carries, sized by `--usage-ratio` (0..1) on the chip.
+     The stylesheet shows it only in the popover; the visible percent label is
+     the chip's own. The index.html CSP allows inline style attributes (only
+     the chip's custom property is inline; the popover bars stay SVG). */
+  function formatUsageRatio(ratio) {
+    var value = Number(ratio);
+    if (!Number.isFinite(value)) value = 0;
+    return String(Number(Math.min(1, Math.max(0, value)).toFixed(4)));
+  }
+
+  // Spliced like the context ring's: the chip escapes every attribute, so the
+  // first '>' closes its opening tag.
+  function withUsageBar(chipHtml, ratio) {
+    var html = String(chipHtml || '');
+    var openEnd = html.indexOf('>');
+    var closeStart = html.lastIndexOf('</');
+    if (openEnd < 0 || closeStart <= openEnd) return html;
+    return html.slice(0, openEnd) + ' style="--usage-ratio:' + formatUsageRatio(ratio) + '"'
+      + html.slice(openEnd, closeStart)
+      + '<span class="inv-usage-bar" aria-hidden="true"><span class="inv-usage-bar-fill"></span></span>'
+      + html.slice(closeStart);
+  }
+
   function renderWindowRow(entry) {
     return '<div class="inv-plan-window' + (entry.expired ? ' inv-plan-window--expired' : '') + '">'
       + '<div class="inv-plan-window-head">'
@@ -358,7 +368,7 @@
       + (summary.severity ? ' inv-context-ring--' + summary.severity + ' inv-plan-ring--' + summary.severity : '')
       + (summary.limitReached ? ' inv-plan-ring--exhausted' : '');
     var html = '<div class="inv-context-usage inv-context-usage--ring inv-plan-usage">'
-      + chip({
+      + withUsageBar(chip({
         id: CHIP_ID,
         domId: CHIP_DOM_ID,
         iconHtml: ringSvg(summary.ringRatio),
@@ -368,7 +378,7 @@
         hasPopup: typeof popover === 'function',
         ariaControls: typeof popover === 'function' ? POPOVER_DOM_ID : '',
         className: ringClass,
-      });
+      }), summary.ringRatio);
     if (typeof popover === 'function') {
       html += popover({
         id: POPOVER_ID,
@@ -562,7 +572,6 @@
 
   return {
     PLAN_METER_ENGINE_TYPE: PLAN_METER_ENGINE_TYPE,
-    PLAN_METER_FLAG: PLAN_METER_FLAG,
     PLAN_WARNING_THRESHOLD: PLAN_WARNING_THRESHOLD,
     PLAN_DANGER_THRESHOLD: PLAN_DANGER_THRESHOLD,
     CHIP_ID: CHIP_ID,

@@ -18,6 +18,18 @@ const EMPTY_DECLARATIVE_CONTENT = Object.freeze({
   settings_schemas: Object.freeze([]), commands: Object.freeze([]),
   workflows: Object.freeze([]), mcp_descriptors: Object.freeze([]),
 });
+// Contribution kinds whose runtime tiers are retired. Installed packages that
+// declare them stay listed, but the kinds compile to nothing.
+const RETIRED_CONTRIBUTION_KINDS = Object.freeze([
+  'mcp_descriptor',
+  'restricted_transform', 'restricted_formatter', 'restricted_renderer', 'restricted_compute',
+  'native_mcp', 'session_provider', 'engine_adapter', 'hook',
+  'provider_descriptor', 'setup_scene',
+  'command', 'workflow',
+]);
+const RETIRED_CONTRIBUTION_KIND_SET = new Set(RETIRED_CONTRIBUTION_KINDS);
+const declaresRetiredKind = (manifest) => Array.isArray(manifest?.contributions)
+  && manifest.contributions.some((item) => RETIRED_CONTRIBUTION_KIND_SET.has(item?.kind));
 const ELIGIBILITY_REASON_CODES = Object.freeze([
   'eligible', 'already_active', 'safe_mode', 'store_read_only', 'not_first_party',
   'publisher_key_not_current', 'permissions_requested', 'dependencies_not_supported',
@@ -29,4 +41,5 @@ module.exports = {
   OFFICIAL_PUBLISHER_ID, SUPPORTED_KINDS, SUPPORTED_KIND_SET, STAGE4B_KINDS,
   STAGE4B_KIND_SET, STAGE5_KINDS, STAGE5_KIND_SET, SNAPSHOT_ARRAY_BY_KIND,
   EMPTY_DECLARATIVE_CONTENT, ELIGIBILITY_REASON_CODES,
+  RETIRED_CONTRIBUTION_KINDS, RETIRED_CONTRIBUTION_KIND_SET, declaresRetiredKind,
 };

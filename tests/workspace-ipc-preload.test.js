@@ -319,39 +319,7 @@ test('preload exposes chat UI IPC helpers on window.jennyShell', async () => {
   });
 });
 
-test('preload exposes the audio attachment IPC helper on window.jennyShell', async () => {
-  const invokes = [];
-  let exposedApi = null;
-  const listeners = new Map();
-  loadWithElectronMock('../preload.js', {
-    contextBridge: {
-      exposeInMainWorld(_key, value) {
-        exposedApi = value;
-      },
-    },
-    ipcRenderer: {
-      invoke(channel, ...args) {
-        invokes.push({ channel, args });
-        return Promise.resolve({ channel, args });
-      },
-      on(channel, listener) {
-        listeners.set(channel, listener);
-      },
-      removeListener(channel) {
-        listeners.delete(channel);
-      },
-    },
-  });
-
-  const audioAsset = await exposedApi.attachments.saveAudioAsset({ bytes: new Uint8Array([1, 2, 3]) });
-
-  assert.deepEqual(audioAsset, {
-    channel: 'attachments:save-audio-asset',
-    args: [{ bytes: new Uint8Array([1, 2, 3]) }],
-  });
-});
-
-test('guidance IPC handlers and preload helpers expose skills and tips plumbing', async () => {
+test('guidance IPC handlers and preload helpers expose skills and no retired tips bridge', async () => {
   const handlers = new Map();
   const mainModule = loadWithElectronMock('../main.js', createElectronMock());
   const skillService = {
@@ -365,20 +333,11 @@ test('guidance IPC handlers and preload helpers expose skills and tips plumbing'
       return Promise.resolve({ opened: scope });
     },
   };
-  const tipsService = {
-    getState() {
-      return { featureEnabled: true, settings: { enabled: true } };
-    },
-    updateSettings(patch) {
-      return { featureEnabled: true, settings: patch };
-    },
-  };
-
   mainModule.registerGuidanceIpcHandlers({
     handle(channel, handler) {
       handlers.set(channel, handler);
     },
-  }, skillService, tipsService);
+  }, skillService);
 
   assert.deepEqual(await handlers.get('skills:get-state')(), {
     featureEnabled: true,
@@ -391,14 +350,8 @@ test('guidance IPC handlers and preload helpers expose skills and tips plumbing'
   assert.deepEqual(await handlers.get('skills:open-scope-folder')(null, 'user'), {
     opened: 'user',
   });
-  assert.deepEqual(await handlers.get('tips:get-state')(), {
-    featureEnabled: true,
-    settings: { enabled: true },
-  });
-  assert.deepEqual(await handlers.get('tips:update-settings')(null, { enabled: false }), {
-    featureEnabled: true,
-    settings: { enabled: false },
-  });
+  assert.equal(handlers.has('tips:get-state'), false);
+  assert.equal(handlers.has('tips:update-settings'), false);
 
   const invokes = [];
   let exposedApi = null;
@@ -425,25 +378,16 @@ test('guidance IPC handlers and preload helpers expose skills and tips plumbing'
 
   const skillState = await exposedApi.skills.getState();
   const skillsUpdate = await exposedApi.skills.updateSettings({ projectEnabled: false });
-  const tipsState = await exposedApi.tips.getState();
-  const tipsUpdate = await exposedApi.tips.updateSettings({ enabled: false });
   const unsubscribeSkills = exposedApi.skills.onChanged(() => {});
-  const unsubscribe = exposedApi.tips.onChanged(() => {});
 
   assert.deepEqual(skillState, { channel: 'skills:get-state', args: [] });
   assert.deepEqual(skillsUpdate, {
     channel: 'skills:update-settings',
     args: [{ projectEnabled: false }],
   });
-  assert.deepEqual(tipsState, { channel: 'tips:get-state', args: [] });
-  assert.deepEqual(tipsUpdate, {
-    channel: 'tips:update-settings',
-    args: [{ enabled: false }],
-  });
   assert.equal(typeof unsubscribeSkills, 'function');
-  assert.equal(typeof unsubscribe, 'function');
   assert.equal(listeners.has('skills:changed'), true);
-  assert.equal(listeners.has('tips:changed'), true);
+  assert.equal(exposedApi.tips, undefined);
 });
 
 test('feature IPC handlers and preload helpers expose the consolidated feature settings bridge', async () => {

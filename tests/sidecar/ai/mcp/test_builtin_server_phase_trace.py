@@ -28,7 +28,7 @@ def _tool(handler, *, name: str = "probe_tool") -> BuiltinTool:
 
 
 def _call(tool: BuiltinTool, workspace_root: Path, arguments: dict | None = None) -> dict:
-    return builtin_server._handle_tools_call(  # noqa: SLF001
+    return builtin_server._handle_tools_call(
         "phase-call",
         {tool.name: tool},
         WorkspaceGuard(str(workspace_root)),

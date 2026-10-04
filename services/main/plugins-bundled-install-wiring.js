@@ -2,15 +2,26 @@
 
 const { join } = require('node:path');
 const {
-  PACKAGE_IDENTITY,
   createBundledPluginMigration,
-  createChatGptPluginMigration,
-} = require('../../services/plugins/provider/chatgpt-migration');
+} = require('../../services/plugins/provider/bundled-plugin-migration');
 const {
   resolveBundledPluginRecord,
 } = require('../../services/plugins/provider/bundled-plugin-inventory');
 
+const { joinPath } = require('../../services/plugins/store/fs-facade');
+const { readJsonFile } = require('../../services/plugins/store/json-file-io');
+
 const PLUGIN_ID_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
+const RECEIPT_DIR = 'provider-migrations';
+// Bundled plugins whose feature was removed from the app or moved into core
+// (Remote Control and ChatGPT, 2026-10-02). A profile that installed one still
+// has the plugin and its install receipt; startup hands the plugin's on/off
+// facts to carryRetiredChoice, uninstalls the plugin and drops the receipt, so
+// this runs once per profile.
+const RETIRED_PLUGINS = Object.freeze([
+  Object.freeze({ publisher_id: 'jenny-official', plugin_id: 'remote-control' }),
+  Object.freeze({ publisher_id: 'jenny-official', plugin_id: 'chatgpt-subscription' }),
+]);
 
 function validIdentity(record) {
   return record?.publisher_id === 'jenny-official'
@@ -23,8 +34,8 @@ function sameIdentity(left, right) {
 }
 
 function createBundledInstallWiring({ inventory, facade, baseDir, stage5Service,
-  chatgptAuthService, preferredEngineType = () => '', enablePlugin,
-  resourcesRoot, appRoot, isPackaged = false, readFile, now, log = () => {} } = {}) {
+  enablePlugin, uninstallPlugin, readDesiredState = async () => '',
+  carryRetiredChoice = async () => {}, resourcesRoot, appRoot, isPackaged = false, readFile, now, log = () => {} } = {}) {
   if (typeof readFile !== 'function') {
     throw new TypeError('Bundled install wiring dependencies invalid');
   }
@@ -64,29 +75,41 @@ function createBundledInstallWiring({ inventory, facade, baseDir, stage5Service,
       facade, baseDir, stage5Service, loadBundledPackage, enablePlugin, now,
       log: (event, data, level = 'WARN') => log(level, event, data),
     };
-    const migration = sameIdentity(identity, PACKAGE_IDENTITY)
-      ? createChatGptPluginMigration({
-        ...shared, chatgptAuthService, preferredEngineType,
-      })
-      : createBundledPluginMigration({ ...shared, identity, autoEnable: () => false });
-    migrations.push(migration);
+    migrations.push(createBundledPluginMigration({ ...shared, identity, autoEnable: () => false }));
   }
 
   const identities = Object.freeze(migrations.map(({ identity }) => identity));
-  const chatgptMigration = migrations.find(({ identity }) => (
-    sameIdentity(identity, PACKAGE_IDENTITY)
-  ));
-  const bundledMigrations = migrations.filter(({ identity }) => (
-    !sameIdentity(identity, PACKAGE_IDENTITY)
-  ));
   let inFlight = null;
 
+  async function retireRemovedPlugins() {
+    for (const identity of RETIRED_PLUGINS) {
+      const receiptPath = joinPath(baseDir, RECEIPT_DIR, `${identity.plugin_id}.json`);
+      let status = 'failed';
+      try {
+        const read = await readJsonFile(facade, receiptPath);
+        if (read.status === 'missing') continue;
+        await carryRetiredChoice(identity, {
+          receipt: read.status === 'ok' ? read.value : null,
+          desiredState: await readDesiredState(identity),
+        });
+        // Uninstalling a plugin that is already absent succeeds without a commit.
+        const removed = await uninstallPlugin(identity);
+        if (removed?.ok === true) {
+          await facade.remove(receiptPath);
+          status = 'removed';
+        }
+      } catch (_error) { /* the receipt stays, so the next start tries again */ }
+      log(status === 'removed' ? 'INFO' : 'WARN', 'plugins.bundled_retired', {
+        plugin_id: identity.plugin_id,
+        status,
+      });
+    }
+  }
+
   async function execute() {
-    const chatgptResult = chatgptMigration
-      ? await chatgptMigration.run()
-      : { ok: true, migrated: false, available: false, reason: 'no_chatgpt_record' };
+    await retireRemovedPlugins();
     const bundled = [];
-    for (const migration of bundledMigrations) {
+    for (const migration of migrations) {
       let result;
       try {
         result = await migration.run();
@@ -102,7 +125,7 @@ function createBundledInstallWiring({ inventory, facade, baseDir, stage5Service,
       bundled.push({ plugin_id: migration.identity.plugin_id,
         ok: result?.ok === true, reason: result?.reason });
     }
-    return { ...chatgptResult, bundled };
+    return { ok: bundled.every((item) => item.ok), bundled };
   }
 
   function run() {

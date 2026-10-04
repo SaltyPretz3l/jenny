@@ -57,6 +57,7 @@ function dumpFailedTurnDiagnostic({
   sidecarErrorMessage,
   model,
   clientTiming,
+  providerDiagnostics,
 }) {
   if (!terminal.status || terminal.status === TERMINAL_STATUS_COMPLETED) {
     return;
@@ -72,6 +73,7 @@ function dumpFailedTurnDiagnostic({
     contextContributions: turnDiagnosticState.promptContributions,
     contextAssemblyBreakdown: turnDiagnosticState.contextAssemblyBreakdown,
     toolEvents: runtime.getDiagnosticToolEvents(),
+    compactions: runtime.getDiagnosticCompactions?.(),
     terminalError: {
       code: normalizedErrorPayload.error_code || null,
       message: normalizedErrorPayload.message || null,
@@ -89,6 +91,7 @@ function dumpFailedTurnDiagnostic({
     mode: turnDiagnosticState.effectiveMode,
     counts: null,
     clientTiming,
+    providerDiagnostics,
   })).catch((dumpError) => {
     if (typeof service._emitServiceLog === 'function') {
       service._emitServiceLog('WARN', 'chat.turn_diagnostic_dump_unexpected_error', {

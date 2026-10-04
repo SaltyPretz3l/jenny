@@ -116,7 +116,7 @@ def _child_refs(outcomes: Any) -> tuple[tuple, tuple]:
 def mixed_dependency_state(loop: Any) -> dict | None:
     # Imported at the request edge: decision snapshot imports the checkpoint
     # transport, which imports the legacy dependency dataclass at startup.
-    from sidecar.runtime.decision_checkpoint import _assert_supported, _previous  # noqa: PLC0415
+    from sidecar.runtime.decision_checkpoint import _assert_supported, _previous
 
     context = loop.request_context
     hydrated = getattr(context, "runtime_continuation_resume", None)

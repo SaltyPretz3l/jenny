@@ -1,0 +1,52 @@
+{
+  "engine": "stable-diffusion.cpp",
+  "tag": "master-929-3f8527a",
+  "commit": "3f8527a",
+  "publishedAt": "2026-09-27T18:38:31Z",
+  "license": "MIT",
+  "licenseUrl": "https://github.com/leejet/stable-diffusion.cpp/blob/master/LICENSE",
+  "projectUrl": "https://github.com/leejet/stable-diffusion.cpp",
+  "platforms": {
+    "win32-x64": {
+      "executable": "sd-cli.exe",
+      "versionBanner": "stable-diffusion.cpp version unknown, commit 3f8527a",
+      "extractedSizeBytes": 1170129541,
+      "assets": [
+        {
+          "role": "engine",
+          "filename": "sd-master-3f8527a-bin-win-cuda12-x64.zip",
+          "url": "https://github.com/leejet/stable-diffusion.cpp/releases/download/master-929-3f8527a/sd-master-3f8527a-bin-win-cuda12-x64.zip",
+          "sizeBytes": 337915440,
+          "sha256": "217d6dead9abd3f827fc338268555cc179234e7e6330ef21ecb1c985e19d2dc7",
+          "entries": 21,
+          "uncompressedBytes": 381171845
+        },
+        {
+          "role": "cuda-runtime",
+          "filename": "cudart-sd-bin-win-cu12-x64.zip",
+          "url": "https://github.com/leejet/stable-diffusion.cpp/releases/download/master-929-3f8527a/cudart-sd-bin-win-cu12-x64.zip",
+          "sizeBytes": 563452046,
+          "sha256": "fe20366827d357c00797eebb58244dddab7fd9a348d70090c3871004c320f38d",
+          "entries": 3,
+          "uncompressedBytes": 788957696
+        }
+      ],
+      "extractLimits": {
+        "maxEntries": 64,
+        "maxEntryUncompressedBytes": 734003200,
+        "maxTotalUncompressedBytes": 1342177280
+      },
+      "expectedFiles": [
+        "sd-cli.exe",
+        "stable-diffusion.dll",
+        "ggml.dll",
+        "ggml-base.dll",
+        "ggml-cuda.dll",
+        "cudart64_12.dll",
+        "cublas64_12.dll",
+        "cublasLt64_12.dll"
+      ]
+    }
+  },
+  "_comment": "PROVENANCE MANIFEST. stable-diffusion.cpp (MIT) is never bundled: the main process downloads the two pinned release assets only after the user clicks Install engine in the Model Library, verifies sizeBytes and sha256 before extraction, and installs them under userData/engines/sdcpp/<tag>/. Both zips extract flat into the same directory (no overlapping entry names, verified 2026-09-29). Sizes and digests come from the GitHub release API digest fields for master-929-3f8527a and were re-hashed locally on 2026-09-29 (Step 0 of docs/plans/BYO_IMAGE_MODELS_SDCPP.md). Release asset URLs redirect once to release-assets.githubusercontent.com. No model weights are referenced here or anywhere in Jenny: the user supplies their own model files."
+}

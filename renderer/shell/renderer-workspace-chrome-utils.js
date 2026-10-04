@@ -13,8 +13,21 @@
   const resolveScrollBehavior = typeof motionPreferenceUtils.resolveScrollBehavior === 'function'
     ? motionPreferenceUtils.resolveScrollBehavior
     : function fallbackResolveScrollBehavior() { return 'smooth'; };
+  // Tab rename reuses the sidebar's inline title editor primitive.
+  const inlineTitleEditorUtils = (typeof globalThis !== 'undefined' && globalThis.inventoryInlineTitleEditor)
+    || (typeof require === 'function' ? require('../inventory/inline-title-editor') : null)
+    || null;
+
+  const { resolveDefaultTitle, selectLinkedRecallSessions } = (typeof globalThis !== 'undefined' && globalThis.stringUtils)
+    || (typeof require === 'function' ? require('../shared/string-utils') : null);
 
   function normalizeId(value) { return String(value || '').trim(); }
+
+  // The linked sessions recall reads (buildLinkedSessionContext's own rule).
+  function resolveRecallSessionIds(activeSummary, linkedIds, sessionsById) {
+    return new Set(selectLinkedRecallSessions(activeSummary, linkedIds, (id) => sessionsById.get(id))
+      .map((entry) => normalizeId(entry.id)));
+  }
   function toIdSet(values) {
     const source = values instanceof Set ? [...values] : (Array.isArray(values) ? values : []);
     return new Set(source.map(normalizeId).filter(Boolean));
@@ -32,6 +45,15 @@
       );
     const parsed = Number(value || 0);
     return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : 0;
+  }
+
+  // "{title}. Status: {statuses}" for an accessible name. A title that already
+  // ends in a sentence mark would read "words.. Status", so the mark goes.
+  function withStatusSuffix(title, statuses) {
+    const base = String(title || '');
+    if (!statuses) return base;
+    return base.replace(/[.!?…。！？]+$/u, '')
+      + jt('shell.workspaceChrome.statusSuffix', '. Status: {statuses}', { statuses });
   }
 
   function sessionStatusLabel(state) {
@@ -86,13 +108,12 @@
 
   var POPOVER_GAP = 8;
   var POPOVER_MARGIN = 16;
-  var POPOVER_LIST_MAX_HEIGHT = '240px';
 
   var ICON_CLOSE = '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>';
-  var ICON_LINK = '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M6.5 9.5a3.536 3.536 0 0 0 5 0l2-2a3.536 3.536 0 0 0-5-5L7.5 3.5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/><path d="M9.5 6.5a3.536 3.536 0 0 0-5 0l-2 2a3.536 3.536 0 0 0 5 5l1-1" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>';
   var ICON_PLUS = '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M8 3v10M3 8h10" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>';
   var ICON_CHEVRON_LEFT = '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M10 12L6 8l4-4" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>';
   var ICON_CHEVRON_RIGHT = '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M6 4l4 4-4 4" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+  var ICON_SEARCH = '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true" xmlns="http://www.w3.org/2000/svg"><circle cx="7" cy="7" r="4.5" stroke="currentColor" stroke-width="1.4"/><path d="M10.5 10.5L13 13" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>';
 
   function createWorkspaceChromeController(deps) {
     const containerEl = deps?.containerEl || null;
@@ -100,6 +121,8 @@
     const isSessionBusy = typeof deps?.isSessionBusy === 'function' ? deps.isSessionBusy : () => false;
     let popoverEl = null;
     let popoverCleanup = [];
+    let popoverOpener = null; // focus returns here when the popover closes around it
+    let popoverRailAnchored = false;
     let contextMenuEl = null;
     let contextMenuCleanup = [];
 
@@ -110,16 +133,31 @@
     let railAbortController = null;
     let resizeObserver = null;
     let tabDragController = null;
+    let paneDropTarget = null; // split view W2-1: the chat view's drop zones, once the pane composition exists
     let overflowFrame = 0;
-    const tabRefs = new Map(); // sessionId -> { el, titleBtn, titleSpan, indicatorSpan, closeBtn, linkBtn }
+    let revealedActiveId = '';
+    const renameHandler = typeof deps?.onRenameSession === 'function' ? deps.onRenameSession : null;
+    const tabRefs = new Map(); // sessionId -> { el, titleBtn, titleSpan, dot, closeBtn, statusLabel }
     const sidebarBadgeState = new WeakMap();
 
     function clearPopover() {
       while (popoverCleanup.length) {
         try { popoverCleanup.pop()(); } catch (_error) { /* best-effort cleanup */ }
       }
+      const doc = popoverEl?.ownerDocument;
+      const focusInside = Boolean(doc && popoverEl.contains(doc.activeElement));
       if (popoverEl) popoverEl.remove();
       popoverEl = null;
+      const opener = popoverOpener;
+      popoverOpener = null;
+      if (focusInside && opener?.isConnected) opener.focus();
+    }
+
+    // The rail hides outside the chat view; a popover opened from a sidebar
+    // row (the plugin view's row menu) stays with the row instead.
+    function hideLinkedSessionPopover(options) {
+      if (options?.keepRowAnchored === true && popoverEl && !popoverRailAnchored) return;
+      clearPopover();
     }
 
     function clearContextMenu() {
@@ -152,7 +190,32 @@
         contextMenuEl.appendChild(btn);
         return btn;
       }
-      addItem('Close', () => deps?.onSessionClosed?.(sessionId), busy);
+      // Split view W1-4c: "Open beside" leads when the composition wires it,
+      // disabled for a session a pane already shows (one session, one pane).
+      if (typeof deps?.onOpenBeside === 'function') {
+        const inPane = typeof deps.isSessionInPane === 'function' && deps.isSessionInPane(sessionId) === true;
+        addItem(jt('shell.workspaceChrome.openBeside', 'Open beside'), () => deps.onOpenBeside(sessionId), inPane).title = jt('chat.panes.toggleShortcutHint', 'Ctrl+Shift+\\ opens or closes the side-by-side pane');
+        const splitSep = doc.createElement('div');
+        splitSep.className = 'workspace-tab-context-menu-separator';
+        splitSep.setAttribute('role', 'separator');
+        contextMenuEl.appendChild(splitSep);
+      }
+      const canRename = typeof renameHandler === 'function' && Boolean(inlineTitleEditorUtils);
+      const canLink = typeof deps?.onLinkSessionsRequested === 'function';
+      if (canRename) addItem(jt('shell.workspaceChrome.renameTab', 'Rename…'), () => beginTabRename(sessionId));
+      if (canLink) {
+        const linkedCount = (getSessionSummary(sessionId)?.linked_session_ids || []).filter(Boolean).length;
+        addItem(linkedCount > 0
+          ? jt('shell.workspaceChrome.linkSessionsLinkedCount', 'Link sessions… · {count} linked', { count: linkedCount })
+          : jt('shell.workspaceChrome.linkSessionsMenu', 'Link sessions…'), () => deps.onLinkSessionsRequested(sessionId, { x: anchorX, y: anchorY }));
+      }
+      if (canRename || canLink) {
+        const editSep = doc.createElement('div');
+        editSep.className = 'workspace-tab-context-menu-separator';
+        editSep.setAttribute('role', 'separator');
+        contextMenuEl.appendChild(editSep);
+      }
+      addItem(jt('shell.workspaceChrome.close', 'Close'), () => deps?.onSessionClosed?.(sessionId), busy);
       addItem(jt('shell.workspaceChrome.closeOthers', 'Close Others'), () => deps?.onCloseOtherSessions?.(sessionId));
       addItem(jt('shell.workspaceChrome.closeToRight', 'Close to the Right'), () => deps?.onCloseSessionsToRight?.(sessionId));
       const sep = doc.createElement('div');
@@ -197,6 +260,32 @@
       const overflows = railEl.scrollWidth > railEl.clientWidth;
       scrollLeftArrow.hidden = !overflows || railEl.scrollLeft <= 0;
       scrollRightArrow.hidden = !overflows || railEl.scrollLeft + railEl.clientWidth >= railEl.scrollWidth - 1;
+      // Logical edges for the CSS fade: RTL scrollLeft runs negative.
+      const offset = Math.abs(Number(railEl.scrollLeft) || 0);
+      railEl.toggleAttribute('data-overflow-start', overflows && offset > 0);
+      railEl.toggleAttribute('data-overflow-end', overflows && offset + railEl.clientWidth < railEl.scrollWidth - 1);
+    }
+
+    // Keep the active tab on screen when it changes (sidebar open, Ctrl+Tab,
+    // "+"), without yanking a rail the user scrolled while it stayed put.
+    function revealActiveTab(activeId) {
+      if (!activeId || activeId === revealedActiveId) return;
+      const el = tabRefs.get(activeId)?.el;
+      if (!el || typeof el.scrollIntoView !== 'function') return;
+      revealedActiveId = activeId;
+      const view = el.ownerDocument?.defaultView || globalThis;
+      el.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: resolveScrollBehavior(null, view) });
+    }
+
+    // A window resize can leave the revealed active tab clipped (the rail
+    // shrank under it); bring it back without the once-per-activation guard.
+    function keepActiveTabInView() {
+      const el = revealedActiveId ? tabRefs.get(revealedActiveId)?.el : null;
+      if (!railEl || !el || typeof el.scrollIntoView !== 'function') return;
+      const rail = railEl.getBoundingClientRect();
+      const tab = el.getBoundingClientRect();
+      if (tab.left >= rail.left - 1 && tab.right <= rail.right + 1) return;
+      el.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'auto' });
     }
 
     function scheduleOverflowArrowUpdate() {
@@ -247,17 +336,42 @@
       const activate = e.target.closest('[data-workspace-activate]');
       if (activate) { Promise.resolve(deps?.onSessionActivated?.(activate.dataset.workspaceActivate)).catch(() => {}); return; }
       const close = e.target.closest('[data-workspace-close]');
-      if (close && !close.disabled) { e.stopPropagation(); Promise.resolve(deps?.onSessionClosed?.(close.dataset.workspaceClose)).catch(() => {}); return; }
-      const link = e.target.closest('[data-workspace-links]');
-      if (link) { Promise.resolve(deps?.onLinkSessionsRequested?.(link.dataset.workspaceLinks, link)).catch(() => {}); }
+      if (close) { e.stopPropagation(); Promise.resolve(deps?.onSessionClosed?.(close.dataset.workspaceClose)).catch(() => {}); }
     }
 
-    function createTab(doc, id, summary, busy, isActive) {
+    function delegatedDoubleClickHandler(e) {
+      const activate = e.target.closest('[data-workspace-activate]');
+      if (activate && beginTabRename(activate.dataset.workspaceActivate)) e.preventDefault();
+    }
+
+    // Rename in place through the sidebar's inline title editor; the handler
+    // persists through the same sessions path the sidebar rename uses.
+    function beginTabRename(sessionId) {
+      const refs = tabRefs.get(normalizeId(sessionId));
+      if (!refs || typeof renameHandler !== 'function' || !inlineTitleEditorUtils) return false;
+      const doc = refs.el.ownerDocument;
+      const settleFocus = () => {
+        if (!doc.activeElement || doc.activeElement === doc.body) refs.titleBtn.focus();
+      };
+      const editor = inlineTitleEditorUtils.startInlineTitleEdit({
+        titleEl: refs.titleBtn,
+        initialValue: refs.titleSpan.textContent,
+        ariaLabel: jt('sidebar.sessionActions.renameChat', 'Rename chat'),
+        onCommit: (value) => {
+          settleFocus();
+          Promise.resolve(renameHandler(normalizeId(sessionId), value))
+            .catch((error) => deps?.onRenameFailed?.(error, jt('sidebar.sessionActions.renameFailed', 'Rename Failed')));
+        },
+        onCancel: settleFocus,
+      });
+      return Boolean(editor);
+    }
+
+    function createTab(doc, id, isActive) {
       const tab = doc.createElement('div');
       const titleBtn = doc.createElement('button');
-      const indicatorSpan = doc.createElement('span');
+      const dot = doc.createElement('span');
       const titleSpan = doc.createElement('span');
-      const closeBtn = doc.createElement('button');
 
       tab.className = `workspace-rail-tab${isActive ? ' active' : ''}`;
       tab.dataset.sessionId = id;
@@ -265,40 +379,44 @@
       titleBtn.type = 'button';
       titleBtn.className = 'workspace-rail-tab-button';
       titleBtn.dataset.workspaceActivate = id;
-      titleBtn.title = String(summary?.title === 'New Plugin Session' ? jt('session.defaultTitle.plugin', 'New Plugin Session') : (!summary?.title || summary.title === 'New Chat' ? jt('session.defaultTitle.chat', 'New Chat') : summary.title));
       titleBtn.setAttribute('role', 'tab');
 
-      indicatorSpan.className = 'workspace-rail-indicator';
-      indicatorSpan.textContent = '';
-
+      // Tab anatomy: [state dot][title][×]. The state word lives in the
+      // tooltip and the accessible name, never in the tab's width.
+      dot.className = 'workspace-rail-state-dot';
+      dot.setAttribute('aria-hidden', 'true');
       titleSpan.className = 'workspace-rail-title';
-      titleSpan.textContent = String(summary?.title === 'New Plugin Session' ? jt('session.defaultTitle.plugin', 'New Plugin Session') : (!summary?.title || summary.title === 'New Chat' ? jt('session.defaultTitle.chat', 'New Chat') : summary.title));
 
-      titleBtn.append(indicatorSpan, titleSpan);
+      titleBtn.append(dot, titleSpan);
       tab.appendChild(titleBtn);
+      railEl.appendChild(tab);
+      tabRefs.set(id, { el: tab, titleBtn, titleSpan, dot, closeBtn: null, statusLabel: '' });
+    }
 
-      let linkBtn = null;
-      if (typeof deps?.onLinkSessionsRequested === 'function') {
-        linkBtn = doc.createElement('button');
-        linkBtn.type = 'button';
-        linkBtn.className = 'workspace-rail-link-button';
-        linkBtn.dataset.workspaceLinks = id;
-        linkBtn.innerHTML = ICON_LINK;
-        linkBtn.title = jt('shell.workspaceChrome.linkSessions', 'Link sessions');
-        linkBtn.hidden = !isActive;
-        tab.appendChild(linkBtn);
+    // A busy tab has no × at all (the dot says why); it returns once idle.
+    function syncCloseButton(id, refs, busy) {
+      if (busy) {
+        if (refs.closeBtn) { refs.closeBtn.remove(); refs.closeBtn = null; }
+        return;
       }
-
+      if (refs.closeBtn) return;
+      const closeBtn = refs.el.ownerDocument.createElement('button');
       closeBtn.type = 'button';
       closeBtn.className = 'workspace-rail-close-button';
       closeBtn.dataset.workspaceClose = id;
       closeBtn.innerHTML = ICON_CLOSE;
-      closeBtn.disabled = busy;
-      closeBtn.title = busy ? jt('shell.workspaceChrome.cannotCloseBusySession', 'Cannot close a busy session.') : jt('shell.workspaceChrome.closeSession', 'Close session');
-      tab.appendChild(closeBtn);
+      closeBtn.title = jt('shell.workspaceChrome.closeSession', 'Close session');
+      refs.el.appendChild(closeBtn);
+      refs.closeBtn = closeBtn;
+    }
 
-      railEl.appendChild(tab);
-      tabRefs.set(id, { el: tab, titleBtn, titleSpan, indicatorSpan, closeBtn, linkBtn });
+    function applyTabTitle(refs, title, statusLabel) {
+      if (refs.titleSpan.textContent !== title) refs.titleSpan.textContent = title;
+      refs.statusLabel = statusLabel;
+      refs.titleBtn.title = statusLabel
+        ? jt('shell.workspaceChrome.tabStatusTooltip', '{status} · {title}', { status: statusLabel, title })
+        : title;
+      refs.titleBtn.setAttribute('aria-label', withStatusSuffix(title, statusLabel));
     }
 
     function patchTab(id, summary, busy, isActive, streamingIds, approvalIds, attentionStates) {
@@ -310,18 +428,22 @@
         attentionStates,
       });
       refs.el.classList.toggle('active', isActive);
-      refs.titleBtn.title = String(summary?.title === 'New Plugin Session' ? jt('session.defaultTitle.plugin', 'New Plugin Session') : (!summary?.title || summary.title === 'New Chat' ? jt('session.defaultTitle.chat', 'New Chat') : summary.title));
       refs.titleBtn.setAttribute('aria-selected', isActive ? 'true' : 'false');
       refs.titleBtn.tabIndex = isActive ? 0 : -1;
-      refs.titleSpan.textContent = String(summary?.title === 'New Plugin Session' ? jt('session.defaultTitle.plugin', 'New Plugin Session') : (!summary?.title || summary.title === 'New Chat' ? jt('session.defaultTitle.chat', 'New Chat') : summary.title));
-      refs.indicatorSpan.textContent = presentation.railIndicatorLabel;
       refs.el.dataset.sessionDominantState = presentation.dominantState;
-      refs.titleBtn.setAttribute('aria-label', presentation.railIndicatorLabel
-        ? refs.titleSpan.textContent + jt('shell.workspaceChrome.statusSuffix', '. Status: {statuses}', { statuses: presentation.railIndicatorLabel })
-        : refs.titleSpan.textContent);
-      refs.closeBtn.disabled = busy;
-      refs.closeBtn.title = busy ? jt('shell.workspaceChrome.cannotCloseBusySession', 'Cannot close a busy session.') : jt('shell.workspaceChrome.closeSession', 'Close session');
-      if (refs.linkBtn) refs.linkBtn.hidden = !isActive;
+      refs.dot.dataset.sessionDominantState = presentation.dominantState;
+      applyTabTitle(refs, resolveDefaultTitle(summary?.title), presentation.railIndicatorLabel);
+      syncCloseButton(id, refs, busy);
+    }
+
+    // A sessions render (auto-title, rename) reaches the rail through here.
+    function syncTabTitles() {
+      for (const [id, refs] of tabRefs) {
+        const summary = getSessionSummary(id);
+        if (!summary) continue;
+        const title = resolveDefaultTitle(summary.title);
+        if (title !== refs.titleSpan.textContent) applyTabTitle(refs, title, refs.statusLabel);
+      }
     }
 
     // The rail shell's own children (scroll arrows, the rail, the + button) are
@@ -365,13 +487,14 @@
         railEl.setAttribute('aria-label', jt('shell.workspaceChrome.openSessions', 'Open sessions'));
         containerEl.appendChild(railEl);
         railEl.addEventListener('click', delegatedClickHandler, listenerOpts);
+        railEl.addEventListener('dblclick', delegatedDoubleClickHandler, listenerOpts);
         railEl.addEventListener('keydown', delegatedKeydownHandler, listenerOpts);
         railEl.addEventListener('scroll', updateOverflowArrows, listenerOpts);
         railEl.addEventListener('auxclick', function (e) {
           if (e.button !== 1) return;
           const tab = e.target.closest('.workspace-rail-tab');
           if (!tab) return;
-          if (e.target.closest('.workspace-rail-close-button, .workspace-rail-link-button')) return;
+          if (e.target.closest('.workspace-rail-close-button, .inv-inline-title-editor')) return;
           e.preventDefault();
           const id = tab.dataset.sessionId;
           if (id && !isSessionBusy(id)) Promise.resolve(deps?.onSessionClosed?.(id)).catch(() => {});
@@ -386,7 +509,10 @@
 
         const ResizeObserverClass = typeof win.ResizeObserver === 'function' ? win.ResizeObserver : null;
         if (ResizeObserverClass) {
-          resizeObserver = new ResizeObserverClass(() => updateOverflowArrows());
+          resizeObserver = new ResizeObserverClass(() => {
+            keepActiveTabInView();
+            updateOverflowArrows();
+          });
           resizeObserver.observe(railEl);
         }
 
@@ -418,6 +544,7 @@
             railEl, tabRefs,
             onDragStart() { clearPopover(); clearContextMenu(); },
             onReorder: deps.onSessionReordered,
+            dropTarget: () => paneDropTarget,
           }) || null;
         }
       }
@@ -439,12 +566,8 @@
         const summary = summaryMap.get(id) || getSessionSummary(id) || {};
         const busy = isSessionBusy(id);
         const isActive = id === activeId;
-        if (tabRefs.has(id)) {
-          patchTab(id, summary, busy, isActive, streamingIds, approvalIds, attentionStates);
-        } else {
-          createTab(doc, id, summary, busy, isActive);
-          patchTab(id, summary, busy, isActive, streamingIds, approvalIds, attentionStates);
-        }
+        if (!tabRefs.has(id)) createTab(doc, id, isActive);
+        patchTab(id, summary, busy, isActive, streamingIds, approvalIds, attentionStates);
       }
 
       // Reorder: walk openSessionIds, insertBefore any out-of-position nodes
@@ -462,6 +585,7 @@
 
       publishTabCount();
       updateOverflowArrows();
+      revealActiveTab(activeId);
     }
 
     function patchRailRuntime(activeSessionId, streamingSessionIds, approvalSessionIds, attentionStates) {
@@ -469,9 +593,11 @@
       const streamingIds = toIdSet(streamingSessionIds);
       const approvalIds = toIdSet(approvalSessionIds);
       for (const [id, refs] of tabRefs) {
+        // The live summary, not the tab's own text: an auto-title that landed
+        // mid-stream must reach the rail on the next runtime pass.
         patchTab(
           id,
-          { title: refs.titleSpan?.textContent || jt('session.defaultTitle.chat', 'New Chat') },
+          getSessionSummary(id) || { title: refs.titleSpan.textContent },
           isSessionBusy(id),
           id === activeId,
           streamingIds,
@@ -479,6 +605,7 @@
           attentionStates
         );
       }
+      revealActiveTab(activeId);
       scheduleOverflowArrowUpdate();
     }
 
@@ -503,16 +630,14 @@
         const titleText = element.querySelector('.session-row__title-text')?.textContent
           || element.getAttribute('title')
           || titleRow.textContent;
-        const rawTitle = String(titleText || jt('session.defaultTitle.chat', 'New Chat')).replace(/\s+/g, ' ').trim() || jt('session.defaultTitle.chat', 'New Chat');
+        const rawTitle = resolveDefaultTitle(String(titleText || '').replace(/\s+/g, ' ').trim());
         const title = rawTitle.length <= 120 ? rawTitle : `${rawTitle.slice(0, 117).trim()}...`;
         const statusLabels = presentation.badgeLabels.slice();
         if (element.dataset.sessionPinned === 'true') statusLabels.push(jt('shell.workspaceChrome.pinned', 'Pinned'));
         const outboxLabel = element.querySelector('.send-outbox-badge')?.getAttribute('aria-label');
         if (outboxLabel) statusLabels.push(String(outboxLabel).slice(0, 80));
         const uniqueStatusLabels = [...new Set(statusLabels)];
-        const statusSuffix = uniqueStatusLabels.length
-          ? jt('shell.workspaceChrome.statusSuffix', '. Status: {statuses}', { statuses: uniqueStatusLabels.join(', ') })
-          : '';
+        const labelledTitle = withStatusSuffix(title, uniqueStatusLabels.join(', '));
         const providerName = String(element.dataset.sessionProviderName || '').replace(/\s+/g, ' ').trim().slice(0, 40);
         const sessionNoun = element.dataset.sessionType === 'plugin'
           ? jt('shell.workspaceChrome.pluginSessionType', '{provider} session', { provider: providerName || jt('shell.workspaceChrome.pluginFallback', 'plugin') }) : jt('shell.workspaceChrome.sessionType', 'session');
@@ -532,80 +657,152 @@
         if (previous?.signature === signature && previous?.titleRow === titleRow && !visibleBadges.length) return;
         if (presentation.lastOutcome) element.dataset.sessionLastOutcome = presentation.lastOutcome;
         else delete element.dataset.sessionLastOutcome;
+        // "open" (a tab, nothing louder to say) rings the dot slot (chats-panel.css).
         element.dataset.sessionDominantState = presentation.dominantState;
         element.dataset.sessionLinkedCount = String(presentation.linkedCount);
         const dot = element.querySelector('.session-row__dot');
         if (dot) dot.setAttribute('title', presentation.statusLabel);
-        openTarget.setAttribute('aria-label', jt('shell.workspaceChrome.openSessionLabel', 'Open {sessionNoun} {title}{statusSuffix}', { sessionNoun, title, statusSuffix }));
+        openTarget.setAttribute('aria-label', jt('shell.workspaceChrome.openSessionLabel', 'Open {sessionNoun} {title}{statusSuffix}', { sessionNoun, title: labelledTitle, statusSuffix: '' }));
         sidebarBadgeState.set(element, { signature, titleRow });
       });
     }
 
-    function showLinkedSessionPopover(activeSessionId, allSessions, currentLinks, onLinksChanged) {
+    // `anchor` is an element or a { x, y } point (the tab menu's origin);
+    // without one the popover opens at the session's tab.
+    function showLinkedSessionPopover(activeSessionId, allSessions, currentLinks, onLinksChanged, anchor) {
       clearPopover();
       clearContextMenu();
       const activeId = normalizeId(activeSessionId);
       if (!activeId || !containerEl) return;
       const doc = containerEl.ownerDocument;
       const selected = new Set((Array.isArray(currentLinks) ? currentLinks : []).map(normalizeId).filter(Boolean));
-      const sessions = (Array.isArray(allSessions) ? allSessions : []).filter((entry) => normalizeId(entry?.id) && normalizeId(entry?.id) !== activeId);
-      const anchor = containerEl.querySelector(`[data-workspace-links="${activeId}"]`) || containerEl;
+      const allEntries = (Array.isArray(allSessions) ? allSessions : []).filter((entry) => normalizeId(entry?.id));
+      const sessionsById = new Map(allEntries.map((entry) => [normalizeId(entry.id), entry]));
+      const activeSummary = sessionsById.get(activeId) || getSessionSummary(activeId);
+      const activeProject = String(activeSummary?.project_id ?? '');
+      const others = allEntries.filter((entry) => normalizeId(entry.id) !== activeId);
+      const isSameProject = (entry) => String(entry?.project_id ?? '') === activeProject;
+      // Order is fixed at open so rows never jump under the pointer: linked
+      // first, then same-project chats (only they can be recalled). Stable sort.
+      const rank = (entry) => (selected.has(normalizeId(entry.id)) ? 0 : 2) + (isSameProject(entry) ? 0 : 1);
+      const sessions = others.slice().sort((left, right) => rank(left) - rank(right));
+      const anchorSource = anchor || tabRefs.get(activeId)?.el || containerEl;
+      const anchorEl = anchorSource && typeof anchorSource.getBoundingClientRect === 'function' ? anchorSource : null;
+      const anchorPoint = { left: Number(anchorSource?.x) || 0, top: Number(anchorSource?.y) || 0, bottom: Number(anchorSource?.y) || 0 };
+      const anchorRect = anchorEl ? anchorEl.getBoundingClientRect() : anchorPoint;
+      popoverRailAnchored = !anchorEl || containerEl.contains(anchorEl);
+      popoverOpener = popoverRailAnchored ? (tabRefs.get(activeId)?.titleBtn || null) : anchorEl;
       const view = doc.defaultView || globalThis;
-      const countLabel = doc.createElement('div');
-      const searchInput = doc.createElement('input');
-      const list = doc.createElement('div');
+      const titleText = jt('shell.workspaceChrome.linkSessionsTitle', 'Link sessions');
+      const make = (tag, className, text) => {
+        const node = doc.createElement(tag);
+        if (className) node.className = className;
+        if (text) node.textContent = text;
+        return node;
+      };
       popoverEl = doc.createElement('div');
       popoverEl.className = 'composer-popover workspace-linked-popover';
-      countLabel.className = 'composer-popover-copy';
-      searchInput.className = 'approved-memory-input';
+      popoverEl.setAttribute('role', 'dialog');
+      popoverEl.setAttribute('aria-label', titleText);
+      const header = make('div', 'workspace-linked-header');
+      header.append(
+        make('div', 'workspace-linked-title', titleText),
+        make('div', 'workspace-linked-subtitle', jt('shell.workspaceChrome.linkSessionsSubtitle', 'Jenny recalls the 3 newest linked chats from this project.'))
+      );
+      const search = make('label', 'workspace-linked-search');
+      search.innerHTML = ICON_SEARCH;
+      const searchInput = make('input');
       searchInput.type = 'search';
       searchInput.placeholder = jt('shell.workspaceChrome.searchSessionsPlaceholder', 'Search sessions by title');
-      list.style.maxHeight = POPOVER_LIST_MAX_HEIGHT;
-      list.style.overflow = 'auto';
-      popoverEl.append(countLabel, searchInput, list);
-      doc.body.appendChild(popoverEl);
-      const anchorRect = anchor.getBoundingClientRect();
-      const popRect = popoverEl.getBoundingClientRect();
-      popoverEl.style.top = `${Math.min(anchorRect.bottom + POPOVER_GAP, view.innerHeight - popRect.height - POPOVER_MARGIN)}px`;
-      popoverEl.style.left = `${Math.max(Math.min(anchorRect.left, view.innerWidth - popRect.width - POPOVER_MARGIN), POPOVER_MARGIN)}px`;
+      searchInput.setAttribute('aria-label', searchInput.placeholder);
+      search.appendChild(searchInput);
+      const list = make('div', 'workspace-linked-list');
+      list.setAttribute('role', 'group');
+      list.setAttribute('aria-label', titleText);
+      const footer = make('div', 'workspace-linked-footer');
+      popoverEl.append(header, search, list, footer);
+      const formatTime = typeof globalThis.logViewUtils?.formatRelativeTime === 'function'
+        ? globalThis.logViewUtils.formatRelativeTime
+        : null;
+      // First match wins; data-hint names the reason for tests and styling.
+      const describeRow = (entry, id, recallIds) => {
+        if (recallIds.has(id)) return ['recall', jt('shell.workspaceChrome.linkUsedForRecall', 'Used for recall')];
+        if (!isSameProject(entry)) return ['other-project', jt('shell.workspaceChrome.linkOtherProject', 'Other project')];
+        if (selected.has(id)) return ['not-recall', jt('shell.workspaceChrome.linkNotUsedForRecall', 'Not used for recall')];
+        const when = formatTime && entry?.updated_at ? formatTime(entry.updated_at) : '';
+        return when && when !== '--' ? ['time', when] : ['', ''];
+      };
+      const escapeId = (id) => (typeof CSS !== 'undefined' && typeof CSS.escape === 'function' ? CSS.escape(id) : id.replace(/["\\]/g, '\\$&'));
+      const focusRow = (id) => list.querySelector(`input[data-linked-session-id="${escapeId(id)}"]`)?.focus();
+      let visibleIds = [];
+      let toggle = () => {};
       // rerender destroys and rebuilds every row (simplest correct re-filter),
       // which would otherwise drop keyboard focus off the just-toggled checkbox
       // on every change. focusId names the row whose checkbox should reclaim
       // focus once the rebuild lands (WIDE-056a).
       const renderList = (focusId) => {
         const query = normalizeId(searchInput.value).toLowerCase();
-        countLabel.textContent = jt('shell.workspaceChrome.linkedSessionsCount', 'Linked sessions: {count}', { count: selected.size });
+        const recallIds = resolveRecallSessionIds(activeSummary, selected, sessionsById);
+        footer.textContent = jt('shell.workspaceChrome.linkSessionsFooter', 'Linked: {linked} · In recall: {recall}', { linked: selected.size, recall: recallIds.size });
         list.textContent = '';
-        sessions.filter((entry) => (String(entry?.title || jt('session.defaultTitle.chat', 'New Chat')) + (!entry?.title || entry?.title === 'New Chat' ? ' ' + jt('session.defaultTitle.chat', 'New Chat') : '')).toLowerCase().includes(query)).forEach((entry) => {
+        const matches = sessions.filter((entry) => resolveDefaultTitle(entry?.title).toLowerCase().includes(query));
+        visibleIds = matches.map((entry) => normalizeId(entry.id));
+        if (!matches.length) {
+          list.appendChild(make('div', 'workspace-linked-empty', sessions.length
+            ? jt('shell.workspaceChrome.linkSessionsNoMatch', 'No sessions match.')
+            : jt('shell.workspaceChrome.linkSessionsNoOthers', 'No other sessions yet.')));
+        }
+        matches.forEach((entry) => {
           const id = normalizeId(entry.id);
-          const row = doc.createElement('label');
-          const checkbox = doc.createElement('input');
-          const copy = doc.createElement('span');
-          row.className = 'composer-popover-row workspace-linked-row';
+          const title = resolveDefaultTitle(entry?.title);
+          const row = make('label', 'workspace-linked-row');
+          const checkbox = make('input');
           checkbox.type = 'checkbox';
           checkbox.dataset.linkedSessionId = id;
           checkbox.checked = selected.has(id);
-          checkbox.addEventListener('change', () => {
-            const wasChecked = !checkbox.checked;
-            if (checkbox.checked) selected.add(id); else selected.delete(id);
-            renderList(id);
-            Promise.resolve(onLinksChanged?.(Array.from(selected))).catch(() => {
-              // Persistence failed: roll back the optimistic toggle and
-              // reconcile the UI rather than leaving it stuck out of sync.
-              if (wasChecked) selected.add(id); else selected.delete(id);
-              renderList(id);
-            });
-          });
-          copy.textContent = String(entry?.title === 'New Plugin Session' ? jt('session.defaultTitle.plugin', 'New Plugin Session') : (!entry?.title || entry.title === 'New Chat' ? jt('session.defaultTitle.chat', 'New Chat') : entry.title));
+          checkbox.addEventListener('change', () => toggle(id, checkbox.checked));
+          const copy = make('span', 'workspace-linked-row-title', title);
+          copy.title = title;
           row.append(checkbox, copy);
+          const [hintKind, hintText] = describeRow(entry, id, recallIds);
+          if (hintKind) {
+            const hint = make('span', 'workspace-linked-row-hint', hintText);
+            hint.dataset.hint = hintKind;
+            row.appendChild(hint);
+          }
           list.appendChild(row);
         });
-        if (focusId) {
-          list.querySelector(`input[data-linked-session-id="${focusId}"]`)?.focus();
+        if (typeof focusId === 'string' && focusId) focusRow(focusId);
+      };
+      toggle = (id, checked) => {
+        if (checked) selected.add(id); else selected.delete(id);
+        renderList(id);
+        Promise.resolve(onLinksChanged?.(Array.from(selected))).catch(() => {
+          // Persistence failed: roll back the optimistic toggle and
+          // reconcile the UI rather than leaving it stuck out of sync.
+          if (checked) selected.delete(id); else selected.add(id);
+          renderList(id);
+        });
+      };
+      const handleInput = () => renderList();
+      // Arrows walk search -> rows; Enter in search toggles a lone match.
+      const handlePopoverKeydown = (event) => {
+        if (event.isComposing || event.keyCode === 229) return; // IME owns Enter/arrows mid-composition
+        const fromSearch = event.target === searchInput;
+        const rowId = event.target?.dataset?.linkedSessionId || '';
+        if (fromSearch && event.key === 'Enter') {
+          event.preventDefault();
+          if (visibleIds.length === 1) toggle(visibleIds[0], !selected.has(visibleIds[0]));
+          return;
         }
+        if ((event.key !== 'ArrowDown' && event.key !== 'ArrowUp') || (!fromSearch && !rowId)) return;
+        event.preventDefault();
+        const next = (fromSearch ? -1 : visibleIds.indexOf(rowId)) + (event.key === 'ArrowDown' ? 1 : -1);
+        if (next < 0) searchInput.focus();
+        else if (next < visibleIds.length) focusRow(visibleIds[next]);
       };
       const handlePointerDown = (event) => {
-        if (!popoverEl?.contains(event.target) && !anchor.contains(event.target)) clearPopover();
+        if (!popoverEl?.contains(event.target) && !anchorEl?.contains?.(event.target)) clearPopover();
       };
       const handleKeydown = (event) => {
         if (event.key === 'Escape') {
@@ -613,24 +810,37 @@
           clearPopover();
         }
       };
-      searchInput.addEventListener('input', renderList);
+      searchInput.addEventListener('input', handleInput);
+      popoverEl.addEventListener('keydown', handlePopoverKeydown);
       doc.addEventListener('mousedown', handlePointerDown, true);
       doc.addEventListener('keydown', handleKeydown, true);
       popoverCleanup = [
-        () => searchInput.removeEventListener('input', renderList),
+        () => searchInput.removeEventListener('input', handleInput),
         () => doc.removeEventListener('mousedown', handlePointerDown, true),
         () => doc.removeEventListener('keydown', handleKeydown, true),
       ];
       renderList();
+      doc.body.appendChild(popoverEl);
+      // Measure the filled popover: below the anchor when it fits, else above,
+      // then clamp inside the viewport.
+      const popRect = popoverEl.getBoundingClientRect();
+      const below = anchorRect.bottom + POPOVER_GAP;
+      const above = (Number(anchorRect.top) || 0) - POPOVER_GAP - popRect.height;
+      const maxTop = view.innerHeight - popRect.height - POPOVER_MARGIN;
+      const top = below <= maxTop || above < POPOVER_MARGIN ? below : above;
+      popoverEl.style.top = `${Math.max(Math.min(top, maxTop), POPOVER_MARGIN)}px`;
+      popoverEl.style.left = `${Math.max(Math.min(anchorRect.left, view.innerWidth - popRect.width - POPOVER_MARGIN), POPOVER_MARGIN)}px`;
       searchInput.focus();
     }
 
     return {
       renderRail,
       patchRailRuntime,
+      syncTabTitles,
       renderSidebarBadges,
       showLinkedSessionPopover,
-      hideLinkedSessionPopover: clearPopover,
+      hideLinkedSessionPopover,
+      setPaneDropTarget(target) { paneDropTarget = target || null; },
       dispose() {
         clearPopover();
         clearContextMenu();
@@ -644,6 +854,7 @@
         if (resizeObserver) { resizeObserver.disconnect(); resizeObserver = null; }
         if (railAbortController) { railAbortController.abort(); railAbortController = null; }
         tabRefs.clear();
+        revealedActiveId = '';
         if (scrollLeftArrow) { scrollLeftArrow.remove(); scrollLeftArrow = null; }
         if (railEl) { railEl.remove(); railEl = null; }
         if (scrollRightArrow) { scrollRightArrow.remove(); scrollRightArrow = null; }
@@ -653,5 +864,5 @@
     };
   }
 
-  return { createWorkspaceChromeController, resolveSessionPresentation, sessionStatusLabel };
+  return { createWorkspaceChromeController, resolveSessionPresentation, sessionStatusLabel, withStatusSuffix };
 });

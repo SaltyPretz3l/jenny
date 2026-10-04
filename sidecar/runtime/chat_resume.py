@@ -14,9 +14,9 @@ from sidecar.ai.context.builder import (
     request_workspace_root_kwargs,
 )
 from sidecar.ai.context.prompt_cache import resolve_current_date
+from sidecar.ai.context.turn_context import trailing_turn_context_enabled
 from sidecar.ai.feature_flags import (
     FEATURE_CANONICAL_TURN_EVENTS,
-    is_chatgpt_plan_meter_enabled,
     is_feature_flag_enabled,
 )
 from sidecar.ai.routing.iteration_limits import (
@@ -34,6 +34,7 @@ from sidecar.ai.routing.plan_mode_transition import (
 )
 from sidecar.ai.routing.router import ChatDecision
 from sidecar.ai.routing.tool_resource_deferral import DecisionSuspensionError, ToolLoopSuspended
+from sidecar.ai.tools.assembly import engine_receives_native_tool_schemas
 from sidecar.ai.tools.contracts import ToolExecutionFailure
 from sidecar.ai.tools.plan_artifact_policy import PLAN_ARTIFACT_WRITE_ARG
 from sidecar.ai.tools.tool_actions import effective_side_effecting
@@ -45,7 +46,6 @@ from sidecar.runtime.approval_plan import (
     build_model_identity_fingerprint,
     build_sampling_params_hash,
     build_tool_contract_hash,
-    stable_hash,
 )
 from sidecar.runtime.chat_decision_render import _chat_response_from_decision
 from sidecar.runtime.chat_helpers import notification_context
@@ -65,7 +65,7 @@ from sidecar.runtime.chat_resume_prefix import (  # noqa: F401 - re-exported by 
     personality_row_is_replaceable,
     plan_personality_block_present,
 )
-from sidecar.runtime.chat_resume_prompt_normalization import (
+from sidecar.runtime.chat_resume_prompt_normalization import (  # noqa: F401 - test import path
     normalize_volatile_system_prompt_text as _normalize_volatile_system_prompt_text,
 )
 from sidecar.runtime.chat_serialization import _serialize_loop_event, _serialize_turn_event
@@ -77,6 +77,7 @@ from sidecar.runtime.turn_retry import (
     MAX_INNER_TURN_RETRIES,
     InnerRetryableTurnError,
     execute_with_inner_turn_retry,
+    strip_retry_system_messages,
 )
 from sidecar.runtime.turn_state import (
     TERMINAL_SUBCODE_PREEMPTED_PLAN_DRIFT,
@@ -98,7 +99,9 @@ _APPROVAL_PLAN_DRIFT_DIAGNOSTIC_COMPONENTS = frozenset(
     }
 )
 
-
+# A live rebuild of the prompt/history (for example after a mid-turn sidecar
+# reinitialize) differs from the frozen plan on every attempt.
+_APPROVAL_ENVIRONMENT_DRIFT_COMPONENTS = frozenset({"message_history", "system_prompt"})
 
 
 def _approval_resume_deadline(plan: Any, *, max_loop_wall_seconds: float) -> float:
@@ -296,11 +299,16 @@ def _build_live_approval_system_prompt(
         "tool_statuses": list(tool_statuses),
         "latest_user_content": plan.latest_user_content,
         "engine_type": stack.config.engine_type,
+        "native_tool_schemas": engine_receives_native_tool_schemas(
+            getattr(stack, "engine", None)
+        ),
         "include_skills": False,
         "workspace_manifest_enabled": getattr(
             stack.config, "tools_workspace_manifest_enabled", False
         ),
         "task_capsule_enabled": getattr(stack.config, "tools_task_capsule_enabled", False),
+        # The frozen tail already carries the turn's trailing turn-context row.
+        "defer_turn_context": trailing_turn_context_enabled(stack.config),
     }
     # Resume keeps the original request authority's root (None = unbound).
     kwargs.update(request_workspace_root_kwargs(
@@ -323,6 +331,8 @@ def _build_live_dynamic_system_messages(
 
     stack = brain_container.stack
     config = stack.config
+    request_context = getattr(plan, "request_context", None)
+    execution_context = getattr(request_context, "execution_context", None)
     messages = _chat_hub.build_dynamic_system_messages(
         context_builder=stack.router._context_builder,
         config=config,
@@ -330,6 +340,7 @@ def _build_live_dynamic_system_messages(
         # A plan whose request carried a personality block already holds that
         # ``## Personality`` row; a second bare one would read as drift here.
         personality_rendered=plan_personality_block_present(plan),
+        execution_context=execution_context,
     )
     if plan is not None:
         for item in plan.working_messages[1:]:
@@ -364,7 +375,7 @@ def _validate_approval_plan_live_context(
         request_context=plan.request_context,
         resolution_context=plan.tool_resolution_context,
     )
-    from sidecar.runtime import chat_resume_snapshots  # noqa: PLC0415
+    from sidecar.runtime import chat_resume_snapshots
     live_read_snapshot_cache = chat_resume_snapshots.rebuild_approval_resume_read_snapshot_cache(
         plan,
         kernel=kernel,
@@ -407,16 +418,15 @@ def _validate_approval_plan_live_context(
         )
         if frozen_input is not None
     )
-    current_system_prompt = _chat_hub._build_live_approval_system_prompt(
+    from sidecar.runtime import chat_resume_prompt_states
+
+    # Prompt + leading system rows, compared across the turn's own tool states.
+    prompt_prefix = chat_resume_prompt_states.rebuild_live_prompt_prefix(
         plan,
         brain_container=brain_container,
         live_params=live_params,
-        tool_statuses=current_tool_contract.status_entries,
-    )
-    current_dynamic_system_messages = _chat_hub._build_live_dynamic_system_messages(
-        brain_container=brain_container,
-        tool_statuses=current_tool_contract.status_entries,
-        plan=plan,
+        canonical_session_messages=canonical_session_messages,
+        tool_contract=current_tool_contract,
     )
     current_request_messages = (
         live_params.get("messages") if isinstance(live_params, dict) else None
@@ -438,18 +448,6 @@ def _validate_approval_plan_live_context(
         config=stack.config,
         engine=stack.engine,
     )
-    # Compare prompts with volatile lines (workspace-manifest ``Generated:``)
-    # neutralized on BOTH sides. The frozen plan carries the full prompt, so
-    # the normalized frozen hash is recomputed here; ``plan.system_prompt_hash``
-    # stays raw for audit metadata and the plan fingerprint.
-    normalized_current_prompt_text = _normalize_volatile_system_prompt_text(
-        str(current_system_prompt)
-    )
-    normalized_frozen_prompt_text = _normalize_volatile_system_prompt_text(
-        str(plan.system_prompt)
-    )
-    current_system_prompt_hash = stable_hash(str(current_system_prompt))
-    system_prompt_mismatch = normalized_current_prompt_text != normalized_frozen_prompt_text
     current_sampling_params_hash = build_sampling_params_hash(
         config=stack.config,
         request_context=plan.request_context,
@@ -460,27 +458,12 @@ def _validate_approval_plan_live_context(
         ),
         prompt_cache_enabled=plan.prompt_cache_enabled,
     )
+    # Rows the resume retry loop appended are not request history (X1).
     current_request_messages_hash = (
-        build_message_history_hash(current_request_messages)
+        build_message_history_hash(strip_retry_system_messages(current_request_messages))
         if isinstance(current_request_messages, list)
         else None
     )
-    # The working-message comparison embeds the system prompt as slot 0, so it
-    # gets the same volatile-line normalization on both sides.
-    current_working_messages = _build_live_approval_working_messages(
-        plan,
-        live_system_prompt=normalized_current_prompt_text,
-        dynamic_system_messages=current_dynamic_system_messages,
-        personality_row_replaceable=personality_row_is_replaceable(plan, stack.config),
-    )
-    expected_working_messages = [dict(item) for item in plan.working_messages]
-    if (
-        expected_working_messages
-        and str(expected_working_messages[0].get("role") or "") == "system"
-    ):
-        expected_working_messages[0]["content"] = normalized_frozen_prompt_text
-    current_message_history_hash = build_message_history_hash(current_working_messages)
-    expected_message_history_hash = build_message_history_hash(expected_working_messages)
     current_tool_call_limit = max(effective_max_tools_per_turn(stack.config), 1)
     _plan_tool_call_limit, plan_remaining_tool_calls, budget_valid = (
         _approval_resume_tool_budget(
@@ -501,7 +484,7 @@ def _validate_approval_plan_live_context(
         mismatches.append("execution_context")
     if current_model_identity_fingerprint != plan.model_identity_fingerprint:
         mismatches.append("model_identity")
-    if system_prompt_mismatch:
+    if prompt_prefix.system_prompt_mismatch:
         mismatches.append("system_prompt")
     if current_sampling_params_hash != plan.sampling_params_hash:
         mismatches.append("sampling_params")
@@ -510,10 +493,7 @@ def _validate_approval_plan_live_context(
         and current_request_messages_hash != plan.request_messages_hash
     ):
         mismatches.append("request_messages")
-    message_history_mismatch = (
-        current_message_history_hash != expected_message_history_hash
-    )
-    if message_history_mismatch:
+    if prompt_prefix.message_history_mismatch:
         mismatches.append("message_history")
     if not budget_valid:
         mismatches.append("tool_budget")
@@ -529,14 +509,14 @@ def _validate_approval_plan_live_context(
             execution_context_fingerprint=current_execution_context_fingerprint,
             model_identity_fingerprint=current_model_identity_fingerprint,
             system_prompt_hash=(
-                current_system_prompt_hash
-                if system_prompt_mismatch
+                prompt_prefix.system_prompt_hash
+                if prompt_prefix.system_prompt_mismatch
                 else plan.system_prompt_hash
             ),
             sampling_params_hash=current_sampling_params_hash,
             message_history_hash=(
-                current_message_history_hash
-                if message_history_mismatch
+                prompt_prefix.message_history_hash
+                if prompt_prefix.message_history_mismatch
                 else plan.message_history_hash
             ),
             request_messages_hash=current_request_messages_hash,
@@ -566,6 +546,9 @@ def _validate_approval_plan_live_context(
             retry_prompt=retry_prompt,
             terminal_subcode="approval_plan_drift",
             diagnostic_components=tuple(mismatches),
+            # The plan is frozen and the live rebuild is deterministic, so a
+            # retry cannot clear pure environment drift; fail on this attempt.
+            retryable=not set(mismatches) <= _APPROVAL_ENVIRONMENT_DRIFT_COMPONENTS,
         )
 
 
@@ -633,7 +616,7 @@ def resume_chat_send_response_from_approval_plan(
         # sequence across the approval pause instead of restarting at zero,
         # which duplicated seq values (and derived event ids) within one turn.
         seq_state = canonical_seq_state if canonical_seq_state is not None else {"seq": 0}
-        from sidecar.runtime import chat_resume_admission  # noqa: PLC0415
+        from sidecar.runtime import chat_resume_admission
         admission = chat_resume_admission.build_resume_admission(
             plan=plan, engine_type=stack.config.engine_type, write_message=electron_tool_writer,
             response_reader_factory=electron_tool_reader_factory, cancel_handle=cancel_handle,
@@ -729,7 +712,6 @@ def resume_chat_send_response_from_approval_plan(
         outcomes = list(plan.outcomes)
         streamed_event_types = set(plan.streamed_event_types)
         tool_payload = [dict(item) for item in plan.tool_payload]
-        tool_statuses = tuple(plan.tool_statuses)
         iteration_calls: list[Any] = []
         resumed_request_context = plan.request_context
         tool_contract = kernel._assemble_tool_contract(
@@ -759,6 +741,7 @@ def resume_chat_send_response_from_approval_plan(
             working_messages=working_messages,
             iteration_calls=iteration_calls,
             streamed_event_types=streamed_event_types,
+            approved_tool_id=str(getattr(resume_tool_calls[-1], "tool_id", "") or ""),
         )
         approved_call_id = str(plan.approved_call_id or plan.call_id or "").strip()
         audit_metadata_by_call = _approval_audit_metadata_map(
@@ -822,7 +805,7 @@ def resume_chat_send_response_from_approval_plan(
                     )
                 except (ToolLoopSuspended, DecisionSuspensionError):
                     raise
-                except Exception:  # noqa: BLE001 - pair pre-dispatch rows first
+                except Exception:  # pair pre-dispatch rows first
                     # Ordinary failures settle orphan executions; suspended questions do not.
                     emit_interrupted_results_for_pending_calls(
                         runtime=effective_runtime,
@@ -999,7 +982,6 @@ def resume_chat_send_response_from_approval_plan(
     ):
         _chat_hub.bind_live_plan_usage(
             stack.engine, writer=notification_writer if stream_notifications else None,
-            enabled=is_chatgpt_plan_meter_enabled(stack.config.feature_flags),
             session_id=plan.request_context.session_id,
         )
         return execute_with_inner_turn_retry(

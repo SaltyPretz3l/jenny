@@ -92,7 +92,7 @@
           signature: (s) => settingsSnapshotPoll.buildSignature([
             'compaction', s.compactionTuning, s.compactionTuningActivity,
             globalThis.rendererCompactionCoordinator?.getCompactionActivity?.(s, s.currentSessionId),
-            s.features?.featureFlags?.compaction_manual, s.backend?.mode,
+            s.backend?.mode,
             callbacks.getCurrentRuntimePreferences?.()?.preferredModel,
             s.status?.model, s.modelList?.active_model,
           ]),
@@ -108,6 +108,12 @@
             jt('settings.compaction.changedElsewhere', 'Compaction settings changed elsewhere while you were editing. Your draft is kept -- save it or reopen Settings to see the latest.'),
             `${settingsToastSource.settings}:compaction:conflict`
           ),
+        },
+        // Language, clock and transcript-view rows: a repaint under the focused
+        // control would drop keyboard focus; the binding patches them in place.
+        appearanceLanguage: {
+          containerId: 'appearanceLanguageField',
+          signature: (s) => settingsSnapshotPoll.buildSignature(['language', s.uiLanguage, s.use24HourTime, s.transcriptViewDefault]),
         },
         toolsConfig: {
           containerId: 'toolsConfigFieldList',
@@ -186,11 +192,12 @@
       toErrorMessage,
       appendClientLog = function noopAppendClientLog() {},
       showSessionActionError,
-      getCurrentRuntimePreferences,
+      getCurrentRuntimePreferences, getRuntimePreferencesFromSession,
       getRuntimePreferenceSnapshot,
       runRuntimePreferenceActivity,
       handleWorkspaceRootChoose,
       clearWorkspaceRoot = function noopClearWorkspaceRoot() { return Promise.resolve(null); },
+      getProjectSwitcher = function noopGetProjectSwitcher() { return Promise.resolve(null); },
       handleRunSetupAgain,
       showSetupHelp,
       showFactoryReset,
@@ -256,7 +263,10 @@
           getCurrentSessionId,
           isVisible: () => state.ui.activeView === 'settings'
             && normalizeSettingsSectionId(state.ui.activeSettingsSection) === 'usage',
-          openSession,
+          // "Open chat" leaves Settings for the chat it opened (a vetoed switch stays put).
+          openSession: async (sessionId) => {
+            if ((await openSession(sessionId)) !== false) setActiveView('chat');
+          },
           openTrace: (target) => navigateToDiagnosticsTrace(target),
           appendClientLog,
           confirmClear: async () => {
@@ -302,6 +312,11 @@
         { name: 'memory_status', run: () => refreshMemoryStatus?.({ force: true }) },
       ]),
       usage: () => ensureUsageController()?.activate?.(),
+      // Runtime limits polls on its own; being shown (again) restarts the
+      // poll, which the hidden view's content-visibility would never do.
+      // (Runs moved to Diagnostics on 2026-10-03.)
+      runtimeLimits: () => { settingsEventBindings?.sectionShown?.('runtimeLimits'); },
+      advanced: () => { settingsEventBindings?.sectionShown?.('advanced'); },
     });
 
     function runRefreshBatch(sectionId, tasks) {
@@ -468,7 +483,18 @@
       }
       if (normalizedSectionId !== 'usage') usageController?.deactivate?.();
       // Deep links (the chat tool row's "Set up PDF reading") name the group to show.
-      if (options.focusId) globalDocument?.getElementById?.(String(options.focusId))?.scrollIntoView?.({ block: 'start' });
+      // Its first control takes keyboard focus a frame later, after the page heading
+      // has taken it, and the scroll comes after the focus so the focus cannot undo it.
+      const target = options.focusId ? globalDocument?.getElementById?.(String(options.focusId)) : null;
+      if (target) {
+        globalWindow?.requestAnimationFrame?.(() => {
+          const focusable = 'button, input, select, textarea, [href], [tabindex]';
+          const control = [...target.querySelectorAll(focusable), target]
+            .find((el) => el.matches(focusable) && !el.disabled && el.getAttribute('tabindex') !== '-1' && !el.closest('[hidden]'));
+          control?.focus({ preventScroll: true });
+          target.scrollIntoView?.({ block: 'start' });
+        });
+      }
     }
 
     function openSettingsSection(sectionId, options) {
@@ -483,22 +509,13 @@
       dom: {
         composerModelSelect: dom.composerModelSelect,
         composerEffortSelect: dom.composerEffortSelect,
-        appearanceThemeBundleSelect: dom.appearanceThemeBundleSelect,
-        appearancePaletteSelect: dom.appearancePaletteSelect,
-        appearanceTypographySelect: dom.appearanceTypographySelect,
-        appearanceFontScaleSelect: dom.appearanceFontScaleSelect,
-        appearanceChatWidthMount: dom.appearanceChatWidthMount,
-        appearanceSurfaceEffectSelect: dom.appearanceSurfaceEffectSelect,
-        appearanceSurfaceEffectDescription: dom.appearanceSurfaceEffectDescription,
+        appearanceSettingsSection: dom.appearanceSettingsSection,
         appearanceSurfaceEffectMeta: dom.appearanceSurfaceEffectMeta,
         appearanceSurfaceEffectPreview: dom.appearanceSurfaceEffectPreview,
         appearanceHoloList: dom.appearanceHoloList,
         appearanceSpellcheckList: dom.appearanceSpellcheckList,
-        appearanceAppZoomSelect: dom.appearanceAppZoomSelect,
-        composerSettingsPopover: dom.composerSettingsPopover,
-        composerSettingsButton: dom.composerSettingsButton,
-        composerChatZoomSelect: dom.composerChatZoomSelect,
-        composerChatZoomStatus: dom.composerChatZoomStatus,
+        composerAttachMenu: dom.composerAttachMenu,
+        composerAttachShortcut: dom.composerAttachShortcut,
         composerCommandPopover: dom.composerCommandPopover,
         composerCommandPopoverList: dom.composerCommandPopoverList,
         composerTerminalShortcut: dom.composerTerminalShortcut,
@@ -506,11 +523,8 @@
         modelBadge: dom.modelBadge,
         modelStatus: dom.modelStatus,
         modelStartupLoadList: dom.modelStartupLoadList,
-        appearanceBadge: dom.appearanceBadge,
-        appearanceStatus: dom.appearanceStatus,
         appearanceResetButton: dom.appearanceResetButton,
         modelCatalogEmpty: dom.modelCatalogEmpty,
-        accountBadge: dom.accountBadge,
         accountSummary: dom.accountSummary,
         localProfileSettingsMount: dom.localProfileSettingsMount,
         backendSummary: dom.backendSummary,
@@ -520,31 +534,36 @@
         settingsControlTowerHost: dom.settingsControlTowerHost,
         skillsSettingsNavItem: dom.skillsSettingsNavItem,
         skillsSettingsSection: dom.skillsSettingsSection,
-        contextBadge: dom.contextBadge,
         contextStatus: dom.contextStatus,
-        contextHistoryScopeSelect: dom.contextHistoryScopeSelect,
+        contextSettingsSection: dom.contextSettingsSection,
         contextSourcesList: dom.contextSourcesList,
         contextRuntimeList: dom.contextRuntimeList,
         contextCompactionTuning: dom.contextCompactionTuning,
         toolsConfigFieldList: dom.toolsConfigFieldList,
+        toolsPermissionsList: dom.toolsPermissionsList,
+        toolsFilesList: dom.toolsFilesList,
+        toolsWebList: dom.toolsWebList,
+        toolsTerminalList: dom.toolsTerminalList,
+        toolsCodeList: dom.toolsCodeList,
+        toolsCommandSandboxHost: dom.toolsCommandSandboxHost,
+        toolsWorkspaceLine: dom.toolsWorkspaceLine,
         toolsApprovalRulesList: dom.toolsApprovalRulesList,
         toolsWorkspacePath: dom.toolsWorkspacePath,
         toolsWorkspaceStatus: dom.toolsWorkspaceStatus,
         toolsWorkspaceProject: dom.toolsWorkspaceProject,
         toolsWorkspaceChooseButton: dom.toolsWorkspaceChooseButton,
-        toolsSummary: dom.toolsSummary,
-        editorBadge: dom.editorBadge,
         editorStatus: dom.editorStatus,
         editorSettingsFieldList: dom.editorSettingsFieldList,
-        homeBadge: dom.homeBadge,
         homeStatus: dom.homeStatus,
         homeSettingsFieldList: dom.homeSettingsFieldList,
+        notificationsSettingsSection: dom.notificationsSettingsSection,
+        notificationsStatus: dom.notificationsStatus,
         contextPreview: dom.contextPreview,
         chatInput: deps.chatInput,
         composerModelSelectEl: dom.composerModelSelect,
       },
       callbacks: {
-        getCurrentRuntimePreferences,
+        getCurrentRuntimePreferences, getRuntimePreferencesFromSession,
         normalizeAppearancePreferences,
         getPalettePresets,
         getTypographyPresets,
@@ -583,7 +602,6 @@
       renderComposerPopover = function noopRenderComposerPopover() {},
       renderCommandPopover = function noopRenderCommandPopover() {},
       syncComposerInputHeight = function noopSyncComposerInputHeight() {},
-      syncComposerModelSelectWidth = function noopSyncComposerModelSelectWidth() {},
     } = settingsController || {};
 
     const settingsEventBindings = settingsEventUtils.createSettingsEventBindings?.({
@@ -594,21 +612,13 @@
       },
       dom: {
         settingsView: dom.settingsView,
-        appearanceThemeBundleSelect: dom.appearanceThemeBundleSelect,
-        appearancePaletteSelect: dom.appearancePaletteSelect,
-        appearanceTypographySelect: dom.appearanceTypographySelect,
-        appearanceFontScaleSelect: dom.appearanceFontScaleSelect,
-        appearanceChatWidthMount: dom.appearanceChatWidthMount,
-        appearanceSurfaceEffectSelect: dom.appearanceSurfaceEffectSelect,
-        appearanceSurfaceEffectDescription: dom.appearanceSurfaceEffectDescription,
+        appearanceSettingsSection: dom.appearanceSettingsSection,
         appearanceSurfaceEffectMeta: dom.appearanceSurfaceEffectMeta,
         appearanceSurfaceEffectPreview: dom.appearanceSurfaceEffectPreview,
         appearanceHoloList: dom.appearanceHoloList,
         appearanceSpellcheckList: dom.appearanceSpellcheckList,
-        composerChatZoomSelect: dom.composerChatZoomSelect,
-        appearanceAppZoomSelect: dom.appearanceAppZoomSelect,
         toolsWorkspaceChooseButton: dom.toolsWorkspaceChooseButton,
-        contextHistoryScopeSelect: dom.contextHistoryScopeSelect,
+        contextSettingsSection: dom.contextSettingsSection,
         contextSourcesList: dom.contextSourcesList,
         contextRuntimeList: dom.contextRuntimeList,
         modelStartupLoadList: dom.modelStartupLoadList,
@@ -617,6 +627,8 @@
         toolsApprovalRulesList: dom.toolsApprovalRulesList,
         editorSettingsFieldList: dom.editorSettingsFieldList,
         homeSettingsFieldList: dom.homeSettingsFieldList,
+        notificationsSettingsSection: dom.notificationsSettingsSection,
+        notificationsStatus: dom.notificationsStatus,
         getSectionDom: (...args) => getSectionDom(...args),
       },
       callbacks: {
@@ -671,6 +683,7 @@
         renderLogs,
         handleWorkspaceRootChoose,
         clearWorkspaceRoot,
+        getProjectSwitcher,
       },
     }) || null;
 
@@ -691,9 +704,8 @@
     }) || null;
 
     // Shared appearance adapter (createAppearanceAdapter, localStorage-backed):
-    // both the Tier C JSON slice (item 8) and the per-field/section reset
-    // module (item 10) consume the SAME instance -- one localStorage read
-    // path, one `apply` hook (applyAppearancePreferences).
+    // the guarded section reset (item 10) writes the defaults through it --
+    // one localStorage read path, one `apply` hook (applyAppearancePreferences).
     let cachedAppearanceAdapter = null;
     function getAppearanceAdapter() {
       if (cachedAppearanceAdapter) {
@@ -719,9 +731,8 @@
       return cachedAppearanceAdapter;
     }
 
-    // Per-field reset plus the guarded Appearance section reset. Appearance
-    // remains localStorage-owned; contextual chat zoom retains its existing
-    // IPC boundary and keyboard reset path.
+    // The guarded Appearance section reset (per-field Revert is the shared
+    // binding's). Appearance remains localStorage-owned.
     let fieldReset = null;
     function mountFieldReset() {
       if (fieldReset) {
@@ -739,8 +750,6 @@
       }
       fieldReset = fieldResetUtils.createSettingsFieldReset({
         documentRef: globalDocument,
-        adapters: { appearance: appearanceAdapter },
-        appearanceUtils,
         onAfterReset: () => renderSettings(),
         log: (message) => appendClientLog('WARN', 'settings.field_reset', { message }),
         resetActions: {
@@ -766,12 +775,6 @@
       bound = true;
       settingsNavController?.bind?.();
       settingsEventBindings?.bind?.();
-      // Render BEFORE mounting the per-field affordances. mountFieldEntry()
-      // resolves each select by id and mount() latches after its first pass,
-      // so a control that renderSettings() mounts (rather than index.html
-      // declaring inline) would otherwise never get a reset button. Chat width
-      // is the first such control: index.html's raw-primitive budget only ever
-      // moves down, so it comes from the inventory selectField instead.
       renderSettings();
       mountFieldReset();
     }
@@ -806,7 +809,6 @@
       renderComposerPopover,
       renderCommandPopover,
       syncComposerInputHeight,
-      syncComposerModelSelectWidth,
       navigateSettingsSection,
       openSettingsSection,
       restoreSettingsNavSection: () => settingsNavController?.restoreActiveSection?.(),

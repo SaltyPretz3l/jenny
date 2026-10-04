@@ -100,14 +100,14 @@ def test_alternating_request_roots_never_serve_a_stale_cache(tmp_path: Path) -> 
 
     # The direct loaders honour the same precedence for callers that prewarm
     # or inspect them; passing nothing still means the constructor root.
-    assert builder._load_workspace_instruction_block() == (  # noqa: SLF001
+    assert builder._load_workspace_instruction_block() == (
         f"{INSTRUCTIONS_HEADING}\nstartup-AGENTJ"
     )
-    assert builder._load_workspace_instruction_block(bound) == (  # noqa: SLF001
+    assert builder._load_workspace_instruction_block(bound) == (
         f"{INSTRUCTIONS_HEADING}\nbound-AGENTJ"
     )
-    assert builder._load_workspace_instruction_block(None) == ""  # noqa: SLF001
-    assert builder._load_bootstrap_blocks(None) == []  # noqa: SLF001
+    assert builder._load_workspace_instruction_block(None) == ""
+    assert builder._load_bootstrap_blocks(None) == []
 
 
 def test_request_root_kwargs_carry_the_authority_root_except_under_host_policy() -> None:

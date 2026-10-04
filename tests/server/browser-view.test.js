@@ -39,6 +39,18 @@ function state(overrides = {}) {
   };
 }
 
+test('device activity renders the numeric wire timestamps', () => {
+  const instance = dom();
+  try {
+    const root = instance.window.document.getElementById('root');
+    const seen = Date.UTC(2026, 9, 3, 12);
+    view.mount(root, state({ authSessionsOpen: true,
+      authSessions: [{ id: 'device_a', current: true, created_at: seen - 1000, last_seen_at: seen }] }));
+    assert.match(root.querySelector('[data-auth-sessions]').textContent,
+      new RegExp(new Date(seen).toLocaleString().replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+  } finally { instance.window.close(); delete global.window; delete global.document; }
+});
+
 test('browser view mounts a responsive shell with inventory controls and sanitized projected transcript', () => {
   const instance = dom();
   const root = instance.window.document.getElementById('root');
@@ -175,7 +187,7 @@ test('browser view exposes canonical generated artifact actions and owner device
   assert.equal(root.querySelector('[data-action="preview-artifact"]').dataset.artifactId, 'artifact_a');
   assert.equal(root.querySelector('[data-action="download-artifact"]').dataset.artifactId, 'artifact_a');
   root.innerHTML = '';
-  view.mount(root, state({ authSessionsOpen: true, authSessions: [{ id: 'device_a', current: true, last_seen_at: 'now' }, { id: 'device_b', current: false, last_seen_at: 'earlier' }] }));
+  view.mount(root, state({ authSessionsOpen: true, authSessions: [{ id: 'device_a', current: true, last_seen_at: Date.UTC(2026, 9, 3) }, { id: 'device_b', current: false, last_seen_at: Date.UTC(2026, 9, 2) }] }));
   assert.ok(root.querySelector('[data-action="manage-auth-sessions"]'));
   assert.equal(root.querySelectorAll('[data-action="revoke-auth-session"]').length, 2);
   assert.match(root.querySelector('[data-auth-sessions]').textContent, /This device/u);

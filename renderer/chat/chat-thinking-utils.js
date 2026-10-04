@@ -21,6 +21,9 @@
   const PAUSE_REASON_READER_AWAY = 'reader_away';
   const PAUSE_REASON_REASONING_EXPANDED = 'reasoning_expanded';
   const LEADING_BLOCK_MARKER_RE = /^(?:#{1,6}|[-*+>])\s+/u;
+  // A prettified body can open with a fence line or a one-word filler
+  // paragraph ("Okay."); the header wants the first line that says something.
+  const HEADER_SKIP_LINE_RE = /^(?:```|~~~|(?:okay|ok|hmm+|hm+|wait|alright|right|yes|no|well|so)[.!?,…]*$)/iu;
 
   function getReasoningEntries(message) {
     return message && message.reasoning && Array.isArray(message.reasoning.entries)
@@ -160,20 +163,11 @@
   const prettifyReasoningMarkdown = typeof _prettifyUtils.prettifyReasoningMarkdown === 'function'
     ? _prettifyUtils.prettifyReasoningMarkdown
     : null;
-  const hasSparseNewlines = typeof _prettifyUtils.hasSparseNewlines === 'function'
-    ? _prettifyUtils.hasSparseNewlines
-    : null;
-  const PRETTIFY_CACHE_LIMIT = 16;
+  const isProseBoundary = typeof _prettifyUtils.isProseBoundary === 'function'
+    ? _prettifyUtils.isProseBoundary
+    : () => false;
+  const PRETTIFY_CACHE_LIMIT = 64;
   const prettifyCache = new Map();
-  const REASONING_CODE_SEGMENT_RE = /(```[\s\S]*?```|```[\s\S]*$|`[^`\n]+`)/;
-
-  function reasoningUsesSparseNewlines(rawText) {
-    if (!hasSparseNewlines) return null;
-    const sparseProse = rawText.split(REASONING_CODE_SEGMENT_RE)
-      .filter((_, index) => index % 2 === 0)
-      .join('');
-    return !sparseProse || hasSparseNewlines(sparseProse);
-  }
 
   function getCachedPrettifiedEntry(cacheKey) {
     const cached = prettifyCache.get(cacheKey);
@@ -200,24 +194,22 @@
     const isStrictAppend = cached?.rawText
       && rawText.length > cached.rawText.length
       && rawText.startsWith(cached.rawText);
-    const currentSparseMode = isStrictAppend ? reasoningUsesSparseNewlines(rawText) : null;
-    const sparseModeUnchanged = isStrictAppend
-      && currentSparseMode !== null
-      && reasoningUsesSparseNewlines(cached.rawText) === currentSparseMode;
-    const rawBoundary = sparseModeUnchanged ? cached.rawText.lastIndexOf('\n\n') : -1;
-    if (rawBoundary >= 0) {
+    const rawBoundary = isStrictAppend ? cached.rawText.lastIndexOf('\n\n') : -1;
+    // Safety is judged with the prettifier's own code segmentation: the prefix
+    // must end outside code with balanced quotes in its trailing prose segment.
+    if (rawBoundary >= 0 && isProseBoundary(cached.rawText.slice(0, rawBoundary))) {
       const remainderStart = rawBoundary + 2;
-      const rawRemainder = rawText.slice(remainderStart);
-      const previousRemainder = prettifyReasoningMarkdown(cached.rawText.slice(remainderStart));
-      if (
-        reasoningUsesSparseNewlines(rawRemainder) === currentSparseMode
-        && cached.prettified.endsWith(previousRemainder)
-      ) {
+      // Prettify rules are block-local past a paragraph break, so the text
+      // after the last \n\n can be repaired standalone. The leading break
+      // makes the standalone remainder judge sparseness the way the full
+      // text does (formatted, not a newline-free wall).
+      const prettifyRemainder = (text) => prettifyReasoningMarkdown(`\n\n${text}`).replace(/^\n+/, '');
+      const previousRemainder = prettifyRemainder(cached.rawText.slice(remainderStart));
+      if (cached.prettified.endsWith(previousRemainder)) {
         const prettifiedPrefix = previousRemainder
           ? cached.prettified.slice(0, -previousRemainder.length)
           : cached.prettified;
-        prettified = prettifiedPrefix
-          + prettifyReasoningMarkdown(rawRemainder);
+        prettified = prettifiedPrefix + prettifyRemainder(rawText.slice(remainderStart));
       }
     }
     if (!prettified) prettified = prettifyReasoningMarkdown(rawText);
@@ -226,7 +218,7 @@
   }
 
   // reasoning_prettify rides the dataset-reflection channel (mirrored off the
-  // shared feature flags by the render pipeline, like responseLoopDisplay).
+  // shared feature flags by the render pipeline).
   // Absent dataset (node tests, early boot) follows the flag's default-ON.
   function isReasoningPrettifyEnabled() {
     if (typeof document === 'undefined' || !document.documentElement || !document.documentElement.dataset) {
@@ -239,11 +231,13 @@
    * Concatenate reasoning entries into the markdown body string used by both
    * the v1 thinking panel and the v2 reasoning row.
    */
-  function joinReasoningEntriesMarkdown(entries) {
+  function joinReasoningEntriesMarkdown(entries, options) {
     const prettify = prettifyReasoningMarkdown && isReasoningPrettifyEnabled();
     return (Array.isArray(entries) ? entries : [])
       .map((entry, index) => ({
-        cacheKey: String(entry?.id || '').trim() || index,
+        cacheKey: typeof options?.scope === 'string'
+          ? `${options.scope}::${String(entry?.id || '').trim() || index}`
+          : String(entry?.id || '').trim() || index,
         rawText: String(entry?.text || '').trim(),
       }))
       .filter(({ rawText }) => Boolean(rawText))
@@ -271,6 +265,7 @@
         const line = rawLine.trim();
         if (!line) continue;
         if (!/\p{L}|\p{N}/u.test(line)) continue;
+        if (HEADER_SKIP_LINE_RE.test(line) && lines.length > 1) continue;
         const cleaned = line.replace(LEADING_BLOCK_MARKER_RE, '');
         if (cleaned) return cleaned.slice(0, 120);
       }
@@ -476,9 +471,20 @@
     }
 
     /**
-     * Drop every live-tail follow exemption. Bulk expand/collapse is a
-     * deliberate reasoning interaction (2026-08-29 review fix): after it, an
-     * expanded phase — live tail included — pauses auto-scroll again.
+     * True while the timeline reader has scrolled away from the live edge
+     * (the `reader_away` pause set by handleScroll and cleared when follow
+     * re-latches). The live reasoning window reads it to stop eliding text
+     * above a detached reader (HB-024).
+     */
+    isReaderAway() {
+      return this.autoScrollPauseReasons.has(PAUSE_REASON_READER_AWAY);
+    }
+
+    /**
+     * Drop every live-tail follow exemption. A transcript view switch is a
+     * deliberate reasoning interaction (2026-08-29 review fix); its caller is
+     * the switch's `announceChange`, after `resetSessionOverrides`. After it,
+     * an expanded phase — live tail included — pauses auto-scroll again.
      */
     clearFollowExemptions() {
       this.followExemptPhaseKeys.clear();
@@ -563,10 +569,7 @@
 
   return {
     syncLiveReasoningStatusLabel,
-    DEFAULT_SCROLL_THRESHOLD,
     clearLiveReasoningShimmer,
-    PAUSE_REASON_READER_AWAY,
-    PAUSE_REASON_REASONING_EXPANDED,
     ThinkingPanelController,
     getReasoningEntries,
     getThinkingSummary,

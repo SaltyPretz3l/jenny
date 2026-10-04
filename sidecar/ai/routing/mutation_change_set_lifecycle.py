@@ -224,7 +224,7 @@ def finish_run_change_set(run: Any, *, approval_paused: bool, reason: str) -> No
         )
         if result.record is not None and result.record["state"] == "committed":
             try:
-                from sidecar.ai.tools.workspace_retention import (  # noqa: PLC0415
+                from sidecar.ai.tools.workspace_retention import (
                     run_recovery_maintenance,
                 )
 
@@ -657,7 +657,7 @@ def _new_record(  # noqa: PLR0913 - journal identity plus the store-owned clock.
     }
 
 
-def _create_operation(  # noqa: PLR0913, PLR0917 - complete durable operation shape.
+def _create_operation(  # noqa: PLR0913 - complete durable operation shape.
     tool_name: str,
     relative_path: str,
     pre: PathSignature,
@@ -719,7 +719,7 @@ def _delete_operation(
     )
 
 
-def _move_operation(  # noqa: PLR0913, PLR0917 - complete source/destination preflight.
+def _move_operation(  # noqa: PLR0913 - complete source/destination preflight.
     source_relative: str,
     destination_relative: str,
     source_pre: PathSignature,
@@ -758,7 +758,7 @@ def _move_operation(  # noqa: PLR0913, PLR0917 - complete source/destination pre
     )
 
 
-def _operation(  # noqa: PLR0913, PLR0917 - schema fields remain explicit at construction.
+def _operation(  # noqa: PLR0913 - schema fields remain explicit at construction.
     tool_name: str,
     kind: str,
     source: dict[str, Any] | None,
@@ -802,7 +802,7 @@ def _endpoint(path: str, pre: PathSignature, post: PathSignature) -> dict[str, A
     }
 
 
-def _inverse(  # noqa: PLR0913, PLR0917 - schema fields remain explicit at construction.
+def _inverse(  # noqa: PLR0913 - schema fields remain explicit at construction.
     step_id: str,
     kind: str,
     source: str,

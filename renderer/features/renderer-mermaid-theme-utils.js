@@ -174,13 +174,14 @@
     const tertiaryColor = blendHexColors(background, nodeAccent, isLightPalette ? 0.05 : 0.08);
     const lineColor = blendHexColors(background, lineAccent, isLightPalette ? 0.85 : 0.78);
     const softBorderColor = blendHexColors(border, nodeAccent, 0.35);
-    const zoomRaw = Number.parseFloat(String(computed.getPropertyValue('--chat-zoom-factor') || '').trim());
-    const zoomFactor = Number.isFinite(zoomRaw) && zoomRaw > 0 ? zoomRaw : 1;
-    const fontSize = Math.round(Math.max(11, Math.min(20, 13 * zoomFactor))) + 'px';
+    // Diagram labels use the code/footnote role (13px) times the Text size axis.
+    const scaleRaw = Number.parseFloat(String(computed.getPropertyValue('--font-scale') || '').trim());
+    const fontScale = Number.isFinite(scaleRaw) && scaleRaw > 0 ? scaleRaw : 1;
+    const fontSize = Math.round(Math.max(11, Math.min(20, 13 * fontScale))) + 'px';
     return {
       key: [
         paletteMode,
-        'zoom:' + zoomFactor,
+        'scale:' + fontScale,
         background,
         surfaceCard,
         surfaceAlt,

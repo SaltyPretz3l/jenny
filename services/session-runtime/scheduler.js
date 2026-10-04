@@ -3,15 +3,11 @@
 const { randomUUID } = require('node:crypto');
 const { isRuntimeRoute } = require('./lanes');
 const { normalizeReason } = require('./lifecycle');
-const { reclaimAbandonedWork } = require('./abandoned-work-reclaim');
+const { reclaimAbandonedWork, sameAttempt } = require('./abandoned-work-reclaim');
+const { deferCleanupAttention } = require('./cleanup-attention');
 const { persistFencedCancellation } = require('./fenced-cancellation');
-
+const { AdmissionWaits } = require('./admission-waits');
 const { TERMINAL: TERMINAL_OUTCOMES } = require('./terminal-retention-contract');
-
-function sameAttempt(left, right) {
-  return Boolean(left && right && ['attempt_id', 'stream_id', 'incarnation', 'authority_revision']
-    .every(key => left[key] === right[key]));
-}
 
 function provenOutcome(outcome) {
   return outcome?.producerSettled === true && outcome?.canonicalSettled === true
@@ -29,7 +25,7 @@ class SessionRuntimeScheduler {
     claimCanonical, startProducer, cancelProducer = null, pauseProducer = null, discardPending = null,
     provePausedCleanup = null, enabled = true, createId = randomUUID,
     onAttention = null, onSuspended = null, captureEligibility = null, releaseEligibility = null,
-    validateCheckpoint = null, onWorkChange = null } = {}) {
+    validateCheckpoint = null, onWorkChange = null, cleanupAttentionGraceMs = 5000, setTimer = setTimeout, now = Date.now } = {}) {
     for (const operation of [resolveRoute, validateWork, claimCanonical, startProducer]) {
       if (typeof operation !== 'function') throw new TypeError('runtime_scheduler_port_required');
     }
@@ -54,6 +50,8 @@ class SessionRuntimeScheduler {
     this.releaseEligibility = typeof releaseEligibility === 'function' ? releaseEligibility : () => false;
     this.validateCheckpoint = typeof validateCheckpoint === 'function' ? validateCheckpoint : () => false;
     this.onWorkChange = onWorkChange;
+    this.cleanupAttention = { graceMs: cleanupAttentionGraceMs, setTimer };
+    this.admissionWaits = new AdmissionWaits({ now });
     this.active = new Map();
     this.cancellationFences = new Map();
     this.pausedCancellationSettlements = new Map();
@@ -71,7 +69,6 @@ class SessionRuntimeScheduler {
     // Re-enabling never resumes paused work. Existing producers retain their
     // leases until the normal canonical and physical settlement path completes.
   }
-
   notifyLaneAvailability() {
     if (!this.enabled || this.closing || this.lanePumpScheduled || this.laneMutationDepth) return false;
     this.lanePumpScheduled = true;
@@ -121,7 +118,7 @@ class SessionRuntimeScheduler {
   }
   beginClosing() { this.closing = true; return true; }
   reclaimAbandoned(options) { return reclaimAbandonedWork(this, options); }
-
+  admissionWait(workId) { return this.admissionWaits.get(workId); }
   reopenAfterShutdown() {
     const lanes = this.lanes.snapshot();
     if (this.active.size || this.hasUnsettledCancellationFence()
@@ -277,7 +274,7 @@ class SessionRuntimeScheduler {
 
   _admissionFailure(work, error) {
     if (error?.retryable === true) {
-      return this._waiting(work, { status: 'waiting', reason: String(error.code || 'admission_busy') });
+      return this._waiting(work, { status: 'waiting', reason: String(error.code || 'admission_busy'), ...(error.blocking_session_id && { blockers: [{ session_id: error.blocking_session_id, quarantined_at: null }] }) }); // F20: names the holder
     }
     try {
       this.store.transition(work.work_id, { expectedRevision: work.revision,
@@ -291,7 +288,7 @@ class SessionRuntimeScheduler {
   _tryDispatch(workId, { immediate = false } = {}) {
     if (this.store.getStatus().read_only) return Object.freeze({ status: 'rejected', reason: 'runtime_store_read_only' });
     const work = this.store.get(workId);
-    if (!work || work.status !== 'pending') return Object.freeze({ status: 'rejected', reason: 'work_not_pending' });
+    if (!work || work.status !== 'pending') { this.admissionWaits.clear(workId); return Object.freeze({ status: 'rejected', reason: 'work_not_pending' }); }
     if (this.closing) {
       this.pausePending({ sessionId: work.session_id, reason: 'runtime_closing' });
       return Object.freeze({ status: 'rejected', reason: 'runtime_closing' });
@@ -311,6 +308,7 @@ class SessionRuntimeScheduler {
     }
     const admission = this.lanes.tryAcquireTurn({ sessionId: work.session_id, route });
     if (admission.status !== 'granted') return this._waiting(work, admission);
+    this.admissionWaits.clear(workId);
     try {
       this._assertCancellationOpen(work);
       this._assertCheckpoint(work);
@@ -360,6 +358,7 @@ class SessionRuntimeScheduler {
   }
 
   _waiting(work, result) {
+    this.admissionWaits.note(work.work_id, result);
     if (!this.enabled && result.status === 'waiting') {
       this.store.transition(work.work_id, { expectedRevision: work.revision,
         to: 'paused', reason: 'runtime_disabled' });
@@ -463,7 +462,9 @@ class SessionRuntimeScheduler {
       }
       this.releaseEligibility(entry.eligibilityAdmission);
       this.notifyLaneAvailability();
-    } else this._attention(entry.work.work_id, new Error('runtime_cleanup_quarantined'));
+    } else { this.notifyLaneAvailability(); // a quarantined lease still blocks: waiting work re-learns why
+      deferCleanupAttention(this.cleanupAttention, () => this.active.get(entry.work.work_id) === entry,
+        () => this._attention(entry.work.work_id, new Error('runtime_cleanup_quarantined'))); }
     return Object.freeze({ status: persisted ? status : 'needs_attention', work_id: entry.work.work_id });
   }
 

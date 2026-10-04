@@ -22,10 +22,11 @@ function setup(opts = {}) {
       <div id="ideBottomResizer" class="hidden"></div>
       <div id="ideBottomPanel" class="hidden" data-open="false">
         <div id="ideBottomTabs"></div>
-        <div id="ideBottomTerminalHost" class="hidden"></div>
+        <div id="ideBottomTerminalHost" class="hidden" aria-hidden="true"></div>
         <div id="ideBottomPanelContent"></div>
       </div>
       <div id="ideBottomHandle" class="hidden"></div>
+      <nav id="ideActivityBar"><button type="button" role="tab" aria-selected="true" tabindex="0">Explorer</button></nav>
     </div>
   </body>`);
   const doc = dom.window.document;
@@ -39,7 +40,7 @@ function setup(opts = {}) {
   };
   const calls = { render: 0, persist: 0, terminal: 0, problems: 0, testRunner: 0 };
   // UIUX-011: opts.persistentTerminalHost mirrors the real controller wiring
-  // once workspace_pty_terminal is on — Terminal paints into its own persistent
+  // (always on now that the PTY terminal is the only one) — Terminal paints into its own persistent
   // #ideBottomTerminalHost instead of the shared #ideBottomPanelContent that
   // Problems/Run/Test Runner innerHTML-replace on every activation.
   const persistentTerminalHost = opts.persistentTerminalHost === true;
@@ -52,6 +53,7 @@ function setup(opts = {}) {
       ideBottomPanelContent: byId('ideBottomPanelContent'),
       ideBottomTerminalHost: byId('ideBottomTerminalHost'),
       ideBottomHandle: byId('ideBottomHandle'),
+      ideActivityBar: byId('ideActivityBar'),
     }),
     getIde: () => ide,
     // Mirror the controller: requestRender re-renders the whole layout (here just
@@ -61,13 +63,14 @@ function setup(opts = {}) {
     renderTerminal: () => {
       calls.terminal += 1;
       const host = persistentTerminalHost ? byId('ideBottomTerminalHost') : byId('ideBottomPanelContent');
-      host.innerHTML = '<div class="ide-terminal-panel"></div>';
+      host.innerHTML = opts.terminalMarkup || '<div class="ide-terminal-panel"></div>';
     },
     renderProblems: () => { calls.problems += 1; byId('ideBottomPanelContent').innerHTML = '<div class="ide-prb"></div>'; },
     ...(opts.wireTestRunner
       ? { renderTestRunner: () => { calls.testRunner += 1; byId('ideBottomPanelContent').innerHTML = '<div class="ide-test-runner-panel"></div>'; } }
       : {}),
     ...(persistentTerminalHost ? { hasPersistentTerminalHost: () => true } : {}),
+    ...(opts.extraDeps || {}),
   });
   panel.bindEvents();
   panel.render();
@@ -370,4 +373,137 @@ test('UIUX-011: repeated cycles between Terminal and every sibling never show tw
     assert.notEqual(termVisible, sharedVisible, `cycle "${view}": exactly one host is visible, never both/neither`);
     assert.equal(termVisible, view === 'terminal', `cycle "${view}": terminal host visibility matches the active view`);
   }
+});
+
+/* Workspace-panel bug pass (S3): #5 aria-hidden tracks host visibility; #14
+ * focus lands in the terminal on open / tab click and leaves a collapsing panel. */
+
+const TERMINAL_WITH_START = '<div class="ide-terminal-panel"><button type="button" data-ide-terminal-action="start">Start</button></div>';
+
+test('#5: aria-hidden tracks visibility on the terminal host and the shared host', (t) => {
+  const h = setup({ persistentTerminalHost: true }); // opens on terminal
+  t.after(() => h.dispose());
+  const termHost = h.byId('ideBottomTerminalHost');
+  const sharedHost = h.byId('ideBottomPanelContent');
+  assert.equal(termHost.hasAttribute('aria-hidden'), false, 'a shown terminal host is exposed to assistive tech');
+  assert.equal(sharedHost.getAttribute('aria-hidden'), 'true', 'the hidden shared host is aria-hidden');
+
+  h.byId('ideBottomTabs').querySelector('[data-ide-bottom-view="problems"]').click();
+  assert.equal(termHost.getAttribute('aria-hidden'), 'true');
+  assert.equal(sharedHost.hasAttribute('aria-hidden'), false);
+
+  h.byId('ideBottomTabs').querySelector('[data-ide-bottom-view="terminal"]').click();
+  assert.equal(termHost.hasAttribute('aria-hidden'), false);
+  assert.equal(sharedHost.getAttribute('aria-hidden'), 'true');
+});
+
+test('#5: without a persistent terminal host the unused host stays aria-hidden', (t) => {
+  const h = setup();
+  t.after(() => h.dispose());
+  assert.equal(h.byId('ideBottomTerminalHost').getAttribute('aria-hidden'), 'true');
+  assert.equal(h.byId('ideBottomPanelContent').hasAttribute('aria-hidden'), false);
+});
+
+test('#14: toggle (Ctrl+`) opening on Terminal focuses the terminal (DOM fallback: Start before a session)', (t) => {
+  const h = setup({ open: false, persistentTerminalHost: true, terminalMarkup: TERMINAL_WITH_START });
+  t.after(() => h.dispose());
+  h.panel.toggle();
+  assert.equal(h.ide.bottomPanelOpen, true);
+  assert.equal(h.doc.activeElement, h.byId('ideBottomTerminalHost').querySelector('[data-ide-terminal-action="start"]'));
+});
+
+test('#14: an injected focusTerminal hook wins; clicking the Terminal tab focuses it, arrow roving does not', (t) => {
+  let focusCalls = 0;
+  const h = setup({
+    activeView: 'problems',
+    persistentTerminalHost: true,
+    extraDeps: { focusTerminal: () => { focusCalls += 1; return true; } },
+  });
+  t.after(() => h.dispose());
+  h.byId('ideBottomTabs').querySelector('[data-ide-bottom-view="terminal"]').click();
+  assert.equal(focusCalls, 1, 'a Terminal tab click lands focus in the terminal');
+  h.byId('ideBottomTabs').querySelector('[data-ide-bottom-view="problems"]').click();
+  assert.equal(focusCalls, 1, 'another tab click does not focus the terminal');
+
+  const problemsTab = h.byId('ideBottomTabs').querySelector('[data-ide-bottom-view="problems"]');
+  problemsTab.focus();
+  problemsTab.dispatchEvent(new h.dom.window.KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true }));
+  assert.equal(h.ide.bottomPanelActiveView, 'terminal');
+  assert.equal(focusCalls, 1, 'arrow roving keeps focus on the tab');
+  assert.equal(h.doc.activeElement.dataset.ideBottomView, 'terminal');
+});
+
+test('#14: collapsing while focus is inside the panel moves focus to the reopen handle, not a hidden element', (t) => {
+  const h = setup({ persistentTerminalHost: true, terminalMarkup: TERMINAL_WITH_START });
+  t.after(() => h.dispose());
+  const collapse = h.byId('ideBottomTabs').querySelector('[data-ide-bottom-collapse]');
+  collapse.focus();
+  collapse.click();
+  assert.equal(h.ide.bottomPanelOpen, false);
+  assert.equal(h.doc.activeElement, h.byId('ideBottomHandle').querySelector('[data-ide-bottom-handle]'));
+});
+
+test('#14: collapse prefers an injected focusEditor, falls back when it cannot focus', (t) => {
+  let editorCalls = 0;
+  const h = setup({ persistentTerminalHost: true, extraDeps: { focusEditor: () => { editorCalls += 1; return true; } } });
+  t.after(() => h.dispose());
+  const collapse = h.byId('ideBottomTabs').querySelector('[data-ide-bottom-collapse]');
+  collapse.focus();
+  collapse.click();
+  assert.equal(editorCalls, 1, 'the editor took focus');
+
+  const h2 = setup({ persistentTerminalHost: true, extraDeps: { focusEditor: () => false } });
+  t.after(() => h2.dispose());
+  const collapse2 = h2.byId('ideBottomTabs').querySelector('[data-ide-bottom-collapse]');
+  collapse2.focus();
+  h2.panel.toggle(); // Ctrl+` from inside the panel
+  assert.equal(h2.doc.activeElement, h2.byId('ideBottomHandle').querySelector('[data-ide-bottom-handle]'));
+});
+
+test('#14: collapsing with focus outside the panel leaves focus alone', (t) => {
+  let editorCalls = 0;
+  const h = setup({ extraDeps: { focusEditor: () => { editorCalls += 1; return true; } } });
+  t.after(() => h.dispose());
+  h.byId('ideActivityBar').querySelector('button').focus();
+  h.panel.close();
+  assert.equal(editorCalls, 0);
+  assert.equal(h.doc.activeElement, h.byId('ideActivityBar').querySelector('button'));
+});
+
+test('bottom-panel tabs name their content host, a tabpanel labelled by the active tab', (t) => {
+  const h = setup({ activeView: 'problems' });
+  t.after(() => h.dispose());
+  const tabs = [...h.byId('ideBottomTabs').querySelectorAll('[role="tab"]')];
+  assert.equal(tabs.length, 4);
+  assert.equal(new Set(tabs.map((tab) => tab.id)).size, 4, 'every tab has a unique id');
+  assert.ok(tabs.every((tab) => tab.id && tab.getAttribute('aria-controls') === 'ideBottomPanelContent'));
+  const host = h.byId('ideBottomPanelContent');
+  assert.equal(host.getAttribute('role'), 'tabpanel');
+  const activeTab = () => h.byId('ideBottomTabs').querySelector('[role="tab"][aria-selected="true"]');
+  assert.equal(activeTab().dataset.ideBottomView, 'problems');
+  assert.equal(host.getAttribute('aria-labelledby'), activeTab().id);
+
+  h.panel.setActiveView('run');
+  assert.equal(activeTab().dataset.ideBottomView, 'run');
+  assert.equal(host.getAttribute('aria-labelledby'), activeTab().id, 'follows the tab switch');
+  assert.equal(h.doc.getElementById(activeTab().getAttribute('aria-controls')), host);
+});
+
+test('with a persistent terminal host the terminal tab names that host as its tabpanel', (t) => {
+  const h = setup({ activeView: 'terminal', persistentTerminalHost: true });
+  t.after(() => h.dispose());
+  const tabs = h.byId('ideBottomTabs');
+  const terminalTab = () => tabs.querySelector('[data-ide-bottom-view="terminal"]');
+  const terminalHost = h.byId('ideBottomTerminalHost');
+  const contentHost = h.byId('ideBottomPanelContent');
+  assert.equal(terminalTab().getAttribute('aria-controls'), 'ideBottomTerminalHost');
+  assert.equal(terminalHost.getAttribute('role'), 'tabpanel');
+  assert.equal(terminalHost.getAttribute('aria-labelledby'), terminalTab().id);
+  assert.equal(contentHost.hasAttribute('aria-labelledby'), false, 'the hidden host is not labelled');
+
+  h.panel.setActiveView('problems');
+  const problemsTab = tabs.querySelector('[data-ide-bottom-view="problems"]');
+  assert.equal(problemsTab.getAttribute('aria-controls'), 'ideBottomPanelContent');
+  assert.equal(contentHost.getAttribute('aria-labelledby'), problemsTab.id);
+  assert.equal(terminalHost.hasAttribute('aria-labelledby'), false);
 });

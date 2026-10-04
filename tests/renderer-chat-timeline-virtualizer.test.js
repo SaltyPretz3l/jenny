@@ -596,27 +596,27 @@ function buildLayoutAxisVirtualizer(t) {
   return { axis, reasons };
 }
 
-test('the root-attribute observer watches the chat width axis alongside chat zoom', (t) => {
+test('the root-attribute observer watches the chat width axis alongside Text size', (t) => {
   const { axis } = buildLayoutAxisVirtualizer(t);
   assert.equal(axis.mutationObservers.length, 1, 'a root-attribute observer is installed');
   const filter = axis.mutationObservers[0].options.attributeFilter;
-  assert.ok(filter.includes('data-chat-zoom'), 'chat zoom stays observed');
+  assert.ok(filter.includes('data-font-scale'), 'Text size is observed');
   assert.ok(filter.includes('data-chat-width'), 'chat width is observed');
 });
 
 test('toggling chat width invalidates the cached layout even though the scroll container never resizes', (t) => {
   const { axis, reasons } = buildLayoutAxisVirtualizer(t);
-  axis.documentElement.setAttribute('data-chat-width', 'wide');
+  axis.documentElement.setAttribute('data-chat-width', 'narrow');
   axis.mutationObservers[0]._fire();
   assert.ok(reasons.includes('layout_invalidated'), 'a width-mode change rebuilds the height cache');
 });
 
 test('an unchanged chat width value is a no-op rather than a layout churn', (t) => {
   const { axis, reasons } = buildLayoutAxisVirtualizer(t);
-  axis.documentElement.setAttribute('data-chat-width', 'wide');
+  axis.documentElement.setAttribute('data-chat-width', 'narrow');
   axis.mutationObservers[0]._fire();
   reasons.length = 0;
-  axis.documentElement.setAttribute('data-chat-width', 'wide');
+  axis.documentElement.setAttribute('data-chat-width', 'narrow');
   axis.mutationObservers[0]._fire();
   assert.equal(reasons.includes('layout_invalidated'), false, 'rewriting the same value invalidates nothing');
 });

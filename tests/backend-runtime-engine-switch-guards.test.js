@@ -8,7 +8,13 @@ const {
   loadModel,
 } = require('../services/backend/backend-runtime');
 
-function makeManagedSwitchService({ activeStreams = new Map(), unloadError = null } = {}) {
+function makeManagedSwitchService({
+  activeStreams = new Map(),
+  unloadError = null,
+  ollamaManager,
+  managerStop = null,
+  managerStatus = null,
+} = {}) {
   const calls = [];
   const logs = [];
   const manager = {
@@ -16,11 +22,19 @@ function makeManagedSwitchService({ activeStreams = new Map(), unloadError = nul
       calls.push('ensureRunning');
       return { state: 'ready' };
     },
+    ...(managerStatus ? { getStatus: () => managerStatus } : {}),
+    ...(managerStop ? {
+      async stop() {
+        calls.push('managerStop');
+        return managerStop();
+      },
+    } : {}),
   };
   const service = {
     activeStreams,
     calls,
     logs,
+    ollamaManager,
     currentEngineType: 'ollama',
     currentModel: 'previous:12b',
     options: { getLlamaServerManager: () => manager },
@@ -80,6 +94,114 @@ test('timed-out Ollama unload aborts a managed switch before llama-server starts
 
   assert.deepEqual(service.calls, ['modelsUnload']);
   assert.equal(service.logs.some(({ event }) => event === 'backend.engine_switch_unload_failed'), true);
+});
+
+const ENGINE_SWITCH_ABORT = /previous:12b.*could not be confirmed evicted.*aborted so the GPU is not double-loaded/i;
+
+function assertEngineSwitchAborted(error) {
+  assert.match(error.message, ENGINE_SWITCH_ABORT);
+  assert.equal(error.error_code, 'CMP-AI-0002');
+  assert.equal(error.category, 'engine_switch_aborted');
+  assert.equal(error.retryable, true);
+  return true;
+}
+
+test('a non-timeout Ollama unload failure aborts the switch when the daemon may still be up', async () => {
+  for (const ollamaManager of [
+    undefined,
+    {},
+    { isConfirmedDown: async () => false },
+    { isConfirmedDown: async () => undefined },
+    { isConfirmedDown: async () => { throw new Error('probe failed'); } },
+  ]) {
+    const service = makeManagedSwitchService({
+      unloadError: new Error('ECONNRESET'),
+      ollamaManager,
+    });
+
+    await assert.rejects(
+      loadModel(service, { model: 'next:12b', engine_type: 'openai-compatible' }),
+      assertEngineSwitchAborted
+    );
+
+    assert.deepEqual(service.calls, ['modelsUnload']);
+  }
+});
+
+test('an Ollama daemon confirmed down lets the switch proceed past a failed unload', async () => {
+  const service = makeManagedSwitchService({
+    unloadError: new Error('ECONNREFUSED'),
+    ollamaManager: { isConfirmedDown: async () => true },
+  });
+
+  await loadModel(service, { model: 'next:12b', engine_type: 'openai-compatible' });
+
+  assert.deepEqual(service.calls, ['modelsUnload', 'ensureRunning', 'initialize']);
+  assert.deepEqual(service.logs.find(({ event }) => (
+    event === 'backend.engine_switch_unload_skipped_daemon_unreachable'
+  )), {
+    level: 'WARN',
+    event: 'backend.engine_switch_unload_skipped_daemon_unreachable',
+    details: { from: 'ollama', model: 'previous:12b' },
+  });
+});
+
+test('a timed-out unload aborts without consulting the daemon probe', async () => {
+  let probed = false;
+  const service = makeManagedSwitchService({
+    unloadError: Object.assign(new Error('timed out'), { category: 'timeout' }),
+    ollamaManager: { isConfirmedDown: async () => { probed = true; return true; } },
+  });
+
+  await assert.rejects(
+    loadModel(service, { model: 'next:12b', engine_type: 'openai-compatible' }),
+    assertEngineSwitchAborted
+  );
+
+  assert.equal(probed, false);
+  assert.deepEqual(service.calls, ['modelsUnload']);
+});
+
+test('an unconfirmed managed-server stop aborts the engine switch before initialization', async () => {
+  for (const managerStop of [
+    async () => ({ state: 'stopped', lastError: 'stop_unconfirmed' }),
+    async () => { throw new Error('stop blew up'); },
+  ]) {
+    const service = makeManagedSwitchService({
+      managerStatus: { state: 'ready' },
+      managerStop,
+    });
+
+    await assert.rejects(
+      loadModel(service, { model: 'llama3:8b', engine_type: 'ollama' }),
+      (error) => {
+        assert.match(
+          error.message,
+          /managed llama-server could not be confirmed stopped; the engine switch was aborted so the GPU is not double-loaded/
+        );
+        assert.equal(error.error_code, 'CMP-AI-0002');
+        assert.equal(error.category, 'engine_switch_aborted');
+        assert.equal(error.retryable, true);
+        return true;
+      }
+    );
+
+    assert.deepEqual(service.calls, ['managerStop']);
+    assert.equal(service.logs.some(({ event }) => (
+      event === 'backend.engine_switch_stop_llama_server_failed'
+    )), true);
+  }
+});
+
+test('a confirmed managed-server stop still lets another engine initialize', async () => {
+  const service = makeManagedSwitchService({
+    managerStatus: { state: 'ready' },
+    managerStop: async () => ({ state: 'stopped', lastError: '' }),
+  });
+
+  await loadModel(service, { model: 'llama3:8b', engine_type: 'ollama' });
+
+  assert.deepEqual(service.calls, ['managerStop', 'initialize']);
 });
 
 test('active chat stream refuses a models.load switch that excludes no stream', async () => {

@@ -61,6 +61,26 @@ function createRuntimeDecisionControl({ context, sessionId, getCurrentWork, asse
   return Object.freeze({ offer, requestPause, validate, suspendedDecision });
 }
 
+// ask_user owns its waiter; this wraps only the suspend callback so a pause that
+// removes the exact live question waiter emits one live-only withdrawal (nothing
+// journaled or stored: the persisted row stays pending for the checkpoint).
+function withQuestionWithdrawal(control, service, { sessionId, streamId, callId, turnId }) {
+  if (!control) return control;
+  const offer = (decision, suspend) => control.offer(decision, typeof suspend !== 'function' ? suspend : pause => {
+    const pending = [...service.pendingUserQuestions?.values?.() || []]
+      .find(entry => entry?.sessionId === sessionId && entry?.streamId === streamId && entry?.callId === callId);
+    if (suspend(pause) !== true) return false;
+    if (pending) {
+      try {
+        service.emit('chat-stream', { type: 'user_questions_withdrawn', streamId, turnId: turnId || streamId, sessionId,
+          callId, questionId: pending.questionId, questionRef: pending.questionRef, toolName: 'ask_user', reason: 'runtime_pause' });
+      } catch (_error) { /* the suspension must still settle */ }
+    }
+    return true;
+  });
+  return Object.freeze({ ...control, offer });
+}
+
 function pauseRuntimeDecision(service, context, work) {
   const streamId = context?.lease?.identity?.streamId;
   if (!streamId || context.cancelled || work.attempt?.stream_id !== streamId
@@ -68,4 +88,4 @@ function pauseRuntimeDecision(service, context, work) {
   return service.activeStreams.get(streamId)?._runtimeDecisionControl?.requestPause() === true;
 }
 
-module.exports = { createRuntimeDecisionControl, projectDecisionPause, pauseRuntimeDecision };
+module.exports = { createRuntimeDecisionControl, projectDecisionPause, pauseRuntimeDecision, withQuestionWithdrawal };

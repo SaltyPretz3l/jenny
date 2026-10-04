@@ -231,8 +231,13 @@ test('wide-032/uiux-033: remove on a running config is prevented client-side; th
 
   assert.equal(fake.calls.saveConfigs.length, 0, 'the removal was prevented before reaching the bridge at all');
   assert.ok(
-    host.querySelector('.ide-test-runner-panel__row[data-config-id="unit"] [data-test-runner-abort]'),
-    'the row (and Stop) is still reachable'
+    host.querySelector('.ide-test-runner-panel__row[data-config-id="unit"]'),
+    'the row is still listed'
+  );
+  // Stop lives on the active-run card only (the row's duplicate was dropped).
+  assert.ok(
+    host.querySelector('.ide-test-runner-panel__active-run [data-test-runner-abort="unit"]'),
+    'Stop is still reachable'
   );
 });
 
@@ -295,7 +300,7 @@ test('wide-032: a stale push after a successful remove does not resurrect the re
   });
   wiring.bindEvents();
   await tick();
-  assert.ok(host.querySelector('[data-config-id="lint"] [data-test-runner-abort]'), 'lint is running');
+  assert.ok(host.querySelector('[data-config-id="lint"] .ide-test-runner-panel__status[data-status="running"]'), 'lint is running');
 
   // Remove the (non-active) unit config while lint keeps running.
   clickEl(host.querySelector('.ide-test-runner-panel__row[data-config-id="unit"] [data-test-runner-remove]'));
@@ -323,7 +328,7 @@ test('wide-032: resetForRoot clears a stale running badge so it cannot leak into
   await wiring.resetForRoot();
   await tick();
   assert.equal(host.querySelector('[data-config-id="unit"]'), null, 'the old root config is gone');
-  assert.equal(host.querySelector('[data-config-id="other"] [data-test-runner-abort]'), null, 'no stale Stop leaked into the new root');
+  assert.equal(host.querySelector('[data-test-runner-abort]'), null, 'no stale Stop leaked into the new root');
 });
 
 test('wide-032: a save resolving after dispose cannot repaint the panel', async () => {
@@ -521,4 +526,20 @@ test('gate: changing the gate select persists the designation through api.saveCo
   assert.deepEqual(fake.calls.saveConfigs[0].map((c) => [c.id, c.gate]), [['unit', false], ['lint', true]]);
   assert.equal(host.querySelector('[data-test-runner-gate-config]').value, 'lint', 'the echo repainted the header');
   assert.ok(host.querySelector('[data-config-id="lint"] .ide-test-runner-panel__gate-dot'), 'the dot moved with it');
+});
+
+test('wiring: a workspace-root reset drops the old root add-form draft (Astra review)', async () => {
+  const { host, wiring, fake } = setup();
+  wiring.bindEvents();
+  await tick();
+  const commandField = host.querySelector('#ideTestRunnerFieldCommand');
+  host.querySelector('#ideTestRunnerFieldId').value = 'root-a-draft';
+  commandField.value = 'npm run a-only';
+  fake.setState({ configs: [{ id: 'b', label: 'B', command: 'npm test' }], history: { byConfig: {} }, activeRun: null, activeConfigId: null });
+  await wiring.resetForRoot();
+  await tick();
+  assert.ok(host.querySelector('[data-config-id="b"]'), 'the new root configs rendered');
+  assert.notEqual(host.querySelector('#ideTestRunnerFieldCommand'), commandField, 'the form was repainted for the new root');
+  assert.equal(host.querySelector('#ideTestRunnerFieldId').value, '', 'no id draft carried over');
+  assert.equal(host.querySelector('#ideTestRunnerFieldCommand').value, '', 'no command draft carried over');
 });

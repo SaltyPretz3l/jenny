@@ -387,3 +387,34 @@ test('creating a second frame on the same host disposes the first', async (t) =>
     'replacement frame must carry a staged artifact src');
   assert.notEqual(first.requestId, second.requestId);
 });
+
+
+test('HTML frames, Mermaid frames and controls share one observer and dispose independently', async (t) => {
+  const { dom, host } = makeHost(t);
+  const Mermaid = require('../renderer/features/renderer-mermaid-utils');
+  const Observer = dom.window.MutationObserver;
+  let observerCount = 0;
+  let disconnectCount = 0;
+  dom.window.MutationObserver = class extends Observer {
+    constructor(callback) { super(callback); observerCount += 1; }
+    disconnect() { super.disconnect(); disconnectCount += 1; }
+  };
+  const mermaidHost = dom.window.document.createElement('div');
+  dom.window.document.body.appendChild(mermaidHost);
+  const html = createHtmlArtifactFrame(host, '<p>preview</p>', makeStageStub());
+  const mermaid = Mermaid.createMermaidFrame(mermaidHost, 'graph TD; A-->B');
+  const preview = dom.window.document.createElement('div');
+  preview.innerHTML = '<svg viewBox="0 0 100 100"><rect width="100" height="100"></rect></svg>';
+  dom.window.document.body.appendChild(preview);
+  Mermaid.attachMermaidControls(preview);
+  t.after(() => { html.dispose(); mermaid(); });
+  assert.equal(observerCount, 1);
+  html.dispose();
+  assert.ok(mermaidHost.querySelector('iframe'));
+  mermaidHost.remove();
+  await settleStaging();
+  assert.equal(disconnectCount, 0);
+  preview.remove();
+  await settleStaging();
+  assert.ok(disconnectCount > 0);
+});

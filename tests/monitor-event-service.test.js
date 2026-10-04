@@ -202,7 +202,8 @@ test('monitor event retention is bounded and records dropped events', () => {
   assert.equal(monitor.events.length, 100);
   assert.equal(monitor.events[0].text, 'line 6');
   assert.equal(monitor.event_count, 105);
-  assert.equal(monitor.dropped_event_count, 5);
+  assert.equal(monitor.display_dropped_event_count, 5);
+  assert.equal(monitor.dropped_event_count, 0);
 });
 
 test('monitor event routing scopes same call id by stream', () => {
@@ -334,4 +335,33 @@ test('pending monitor events drain once the tool result message exists', () => {
   const monitor = service.messages[0].tool_result.metadata.monitor;
   assert.equal(monitor.events.length, 1);
   assert.equal(monitor.events[0].text, 'early line');
+});
+
+
+test('startup replay merges overlapping output sequences once', () => {
+  const service = createFakeService();
+  const initial = service.messages.pop();
+  assert.equal(handleMonitorNotification(service, monitorEvent({ sequence: 1, text: 'early' })), false);
+  initial.tool_result.metadata.monitor.events = [{ sequence: 1, kind: 'output', stream: 'stdout', text: 'early' }];
+  initial.tool_result.metadata.monitor.event_count = 1;
+  service.messages.push(initial);
+  assert.equal(drainPendingMonitorNotificationsForToolResult(service, {
+    sessionId: 'session_1', requestId: 'stream_1', toolCallId: 'call_1', monitorId: 'mon_1',
+  }), 1);
+  handleMonitorNotification(service, monitorEvent({ sequence: 1, text: 'early' }));
+  const monitor = service.messages[0].tool_result.metadata.monitor;
+  assert.equal(monitor.events.length, 1);
+  assert.equal(monitor.event_count, 1);
+});
+
+test('producer counters and salience degradation survive stale notifications', () => {
+  const service = createFakeService();
+  handleMonitorNotification(service, monitorEvent({ sequence: 5, text: 'visible', event_count: 10, suppressed_event_count: 8, dropped_event_count: 1, salience_gate_disabled: true, salience_gate_disabled_reason: 'budget_exhausted' }));
+  handleMonitorNotification(service, monitorEvent({ sequence: 1, text: 'old', event_count: 1, suppressed_event_count: 0, dropped_event_count: 0, salience_gate_disabled: false }));
+  const monitor = service.messages[0].tool_result.metadata.monitor;
+  assert.equal(monitor.event_count, 10);
+  assert.equal(monitor.suppressed_event_count, 8);
+  assert.equal(monitor.dropped_event_count, 1);
+  assert.equal(monitor.salience_gate_disabled, true);
+  assert.equal(monitor.salience_gate_disabled_reason, 'budget_exhausted');
 });

@@ -8,6 +8,7 @@ const { allowsPlanArtifact } = require('../tools/plan-artifact-policy');
 const { builtinExecutionDescriptor } = require('./execution-tool-descriptors');
 const { evaluatePolicy } = require('../tools/tool-policy-evaluator');
 const { effectiveSideEffecting } = require('../tools/tool-policy-actions');
+const { ALWAYS_ON_TOOL_NAMES } = require('../tools/tool-surface-families');
 const { PROJECT_ERROR_CODES, RUNTIME_ERROR_CODES, TOOL_ERROR_CODES } = require('./error-codes');
 const {
   authorityFingerprint,
@@ -260,6 +261,19 @@ function normalizePluginToolCapture(value, expectedAuthority) {
   };
 }
 
+// Grow-only for the binding's life; always-on tools are never disabled.
+function addLiveDisabledTools(state, toolNames) {
+  let changed = false;
+  for (const value of Array.isArray(toolNames) ? toolNames : []) {
+    if (state.liveDisabledTools.size >= 512) break;
+    const name = boundedToken(value, MAX_OPERATION_CHARS);
+    if (!name || ALWAYS_ON_TOOL_NAMES.includes(name) || state.liveDisabledTools.has(name)) continue;
+    state.liveDisabledTools.add(name);
+    changed = true;
+  }
+  return changed;
+}
+
 class SessionExecutionAuthority {
   constructor({
     projectAuthority,
@@ -268,6 +282,7 @@ class SessionExecutionAuthority {
     skillsService = null,
     resolveProjectWorkspaceServices,
     resolvePluginToolAuthority = null,
+    resolveSessionDisabledTools = null,
     randomUUID: createUUID = randomUUID,
   } = {}) {
     if (!projectAuthority || typeof projectAuthority.captureSession !== 'function'
@@ -294,6 +309,8 @@ class SessionExecutionAuthority {
     this._resolveProjectWorkspaceServices = resolveProjectWorkspaceServices;
     this._resolvePluginToolAuthority = resolvePluginToolAuthority;
     this._createUUID = createUUID;
+    this._resolveSessionDisabledTools = resolveSessionDisabledTools;
+    this._sessionBindings = new Map();
   }
 
   captureSession(sessionId, {
@@ -379,6 +396,7 @@ class SessionExecutionAuthority {
       authorityRevision,
       binding,
       closed: false,
+      liveDisabledTools: new Set(),
       executionContext,
       mode: capturedMode,
       nonPlanMode,
@@ -394,7 +412,30 @@ class SessionExecutionAuthority {
       toolPreferences: isPlainRecord(toolPreferences) ? cloneJson(toolPreferences, 'Tool preferences', 64 * 1024) : null,
       trustedContext,
     });
+    if (!this._sessionBindings.has(normalizedSessionId)) {
+      this._sessionBindings.set(normalizedSessionId, new Set());
+    }
+    this._sessionBindings.get(normalizedSessionId).add(binding);
+    // A turn captures further bindings after it starts (stream, resume after a
+    // pause, replacement). Each starts from the chat's current switches, so a
+    // tool switched off mid-turn stays off for the rest of that turn.
+    let currentlyDisabled = [];
+    try { currentlyDisabled = this._resolveSessionDisabledTools?.(normalizedSessionId) || []; }
+    catch (_error) { /* the request's captured preferences still apply */ }
+    addLiveDisabledTools(bindingStates.get(binding), currentlyDisabled);
     return binding;
+  }
+
+  disableToolsForSession(sessionId, toolNames) {
+    const bindings = this._sessionBindings.get(sessionId);
+    if (!bindings || !Array.isArray(toolNames) || !toolNames.length) return 0;
+    let updated = 0;
+    for (const binding of bindings) {
+      const state = bindingStates.get(binding);
+      if (!state || state.closed) continue;
+      if (addLiveDisabledTools(state, toolNames)) updated += 1;
+    }
+    return updated;
   }
 
   toExecutionContext(binding) {
@@ -564,8 +605,9 @@ class SessionExecutionAuthority {
         'The tool operation is unavailable in the captured read-only mode.');
     }
     const preferences = state.toolPreferences;
-    if (Array.isArray(preferences?.disabled_tools)
-      && preferences.disabled_tools.includes(validation.toolName)) {
+    if ((Array.isArray(preferences?.disabled_tools)
+      && preferences.disabled_tools.includes(validation.toolName))
+      || state.liveDisabledTools.has(validation.toolName)) {
       return rejected(validation.operationId, TOOL_ERROR_CODES.POLICY_DENIED, 'tool_disabled',
         'The tool is disabled for this request.');
     }
@@ -606,6 +648,10 @@ class SessionExecutionAuthority {
     const state = bindingStates.get(binding);
     if (!state) return false;
     state.closed = true;
+    state.liveDisabledTools.clear();
+    const bindings = this._sessionBindings.get(state.sessionId);
+    bindings?.delete(binding);
+    if (!bindings?.size) this._sessionBindings.delete(state.sessionId);
     state.approved.clear();
     state.planApprovals.clear();
     state.pluginDescriptors.clear();

@@ -74,10 +74,9 @@ function buildPaintV2State(enabled, sessionId = 'session-1') {
   };
 }
 
-// The harness's synchronous-immediate rAF leaves queuePatch's patchFrame
-// handle truthy after the first patch (the callback zeroes it BEFORE the
-// return value is assigned), so repeated patches would silently no-op. A
-// flush-controlled rAF mirrors the real async browser ordering instead.
+// queuePatch patches synchronously. The flush-controlled rAF keeps
+// reveal and unit animation frames under test control so they run
+// in real browser order.
 function createFlushableRevealController(html, options = {}) {
   const dom = trackRevealDom(new JSDOM(html));
   const timeline = dom.window.document.getElementById('timeline');

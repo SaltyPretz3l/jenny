@@ -17,6 +17,7 @@ from sidecar.ai.error_codes import (
     CMP_TOOL_APPROVAL_WINDOW_DROPPED,
     CMP_TOOL_COERCED_ARGS_REJECTED,
     CMP_TOOL_DISABLED,
+    CMP_TOOL_OUTSIDE_WORKSPACE,
     CMP_TOOL_PAUSED_UNATTENDED,
     CMP_TOOL_PLACEHOLDER_ARGUMENTS_REJECTED,
     CMP_TOOL_POLICY_DENIED,
@@ -27,6 +28,7 @@ from sidecar.ai.routing import tool_resource_deferral as _tool_resource_deferral
 from sidecar.ai.routing import tool_restored_inputs as _tool_restored_inputs
 from sidecar.ai.tools import assembly as _tool_assembly
 from sidecar.ai.tools import contracts as _tool_contracts
+from sidecar.ai.tools import sanitization as _sanitization
 from sidecar.ai.tools import schema_examples as _tools_schema_examples
 from sidecar.ai.tools.plan_artifact_policy import is_plan_artifact_write_eligible
 from sidecar.ai.tools.policy import tool_policy_call_key
@@ -38,6 +40,12 @@ from sidecar.runtime.turn_state import current_live_run_mode_state
 logger = logging.getLogger(__name__)
 TOOL_NOT_EXPOSED_REASON = _tool_assembly.TOOL_NOT_EXPOSED_REASON
 TOOL_SEARCH_TOOL_NAME = _tool_assembly.TOOL_SEARCH_TOOL_NAME
+# FG-009: appended to a Plan-mode outside-root refusal so the model plans the
+# read instead of hunting for access it cannot get before approval.
+PLAN_MODE_OUTSIDE_ROOT_HINT = (
+    "In Plan mode files outside the workspace cannot be read; plan to read them "
+    "in the build step after the user approves (Build it)."
+)
 
 
 def _remaining_deferred_names(
@@ -68,6 +76,19 @@ def _is_deferred_tool_call(
     if not callable(checker):
         return False
     return bool(checker(call, tool_resolution_context))
+
+
+def _plan_mode_outside_root_hint(error_code: str, request_context: Any | None) -> str:
+    if error_code != CMP_TOOL_OUTSIDE_WORKSPACE:
+        return ""
+    if getattr(request_context, "plan_mode", False) is not True:
+        return ""
+    if getattr(request_context, "read_only", False) is not True:
+        return ""
+    live_run_mode = current_live_run_mode_state()
+    if live_run_mode is not None and not live_run_mode.snapshot()[1]:
+        return ""
+    return f" {PLAN_MODE_OUTSIDE_ROOT_HINT}"
 
 
 def should_pause_for_live_prompt(
@@ -207,7 +228,7 @@ def _record_filtered_outcome(  # noqa: PLR0913
     iteration_calls.append(call)
 
 
-def pre_filter_tool_calls(  # noqa: C901, PLR0912, PLR0913, PLR0915
+def pre_filter_tool_calls(  # noqa: PLR0913
     tool_calls: tuple[Any, ...] | list[Any],
     *,
     kernel: Any,
@@ -521,7 +542,7 @@ def execute_tool_calls_sequentially(  # noqa: C901, PLR0912, PLR0913, PLR0915
                 trusted_execution_kwargs: dict[str, Any] = {}
                 if call.tool_id == "ask_user":
                     # Runtime assembly imports this dispatcher; defer the reverse dependency.
-                    from sidecar.runtime.decision_checkpoint import (  # noqa: PLC0415
+                    from sidecar.runtime.decision_checkpoint import (
                         prepare_question_decision,
                     )
                     trusted_execution_kwargs["on_frozen_input"] = partial(
@@ -571,24 +592,29 @@ def execute_tool_calls_sequentially(  # noqa: C901, PLR0912, PLR0913, PLR0915
             failure_metadata: dict[str, object] = {
                 key: value for key, value in exc.to_error_data().items()
             }
+            # HB-017: the failure text keeps real paths for the model; the log does not.
+            log_message = _sanitization.redact_error_paths(exc.message)
             log_event(
                 logger,
                 logging.WARNING,
                 component="ai.router",
                 event="ai.router.tool_execution_recovered",
-                message=exc.message,
+                message=log_message,
                 status="recovered",
                 data={
                     "tool": call.tool_id,
                     "code": exc.code,
-                    "error_message": exc.message,
+                    "error_message": log_message,
                     "request_id": request_id,
                     "path": "sequential",
                 },
                 request_id=request_id,
                 session_id=session_id,
             )
-            failure_output = f"Tool '{call.tool_id}' failed: {exc.message}."
+            failure_output = (
+                f"Tool '{call.tool_id}' failed: {exc.message}."
+                f"{_plan_mode_outside_root_hint(exc.code, request_context)}"
+            )
             if (
                 getattr(
                     getattr(kernel, "_config", None),
@@ -640,6 +666,14 @@ APPROVAL_WINDOW_DROPPED_OUTPUT_TEMPLATE = (
     "Tool '{tool_id}' was not executed: it was not part of the approved "
     "execution window for this turn. Re-request it if it is still needed."
 )
+# Names the call the batch paused on, so a model that sees only this row does
+# not read the drop as a refusal of the tool itself (dogfood TR-009).
+APPROVAL_WINDOW_DROPPED_AFTER_OUTPUT_TEMPLATE = (
+    "Tool '{tool_id}' was not executed: this batch paused for approval of "
+    "'{approved_tool}', and only that call (plus earlier read-only calls) was in "
+    "the approved execution window. Nothing from this call happened. Re-issue "
+    "it now if it is still needed."
+)
 
 
 def settle_dropped_tool_calls(  # noqa: PLR0913 -- mirrors the filtered-outcome recorder.
@@ -654,6 +688,7 @@ def settle_dropped_tool_calls(  # noqa: PLR0913 -- mirrors the filtered-outcome 
     working_messages: list[dict[str, Any]],
     iteration_calls: list[Any],
     streamed_event_types: set[str],
+    approved_tool_id: str = "",
 ) -> int:
     """Give every admitted-but-unexecuted tool call an explicit terminal outcome.
 
@@ -666,6 +701,11 @@ def settle_dropped_tool_calls(  # noqa: PLR0913 -- mirrors the filtered-outcome 
     if not dropped_calls:
         return 0
 
+    template = (
+        APPROVAL_WINDOW_DROPPED_AFTER_OUTPUT_TEMPLATE
+        if approved_tool_id
+        else APPROVAL_WINDOW_DROPPED_OUTPUT_TEMPLATE
+    )
     outcome_index = len(outcomes)
     for call in dropped_calls:
         outcome_index += 1
@@ -678,8 +718,9 @@ def settle_dropped_tool_calls(  # noqa: PLR0913 -- mirrors the filtered-outcome 
             outcome_index=outcome_index,
             tool_result=_blocked_outcome(
                 call,
-                output=APPROVAL_WINDOW_DROPPED_OUTPUT_TEMPLATE.format(
-                    tool_id=str(getattr(call, "tool_id", "") or "")
+                output=template.format(
+                    tool_id=str(getattr(call, "tool_id", "") or ""),
+                    approved_tool=approved_tool_id,
                 ),
                 error_code=CMP_TOOL_APPROVAL_WINDOW_DROPPED,
                 metadata={"approval_window_dropped": True},
@@ -760,4 +801,32 @@ def prevalidate_call_arguments(
                 "minimal_valid_arguments": repair_hints["minimal_valid_arguments"],
             },
         }
-    return None
+    return _launcher_refusal(descriptor, call.arguments)
+
+
+def _launcher_refusal(descriptor: Any, arguments: Any) -> dict[str, Any] | None:
+    """Refuse a command the sidecar's shell would silently truncate (HB-013).
+
+    Runs with the schema prevalidation, before the approval gate and before
+    any runtime operation is admitted or resource lease acquired, so the
+    refusal leaves nothing to settle. Bridge-owned ``run_command`` (desktop
+    sandbox, hosted worker) runs POSIX ``/bin/sh`` and keeps every line.
+    """
+    if (
+        getattr(descriptor, "name", "") != "run_command"
+        or getattr(descriptor, "server_name", "") == "electron_tool_bridge"
+        or not isinstance(arguments, dict)
+        or not isinstance(arguments.get("command"), str)
+    ):
+        return None
+    refusal = _tool_support.cmd_exe_multiline_refusal(arguments["command"])
+    if refusal is None:
+        return None
+    return {
+        "message": (
+            f"Tool 'run_command' was not executed: {refusal} "
+            "Adjust the arguments or choose a different approach, then continue."
+        ),
+        "metadata": {"pre_dispatch_blocked": True, "refusal": "cmd_exe_multiline_command"},
+        "error_code": _tool_support.CMP_TOOL_COMMAND_BLOCKED,
+    }

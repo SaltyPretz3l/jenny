@@ -12,8 +12,8 @@ from types import SimpleNamespace
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-import pytest  # noqa: E402
-from test_tool_loop import (  # noqa: E402 — shared loop harness.
+import pytest
+from test_tool_loop import (  # shared loop harness.
     _build_router,
     _mermaid_descriptor,
     _StubMCPClient,
@@ -21,25 +21,25 @@ from test_tool_loop import (  # noqa: E402 — shared loop harness.
     _ToolPlan,
 )
 
-from sidecar.ai.context.token_budget import BudgetTracker  # noqa: E402
-from sidecar.ai.mcp.models import MCPToolDescriptor  # noqa: E402
-from sidecar.ai.routing.loop_events import (  # noqa: E402
+from sidecar.ai.context.token_budget import BudgetTracker
+from sidecar.ai.mcp.models import MCPToolDescriptor
+from sidecar.ai.routing.loop_events import (
     StreamResetEvent,
     ThinkingEvent,
     TokenDeltaEvent,
 )
-from sidecar.ai.routing.loop_runtime import LoopRuntime  # noqa: E402
-from sidecar.ai.routing.tool_loop_recovery import (  # noqa: E402
+from sidecar.ai.routing.loop_runtime import LoopRuntime
+from sidecar.ai.routing.tool_loop_recovery import (
     _is_tool_call_markup,
     budget_exhausted_wind_down,
     max_iterations_summary,
 )
-from sidecar.ai.tools.models import (  # noqa: E402
+from sidecar.ai.tools.models import (
     GenerationResult,
     GenerationUsage,
     ToolCallRequest,
 )
-from sidecar.protocol import CHAT_THINKING_KIND_STATUS  # noqa: E402
+from sidecar.protocol import CHAT_THINKING_KIND_STATUS
 
 
 def _tool_plan(*calls: ToolCallRequest) -> _ToolPlan:
@@ -92,6 +92,52 @@ def test_budget_exhausted_wind_down_sets_resumable_stop(
     )
 
     assert result.resumable_stop == reason
+
+
+def _captured_wind_down_note(monkeypatch: pytest.MonkeyPatch, reason: str) -> str | None:
+    notes: list[str] = []
+
+    def _capture(_loop, spec):
+        notes.append(spec.system_message)
+        return "Summary.", "model_winddown"
+
+    monkeypatch.setattr("sidecar.ai.routing.tool_loop_recovery.wind_down_response", _capture)
+    budget_exhausted_wind_down(
+        _budget_stop_loop(), GenerationResult(content="", finish_reason="stop"), reason=reason
+    )
+    return notes[0] if notes else None
+
+
+def test_no_progress_wind_down_names_the_rule_not_a_budget(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # TR-011: the model told the user "the tool budget is exhausted" after three
+    # failed reads. The note it gets must name the no-progress rule instead.
+    note = _captured_wind_down_note(monkeypatch, "diminishing_returns")
+
+    assert note is not None
+    assert "not a message from the user" in note
+    assert "last 3 rounds of tool calls made no progress" in note
+    assert "not a tool budget" in note
+    assert "'resume'" in note
+    assert "budget is spent" not in note
+
+
+def test_tool_cap_and_context_budget_keep_their_stop_wording(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    assert "this turn's tool budget is spent" in str(
+        _captured_wind_down_note(monkeypatch, "tool_cap")
+    )
+    # The context-budget stop answers deterministically: no model note at all.
+    assert _captured_wind_down_note(monkeypatch, "context_budget") is None
+    result = budget_exhausted_wind_down(
+        _budget_stop_loop(), GenerationResult(content="", finish_reason="stop"),
+        reason="context_budget",
+    )
+    assert result.response_text.endswith(
+        "Stopped: this turn's context budget is used up. Reply 'resume' to continue."
+    )
 
 
 def test_max_iterations_summary_sets_resumable_stop(
@@ -300,6 +346,13 @@ def test_diminishing_returns_regenerates_without_reusing_pre_tool_text(
     assert decision.response_text.endswith(_DIMINISHING_RETURNS_FOOTER)
     assert engine.call_count == 4
     assert engine.requests[-1]["tools"] == []
+    wind_down_notes = [
+        str(message.get("content", ""))
+        for message in engine.requests[-1]["messages"]
+        if "not a message from the user" in str(message.get("content", ""))
+    ]
+    assert any("made no progress" in note for note in wind_down_notes)
+    assert not any("budget is spent" in note for note in wind_down_notes)
     assert any(
         isinstance(event, ThinkingEvent)
         and event.kind == CHAT_THINKING_KIND_STATUS
@@ -402,7 +455,7 @@ def test_tool_cap_truncated_final_keeps_stream_terminal_contract() -> None:
     )
 
     assert _TOOL_CAP_FOOTER not in decision.response_text
-    assert "cut off" in decision.response_text
+    assert "connection to the model server closed" in decision.response_text
 
 
 def test_context_budget_stop_uses_deterministic_summary_without_regeneration(
@@ -535,3 +588,13 @@ def test_tool_call_markup_detector_ignores_prose(text: str) -> None:
 )
 def test_tool_call_markup_detector_flags_real_markup(text: str) -> None:
     assert _is_tool_call_markup(text, _loop_with_tools("read_file")) is True
+
+
+@pytest.mark.parametrize("reason", ["tool_cap", "diminishing_returns"])
+def test_budget_exhausted_wind_down_runs_with_thinking_off(monkeypatch, reason) -> None:
+    seen: list[object] = []
+    target = "sidecar.ai.routing.tool_loop_recovery.wind_down_response"
+    monkeypatch.setattr(target, lambda _l, s: (seen.append(s.reasoning_effort), ("S.", "m"))[1])
+    stop = GenerationResult(content="", finish_reason="stop")
+    budget_exhausted_wind_down(_budget_stop_loop(), stop, reason=reason)
+    assert seen == ["none"]

@@ -211,9 +211,6 @@ describe('real store: install commits durable bytes', () => {
     assert.equal(snapshot.installed_count, 1);
     assert.equal(snapshot.plugins[0].effective_state, 'installed_disabled');
     assert.equal(snapshot.disabled_only_state, 'installed_disabled');
-    const policy = await restarted.getPolicyStatus();
-    assert.equal(policy.contribution_execution_permitted, true);
-    assert.equal(policy.activation_scope, 'stage5_remote_mcp');
 
     dropRoot(rootDir);
   });

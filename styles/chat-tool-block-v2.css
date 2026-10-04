@@ -20,7 +20,7 @@
 .tool-kv-row--block .tool-kv-value--block {
   background: color-mix(in srgb, var(--tool-call-accent) 6%, var(--bg-surface));
   border: 1px solid color-mix(in srgb, var(--tool-call-accent) 22%, var(--line));
-  border-radius: var(--radius-sm);
+  border-radius: var(--tl-radius-control);
 }
 
 /* .tool-call-input / .tool-call-output surface styling lives in
@@ -71,7 +71,7 @@
 
 .tool-call-row .tool-result-duration {
   margin-inline-start: auto;
-  font-size: calc(12px * var(--chat-zoom-factor, 1));
+  font-size: var(--tl-font-meta);
   color: var(--text-secondary);
 }
 
@@ -108,13 +108,6 @@
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
-}
-
-.tool-call-row--minimal .tool-call-icon {
-  display: inline-flex;
-  flex: none;
-  align-items: center;
-  color: var(--text-muted);
 }
 
 /* W1-4 clickable path chip beside the disclosure: quiet until hovered so
@@ -267,7 +260,7 @@
   color: var(--text-muted);
   background: var(--widget-tool-code-bg);
   font-family: var(--font-family-mono);
-  font-size: var(--font-size-sm);
+  font-size: var(--tl-font-code);
   line-height: 1.55;
   white-space: pre;
 }

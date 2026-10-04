@@ -336,99 +336,108 @@ test('file diff dispatcher materializes lazy bodies and routes open-in-editor by
   fileDiffBindings.disposeFileDiffBindings();
 });
 
-test('Collapse/Expand All toggle button batches state changes into one full render', async () => {
+test('the transcript view control mounts in the pane cluster, opens a radio menu and switches the pane session', (t) => {
   const dom = new JSDOM('<!DOCTYPE html><html><body>'
-    + '<button id="timelineCollapseExpandToggle">Toggle</button>'
-    + '<div id="chatTimeline">'
-    + '  <div class="tool-call-header" data-tool-row-key="tool_1" aria-expanded="true"></div>'
-    + '  <div data-reasoning-toggle data-message-id="msg_1" data-phase-key="phase_1" data-default-expanded="true" aria-expanded="true"></div>'
+    + '<div class="chat-pane">'
+    + '<div data-chat-node="chatTimelineUtilityCluster"><button data-chat-node="artifactSplitViewToggle">split</button><div class="composer-wayfinder-host"></div></div>'
+    + '<div id="chatTimeline"></div>'
     + '</div>'
     + '</body></html>');
   const window = dom.window;
-  const chatTimeline = window.document.getElementById('chatTimeline');
-  const collapseExpandToggle = window.document.getElementById('timelineCollapseExpandToggle');
-
-  const toolExpansionCalls = [];
-  const reasoningBatchCalls = [];
-  const renderCalls = [];
-  const syncNodeCalls = [];
-  const phaseExpansionMap = new Map();
-  const thinkingController = {
-    phaseExpansionState: phaseExpansionMap,
-    autoScrollPaused: false
+  const doc = window.document;
+  const chatTimeline = doc.getElementById('chatTimeline');
+  const previous = {
+    document: global.document, window: global.window,
+    actionButton: globalThis.inventoryActionButton, contextMenu: globalThis.inventoryContextMenu,
+    viewUtils: globalThis.rendererTranscriptViewUtils, controller: globalThis.rendererTranscriptViewController,
   };
-
-  const bindings = createTranscriptEventBindings({
-    chatTimeline,
-    state: { currentSessionId: 'sess_123' },
-    handleBranchMessage: async () => null,
-    handleCopyMessage: async () => {},
-    handleRegenerateMessage: async () => {},
-    handleElaborateMessage: async () => {},
-    handleFollowUpMessage: async () => {},
-    handleUseProactiveSuggestionMessage: async () => {},
-    handleSaveProactiveSuggestionMessage: async () => {},
-    handleLaterProactiveSuggestionMessage: async () => {},
-    handleErrorRecoveryAction: async () => {},
-    handleArtifactAction: async () => {},
-    toggleInteractiveRoundRecap: async () => {},
-    toggleThreadBranch: () => {},
-    setReasoningPhaseExpandedPreferences: (sessionId, entries) => reasoningBatchCalls.push({ sessionId, entries }),
-    syncThinkingBlockNode: (msgId, phaseKey) => {
-      syncNodeCalls.push({ msgId, phaseKey });
-    },
-    resolveToolCallId: () => '',
-    toggleToolDetails: () => assert.fail('bulk toggle must not use the per-row materialization path'),
-    setToolCallExpansion: (rowKey, expanded) => toolExpansionCalls.push({ rowKey, expanded }),
-    renderAll: (options) => renderCalls.push(options),
-    thinkingController,
+  global.document = doc;
+  global.window = window;
+  globalThis.inventoryActionButton = require('../renderer/inventory/action-button');
+  globalThis.inventoryContextMenu = require('../renderer/inventory/context-menu');
+  globalThis.rendererTranscriptViewUtils = require('../renderer/chat/renderer-transcript-view-utils');
+  const setViewCalls = [];
+  let view = 'thinking';
+  globalThis.rendererTranscriptViewController = {
+    getView: () => view,
+    setView: (sessionId, nextView, options) => { setViewCalls.push([sessionId, nextView, options]); view = nextView; return nextView; },
+  };
+  t.after(() => {
+    globalThis.inventoryContextMenu.hide({ restoreFocus: false });
+    global.document = previous.document; global.window = previous.window;
+    globalThis.inventoryActionButton = previous.actionButton; globalThis.inventoryContextMenu = previous.contextMenu;
+    globalThis.rendererTranscriptViewUtils = previous.viewUtils; globalThis.rendererTranscriptViewController = previous.controller;
   });
 
+  const registered = [];
+  const bindings = createTranscriptEventBindings(buildNoopBindingDeps(chatTimeline, {
+    state: { currentSessionId: 'sess_focused' },
+    getSessionId: () => 'sess_pane',
+  }));
   bindings.bindTranscriptEvents((target, eventName, handler, options) => {
+    registered.push([target, eventName]);
     target.addEventListener(eventName, handler, options);
   });
 
-  // Step 1: Click when any are expanded -> should collapse all (nextExpanded = false)
-  const clickEvent = new window.MouseEvent('click', { bubbles: true, cancelable: true });
-  collapseExpandToggle.dispatchEvent(clickEvent);
-  await Promise.resolve();
+  const cluster = doc.querySelector('[data-chat-node="chatTimelineUtilityCluster"]');
+  const button = cluster.querySelector('[data-transcript-view-toggle]');
+  assert.ok(button, 'the control is built into the pane cluster');
+  assert.equal(button.previousElementSibling?.getAttribute('data-chat-node'), 'artifactSplitViewToggle', 'it sits after the split toggle');
+  assert.equal(button.tagName, 'BUTTON');
+  assert.ok(button.classList.contains('chat-timeline-utility-button') && button.classList.contains('chat-timeline-view-toggle'));
+  assert.equal(button.getAttribute('aria-haspopup'), 'menu');
+  assert.equal(button.dataset.transcriptView, 'thinking', 'the icon follows the pane session view');
+  assert.match(button.getAttribute('aria-label'), /Thinking/);
+  assert.equal(button.querySelectorAll('svg[data-view]').length, 3, 'all three icons ship; the stylesheet shows one');
+  assert.ok(registered.some(([target, name]) => target === chatTimeline && name === 'transcript-view-rendered'), 'the pane timeline notice is the sync signal');
 
-  assert.equal(clickEvent.defaultPrevented, true);
-  assert.deepEqual(toolExpansionCalls, [{ rowKey: 'tool_1', expanded: false }]);
-  assert.equal(reasoningBatchCalls.length, 1);
-  assert.equal(reasoningBatchCalls[0].sessionId, 'sess_123');
-  assert.deepEqual(reasoningBatchCalls[0].entries, [{
-    messageId: 'msg_1', phaseKey: 'phase_1', expanded: false, defaultExpanded: true,
-  }]);
-  assert.deepEqual(renderCalls, [{ forceFullRender: true }]);
-  assert.equal(syncNodeCalls.length, 0);
-  assert.equal(phaseExpansionMap.get('msg_1::phase_1'), false);
-  assert.equal(thinkingController.autoScrollPaused, true);
+  button.dispatchEvent(new window.MouseEvent('click', { bubbles: true, cancelable: true }));
+  assert.equal(button.getAttribute('aria-expanded'), 'true');
+  const items = [...doc.querySelectorAll('.inv-context-menu [role="menuitemradio"]')];
+  assert.deepEqual(items.map((item) => item.querySelector('.inv-context-menu-text > span:first-child').textContent), ['Answers', 'Thinking', 'Everything']);
+  assert.deepEqual(items.map((item) => item.getAttribute('aria-checked')), ['false', 'true', 'false']);
+  assert.deepEqual(items.map((item) => item.getAttribute('data-access-key')), ['1', '2', '3']);
+  assert.ok(items[0].querySelector('.inv-context-menu-description')?.textContent.length > 0, 'each row explains its view');
 
-  // Clear tracking arrays for next phase
-  toolExpansionCalls.length = 0;
-  reasoningBatchCalls.length = 0;
-  renderCalls.length = 0;
-  syncNodeCalls.length = 0;
-  phaseExpansionMap.clear();
-  thinkingController.autoScrollPaused = false;
+  items[2].click();
+  assert.deepEqual(setViewCalls, [['sess_pane', 'everything', { source: 'control' }]], "the pane's session, not the focused one");
+  assert.equal(doc.querySelector('.inv-context-menu'), null, 'the menu closed');
+  assert.equal(button.getAttribute('aria-expanded'), 'false');
+  assert.equal(button.dataset.transcriptView, 'thinking', 'the icon waits for the render notice');
+  chatTimeline.dispatchEvent(new window.CustomEvent('transcript-view-rendered', { detail: { view: 'everything', previousView: 'thinking' } }));
+  assert.equal(button.dataset.transcriptView, 'everything');
+  assert.match(button.getAttribute('aria-label'), /Everything/);
 
-  // Step 2: Update DOM elements to be collapsed
-  chatTimeline.querySelector('.tool-call-header').setAttribute('aria-expanded', 'false');
-  chatTimeline.querySelector('[data-reasoning-toggle]').setAttribute('aria-expanded', 'false');
+  // Number keys pick inside the open menu.
+  button.dispatchEvent(new window.MouseEvent('click', { bubbles: true, cancelable: true }));
+  doc.activeElement.dispatchEvent(new window.KeyboardEvent('keydown', { key: '1', bubbles: true, cancelable: true }));
+  assert.equal(setViewCalls.length, 2);
+  assert.equal(setViewCalls[1][1], 'answers');
 
-  // Click when all are collapsed -> should expand all (nextExpanded = true)
-  const clickEvent2 = new window.MouseEvent('click', { bubbles: true, cancelable: true });
-  collapseExpandToggle.dispatchEvent(clickEvent2);
-  await Promise.resolve();
+  // A character typed outside the menu (focus moved on) is not a pick; a Tab leaving the menu dismisses it.
+  button.dispatchEvent(new window.MouseEvent('click', { bubbles: true, cancelable: true }));
+  const composer = doc.body.appendChild(doc.createElement('textarea'));
+  composer.focus();
+  const typed = new window.KeyboardEvent('keydown', { key: '3', bubbles: true, cancelable: true });
+  composer.dispatchEvent(typed);
+  assert.equal(setViewCalls.length, 2, 'the composer keeps its character');
+  assert.equal(typed.defaultPrevented, false);
+  const item = doc.querySelector('.inv-context-menu [role="menuitemradio"]'); item.focus();
+  item.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true }));
+  assert.equal(doc.querySelector('.inv-context-menu'), null, 'Tab closes the menu');
+  assert.equal(button.getAttribute('aria-expanded'), 'false');
 
-  assert.equal(clickEvent2.defaultPrevented, true);
-  assert.deepEqual(toolExpansionCalls, [{ rowKey: 'tool_1', expanded: true }]);
-  assert.equal(reasoningBatchCalls.length, 1);
-  assert.equal(reasoningBatchCalls[0].entries[0].expanded, true);
-  assert.deepEqual(renderCalls, [{ forceFullRender: true }]);
-  assert.equal(phaseExpansionMap.get('msg_1::phase_1'), true);
-  assert.equal(thinkingController.autoScrollPaused, true);
+  // A rebind reuses the button instead of building a second one.
+  bindings.bindTranscriptEvents((target, eventName, handler, options) => target.addEventListener(eventName, handler, options));
+  assert.equal(cluster.querySelectorAll('[data-transcript-view-toggle]').length, 1);
+});
+
+test('without a pane cluster (unit fixtures) the bindings mount no control', () => {
+  const dom = new JSDOM('<!DOCTYPE html><html><body><div id="chatTimeline"></div></body></html>');
+  const chatTimeline = dom.window.document.getElementById('chatTimeline');
+  const bindings = createTranscriptEventBindings(buildNoopBindingDeps(chatTimeline));
+  bindings.bindTranscriptEvents((target, eventName, handler, options) => target.addEventListener(eventName, handler, options));
+  assert.equal(dom.window.document.querySelector('[data-transcript-view-toggle]'), null);
 });
 
 test('reasoning toggle marks only the streaming row as live-tail follow-exempt', (t) => {

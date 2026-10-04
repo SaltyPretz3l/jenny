@@ -387,7 +387,7 @@ class EmbeddingStore:
             if not self._table_exists(_LEGACY_TABLE):
                 return []
             rows = self._connection.execute(
-                f"SELECT memory_id FROM {_LEGACY_TABLE}"  # noqa: S608 - fixed identifier
+                f"SELECT memory_id FROM {_LEGACY_TABLE}"  # fixed identifier
             ).fetchall()
         return [row[0] for row in rows]
 
@@ -399,7 +399,7 @@ class EmbeddingStore:
                 return
             with self._write_transaction():
                 self._connection.execute(
-                    f"DELETE FROM {_LEGACY_TABLE} WHERE memory_id = ?",  # noqa: S608
+                    f"DELETE FROM {_LEGACY_TABLE} WHERE memory_id = ?",
                     (safe_memory_id,),
                 )
 
@@ -458,7 +458,7 @@ class SemanticRecallService:
                 return False
             self._store.store_embedding(memory_id, embedding, model_name)
             return True
-        except Exception as error:
+        except Exception as error:  # noqa: BLE001  # fail-soft
             logger.debug(
                 "semantic embedding failed",
                 extra={"memory_id": memory_id, "error_type": type(error).__name__},
@@ -520,7 +520,7 @@ class SemanticRecallService:
             )
             self._last_recall_partial = scan.partial
             return [] if scan.partial else scan.matches
-        except Exception as error:
+        except Exception as error:  # noqa: BLE001  # fail-soft
             self._last_recall_partial = True
             logger.debug(
                 "semantic recall failed",

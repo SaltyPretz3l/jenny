@@ -38,7 +38,7 @@ function buildControlPlanePosture(featureEnabled, safeMode, stage) {
     stage,
     disabled_only: false,
     activation_scope: stage >= 5 ? 'stage5_remote_mcp' : 'first_party_skill_prompt',
-    restricted_host_scope: stage >= 6 ? 'stage6_restricted_host' : 'unavailable',
+    restricted_host_scope: 'unavailable',
     enabled: featureEnabled === true,
     safe_mode_active: safeMode?.active === true,
     safe_mode_source: String(safeMode?.source || 'none'),

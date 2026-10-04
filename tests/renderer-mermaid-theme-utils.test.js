@@ -448,7 +448,7 @@ test('normalizeMermaidEdgeAndClusterColors is a no-op when svgRoot or edgeStyles
   assert.equal(edge.getAttribute('stroke'), null);
 });
 
-test('buildThemeConfig scales fontSize from --chat-zoom-factor, clamps 11-20px, and folds the factor into the cache key', (t) => {
+test('buildThemeConfig scales fontSize from the Text size axis (--font-scale), clamps 11-20px, and folds the factor into the cache key', (t) => {
   const midnight = PALETTE_FIXTURES.find((fixture) => fixture.paletteId === 'midnight');
   const cases = [
     { zoom: null, fontSize: '13px' },
@@ -462,7 +462,7 @@ test('buildThemeConfig scales fontSize from --chat-zoom-factor, clamps 11-20px, 
     installDomGlobals(dom, t);
     const tokens = { ...midnight.tokens };
     if (item.zoom != null) {
-      tokens['--chat-zoom-factor'] = item.zoom;
+      tokens['--font-scale'] = item.zoom;
     }
     installPaletteTokens(dom, 'midnight', tokens);
 

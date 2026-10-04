@@ -575,10 +575,9 @@
  * @property {Object|null} [contextPreferences]
  * @property {Object|null} [activeFileContext]
  * @property {Array<Object>} [mentionContents]
- * @property {{web_search?: boolean, browser?: boolean, Bash?: boolean, python_execute?: boolean, file_tools?: boolean}} [toolPreferences]
+ * @property {{families?: Object<string, boolean>, connections?: Object<string, boolean>}} [toolPreferences] This chat's tool overrides (surface family id or `mcp:`/`plugin:` connection id to on/off); Electron resolves them to a deny-list.
  * @property {{disableThinking?: boolean, leanContext?: boolean, plainChatMode?: boolean}} [debugOptions]
  * @property {{send_started_at_ms?: number, optimistic_rendered_at_ms?: number, local_render_latency_ms?: number}} [clientTiming]
- * @property {Object} [pluginCommandInvocation] Frozen PluginCommandInvocationV2 wire value.
  * @property {{id: string}} [skillInvocation] One-turn skill selection; Electron resolves metadata.
  * @property {string} [editedMessageId]
  * Runtime validation is generated from config/chat-lifecycle-v2.schema.json.

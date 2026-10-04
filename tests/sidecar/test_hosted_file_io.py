@@ -10,7 +10,13 @@ from pathlib import Path
 
 import pytest
 
-from sidecar.ai.tools.builtins import edit_file, file_atomic_write, file_state, filesystem
+from sidecar.ai.tools.builtins import (
+    edit_file,
+    file_atomic_write,
+    file_state,
+    filesystem,
+    filesystem_listing,
+)
 from sidecar.ai.tools.contracts import ToolExecutionFailure
 from sidecar.ai.tools.hosted_file_io import (
     configure_hosted_file_io,
@@ -289,3 +295,63 @@ def test_post_replace_fsync_error_reports_applied_effect(tmp_path: Path, monkeyp
     assert caught.value.effects == "applied_durability_uncertain"
     assert caught.value.retryable is False
     assert target.read_bytes() == b"new"
+
+
+def _list_text(result) -> str:
+    return result.output if hasattr(result, "output") else str(result)
+
+
+def test_list_dir_desktop_output_unchanged_when_hosted_disabled(tmp_path: Path) -> None:
+    (tmp_path / "sub").mkdir()
+    (tmp_path / "a.txt").write_bytes(b"abc")
+    text = _list_text(filesystem_listing.list_dir_tool({"path": "."}, WorkspaceGuard(str(tmp_path))))
+    assert "[D] sub" in text
+    assert "[F] a.txt  3B" in text
+
+
+def test_list_dir_selects_descriptor_path_when_hosted(tmp_path: Path, monkeypatch) -> None:
+    sentinel = ToolExecutionFailure(code="CMP-TOOL-0001", message="hosted-path", retryable=False)
+
+    def fake_open(path):
+        raise sentinel
+
+    monkeypatch.setattr(filesystem_listing, "hosted_file_io_enabled", lambda: True)
+    monkeypatch.setattr(filesystem_listing, "open_hosted_directory", fake_open)
+    with pytest.raises(ToolExecutionFailure) as caught:
+        filesystem_listing.list_dir_tool({"path": "."}, WorkspaceGuard(str(tmp_path)))
+    assert caught.value is sentinel
+
+
+@pytest.mark.skipif(os.name != "posix", reason="Linux hosted descriptor qualification")
+def test_hosted_list_dir_matches_desktop_output(tmp_path: Path) -> None:
+    root = tmp_path.resolve() / "workspace"
+    (root / "sub").mkdir(parents=True)
+    (root / "sub" / "inner.txt").write_bytes(b"12345")
+    (root / "a.txt").write_bytes(b"abc")
+    guard = WorkspaceGuard(str(root))
+    expected = [_list_text(filesystem_listing.list_dir_tool({"path": p}, guard)) for p in (".", "sub")]
+    with scoped_hosted_file_io(str(root), enabled=True):
+        actual = [_list_text(filesystem_listing.list_dir_tool({"path": p}, guard)) for p in (".", "sub")]
+    assert actual == expected
+
+
+@pytest.mark.skipif(os.name != "posix", reason="Linux hosted descriptor qualification")
+def test_hosted_list_dir_rejects_directory_swapped_for_symlink(tmp_path: Path) -> None:
+    root = tmp_path.resolve() / "workspace"
+    (root / "dir").mkdir(parents=True)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "secret-name.txt").write_bytes(b"private")
+    guard = WorkspaceGuard(str(root))
+    original = guard.resolve_list_path
+
+    def resolve_then_swap(requested):
+        resolved = original(requested)
+        (root / "dir").rename(root / "moved")
+        (root / "dir").symlink_to(outside, target_is_directory=True)
+        return resolved
+
+    guard.resolve_list_path = resolve_then_swap  # type: ignore[method-assign]
+    with scoped_hosted_file_io(str(root), enabled=True), pytest.raises(ToolExecutionFailure) as caught:
+        filesystem_listing.list_dir_tool({"path": "dir"}, guard)
+    assert "secret-name" not in caught.value.message

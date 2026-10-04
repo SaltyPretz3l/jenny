@@ -195,20 +195,50 @@ test('reportError survives missing optional sinks', () => {
   assert.equal(toast.toastId, 'toast_x');
 });
 
-/* ── Composition wiring (source-level: the shim replaces the three
- * error wrapper names and leaves showToastMessage untouched) ── */
-
-test('lifecycle composition wires the intake controller behind the flag', () => {
-  const source = fs.readFileSync(
-    path.join(__dirname, '..', 'renderer', 'app', 'renderer-app-lifecycle-composition.js'),
-    'utf8'
-  );
-  assert.match(source, /rendererErrorIntakeControllerUtils/);
-  assert.match(source, /error_intake_routing === true/);
-  assert.match(source, /showShellErrorToast: rawShowShellErrorToast/);
-  assert.match(source, /showSessionActionError: rawShowSessionActionError/);
-  assert.match(source, /showComposerActionError: rawShowComposerActionError/);
-  assert.match(source, /showShellErrorToast = rawShowShellErrorToast/, 'flag-off fallback binding');
+test('lifecycle composition installs live flag-gated error wrappers', async () => {
+  const vm = require('node:vm');
+  const calls = { raw: [], routed: [], recorded: [] };
+  const state = { ui: {}, features: { featureFlags: { error_intake_routing: false } } };
+  let placeholder;
+  placeholder = new Proxy(function () { return placeholder; }, {
+    get(_target, key) {
+      if (key === 'then' || key === Symbol.unscopables) return undefined;
+      if (key === Symbol.iterator) return function* () {};
+      return placeholder;
+    },
+  });
+  const window = new Proxy({
+    rendererErrorIntakeControllerUtils: { createErrorIntakeController },
+    rendererErrorCenterStore: { createErrorCenterStore: () => ({ record: (entry) => calls.recorded.push(entry) }) },
+  }, { get(target, key) { return key in target ? target[key] : placeholder; } });
+  const bag = {
+    window, state, document: placeholder, TOAST_SOURCE,
+    registerRendererCleanup() {},
+    toastControllerUtils: { createToastController: () => ({
+      showToastMessage: (message) => { calls.routed.push(message); return 'routed'; },
+      showShellErrorToast: (message) => { calls.raw.push(message); return 'legacy'; },
+      showSessionActionError: () => 'legacy-session',
+      showComposerActionError: () => 'legacy-composer',
+      toErrorMessage: (error) => error.message || String(error),
+    }) },
+  };
+  const ctx = new Proxy(bag, {
+    has(_target, key) { return key !== 'result' && key !== Symbol.unscopables; },
+    get(target, key) { return key === Symbol.unscopables ? undefined : key in target ? target[key] : placeholder; },
+  });
+  const sandbox = { window, console };
+  vm.runInNewContext(fs.readFileSync(path.join(__dirname, '..', 'renderer/app/renderer-app-lifecycle-composition.js'), 'utf8'), sandbox);
+  const composed = await window.rendererAppLifecycleComposition.createLifecycleComposition(ctx);
+  assert.equal(composed.showShellErrorToast('off'), 'legacy');
+  state.features.featureFlags.error_intake_routing = true;
+  assert.equal(composed.showShellErrorToast('on'), 'routed');
+  assert.equal(composed.showSessionActionError(new Error('session')), 'routed');
+  assert.equal(composed.showComposerActionError(new Error('composer')), 'routed');
+  state.features.featureFlags.error_intake_routing = false;
+  assert.equal(composed.showShellErrorToast('off-again'), 'legacy');
+  assert.deepEqual(calls.raw, ['off', 'off-again']);
+  assert.deepEqual(calls.routed, ['on', 'session', 'composer']);
+  assert.equal(calls.recorded.length, 3);
 });
 
 test('index.html loads the intake core after the classifier and the controller after toast-utils', () => {

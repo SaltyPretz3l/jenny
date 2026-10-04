@@ -480,7 +480,7 @@ def test_request_tool_approval_cancel_wins_over_queued_response() -> None:
     def _write(payload: dict[str, object]) -> None:
         written.append(payload)
 
-    def _factory(_approval_id: int, *, cancel_handle=None):  # noqa: ANN001
+    def _factory(_approval_id: int, *, cancel_handle=None):
         _ = cancel_handle
 
         def _read(_timeout: float) -> dict[str, object]:

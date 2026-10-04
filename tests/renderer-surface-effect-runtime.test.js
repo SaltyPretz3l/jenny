@@ -294,11 +294,12 @@ test('advancePhaseEnvelope: bit-identical to the pre-extraction inline law acros
 
 // ── makeRng ───────────────────────────────────────────────────────────────────
 
+// The shared LCG state sequence; draws divide by 2^32 so the range is [0, 1).
 function referenceLcg(seed) {
   let s = ((seed ^ 0xdeadbeef) >>> 0) || 1;
   return function draw() {
     s = (Math.imul(s, 1664525) + 1013904223) >>> 0;
-    return s / 0xffffffff;
+    return s / 0x100000000;
   };
 }
 
@@ -322,6 +323,14 @@ test('makeRng: output always lands in [0, 1)', () => {
     const value = rng();
     assert.ok(value >= 0 && value < 1, `value ${value} out of [0,1)`);
   }
+});
+
+test('makeRng: stays half-open when the LCG state reaches uint32 max (index-safe)', () => {
+  // Seed 0xf85809cf drives the first state to 0xffffffff; a 2^32-1 divisor
+  // returned exactly 1 here, so Math.floor(rng() * n) indexed past the end.
+  const value = runtime.makeRng(0xf85809cf)();
+  assert.ok(value >= 0 && value < 1, `expected [0, 1), got ${value}`);
+  assert.ok(Math.floor(value * 10) < 10, 'array index remains in bounds');
 });
 
 test("makeRng PARITY: seed 12345 matches renderer-atomic-burst-utils.js's internal LCG bit-for-bit", () => {

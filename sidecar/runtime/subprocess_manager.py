@@ -44,15 +44,15 @@ from sidecar.runtime.process_containment import (  # noqa: F401
     surviving_pids,
     tree_is_empty,
 )
-from sidecar.runtime.process_containment import (  # noqa: F401
+from sidecar.runtime.process_containment import (
     uses_posix_process_groups as _uses_posix_process_groups,
 )
 
 # Re-bound under the original private names for compatibility.
-from sidecar.runtime.worker_payload import (  # noqa: F401
+from sidecar.runtime.worker_payload import (
     build_background_env as _build_background_env,
 )
-from sidecar.runtime.worker_payload import (  # noqa: F401
+from sidecar.runtime.worker_payload import (
     write_worker_payload as _write_worker_payload,
 )
 from sidecar.runtime.worker_secrets import (
@@ -579,7 +579,7 @@ class SubprocessManager:
             return
         try:
             waiter.start()
-        except Exception:  # noqa: BLE001
+        except Exception:
             logger.error(
                 "background subprocess waiter failed to start; retaining registry ownership "
                 "task_key=%s pid=%s",

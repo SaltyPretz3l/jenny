@@ -1,3 +1,10 @@
+/* renderer/features/renderer-attachment-queue-utils.js - the attachment queue controller (UMD).
+ * Split view W2-2b: the optional trailing `sessionId` argument (resetAttachmentQueue,
+ * removeQueuedAttachment, beginAttachmentToken, mergePreparedAttachments) names a pane's session and
+ * routes the queue read/write through the session-keyed helpers of renderer-composer-session-state.js;
+ * omitted, it is the live queue (pane 0's) through today's direct path. A session other
+ * than the live queue's re-renders through its pane (renderSessionAttachments) instead of pane 0's
+ * tray, notice and composer. */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) {
     module.exports = factory();
@@ -18,9 +25,12 @@
     const renderComposerState = callbacks.renderComposerState || (() => {});
     const closeComposerPopover = callbacks.closeComposerPopover || (() => {});
     const appendClientLog = callbacks.appendClientLog || (() => {});
+    const renderSessionAttachments = callbacks.renderSessionAttachments
+      || ((sessionId) => windowRef.rendererAppPaneComposition?.getPaneComposition?.()?.renderSessionPane?.(sessionId, 'composer'));
     let disposed = false;
     let nextOperationId = 0;
     const activeTokens = new Map();
+    const paneTokens = new WeakSet(); // W2-2b: ops begun by another pane's bindings
 
     function filterReleasableAssetPaths(paths) {
       const controller = state.sendReceiptController;
@@ -45,7 +55,34 @@
       return String(entry.path || entry.assetPath || entry.id || '').trim();
     }
 
-    function renderAttachmentSurfaces() {
+    function queueHelpers() {
+      return windowRef.rendererComposerSessionState || globalThis.rendererComposerSessionState
+        || (typeof require === 'function' ? require('../chat/renderer-composer-session-state') : null);
+    }
+
+    function isLiveQueue(sessionId) {
+      const helpers = queueHelpers();
+      return sessionId === undefined || !helpers || helpers.isLiveQueueSession(state, sessionId);
+    }
+
+    function readQueue(sessionId) {
+      if (sessionId !== undefined && queueHelpers()) return queueHelpers().getQueuedAttachments(state, sessionId);
+      return Array.isArray(state.attachments?.queued) ? state.attachments.queued : [];
+    }
+
+    function writeQueue(sessionId, list) {
+      if (sessionId !== undefined && queueHelpers()) {
+        queueHelpers().setQueuedAttachments(state, sessionId, list);
+        return;
+      }
+      state.attachments.queued = list;
+    }
+
+    function renderAttachmentSurfaces(sessionId) {
+      if (!isLiveQueue(sessionId)) {
+        renderSessionAttachments(String(sessionId || '').trim());
+        return;
+      }
       renderAttachmentTray();
       try {
         renderComposerState();
@@ -54,26 +91,26 @@
       }
     }
 
-    function resetAttachmentQueue() {
-      const queuedAttachments = Array.isArray(state.attachments?.queued) ? state.attachments.queued : [];
-      state.attachments.queued = [];
+    function resetAttachmentQueue(sessionId) {
+      const queuedAttachments = readQueue(sessionId);
+      writeQueue(sessionId, []);
       const releasableAssetPaths = filterReleasableAssetPaths(queuedAttachments
         .map((entry) => String(entry?.assetPath || '').trim())
         .filter(Boolean));
       if (releasableAssetPaths.length && windowRef.jennyShell?.attachments?.releaseAssets) {
         windowRef.jennyShell.attachments.releaseAssets(releasableAssetPaths).catch(() => {});
       }
-      clearAttachmentNotice();
-      renderAttachmentSurfaces();
+      if (isLiveQueue(sessionId)) clearAttachmentNotice();
+      renderAttachmentSurfaces(sessionId);
     }
 
-    function removeQueuedAttachment(attachmentId) {
+    function removeQueuedAttachment(attachmentId, sessionId) {
       const targetId = String(attachmentId || '').trim();
       if (!targetId) {
         return;
       }
       const removed = [];
-      state.attachments.queued = (Array.isArray(state.attachments?.queued) ? state.attachments.queued : []).filter(
+      writeQueue(sessionId, readQueue(sessionId).filter(
         (entry) => {
           const matches = String(entry?.id || '').trim() === targetId;
           if (matches) {
@@ -81,24 +118,25 @@
           }
           return !matches;
         }
-      );
+      ));
       const releasableAssetPaths = filterReleasableAssetPaths(removed
         .map((entry) => String(entry?.assetPath || '').trim())
         .filter(Boolean));
       if (releasableAssetPaths.length && windowRef.jennyShell?.attachments?.releaseAssets) {
         windowRef.jennyShell.attachments.releaseAssets(releasableAssetPaths).catch(() => {});
       }
-      renderAttachmentSurfaces();
+      renderAttachmentSurfaces(sessionId);
     }
 
-    function mergePreparedAttachments(payload) {
+    function mergePreparedAttachments(payload, sessionId) {
+      const currentQueue = readQueue(sessionId);
       const existingPaths = new Set(
-        (Array.isArray(state.attachments?.queued) ? state.attachments.queued : [])
+        currentQueue
           .map((entry) => getAttachmentIdentityKey(entry))
           .filter(Boolean)
       );
-      const startingCount = Array.isArray(state.attachments?.queued) ? state.attachments.queued.length : 0;
-      const nextQueued = [...(Array.isArray(state.attachments?.queued) ? state.attachments.queued : [])];
+      const startingCount = currentQueue.length;
+      const nextQueued = [...currentQueue];
       const discarded = [];
       let droppedForCapacity = 0;
 
@@ -119,7 +157,7 @@
         nextQueued.push(entry);
       }
 
-      state.attachments.queued = nextQueued;
+      writeQueue(sessionId, nextQueued);
       const retainedAssetPaths = new Set(nextQueued
         .map((entry) => String(entry?.assetPath || '').trim())
         .filter(Boolean));
@@ -143,7 +181,7 @@
           dedupeKey: `${TOAST_SOURCE.attachments}:queue`,
         });
       }
-      renderAttachmentSurfaces();
+      renderAttachmentSurfaces(sessionId);
     }
 
     // UIUX-006: each async attachment op is stamped with a {sessionId,
@@ -155,14 +193,15 @@
     // controller. Absent that controller (older/test callers), an op may
     // merge only while its origin is still active; otherwise its assets are
     // released rather than mutating the newly active session.
-    function beginAttachmentToken() {
+    function beginAttachmentToken(sessionId) {
       if (disposed) { return null; }
-      const base = windowRef.rendererComposerSessionStateController?.beginAttachmentOp?.() || {
-        sessionId: String(state.currentSessionId || '').trim(),
+      const base = windowRef.rendererComposerSessionStateController?.beginAttachmentOp?.(sessionId) || {
+        sessionId: String((sessionId === undefined ? state.currentSessionId : sessionId) || '').trim(),
         generation: 0,
       };
       const token = Object.freeze({ ...base, operationId: `attachment_${++nextOperationId}` });
       activeTokens.set(token.operationId, token);
+      if (sessionId !== undefined && !isLiveQueue(sessionId)) paneTokens.add(token);
       return token;
     }
 
@@ -205,7 +244,8 @@
       try {
         const payload = await windowRef.jennyShell.attachments.pick({ session_id: token?.sessionId || '' });
         const routed = routeAttachmentResult(token, payload);
-        if (!disposed && routed.target !== 'discarded') {
+        // Pane 0's settings popover (and its focus restore) is not another pane's.
+        if (!disposed && routed.target !== 'discarded' && !paneTokens.has(token)) {
           closeComposerPopover({ restoreFocus: true });
         }
       } catch (error) {
@@ -214,13 +254,31 @@
       }
     }
 
-    async function prepareDroppedAttachments(paths, token = beginAttachmentToken()) {
-      if (!Array.isArray(paths) || !paths.length) {
+    // `dropped` holds path strings or the dropped File objects. Files go to the
+    // preload's prepareDroppedFiles, which resolves them itself, so a drop from
+    // outside the workspace attaches like a picker selection; path strings (and
+    // Files when that bridge is missing) keep the workspace-root rules.
+    async function prepareDroppedAttachments(dropped, token = beginAttachmentToken()) {
+      if (!Array.isArray(dropped) || !dropped.length) {
+        cancelAttachmentToken(token);
+        return;
+      }
+      const attachments = windowRef.jennyShell.attachments;
+      const files = dropped.filter((entry) => entry && typeof entry === 'object');
+      const useFiles = files.length > 0 && typeof attachments.prepareDroppedFiles === 'function';
+      const paths = useFiles ? [] : dropped.map((entry) => (typeof entry === 'string'
+        ? entry.trim()
+        : String((typeof attachments.getPathForFile === 'function' && attachments.getPathForFile(entry)) || '').trim()))
+        .filter(Boolean);
+      if (!useFiles && !paths.length) {
         cancelAttachmentToken(token);
         return;
       }
       try {
-        const payload = await windowRef.jennyShell.attachments.prepare(paths, { session_id: token?.sessionId || '' });
+        const scope = { session_id: token?.sessionId || '' };
+        const payload = useFiles
+          ? await attachments.prepareDroppedFiles(files, scope)
+          : await attachments.prepare(paths, scope);
         routeAttachmentResult(token, payload);
       } catch (error) {
         cancelAttachmentToken(token);

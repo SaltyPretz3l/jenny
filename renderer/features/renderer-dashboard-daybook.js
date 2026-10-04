@@ -155,14 +155,11 @@
       if (!updateConfig) {
         return;
       }
-      // updateHomeConfig merges ONE level deep: sending {scratchpad:{settings:
-      // {rows}}} would replace the entire settings object and silently drop
-      // font / captureMode / markdown / globalCapture (and notes / pins with
-      // it). Spread both levels off the live config instead.
+      // Preserve sibling settings without sending notes owned by the text writer.
       const scratchpad = asObject(getHomeConfig()?.scratchpad) || {};
       const settings = asObject(scratchpad.settings) || {};
       settleConfig(
-        updateConfig({ scratchpad: { ...scratchpad, settings: { ...settings, rows } } }),
+        updateConfig({ scratchpad: { settings: { ...settings, rows } } }),
         'home.rail_rows_persist_failed'
       );
     }

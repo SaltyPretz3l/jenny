@@ -16,6 +16,89 @@ function assertOmits(relativePath, selectors) {
   }
 }
 
+test('timeline keyframes have one owner and retired motion files stay removed', () => {
+  const cssFiles = fs.readdirSync(path.join(repoRoot, 'styles'), { recursive: true })
+    .filter((entry) => String(entry).endsWith('.css'))
+    .map((entry) => path.join('styles', String(entry)));
+  cssFiles.push(...fs.readdirSync(path.join(repoRoot, 'renderer', 'inventory'))
+    .filter((entry) => entry.endsWith('.css'))
+    .map((entry) => path.join('renderer', 'inventory', entry)));
+  const css = cssFiles.map(readRepoFile).join('\n');
+  for (const name of [
+    'status-dot-pulse', 'tool-call-running-breathe', 'shimmer-text',
+    'hero-exit', 'thread-enter', 'thread-entry-item', 'chat-copy-chip-fade',
+    'assistant-stream-pulse', 'turn-activity-fold-left', 'turn-activity-fold-right',
+    'turn-activity-checklist-draw',
+  ]) {
+    assert.equal(Array.from(css.matchAll(new RegExp(`@keyframes\\s+${name}\\s*\\{`, 'g'))).length, 1, name);
+  }
+  const imports = readRepoFile('styles.css');
+  for (const name of ['chat-animations.css', 'chat-send-lifecycle-v2.css']) {
+    assert.equal(fs.existsSync(path.join(repoRoot, 'styles', name)), false, `${name} is retired`);
+    assert.equal(imports.includes(name), false, `${name} must not be imported`);
+  }
+});
+
+test('timeline paint skipping uses the shared class and Mermaid height changes are instant', () => {
+  assert.doesNotMatch(readRepoFile('styles/chat-thread.css'), /#chatTimeline/);
+  const iframe = readRepoFile('styles/chat-tools.css').match(/\.tool-mermaid-preview iframe\s*\{[^}]*\}/)?.[0];
+  assert.ok(iframe, 'the Mermaid iframe rule remains styled');
+  assert.doesNotMatch(iframe, /\btransition\s*:/);
+});
+
+test('timeline typography and bubble radius use the --tl-* token contract', () => {
+  const heroSelectors = [
+    '.hero-avatar', '.hero-title', '.hero-subtitle', '.hero-runtime-hint',
+  ];
+  // No timeline aliases match the 20px plan title or 14px approval prompt.
+  // The brand glyph retains the explicitly excluded heading-size treatment.
+  // Remove only these exact declarations, leaving every other use guarded.
+  const preservedSizes = {
+    'styles/chat-machinery.css': [
+      /^(\.plan-document__title\s*\{[^}]*?)font-size:\s*var\(--font-size-title\);/m,
+    ],
+    'styles/chat-tools.css': [
+      /^(\.tool-approval-prompt\s*\{[^}]*?)font-size:\s*var\(--font-size-body\);/m,
+    ],
+    'styles/chat-thread.css': [
+      /^(\.chat-assistant-sprite-glyph\s*\{[^}]*?)font-size:\s*var\(--font-size-heading\);/m,
+    ],
+  };
+  for (const relativePath of [
+    'styles/chat-machinery.css',
+    'styles/chat-tools.css',
+    'styles/chat-tool-block-v2.css',
+    'styles/chat-thread.css',
+  ]) {
+    let css = readRepoFile(relativePath);
+    if (relativePath === 'styles/chat-thread.css') {
+      // Only these landing hero rules are outside the timeline type contract.
+      for (const selector of heroSelectors) {
+        const escaped = selector.replaceAll('.', '\\.');
+        const rule = new RegExp(`^${escaped}\\s*\\{[^}]*\\}`, 'm');
+        assert.match(css, rule, `expected the explicit hero exception ${selector}`);
+        css = css.replace(rule, '');
+      }
+    }
+    for (const declaration of preservedSizes[relativePath] || []) {
+      assert.match(css, declaration, `${relativePath} retains its unmatched size`);
+      css = css.replace(declaration, '$1');
+    }
+    assert.doesNotMatch(css, /var\(\s*--font-size-/, `${relativePath} bypasses timeline font tokens`);
+    assert.doesNotMatch(css, /\bfont-weight:\s*500\b/, `${relativePath} bypasses timeline label weight`);
+    if (relativePath !== 'styles/chat-thread.css') {
+      // chat-thread.css keeps base radii on its non-timeline rules (sprites, hero).
+      assert.doesNotMatch(css, /var\(\s*--radius-(?:sm|base|md|pill)\b/, `${relativePath} bypasses timeline radius tokens`);
+      assert.doesNotMatch(css, /border-radius:\s*999px/, `${relativePath} bypasses the chip radius token`);
+    }
+  }
+  assert.match(
+    readRepoFile('styles/chat-timeline-tokens.css'),
+    /--tl-radius-bubble:\s*var\(--radius-md\);/,
+    'the bubble radius aliases the existing medium radius'
+  );
+});
+
 test('retired artifact shelf stubs are deleted', () => {
   assert.equal(fs.existsSync(path.join(repoRoot, 'styles', 'artifact-shelf.css')), false);
   assert.equal(fs.existsSync(path.join(repoRoot, 'styles', 'artifact-shelf-v2.css')), false);
@@ -72,6 +155,27 @@ test('broken CSS token references use canonical foundation tokens', () => {
 test('retired feature and dead utility selectors stay removed', () => {
   const removedByFile = {
     'styles/views-home-setup.css': ['.chatgpt-connect-'],
+    // Open Loops rows carry status in the meta line; the edge-to-edge row tints
+    // and the vestigial first-row / details-disclosure hooks are gone.
+    'styles/views-home-board.css': [
+      '[data-loop-due="true"]',
+      '.memory-commitment-item',
+      '.home-loop-history-toggle',
+      '.home-loop-meta-block',
+    ],
+    // Subagent Monitor v2: the master/detail split and the stage-grid host are gone.
+    'styles/chat-subagent-monitor.css': [
+      '.subagent-monitor-master',
+      '.subagent-monitor-detail-pane',
+      '.subagent-monitor-tree-pane',
+      '.subagent-monitor-kicker',
+      '.subagent-monitor-parent-state',
+      '.subagent-tool-list',
+      '.subagent-tool-row',
+      '.subagent-monitor-open',
+      '.is-compact',
+      '.is-hidden-compact',
+    ],
     'styles/chat-composer-v2.css': [
       '.composer-popover-trigger',
       '.composer-slash-launcher',
@@ -133,6 +237,28 @@ test('retired feature and dead utility selectors stay removed', () => {
       '.plugin-manager-overflow',
     ],
     'styles/foundation.css': ['.brand-icon', '.brand-icon-core', '.brand-name', '.titlebar-divider'],
+    // Legacy static artifact header (V3 replaces the markup via innerHTML) and
+    // the dead V2 header/toolbar/footer chrome.
+    'styles/context-panel.css': [
+      '.artifact-review-header',
+      '.artifact-review-heading',
+      '.artifact-review-kicker',
+      '.artifact-review-status',
+      '.artifact-review-actions',
+      '.artifact-review-action',
+      '--artifact-dossier-pane-bg',
+      '--mat-live-bg',
+    ],
+    'styles/artifact-panel.css': [
+      '.artifact-panel-v2-header',
+      '.artifact-panel-v2-title',
+      '.artifact-panel-v2-toolbar',
+      '.artifact-panel-v2-text-btn',
+      '.artifact-panel-v2-save-',
+      '.artifact-panel-v2-delete-btn',
+      '.artifact-panel-v2-footer {',
+      '.artifact-panel-v2-footer-meta',
+    ],
     'styles/shell-chrome.css': ['.status-strip', '.backend-banner', '.workspace.sidebar-inactive'],
     'styles/workspace-rail.css': ['.workspace-rail-tooltip', '.workspace.sidebar-inactive'],
     'renderer/inventory/inventory.css': [
@@ -156,7 +282,6 @@ test('retired feature and dead utility selectors stay removed', () => {
 test('dynamic state and live combined-selector members remain styled', () => {
   const retainedByFile = {
     'styles/views-home-board.css': [
-      '[data-loop-due="true"]',
       '[data-loop-status="resolved"]',
       '[data-loop-status="archived"]',
       '[data-loop-resolving="true"]',
@@ -301,4 +426,22 @@ test('the typography preference remaps the mono face, not just body and display'
   // JetBrains Mono is not bundled and is absent on a stock Windows install, so
   // the base stack must name a real fallback before the generic keyword.
   assert.match(foundationCss, /--font-family-mono:[^;]*ui-monospace,\s*Consolas,\s*monospace;/);
+});
+
+test('right-rail panels share one flat --side-panel-bg and gutter token, with no gradient', () => {
+  const foundationCss = readRepoFile('styles/foundation.css');
+  const contextCss = readRepoFile('styles/context-panel.css');
+  const bg = foundationCss.match(/--side-panel-bg:\s*([^;]+);/);
+  assert.ok(bg, 'foundation defines --side-panel-bg');
+  assert.doesNotMatch(bg[1], /gradient/);
+  assert.match(foundationCss, /--side-panel-gutter:\s*16px;/);
+  const rule = (selector) => {
+    const start = contextCss.indexOf(selector + ' {');
+    assert.notEqual(start, -1, selector);
+    return contextCss.slice(start, contextCss.indexOf('}', start));
+  };
+  assert.match(rule('.chat-context-panel'), /background: var\(--side-panel-bg\);/);
+  assert.match(rule('.artifact-review-panel'), /background: var\(--side-panel-bg\);/);
+  assert.match(rule('.artifact-review-panel.artifact-review-overlay'), /background: var\(--side-panel-bg\);/);
+  assert.equal(/artifact-review-header[^{]*\{[^}]*gradient/.test(contextCss), false, 'legacy header gradient is gone');
 });

@@ -16,7 +16,7 @@ import pytest
 from sidecar.ai.mcp.exceptions import MCPError
 from sidecar.ai.routing import auto_checkpoint as _auto_ckpt
 from sidecar.ai.routing.auto_checkpoint import (
-    AUTO_CHECKPOINT_FLAG,
+    AUTO_CHECKPOINT_POLICY_KEY,
     maybe_create_auto_checkpoint,
     should_create_checkpoint,
 )
@@ -27,7 +27,7 @@ from sidecar.runtime.multiplexer import TurnCancellationHandle
 
 def _make_loop_run(
     *,
-    flag_enabled: bool = True,
+    policy_allows: bool = True,
     has_writer: bool = True,
     session_id="sess1",
     cancel_handle: TurnCancellationHandle | None = None,
@@ -42,7 +42,9 @@ def _make_loop_run(
         wall_clock_deadline=wall_clock_deadline,
     )
     kernel = SimpleNamespace(
-        _config=SimpleNamespace(feature_flags={AUTO_CHECKPOINT_FLAG: flag_enabled}),
+        _config=SimpleNamespace(
+            feature_flags={} if policy_allows else {AUTO_CHECKPOINT_POLICY_KEY: False}
+        ),
     )
     return SimpleNamespace(
         kernel=kernel,
@@ -66,9 +68,18 @@ def _readonly_remaining():
 # ---------------------------------------------------------------------------
 
 
-def test_should_create_checkpoint_false_when_flag_off():
+def test_should_create_checkpoint_true_when_the_policy_key_is_absent():
+    # The retired auto_checkpoint feature flag no longer ships from Electron.
     assert should_create_checkpoint(
-        feature_flags={AUTO_CHECKPOINT_FLAG: False},
+        feature_flags={},
+        already_created=False,
+        tool_ids=["write_file"],
+    ) is True
+
+
+def test_should_create_checkpoint_false_when_an_execution_policy_disables_it():
+    assert should_create_checkpoint(
+        feature_flags={AUTO_CHECKPOINT_POLICY_KEY: False},
         already_created=False,
         tool_ids=["write_file"],
     ) is False
@@ -76,7 +87,7 @@ def test_should_create_checkpoint_false_when_flag_off():
 
 def test_should_create_checkpoint_false_when_no_mutating_tool():
     assert should_create_checkpoint(
-        feature_flags={AUTO_CHECKPOINT_FLAG: True},
+        feature_flags={AUTO_CHECKPOINT_POLICY_KEY: True},
         already_created=False,
         tool_ids=["read_file"],
     ) is False
@@ -84,7 +95,7 @@ def test_should_create_checkpoint_false_when_no_mutating_tool():
 
 def test_should_create_checkpoint_true_when_flag_on_and_mutating_tool_present():
     assert should_create_checkpoint(
-        feature_flags={AUTO_CHECKPOINT_FLAG: True},
+        feature_flags={AUTO_CHECKPOINT_POLICY_KEY: True},
         already_created=False,
         tool_ids=["write_file"],
     ) is True
@@ -92,7 +103,7 @@ def test_should_create_checkpoint_true_when_flag_on_and_mutating_tool_present():
 
 def test_should_create_checkpoint_true_for_move_file():
     assert should_create_checkpoint(
-        feature_flags={AUTO_CHECKPOINT_FLAG: True},
+        feature_flags={AUTO_CHECKPOINT_POLICY_KEY: True},
         already_created=False,
         tool_ids=["move_file"],
     ) is True
@@ -100,7 +111,7 @@ def test_should_create_checkpoint_true_for_move_file():
 
 def test_should_create_checkpoint_false_when_already_created():
     assert should_create_checkpoint(
-        feature_flags={AUTO_CHECKPOINT_FLAG: True},
+        feature_flags={AUTO_CHECKPOINT_POLICY_KEY: True},
         already_created=True,
         tool_ids=["write_file"],
     ) is False
@@ -151,10 +162,10 @@ def test_maybe_create_auto_checkpoint_uses_the_turns_request_id(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-def test_maybe_create_auto_checkpoint_does_not_fire_when_flag_off(monkeypatch):
+def test_maybe_create_auto_checkpoint_does_not_fire_when_policy_disables_it(monkeypatch):
     calls = []
     monkeypatch.setattr(_auto_ckpt, "execute_electron_tool", calls.append)
-    loop_run = _make_loop_run(flag_enabled=False)
+    loop_run = _make_loop_run(policy_allows=False)
 
     maybe_create_auto_checkpoint(loop_run, _mutating_remaining())
 

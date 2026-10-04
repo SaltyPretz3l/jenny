@@ -114,6 +114,8 @@ CANCELLED_TERMINAL_SUBCODES = frozenset(
         "session_delete",
         "transport_abort",
         "sidecar_cancel",
+        # Electron cancels an in-flight turn with this when Jenny closes (dogfood TR-012).
+        "app_shutdown",
     }
 )
 

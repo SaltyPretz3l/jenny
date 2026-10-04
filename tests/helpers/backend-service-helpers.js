@@ -84,8 +84,6 @@ function createMockToolExecutor(options = {}) {
     metadata: {},
   };
   const executeCalls = [];
-  const pendingApprovals = new Map();
-  const streamApprovals = new Map();
 
   const registry = {
     getTool(name) {
@@ -119,9 +117,7 @@ function createMockToolExecutor(options = {}) {
       return policies[toolName] || 'ask';
     },
     executeCalls,
-    _pendingApprovals: pendingApprovals,
-    _streamApprovals: streamApprovals,
-    async execute(call, context) {
+    async executePreApproved(call, context) {
       executeCalls.push({ call, context });
       const result = executeResults[call.toolName] || executeResults[call.callId] || defaultResult;
       if (typeof result === 'function') {
@@ -129,76 +125,6 @@ function createMockToolExecutor(options = {}) {
       }
       return { ...defaultResult, ...result, callId: call.callId, toolName: call.toolName };
     },
-    approve(callId) { return false; },
-    deny(callId) { return false; },
-    cancelPendingForStream(streamId) {
-      const callIds = streamApprovals.get(streamId);
-      if (callIds) {
-        for (const callId of callIds) {
-          pendingApprovals.delete(callId);
-        }
-        streamApprovals.delete(streamId);
-      }
-    },
-  };
-}
-
-function createApprovalBlockingToolExecutor() {
-  let releaseApproval = null;
-  const executeCalls = [];
-
-  return {
-    registry: {
-      getTool(name) {
-        return {
-          name,
-          readOnly: false,
-          summarize(input) {
-            return `${name} ${input.file_path || ''}`.trim();
-          },
-        };
-      },
-      getToolSchemas() {
-        return [
-          { type: 'function', function: { name: 'Read', description: 'Read file', parameters: {} } },
-        ];
-      },
-    },
-    _permissionStore: {
-      getAllPolicies() {
-        return { Read: 'ask' };
-      },
-    },
-    getToolPolicy(toolName) {
-      return { Read: 'ask' }[toolName] || 'ask';
-    },
-    async execute(call) {
-      executeCalls.push(call);
-      await new Promise((resolve) => {
-        releaseApproval = resolve;
-      });
-      return {
-        callId: call.callId,
-        toolName: call.toolName,
-        content: 'approved output',
-        summary: 'approved summary',
-        isError: false,
-        approvalState: 'approved',
-        durationMs: 5,
-        metadata: {},
-      };
-    },
-    approve() {
-      if (releaseApproval) {
-        releaseApproval();
-      }
-      return true;
-    },
-    deny() {
-      return false;
-    },
-    cancelPendingForStream() {},
-    executeCalls,
   };
 }
 
@@ -230,7 +156,7 @@ function createAbortAwareToolExecutor() {
     getToolPolicy(toolName) {
       return { Read: 'auto' }[toolName] || 'ask';
     },
-    async execute(call, context) {
+    async executePreApproved(call, context) {
       executeCalls.push(call.callId);
       if (call.callId === 'call_1') {
         await new Promise((resolve) => {
@@ -263,9 +189,6 @@ function createAbortAwareToolExecutor() {
         metadata: {},
       };
     },
-    approve() { return false; },
-    deny() { return false; },
-    cancelPendingForStream() {},
     executeCalls,
   };
 }
@@ -276,6 +199,5 @@ module.exports = {
   buildInteractiveAnswer,
   buildInteractiveAnswers,
   createMockToolExecutor,
-  createApprovalBlockingToolExecutor,
   createAbortAwareToolExecutor,
 };

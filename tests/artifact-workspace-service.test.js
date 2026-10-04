@@ -18,6 +18,48 @@ function createWorkspaceRoot() {
   return createTrackedTempDir('jenny-artifacts-');
 }
 
+for (const binary of [false, true]) {
+  test(`artifact ${binary ? 'image' : 'text'} read stays bounded after a stale stat`, async () => {
+    const workspaceRoot = createWorkspaceRoot();
+    const realFs = require('fs/promises');
+    let target;
+    const service = new ArtifactWorkspaceService({
+      configService: { getState: () => ({ toolsWorkspaceRoot: workspaceRoot }) },
+      fsImpl: { ...realFs, readFile: async (file, ...args) => {
+        if (file === target) throw new Error('unbounded artifact read');
+        return realFs.readFile(file, ...args);
+      }, stat: async (file) => {
+        const stats = await realFs.stat(file);
+        if (file === target) stats.size = 1;
+        return stats;
+      } },
+      sessionMessageReader: () => [{ tool_result: { generated_artifacts: [created.metadata] } }],
+    });
+    const created = binary
+      ? await service.createBinaryArtifact('stale', { artifact_kind: 'image', content: makePngBuffer(), mime_type: 'image/png', file_name: 'image.png' })
+      : await service.createArtifact('stale', { content: 'small', title: 'text', language: 'markdown' });
+    target = created.metadata.absolute_path;
+    const limit = binary ? 10 * 1024 * 1024 : 512 * 1024;
+    fs.writeFileSync(target, Buffer.alloc(limit + 1, 120));
+    let requestedBytes = 0;
+    const realOpen = realFs.open;
+    service._fs.open = async (...args) => {
+      const handle = await realOpen(...args);
+      const read = handle.read.bind(handle);
+      handle.read = async (...readArgs) => {
+        requestedBytes += readArgs[2];
+        return read(...readArgs);
+      };
+      return handle;
+    };
+    const result = await service.readArtifact('stale', created.metadata.artifact_id);
+    assert.equal(result.content.length, 0);
+    assert.equal(result.asset_data_url, undefined);
+    assert.ok(requestedBytes <= limit + 1);
+    assert.equal(result.artifact.editable, false);
+  });
+}
+
 function makePngBuffer(width = 2, height = 3) {
   const header = Buffer.from([
     0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,

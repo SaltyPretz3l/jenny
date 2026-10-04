@@ -104,7 +104,7 @@ def test_wait_returns_the_same_cleanup_verdict_it_publishes(
         nonlocal finalize_calls
         finalize_calls += 1
         verdict = uncertain if finalize_calls == 1 else confirmed
-        owned._cleanup_observation.publish(verdict)  # noqa: SLF001
+        owned._cleanup_observation.publish(verdict)
         return verdict
 
     monkeypatch.setattr(service, "_finalize", _finalize)
@@ -147,7 +147,7 @@ def test_uncertain_cleanup_quarantines_capacity_until_owner_retry_confirms() -> 
             del timeout
 
     service = OwnedProcessService(max_active=1, max_queued=0)
-    lease = service._acquire_capacity(  # noqa: SLF001 - construct owned test fixture.
+    lease = service._acquire_capacity(  # construct owned test fixture.
         allow_queue=False, timeout_seconds=0
     )
     job = _Job()
@@ -169,8 +169,8 @@ def test_uncertain_cleanup_quarantines_capacity_until_owner_retry_confirms() -> 
         _cleanup_observation=CleanupObservation(observed.append),
         _output_readers=(reader,),  # type: ignore[arg-type]
     )
-    with service._condition:  # noqa: SLF001 - mirror spawn registration.
-        service._active[id(owned)] = owned  # noqa: SLF001
+    with service._condition:  # mirror spawn registration.
+        service._active[id(owned)] = owned
 
     first = service.release(owned)
     repeated = service.release(owned)
@@ -181,7 +181,7 @@ def test_uncertain_cleanup_quarantines_capacity_until_owner_retry_confirms() -> 
     assert service.snapshot().active == 1
     assert observed == [first]
     with pytest.raises(OwnedProcessCapacityError):
-        service._acquire_capacity(allow_queue=False, timeout_seconds=0)  # noqa: SLF001
+        service._acquire_capacity(allow_queue=False, timeout_seconds=0)
 
     job.provable = True
     reader.alive = False

@@ -2,7 +2,7 @@
 
 const path = require('node:path');
 const { randomUUID } = require('node:crypto');
-const { createDiskAdmission } = require('./resource-limits');
+const { createDiskAdmission, rewriteHeadroom, DELETE_RESERVE_BYTES } = require('./resource-limits');
 const { loadHostConfig } = require('./config');
 const { assertImportComplete } = require('../services/host/maintenance-commands');
 const { acquireProfile } = require('../services/host/profile-ownership');
@@ -66,7 +66,7 @@ async function startHostedServer(configPath) {
       const result = await composition?.stop();
       if (composition && result?.exitConfirmed !== true) throw new Error('host_child_exit_unconfirmed');
       await executionBroker?.close();
-      try { composition?.dispose(); } finally { lock.release(); }
+      try { await composition?.dispose(); } finally { lock.release(); }
       if (failures.length) throw new AggregateError(failures, 'host_transport_stop_failed');
     })();
     return stopPromise;
@@ -87,21 +87,27 @@ async function startHostedServer(configPath) {
       await executionBroker.prepare();
     }
     composition = createHostedBackend({ ...config, pythonExecutable, executionBroker,
+      executionStagingRoot: config.execution?.stagingRoot || null,
       repoRoot: path.resolve(__dirname, '..'),
       credentialService: new FileSecretStore({ directory: config.secretsDir }) });
     assets = createAssetCommands({ backend: composition.backend, userDataPath: config.userDataPath });
     const sweep = () => { try { assets.pruneExpired(); } catch { log('WARN', 'host.asset_cleanup_failed'); } };
     sweep();
     assetSweep = setInterval(sweep, 3_600_000); assetSweep.unref();
-    const canAdmit = createDiskAdmission([config.userDataPath, config.workspaceRoot], { logger: log });
+    const diskRoots = [config.userDataPath, config.workspaceRoot];
+    const canAdmit = createDiskAdmission(diskRoots, { logger: log });
+    const receiptsPath = path.join(config.userDataPath, 'command-receipts.json');
+    const canAdmitDeletion = createDiskAdmission(diskRoots, {
+      logger: log, reserveBytes: DELETE_RESERVE_BYTES, extraBytes: () => rewriteHeadroom(receiptsPath),
+    });
     const assetRoutes = createAssetRoutes({ commands: { ...assets, upload: (params) => canAdmit()
       ? assets.upload(params) : { ok: false, error: { kind: 'unavailable', reason: 'disk_pressure', retryable: true } } } });
     const artifactRoutes = createArtifactRoutes({ commands: createArtifactCommands(composition) });
     const bootEpoch = randomUUID();
     events = new BackendEvents({ backend: composition.backend, bootEpoch });
     router = createCommandRouter({ backend: composition.backend, clients, leases,
-      receipts: new CommandReceipts({ filePath: path.join(config.userDataPath, 'command-receipts.json') }),
-      bootEpoch, eventStream: events, resolveAttachments: assets.resolveAttachments, canAdmit });
+      receipts: new CommandReceipts({ filePath: receiptsPath }),
+      bootEpoch, eventStream: events, resolveAttachments: assets.resolveAttachments, canAdmit, canAdmitDeletion });
     transport = createHttpServer({ canonicalOrigin: config.canonicalOrigin,
       browserAccessMode: config.browserAccessMode,
       executionStatus: () => executionBroker?.status().available === true,

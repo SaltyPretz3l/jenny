@@ -119,15 +119,16 @@ test('oversized electron tool failure becomes one bounded redacted bridge error 
   assert.ok(Buffer.byteLength(JSON.stringify(response), 'utf8') < 10 * 1024 * 1024);
 });
 
-test('plugin host reverse request uses the request-scoped fixed handler', async () => {
+test('the retired plugin.host reverse request is not answered', async () => {
   const client = new SidecarClient();
   const { proc, writes } = recordingProcess();
   client.attachProcess(proc);
-  client.pluginHostHandlers.set('req_plugin_host', async (params) => ({ ok: true, operation: params.operation }));
-  await client._handlePluginHostRequest({
+  client._handleMessage({
     jsonrpc: '2.0', id: 10000015, method: 'plugin.host',
     params: { request_id: 'req_plugin_host', operation: 'start' },
   });
-  assert.equal(writes.length, 1);
-  assert.deepEqual(decode(writes[0]).result, { ok: true, operation: 'start' });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(writes.length, 0);
+  assert.equal(client.pluginHostHandlers, undefined);
+  assert.equal(client._handlePluginHostRequest, undefined);
 });

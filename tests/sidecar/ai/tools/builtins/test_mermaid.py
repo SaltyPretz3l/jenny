@@ -19,7 +19,7 @@ def _workspace() -> WorkspaceGuard:
 
 def test_mermaid_generate_returns_deterministic_output_for_same_input() -> None:
     arguments = {
-        "prompt": "Map user request to a generated flow.",
+        "prompt": "flowchart TD\n    User --> Request\n    Request --> Reply",
         "diagram_type": "flowchart",
         "title": "Request Flow",
         "render_hint": "compact",
@@ -149,3 +149,13 @@ def test_mermaid_generate_omits_artifact_without_session_or_workspace() -> None:
 
     assert result.generated_artifacts == ()
     assert json.loads(result.output)["mermaid"].startswith("graph TD")
+
+
+@pytest.mark.parametrize("source", [
+    "stateDiagram-v2\n    [*] --> Ready\n    Ready --> Done",
+    "%% diagram comment\nflowchart TD\n    A --> B",
+    "  unknownDiagram\n    preserve  this indentation  ",
+])
+def test_mermaid_source_is_preserved_without_placeholder(source):
+    result = mermaid_generate_tool({"prompt": source}, _workspace())
+    assert json.loads(result.output)["mermaid"] == source

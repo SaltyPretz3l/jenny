@@ -2,6 +2,8 @@
 
 const { PLUGIN_VIEW_SCHEME } = require('./plugin-view-protocol');
 
+const downloadPolicies = new WeakSet();
+
 function installPluginViewSessionPolicy(session, artifactDigest) {
   if (!session) throw new TypeError('plugin view session is required');
   session.setPermissionCheckHandler?.(() => false);
@@ -17,7 +19,10 @@ function installPluginViewSessionPolicy(session, artifactDigest) {
     } catch (_error) { allowed = false; }
     callback({ cancel: !allowed });
   });
-  session.on?.('will-download', (event) => event.preventDefault());
+  if (!downloadPolicies.has(session)) {
+    session.on?.('will-download', (event) => event.preventDefault());
+    downloadPolicies.add(session);
+  }
   return session;
 }
 

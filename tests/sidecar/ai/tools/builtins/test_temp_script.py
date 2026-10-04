@@ -162,7 +162,7 @@ def test_live_output_redacts_temporary_path(
     monkeypatch.setattr(temp_script_module, "run_command_tool", fake_run)
     output_chunk_slot.begin_tool_call(emitted.append)
     try:
-        temp_script_module._run_with_redacted_live_output(  # noqa: SLF001
+        temp_script_module._run_with_redacted_live_output(
             {"command": "ignored"},
             workspace=WorkspaceGuard(str(tmp_path)),
             temp_root=temp_root,

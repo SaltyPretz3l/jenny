@@ -6,10 +6,10 @@ const path = require('node:path');
 const { JSDOM } = require('jsdom');
 const test = require('node:test');
 
-test('production loads inventory, drawer, catalog, details, and operations before plugin controllers', () => {
+test('production loads inventory, drawer, details, and operations before plugin controllers', () => {
   const html = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
   const ordered = ['renderer/inventory/toggle-switch.js', 'renderer/inventory/drawer.js',
-    'renderer/shell/renderer-plugin-catalog.js', 'renderer/shell/renderer-plugin-manager-details.js',
+    'renderer/shell/renderer-plugin-manager-details.js',
     'renderer/shell/renderer-plugin-manager-operations.js', 'renderer/shell/renderer-plugins-settings.js'];
   const positions = ordered.map((source) => html.indexOf(source));
   assert.equal(positions.every((position) => position >= 0), true);

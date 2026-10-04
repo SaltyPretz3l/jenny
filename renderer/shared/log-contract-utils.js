@@ -236,6 +236,32 @@
     return String(value).replace(REDACTED_PATH_TAIL_RE, () => replacement);
   }
 
+  function normalizeLogShape(value, invalidCharacters, options) {
+    return typeof value === 'string' && value.length > 0 && value.length <= 160
+      && !invalidCharacters.test(value) && redactLogText(value, options) === value
+      ? value : null;
+  }
+
+  function normalizeLogIdentifier(value, options = {}) {
+    return normalizeLogShape(value, /[^A-Za-z0-9._:/@-]/, options);
+  }
+
+  function normalizeLogName(value, options = {}) {
+    return normalizeLogShape(value, /[^A-Za-z0-9_.:-]/, options);
+  }
+
+  // Producers own their status vocabulary (ok, failed, interrupted, partial, ...);
+  // ingress only enforces a short snake_case token. A missing status means ok; a
+  // malformed one is unknown, never silently reported as success.
+  const LOG_STATUS_RE = /^[a-z][a-z0-9_]{0,39}$/;
+
+  function normalizeLogStatus(value, options = {}) {
+    if (value == null || value === '') return 'ok';
+    // A well-formed token can still be secret-shaped (tok_..., sk_...): the redactor decides.
+    return typeof value === 'string' && LOG_STATUS_RE.test(value) && redactLogText(value, options) === value
+      ? value : 'unknown';
+  }
+
   function redactLogReportValue(value, options = {}, seen = new WeakSet(), key = '') {
     if (isSensitiveLogKey(key)) {
       return '[redacted]';
@@ -260,6 +286,7 @@
     }
     const out = {};
     for (const [entryKey, entryValue] of Object.entries(value)) {
+      if (entryKey.length > 64 || redactLogText(entryKey, options) !== entryKey) continue;
       out[entryKey] = redactLogReportValue(entryValue, options, seen, entryKey);
     }
     seen.delete(value);
@@ -274,6 +301,9 @@
     SECRET_SHAPE_RE,
     collapseRedactedPathTails,
     isSensitiveLogKey,
+    normalizeLogIdentifier,
+    normalizeLogName,
+    normalizeLogStatus,
     redactLogReportValue,
     redactLogText,
   };

@@ -5,7 +5,8 @@ const { pauseRuntimeDecision } = require('../backend/runtime-decision-control');
 const path = require('node:path');
 const { createMutationJournalProof } = require('./mutation-journal-proof');
 const { recoverPausedCancellations } = require('./paused-cancellation-recovery');
-const { backfillCancelledPausedTurnEvents, repairCancelledPausedTurns } = require('../backend/runtime-paused-turn-backfill');
+const { backfillCancelledPausedTurnEvents, emitCancelledPausedTurnTerminal,
+  repairCancelledPausedTurns } = require('../backend/runtime-paused-turn-backfill');
 const { reconcileMutationPreparations } = require('./mutation-preparation-recovery');
 const { createRuntimeTerminalRetention } = require('../backend/runtime-terminal-retention');
 const { recoverCheckpointRetirements } = require('../backend/runtime-checkpoint-retention');
@@ -24,6 +25,7 @@ const { dependencyReady } = require('./dependency-proof');
 const { RuntimeChildOperations } = require('./child-operations');
 const { recoverRuntimeCancellationTrees } = require('./subtree-cancellation');
 const { RuntimeEligibilityCoordinator } = require('./eligibility');
+const { createRuntimeWaitNotices } = require('../backend/runtime-wait-notices');
 
 function initializeSessionRuntimeComposition(service) {
   if (!Object.hasOwn(service?.featureFlags || {}, 'session_runtime')) return null;
@@ -36,6 +38,7 @@ function initializeSessionRuntimeComposition(service) {
   const store = new RuntimeStore(path.join(userDataPath, 'session-runtime'), { logger: log });
   let scheduler;
   let eligibilityCoordinator;
+  let waitNotices;
   const lanes = new RuntimeLaneAdmission({ limits, onChange: () => {
     scheduler?.notifyLaneAvailability();
     eligibilityCoordinator?.wake();
@@ -81,15 +84,25 @@ function initializeSessionRuntimeComposition(service) {
     onAttention: details => log('ERROR', 'session_runtime.attention_required', details),
     onWorkChange: work => {
       eligibilityCoordinator?.wake();
+      // A stopped command may leave its lease unconfirmed: waiting replies re-learn why.
+      waitNotices?.refresh();
       // A cancelled paused turn never reaches terminal finalization.
       try { backfillCancelledPausedTurnEvents(conversationStore, work); } catch (error) {
         log('WARN', 'session_runtime.paused_turn_backfill_failed', { message: String(error?.message || error) });
       }
+      // After the backfill, so the renderer's terminal reconcile reads the repaired turn.
+      try { emitCancelledPausedTurnTerminal(service, work, scheduler.incarnation); } catch (error) {
+        log('WARN', 'session_runtime.paused_turn_terminal_failed', { message: String(error?.message || error) });
+      }
     },
     captureEligibility: sessionId => eligibilityCoordinator?.captureAdmission(sessionId),
     releaseEligibility: admission => eligibilityCoordinator?.releaseAdmission(admission),
-    onSuspended: ({ work, waitResources, admission }) => eligibilityCoordinator
-      ?.track(work.work_id, waitResources, { admission }),
+    onSuspended: ({ work, waitResources, admission }) => {
+      const tracked = eligibilityCoordinator?.track(work.work_id, waitResources, { admission });
+      // Only a wait the coordinator will end by itself is announced as one.
+      if (tracked?.status === 'tracked') waitNotices?.note(work, waitResources);
+      return tracked;
+    },
     validateCheckpoint: (work, reference) => checkpointStore.validate(work, reference),
   });
   let runtime;
@@ -103,6 +116,15 @@ function initializeSessionRuntimeComposition(service) {
     canDispatch: () => !scheduler.closing,
     onAttention: details => log('ERROR', 'session_runtime.eligibility_attention_required', details),
   });
+  waitNotices = createRuntimeWaitNotices({
+    emit: payload => service.emit('chat-stream', payload),
+    broker: resourceBroker,
+    isTracked: workId => eligibilityCoordinator.isTracked(workId),
+    getWork: workId => store.get(workId),
+    incarnation: scheduler.incarnation,
+    log,
+  });
+  resourceBroker.onAvailabilityChange(() => waitNotices.refresh());
   runtime = new SessionRuntimeService({ store, scheduler, chatAdapter, resourceBroker, pathResolver,
     checkpointStore, budgetStore, lineageStore, conversationStore, eligibilityCoordinator });
   runtime.mutationJournalProof = mutationJournalProof;

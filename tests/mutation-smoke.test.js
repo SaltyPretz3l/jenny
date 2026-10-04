@@ -263,9 +263,9 @@ test('runWithMutation surfaces a CRITICAL error and fails when restore is imposs
   console.error = (...args) => errors.push(args.join(' '));
   try {
     // Destroy the directory mid-run so the finally-restore write hits ENOENT.
-    mut.runWithMutation(file, original, 'const ok = a !== b;\n', () => {
+    assert.throws(() => mut.runWithMutation(file, original, 'const ok = a !== b;\n', () => {
       fs.rmSync(dir, { recursive: true, force: true });
-    });
+    }), /restore failed/);
     assert.ok(errors.some((m) => /CRITICAL/.test(m)), 'must log a CRITICAL restore failure');
     assert.ok(errors.some((m) => /git checkout/.test(m)), 'must point at the git recovery path');
     assert.equal(process.exitCode, 1, 'must fail the process on an unrecoverable restore');
@@ -281,6 +281,56 @@ test('runWithMutation surfaces a CRITICAL error and fails when restore is imposs
 });
 
 // --- end-to-end acceptance: weak oracle leaves a survivor; strong kills it ----
+
+test('CHK-01: failed restore aborts all sources and retains bytes for the exit retry', (t) => {
+  const dir = makeTempDir(t);
+  const result = spawnSync(process.execPath, ['-e', `
+    const assert = require('node:assert/strict');
+    const fs = require('fs');
+    const path = require('path');
+    const mut = require(${JSON.stringify(path.join(ROOT, 'scripts/mutation-smoke.js'))});
+    const root = ${JSON.stringify(dir)};
+    const a = path.join(root, 'a.js');
+    const b = path.join(root, 'b.js');
+    const original = Buffer.from('const ok = a === b;\\r\\n');
+    fs.writeFileSync(a, original);
+    fs.writeFileSync(b, original);
+    const write = fs.writeFileSync;
+    let blocked = true;
+    fs.writeFileSync = (file, data, ...args) => {
+      if (file === a && Buffer.isBuffer(data) && blocked) throw new Error('restore locked');
+      return write(file, data, ...args);
+    };
+    const visited = [];
+    assert.throws(() => mut.runMutationSmoke({
+      root, sources: ['a.js', 'b.js'],
+      resolveTests: (source) => { visited.push(source); return { tests: ['fake.test.js'], source: 'stem-match' }; },
+      runTests: () => ({ passed: true }),
+    }), /restore failed/);
+    assert.deepEqual(visited, ['a.js']);
+    assert.throws(() => mut.runWithMutation(b, original, 'changed', () => {}), /restore failed/);
+    assert.deepEqual(fs.readFileSync(b), original);
+    blocked = false;
+    process.emit('exit');
+    assert.deepEqual(fs.readFileSync(a), original);
+    blocked = true;
+    assert.throws(() => mut.runWithMutation(a, original, 'changed', () => {}), /restore failed/);
+    blocked = false;
+    let runs = 0;
+    mut.runMutationSmoke({
+      root, sources: ['a.js'], maxMutantsPerFile: 1,
+      resolveTests: () => ({ tests: ['fake.test.js'], source: 'stem-match' }),
+      runTests: () => {
+        if (runs++ === 0) assert.deepEqual(fs.readFileSync(a), original, 'recover before reading the next baseline');
+        return { passed: true };
+      },
+    });
+    assert.deepEqual(fs.readFileSync(a), original);
+    console.log('original bytes recovered; second source untouched');
+  `], { encoding: 'utf8', timeout: 10000 });
+  assert.match(result.stdout, /original bytes recovered; second source untouched/, result.stderr);
+  assert.equal(result.status, 1, 'restore failure must retain a non-zero exit even after recovery');
+});
 
 function writeFixture(dir) {
   const calc = "'use strict';\nfunction isAdult(age) {\n  return age >= 18;\n}\nmodule.exports = { isAdult };\n";

@@ -13,8 +13,9 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
 
+  // Kept local: uninstall.html loads this primitive without renderer/shared/string-utils.js.
   function escapeHtml(value) {
-    return String(value || '')
+    return String(value == null ? '' : value)
       .replaceAll('&', '&amp;')
       .replaceAll('<', '&lt;')
       .replaceAll('>', '&gt;')
@@ -59,14 +60,14 @@
     var descriptionId = description ? sanitizeDomId(o.descriptionId) : '';
     var checked = Boolean(o.checked);
     var disabled = Boolean(o.disabled);
-    var cls = 'inv-toggle';
+    var cls = 'inv-toggle' + (o.bare === true ? ' inv-toggle--bare' : '');
     if (checked) cls += ' inv-toggle--on';
     if (disabled) cls += ' inv-toggle--disabled';
     var extraClassName = sanitizeClassName(o.className);
     if (extraClassName) cls += ' ' + extraClassName;
 
     var labelContent = '';
-    if (label) {
+    if (label && o.bare !== true) {
       if (description) {
         labelContent = '<span class="inv-toggle-label-group">'
           + '<span class="inv-toggle-label">' + label + '</span>'
@@ -83,8 +84,10 @@
       + (disabled ? ' aria-disabled="true"' : '') + '>'
       + '<button class="inv-toggle-track" type="button"'
       + ' role="switch"'
+      + (sanitizeDomId(o.domId) ? ' id="' + escapeHtml(sanitizeDomId(o.domId)) + '"' : '')
+      + (o.labelledBy ? ' aria-labelledby="' + escapeHtml(o.labelledBy) + '"' : '')
       + ' aria-checked="' + (checked ? 'true' : 'false') + '"'
-      + (descriptionId ? ' aria-describedby="' + escapeHtml(descriptionId) + '"' : '')
+      + (o.describedBy || descriptionId ? ' aria-describedby="' + escapeHtml(o.describedBy || descriptionId) + '"' : '')
       + (id ? ' data-inv-toggle="' + id + '"' : '')
       + (disabled ? ' disabled aria-disabled="true"' : '')
       + '>'
@@ -111,6 +114,67 @@
       if (checked) wrapper.classList.add('inv-toggle--on');
       else wrapper.classList.remove('inv-toggle--on');
     }
+  }
+
+  /**
+   * Sync a rendered switch's disabled state in place: the track's `disabled`,
+   * `aria-disabled` on the track and its label, and the label's dimmed class,
+   * so a switch re-enabled without a re-render does not keep looking disabled.
+   * Does not dispatch inv-toggle-change.
+   * @param {HTMLElement} trackEl - The button[role="switch"] element
+   * @param {boolean} disabled
+   */
+  function setDisabled(trackEl, disabled) {
+    if (!trackEl) return;
+    var off = Boolean(disabled);
+    trackEl.disabled = off;
+    var wrapper = typeof trackEl.closest === 'function' ? trackEl.closest('label.inv-toggle') : null;
+    [trackEl, wrapper].forEach(function (el) {
+      if (!el) return;
+      if (off) el.setAttribute('aria-disabled', 'true');
+      else el.removeAttribute('aria-disabled');
+    });
+    if (wrapper) {
+      if (off) wrapper.classList.add('inv-toggle--disabled');
+      else wrapper.classList.remove('inv-toggle--disabled');
+    }
+  }
+
+  /**
+   * Show a one-line error under the switch's label and help text, or clear it
+   * (empty message). The line is created on demand; a switch without help text
+   * gets the label group it needs.
+   * @param {HTMLElement} trackEl - The button[role="switch"] element
+   * @param {string|null} message
+   */
+  function setError(trackEl, message) {
+    var wrapper = trackEl && typeof trackEl.closest === 'function' ? trackEl.closest('.inv-toggle') : null;
+    if (!wrapper) return;
+    var text = message != null ? String(message).trim() : '';
+    var errorEl = wrapper.querySelector('.inv-toggle-error');
+    if (!text) {
+      if (errorEl) errorEl.remove();
+      if (wrapper.getAttribute('data-state') === 'error') wrapper.removeAttribute('data-state');
+      return;
+    }
+    if (!errorEl) {
+      var doc = wrapper.ownerDocument;
+      var group = wrapper.querySelector('.inv-toggle-label-group');
+      if (!group) {
+        var label = wrapper.querySelector('.inv-toggle-label');
+        if (!label) return;
+        group = doc.createElement('span');
+        group.className = 'inv-toggle-label-group';
+        wrapper.insertBefore(group, label);
+        group.appendChild(label);
+      }
+      errorEl = doc.createElement('span');
+      errorEl.className = 'inv-toggle-error';
+      errorEl.setAttribute('role', 'alert');
+      group.appendChild(errorEl);
+    }
+    if (errorEl.textContent !== text) errorEl.textContent = text;
+    wrapper.setAttribute('data-state', 'error');
   }
 
   /**
@@ -152,6 +216,8 @@
     toggleSwitch: toggleSwitch,
     toggle: toggle,
     setChecked: setChecked,
+    setDisabled: setDisabled,
+    setError: setError,
     initToggleHandlers: initToggleHandlers,
   };
 });

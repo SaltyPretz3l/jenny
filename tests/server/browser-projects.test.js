@@ -46,6 +46,68 @@ function clickTarget(element) {
   return { target: { closest: () => element } };
 }
 
+test('project inputs keep their nodes, drafts, focus and selection through renders and refresh', async (t) => {
+  const instance = new JSDOM('<!doctype html><div id="root"></div>');
+  global.window = instance.window;
+  global.document = instance.window.document;
+  t.after(() => {
+    delete global.window;
+    delete global.document;
+    instance.window.close();
+  });
+  const current = state();
+  current.projectsOpen = true;
+  current.projects = [{ id: 'project_alpha', name: 'Alpha', root_path: '/workspace/alpha',
+    root_revision: 3, authority_key: AUTHORITY_KEY }];
+  current.permissionReview = { pending: [{ id: 'review_a', tool_name: 'read_file' }] };
+  const bridge = { command: async (operation) => operation === 'projects.list'
+    ? { ok: true, projects: [{ ...current.projects[0], name: 'Server name', root_revision: 4 }] }
+    : { ok: true, pending: current.permissionReview.pending } };
+  const root = instance.window.document.getElementById('root');
+  const app = new BrowserApp({ root, bridge, state: current, view });
+  t.after(() => app.dispose());
+  const create = root.querySelector('#browser-project-create-name');
+  const name = root.querySelector('#browser-project-name-project_alpha');
+  const pathInput = root.querySelector('#browser-project-root-project_alpha');
+  const grant = root.querySelector('#browser-review-project-review_a');
+  create.value = 'New project';
+  name.value = 'Draft name';
+  pathInput.value = '/workspace/draft';
+  grant.value = 'project_alpha';
+  name.focus();
+  name.setSelectionRange(2, 6, 'backward');
+  app.render();
+  await app.projects.load();
+  assert.equal(root.querySelector('#browser-project-name-project_alpha'), name, 'rename input stays mounted');
+  assert.equal(root.querySelector('#browser-project-create-name'), create);
+  assert.equal(root.querySelector('#browser-project-root-project_alpha'), pathInput);
+  assert.equal(root.querySelector('#browser-review-project-review_a'), grant);
+  assert.equal(create.value, 'New project');
+  assert.equal(name.value, 'Draft name');
+  assert.equal(pathInput.value, '/workspace/draft');
+  assert.equal(grant.value, 'project_alpha');
+  assert.equal(instance.window.document.activeElement, name);
+  assert.equal(name.selectionStart, 2);
+  assert.equal(name.selectionEnd, 6);
+  assert.equal(name.selectionDirection, 'backward');
+  assert.equal(name.disabled, false);
+  assert.equal(root.querySelector('[data-action="project-save-root"]').dataset.rootRevision, '4');
+  name.value = name.defaultValue;
+  current.projects[0].name = 'Later server name';
+  app.render();
+  assert.equal(name.value, 'Later server name', 'clean inputs still follow canonical changes');
+  current.projectsBusy = true;
+  app.render();
+  const composer = root.querySelector('#composer-prompt');
+  composer.focus();
+  current.projectsBusy = false;
+  app.render();
+  assert.equal(instance.window.document.activeElement, composer, 'refresh does not steal focus from another control');
+  current.permissionReview.pending = [];
+  app.render();
+  assert.equal(root.contains(grant), false, 'removed reviews do not retain stale controls');
+});
+
 test('browser project controls use scoped commands for roots, assignment, and imported grants', async (t) => {
   const instance = new JSDOM('<!doctype html><div id="root"></div>');
   global.window = instance.window;
@@ -128,6 +190,7 @@ test('browser project controls use scoped commands for roots, assignment, and im
   assert.deepEqual(calls.find((entry) => entry.operation === 'projects.create').options.params, {
     name: 'New project',
   });
+  assert.equal(root.querySelector('#browser-project-create-name').value, '', 'successful creation clears the draft');
 
   root.querySelector('#browser-project-root-project_alpha').value = '/workspace/new-alpha';
   await app._handleClick(clickTarget(root.querySelector(

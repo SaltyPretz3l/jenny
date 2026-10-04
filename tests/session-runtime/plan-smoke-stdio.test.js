@@ -6,7 +6,8 @@ const test = require('node:test');
 const { ROOT, waitFor, createBackend } = require('../helpers/session-runtime-stdio-fixture');
 
 test('real Python Plan recovers from an oversized read and releases the turn for followup', { timeout: 45000 }, async t => {
-  const root = fs.mkdtempSync(path.join(ROOT, 'artifacts', 'read-error-smoke-'));
+  const artifacts = path.join(ROOT, 'artifacts'); fs.mkdirSync(artifacts, { recursive: true });
+  const root = fs.mkdtempSync(path.join(artifacts, 'read-error-smoke-'));
   const profile = path.join(root, 'profile'); fs.mkdirSync(profile);
   const workspace = path.join(root, 'workspace'); fs.mkdirSync(workspace);
   fs.writeFileSync(path.join(workspace, 'large.md'), 'Audit fixture line.\n'.repeat(11000));

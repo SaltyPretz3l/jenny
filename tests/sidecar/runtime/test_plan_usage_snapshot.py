@@ -7,10 +7,6 @@ from typing import Any
 
 import pytest
 
-from sidecar.ai.feature_flags import (
-    FEATURE_CHATGPT_PLAN_METER,
-    is_chatgpt_plan_meter_enabled,
-)
 from sidecar.runtime.chat_helpers import chat_error_notification
 from sidecar.runtime.chat_models import ChatRequestError
 from sidecar.runtime.local_engine.request_context import (
@@ -34,7 +30,7 @@ def test_live_readings_refresh_each_response_and_writer_failure_preserves_stash(
     readings: list[dict[str, Any]] = []
     install_request_context(engine, request_id="live", trace_id="trace-live")
     try:
-        bind_live_plan_usage(engine, writer=readings.append, enabled=True, session_id="session")
+        bind_live_plan_usage(engine, writer=readings.append, session_id="session")
         for percent in [12, 13]:
             record_plan_usage_snapshot(engine, SimpleNamespace(headers={
                 "x-codex-primary-used-percent": str(percent),
@@ -48,23 +44,12 @@ def test_live_readings_refresh_each_response_and_writer_failure_preserves_stash(
         def broken_writer(_message: Any) -> None:
             raise RuntimeError("disconnected")
 
-        bind_live_plan_usage(engine, writer=broken_writer, enabled=True, session_id="session")
+        bind_live_plan_usage(engine, writer=broken_writer, session_id="session")
         record_plan_usage_snapshot(engine, SimpleNamespace(headers=_FULL_HEADERS))
         assert read_plan_usage_snapshot(engine)["primary"]["used_percent"] == 62.0
     finally:
         clear_request_context(engine)
 
-
-def test_chatgpt_plan_meter_flag_defaults_on_like_context_usage_live() -> None:
-    # Mirrors is_context_usage_live_enabled's default-True contract: missing
-    # mapping, empty mapping, and non-mapping input all default ON; only an
-    # explicit False turns it off. Default-ON kill switch is
-    # JENNY_ENABLE_CHATGPT_PLAN_METER=0 (Electron layer; not read here).
-    assert is_chatgpt_plan_meter_enabled(None) is True
-    assert is_chatgpt_plan_meter_enabled({}) is True
-    assert is_chatgpt_plan_meter_enabled({FEATURE_CHATGPT_PLAN_METER: True}) is True
-    assert is_chatgpt_plan_meter_enabled({FEATURE_CHATGPT_PLAN_METER: False}) is False
-    assert is_chatgpt_plan_meter_enabled("not-a-mapping") is True  # type: ignore[arg-type]
 
 _FULL_HEADERS = {
     "x-codex-primary-used-percent": "62.04",
@@ -279,24 +264,12 @@ def test_record_never_raises_on_a_headerless_response() -> None:
         clear_request_context(engine)
 
 
-def test_attach_plan_usage_omits_when_disabled() -> None:
-    engine = object()
-    install_request_context(engine, request_id="req-3")
-    try:
-        record_plan_usage_snapshot(engine, _response(_FULL_HEADERS))
-        payload: dict[str, Any] = {}
-        attach_plan_usage(payload, engine, enabled=False)
-        assert PLAN_USAGE_CONTEXT_KEY not in payload
-    finally:
-        clear_request_context(engine)
-
-
 def test_attach_plan_usage_omits_when_no_snapshot() -> None:
     engine = object()
     install_request_context(engine, request_id="req-4")
     try:
         payload: dict[str, Any] = {}
-        attach_plan_usage(payload, engine, enabled=True)
+        attach_plan_usage(payload, engine)
         assert PLAN_USAGE_CONTEXT_KEY not in payload
     finally:
         clear_request_context(engine)
@@ -308,7 +281,7 @@ def test_attach_plan_usage_copies_rather_than_aliases() -> None:
     try:
         record_plan_usage_snapshot(engine, _response(_FULL_HEADERS))
         payload: dict[str, Any] = {}
-        attach_plan_usage(payload, engine, enabled=True)
+        attach_plan_usage(payload, engine)
         attached = payload[PLAN_USAGE_CONTEXT_KEY]
         stashed = read_plan_usage_snapshot(engine)
         assert attached == stashed
@@ -354,7 +327,7 @@ def test_chat_error_notification_carries_plan_usage_from_error_data() -> None:
             retryable=True,
             data={},
         )
-        attach_plan_usage(error.data, engine, enabled=True)
+        attach_plan_usage(error.data, engine)
     finally:
         clear_request_context(engine)
     notification_payload = chat_error_notification(error)["params"]

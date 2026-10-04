@@ -18,8 +18,8 @@ const {
 const {
   ensureSessionTurnActorRegistry,
 } = require('./session-turn-actor');
-const { INTERACTIVE_ERROR_CODES, PLUGIN_ERROR_CODES } = require('./error-codes');
-const { validate: validatePluginContract } = require('../plugins/contracts/generated-plugin-contracts');
+const { INTERACTIVE_ERROR_CODES } = require('./error-codes');
+const { resolveSkillsAuthority } = require('../skills-project-scope');
 const LOCAL_INFERENCE_ENGINE_TYPES = new Set(['ollama', 'vllm']);
 const SKILL_INVOCATION_ID_PATTERN = /^(bundled|user|project)\/[A-Za-z0-9_][A-Za-z0-9._-]*(\/[A-Za-z0-9_][A-Za-z0-9._-]*){0,7}$/;
 
@@ -30,12 +30,24 @@ function getSessionSummary(store, sessionId) {
   return store?.getSession?.(sessionId) || null;
 }
 
-function resolveSkillInvocation(service, invocation) {
+// The catalog the sidecar will see for this chat: its bound project's skills,
+// never the open Workspace's (hosts without project authority keep the
+// legacy unscoped catalog).
+function sessionSkillsState(service, sessionKey) {
+  if (typeof service.projectAuthority?.captureSession !== 'function') {
+    return service.skillsService?.getState?.();
+  }
+  return service.skillsService?.getState?.({
+    authority: resolveSkillsAuthority(service.projectAuthority, { sessionId: sessionKey }),
+  });
+}
+
+function resolveSkillInvocation(service, invocation, sessionKey = '') {
   if (invocation == null) return null;
   const id = invocation && typeof invocation === 'object' && !Array.isArray(invocation)
     && typeof invocation.id === 'string' && SKILL_INVOCATION_ID_PATTERN.test(invocation.id)
     ? invocation.id : '';
-  const state = id ? service.skillsService?.getState?.() : null;
+  const state = id ? sessionSkillsState(service, sessionKey) : null;
   const scope = state?.scopes?.find((candidate) => candidate?.scope === id.split('/')[0]);
   const entry = state?.entries?.find((candidate) => candidate?.id === id)
     || scope?.entries?.find((candidate) => candidate?.id === id);
@@ -56,6 +68,46 @@ function resolveSkillInvocation(service, invocation) {
   return { id, name: String(entry.name), scope: String(entry.scope), command: String(entry.command) };
 }
 
+// Force local inference: the model and engine every inference for a chat must
+// use instead of the chat's own pick, or null when the mode is off. Throws the
+// user-facing reason when the forced route is not usable.
+async function resolveForcedLocalRoute(service, { hasImageAttachments = false } = {}) {
+  const offlineIntelligence = service.offlineIntelligenceService;
+  // getState() lists the local model catalog (a sidecar models.list round trip,
+  // ~400 ms of every warm turn in the P3-PERF-A baseline). Only force-local
+  // reads that state, so check the configured mode first.
+  if (
+    !offlineIntelligence
+    || typeof offlineIntelligence.getState !== 'function'
+    || (typeof offlineIntelligence.getMode === 'function' && offlineIntelligence.getMode() !== 'local_only')
+  ) {
+    return null;
+  }
+  const offlineState = await offlineIntelligence.getState();
+  if (offlineState.mode !== 'local_only') return null;
+  if (!offlineState.preferredLocalModel) {
+    throw new Error('Force local inference requires a model selected in Model Library.');
+  }
+  if (offlineState.localCatalog?.available !== true || !offlineState.localChatReady) {
+    throw new Error(
+      String(offlineState.unavailableReason || 'Forced local inference is unavailable right now.')
+    );
+  }
+  if (hasImageAttachments && !offlineState.localVisionReady) {
+    throw new Error(
+      String(
+        offlineState.visionUnavailableReason
+        || 'Offline local vision is unavailable for the selected local model.'
+      )
+    );
+  }
+  const engineType = String(offlineState.selectedLocalEngineType || '').trim().toLowerCase();
+  if (!LOCAL_INFERENCE_ENGINE_TYPES.has(engineType)) {
+    throw new Error('Force local inference blocked a model without a verified local inference provider.');
+  }
+  return { model: String(offlineState.preferredLocalModel || '').trim(), engineType };
+}
+
 async function prepareLocalEngineChatRequest(service, {
   sessionId,
   prompt,
@@ -74,7 +126,6 @@ async function prepareLocalEngineChatRequest(service, {
   approvalMode,
   debugOptions,
   clientTiming,
-  pluginCommandInvocation,
   skillInvocation,
   editedMessageId,
   failureRetry,
@@ -100,19 +151,7 @@ async function prepareLocalEngineChatRequest(service, {
     MAX_INTERACTIVE_ROUNDS
   );
   const sessionKey = String(sessionId || '').trim();
-  let normalizedPluginCommandInvocation = null;
-  if (pluginCommandInvocation) {
-    const checked = validatePluginContract('PluginCommandInvocationV2', pluginCommandInvocation);
-    if (!checked.ok) {
-      const error = new Error('Plugin command invocation is invalid.');
-      error.code = PLUGIN_ERROR_CODES.POLICY_BLOCKED;
-      error.reason = 'plugin_command_invocation_invalid';
-      error.retryable = false;
-      throw error;
-    }
-    normalizedPluginCommandInvocation = checked.value;
-  }
-  const normalizedSkillInvocation = resolveSkillInvocation(service, skillInvocation);
+  const normalizedSkillInvocation = resolveSkillInvocation(service, skillInvocation, sessionKey);
   const normalizedContextPreferences = normalizeContextPreferences(
     typeof contextPreferences !== 'undefined'
       ? contextPreferences
@@ -138,35 +177,10 @@ async function prepareLocalEngineChatRequest(service, {
   let runtimePreferredModel = normalizedPreferences.preferred_model;
   let runtimePreferredEngineType = '';
   throwIfStartCancelled();
-  if (
-    service.offlineIntelligenceService
-    && typeof service.offlineIntelligenceService.getState === 'function'
-  ) {
-    const offlineState = await service.offlineIntelligenceService.getState();
-    if (offlineState.mode === 'local_only') {
-      if (!offlineState.preferredLocalModel) {
-        throw new Error('Force local inference requires a model selected in Model Library.');
-      }
-      if (offlineState.localCatalog?.available !== true || !offlineState.localChatReady) {
-        throw new Error(
-          String(offlineState.unavailableReason || 'Forced local inference is unavailable right now.')
-        );
-      }
-      if (hasImageAttachments && !offlineState.localVisionReady) {
-        throw new Error(
-          String(
-            offlineState.visionUnavailableReason
-            || 'Offline local vision is unavailable for the selected local model.'
-          )
-        );
-      }
-      runtimePreferredModel = String(offlineState.preferredLocalModel || '').trim();
-      const forcedEngineType = String(offlineState.selectedLocalEngineType || '').trim().toLowerCase();
-      if (!LOCAL_INFERENCE_ENGINE_TYPES.has(forcedEngineType)) {
-        throw new Error('Force local inference blocked a model without a verified local inference provider.');
-      }
-      runtimePreferredEngineType = forcedEngineType;
-    }
+  const forcedLocal = await resolveForcedLocalRoute(service, { hasImageAttachments });
+  if (forcedLocal) {
+    runtimePreferredModel = forcedLocal.model;
+    runtimePreferredEngineType = forcedLocal.engineType;
   }
 
   throwIfStartCancelled();
@@ -186,7 +200,6 @@ async function prepareLocalEngineChatRequest(service, {
     approvalMode,
     debugOptions,
     clientTiming,
-    pluginCommandInvocation: normalizedPluginCommandInvocation,
     skillInvocation: normalizedSkillInvocation,
     editedMessageId,
     failureRetry,
@@ -239,5 +252,6 @@ async function startLocalEngineChatStream(service, request, options = {}) {
 
 module.exports = {
   prepareLocalEngineChatRequest,
+  resolveForcedLocalRoute,
   startLocalEngineChatStream,
 };

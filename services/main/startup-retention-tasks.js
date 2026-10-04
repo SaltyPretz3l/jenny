@@ -2,6 +2,7 @@ const { readSessionMessagesForReferenceScan } = require('../backend/session-refe
 const { collectAssetPaths } = require('../attachment-service');
 const { createArtifactRetentionService } = require('../artifact-retention-service');
 const { payloadPathsFromMessages } = require('../backend/ipc-payload-retention');
+const { pruneLegacySessionFiles } = require('../backend/session-legacy-file-prune');
 
 // Attachments only change through message mutations, and every message
 // mutation bumps updated_at (append/update/replace/truncate) — the
@@ -139,7 +140,7 @@ function scheduleStartupRetentionTasks({
       // carry) is never treated as orphaned.
       const resolveActiveIds = () =>
         (backendService.sessionStore?.listSessions() || []).map((s) => s.id);
-      artifactService.pruneOrphanedArtifacts(resolveActiveIds).catch((err) => {
+      return artifactService.pruneOrphanedArtifacts(resolveActiveIds).catch((err) => {
         log('WARN', 'artifacts.orphan_prune_failed', { error: String(err?.message || err) });
       });
     };
@@ -152,11 +153,13 @@ function scheduleStartupRetentionTasks({
     // unreferenced dirs past age/byte quotas into .jenny/quarantine.
     const retentionService = artifactRetentionService || createArtifactRetentionService({
       getWorkspaceRoot: () => artifactService.getWorkspaceRoot(),
+      getWorkspaceScopes: artifactService.getRetentionScopes
+        ? () => artifactService.getRetentionScopes() : undefined,
       getSessionStore: () => backendService.sessionStore || null,
       logger: log,
     });
     const sweepArtifactRetention = () => {
-      Promise.resolve(retentionService.sweep()).catch((err) => {
+      return Promise.resolve(retentionService.sweep()).catch((err) => {
         log('WARN', 'artifacts.retention_sweep_failed', { error: String(err?.message || err) });
       });
     };
@@ -231,6 +234,18 @@ function scheduleStartupRetentionTasks({
     if (attachmentAssetStore) {
       unrefInterval(setIntervalRef(sweepSessionReferences, 30 * 60 * 1000));
     }
+  }
+  const legacySessionFilePath = backendService?.sessionStore?.filePath;
+  if (typeof legacySessionFilePath === 'string' && legacySessionFilePath) {
+    // Once per launch, no interval: the leftovers (crash-orphaned atomic-write
+    // temps, the one-time split-migration backup) are only ever created before
+    // or during startup, and each was ~63MB on a real profile.
+    const pruneLegacyFiles = () => {
+      pruneLegacySessionFiles({ legacyFilePath: legacySessionFilePath, log }).catch((err) => {
+        log('WARN', 'session_store.legacy_file_prune_failed', { error: String(err?.message || err) });
+      });
+    };
+    runInitialRetentionTaskWhenReady(backendService, pruneLegacyFiles, { setTimeoutRef, staggerMs: 12000 });
   }
 }
 

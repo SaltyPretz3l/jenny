@@ -1,8 +1,9 @@
 # Session runtime operations
 
-The selected program is being implemented incrementally. M1 provides project
-authority and migration foundations; durable queueing, Start, children, and
-recovery controls are not yet qualified. Follow the active
+The runtime implements project authority, durable Send/Start, child work,
+continuations and recovery through the shared application services. Source
+implementation and deterministic integration do not by themselves establish
+installed-app, real-model/GPU or hosted qualification. Follow the active
 implementation plan for
 milestone status and acceptance evidence.
 
@@ -20,8 +21,8 @@ chats start in that project; with no folder configured they start in General.
 Existing chats are never retargeted by a folder change. An idle chat whose
 project has no folder shows "Use <folder>" above the composer, which assigns
 that one chat to the workspace project on click (`projects.adoptWorkspace`).
-Runtime & orchestration settings remain the path for several projects, renames,
-rebinding and manual assignment. Sessions with no project folder can converse
+Settings › Projects remains the path for several projects, renames, rebinding
+and manual assignment. Sessions with no project folder can converse
 but cannot use filesystem tools. Hosted profiles never provision implicitly.
 
 Binding a new root invalidates prior authority. Session assignment refuses live
@@ -54,7 +55,7 @@ actual provider attempt checks the captured route and authority. Cancellation
 requests cleanup; capacity remains held until the producer is confirmed stopped.
 Late confirmation can settle the same durable attempt and release its quarantine.
 
-Suggestions, commit messages, and inline completion reserve inference capacity
+Suggestions and commit messages reserve inference capacity
 before creating an auxiliary worker. Manual compaction additionally holds the
 session lane and rechecks captured session/project authority before saving its
 canonical snapshot. These explicit operations retain admission when the runtime
@@ -79,21 +80,39 @@ pages require the captured lineage revision; refresh after a stale projection. I
 canonical `session_id`/`turn_id` references, attempt correlation and bounded
 recovery/control state. `checkpoint.recorded` means a reference was recorded;
 it is not proof that the checkpoint can currently resume. Inspection excludes
-submitted input, checkpoint bodies, root authority, process handles and raw error
-text. Browser transport parity and full program qualification remain pending.
+submitted input (except the prompt of editable pending work, which Runs pre-fills
+into its instructions box), checkpoint bodies, root authority, process handles and
+raw error text. Browser durable-work APIs are documented below; full program qualification remains governed by the active plan and manual matrix.
 
 ## Desktop orchestration and Send
 
-Runtime & orchestration loads its inspector when opened. Selecting work only
-inspects it. Explicit Start captures purpose, instructions and immutable root
-inference limits. Work pages expose pause, resume, cancel, direct children,
-budget usage and canonical conversation links. Cancel requested and cleanup
-confirmed are separate states; outstanding producers keep their capacity.
+Diagnostics › Runs shows what Jenny is working on
+across chats; only the composer starts work. It reads `getSnapshot({ view: 'runs',
+finished_since })`: every unfinished item plus the terminal items updated since
+local midnight, grouped Needs you / Running / Waiting / Finished today, in
+created_at order and without a cursor (a revision-bound cursor goes stale on
+every transition). Rows carry `group`, `recovery_kind`, `control_kind`,
+`wait_kind`, the per-lane `queue_position` of pending work, `parent_work_id` and
+durable `progress` (steps and tool calls, or null when the runtime has no durable
+count, as for a plain chat send). Chat titles are joined in the renderer against
+the session list. Row verbs: Resume and Open chat for work that needs you, Pause
+and Stop (confirmed inline) for running work, Withdraw for queued work, none for
+finished work. Selecting a row shows its budget, named subagents and, for
+editable pending work only, an instructions box pre-filled with the submitted
+prompt (`coordination.prompt`). Pause requested, Stop requested and cleanup
+confirmed stay separate states; outstanding producers keep their capacity. One
+controller polls every 2 s for both Runs and Runtime limits, only while the
+window is visible and one of them is on screen, patches rows in place by
+work_id and skips the render when nothing changed.
+
+Settings › Limits & budgets includes the Runtime limits form: a plain label, a number field
+and "default {n}" (or "capped at {n} by this machine" when the effective ceiling
+is lower) per configured limit, with Reset to defaults and Save.
 
 Configured limits persist with compare-and-swap checks and show their effective
 ceilings. Lowering a limit retains existing active or quarantined leases. Sandbox
-command capacity remains one. OFF blocks Start and resume while inspection,
-cancellation and settings remain available.
+command capacity remains one. OFF blocks resume while inspection, stop,
+withdraw and limits remain available.
 
 New ordinary Send saves work before execution. A saved acknowledgement is not a
 stream-start acknowledgement. Multiple pending sends retain their own identity;
@@ -266,7 +285,7 @@ durable Send path; an edit, a retry or a legacy stream has no running work, so
 Pause stays hidden). It reads one session-scoped snapshot, takes the running
 work, re-reads that work's revision and calls `pause`; with no running work it
 refuses with `runtime_no_running_reply` rather than pausing a queued message,
-which is withdrawn from the strip or paused from Settings › Runtime. A running
+which is withdrawn from the strip or from Settings › Runs. A running
 reply returns `status: requested`: the control reads "Pause requested…" and
 disables, and the composer says the pause lands at her next approval and that a
 reply needing no approval simply finishes. That request settles only when the
@@ -435,8 +454,9 @@ while the selected conversation is running; unresolved transport receipts retain
 their exact request identity for recovery. Paused work stays paused after host
 reconstruction or switching runtime ON until explicitly resumed.
 
-Open Runtime & orchestration to inspect work and use Start, pause, resume, cancel,
-pending instruction edits and runtime limits. Session mutations require the current
+Open Runs from the topbar to inspect work and use pause, resume, stop, withdraw,
+pending instruction edits and runtime limits (the hosted contract pages summaries,
+so Runs groups them from status there). Session mutations require the current
 browser control lease and both the host revision and work revision. Authentication
 or lease loss fences changes; hidden inspection stops polling. Cancellation intent
 and confirmed physical cleanup remain distinct.

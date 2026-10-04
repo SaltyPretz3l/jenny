@@ -62,7 +62,7 @@ function listRestartCandidates(runtimeStore) {
 
 function recoverPublishedRuntimeContinuations({ runtimeStore, checkpointStore,
   conversationStore, sessionStore, journal, actorRegistry, activeStreams,
-  logger = null } = {}) {
+  logger = null, workIds = null } = {}) {
   requirePort(runtimeStore, ['get', 'listSummaries', 'attachRecoveredCheckpoint'], 'runtimeStore');
   requirePort(checkpointStore, ['findCommittedForWork'], 'checkpointStore');
   requirePort(conversationStore, ['resolvePendingContinuation'], 'conversationStore');
@@ -97,7 +97,9 @@ function recoverPublishedRuntimeContinuations({ runtimeStore, checkpointStore,
     } catch (_error) { /* Diagnostics must not change recovery state. */ }
   };
 
-  for (const workId of listRestartCandidates(runtimeStore)) {
+  // An in-process backend restart passes only the work its reclaim left for
+  // recovery; work this process already recovered at composition is not re-run.
+  for (const workId of workIds || listRestartCandidates(runtimeStore)) {
     const work = runtimeStore.get(workId);
     if (!isRecoverableCheckpointWork(work)) continue;
     const discovered = checkpointStore.findCommittedForWork(work);

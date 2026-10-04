@@ -13,7 +13,7 @@ from sidecar.runtime.monitor_manager import MonitorManager
 
 
 def _active_monitor(manager: MonitorManager, tmp_path: Path, job: object):
-    active = manager._build_active_monitor(  # noqa: SLF001
+    active = manager._build_active_monitor(
         command="echo hi",
         description="startup failure",
         timeout_ms=5_000,
@@ -27,7 +27,7 @@ def _active_monitor(manager: MonitorManager, tmp_path: Path, job: object):
         notification_writer=None,
     )
     active.job = job
-    manager._active[active.monitor_id] = active  # noqa: SLF001
+    manager._active[active.monitor_id] = active
     return active
 
 
@@ -76,10 +76,10 @@ def test_monitor_runner_thread_start_failure_rolls_back_active_process(
         )
 
     assert terminated == [job]
-    assert manager._active == {}  # noqa: SLF001
-    monitor_ids = manager._status_store.list_record_ids()  # noqa: SLF001
+    assert manager._active == {}
+    monitor_ids = manager._status_store.list_record_ids()
     assert len(monitor_ids) == 1
-    status = manager._status_store.read(monitor_ids[0])  # noqa: SLF001
+    status = manager._status_store.read(monitor_ids[0])
     assert status is not None
     assert status["state"] == "failed"
     assert status["terminal_reason"] == "process_error"
@@ -129,7 +129,7 @@ def test_reader_thread_start_failure_terminates_and_settles_once(
     manager = MonitorManager(runtime_root=tmp_path / "runtime")
     active = _active_monitor(manager, tmp_path, job)
 
-    manager._run_monitor(active)  # noqa: SLF001
+    manager._run_monitor(active)
 
     assert wait_calls == []
     assert terminated == [job]
@@ -138,4 +138,4 @@ def test_reader_thread_start_failure_terminates_and_settles_once(
     assert active.state == "failed"
     assert active.terminal_reason == "process_error"
     assert active.terminal_event.is_set()
-    assert manager._active == {}  # noqa: SLF001
+    assert manager._active == {}

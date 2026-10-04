@@ -120,11 +120,15 @@ from typing import Any  # noqa: E402
 
 from sidecar.ai.config import RuntimeConfig  # noqa: E402
 from sidecar.ai.context.builder import ContextBuilder  # noqa: E402
-from sidecar.ai.context.compaction import COMPACTED_SUMMARY_HEADING  # noqa: E402
-from sidecar.ai.context.token_budget import TokenBudget  # noqa: E402
+from sidecar.ai.context.compaction import (  # noqa: E402
+    COMPACTED_SUMMARY_HEADING,
+    CompactionCircuitBreaker,
+)
+from sidecar.ai.context.token_budget import CharEstimationBackend, TokenBudget  # noqa: E402
 from sidecar.ai.engines.vision_input import VisionImage  # noqa: E402
 from sidecar.ai.feature_flags import FEATURE_TOKEN_BUDGET  # noqa: E402
 from sidecar.ai.routing import chat_decision as _chat_decision  # noqa: E402
+from sidecar.ai.routing.loop_events import ContextCompactedEvent  # noqa: E402
 from sidecar.ai.routing.router import ChatRouter  # noqa: E402
 from sidecar.ai.routing.vision_turn import vision_token_surcharge  # noqa: E402
 from sidecar.ai.tools.models import GenerationResult  # noqa: E402
@@ -452,3 +456,62 @@ def test_context_compaction_budgets_against_the_vision_surcharged_window(
     _run(0)
 
     assert seen_windows == [8_000 - surcharge, 8_000]
+
+
+_CANNED_SUMMARY = "<summary>\n" + "\n".join(
+    f"{index}. **Section {index}** kept." for index in range(1, 10)
+) + "\n</summary>"
+
+
+def test_preflight_compaction_event_reports_summary_source_omissions(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """CMC-008: the summarizer input dropped older messages, and the event says so
+    while ``input_complete`` keeps meaning ingress completeness."""
+    history: list[dict[str, object]] = []
+    for index in range(60):
+        history.append({"role": "user", "content": f"question {index} " + "word " * 400})
+        history.append({"role": "assistant", "content": f"answer {index} " + "word " * 400})
+    history.append({"role": "user", "content": "continue"})
+    emitted: list[object] = []
+    kernel = SimpleNamespace(
+        _config=SimpleNamespace(tools_enabled=False, max_tokens=512, resolved_user_max_output_tokens=None),
+        _engine=SimpleNamespace(get_model_max_output_tokens=lambda: 512),
+        _context_builder=SimpleNamespace(insert_runtime_system_messages=lambda messages, _rt: list(messages)),
+        _compaction_breakers=SimpleNamespace(for_key=lambda _key: CompactionCircuitBreaker()),
+        _build_compaction_generate_fn=lambda **_kwargs: (lambda _messages: _CANNED_SUMMARY),
+    )
+    context = _chat_decision._BudgetPreflightContext(
+        kernel=kernel,
+        feature_flags={FEATURE_TOKEN_BUDGET: True},
+        tool_payload=[],
+        prompt_cache_enabled=False,
+        request_id="req-summary-source-dropped",
+        session_id=None,
+        system_prompt_text="",
+        runtime=SimpleNamespace(emit_safe=emitted.append),
+        cache_break_detector=None,
+        cache_source_key="",
+        reasoning_effort=None,
+        input_complete=True,
+    )
+    monkeypatch.setattr(_chat_decision, "resolve_compaction_prompt", lambda _config: "compact")
+    monkeypatch.setattr(_chat_decision, "_emit_preflight_context_usage", lambda *_args, **_kwargs: None)
+
+    _chat_decision._run_context_compaction(
+        context,
+        _chat_decision._CompactionInput(
+            working_messages=history,
+            runtime_system_messages=[],
+            budget=TokenBudget(context_window=8_000, max_output_tokens=512),
+            budget_tracker=SimpleNamespace(backend=CharEstimationBackend()),
+            num_tools=0,
+            status=SimpleNamespace(tokens_used=40_000, tokens_available=8_000, utilization_pct=500),
+        ),
+    )
+
+    events = [event for event in emitted if isinstance(event, ContextCompactedEvent)]
+    assert len(events) == 1
+    assert events[0].summary_status == "created"
+    assert events[0].input_complete is True
+    assert events[0].summary_source_dropped_messages > 0

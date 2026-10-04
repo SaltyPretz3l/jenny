@@ -46,6 +46,9 @@ _HISTOGRAM_OVERFLOW_KEY = "other"
 # before its usage trailer). The per-call ledger lives in ``provider_calls``.
 _MAX_PROVIDER_CALLS_RETAINED = 32
 _DEFAULT_PROVIDER_CALL_PURPOSE = "turn"
+_PROVIDER_CALL_FINISH_REASONS = frozenset({
+    "stop", "length", "tool_calls", "incomplete", "error", "reasoning_only", "thinking_budget",
+})
 # Calls whose text is never shown to the user: their output must not count as
 # the turn's visible output, and their first chunk is not the turn's.
 _INTERNAL_PROVIDER_CALL_PURPOSES = frozenset({"reasoning_summary", "compaction_summary"})
@@ -54,6 +57,7 @@ _PROVIDER_CALL_SCOPED_FIELDS = (
     "provider_eval_count",
     "provider_cached_tokens",
     "provider_prompt_cache_hit_ratio",
+    "provider_prompt_tokens_evaluated",
     "provider_prompt_eval_duration_ns",
     "provider_prompt_eval_duration_ms",
     "provider_eval_duration_ns",
@@ -65,6 +69,7 @@ _PROVIDER_CALL_SCOPED_FIELDS = (
     "provider_usage_source",
     "provider_tokens_per_second",
     "stream_counters",
+    "prefix_reuse",
 )
 
 
@@ -535,6 +540,7 @@ class TurnDiagnosticsStore:
         prompt_eval_count: int | None = None,
         eval_count: int | None = None,
         cached_tokens: int | None = None,
+        prompt_tokens_evaluated: int | None = None,
         prompt_eval_duration_ns: int | None = None,
         eval_duration_ns: int | None = None,
         total_duration_ns: int | None = None,
@@ -553,6 +559,11 @@ class TurnDiagnosticsStore:
           prompt cache, if the provider reports that separately (OpenAI
           ``prompt_tokens_details.cached_tokens``, vLLM prefix-cache signal).
           Ollama does not surface this directly; leave as ``None``.
+        - ``prompt_tokens_evaluated`` — prompt tokens the server actually
+          prefilled (llama-server ``timings.prompt_n``; Ollama's
+          ``prompt_eval_count``, which already excludes cached tokens). This is
+          the prefix-cache miss counter, whatever ``prompt_eval_count`` means
+          for the provider.
         - ``*_duration_ns`` — Ollama-style duration fields, nanoseconds.
 
         All values are optional; only keys with finite, non-negative numbers
@@ -583,6 +594,7 @@ class TurnDiagnosticsStore:
         normalized_prompt_eval = _coerce_count(prompt_eval_count)
         normalized_eval = _coerce_count(eval_count)
         normalized_cached = _coerce_count(cached_tokens)
+        normalized_evaluated = _coerce_count(prompt_tokens_evaluated)
         normalized_prompt_eval_ns = _coerce_duration_ns(prompt_eval_duration_ns)
         normalized_eval_ns = _coerce_duration_ns(eval_duration_ns)
         normalized_total_ns = _coerce_duration_ns(total_duration_ns)
@@ -600,18 +612,17 @@ class TurnDiagnosticsStore:
                     min(normalized_cached / normalized_prompt_eval, 1.0),
                     4,
                 )
-        if normalized_prompt_eval_ns is not None:
-            updates["provider_prompt_eval_duration_ns"] = normalized_prompt_eval_ns
-            updates["provider_prompt_eval_duration_ms"] = normalized_prompt_eval_ns // 1_000_000
-        if normalized_eval_ns is not None:
-            updates["provider_eval_duration_ns"] = normalized_eval_ns
-            updates["provider_eval_duration_ms"] = normalized_eval_ns // 1_000_000
-        if normalized_total_ns is not None:
-            updates["provider_total_duration_ns"] = normalized_total_ns
-            updates["provider_total_duration_ms"] = normalized_total_ns // 1_000_000
-        if normalized_load_ns is not None:
-            updates["provider_load_duration_ns"] = normalized_load_ns
-            updates["provider_load_duration_ms"] = normalized_load_ns // 1_000_000
+        if normalized_evaluated is not None:
+            updates["provider_prompt_tokens_evaluated"] = normalized_evaluated
+        for prefix, duration_ns in (
+            ("provider_prompt_eval_duration", normalized_prompt_eval_ns),
+            ("provider_eval_duration", normalized_eval_ns),
+            ("provider_total_duration", normalized_total_ns),
+            ("provider_load_duration", normalized_load_ns),
+        ):
+            if duration_ns is not None:
+                updates[f"{prefix}_ns"] = duration_ns
+                updates[f"{prefix}_ms"] = duration_ns // 1_000_000
         if normalized_provider_label is not None:
             updates["provider_usage_source"] = normalized_provider_label
 
@@ -636,6 +647,7 @@ class TurnDiagnosticsStore:
                     ("prompt_eval_count", normalized_prompt_eval),
                     ("eval_count", normalized_eval),
                     ("cached_tokens", normalized_cached),
+                    ("prompt_tokens_evaluated", normalized_evaluated),
                 )
                 if value is not None
             },
@@ -660,13 +672,30 @@ class TurnDiagnosticsStore:
                 call["usage"] = call_usage
             turn["_updated_at"] = now
 
+    def record_prefix_reuse(self, *, request_id: str, prefix_reuse: Mapping[str, Any]) -> None:
+        """Attach the paired prefix-cache reading to the provider call just completed."""
+        if not isinstance(prefix_reuse, Mapping):
+            return
+        payload = copy.deepcopy(dict(prefix_reuse))
+        now = time.monotonic()
+        with self._lock:
+            turn = self._get_turn_locked(str(request_id or "").strip())
+            if turn is None:
+                return
+            turn["prefix_reuse"] = payload
+            call = self._current_call_locked(turn)
+            if call is not None:
+                call["prefix_reuse"] = copy.deepcopy(payload)
+            turn["_updated_at"] = now
+
     def complete_provider_request(
         self,
         *,
         request_id: str,
         outcome: str = "completed",
+        finish_reason: str | None = None,
     ) -> None:
-        """End the provider call in flight; ``outcome`` is ``completed`` or ``failed``."""
+        """End the provider call and retain only allowlisted terminal evidence."""
         normalized_outcome = str(outcome or "").strip().lower()[:32] or "completed"
         now = time.monotonic()
         with self._lock:
@@ -678,6 +707,8 @@ class TurnDiagnosticsStore:
             call = self._current_call_locked(turn)
             if call is not None:
                 call["outcome"] = normalized_outcome
+                if finish_reason in _PROVIDER_CALL_FINISH_REASONS:
+                    call["finish_reason"] = finish_reason
                 started_at = turn.get("_provider_started_at")
                 if isinstance(started_at, (int, float)):
                     call["duration_ms"] = max(int((now - started_at) * 1000), 0)

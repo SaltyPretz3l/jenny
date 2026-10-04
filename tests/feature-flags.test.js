@@ -5,6 +5,7 @@ const {
   FEATURE_OVERRIDE_KEYS,
   FORCE_DENY_ENV_KEYS,
   INTERNAL_FEATURE_FLAG_KEYS,
+  RETIRED_FEATURE_FLAG_ENV_KEYS,
   buildFeatureFlagDefaults,
   buildFeatureFlags,
   isFeatureEnabledByDefault,
@@ -30,7 +31,9 @@ test('buildFeatureFlags keeps agent executor disabled by default', () => {
 
   assert.equal(Object.hasOwn(flags, 'tips_surface'), false);
   assert.equal(Object.prototype.hasOwnProperty.call(flags, 'cost_tracker'), false);
-  assert.equal(flags.comet_personality, false);
+  // Comet companion removed (sweep S9): both retired flags are gone from the map.
+  assert.equal(Object.hasOwn(flags, 'comet_personality'), false);
+  assert.equal(Object.hasOwn(flags, 'comet_overlay'), false);
   assert.equal(flags.pretext_layout, true);
   assert.equal(flags.agent_executor, false);
   assert.equal(flags.task_lifecycle, false);
@@ -95,6 +98,18 @@ test('retired chat_turn_v2 flag cannot be restored through environment overrides
     normalizeFeatureOverrides({ chat_turn_v2: true }),
     {}
   );
+});
+
+test('image_generate is an internal default-on flag that can be disabled from env', () => {
+  const defaults = buildFeatureFlags({});
+  const disabled = buildFeatureFlags({
+    JENNY_ENABLE_TOOLS_IMAGE_GENERATE: '0',
+  });
+
+  assert.equal(defaults.tools_image_generate_enabled, true);
+  assert.equal(disabled.tools_image_generate_enabled, false);
+  assert.ok(INTERNAL_FEATURE_FLAG_KEYS.includes('tools_image_generate_enabled'));
+  assert.ok(!FEATURE_OVERRIDE_KEYS.includes('tools_image_generate_enabled'));
 });
 
 test('workspace_test_runner is an internal default-on flag that can be disabled from env', () => {
@@ -165,43 +180,6 @@ test('katex_math is an internal default-on flag that can be disabled from env', 
   assert.ok(!FEATURE_OVERRIDE_KEYS.includes('katex_math'));
   assert.deepEqual(
     normalizeFeatureOverrides({ katex_math: true }),
-    {}
-  );
-});
-
-test('compaction_manual is an internal DEFAULT-ON flag with an env rollback (JCA-003 closed: chat.send consumes the persisted compaction snapshot)', () => {
-  const defaults = buildFeatureFlags({});
-  const disabled = buildFeatureFlags({
-    JENNY_ENABLE_COMPACTION_MANUAL: '0',
-  });
-
-  assert.equal(defaults.compaction_manual, true,
-    'Compact now is back on: Electron persists the compacted messages and future chat.send calls consume them');
-  assert.equal(disabled.compaction_manual, false);
-  assert.ok(INTERNAL_FEATURE_FLAG_KEYS.includes('compaction_manual'));
-  assert.ok(!FEATURE_OVERRIDE_KEYS.includes('compaction_manual'));
-  assert.deepEqual(
-    normalizeFeatureOverrides({ compaction_manual: true }),
-    {}
-  );
-});
-
-test('chat_tool_trace_rows_fix is an internal default-on rollout flag with env rollback', () => {
-  const defaults = buildFeatureFlags({});
-  const enabled = buildFeatureFlags({
-    JENNY_ENABLE_CHAT_TOOL_TRACE_ROWS_FIX: '1',
-  });
-  const disabled = buildFeatureFlags({
-    JENNY_ENABLE_CHAT_TOOL_TRACE_ROWS_FIX: '0',
-  });
-
-  assert.equal(defaults.chat_tool_trace_rows_fix, true);
-  assert.equal(enabled.chat_tool_trace_rows_fix, true);
-  assert.equal(disabled.chat_tool_trace_rows_fix, false);
-  assert.ok(INTERNAL_FEATURE_FLAG_KEYS.includes('chat_tool_trace_rows_fix'));
-  assert.ok(!FEATURE_OVERRIDE_KEYS.includes('chat_tool_trace_rows_fix'));
-  assert.deepEqual(
-    normalizeFeatureOverrides({ chat_tool_trace_rows_fix: true }),
     {}
   );
 });
@@ -456,16 +434,6 @@ test('workspace_git is an internal default-on flag with an env rollback', () => 
   );
 });
 
-test('scratchpad_v2 is an internal default-on flag with an env opt-out', () => {
-  const defaults = buildFeatureFlags({});
-  const disabled = buildFeatureFlags({ JENNY_ENABLE_SCRATCHPAD_V2: '0' });
-
-  assert.equal(defaults.scratchpad_v2, true);
-  assert.equal(disabled.scratchpad_v2, false);
-  assert.ok(INTERNAL_FEATURE_FLAG_KEYS.includes('scratchpad_v2'));
-  assert.ok(!FEATURE_OVERRIDE_KEYS.includes('scratchpad_v2'));
-});
-
 test('workspace_auto_save is retired in favor of the sole Editor preference', () => {
   const defaults = buildFeatureFlags({});
   assert.equal(Object.prototype.hasOwnProperty.call(defaults, 'workspace_auto_save'), false);
@@ -567,31 +535,6 @@ test('titlebar_gpu_telemetry is an internal DEFAULT-ON flag with an env rollback
   assert.deepEqual(normalizeFeatureOverrides({ titlebar_gpu_telemetry: true }), {});
 });
 
-test('artifact_panel_v2 is an internal DEFAULT-ON flag with an env rollback (Artifact Panel V2)', () => {
-  const defaults = buildFeatureFlags({});
-  const enabled = buildFeatureFlags({ JENNY_ENABLE_ARTIFACT_PANEL_V2: '1' });
-  const disabled = buildFeatureFlags({ JENNY_ENABLE_ARTIFACT_PANEL_V2: '0' });
-
-  assert.equal(defaults.artifact_panel_v2, true);
-  assert.equal(enabled.artifact_panel_v2, true);
-  assert.equal(disabled.artifact_panel_v2, false);
-  assert.ok(INTERNAL_FEATURE_FLAG_KEYS.includes('artifact_panel_v2'));
-  assert.ok(!FEATURE_OVERRIDE_KEYS.includes('artifact_panel_v2'));
-  assert.deepEqual(normalizeFeatureOverrides({ artifact_panel_v2: true }), {});
-});
-
-test('artifact_panel_v3 is an internal DEFAULT-ON flag with an env rollback (Canvas)', () => {
-  const defaults = buildFeatureFlags({});
-  const enabled = buildFeatureFlags({ JENNY_ENABLE_ARTIFACT_PANEL_V3: '1' });
-  const disabled = buildFeatureFlags({ JENNY_ENABLE_ARTIFACT_PANEL_V3: '0' });
-  assert.equal(defaults.artifact_panel_v3, true);
-  assert.equal(enabled.artifact_panel_v3, true);
-  assert.equal(disabled.artifact_panel_v3, false);
-  assert.ok(INTERNAL_FEATURE_FLAG_KEYS.includes('artifact_panel_v3'));
-  assert.ok(!FEATURE_OVERRIDE_KEYS.includes('artifact_panel_v3'));
-  assert.deepEqual(normalizeFeatureOverrides({ artifact_panel_v3: true }), {});
-});
-
 test('ide_chat_dock is an internal DEFAULT-ON flag with an env rollback (Workspace Chat Dock)', () => {
   const defaults = buildFeatureFlags({});
   const enabled = buildFeatureFlags({ JENNY_ENABLE_IDE_CHAT_DOCK: '1' });
@@ -647,22 +590,6 @@ test('mcp_management_ui is an internal DEFAULT-ON flag with an env rollback, ind
   assert.deepEqual(normalizeFeatureOverrides({ mcp_management_ui: true }), {});
 });
 
-test('response_loop_display_v2 is an internal DEFAULT-ON flag with an env opt-out', () => {
-  const defaults = buildFeatureFlags({});
-  const enabled = buildFeatureFlags({ JENNY_ENABLE_RESPONSE_LOOP_DISPLAY_V2: '1' });
-  const disabled = buildFeatureFlags({ JENNY_ENABLE_RESPONSE_LOOP_DISPLAY_V2: '0' });
-
-  // Shared gate for backend commentary/reasoning preservation + renderer display.
-  // Tasks 1-8 landed so it ships ON; JENNY_ENABLE_RESPONSE_LOOP_DISPLAY_V2=0 rolls
-  // it back. Internal (not a user override), like the other view-surface flags.
-  assert.equal(defaults.response_loop_display_v2, true);
-  assert.equal(enabled.response_loop_display_v2, true);
-  assert.equal(disabled.response_loop_display_v2, false);
-  assert.ok(INTERNAL_FEATURE_FLAG_KEYS.includes('response_loop_display_v2'));
-  assert.ok(!FEATURE_OVERRIDE_KEYS.includes('response_loop_display_v2'));
-  assert.deepEqual(normalizeFeatureOverrides({ response_loop_display_v2: true }), {});
-});
-
 test('buildFeatureFlags treats malformed agent executor env values as the default', () => {
   const flags = buildFeatureFlags({
     JENNY_ENABLE_AGENT_EXECUTOR: 'maybe',
@@ -700,17 +627,34 @@ test('error_intake_routing defaults on with rollback overrides intact (EH-W12 so
   assert.equal(envDisabled.error_intake_routing, false, 'the env override still rolls back');
 });
 
-test('workspace_pty_terminal is an internal DEFAULT-ON flag with an env rollback (owner-directed pre-soak flip 2026-07-02, overriding the handoff ship-OFF call)', () => {
-  const defaults = buildFeatureFlags({});
-  const enabled = buildFeatureFlags({ JENNY_ENABLE_WORKSPACE_PTY_TERMINAL: '1' });
-  const disabled = buildFeatureFlags({ JENNY_ENABLE_WORKSPACE_PTY_TERMINAL: '0' });
-
-  assert.equal(defaults.workspace_pty_terminal, true);
-  assert.equal(enabled.workspace_pty_terminal, true);
-  assert.equal(disabled.workspace_pty_terminal, false);
-  assert.ok(INTERNAL_FEATURE_FLAG_KEYS.includes('workspace_pty_terminal'));
+test('workspace_pty_terminal is retired: its env name is accepted and ignored until 1.2.2 (post-1.2.0 sweep S8)', () => {
+  assert.deepEqual(RETIRED_FEATURE_FLAG_ENV_KEYS.workspace_pty_terminal, {
+    env: 'JENNY_ENABLE_WORKSPACE_PTY_TERMINAL',
+    removeIn: '1.2.2',
+  });
+  const baseline = buildFeatureFlags({});
+  for (const value of ['0', '1', 'off']) {
+    const flags = buildFeatureFlags({ JENNY_ENABLE_WORKSPACE_PTY_TERMINAL: value });
+    assert.deepEqual(flags, baseline, `a leftover kill-switch value ${value} changes nothing`);
+  }
+  assert.equal(Object.hasOwn(baseline, 'workspace_pty_terminal'), false, 'no flag key is emitted');
+  assert.ok(!INTERNAL_FEATURE_FLAG_KEYS.includes('workspace_pty_terminal'));
   assert.ok(!FEATURE_OVERRIDE_KEYS.includes('workspace_pty_terminal'));
-  assert.deepEqual(normalizeFeatureOverrides({ workspace_pty_terminal: true }), {});
+  assert.deepEqual(normalizeFeatureOverrides({ workspace_pty_terminal: false }), {});
+});
+
+test('workspace_inline_suggest is retired with the inline code suggestions (owner, 2026-10-01)', () => {
+  assert.deepEqual(RETIRED_FEATURE_FLAG_ENV_KEYS.workspace_inline_suggest, {
+    env: 'JENNY_ENABLE_WORKSPACE_INLINE_SUGGEST',
+    removeIn: '1.2.2',
+  });
+  const baseline = buildFeatureFlags({});
+  for (const value of ['0', '1']) {
+    assert.deepEqual(buildFeatureFlags({ JENNY_ENABLE_WORKSPACE_INLINE_SUGGEST: value }), baseline);
+  }
+  assert.equal(Object.hasOwn(baseline, 'workspace_inline_suggest'), false, 'no flag key is emitted');
+  assert.ok(!FEATURE_OVERRIDE_KEYS.includes('workspace_inline_suggest'));
+  assert.deepEqual(normalizeFeatureOverrides({ workspace_inline_suggest: false }), {});
 });
 
 test('thread_root_markup_memo is an internal DEFAULT-ON flag with an env rollback (Finding 3 settled-root markup memoization)', () => {
@@ -724,22 +668,6 @@ test('thread_root_markup_memo is an internal DEFAULT-ON flag with an env rollbac
   assert.ok(INTERNAL_FEATURE_FLAG_KEYS.includes('thread_root_markup_memo'));
   assert.ok(!FEATURE_OVERRIDE_KEYS.includes('thread_root_markup_memo'));
   assert.deepEqual(normalizeFeatureOverrides({ thread_root_markup_memo: true }), {});
-});
-
-test('auto_checkpoint is an internal DEFAULT-ON flag with an env rollback (owner-directed flip 2026-07-07)', () => {
-  const defaults = buildFeatureFlags({});
-  const enabled = buildFeatureFlags({ JENNY_ENABLE_AUTO_CHECKPOINT: '1' });
-  const disabled = buildFeatureFlags({ JENNY_ENABLE_AUTO_CHECKPOINT: '0' });
-
-  assert.equal(defaults.auto_checkpoint, true);
-  assert.equal(enabled.auto_checkpoint, true);
-  assert.equal(disabled.auto_checkpoint, false);
-  assert.ok(INTERNAL_FEATURE_FLAG_KEYS.includes('auto_checkpoint'));
-  assert.ok(!FEATURE_OVERRIDE_KEYS.includes('auto_checkpoint'));
-  assert.deepEqual(
-    normalizeFeatureOverrides({ auto_checkpoint: true }),
-    {}
-  );
 });
 
 test('strict_auto_run is a user-overridable DEFAULT-OFF flag with an env opt-in', () => {
@@ -756,29 +684,45 @@ test('strict_auto_run is a user-overridable DEFAULT-OFF flag with an env opt-in'
   );
 });
 
-test('remote_control is DEFAULT-OFF with a stored override and emergency env deny', () => {
-  assert.equal(buildFeatureFlags({}).remote_control, false);
-  assert.equal(buildFeatureFlags({}, { remote_control: true }).remote_control, true);
+test('remote_control is retired with Remote Control (owner, 2026-10-02)', () => {
+  assert.deepEqual(RETIRED_FEATURE_FLAG_ENV_KEYS.remote_control, {
+    env: 'JENNY_ENABLE_REMOTE_CONTROL',
+    removeIn: '1.2.2',
+  });
+  for (const value of ['0', '1']) {
+    const flags = buildFeatureFlags({ JENNY_ENABLE_REMOTE_CONTROL: value }, { remote_control: true });
+    assert.equal(Object.hasOwn(flags, 'remote_control'), false, 'no flag key is emitted');
+  }
+  assert.ok(!FEATURE_OVERRIDE_KEYS.includes('remote_control'));
+  // A profile that stored the override loses it on load, so no config bump is needed.
+  assert.deepEqual(normalizeFeatureOverrides({ remote_control: true }), {});
+  assert.deepEqual(FORCE_DENY_ENV_KEYS, { session_runtime: 'JENNY_ENABLE_SESSION_RUNTIME' });
+});
+
+test('privileged_plugins is retired with the privileged plugin tier (owner, 2026-10-02)', () => {
+  assert.deepEqual(RETIRED_FEATURE_FLAG_ENV_KEYS.privileged_plugins, {
+    env: 'JENNY_ENABLE_PRIVILEGED_PLUGINS',
+    removeIn: '1.2.2',
+  });
+  for (const value of ['0', '1']) {
+    const flags = buildFeatureFlags({ JENNY_ENABLE_PRIVILEGED_PLUGINS: value }, { privileged_plugins: true });
+    assert.equal(Object.hasOwn(flags, 'privileged_plugins'), false, 'no flag key is emitted');
+  }
+  assert.ok(!FEATURE_OVERRIDE_KEYS.includes('privileged_plugins'));
+  assert.ok(!INTERNAL_FEATURE_FLAG_KEYS.includes('privileged_plugins'));
+  // A profile that stored the override loses it on load, so no config bump is needed.
+  assert.deepEqual(normalizeFeatureOverrides({ privileged_plugins: true }), {});
+});
+
+test('desktop_notifications is a default-on internal kill switch, not a user override', () => {
+  assert.equal(buildFeatureFlagDefaults({}).desktop_notifications, true);
   assert.equal(
-    buildFeatureFlags(
-      { JENNY_ENABLE_REMOTE_CONTROL: '0' },
-      { remote_control: true, strict_auto_run: true }
-    ).remote_control,
+    buildFeatureFlagDefaults({ JENNY_ENABLE_DESKTOP_NOTIFICATIONS: '0' }).desktop_notifications,
     false
   );
-  assert.equal(buildFeatureFlags({ JENNY_ENABLE_REMOTE_CONTROL: '1' }).remote_control, true);
-  assert.equal(
-    buildFeatureFlags(
-      { JENNY_ENABLE_REMOTE_CONTROL: '0' },
-      { remote_control: true, strict_auto_run: true }
-    ).strict_auto_run,
-    true
-  );
-  assert.ok(FEATURE_OVERRIDE_KEYS.includes('remote_control'));
-  assert.deepEqual(FORCE_DENY_ENV_KEYS, {
-    remote_control: 'JENNY_ENABLE_REMOTE_CONTROL',
-    session_runtime: 'JENNY_ENABLE_SESSION_RUNTIME',
-  });
+  assert.ok(INTERNAL_FEATURE_FLAG_KEYS.includes('desktop_notifications'));
+  assert.ok(!FEATURE_OVERRIDE_KEYS.includes('desktop_notifications'));
+  assert.deepEqual(normalizeFeatureOverrides({ desktop_notifications: false }), {});
 });
 
 test('unattended_guard is a default-on user override with env rollback', () => {
@@ -795,22 +739,6 @@ test('unattended_guard is a default-on user override with env rollback', () => {
   );
 });
 
-test('workspace_exploded_view is an internal DEFAULT-ON flag with an env rollback (owner-directed flip 2026-07-07)', () => {
-  const defaults = buildFeatureFlags({});
-  const enabled = buildFeatureFlags({ JENNY_ENABLE_WORKSPACE_EXPLODED_VIEW: '1' });
-  const disabled = buildFeatureFlags({ JENNY_ENABLE_WORKSPACE_EXPLODED_VIEW: '0' });
-
-  assert.equal(defaults.workspace_exploded_view, true);
-  assert.equal(enabled.workspace_exploded_view, true);
-  assert.equal(disabled.workspace_exploded_view, false);
-  assert.ok(INTERNAL_FEATURE_FLAG_KEYS.includes('workspace_exploded_view'));
-  assert.ok(!FEATURE_OVERRIDE_KEYS.includes('workspace_exploded_view'));
-  assert.deepEqual(
-    normalizeFeatureOverrides({ workspace_exploded_view: true }),
-    {}
-  );
-});
-
 test('workspace_external_import is an internal DEFAULT-ON flag with an env rollback', () => {
   const defaults = buildFeatureFlags({});
   const enabled = buildFeatureFlags({ JENNY_ENABLE_WORKSPACE_EXTERNAL_IMPORT: '1' });
@@ -822,22 +750,6 @@ test('workspace_external_import is an internal DEFAULT-ON flag with an env rollb
   assert.ok(INTERNAL_FEATURE_FLAG_KEYS.includes('workspace_external_import'));
   assert.ok(!FEATURE_OVERRIDE_KEYS.includes('workspace_external_import'));
   assert.deepEqual(normalizeFeatureOverrides({ workspace_external_import: true }), {});
-});
-
-test('chat_timeline_deterministic_row_id is an internal DEFAULT-ON flag with an env rollback (DC1 flicker cure; owner-directed flip 2026-07-07)', () => {
-  const defaults = buildFeatureFlags({});
-  const enabled = buildFeatureFlags({ JENNY_ENABLE_CHAT_TIMELINE_DETERMINISTIC_ROW_ID: '1' });
-  const disabled = buildFeatureFlags({ JENNY_ENABLE_CHAT_TIMELINE_DETERMINISTIC_ROW_ID: '0' });
-
-  assert.equal(defaults.chat_timeline_deterministic_row_id, true);
-  assert.equal(enabled.chat_timeline_deterministic_row_id, true);
-  assert.equal(disabled.chat_timeline_deterministic_row_id, false);
-  assert.ok(INTERNAL_FEATURE_FLAG_KEYS.includes('chat_timeline_deterministic_row_id'));
-  assert.ok(!FEATURE_OVERRIDE_KEYS.includes('chat_timeline_deterministic_row_id'));
-  assert.deepEqual(
-    normalizeFeatureOverrides({ chat_timeline_deterministic_row_id: true }),
-    {}
-  );
 });
 
 test('chat_timeline_render_telemetry is an internal DEFAULT-ON flag with an env rollback (Track A render diagnostics; owner-directed flip 2026-07-07)', () => {
@@ -934,19 +846,6 @@ test('surface_effect_heartbeat defaults on with an env-only rollback', () => {
   assert.deepEqual(normalizeFeatureOverrides({ surface_effect_heartbeat: false }), {});
 });
 
-test('cloud_loop_profile is an internal default-on flag that can be disabled from env', () => {
-  const defaults = buildFeatureFlags({});
-  const disabled = buildFeatureFlags({ JENNY_ENABLE_CLOUD_LOOP_PROFILE: '0' });
-  const reenabled = buildFeatureFlags({ JENNY_ENABLE_CLOUD_LOOP_PROFILE: '1' });
-
-  assert.equal(defaults.cloud_loop_profile, true);
-  assert.equal(disabled.cloud_loop_profile, false);
-  assert.equal(reenabled.cloud_loop_profile, true);
-  assert.ok(INTERNAL_FEATURE_FLAG_KEYS.includes('cloud_loop_profile'));
-  assert.ok(!FEATURE_OVERRIDE_KEYS.includes('cloud_loop_profile'));
-  assert.deepEqual(normalizeFeatureOverrides({ cloud_loop_profile: false }), {});
-});
-
 test('plugins default on at Stage 7 and retain the environment kill switch', () => {
   assert.equal(buildFeatureFlags({}).plugins, true);
   assert.equal(buildFeatureFlags({ JENNY_ENABLE_PLUGINS: '0' }).plugins, false);
@@ -987,4 +886,49 @@ test('tools_task_board_enabled is internal, default-on, and rolls back by env', 
   assert.equal(INTERNAL_FEATURE_FLAG_KEYS.includes('tools_task_board_enabled'), true);
   assert.equal(FEATURE_OVERRIDE_KEYS.includes('tools_task_board_enabled'), false);
   assert.deepEqual(normalizeFeatureOverrides({ tools_task_board_enabled: false }), {});
+});
+
+// Post-1.2.0 sweep (S6, 2026-09-25): these default-ON flags were collapsed —
+// their ON behaviour is unconditional and the keys left the closed registry.
+// The JENNY_ENABLE_<KEY> env names stay accepted-and-ignored until 1.2.2:
+// buildFeatureFlags only reads JENNY_ENABLE_<KEY> for registered keys, so a
+// stale kill switch in a user's environment is silently ignored (no key, no
+// throw, no effect on any other flag).
+const RETIRED_2026_09_25 = Object.freeze({
+  artifact_panel_v2: 'JENNY_ENABLE_ARTIFACT_PANEL_V2',
+  artifact_panel_v3: 'JENNY_ENABLE_ARTIFACT_PANEL_V3',
+  chat_tool_trace_rows_fix: 'JENNY_ENABLE_CHAT_TOOL_TRACE_ROWS_FIX',
+  scratchpad_v2: 'JENNY_ENABLE_SCRATCHPAD_V2',
+  auto_checkpoint: 'JENNY_ENABLE_AUTO_CHECKPOINT',
+  workspace_exploded_view: 'JENNY_ENABLE_WORKSPACE_EXPLODED_VIEW',
+  reasoning_status_v2: 'JENNY_ENABLE_REASONING_STATUS_V2',
+  response_loop_display_v2: 'JENNY_ENABLE_RESPONSE_LOOP_DISPLAY_V2',
+  chat_timeline_deterministic_row_id: 'JENNY_ENABLE_CHAT_TIMELINE_DETERMINISTIC_ROW_ID',
+  cloud_loop_profile: 'JENNY_ENABLE_CLOUD_LOOP_PROFILE',
+  context_usage_live: 'JENNY_ENABLE_CONTEXT_USAGE_LIVE',
+  chatgpt_plan_meter: 'JENNY_ENABLE_CHATGPT_PLAN_METER',
+  compaction_manual: 'JENNY_ENABLE_COMPACTION_MANUAL',
+});
+
+test('retired 2026-09-25 flags are gone from the registry and their env names are silently ignored', () => {
+  const retiredKeys = Object.keys(RETIRED_2026_09_25);
+  const defaults = buildFeatureFlags({});
+  const defaultsViaHelper = buildFeatureFlagDefaults({});
+  for (const key of retiredKeys) {
+    assert.equal(INTERNAL_FEATURE_FLAG_KEYS.includes(key), false, `${key} left INTERNAL_FEATURE_FLAG_KEYS`);
+    assert.equal(FEATURE_OVERRIDE_KEYS.includes(key), false, `${key} is not user-overridable`);
+    assert.equal(Object.prototype.hasOwnProperty.call(defaults, key), false, `${key} is not emitted`);
+    assert.equal(Object.prototype.hasOwnProperty.call(defaultsViaHelper, key), false, `${key} has no default`);
+    assert.equal(Object.values(FORCE_DENY_ENV_KEYS).includes(RETIRED_2026_09_25[key]), false);
+  }
+  // A stale stored override for a retired key is dropped, not rejected.
+  const staleOverrides = Object.fromEntries(retiredKeys.map((key) => [key, false]));
+  assert.deepEqual(normalizeFeatureOverrides(staleOverrides), {});
+  // Both kill-switch values are accepted and change nothing.
+  for (const value of ['0', '1', 'false', 'true']) {
+    const env = Object.fromEntries(Object.values(RETIRED_2026_09_25).map((name) => [name, value]));
+    let flags;
+    assert.doesNotThrow(() => { flags = buildFeatureFlags(env, staleOverrides); });
+    assert.deepEqual(flags, defaults, `JENNY_ENABLE_*=${value} for retired keys must be ignored`);
+  }
 });

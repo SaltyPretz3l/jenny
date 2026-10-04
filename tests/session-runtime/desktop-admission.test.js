@@ -11,6 +11,7 @@ const { createChatStreamBridge } = require('../../services/chat-stream-bridge');
 const { createControllerHarness } = require('../helpers/send-controller-harness');
 const { createStreamHandlerLifecycle } = require('../../renderer/chat/renderer-stream-handler-lifecycle');
 const { waitFor } = require('../helpers/session-runtime-chat-adapter-harness');
+const PNG_SIGNATURE = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
 
 test('real application and stdio producer emit one canonical admission before content through both bridge formats', async t => {
   t.after(cleanupTrackedResources);
@@ -90,7 +91,7 @@ test('canonical creation binds only valid unbound draft images before durable Se
   service.attachmentAssetStore = new AttachmentAssetStore({ rootDir: path.join(profile, 'attachments'), nativeImage: null });
   const { ensureSessionAttachmentAuthority } = require('../../services/projects/session-attachment-authority');
   const authority = ensureSessionAttachmentAuthority(service);
-  const image = service.attachmentAssetStore.saveImageBufferSync(Buffer.from('controlled-image-bytes'),
+  const image = service.attachmentAssetStore.saveImageBufferSync(Buffer.concat([PNG_SIGNATURE, Buffer.from('controlled-image-bytes')]),
     { displayName: 'draft.png', mimeType: 'image/png', sourceKind: 'paste' });
   authority.registerImportedImages(authority.captureImportScope(), [image]);
   const created = await service.createSession({ title: 'With image', initialPrompt: 'Unsent draft', linkedTaskId: 'task_image', draftImageAttachments: [image] });
@@ -113,7 +114,7 @@ test('failed image binding rolls back only the new conversation and releases the
   service.attachmentAssetStore = new AttachmentAssetStore({ rootDir: path.join(profile, 'attachments'), nativeImage: null });
   const { ensureSessionAttachmentAuthority } = require('../../services/projects/session-attachment-authority');
   const authority = ensureSessionAttachmentAuthority(service);
-  const images = ['a', 'b'].map(name => service.attachmentAssetStore.saveImageBufferSync(Buffer.from(`image-${name}`),
+  const images = ['a', 'b'].map(name => service.attachmentAssetStore.saveImageBufferSync(Buffer.concat([PNG_SIGNATURE, Buffer.from(`image-${name}`)]),
     { displayName: `${name}.png`, mimeType: 'image/png', sourceKind: 'file' }));
   authority.registerImportedImages(authority.captureImportScope(), images);
   const existing = await service.createSession({ title: 'Keep existing' });

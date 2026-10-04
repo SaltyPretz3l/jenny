@@ -1,15 +1,13 @@
-/* renderer/features/renderer-ide-terminal-wiring.js — selects the bottom-panel
- * terminal implementation by feature flag. When workspace_pty_terminal is ON and
- * the ConPTY (xterm) panel module is present, it builds the real PTY terminal;
- * otherwise it selects the line-terminal factory. Dependencies pass through
- * unchanged; this wiring adds no state and owns no side effects.
+/* renderer/features/renderer-ide-terminal-wiring.js — builds the bottom-panel
+ * terminal: the ConPTY (xterm) panel is the only Workspace IDE terminal (the
+ * piped line terminal and its workspace_pty_terminal flag were retired in the
+ * post-1.2.0 sweep, S8). Dependencies pass through unchanged; this wiring adds
+ * no state and owns no side effects.
  *
  * UIUX-011: the PTY panel owns a persistent host (outside the shared bottom-panel
  * content host that Problems/Run/Test Runner innerHTML-replace on every
  * activation) so its live xterm instance + ResizeObserver are never orphaned by
- * a sibling repaint. `getPtyMountEl`, when supplied, overrides `deps.getMountEl`
- * ONLY for the pty branch; the legacy line-terminal keeps the shared-host
- * `deps.getMountEl` untouched — it holds no comparable live external resource. */
+ * a sibling repaint. `getPtyMountEl`, when supplied, overrides `deps.getMountEl`. */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) {
     module.exports = factory();
@@ -19,21 +17,18 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
 
-  function createIdeTerminalPanelForFlags(opts) {
+  function createIdeTerminalPanel(opts) {
     const o = opts || {};
-    const isPtyEnabled = typeof o.isPtyEnabled === 'function' ? o.isPtyEnabled : () => false;
-    const terminalPanelUtils = o.terminalPanelUtils || null;
     const ptyTerminalPanelUtils = o.ptyTerminalPanelUtils || null;
-    const deps = o.deps;
-    if (isPtyEnabled() === true
-      && typeof ptyTerminalPanelUtils?.createIdePtyTerminalPanel === 'function') {
-      const ptyDeps = typeof o.getPtyMountEl === 'function'
-        ? { ...deps, getMountEl: o.getPtyMountEl }
-        : deps;
-      return ptyTerminalPanelUtils.createIdePtyTerminalPanel(ptyDeps) || null;
+    if (typeof ptyTerminalPanelUtils?.createIdePtyTerminalPanel !== 'function') {
+      return null;
     }
-    return terminalPanelUtils?.createIdeTerminalPanel?.(deps) || null;
+    const deps = o.deps;
+    const ptyDeps = typeof o.getPtyMountEl === 'function'
+      ? { ...deps, getMountEl: o.getPtyMountEl }
+      : deps;
+    return ptyTerminalPanelUtils.createIdePtyTerminalPanel(ptyDeps) || null;
   }
 
-  return { createIdeTerminalPanelForFlags };
+  return { createIdeTerminalPanel };
 });

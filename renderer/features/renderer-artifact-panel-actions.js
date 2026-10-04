@@ -1,11 +1,11 @@
 /** Download, maximize, and overflow actions for Artifact Panel V3. */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) {
-    module.exports = factory(require('../inventory/context-menu'), require('../shared/log-contract-utils'));
+    module.exports = factory(require('../inventory/context-menu'), require('../shared/log-contract-utils'), require('./renderer-artifacts-projection'));
     return;
   }
-  root.rendererArtifactPanelActions = factory(root.inventoryContextMenu, root.logContractUtils);
-})(typeof globalThis !== 'undefined' ? globalThis : this, function (contextMenu, logContractUtils) {
+  root.rendererArtifactPanelActions = factory(root.inventoryContextMenu, root.logContractUtils, root.rendererArtifactsProjection);
+})(typeof globalThis !== 'undefined' ? globalThis : this, function (contextMenu, logContractUtils, projection) {
   'use strict';
 
   var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
@@ -20,13 +20,6 @@
     }).join('').replace(/^[. ]+|[. ]+$/g, '') || 'artifact';
   }
 
-  function isJsonText(value) {
-    try {
-      var parsed = JSON.parse(String(value || '').trim());
-      return parsed !== null && typeof parsed === 'object';
-    } catch (_error) { return false; }
-  }
-
   function isMarkdownArtifact(artifact) {
     var file = artifact?.generatedFile || {};
     var language = String(file.language || '').toLowerCase();
@@ -37,7 +30,7 @@
     if (!artifact || artifact.artifactType === 'image' || source == null) return null;
     var file = artifact.generatedFile || {};
     var markdown = isMarkdownArtifact(artifact);
-    var json = artifact.artifactType === 'tool_output' && isJsonText(source);
+    var json = artifact.artifactType === 'tool_output' && projection?.isJsonDocument?.(source) === true;
     var format = markdown ? 'markdown' : json ? 'json' : 'plain';
     var extension = markdown ? 'md' : json ? 'json' : fileExtension(file.fileName || file.displayPath) || 'txt';
     var label = markdown ? 'Markdown' : json ? 'JSON' : typeof formatLanguageLabel === 'function' && file.language
@@ -114,14 +107,39 @@
       return tracked;
     }
 
+    // More lists only what applies to this artifact (no permanently disabled
+    // rows): Copy (only while the narrow header folds it), Download, Maximize
+    // (not while maximized or in the overlay), Reveal, Open externally, Jump to
+    // chat, Delete.
+    function overflowItems(artifact) {
+      var generated = artifact.artifactType === 'generated_file';
+      var textSource = artifact.artifactType !== 'image' && options.getArtifactSource?.() != null;
+      var overlay = panelEl?.classList?.contains('artifact-review-overlay') === true;
+      function act(selector) {
+        return function () { if (options.isCurrentArtifact?.(artifact) !== false) hiddenClick(selector); };
+      }
+      var items = [];
+      if (textSource && options.isNarrow?.() === true) items.push({ label: jt('common.copy', 'Copy'), action: act('[data-artifact-panel-v2-copy]') });
+      if (textSource) items.push({ label: jt('artifacts.actions.download', 'Download'), action: function () { return download(artifact); } });
+      if (!overlay && options.isMaximized?.() !== true && typeof options.toggleMaximize === 'function') {
+        items.push({ label: jt('artifacts.actions.maximizePanel', 'Maximize panel'), action: function () { toggleMaximize(); } });
+      }
+      if (generated) {
+        items.push({ label: jt('artifacts.actions.revealInFolder', 'Reveal in folder'), action: act('#artifactReviewRevealButton') });
+        items.push({ label: jt('artifacts.actions.openExternally', 'Open externally'), action: act('#artifactReviewOpenExternalButton') });
+      }
+      if (artifact.sourceMessageId) items.push({ label: jt('artifacts.actions.jumpToChatLabel', 'Jump to chat'), action: act('#artifactReviewJumpButton') });
+      if (generated) {
+        if (items.length) items.push({ separator: true });
+        items.push({ label: jt('artifacts.actions.deleteLabel', 'Delete artifact'), danger: true, action: act('#artifactReviewDeleteButton') });
+      }
+      return items;
+    }
+
     function showOverflow(artifact, triggerEl) {
       if (disposed || !artifact || !contextMenu?.show || !triggerEl) return false;
-      var generated = artifact.artifactType === 'generated_file';
-      var isImage = artifact.artifactType === 'image';
-      var sourceReady = options.getArtifactSource?.() != null;
-      function act(selector) {
-        if (options.isCurrentArtifact?.(artifact) !== false) hiddenClick(selector);
-      }
+      var items = overflowItems(artifact);
+      if (!items.length) return false;
       triggerEl.setAttribute('aria-expanded', 'true');
       overflowOpen = true;
       contextMenu.show({
@@ -135,15 +153,7 @@
         onActionError: function (error) {
           if (!disposed) options.appendClientLog?.('ERROR', 'artifacts.overflow_action_failed', { message: safeErrorMessage(error) });
         },
-        items: [
-          { label: jt('artifacts.actions.revealInFolder', 'Reveal in folder'), disabled: !generated, action: function () { act('#artifactReviewRevealButton'); } },
-          { label: jt('artifacts.actions.openExternally', 'Open externally'), disabled: !generated, action: function () { act('#artifactReviewOpenExternalButton'); } },
-          { label: jt('artifacts.actions.jumpToChatLabel', 'Jump to chat'), disabled: !artifact.sourceMessageId, action: function () { act('#artifactReviewJumpButton'); } },
-          { label: jt('common.copy', 'Copy'), disabled: isImage || !sourceReady, action: function () { act('[data-artifact-panel-v2-copy]'); } },
-          { label: jt('artifacts.actions.download', 'Download'), disabled: isImage || !sourceReady, action: function () { return download(artifact); } },
-          { separator: true },
-          { label: jt('artifacts.actions.deleteLabel', 'Delete artifact'), danger: true, disabled: !generated, action: function () { act('#artifactReviewDeleteButton'); } },
-        ],
+        items: items,
       });
       return true;
     }

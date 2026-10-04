@@ -280,8 +280,54 @@ def test_wind_down_notes_never_speak_for_the_user() -> None:
     for note in (
         tool_loop_recovery._EMPTY_FINAL_WIND_DOWN,
         tool_loop_recovery._BUDGET_EXHAUSTED_WIND_DOWN,
+        tool_loop_recovery._NO_PROGRESS_WIND_DOWN,
         tool_loop_recovery._MAX_ITERATIONS_WIND_DOWN,
         thinking_checkpoint._THINKING_BUDGET_WIND_DOWN,
     ):
         assert "user wants" not in note.lower()
         assert "not a message from the user" in note or "Summarize for the user" in note
+
+
+def test_empty_final_wind_down_runs_with_thinking_off() -> None:
+    # The wind-down leg is a tools-stripped "reply now": thinking is what it must not spend.
+    engine, decision = _run(
+        [
+            _tool_plan(),
+            _ToolPlan(result=GenerationResult(content="", finish_reason="stop")),
+            _ToolPlan(result=GenerationResult(content="Diagram done.", finish_reason="stop")),
+        ]
+    )
+
+    assert decision.completion_source == "model_winddown"
+    assert engine.requests[-1]["reasoning_effort"] == "none"
+    assert engine.requests[-1]["tools"] == []
+    assert engine.requests[0]["reasoning_effort"] != "none"
+
+
+def test_max_iterations_wind_down_runs_with_thinking_off() -> None:
+    # HB-022: the step-cap summary inherited the turn's thinking and reasoned for 434 s.
+    engine = _ToolLoopEngine(
+        plans=[
+            _tool_plan(),
+            _ToolPlan(result=GenerationResult(content="Progress so far.", finish_reason="stop")),
+        ]
+    )
+    router = _build_router(
+        engine=engine,
+        mcp_client=_StubMCPClient((_mermaid_descriptor(),)),
+        tools_mermaid_enabled=True,
+    )
+    decision = router.build_chat_decision(
+        request_id="req_max_iteration_thinking_off",
+        messages=[{"role": "user", "content": "Generate a diagram."}],
+        latest_user_content="Generate a diagram.",
+        mode="assist",
+        approvals_pre_granted=True,
+        runtime=LoopRuntime(request_id="req_max_iteration_thinking_off", max_iterations=1),
+    )
+
+    assert decision.completion_source == "model_winddown"
+    assert len(engine.requests) == 2
+    assert engine.requests[-1]["reasoning_effort"] == "none"
+    assert engine.requests[-1]["tools"] == []
+    assert engine.requests[0]["reasoning_effort"] != "none"

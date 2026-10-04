@@ -27,8 +27,6 @@
   const DEFAULT_HEIGHT_PX = 80;
   const DEFAULT_MIN_HEIGHT_PX = 60;
   const DEFAULT_TIMEOUT_MS = 5000;
-  const disconnectRegistries = new WeakMap();
-  const nodeDisconnectRegistries = new WeakMap();
   const directRenderGates = new WeakMap();
   let requestSequence = 0;
   const sanitizeMermaidPreviewSource = sanitizeUtils.sanitizeMermaidPreviewSource;
@@ -60,90 +58,11 @@
     return origin && origin !== 'null' ? origin : '*';
   }
 
-  function getDisconnectRegistry(windowRef, ownerDocument) {
-    if (!windowRef || !ownerDocument || typeof windowRef.MutationObserver !== 'function' || !ownerDocument.body) {
-      return null;
-    }
-    let registry = disconnectRegistries.get(ownerDocument);
-    if (registry) {
-      return registry;
-    }
-    const entries = new Set();
-    const observer = new windowRef.MutationObserver(function handleDisconnectMutations() {
-      for (const entry of Array.from(entries)) {
-        if (!entry.host.isConnected || !entry.iframe.isConnected) {
-          entries.delete(entry);
-          entry.onDisconnect();
-        }
-      }
-      if (!entries.size) {
-        observer.disconnect();
-        disconnectRegistries.delete(ownerDocument);
-      }
-    });
-    observer.observe(ownerDocument.body, { childList: true, subtree: true });
-    registry = { entries, observer };
-    disconnectRegistries.set(ownerDocument, registry);
-    return registry;
-  }
-
-  function registerDisconnectCheck(windowRef, ownerDocument, host, iframe, onDisconnect) {
-    const registry = getDisconnectRegistry(windowRef, ownerDocument);
-    if (!registry || typeof onDisconnect !== 'function') {
-      return function noopUnregister() {};
-    }
-    const entry = { host, iframe, onDisconnect };
-    registry.entries.add(entry);
-    return function unregister() {
-      registry.entries.delete(entry);
-      if (!registry.entries.size) {
-        registry.observer.disconnect();
-        disconnectRegistries.delete(ownerDocument);
-      }
-    };
-  }
-
-  function getNodeDisconnectRegistry(windowRef, ownerDocument) {
-    if (!windowRef || !ownerDocument || typeof windowRef.MutationObserver !== 'function' || !ownerDocument.body) {
-      return null;
-    }
-    let registry = nodeDisconnectRegistries.get(ownerDocument);
-    if (registry) {
-      return registry;
-    }
-    const entries = new Set();
-    const observer = new windowRef.MutationObserver(function handleNodeDisconnectMutations() {
-      for (const entry of Array.from(entries)) {
-        if (!entry.node.isConnected) {
-          entries.delete(entry);
-          entry.onDisconnect();
-        }
-      }
-      if (!entries.size) {
-        observer.disconnect();
-        nodeDisconnectRegistries.delete(ownerDocument);
-      }
-    });
-    observer.observe(ownerDocument.body, { childList: true, subtree: true });
-    registry = { entries, observer };
-    nodeDisconnectRegistries.set(ownerDocument, registry);
-    return registry;
-  }
-
-  function registerNodeDisconnectCheck(windowRef, ownerDocument, node, onDisconnect) {
-    const registry = getNodeDisconnectRegistry(windowRef, ownerDocument);
-    if (!registry || !node || typeof onDisconnect !== 'function') {
-      return function noopUnregister() {};
-    }
-    const entry = { node, onDisconnect };
-    registry.entries.add(entry);
-    return function unregister() {
-      registry.entries.delete(entry);
-      if (!registry.entries.size) {
-        registry.observer.disconnect();
-        nodeDisconnectRegistries.delete(ownerDocument);
-      }
-    };
+  function registerDisconnectCheck(windowRef, ownerDocument, isConnected, onDisconnect) {
+    // HTML frame utilities load later in the browser's deferred script list.
+    const frameUtils = globalThis.rendererHtmlArtifactFrameUtils
+      || (typeof require === 'function' ? require('./renderer-html-artifact-frame-utils') : null);
+    return frameUtils.registerDocumentDisconnect(windowRef, ownerDocument, isConnected, onDisconnect);
   }
 
   function createMermaidFrame(host, source, options = {}) {
@@ -341,7 +260,7 @@
     // Listener-before-append is deliberate: a cached local frame can dispatch
     // load (or its ready message) while appendChild is still on the stack.
     host.appendChild(iframe);
-    unregisterDisconnect = registerDisconnectCheck(windowRef, ownerDocument, host, iframe, function handleDisconnect() {
+    unregisterDisconnect = registerDisconnectCheck(windowRef, ownerDocument, () => host.isConnected && iframe.isConnected, function handleDisconnect() {
       teardown(false);
     });
     return dispose;
@@ -772,7 +691,7 @@
     }
 
     if (windowRef) {
-      unregisterDisconnect = registerNodeDisconnectCheck(windowRef, doc, previewNode, cleanupInteractiveControls);
+      unregisterDisconnect = registerDisconnectCheck(windowRef, doc, () => previewNode.isConnected, cleanupInteractiveControls);
     }
   }
 

@@ -1,6 +1,6 @@
 'use strict';
 
-const { normalizeString } = require('../renderer/shared/string-utils');
+const { normalizeString } = require('./shared/normalize');
 const { PROACTIVE_ERROR_CODES } = require('./backend/error-codes');
 const {
   MAX_PROACTIVE_REMINDER_LABEL_CHARS,
@@ -61,7 +61,11 @@ function normalizeRuntimeToolStatusMap(statusMap) {
       displayName: normalizeString(rawStatus.display_name || rawStatus.displayName || name) || name,
       sourceKind: normalizeString(rawStatus.source_kind || rawStatus.sourceKind),
       toolFamily: normalizeString(rawStatus.tool_family || rawStatus.toolFamily),
+      serverName: normalizeString(rawStatus.server_name || rawStatus.serverName),
+      connectionId: normalizeString(rawStatus.connection_id || rawStatus.connectionId),
     };
+    const sideEffecting = rawStatus.side_effecting ?? rawStatus.sideEffecting;
+    if (typeof sideEffecting === 'boolean') normalized[name].sideEffecting = sideEffecting;
   }
   return normalized;
 }

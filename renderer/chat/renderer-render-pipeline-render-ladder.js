@@ -24,6 +24,11 @@
       derived,
       renderReason,
     } = context;
+    // Split view W1-4a: the session this render's pane shows, resolved once by
+    // the caller; a caller that omits it is the one-pane app.
+    const paneSessionId = typeof context.paneSessionId === 'string'
+      ? context.paneSessionId
+      : String(state?.currentSessionId || '').trim();
 
     // Post-approval flicker RCA: every full render is charged to the FIRST
     // gate that was true, in the same order the ladder below tests them, so
@@ -42,7 +47,7 @@
         return 'thread_expansion';
       }
       const patchBlock = String(describeStreamRevealPatchBlock({
-        currentSessionId: state.currentSessionId,
+        currentSessionId: paneSessionId,
         messages,
         latestAssistantMessageId,
         structureSignature,
@@ -84,7 +89,7 @@
       return 'no_assistant';
     }
     const catchupState = renderReason === 'view_catchup'
-      ? (timelineVisibilityTracker?.consumeHiddenCatchup?.(state.currentSessionId) || { required: false })
+      ? (timelineVisibilityTracker?.consumeHiddenCatchup?.(paneSessionId) || { required: false })
       : { required: false };
     const catchupActive = catchupState.required === true;
     let catchupRenderCommitted = false;
@@ -95,13 +100,13 @@
       }
       catchupRenderCommitted = true;
       appendClientLog('INFO', 'timeline.catchup_patched', {
-        sessionId: state.currentSessionId,
+        sessionId: paneSessionId,
         streamId: catchupState.streamId || String(derived.streamingMessage?.streamId || ''),
         mode,
         hiddenRenderableEventCount: catchupState.hiddenRenderableEventCount || 0,
         ...extra,
       });
-      timelineVisibilityTracker?.markRenderCommitted?.(state.currentSessionId, { patched: true });
+      timelineVisibilityTracker?.markRenderCommitted?.(paneSessionId, { patched: true });
     }
 
     function markCatchupFullRenderFallback(reason, extra = {}) {
@@ -113,14 +118,14 @@
         reason === 'final_full_render' ? 'INFO' : 'WARN',
         'timeline.catchup_full_render_fallback',
         {
-          sessionId: state.currentSessionId,
+          sessionId: paneSessionId,
           streamId: catchupState.streamId || String(derived.streamingMessage?.streamId || ''),
           reason,
           hiddenRenderableEventCount: catchupState.hiddenRenderableEventCount || 0,
           ...extra,
         }
       );
-      timelineVisibilityTracker?.markRenderCommitted?.(state.currentSessionId, { patched: false });
+      timelineVisibilityTracker?.markRenderCommitted?.(paneSessionId, { patched: false });
     }
 
     function nextStreamingArticleRebuildSeq(turnId) {

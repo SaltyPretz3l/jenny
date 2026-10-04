@@ -368,6 +368,7 @@ class TranscriptPhaseCollector {
     const tokensAfter = Number(source.tokensAfter);
     const droppedMessages = Number(source.droppedMessages);
     const droppedBytes = Number(source.droppedBytes);
+    const summarySourceDroppedMessages = Number(source.summarySourceDroppedMessages);
     const occurredAt = String(source.occurredAt || '').trim();
     const stored = {
       strategy: String(source.strategy || '').trim().slice(0, 40),
@@ -383,6 +384,8 @@ class TranscriptPhaseCollector {
         ? Math.min(Number.MAX_SAFE_INTEGER, Math.max(0, Math.floor(droppedMessages))) : 0,
       droppedBytes: Number.isFinite(droppedBytes)
         ? Math.min(Number.MAX_SAFE_INTEGER, Math.max(0, Math.floor(droppedBytes))) : 0,
+      summarySourceDroppedMessages: Number.isFinite(summarySourceDroppedMessages)
+        ? Math.min(Number.MAX_SAFE_INTEGER, Math.max(0, Math.floor(summarySourceDroppedMessages))) : 0,
       summaryPersisted: Boolean(source.summaryPersisted),
       historyScopeFallback: String(source.historyScopeFallback || '').trim().slice(0, 40),
       summaryExcerpt: String(source.summaryExcerpt || '').trim().slice(0, 1200),

@@ -182,12 +182,12 @@ test('pretext full renders add predicted-height metadata and clear temporary min
   assert.equal(assistantArticle.style.minHeight, '');
 });
 
-// Skipped pending coalesced-turn refactor: same root cause as
-// renderer-artifacts-shell-navigation "artifact jumps for compat-only tool
-// nodes". Asserts a [data-row-kind="tool_step"] inside the assistant article,
-// which currently lives in its own tool_use article (per
-// renderer-turn-compat.test.js segmented contract).
-test('pretext full renders keep predicted-height metadata on projected tool shells', { skip: 'pending coalesced-turn refactor (contradicts renderer-turn-compat segmented expectation)' }, async (t) => {
+// Segmented contract (tests/renderer-turn-compat.test.js "completed segmented
+// turns render source-owned articles"): the tool call renders as a tool_call
+// row inside its own tool_use article, and that projected tool shell carries the
+// same pretext predicted-height metadata as the assistant article. Un-skipped
+// 2026-09-25 against the settled contract (the coalesced tool_step shape is gone).
+test('pretext full renders keep predicted-height metadata on projected tool shells', async (t) => {
   const { window, shell } = await loadRendererTestApp(t, {
     shell: {
       features: {
@@ -252,11 +252,14 @@ test('pretext full renders keep predicted-height metadata on projected tool shel
   });
   await waitForUi(window, 60);
 
-  const turnArticle = timeline.querySelector('[data-message-id="assistant_tool_pretext"]');
-  assert.ok(turnArticle, 'completed tool turns should stay anchored to the primary assistant message');
+  const turnArticle = timeline.querySelector('article[data-message-id="assistant_tool_pretext"]');
+  const toolArticle = timeline.querySelector('article[data-message-id="tool_use_tool_pretext"]');
+  assert.ok(turnArticle, 'the assistant text keeps its own article');
+  assert.ok(toolArticle, 'the tool call renders on its source-owned tool_use article');
   assert.match(String(turnArticle.getAttribute('data-predicted-height') || ''), /^\d+$/);
-  assert.ok(turnArticle.querySelector('.turn-row-list[data-turn-row-list="true"]'));
-  assert.ok(turnArticle.querySelector('[data-row-kind="tool_step"][data-tool-call-id="call_tool_pretext"]'));
+  assert.match(String(toolArticle.getAttribute('data-predicted-height') || ''), /^\d+$/);
+  assert.ok(toolArticle.querySelector('.turn-row-list[data-turn-row-list="true"]'));
+  assert.ok(toolArticle.querySelector('[data-row-kind="tool_call"][data-tool-call-id="call_tool_pretext"]'));
 });
 
 test('pretext stream patches keep predicted-height metadata on the streaming assistant article', async (t) => {
@@ -715,15 +718,12 @@ test('active-turn row-aware patch keeps sibling turn roots stable when tool rows
   );
 });
 
-// Skipped pending live/hydrated turn-id reconciliation: the live row's
-// turn_id is the click-derived local id while the hydrated canonical row's
-// turn_id is the streamId, so the buildRowId-derived data-row-id naturally
-// diverges across the streaming → hydrated transition. Reconciliation
-// preserves row_id but not turn_id, and the buildRowId derivation cannot
-// honor an explicit row_id without regressing the tested data-row-id format
-// in renderer-turn-row-render-utils / renderer-turn-article tests. Re-enable
-// when the turn_id namespace is unified across live/canonical projections.
-test('row-model tool shells preserve their row id across terminal reconciliation', { skip: 'pending live/hydrated turn_id reconciliation (turn_id divergence prevents stable data-row-id across transition)' }, async (t) => {
+// Un-skipped 2026-09-25: the live and hydrated projections now share the
+// streamId as turn_id, so the tool_call row keeps one data-row-id
+// (<streamId>:tool_call:<callId>) across the streaming -> hydrated transition,
+// even though the source-owned tool_use article is re-keyed from the live
+// message id to the canonical one (segmented contract, renderer-turn-compat).
+test('row-model tool shells preserve their row id across terminal reconciliation', async (t) => {
   const { window, shell } = await loadRendererTestApp(t);
   const input = window.document.getElementById('chatInput');
   const sendButton = window.document.getElementById('sendButton');
@@ -755,11 +755,11 @@ test('row-model tool shells preserve their row id across terminal reconciliation
   await waitForUi(window, 60);
 
   const provisionalToolRow = timeline.querySelector(
-    '[data-message-id="assistant_stream-batch5-dom"] [data-row-kind="tool_step"][data-tool-call-id="call_batch5_dom"]'
+    '[data-row-kind="tool_call"][data-tool-call-id="call_batch5_dom"]'
   );
   assert.ok(provisionalToolRow, 'tool shell should render during the provisional row-model phase');
   const provisionalRowId = provisionalToolRow.getAttribute('data-row-id');
-  assert.ok(provisionalRowId && provisionalRowId !== 'shell:tool_use_call_batch5_dom');
+  assert.equal(provisionalRowId, 'stream-batch5-dom:tool_call:call_batch5_dom');
 
   shell.__state.messagesBySession.set('session-1', [
     { id: 'user_stream-batch5-dom', role: 'user', content: 'Use a tool', status: 'complete' },
@@ -808,9 +808,9 @@ test('row-model tool shells preserve their row id across terminal reconciliation
   await waitForUi(window, 80);
 
   const hydratedToolRow = timeline.querySelector(
-    '[data-message-id="assistant_stream-batch5-dom"] [data-row-kind="tool_step"][data-tool-call-id="call_batch5_dom"]'
+    '[data-row-kind="tool_call"][data-tool-call-id="call_batch5_dom"]'
   );
-  assert.ok(hydratedToolRow, 'the hydrated turn article should still render the tool row after terminal hydration');
+  assert.ok(hydratedToolRow, 'the hydrated tool_use article should still render the tool row after terminal hydration');
   assert.equal(hydratedToolRow.getAttribute('data-row-id'), provisionalRowId);
   assert.equal(
     window.__rendererState.ui.chatTimelineLiveStateBySession.has('session-1'),

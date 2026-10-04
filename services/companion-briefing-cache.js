@@ -3,7 +3,7 @@ const {
   readGitSnapshot,
   resolveTimeZone,
 } = require('./proactive/briefing');
-const { normalizeString } = require('../renderer/shared/string-utils');
+const { normalizeString } = require('./shared/normalize');
 
 function buildBriefingCacheKey({
   dateKey,
@@ -49,7 +49,7 @@ function createDailyBriefingCache({
     try {
       const snapshot = await promise;
       if (gitEntry?.key === key && gitEntry?.promise === promise) {
-        gitEntry = { key, promise: null, snapshot };
+        gitEntry = snapshot?.retryable === true ? null : { key, promise: null, snapshot };
       }
       return snapshot;
     } catch (error) {

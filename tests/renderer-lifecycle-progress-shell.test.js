@@ -112,114 +112,130 @@ test('startup overlay uses the quiet-curtain tokens and plain text status host',
   );
 
   const rootTokenBlock = startupCss.match(/:root\s*\{[\s\S]*?\}/)?.[0] || '';
-  assert.equal((rootTokenBlock.match(/--startup-[a-z-]+:/g) || []).length, 8);
-  assert.match(startupCss, /transition: opacity 360ms/);
+  assert.deepEqual((rootTokenBlock.match(/--startup-[a-z-]+:/g) || []), ['--startup-bg:', '--startup-fade-ms:']);
+  assert.match(startupCss, /transition: opacity var\(--startup-fade-ms\)/);
   assert.doesNotMatch(startupCss, /startup-overlay-status-row/);
 });
 
-test('startup overlay progress markup exposes determinate progress', () => {
+test('startup overlay markup has no progress bar and names the line as its label', () => {
   const indexMarkup = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
+  const curtainMarkup = indexMarkup.slice(indexMarkup.indexOf('id="startupOverlay"'), indexMarkup.indexOf('id="appShell"'));
 
-  assert.match(indexMarkup, /id="startupOverlayProgressBar"/);
-  assert.match(indexMarkup, /role="progressbar"/);
-  assert.match(indexMarkup, /aria-valuemin="0"/);
-  assert.match(indexMarkup, /aria-valuemax="100"/);
-  assert.match(indexMarkup, /aria-valuenow="0"/);
-  assert.doesNotMatch(indexMarkup, /startup-progress-bar" aria-hidden="true"/);
+  assert.doesNotMatch(curtainMarkup, /role="progressbar"/);
+  assert.doesNotMatch(curtainMarkup, /startupOverlayProgress/);
+  assert.match(curtainMarkup, /aria-labelledby="startupOverlaySublabel"/);
+  assert.match(curtainMarkup, /data-i18n="setup\.startup\.restoringChats"/);
 });
 
-test('lifecycle progress updates startup overlay progress fill and accessible value', () => {
+test('curtain message ignores detail, and load facts are read from phase keys, never sentences', () => {
   const previousSetTimeout = global.setTimeout;
   const previousClearTimeout = global.clearTimeout;
   global.setTimeout = () => 0;
   global.clearTimeout = () => {};
 
   try {
-    const startupCard = createClassListHost();
-    const startupProgressBar = createClassListHost();
-    const startupProgressFill = createClassListHost();
-    const startupOverlay = createClassListHost([], {
-      selectors: {
-        '.startup-card': startupCard,
-        '#startupOverlayProgressBar': startupProgressBar,
-        '#startupOverlayProgressFill': startupProgressFill,
-      },
-    });
-    const startupOverlayLabel = createClassListHost();
-    startupOverlayLabel.textContent = 'Starting Jenny';
+    const startupOverlay = createClassListHost();
     const startupOverlaySublabel = createClassListHost();
     const startupOverlaySecondary = createClassListHost();
     const state = {
+      ui: { activeView: 'chat' },
       lifecycleProgress: {
-        active: false,
-        scenario: '',
-        phase: '',
-        detail: '',
-        stepIndex: 0,
-        stepCount: 0,
-        percent: 0,
-        startedAt: 0,
-        error: '',
+        active: false, scenario: '', phase: '', startedAt: 0, error: '',
       },
     };
     const controller = createLifecycleProgressController({
       state,
-      constants: {
-        ACTIVITY_SCOPE: {
-          lifecycleStartup: 'lifecycle.startup',
-          lifecycleShutdown: 'lifecycle.shutdown',
-          lifecycleModelSwitch: 'lifecycle.model-switch',
-        },
-      },
-      dom: {
-        startupOverlay,
-        startupOverlayLabel,
-        startupOverlaySublabel,
-        startupOverlaySecondary,
-      },
-      callbacks: {
-        beginActivity() {},
-        resolveActivity() {},
-        failActivity() {},
-        onStartupReady() {},
-        setTurnStatusPill() {},
-        clearTurnStatusPill() {},
-      },
+      constants: { ACTIVITY_SCOPE: {} },
+      dom: { startupOverlay, startupOverlaySublabel, startupOverlaySecondary },
+      callbacks: { onStartupReady() {} },
     });
 
     controller.handleLifecycleProgress({
-      scenario: 'startup',
-      phase: 'sidecar_initialize',
-      detail: 'Initializing engine...',
-      stepIndex: 4,
-      stepCount: 7,
-      percent: 57,
-      error: '',
+      scenario: 'startup', phase: 'sidecar_initialize', detail: 'Initializing engine...', stepIndex: 4, stepCount: 7, percent: 57, error: '',
     });
+    assert.equal(startupOverlaySublabel.textContent, 'Restoring your chats', 'detail is dropped from the curtain');
+    assert.equal(startupOverlay.getAttribute('data-percent'), undefined);
 
-    assert.equal(startupProgressFill.style.width, '57%');
-    assert.equal(startupProgressBar.getAttribute('aria-valuenow'), '57');
-
-    controller.handleBackendStatus({
-      phase: 'model_acquiring',
-      model_acquisition: { percent: 70, status: 'Downloading ornith:9b' },
+    // Main's wire shape since 2026-09-29: a phase key and facts, no sentence.
+    controller.handleLifecycleProgress({
+      scenario: 'startup', phase: 'model_loading', facts: { modelId: 'qwen3:8b', elapsedMs: 420 }, error: '', timestamp: 1,
     });
-    const acquisitionPercent = state.lifecycleProgress.percent;
-    controller.handleBackendStatus({
-      phase: 'model_acquiring',
-      model_acquisition: { percent: 20, status: 'stale progress' },
-    });
-    assert.equal(state.lifecycleProgress.percent, acquisitionPercent, 'progress never regresses');
-
-    controller.handleBackendStatus({ phase: 'model_unavailable' });
-    assert.equal(state.lifecycleProgress.phase, 'model_unavailable');
-    assert.equal(startupOverlay.getAttribute('data-state'), 'blocked');
-    assert.equal(startupOverlayLabel.textContent, 'Starting Jenny', 'accessible label stays immutable');
-    assert.match(startupOverlaySublabel.textContent, /Model failed to load/);
-    assert.match(startupOverlaySecondary.textContent, /configured model is unavailable/i);
+    assert.equal(state.lifecycleProgress.modelId, 'qwen3:8b');
+    assert.equal(state.lifecycleProgress.phase, 'model_loading');
   } finally {
     global.setTimeout = previousSetTimeout;
     global.clearTimeout = previousClearTimeout;
+  }
+});
+
+test('curtain line reads Restoring your chats, then Opening {view} once the session list is loaded', () => {
+  const previousSetTimeout = global.setTimeout;
+  const previousClearTimeout = global.clearTimeout;
+  const scheduled = [];
+  global.setTimeout = (cb, delay) => { scheduled.push({ cb, delay }); return scheduled.length; };
+  global.clearTimeout = () => {};
+  try {
+    const startupOverlaySublabel = createClassListHost();
+    const state = {
+      ui: { activeView: 'chat' },
+      sessionListLoaded: false,
+      lifecycleProgress: { active: false, scenario: '', startedAt: 0 },
+    };
+    createLifecycleProgressController({
+      state,
+      constants: { ACTIVITY_SCOPE: {} },
+      dom: { startupOverlay: createClassListHost(), startupOverlaySublabel, startupOverlaySecondary: createClassListHost() },
+      callbacks: { onStartupReady() {} },
+    });
+    assert.equal(startupOverlaySublabel.textContent, 'Restoring your chats');
+    state.sessionListLoaded = true;
+    const refresh = scheduled.find((entry) => entry.delay === 250);
+    assert.ok(refresh, 'the line re-reads the shell state while the curtain is up');
+    refresh.cb();
+    assert.equal(startupOverlaySublabel.textContent, 'Opening Chat');
+    state.ui.activeView = 'logs';
+    scheduled.filter((entry) => entry.delay === 250).pop().cb();
+    assert.equal(startupOverlaySublabel.textContent, 'Opening Diagnostics');
+  } finally {
+    global.setTimeout = previousSetTimeout;
+    global.clearTimeout = previousClearTimeout;
+  }
+});
+
+test('slow state adds the second line without re-centring: the action row is reserved from the start', () => {
+  const previousSetTimeout = global.setTimeout;
+  const previousClearTimeout = global.clearTimeout;
+  const previousSlow = globalThis.__JENNY_STARTUP_OVERLAY_SLOW_MS;
+  const scheduled = [];
+  global.setTimeout = (cb, delay) => { scheduled.push({ cb, delay }); return scheduled.length; };
+  global.clearTimeout = () => {};
+  globalThis.__JENNY_STARTUP_OVERLAY_SLOW_MS = 8;
+  try {
+    const actions = createClassListHost(['startup-overlay-actions']);
+    const startupOverlay = createClassListHost([], { selectors: { '#startupOverlayActions': actions } });
+    const startupOverlaySecondary = createClassListHost(['startup-overlay-secondary']);
+    createLifecycleProgressController({
+      state: { ui: { activeView: 'chat' }, lifecycleProgress: { active: false, scenario: '', startedAt: 0 } },
+      constants: { ACTIVITY_SCOPE: {} },
+      dom: { startupOverlay, startupOverlaySublabel: createClassListHost(), startupOverlaySecondary },
+      callbacks: { onStartupReady() {} },
+    });
+    assert.equal(actions.classList.contains('startup-overlay-actions'), true);
+    scheduled.find((entry) => entry.delay === 8).cb();
+    assert.equal(startupOverlay.getAttribute('data-state'), 'slow');
+    assert.equal(startupOverlaySecondary.textContent, 'Taking longer than usual');
+    assert.equal(actions.classList.contains('startup-overlay-actions'), true, 'the same reserved row carries Continue anyway');
+
+    const css = fs.readFileSync(path.join(__dirname, '..', 'styles', 'startup-overlay.css'), 'utf8');
+    const rowRule = css.match(/\.startup-overlay-actions\s*\{([\s\S]*?)\}/)?.[1] || '';
+    assert.match(rowRule, /min-height:\s*32px/);
+    assert.doesNotMatch(css, /\.startup-overlay-actions:empty/, 'the row never collapses, so nothing re-centres');
+    const secondaryRule = css.match(/\.startup-overlay-secondary\s*\{([\s\S]*?)\}/)?.[1] || '';
+    assert.match(secondaryRule, /min-height:/);
+  } finally {
+    global.setTimeout = previousSetTimeout;
+    global.clearTimeout = previousClearTimeout;
+    globalThis.__JENNY_STARTUP_OVERLAY_SLOW_MS = previousSlow;
   }
 });
 
@@ -272,8 +288,6 @@ test('startup overlay skips pointer tilt handlers when reduced motion is request
         resolveActivity() {},
         failActivity() {},
         onStartupReady() {},
-        setTurnStatusPill() {},
-        clearTurnStatusPill() {},
       },
     });
 
@@ -286,7 +300,7 @@ test('startup overlay skips pointer tilt handlers when reduced motion is request
   }
 });
 
-test('lifecycle progress publishes startup status to the turn-status pill and keeps the legacy strip hidden', () => {
+test('lifecycle progress keeps the curtain status plain text and renderer-owned', () => {
   const previousInventory = global.inventory;
   const previousSetTimeout = global.setTimeout;
   const previousClearTimeout = global.clearTimeout;
@@ -304,7 +318,6 @@ test('lifecycle progress publishes startup status to the turn-status pill and ke
     const startupOverlay = createClassListHost();
     const startupOverlayLabel = createClassListHost();
     const startupOverlaySublabel = createClassListHost();
-    const pillUpdates = [];
     const state = {
       lifecycleProgress: {
         active: false,
@@ -337,8 +350,6 @@ test('lifecycle progress publishes startup status to the turn-status pill and ke
         resolveActivity() {},
         failActivity() {},
         onStartupReady() {},
-        setTurnStatusPill(source, payload) { pillUpdates.push({ source, payload }); },
-        clearTurnStatusPill() {},
       },
     });
 
@@ -352,18 +363,9 @@ test('lifecycle progress publishes startup status to the turn-status pill and ke
       error: '',
     });
 
-    // The curtain status is deliberately plain text; inventory status rows
-    // remain reserved for the legacy lifecycle pill/banner surfaces.
-    assert.equal(startupOverlaySublabel.textContent, 'Initializing engine...');
+    // The curtain status is deliberately plain text and renderer-owned.
+    assert.equal(startupOverlaySublabel.textContent, 'Restoring your chats');
     assert.equal(startupOverlaySublabel.innerHTML, '');
-    // Pill received the startup lifecycle update.
-    const startupPillUpdates = pillUpdates.filter((entry) => entry.source === 'lifecycle.startup');
-    assert.ok(startupPillUpdates.length >= 1);
-    const lastStartupUpdate = startupPillUpdates[startupPillUpdates.length - 1];
-    assert.equal(lastStartupUpdate.payload.tone, 'pending');
-    assert.match(lastStartupUpdate.payload.message, /Initializing engine/);
-    assert.equal(lastStartupUpdate.payload.spinner, true);
-    assert.equal(lastStartupUpdate.payload.progressPercent, 57);
   } finally {
     global.inventory = previousInventory;
     global.setTimeout = previousSetTimeout;
@@ -421,8 +423,6 @@ test('lifecycle progress keeps fatal state until authoritative backend recovery'
         resolveActivity() {},
         failActivity() {},
         onStartupReady() {},
-        setTurnStatusPill() {},
-        clearTurnStatusPill() {},
       },
     });
 
@@ -438,8 +438,8 @@ test('lifecycle progress keeps fatal state until authoritative backend recovery'
     });
 
     assert.equal(startupOverlay.getAttribute('data-state'), 'error');
-    assert.equal(startupOverlaySublabel.textContent, 'Startup failed');
-    assert.match(startupOverlaySecondary.textContent, /Connection failed/);
+    assert.equal(startupOverlaySublabel.textContent, 'Jenny could not start');
+    assert.match(startupOverlaySecondary.textContent, /Retry restarts the engine/);
 
     // A late progress event alone cannot prove recovery from the fatal state.
     controller.handleLifecycleProgress({
@@ -456,7 +456,7 @@ test('lifecycle progress keeps fatal state until authoritative backend recovery'
 
     controller.handleBackendStatus({ phase: 'sidecar_spawned', detail: 'Initializing engine...' });
     assert.equal(startupOverlay.getAttribute('data-state'), undefined);
-    assert.match(startupOverlaySublabel.textContent, /Initializing engine/);
+    assert.equal(startupOverlaySublabel.textContent, 'Restoring your chats');
   } finally {
     global.inventory = previousInventory;
     global.setTimeout = previousSetTimeout;
@@ -464,79 +464,48 @@ test('lifecycle progress keeps fatal state until authoritative backend recovery'
   }
 });
 
-test('lifecycle progress dispose() tears down the startup circuit-trace rAF loop', (t) => {
-  const core = require('../renderer/shell/renderer-circuit-trace-core.js');
-  const prev = {
-    core: globalThis.rendererCircuitTraceCore,
-    raf: globalThis.requestAnimationFrame,
-    caf: globalThis.cancelAnimationFrame,
-  };
-  globalThis.rendererCircuitTraceCore = core;
-
-  let nextId = 1;
+test('lifecycle progress dispose() tears down the startup starfield rAF loop', (t) => {
+  const { JSDOM } = require('jsdom');
+  const dom = new JSDOM('<!doctype html><html><body><div id="startupOverlay">'
+    + '<canvas id="startupOverlaySky"></canvas><div class="startup-overlay-wordmark">Jenny</div>'
+    + '<div id="startupOverlaySublabel"></div></div></body></html>', { pretendToBeVisual: true });
+  const previousStarfield = globalThis.rendererStartupStarfield;
+  globalThis.rendererStartupStarfield = require('../renderer/shell/renderer-startup-starfield.js');
+  t.after(() => {
+    globalThis.rendererStartupStarfield = previousStarfield;
+    dom.window.close();
+  });
   const frames = new Map();
-  globalThis.requestAnimationFrame = (cb) => { const id = nextId++; frames.set(id, cb); return id; };
-  globalThis.cancelAnimationFrame = (id) => { frames.delete(id); };
+  let nextId = 1;
+  dom.window.requestAnimationFrame = (cb) => { const id = nextId++; frames.set(id, cb); return id; };
+  dom.window.cancelAnimationFrame = (id) => { frames.delete(id); };
+  dom.window.HTMLCanvasElement.prototype.getContext = () => ({
+    setTransform() {}, clearRect() {}, beginPath() {}, arc() {}, fill() {}, fillStyle: '', globalAlpha: 1,
+  });
   const flush = (ts) => {
     const pending = Array.from(frames.values());
     frames.clear();
     pending.forEach((cb) => cb(ts));
   };
 
-  t.after(() => {
-    globalThis.rendererCircuitTraceCore = prev.core;
-    globalThis.requestAnimationFrame = prev.raf;
-    globalThis.cancelAnimationFrame = prev.caf;
-  });
-
-  function makeCtx() {
-    return {
-      save() {}, restore() {}, scale() {}, clearRect() {}, beginPath() {},
-      moveTo() {}, lineTo() {}, stroke() {}, arc() {}, fill() {},
-      set strokeStyle(v) {}, set lineCap(v) {}, set lineWidth(v) {}, set lineJoin(v) {},
-      set globalAlpha(v) {}, set fillStyle(v) {}, set shadowColor(v) {}, set shadowBlur(v) {},
-      set globalCompositeOperation(v) {},
-    };
-  }
-  function makeOverlay() {
-    const overlay = {
-      firstChild: null,
-      style: { setProperty() {} },
-      classList: { add() {}, remove() {}, contains() { return false; } },
-      addEventListener() {}, removeEventListener() {},
-      getBoundingClientRect() { return { left: 0, top: 0, width: 200, height: 200 }; },
-      querySelector() { return null; },
-      insertBefore(node) { node.parentNode = overlay; return node; },
-    };
-    const win = { devicePixelRatio: 1, getComputedStyle() { return { getPropertyValue() { return ''; } }; } };
-    overlay.ownerDocument = {
-      defaultView: win,
-      createElement() {
-        return {
-          className: '', width: 0, height: 0, style: {}, parentNode: overlay,
-          classList: { add() {}, remove() {}, contains() { return false; } },
-          getContext() { return makeCtx(); },
-        };
-      },
-    };
-    return overlay;
-  }
-
   const controller = createLifecycleProgressController({
     state: { lifecycleProgress: { active: false, scenario: '', startedAt: 0 } },
     constants: { ACTIVITY_SCOPE: {} },
-    dom: { startupOverlay: makeOverlay() },
-    callbacks: { onStartupReady() {}, setTurnStatusPill() {}, clearTurnStatusPill() {} },
+    dom: {
+      startupOverlay: dom.window.document.getElementById('startupOverlay'),
+      startupOverlaySublabel: dom.window.document.getElementById('startupOverlaySublabel'),
+    },
+    callbacks: { onStartupReady() {} },
   });
 
-  assert.ok(frames.size > 0, 'circuit-trace should schedule a frame at construction');
-  flush(16); // drains the one-shot "ready" frame; the draw loop reschedules itself
-  assert.ok(frames.size > 0, 'circuit-trace loop should keep rescheduling while visible');
+  assert.ok(frames.size > 0, 'the starfield should schedule a frame at construction');
+  flush(16);
+  assert.ok(frames.size > 0, 'the starfield loop keeps rescheduling while visible');
 
   controller.dispose();
-  assert.equal(frames.size, 0, 'dispose() must cancel the live circuit-trace frame');
+  assert.equal(frames.size, 0, 'dispose() must cancel the live starfield frame');
   flush(32);
-  assert.equal(frames.size, 0, 'no circuit-trace frame should be scheduled after dispose()');
+  assert.equal(frames.size, 0, 'no starfield frame should be scheduled after dispose()');
 });
 
 function createStartupGateController(activeView, callbacks = {}) {
@@ -581,8 +550,6 @@ function createStartupGateController(activeView, callbacks = {}) {
       resolveActivity() {},
       failActivity() {},
       onStartupReady() {},
-      setTurnStatusPill() {},
-      clearTurnStatusPill() {},
       retryBackendStart: callbacks.retryBackendStart,
     },
   });
@@ -605,6 +572,7 @@ test('startup overlay holds for the Home boot view until it reports ready', () =
     );
 
     controller.notifyBootViewReady();
+    controller.notifyShellHydrated();
     assert.equal(
       startupOverlay.classList.contains('hidden'),
       true,
@@ -631,6 +599,7 @@ test('startup overlay requires first usable render for non-Home boot views too',
       'backend readiness alone cannot dismiss a restored view'
     );
     controller.notifyBootViewReady();
+    controller.notifyShellHydrated();
     assert.equal(startupOverlay.classList.contains('hidden'), true);
   } finally {
     global.setTimeout = previousSetTimeout;
@@ -668,6 +637,35 @@ test('startup overlay surfaces a backend failure immediately (UIUX-021: as a mod
     assert.equal(startupOverlayRetryButton.classList.contains('hidden'), false);
     assert.equal(startupOverlayRetryButton.disabled, false);
     assert.equal(startupOverlayRetryButton.__focusCalls >= 1, true, 'focus must transfer onto the dialog/Retry control');
+  } finally {
+    global.setTimeout = previousSetTimeout;
+    global.clearTimeout = previousClearTimeout;
+    global.window = previousWindow;
+  }
+});
+
+test('a startup error after the curtain has lifted does not resurrect it as a modal (the shell is already in use)', () => {
+  const previousSetTimeout = global.setTimeout;
+  const previousClearTimeout = global.clearTimeout;
+  const previousWindow = global.window;
+  global.setTimeout = () => 0;
+  global.clearTimeout = () => {};
+  global.window = { jennyShell: null };
+  try {
+    const { controller, startupOverlay, startupOverlayRetryButton } = createStartupGateController('home');
+    controller.notifyBootViewReady();
+    controller.notifyShellHydrated();
+    assert.equal(startupOverlay.classList.contains('hidden'), true, 'the curtain lifts on the shell, before the backend is done');
+
+    controller.handleLifecycleProgress({
+      scenario: 'startup', phase: 'sidecar_initialize', facts: {}, error: 'sidecar crashed', timestamp: 2,
+    });
+    assert.notEqual(startupOverlay.getAttribute('role'), 'alertdialog', 'a lifted curtain never becomes the alertdialog');
+    assert.equal(startupOverlayRetryButton.classList.contains('hidden'), true, 'Retry stays on the pill and its toasts, not on a curtain nobody sees');
+    assert.equal(Boolean(startupOverlayRetryButton.__focusCalls), false);
+
+    controller.handleBackendStatus({ phase: 'failed', detail: 'sidecar crashed' });
+    assert.notEqual(startupOverlay.getAttribute('role'), 'alertdialog');
   } finally {
     global.setTimeout = previousSetTimeout;
     global.clearTimeout = previousClearTimeout;

@@ -12,7 +12,25 @@
     const {
       appendClientLog,
       getRendererElapsedMs,
+      // Split view W3-1: re-syncs the composer of the non-zero pane showing a
+      // session (the pane composition's composer route; a no-op with one pane).
+      renderSessionComposer = () => {},
+      // Pane 0's notice host (no argument: #composerStatusNotice).
+      renderComposerStatusNotice = () => {},
     } = deps.callbacks;
+
+    // A keyed notice paints under the pane showing its session. Nothing else
+    // re-renders that pane's composer when the slot changes (a rejected paste
+    // fires no input event), so a write that sets or drops a keyed notice
+    // routes a composer sync to the session(s) involved -- and repaints pane
+    // 0's host, which may have held the slot before (gate §D: a notice moving
+    // to pane 1 left pane 0's copy up until pane 0's next composer render).
+    function syncKeyedNoticePanes(previousSessionId) {
+      const nextSessionId = String(state.ui.composerStatusNoticeSessionId || '').trim();
+      if (previousSessionId) renderSessionComposer(previousSessionId);
+      if (nextSessionId && nextSessionId !== previousSessionId) renderSessionComposer(nextSessionId);
+      if (previousSessionId || nextSessionId) renderComposerStatusNotice();
+    }
     function getMultiStreamController() {
       return globalThis.rendererMultiStreamController || null;
     }
@@ -159,12 +177,16 @@
       ) {
         return;
       }
+      const previousSessionId = String(state.ui.composerStatusNoticeSessionId || '').trim();
       state.ui.composerStatusNotice = nextMessage;
       state.ui.composerStatusNoticeAt = timestamp;
       state.ui.composerStatusNoticeOwner = owner;
       state.ui.composerStatusNoticeTone = normalizeComposerNoticeTone(resolvedOptions.tone);
       state.ui.composerStatusNoticeSpinner = resolvedOptions.spinner === true;
       state.ui.composerStatusNoticeBadgeText = String(resolvedOptions.badgeText || '').trim();
+      // Split view W3-1: the session the notice belongs to ('' = unkeyed, pane 0's).
+      state.ui.composerStatusNoticeSessionId = String(resolvedOptions.sessionId || '').trim();
+      syncKeyedNoticePanes(previousSessionId);
     }
 
     function clearComposerStatusNotice(options) {
@@ -173,12 +195,15 @@
       if (owner && state.ui.composerStatusNoticeOwner && state.ui.composerStatusNoticeOwner !== owner) {
         return;
       }
+      const previousSessionId = String(state.ui.composerStatusNoticeSessionId || '').trim();
       state.ui.composerStatusNotice = '';
       state.ui.composerStatusNoticeAt = 0;
       state.ui.composerStatusNoticeOwner = '';
       state.ui.composerStatusNoticeTone = 'default';
       state.ui.composerStatusNoticeSpinner = false;
       state.ui.composerStatusNoticeBadgeText = '';
+      state.ui.composerStatusNoticeSessionId = '';
+      syncKeyedNoticePanes(previousSessionId);
     }
 
     function getActiveSendPreflight() {

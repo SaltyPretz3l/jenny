@@ -32,7 +32,7 @@
 
 .cal-week__head-cell[data-today="true"] .cal-week__head-date {
   color: color-mix(in srgb, var(--home-live-accent) 80%, var(--text-primary));
-  font-weight: 700;
+  font-weight: 500;
 }
 
 .cal-week__allday {
@@ -212,7 +212,7 @@
 
 .cal-event__title {
   font-size: var(--font-size-xs);
-  font-weight: 700;
+  font-weight: 500;
 }
 
 .cal-event__time {
@@ -264,10 +264,10 @@
 
 .cal-week__empty-title {
   color: var(--text-primary);
-  font-size: var(--font-size-lg);
-  font-weight: 700;
+  font-size: var(--font-size-heading);
+  font-weight: 500;
 }
 
 .cal-week__empty-hint {
-  font-size: var(--font-size-sm);
+  font-size: var(--font-size-footnote);
 }

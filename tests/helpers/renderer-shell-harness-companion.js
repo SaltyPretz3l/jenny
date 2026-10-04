@@ -66,28 +66,6 @@ function createDefaultCompanionState() {
   };
 }
 
-function buildSourceLabel(followUp) {
-  if (String(followUp.sessionId || '').trim()) {
-    return 'Linked to Session';
-  }
-  if (String(followUp.sourceKind || '').trim() === 'agent_task') {
-    return 'Tracked from an agent task';
-  }
-  if (String(followUp.sourceKind || '').trim() === 'assistant_reply') {
-    return 'Saved from an assistant reply';
-  }
-  if (String(followUp.sourceKind || '').trim() === 'proactive_suggestion') {
-    return 'Saved from a proactive suggestion';
-  }
-  if (String(followUp.sourceKind || '').trim() === 'reminder') {
-    return 'Promoted from a reminder';
-  }
-  if (String(followUp.sourceKind || '').trim() === 'manual') {
-    return 'Saved manually';
-  }
-  return '';
-}
-
 function buildSourceBadge(followUp) {
   if (String(followUp.sourceKind || '').trim() === 'agent_task') {
     return 'Agent task';
@@ -111,6 +89,7 @@ function resolveSessionMeta(followUp, companionState) {
   const sessionId = String(followUp.sessionId || '').trim();
   if (!sessionId) {
     return {
+      sessionState: '',
       sessionTitle: '',
       sessionBadge: '',
       contextLine: '',
@@ -131,6 +110,7 @@ function resolveSessionMeta(followUp, companionState) {
   const sessionTitle = String(sourceMeta.sessionTitle || sourceMeta.sessionLabel || '').trim();
   if (sessionId === activeSessionId) {
     return {
+      sessionState: 'current',
       sessionTitle,
       sessionBadge: 'Current session',
       contextLine: '',
@@ -138,29 +118,18 @@ function resolveSessionMeta(followUp, companionState) {
   }
   if (openSessionIds.has(sessionId)) {
     return {
+      sessionState: 'open',
       sessionTitle,
       sessionBadge: 'Open session',
       contextLine: sessionTitle,
     };
   }
   return {
+    sessionState: 'saved',
     sessionTitle,
     sessionBadge: 'Saved from session',
     contextLine: sessionTitle,
   };
-}
-
-function buildContinueAction(followUp, label = 'Resume this thread') {
-  if (!String(followUp.sessionId || '').trim()) {
-    return [];
-  }
-  return [{
-    id: `continue_follow_up:${followUp.id}`,
-    type: 'continue_session',
-    label,
-    sessionId: followUp.sessionId,
-    followUpId: followUp.id,
-  }];
 }
 
 function toComparableTimestamp(value) {
@@ -267,179 +236,82 @@ function normalizeFollowUp(followUp) {
   };
 }
 
-function toActiveFollowUpLoop(followUp, companionState) {
-  const sessionMeta = resolveSessionMeta(followUp, companionState);
-  return {
-    id: `followup:${followUp.id}`,
-    kind: 'follow_up',
-    status: 'active',
-    title: followUp.label,
-    body: followUp.body,
-    followUpId: followUp.id,
+/* Mirrors CompanionService._buildFollowUpActions (services/companion-service.js):
+ * one slot per status, array order = display order (primary, inline, overflow).
+ * The harness never marks a session 'missing' (it has no session list) and the
+ * task board is off, so Start a session never appears. */
+const RESUMABLE_SESSION_STATES = new Set(['current', 'open', 'saved']);
+const MAX_ARCHIVED_BOARD_ITEMS = 50;
+
+function buildFollowUpActions(followUp, status, { canResume = false } = {}) {
+  const followUpId = followUp.id;
+  const action = (type, slot, label, labelKey, idPrefix = type) => ({
+    id: `${idPrefix}:${followUpId}`,
+    type,
+    label,
+    labelKey,
+    slot,
+    followUpId,
+  });
+  const resume = (slot) => ({
+    ...action('continue_session', slot, 'Resume thread', 'companion.actions.resumeThread', 'continue_follow_up'),
     sessionId: followUp.sessionId,
-    sessionTitle: sessionMeta.sessionTitle,
-    sessionBadge: sessionMeta.sessionBadge,
-    sourceBadge: buildSourceBadge(followUp),
-    contextLine: sessionMeta.contextLine,
-    sourceLabel: buildSourceLabel(followUp),
-    isDue: followUp.status === 'deferred',
-    timingLabel: followUp.status === 'deferred' ? 'Due now' : '',
-    history: Array.isArray(followUp.history) ? followUp.history.slice(0, 12) : [],
-    actions: [
-      {
-        id: `edit_follow_up:${followUp.id}`,
-        type: 'edit_follow_up',
-        label: 'Edit',
-        followUpId: followUp.id,
-      },
-      ...buildContinueAction(followUp),
-      {
-        id: `resolve_follow_up:${followUp.id}`,
-        type: 'resolve_follow_up',
-        label: 'Done',
-        followUpId: followUp.id,
-      },
-      {
-        id: `defer_follow_up:${followUp.id}`,
-        type: 'defer_follow_up',
-        label: 'Later',
-        followUpId: followUp.id,
-      },
-      {
-        id: `delete_follow_up:${followUp.id}`,
-        type: 'delete_follow_up',
-        label: 'Delete',
-        followUpId: followUp.id,
-      },
-    ],
-  };
+  });
+  const done = (slot) => action('resolve_follow_up', slot, 'Done', 'companion.actions.done');
+  const actions = [];
+  if (status === 'active') {
+    const primary = canResume ? resume('primary') : done('primary');
+    actions.push(primary);
+    if (primary.type !== 'resolve_follow_up') {
+      actions.push(done('inline'));
+    }
+    actions.push(action('defer_follow_up', 'inline', 'Later', 'companion.actions.later'));
+  } else if (status === 'deferred') {
+    actions.push(action('activate_follow_up', 'primary', 'Make active', 'companion.actions.makeActive'));
+  } else if (status === 'resolved') {
+    actions.push(action('activate_follow_up', 'inline', 'Reopen', 'companion.actions.reopen'));
+  } else if (status === 'archived') {
+    actions.push(action('unarchive_follow_up', 'inline', 'Restore', 'companion.actions.restore'));
+  }
+  if (canResume && status !== 'active') {
+    actions.push(resume('inline'));
+  }
+  actions.push(action('edit_follow_up', 'overflow', 'Edit', 'companion.actions.edit'));
+  if (status === 'resolved') {
+    actions.push(action('archive_follow_up', 'overflow', 'Archive', 'companion.actions.archive'));
+  }
+  actions.push(action('delete_follow_up', 'overflow', 'Delete', 'companion.actions.delete'));
+  return actions;
 }
 
-function toDeferredFollowUpLoop(followUp, companionState) {
+/* Board item shape per CompanionService._buildFollowUpBoard: timing travels as
+ * ISO fields (the row formats them in the UI locale), never a baked label. */
+function toFollowUpBoardItem(followUp, status, companionState) {
   const sessionMeta = resolveSessionMeta(followUp, companionState);
   return {
     id: `followup:${followUp.id}`,
     kind: 'follow_up',
-    status: 'deferred',
+    status,
     title: followUp.label,
     body: followUp.body,
     followUpId: followUp.id,
     sessionId: followUp.sessionId,
     sessionTitle: sessionMeta.sessionTitle,
+    sessionState: sessionMeta.sessionState,
     sessionBadge: sessionMeta.sessionBadge,
     sourceBadge: buildSourceBadge(followUp),
     contextLine: sessionMeta.contextLine,
-    sourceLabel: buildSourceLabel(followUp),
+    sourceKind: followUp.sourceKind,
+    sourceId: followUp.sourceId,
+    resolvedAt: followUp.resolvedAt,
     deferredUntil: followUp.deferredUntil,
     deferPreset: followUp.deferPreset,
-    timingLabel: followUp.deferredUntil ? `Deferred until ${new Date(followUp.deferredUntil).toLocaleString()}` : '',
-    history: Array.isArray(followUp.history) ? followUp.history.slice(0, 12) : [],
-    actions: [
-      {
-        id: `edit_follow_up:${followUp.id}`,
-        type: 'edit_follow_up',
-        label: 'Edit',
-        followUpId: followUp.id,
-      },
-      {
-        id: `activate_follow_up:${followUp.id}`,
-        type: 'activate_follow_up',
-        label: 'Make Active',
-        followUpId: followUp.id,
-      },
-      ...buildContinueAction(followUp),
-      {
-        id: `delete_follow_up:${followUp.id}`,
-        type: 'delete_follow_up',
-        label: 'Delete',
-        followUpId: followUp.id,
-      },
-    ],
-  };
-}
-
-function toResolvedFollowUpLoop(followUp, companionState) {
-  const sessionMeta = resolveSessionMeta(followUp, companionState);
-  return {
-    id: `followup:${followUp.id}`,
-    kind: 'follow_up',
-    status: 'resolved',
-    title: followUp.label,
-    body: followUp.body,
-    followUpId: followUp.id,
-    sessionId: followUp.sessionId,
-    sessionTitle: sessionMeta.sessionTitle,
-    sessionBadge: sessionMeta.sessionBadge,
-    sourceBadge: buildSourceBadge(followUp),
-    contextLine: sessionMeta.contextLine,
-    sourceLabel: buildSourceLabel(followUp),
-    timingLabel: followUp.resolvedAt ? `Completed ${new Date(followUp.resolvedAt).toLocaleString()}` : '',
     archivedAt: followUp.archivedAt,
+    isDue: status === 'active' && followUp.status === 'deferred',
+    actions: buildFollowUpActions(followUp, status, {
+      canResume: RESUMABLE_SESSION_STATES.has(sessionMeta.sessionState),
+    }),
     history: Array.isArray(followUp.history) ? followUp.history.slice(0, 12) : [],
-    actions: [
-      {
-        id: `edit_follow_up:${followUp.id}`,
-        type: 'edit_follow_up',
-        label: 'Edit',
-        followUpId: followUp.id,
-      },
-      {
-        id: `activate_follow_up:${followUp.id}`,
-        type: 'activate_follow_up',
-        label: 'Reopen',
-        followUpId: followUp.id,
-      },
-      {
-        id: `archive_follow_up:${followUp.id}`,
-        type: 'archive_follow_up',
-        label: 'Archive',
-        followUpId: followUp.id,
-      },
-      ...buildContinueAction(followUp),
-      {
-        id: `delete_follow_up:${followUp.id}`,
-        type: 'delete_follow_up',
-        label: 'Delete',
-        followUpId: followUp.id,
-      },
-    ],
-  };
-}
-
-function toArchivedFollowUpLoop(followUp, companionState) {
-  const sessionMeta = resolveSessionMeta(followUp, companionState);
-  const archivedAt = String(followUp.archivedAt || '').trim();
-  return {
-    id: `followup:${followUp.id}`,
-    kind: 'follow_up',
-    status: 'archived',
-    title: followUp.label,
-    body: followUp.body,
-    followUpId: followUp.id,
-    sessionId: followUp.sessionId,
-    sessionTitle: sessionMeta.sessionTitle,
-    sessionBadge: sessionMeta.sessionBadge,
-    sourceBadge: buildSourceBadge(followUp),
-    contextLine: sessionMeta.contextLine,
-    sourceLabel: buildSourceLabel(followUp),
-    timingLabel: archivedAt ? `Archived ${new Date(archivedAt).toLocaleString()}` : 'Archived',
-    archivedAt,
-    history: Array.isArray(followUp.history) ? followUp.history.slice(0, 12) : [],
-    actions: [
-      {
-        id: `unarchive_follow_up:${followUp.id}`,
-        type: 'unarchive_follow_up',
-        label: 'Restore',
-        followUpId: followUp.id,
-      },
-      ...buildContinueAction(followUp),
-      {
-        id: `delete_follow_up:${followUp.id}`,
-        type: 'delete_follow_up',
-        label: 'Delete',
-        followUpId: followUp.id,
-      },
-    ],
   };
 }
 
@@ -475,7 +347,7 @@ function syncFollowUpOpenLoops(companionState) {
       }
       return compareFollowUpRecencyDesc(left, right);
     })
-    .map((followUp) => toActiveFollowUpLoop(followUp, source));
+    .map((followUp) => toFollowUpBoardItem(followUp, 'active', source));
   const deferredFollowUpLoops = followUps
     .filter((followUp) => {
       if (!followUp.id || followUp.archivedAt || followUp.status !== 'deferred' || !followUp.deferredUntil) {
@@ -485,22 +357,25 @@ function syncFollowUpOpenLoops(companionState) {
       return !Number.isNaN(deferredUntil.valueOf()) && deferredUntil.valueOf() > now.valueOf();
     })
     .sort(compareDeferredTimingAsc)
-    .map((followUp) => toDeferredFollowUpLoop(followUp, source));
+    .map((followUp) => toFollowUpBoardItem(followUp, 'deferred', source));
   const resolvedFollowUpLoops = followUps
     .filter((followUp) => followUp.id && followUp.status === 'resolved' && !followUp.archivedAt)
     .sort((left, right) => compareIsoDesc(
       [left?.resolvedAt, left?.updatedAt, left?.createdAt],
       [right?.resolvedAt, right?.updatedAt, right?.createdAt]
     ))
-    .slice(0, 5)
-    .map((followUp) => toResolvedFollowUpLoop(followUp, source));
+    // The service sends every resolved loop (bounded like the archive); the
+    // renderer previews the newest few behind "Show all".
+    .slice(0, MAX_ARCHIVED_BOARD_ITEMS)
+    .map((followUp) => toFollowUpBoardItem(followUp, 'resolved', source));
   const archivedFollowUpLoops = followUps
     .filter((followUp) => followUp.id && followUp.status === 'resolved' && followUp.archivedAt)
     .sort((left, right) => compareIsoDesc(
       [left?.archivedAt, left?.updatedAt, left?.resolvedAt, left?.createdAt],
       [right?.archivedAt, right?.updatedAt, right?.resolvedAt, right?.createdAt]
     ))
-    .map((followUp) => toArchivedFollowUpLoop(followUp, source));
+    .slice(0, MAX_ARCHIVED_BOARD_ITEMS)
+    .map((followUp) => toFollowUpBoardItem(followUp, 'archived', source));
   const existingBoard = source.openLoopsBoard && typeof source.openLoopsBoard === 'object'
     ? source.openLoopsBoard
     : {};

@@ -341,7 +341,7 @@ class UsageHistoryService extends EventEmitter {
     this._maxTurns = normalizeLimit(maxTurns, DEFAULT_MAX_TURNS, DEFAULT_MAX_TURNS);
     this._maxAgeMs = normalizeLimit(maxAgeDays, DEFAULT_MAX_AGE_DAYS, DEFAULT_MAX_AGE_DAYS) * DAY_MS;
     this._store = store || (userDataPath
-      ? new FileJsonStore(path.join(userDataPath, USAGE_HISTORY_FILE), { logger: this._logger })
+      ? new FileJsonStore(path.join(userDataPath, USAGE_HISTORY_FILE), { logger: this._logger, compact: true })
       : null);
     this._legacyPath = userDataPath ? path.join(userDataPath, LEGACY_COST_FILE) : '';
     this._fs = fsImpl;

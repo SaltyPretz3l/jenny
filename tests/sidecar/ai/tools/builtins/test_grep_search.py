@@ -297,9 +297,9 @@ def test_grep_search_aborts_when_total_runtime_budget_is_exhausted(
 def test_grep_search_timeout_resets_worker_state_without_leaving_process_alive(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    worker = grep_module._RegexSearchWorker()  # noqa: SLF001
-    worker._ensure_started()  # noqa: SLF001
-    process = worker._process  # noqa: SLF001
+    worker = grep_module._RegexSearchWorker()
+    worker._ensure_started()
+    process = worker._process
     assert process is not None
     assert process.poll() is None
     monkeypatch.setattr(worker, "_wait_for_response", lambda _timeout: None)
@@ -315,8 +315,8 @@ def test_grep_search_timeout_resets_worker_state_without_leaving_process_alive(
             timeout_seconds=0.01,
         )
 
-    assert worker._process is None  # noqa: SLF001
-    assert worker._responses is None  # noqa: SLF001
+    assert worker._process is None
+    assert worker._responses is None
     assert process.poll() is not None
 
 
@@ -326,7 +326,7 @@ def test_grep_search_startup_timeout_is_distinct_from_search_timeout(
     monkeypatch.setattr(
         grep_module, "REGEX_WORKER_STARTUP_TIMEOUT_SECONDS", 0.05
     )
-    worker = grep_module._RegexSearchWorker(  # noqa: SLF001
+    worker = grep_module._RegexSearchWorker(
         command_factory=lambda: [
             sys.executable,
             "-c",
@@ -345,14 +345,14 @@ def test_grep_search_startup_timeout_is_distinct_from_search_timeout(
             timeout_seconds=0.01,
         )
 
-    assert worker._process is None  # noqa: SLF001
-    assert worker._responses is None  # noqa: SLF001
+    assert worker._process is None
+    assert worker._responses is None
 
 
 def test_grep_worker_command_uses_source_entrypoint(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(grep_module.sys, "frozen", False, raising=False)
 
-    assert grep_module._grep_worker_command() == [  # noqa: SLF001
+    assert grep_module._grep_worker_command() == [
         sys.executable,
         "-m",
         "sidecar",
@@ -363,7 +363,7 @@ def test_grep_worker_command_uses_source_entrypoint(monkeypatch: pytest.MonkeyPa
 def test_grep_worker_command_uses_packaged_entrypoint(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(grep_module.sys, "frozen", True, raising=False)
 
-    assert grep_module._grep_worker_command() == [  # noqa: SLF001
+    assert grep_module._grep_worker_command() == [
         sys.executable,
         "--grep-search-worker",
     ]

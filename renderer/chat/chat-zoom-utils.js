@@ -7,19 +7,18 @@
     globalScope.chatZoomUtils = factory();
   }
 })(typeof globalThis !== 'undefined' ? globalThis : this, function chatZoomUtilsFactory() {
+  // Chat zoom is retired (type-scale rebase, 2026-09-28): the single Text size
+  // setting (--font-scale) scales the chat like every other surface, and app
+  // zoom owns whole-window magnification. The API survives as an inert shim so
+  // existing callers and the persisted chatUi.zoomPercent value stay intact;
+  // every value normalizes to 100 and nothing is written to the document.
   var DEFAULT_CHAT_ZOOM_PERCENT = 100;
-  var MIN_CHAT_ZOOM_PERCENT = 85;
-  var MAX_CHAT_ZOOM_PERCENT = 135;
+  var MIN_CHAT_ZOOM_PERCENT = 100;
+  var MAX_CHAT_ZOOM_PERCENT = 100;
   var CHAT_ZOOM_STEP = 5;
 
-  function normalizeChatZoomPercent(value) {
-    var parsed = Number(value);
-    if (!Number.isFinite(parsed)) {
-      return DEFAULT_CHAT_ZOOM_PERCENT;
-    }
-    var clamped = Math.min(MAX_CHAT_ZOOM_PERCENT, Math.max(MIN_CHAT_ZOOM_PERCENT, parsed));
-    var stepped = Math.round(clamped / CHAT_ZOOM_STEP) * CHAT_ZOOM_STEP;
-    return Math.min(MAX_CHAT_ZOOM_PERCENT, Math.max(MIN_CHAT_ZOOM_PERCENT, stepped));
+  function normalizeChatZoomPercent(_value) {
+    return DEFAULT_CHAT_ZOOM_PERCENT;
   }
 
   function formatChatZoomFactor(percent) {
@@ -41,16 +40,17 @@
     return null;
   }
 
-  function applyChatZoomToDocument(docOrRoot, percent) {
-    var normalized = normalizeChatZoomPercent(percent);
+  function applyChatZoomToDocument(docOrRoot, _percent) {
     var rootElement = resolveRootElement(docOrRoot);
-    if (!rootElement) {
-      return normalized;
+    if (rootElement) {
+      // Clear values a pre-retirement build may have left on the root.
+      if (rootElement.style && typeof rootElement.style.removeProperty === 'function') {
+        rootElement.style.removeProperty('--chat-zoom-percent');
+        rootElement.style.removeProperty('--chat-zoom-factor');
+      }
+      if (rootElement.dataset) delete rootElement.dataset.chatZoom;
     }
-    rootElement.style.setProperty('--chat-zoom-percent', String(normalized));
-    rootElement.style.setProperty('--chat-zoom-factor', formatChatZoomFactor(normalized));
-    rootElement.dataset.chatZoom = String(normalized);
-    return normalized;
+    return DEFAULT_CHAT_ZOOM_PERCENT;
   }
 
   function getDefaultChatZoomPercent() {
@@ -58,15 +58,7 @@
   }
 
   function getChatZoomOptions() {
-    var options = [];
-    for (var percent = MIN_CHAT_ZOOM_PERCENT; percent <= MAX_CHAT_ZOOM_PERCENT; percent += CHAT_ZOOM_STEP) {
-      options.push({
-        id: String(percent),
-        value: percent,
-        label: percent + '%',
-      });
-    }
-    return options;
+    return [];
   }
 
   function stepChatZoomPercent(currentPercent, direction) {

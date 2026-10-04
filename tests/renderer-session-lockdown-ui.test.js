@@ -384,47 +384,40 @@ test('composer setToggle is a no-op while the current session is locked, and wor
     currentSessionId: 'sess-1',
   };
   const controller = createComposerV2ToggleController({ state });
-  controller.setAvailableTools(['web_search']);
+  controller.setAvailableTools([{ name: 'web_search', surfaceFamily: 'web', lockdownAvailable: false }]);
 
-  const blockedResult = await controller.setToggle('web_search', false);
+  const blockedResult = await controller.setToggle('web', false);
   assert.equal(blockedResult, false);
-  assert.equal(controller.getToggleStates().web_search, true, 'toggle state unchanged while locked');
+  assert.equal(Object.hasOwn(controller.getToggleStates().families, 'web'), false, 'toggle state unchanged while locked');
 
   state.sessions[0].lockdown = false;
-  const allowedResult = await controller.setToggle('web_search', false);
+  const allowedResult = await controller.setToggle('web', false);
   assert.equal(allowedResult, true);
-  assert.equal(controller.getToggleStates().web_search, false, 'toggle takes effect once unlocked');
+  assert.equal(controller.getToggleStates().families.web, false, 'toggle takes effect once unlocked');
 });
 
-test('composer tool toggle markup is disabled with the lockdown tooltip while locked, and normal once unlocked', () => {
-  const previousInventory = global.inventory;
-  global.inventory = {
-    toggleSwitch: ToggleSwitch.toggleSwitch,
-    chip: Chip,
-    popover: Popover,
-  };
-  try {
-    const state = {
-      features: { featureFlags: { session_offline_lockdown: true } },
-      sessions: [{ id: 'sess-1', lockdown: true }],
-      currentSessionId: 'sess-1',
-    };
-    const controller = createComposerV2ToggleController({ state });
-    controller.setAvailableTools(['web_search']);
-
-    const lockedMarkup = controller.renderToolToggles();
-    assert.ok(lockedMarkup.includes('Offline lockdown is on for this session'), 'lockdown tooltip present');
-    assert.ok(lockedMarkup.includes('aria-disabled="true"'), 'toggle rendered disabled while locked');
-
-    state.sessions[0].lockdown = false;
-    const unlockedMarkup = controller.renderToolToggles();
-    assert.ok(
-      !unlockedMarkup.includes('Offline lockdown is on for this session'),
-      'lockdown tooltip absent once unlocked'
-    );
-  } finally {
-    global.inventory = previousInventory;
-  }
+test('composer slot disables denied tools during lockdown and permits local file switches', (t) => {
+  const { JSDOM } = require('jsdom');
+  const { createComposerToolsSlot } = require('../renderer/chat/renderer-composer-tools-slot');
+  const dom = new JSDOM('<div id="slot"><span id="composerChatChipHost"></span><div id="composerChatPanel"><div id="composerChatPanelChips"></div><div id="composerChatPanelList"></div><button data-chat-panel-action="reset"></button></div></div>');
+  t.after(() => dom.window.close());
+  dom.window.inventory = { toggleSwitch: ToggleSwitch.toggleSwitch, chip: Chip, popover: Popover, actionButton: require('../renderer/inventory/action-button') };
+  const state = { features: { featureFlags: { session_offline_lockdown: true } },
+    sessions: [{ id: 'sess-1', lockdown: true }], currentSessionId: 'sess-1' };
+  const controller = createComposerV2ToggleController({ state });
+  controller.setAvailableTools([{ name: 'web_search', surfaceFamily: 'web', lockdownAvailable: false },
+    { name: 'read_file', surfaceFamily: 'files', lockdownAvailable: true }]);
+  const slot = dom.window.document.getElementById('slot');
+  const tools = createComposerToolsSlot({ state, windowRef: dom.window, slot, controller });
+  tools.render();
+  const web = slot.querySelector('[data-inv-toggle="tool-target:web"]');
+  assert.equal(web.disabled, true);
+  assert.equal(slot.querySelector('[data-inv-toggle="tool-target:files"]').disabled, false);
+  assert.match(slot.textContent, /Offline for this chat/);
+  state.sessions[0].lockdown = false;
+  tools.render();
+  assert.equal(web.disabled, false);
+  assert.ok(!slot.textContent.includes('Offline for this chat'));
 });
 
 /* ── Group 4: the lockdown_remote_engine refusal card and its two actions ── */
@@ -610,30 +603,22 @@ test('flag off hides the toggle and both badges, and leaves composer toggles una
     currentSessionId: 'sess-1',
   };
   const controller = createComposerV2ToggleController({ state });
-  controller.setAvailableTools(['web_search']);
-  const result = await controller.setToggle('web_search', false);
+  controller.setAvailableTools([{ name: 'web_search', surfaceFamily: 'web', lockdownAvailable: false }]);
+  const result = await controller.setToggle('web', false);
   assert.equal(result, true, 'composer toggle is not gated by a persisted lockdown when the flag is off');
-  assert.equal(controller.getToggleStates().web_search, false);
+  assert.equal(controller.getToggleStates().families.web, false);
 
-  const previousInventory = global.inventory;
-  global.inventory = {
-    toggleSwitch: ToggleSwitch.toggleSwitch,
-    chip: Chip,
-    popover: Popover,
-  };
-  try {
-    const markup = controller.renderToolToggles();
-    assert.ok(markup, 'composer tool toggle remains rendered');
-    assert.ok(!markup.includes('Offline lockdown is on for this session'));
-    const webToggle = markup.match(
-      /<button[^>]*data-inv-toggle="tool-toggle-web_search"[^>]*>/
-    )?.[0];
-    assert.ok(webToggle, 'web-search toggle remains rendered');
-    assert.ok(!webToggle.includes('disabled'), 'web-search toggle remains enabled');
-    assert.ok(webToggle.includes('aria-checked="false"'), 'the successful toggle change remains visible');
-  } finally {
-    global.inventory = previousInventory;
-  }
+  const { createComposerToolsSlot } = require('../renderer/chat/renderer-composer-tools-slot');
+  const slot = window.document.getElementById('composerToolToggleSlot');
+  const tools = createComposerToolsSlot({ state, windowRef: window, slot, controller });
+  tools.render();
+  await controller.setToggle('web', false);
+  tools.render();
+  const webToggle = slot.querySelector('[data-inv-toggle="tool-target:web"]');
+  assert.ok(webToggle, 'web toggle remains rendered');
+  assert.equal(webToggle.disabled, false, 'web toggle remains enabled');
+  assert.equal(webToggle.getAttribute('aria-checked'), 'false');
+  assert.ok(!slot.textContent.includes('Offline for this chat'));
 });
 
 /* ── Group 6: reduced motion drops the fade transition class ── */

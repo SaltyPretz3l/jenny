@@ -140,13 +140,15 @@ async function runCli(argv = process.argv.slice(2), dependencies = {}) {
     try {
       assertImportComplete(config.userDataPath);
       const passphrase = await (dependencies.readPasswordImpl || readPassword)({ prompt: 'Archive passphrase (blank for unencrypted): ' });
-      composition = createHostedBackend({ ...config, pythonExecutable, repoRoot: path.resolve(__dirname, '..'),
+      // Offline import never starts the runtime; compose with command execution disabled.
+      composition = createHostedBackend({ ...config, hostExecutionPolicyVersion: 1,
+        pythonExecutable, repoRoot: path.resolve(__dirname, '..'),
         credentialService: new FileSecretStore({ directory: config.secretsDir }) });
       const result = await importConversations({ backend: composition.backend, userDataPath: config.userDataPath,
         archivePath: path.resolve(parsed.archivePath), passphrase });
       (dependencies.confirmOutput || process.stdout).write(`${JSON.stringify(result)}\n`);
       return result;
-    } finally { try { composition?.dispose(); } finally { lock.release(); } }
+    } finally { try { await composition?.dispose(); } finally { lock.release(); } }
   }
 
   return initializeOwner({

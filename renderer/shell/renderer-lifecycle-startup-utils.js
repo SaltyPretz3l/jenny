@@ -42,10 +42,9 @@
         elapsedMs: getElapsedMs(),
       });
       fwd.initializeComposerHolo?.();
-      fwd.initializeSpriteHolo?.();
       // Chromium may restore textarea contents during a shell reload without
       // dispatching an input event. Recompute the active/typing state after
-      // the holo canvases exist so a restored draft does not keep only the
+      // the composer holo canvas exists so a restored draft does not keep only the
       // subdued passive composer ring until the next user interaction.
       fwd.syncComposerVisualState?.();
       fwd.initializeComposerLayoutObserver?.();

@@ -63,7 +63,7 @@ def test_batch4_transport_enabled_requires_both_flags(monkeypatch) -> None:
             )
         ),
     )
-    assert server._batch4_transport_enabled() is True  # noqa: SLF001
+    assert server._batch4_transport_enabled() is True
 
     monkeypatch.setattr(
         server,
@@ -74,11 +74,11 @@ def test_batch4_transport_enabled_requires_both_flags(monkeypatch) -> None:
             )
         ),
     )
-    assert server._batch4_transport_enabled() is False  # noqa: SLF001
+    assert server._batch4_transport_enabled() is False
 
 
 def test_message_transport_ids_use_runtime_request_id_fallback() -> None:
-    request_id, trace_id, session_id = server_chat_workers._message_transport_ids(  # noqa: SLF001
+    request_id, trace_id, session_id = server_chat_workers._message_transport_ids(
         {
             "jsonrpc": "2.0",
             "id": 77,
@@ -244,7 +244,6 @@ def test_initialize_exposes_provider_capabilities_without_secret_leak() -> None:
         "openai-compatible",
         "codex-cli",
         "chatgpt",
-        "plugin_host",
         "replay",
         "mock",
     }

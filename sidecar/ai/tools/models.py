@@ -174,9 +174,13 @@ class GenerationResult:
     # Set only when an engine actually ran the in-band parser and an explicit
     # candidate failed to parse. Routing must not infer this from response text.
     inband_tool_call_parse_failed: bool = False
-    # A native tool call was cut off at the output-token limit or rejected at the
-    # argument cap and dropped, so the result's text is not an answer.
+    # A native tool call was cut off at the output-token limit, or rejected at a
+    # provider tool-call cap under any finish, and dropped, so the result's text
+    # is not an answer.
     tool_call_truncated: bool = False
+    # The cap that rejected the dropped call ("argument_bytes" or
+    # "tool_call_count"); empty when nothing was rejected.
+    tool_call_rejected_reason: str = ""
 
 
 # ---------------------------------------------------------------------------

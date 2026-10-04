@@ -54,9 +54,8 @@
 }
 
 .surface-gallery-label {
-  font-size: 11px;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
+  font-size: var(--font-size-caption);
+  font-weight: 500;
   color: rgba(242, 244, 248, 0.6);
 }
 
@@ -92,7 +91,7 @@
   background: #1e212b;
   color: inherit;
   cursor: pointer;
-  font-size: 12px;
+  font-size: var(--font-size-body);
 }
 .surface-gallery-btn:hover:not(:disabled) {
   background: #262a36;
@@ -104,7 +103,7 @@
 
 .surface-gallery-hint {
   margin: 4px 0 0;
-  font-size: 11px;
+  font-size: var(--font-size-caption);
   line-height: 1.4;
   color: rgba(242, 244, 248, 0.55);
 }

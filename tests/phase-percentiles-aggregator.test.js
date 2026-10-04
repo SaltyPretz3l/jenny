@@ -91,3 +91,23 @@ test('phase client timing normalization derives local render latency when omitte
     }
   );
 });
+
+test('absent client timing is "not measured", never a 0 ms sample (P3-PERF-A 2026-09-25)', () => {
+  // Number(null) === 0 used to pass the finite check, so every turn without
+  // renderer timing recorded click_to_optimistic_render = 0.
+  const aggregator = createPhasePercentilesAggregator();
+  for (const value of [null, undefined, '', '   ', true]) {
+    assert.equal(aggregator.record('click_to_optimistic_render', value), false, `recorded ${String(value)}`);
+  }
+  assert.deepEqual(aggregator.snapshot().phases, {});
+  assert.equal(aggregator.record('click_to_optimistic_render', 0), true, 'a real 0 ms duration is still a sample');
+
+  const missing = { sendStartedAtMs: null, optimisticRenderedAtMs: null, localRenderLatencyMs: null };
+  assert.deepEqual(normalizePhaseClientTiming(null), missing);
+  assert.deepEqual(normalizePhaseClientTiming({
+    send_started_at_ms: null, optimistic_rendered_at_ms: null, local_render_latency_ms: null,
+  }), missing);
+  // 0 is the renderer's "unknown start" fallback, not a wall-clock timestamp.
+  assert.deepEqual(normalizePhaseClientTiming({ send_started_at_ms: 0, optimistic_rendered_at_ms: 135 }),
+    { sendStartedAtMs: null, optimisticRenderedAtMs: 135, localRenderLatencyMs: null });
+});

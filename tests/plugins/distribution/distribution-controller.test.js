@@ -43,23 +43,6 @@ test('detached operations can be awaited internally and disposal aborts then set
   assert.equal((await settled).reason, 'test_abort');
   assert.equal((await getReceipt(fs, 's', 'detached1')).receipt.status, 'failed');
 });
-test('offline mirror selection stores a real root but returns no path', async () => {
-  const controller = new DistributionController({ facade: new MemoryFsFacade(), baseDir: 's', mintOperationId: () => 'op', now: () => '2026-08-04T00:00:00Z', realpath: async () => 'C:\\real-mirror' });
-  const result = await controller.selectOfflineMirror({ sourceId: 'mirror', rootPath: 'C:\\chosen' });
-  assert.deepEqual(result, { ok: true, source_id: 'mirror', revision: 1 });
-});
-test('update operations resolve a versioned catalog target without a locator in the frozen request', async () => {
-  const controller = new DistributionController({ facade: new MemoryFsFacade(), baseDir: 's', mintOperationId: () => 'op', now: () => '2026-08-04T00:00:00Z', realpath: async (value) => value });
-  const acquired = await controller._acquire('op', { operation: { kind: 'update', target: { publisher_id: 'acme', plugin_id: 'widget' } } }, {
-    updateSourceKind: 'signed_catalog', sourceId: 'stable', acquireCatalogTarget: async (input) => {
-      assert.equal(input.kind, 'signed_catalog'); assert.equal(input.sourceId, 'stable');
-      return { ok: true, bytes: Buffer.from('package'), target_path_digest: 'a'.repeat(64), tuf_root_digest: 'b'.repeat(64) };
-    },
-  }, new AbortController().signal);
-  assert.equal(acquired.ok, true); assert.deepEqual(acquired.sourceIdentity, { kind: 'signed_catalog', catalog_id: 'stable',
-    target_path_digest: 'a'.repeat(64), tuf_root_digest: 'b'.repeat(64) });
-});
-
 test('update operations can consume the already selected local package without a path on the request', async () => {
   const controller = new DistributionController({
     facade: new MemoryFsFacade(), baseDir: 's', mintOperationId: () => 'op',
@@ -83,12 +66,12 @@ test('update operations can consume the already selected local package without a
   });
 });
 
-test('Stage 5 install, update, and exact rollback retain their audit attribution', async () => {
+test('Stage 5 install and update retain their audit attribution', async () => {
   const fs = new MemoryFsFacade(); const fixture = buildSignedPluginPackage({ contractVersion: 3 });
   const updateFixture = buildSignedPluginPackage({ contractVersion: 3, version: '1.1.0' });
   const locator = 'C:\\selected\\plugin.zip';
   const updateLocator = 'C:\\selected\\plugin-update.zip';
-  const operationIds = ['install1', 'update1', 'rollback1'];
+  const operationIds = ['install1', 'update1'];
   const committedEvents = [];
   const controller = new DistributionController({ facade: fs, baseDir: 's', mintOperationId: () => operationIds.shift(),
     now: () => '2026-08-04T00:00:00Z', realpath: async (value) => value,
@@ -129,21 +112,13 @@ test('Stage 5 install, update, and exact rollback retain their audit attribution
   const updatedState = await readCommittedState(fs, 's');
   assert.equal(updatedState.generation.plugins[0].resolved_version, '1.1.0');
 
-  const rolled = await controller.startDistributionOperation({ operation_schema_version: 1, client_request_id: 'request_rollback', operation: {
-    kind: 'rollback', target_generation_id: state.generation.generation_id, expected_generation_id: updatedState.generation.generation_id } }, {
-    validateTrust: async () => true, validatePolicy: async () => true, validateAdvisories: async () => true, validateRollbackData: async () => true,
-  });
-  assert.equal(rolled.ok, true, rolled.reason); assert.notEqual(rolled.generation_id, state.generation.generation_id);
-  assert.deepEqual(committedEvents.map((event) => event.generation_id),
-    [result.generation_id, updated.generation_id, rolled.generation_id]);
-  const rolledState = await readCommittedState(fs, 's'); assert.equal(rolledState.pointer.commit_epoch, state.pointer.commit_epoch + 2);
-  assert.equal(rolledState.generation.plugins[0].data_snapshot_digest, state.generation.plugins[0].data_snapshot_digest);
+  assert.deepEqual(committedEvents.map((event) => event.generation_id), [result.generation_id, updated.generation_id]);
   const audit = await exportAuditLog(fs, 's', { now: '2026-08-04T00:00:00Z' });
   assert.equal(audit.ok, true, audit.reason);
-  assert.deepEqual(audit.document.entries.map((entry) => entry.action), ['install', 'update', 'rollback']);
+  assert.deepEqual(audit.document.entries.map((entry) => entry.action), ['install', 'update']);
 });
 
-test('Stage 6 install and rollback preserve the closed V4 restricted-component graph', async () => {
+test('Stage 6 install preserves the closed V4 restricted-component graph', async () => {
   const componentBytes = Buffer.from([0, 97, 115, 109, 10, 0, 1, 0]);
   const fixture = buildSignedPluginPackage({
     contractVersion: 4,
@@ -165,7 +140,7 @@ test('Stage 6 install and rollback preserve the closed V4 restricted-component g
     }],
   });
   const fs = new MemoryFsFacade();
-  const operationIds = ['stage6_install', 'stage6_rollback'];
+  const operationIds = ['stage6_install'];
   const now = '2026-08-05T00:00:00Z';
   const controller = new DistributionController({
     facade: fs, baseDir: 's', mintOperationId: () => operationIds.shift(),
@@ -206,21 +181,6 @@ test('Stage 6 install and rollback preserve the closed V4 restricted-component g
   assert.deepEqual(state.generation.plugins[0].restricted_module_digests,
     [fixture.manifest.contributions[0].component_sha256]);
 
-  const rolled = await controller.startDistributionOperation({
-    operation_schema_version: 1, client_request_id: 'stage6_rollback_request',
-    operation: {
-      kind: 'rollback', target_generation_id: state.generation.generation_id,
-      expected_generation_id: state.generation.generation_id,
-    },
-  }, {
-    validateTrust: async () => true, validatePolicy: async () => true,
-    validateAdvisories: async () => true, validateRollbackData: async () => true,
-  });
-  assert.equal(rolled.ok, true, rolled.reason);
-  const rolledState = await readCommittedState(fs, 's');
-  assert.equal(rolledState.generation.generation_schema_version, 4);
-  assert.deepEqual(rolledState.generation.plugins[0].restricted_module_digests,
-    state.generation.plugins[0].restricted_module_digests);
 });
 
 test('Stage 5 install rejects a valid package acquired from a different source than its trust evidence', async () => {
@@ -257,4 +217,56 @@ test('two concurrent identical requests run one operation and the second joins i
   assert.equal(first.operation_id, second.operation_id);
   assert.equal(first.status, 'checked');
   assert.equal(second.status, 'checked');
+});
+test('git and https_url acquisition are retired: refused without touching the network', async () => {
+  let touched = false;
+  const networkBroker = { download: async () => { touched = true; return { ok: false }; } };
+  const controller = new DistributionController({ facade: new MemoryFsFacade(), baseDir: 's', networkBroker,
+    mintOperationId: () => 'op', now: () => '2026-08-04T00:00:00Z', realpath: async (value) => value, gitAcquire: async () => { touched = true; return { ok: false }; } });
+  for (const [source_kind, source_locator] of [['git', 'https://example.test/repo.git'], ['https_url', 'https://example.test/p.zip']]) {
+    const result = await controller._acquire('op', { operation: { kind: 'install', source_kind, source_locator } }, {}, new AbortController().signal);
+    assert.equal(result.ok, false); assert.match(result.reason, /^catalog_/);
+  }
+  assert.equal(touched, false);
+  assert.equal(Object.hasOwn(controller, 'networkBroker'), false); assert.equal(Object.hasOwn(controller, 'gitAcquire'), false);
+  assert.equal(Object.hasOwn(require('../../../services/git-runner'), 'buildPluginFetchProfile'), false);
+});
+test('catalog, offline mirror and rollback paths are retired: they fail closed without a network or catalog acquirer', async () => {
+  let touched = false;
+  const controller = new DistributionController({ facade: new MemoryFsFacade(), baseDir: 's',
+    mintOperationId: () => 'op', now: () => '2026-08-04T00:00:00Z', realpath: async (value) => value });
+  assert.equal(typeof controller.selectOfflineMirror, 'undefined');
+  assert.equal(typeof controller._executeCatalogRefresh, 'undefined');
+  assert.equal(typeof controller._executeRollback, 'undefined');
+  const target = { publisher_id: 'acme', plugin_id: 'widget' };
+  const acquirer = async () => { touched = true; return { ok: true, bytes: Buffer.from('package') }; };
+  for (const operation of [
+    { kind: 'install', source_kind: 'signed_catalog', source_locator: 'stable', target },
+    { kind: 'install', source_kind: 'offline_mirror', source_locator: 'mirror', target },
+    { kind: 'update', target },
+  ]) {
+    const result = await controller._acquire('op', { operation }, {
+      updateSourceKind: operation.kind === 'update' ? 'signed_catalog' : undefined,
+      acquireCatalogTarget: acquirer }, new AbortController().signal);
+    assert.equal(result.ok, false); assert.match(result.reason, /^catalog_/);
+  }
+  assert.equal(touched, false);
+});
+test('catalog_refresh and rollback operations are refused as unsupported', async () => {
+  let touched = false;
+  const refuse = async () => { touched = true; return { ok: true }; };
+  const requests = [
+    { operation_schema_version: 1, client_request_id: 'request_refresh', operation: { kind: 'catalog_refresh', catalog_id: 'stable' } },
+    { operation_schema_version: 1, client_request_id: 'request_rollback', operation: { kind: 'rollback', target_generation_id: 'g_one', expected_generation_id: 'g_two' } },
+  ];
+  for (const request of requests) {
+    const controller = new DistributionController({ facade: new MemoryFsFacade(), baseDir: 's',
+      mintOperationId: () => 'op', now: () => '2026-08-04T00:00:00Z', realpath: async (value) => value });
+    const result = await controller.startDistributionOperation(request, { refreshCatalog: refuse,
+      validateTrust: refuse, validatePolicy: refuse, validateAdvisories: refuse, validateRollbackData: refuse });
+    assert.equal(result.ok, false);
+    // A rollback names an expected generation, so on an empty store it stops on that conflict before the kind dispatch.
+    assert.match(result.reason, request.operation.kind === 'rollback' ? /^(operation_not_supported|expected_generation_conflict)$/ : /^operation_not_supported$/);
+  }
+  assert.equal(touched, false);
 });

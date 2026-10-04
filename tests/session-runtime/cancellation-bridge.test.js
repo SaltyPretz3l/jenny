@@ -25,7 +25,6 @@ function fixture({ failIntent = false } = {}) {
       assert.deepEqual(value, { declined: true });
       events.push('answer_invalidated');
     } }]]),
-    toolExecutor: { cancelPendingForStream(id) { assert.equal(id, 'stream_1'); events.push('pending_tools'); } },
     _emitServiceLog(level, event, details) {
       if (level === 'ERROR') {
         assert.equal(event, 'session_runtime.cancellation_intent_failed');
@@ -40,7 +39,7 @@ function fixture({ failIntent = false } = {}) {
 test('stream cancellation fences runtime admission before aborting and invalidating live decisions', () => {
   const f = fixture();
   assert.equal(cancelChatStream(f.service, 'stream_1', 'user'), true);
-  assert.deepEqual(f.events, ['fence', 'abort', 'approval_invalidated', 'answer_invalidated', 'pending_tools']);
+  assert.deepEqual(f.events, ['fence', 'abort', 'approval_invalidated', 'answer_invalidated']);
   assert.equal(f.controller.signal.aborted, true);
   assert.equal(f.service.activeStreams.size, 0);
   assert.equal(f.service.pendingToolApprovals.size, 0);
@@ -60,4 +59,24 @@ test('a missing active-stream map entry still fences the runtime without claimin
   assert.equal(cancelChatStream(f.service, 'stream_1', 'user'), false);
   assert.deepEqual(f.events, ['fence']);
   assert.equal(f.controller.signal.aborted, false);
+});
+
+// Dogfood HB-034: a paused turn has no controller, so Stop used to be refused.
+test('an accepted cancel of a paused turn is not a refused Stop', () => {
+  for (const [note, expected] of [
+    [{ status: 'cancelled', work_id: 'work_1', cleanup_confirmed: true, persisted: true, paused: true }, true],
+    [{ status: 'requested', work_id: 'work_1', cleanup_confirmed: false, persisted: true, paused: true }, true],
+    [{ status: 'rejected', work_id: 'work_1', reason: 'revision_conflict', paused: true }, false],
+    [{ status: 'requested', work_id: 'work_1', persisted: false, paused: true }, false],
+    // An active entry whose controller is already gone claims nothing.
+    [{ status: 'requested', work_id: 'work_1', persisted: true }, false],
+    [{ status: 'rejected', work_id: null, reason: 'runtime_stream_not_found' }, false],
+  ]) {
+    const service = {
+      activeStreams: new Map(),
+      sessionRuntime: { noteStreamCancellation: () => note },
+      pendingToolApprovals: new Map(), pendingUserQuestions: new Map(),
+    };
+    assert.equal(cancelChatStream(service, 'stream_1', 'user'), expected, JSON.stringify(note));
+  }
 });

@@ -13,15 +13,10 @@ SOURCE_DIRS = (
     "tests",
     "styles",
     "docs",
-    "comet",
     "plugins",
     "content",
 )
 ROOT_SOURCE_FILES = ("main.js", "preload.js", "start.js")
-# Vendored upstream source has its own LICENSE; its provenance-relevant bytes stay intact.
-SKIP_RELATIVE_PREFIXES = {
-    "plugins/official/local-image-generation/runtime/upstream",
-}
 SOURCE_SUFFIXES = {
     ".cjs",
     ".js",
@@ -94,11 +89,6 @@ def main() -> int:
         if not (
             relative_path in ROOT_SOURCE_FILES
             or relative_path.split("/", 1)[0] in SOURCE_DIRS
-        ):
-            continue
-        if any(
-            relative_path == prefix or relative_path.startswith(f"{prefix}/")
-            for prefix in SKIP_RELATIVE_PREFIXES
         ):
             continue
         if path.suffix not in SOURCE_SUFFIXES:

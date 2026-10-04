@@ -64,3 +64,26 @@ test('dom-e2e: the mode row lays out unconditionally — no collapse guard survi
   assert.doesNotMatch(css, /:has\(\.composer-run-mode-hint\)/);
 });
 
+
+test('dom-e2e: the rail slot also carries the Ask | Auto | Plan segments; refresh syncs aria-pressed, a disabled chip disables them', async (t) => {
+  const h = buildHarness(t, { runMode: 'auto' });
+  const doc = h.container.ownerDocument;
+  const slot = doc.getElementById('composerRunModeSlot');
+  const chip = doc.getElementById('composerRunModeChip');
+  const group = slot.querySelector('.composer-run-mode-segments[role="group"]');
+  assert.ok(group, 'segments mounted beside the chip');
+  assert.equal(chip.nextElementSibling, group);
+  const pressed = () => Array.from(group.querySelectorAll('[aria-pressed="true"]')).map((b) => b.dataset.runModeOption);
+  assert.deepEqual(pressed(), ['auto']);
+  h.mode.current = 'plan';
+  h.renderer.refresh();
+  assert.deepEqual(pressed(), ['plan']);
+  assert.equal(chip.hasAttribute('aria-pressed'), false, 'the chip stays a three-state indicator');
+
+  chip.disabled = true; // plugin read-only session (the render pipeline flips it directly)
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.deepEqual(Array.from(group.querySelectorAll('button')).map((b) => b.disabled), [true, true, true]);
+
+  h.renderer.destroy();
+  assert.equal(slot.querySelector('.composer-run-mode-segments'), null, 'destroy removes the segments');
+});

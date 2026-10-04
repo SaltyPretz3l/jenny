@@ -3,6 +3,69 @@ const assert = require('node:assert/strict');
 
 const { normalizeLogEntry, toPersistedMainLog } = require('../services/log-entry-normalizer');
 
+test('normalizer defaults invalid envelope names and preserves dotted names and identifiers', () => {
+  const invalid = normalizeLogEntry({ event: 'bad event "quoted"', component: 'bad component', status: 'token=sk-test-SYNTHETIC123', level: 'LOUD' });
+  assert.equal(invalid.event, 'electron.event');
+  assert.equal(invalid.component, 'electron.event');
+  assert.equal(invalid.status, 'unknown');
+  assert.equal(normalizeLogEntry({}).status, 'ok');
+  assert.equal(normalizeLogEntry({ status: 'interrupted' }).status, 'interrupted');
+  // A well-formed status token can still be secret-shaped.
+  const secretStatus = normalizeLogEntry({ status: 'tok_syntheticsecret123' });
+  assert.equal(secretStatus.status, 'unknown');
+  assert.equal(JSON.stringify(toPersistedMainLog('INFO', secretStatus)).includes('syntheticsecret'), false);
+  assert.equal(invalid.level, 'INFO');
+  const valid = normalizeLogEntry({
+    event: 'sidecar.runtime.complete', component: 'sidecar.runtime',
+    trace_id: 'b7a5cd07-7e36-4810-8142-07cf13ea147a', stream_id: 'stream-123',
+    agent_id: 'agent-1', entry_id: 'run:42', status: 'degraded',
+  });
+  assert.equal(valid.event, 'sidecar.runtime.complete');
+  assert.equal(valid.component, 'sidecar.runtime');
+  assert.equal(valid.trace_id, 'b7a5cd07-7e36-4810-8142-07cf13ea147a');
+  assert.equal(valid.stream_id, 'stream-123');
+  assert.equal(valid.agent_id, 'agent-1');
+  assert.equal(valid.entry_id, 'run:42');
+  assert.equal(toPersistedMainLog('INFO', valid).stream_id, 'stream-123');
+});
+
+test('normalizer drops invalid identifiers without trimming or coercion and keeps numeric ids typed', () => {
+  for (const value of [' id ', 'id=42', '"id"', 'sk-test-SYNTHETIC123', 'x'.repeat(161), 42]) {
+    const entry = normalizeLogEntry({
+      trace_id: value, request_id: value, session_id: value, tool_call_id: value,
+      agent_id: value, stream_id: value, id: value, entry_id: value, origin_entry_id: value, run_id: value,
+    });
+    for (const key of ['trace_id', 'request_id', 'session_id', 'tool_call_id', 'agent_id', 'stream_id', 'id', 'entry_id', 'origin_entry_id', 'run_id']) {
+      assert.equal(entry[key] ?? null, null, `${key}: ${value}`);
+    }
+  }
+  const entry = normalizeLogEntry({ approval_id: 0, rpc_id: 42 });
+  assert.equal(entry.approval_id, 0);
+  assert.equal(entry.rpc_id, 42);
+  // Electron approval ids are string tokens; they survive when identifier-shaped.
+  assert.equal(normalizeLogEntry({ approval_id: 'approval-1' }).approval_id, 'approval-1');
+  assert.equal(normalizeLogEntry({ rpc_id: 'rpc-7' }).rpc_id, 'rpc-7');
+  const invalid = normalizeLogEntry({ approval_id: 'token=sk-test-SYNTHETIC123', rpc_id: 1.5 });
+  assert.equal(invalid.approval_id, null);
+  assert.equal(invalid.rpc_id, null);
+});
+
+test('normalizer drops secret-bearing and overlong dynamic keys in data and details', () => {
+  const secret = 'token=sk-test-SYNTHETIC123';
+  for (const redactionMode of ['redacted', 'sanitized_snippets', 'unredacted']) {
+    const entry = normalizeLogEntry({
+      redaction_mode: redactionMode, message: secret,
+      data: { nested: { [secret]: 'value', ['x'.repeat(65)]: 1, ['x'.repeat(64)]: 2 } },
+      details: { [secret]: 'value', ['y'.repeat(65)]: 1, safe: true },
+    });
+    assert.deepEqual(entry.data.nested, { ['x'.repeat(64)]: 2 });
+    assert.equal(entry.details.safe, true);
+    assert.equal(Object.hasOwn(entry.details, secret), false);
+    assert.equal(Object.hasOwn(entry.details, 'y'.repeat(65)), false);
+    assert.doesNotMatch(JSON.stringify(entry), /SYNTHETIC123/);
+  }
+});
+
 test('normalizeLogEntry emits structured contract fields with safe defaults', () => {
   const entry = normalizeLogEntry({
     level: 'warn',
@@ -40,8 +103,8 @@ test('normalizeLogEntry preserves provided correlation metadata', () => {
     request_id: 'req-1',
     session_id: 'session-2',
     tool_call_id: 'call-2',
-    approval_id: 'approval-1',
-    rpc_id: 'rpc-9',
+    approval_id: 1,
+    rpc_id: 9,
     status: 'failed',
     duration_ms: 12.5,
     data: { reason: 'uncaughtException' },
@@ -52,8 +115,8 @@ test('normalizeLogEntry preserves provided correlation metadata', () => {
   assert.equal(entry.request_id, 'req-1');
   assert.equal(entry.session_id, 'session-2');
   assert.equal(entry.tool_call_id, 'call-2');
-  assert.equal(entry.approval_id, 'approval-1');
-  assert.equal(entry.rpc_id, 'rpc-9');
+  assert.equal(entry.approval_id, 1);
+  assert.equal(entry.rpc_id, 9);
   assert.equal(entry.status, 'failed');
   assert.equal(entry.duration_ms, 12.5);
   assert.deepEqual(entry.data, { reason: 'uncaughtException' });

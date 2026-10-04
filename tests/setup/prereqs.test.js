@@ -10,6 +10,7 @@ const {
   checkNpm,
   checkPython,
   checkGit,
+  defaultRun,
   MIN_PYTHON,
 } = require('../../scripts/setup/prereqs');
 
@@ -52,7 +53,27 @@ test('checkNode trusts an injected runtime version (the orchestrator runs under 
 });
 
 test('checkNpm parses the npm --version output', () => {
-  const npm = checkNpm(fakeRun({ 'npm --version': { stdout: '10.9.2\n' } }));
+  const npm = checkNpm(fakeRun({ 'npm --version': { stdout: '10.9.2\n' } }), { platform: 'darwin' });
+  assert.equal(npm.found, true);
+  assert.equal(npm.satisfiesMin, true);
+});
+
+test('checkNpm probes the npm.cmd shim through a shell on Windows', () => {
+  const calls = [];
+  const run = (cmd, args, opts) => {
+    calls.push({ cmd, args, opts });
+    return cmd === 'npm.cmd'
+      ? { status: 0, stdout: '11.10.1\n', stderr: '' }
+      : { status: 127, stdout: '', stderr: '' };
+  };
+  const npm = checkNpm(run, { platform: 'win32' });
+  assert.equal(npm.found, true);
+  assert.equal(npm.versionText, '11.10.1');
+  assert.deepEqual(calls, [{ cmd: 'npm.cmd', args: ['--version'], opts: { shell: true } }]);
+});
+
+test('checkNpm finds the real npm through defaultRun on Windows',{ skip: process.platform !== 'win32' }, () => {
+  const npm = checkNpm(defaultRun, { platform: 'win32' });
   assert.equal(npm.found, true);
   assert.equal(npm.satisfiesMin, true);
 });

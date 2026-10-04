@@ -167,10 +167,13 @@
     }
 
     heartbeat(options = {}) {
-      if (this.heartbeatPending) return this.heartbeatPending;
-      const pending = this._heartbeat(options).finally(() => {
+      // Dedup per controller generation, conversation and lease generation (DKR-006).
+      const state = this.getState();
+      const key = [this.getGeneration(), text(state.selectedSessionId), state.control?.generation ?? ''].join('|');
+      if (this.heartbeatPending?.key === key) return this.heartbeatPending;
+      const pending = Object.assign(this._heartbeat(options).finally(() => {
         if (this.heartbeatPending === pending) this.heartbeatPending = null;
-      });
+      }), { key });
       this.heartbeatPending = pending;
       return pending;
     }
@@ -301,6 +304,7 @@
         state.activeStreamId = '';
         if (state.selectedSessionId) await this.loadSnapshot(state.selectedSessionId);
       }
+      if (result.cleanup_status === 'degraded') state.statusMessage = jt("browserConversation.chatDeletedCleanupIncomplete", "The chat was deleted, but some of its files could not be removed from the host.");
       this.render();
     }
 
@@ -571,13 +575,7 @@
         current.current_segment_text = current.assistant_text;
       }
       if (Array.isArray(event.reasoning)) {
-        for (const entry of event.reasoning) {
-          const entryId = text(entry?.id);
-          if (!entryId) continue;
-          const index = current.reasoning.findIndex((item) => text(item?.id) === entryId);
-          if (index >= 0) current.reasoning[index] = { ...current.reasoning[index], ...entry };
-          else current.reasoning.push({ ...entry });
-        }
+        current.reasoning = event.reasoning.filter((entry) => text(entry?.id)).map((entry) => ({ ...entry }));
       }
       current.phase = text(event.type);
       state.liveProjection = current;

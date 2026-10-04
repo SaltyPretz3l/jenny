@@ -20,11 +20,6 @@
   } = turnNormalizationUtils;
   const { beginSegment } = streamTextCursor;
 
-  const PILL_SOURCES = (typeof globalThis !== 'undefined'
-    && globalThis.rendererTurnStatusPill
-    && globalThis.rendererTurnStatusPill.SOURCES)
-    || { TURN_RUNNING_TOOL: 'turn.running_tool', TURN_NEEDS_APPROVAL: 'turn.needs_approval' };
-
   const STRUCTURAL_RESULT_TOOL_NAMES = new Set([
     'ask_user',
     'bash',
@@ -72,8 +67,6 @@
       createNormalizedMessage = (_role, _content, extra = {}) => ({ ...extra }),
       releaseApprovalToastSessions = () => {},
       clearSessionComposerNotice = () => {},
-      setSessionTurnStatusPill = () => {},
-      clearSessionTurnStatusPill = () => {},
       patchSessionSummary = () => {},
       queueSessionRender = () => {},
       scheduleLiveToolPatch = () => false,
@@ -92,6 +85,8 @@
       // no session-store, no journaling. See renderer-stream-tool-live-tail.js.
       applyToolLiveOutputChunk = () => false,
       settleToolLiveOutput = () => {},
+      // The session whose timeline the tail patches (pane 0 in split view).
+      isToolLiveOutputSession = isCurrentSession,
     } = options;
 
     function normalizeApprovalId(payload, callId) {
@@ -177,11 +172,15 @@
         || metadata.diff
         || (Array.isArray(metadata.diffs) && metadata.diffs.length > 0)
         || metadata.monitor
+        // A subagent report swaps the row's live summary for the terminal one.
+        || metadata.subagent_batch_report
+        || metadata.subagent_report
         || (Array.isArray(metadata.generated_artifacts) && metadata.generated_artifacts.length > 0)
         || (Array.isArray(metadata.generatedArtifacts) && metadata.generatedArtifacts.length > 0)
         || metadata.stdout !== undefined
         || metadata.stderr !== undefined
         || metadata.exitCode != null
+        || metadata.exit_code != null
         || metadata.timedOut
         || metadata.killed
       );
@@ -223,6 +222,7 @@
         setSessionMessages(payload.sessionId, pendingMessages, `session_${payload.sessionId}`);
       }
       state.pendingStreams.delete(payload.streamId);
+      state.streamDeltaKindByStream?.delete(String(payload.streamId || '').trim());
       const rawNextId = payload.next_assistant_message_id ?? payload.nextAssistantMessageId;
       const identity = segmentIdentityUtils.resolveAssistantSegmentIdentity?.(payload.streamId, rawNextId);
       if (rawNextId != null && !identity && !segState.invalidAssistantIdentityReported) {
@@ -350,25 +350,6 @@
         state.pendingToolApprovals.delete(callId);
         releaseApprovalToastSessions([payload.sessionId]);
       }
-      const toolName = String(payload.toolName || existingToolEntry?.toolName || '').trim();
-      const turnPhaseApi = (typeof globalThis !== 'undefined' && globalThis.rendererTurnPhase) || null;
-      const composerCopy = turnPhaseApi && typeof turnPhaseApi.phaseToComposerCopy === 'function'
-        ? (status === 'pending_approval'
-          ? turnPhaseApi.phaseToComposerCopy('needs_approval', { approvalToolName: toolName })
-          : turnPhaseApi.phaseToComposerCopy('running_tool', { toolName }))
-        : null;
-      const pillMessage = composerCopy && composerCopy.message
-        ? composerCopy.message
-        : (status === 'pending_approval' ? jt('chat.toolStatus.approvalNeeded', 'Approval needed') : jt('chat.toolStatus.runningTool', 'Running tool\u2026'));
-      const pillSource = status === 'pending_approval' ? PILL_SOURCES.TURN_NEEDS_APPROVAL : PILL_SOURCES.TURN_RUNNING_TOOL;
-      const otherPillSource = status === 'pending_approval' ? PILL_SOURCES.TURN_RUNNING_TOOL : PILL_SOURCES.TURN_NEEDS_APPROVAL;
-      setSessionTurnStatusPill(payload.sessionId, pillSource, {
-        message: pillMessage,
-        tone: composerCopy ? composerCopy.tone : (status === 'pending_approval' ? 'warning' : 'pending'),
-        spinner: composerCopy ? composerCopy.spinner : status !== 'pending_approval',
-        badgeText: composerCopy ? composerCopy.badgeText : (status === 'pending_approval' ? 'Approval' : 'Tool'),
-      });
-      clearSessionTurnStatusPill(payload.sessionId, otherPillSource);
       queueToolSessionRender(payload, 'tool_use', {
         messages: true,
         composerStatus: true,
@@ -402,11 +383,10 @@
 
     // Main suspended this approval for a runtime pause: the waiter is gone, but
     // the persisted tool row stays pending for the checkpoint, so only the live
-    // approval entry, its toast and its pill leave.
+    // approval entry and its toast leave.
     function withdrawApproval(payload) {
       state.pendingToolApprovals.delete(normalizeApprovalId(payload, extractToolCallId(payload)));
       releaseApprovalToastSessions([payload.sessionId]);
-      clearSessionTurnStatusPill(payload.sessionId, PILL_SOURCES.TURN_NEEDS_APPROVAL);
       queueToolSessionRender(payload, 'tool_approval_withdrawn', {
         sessions: true,
         header: true,
@@ -523,18 +503,6 @@
         else activeMessages.push(planMessage);
         setSessionMessages(payload.sessionId, activeMessages, `session_${payload.sessionId}`);
       }
-      const approvalToolName = String(payload.toolName || '').trim();
-      const approvalTurnPhaseApi = (typeof globalThis !== 'undefined' && globalThis.rendererTurnPhase) || null;
-      const approvalCopy = approvalTurnPhaseApi && typeof approvalTurnPhaseApi.phaseToComposerCopy === 'function'
-        ? approvalTurnPhaseApi.phaseToComposerCopy('needs_approval', { approvalToolName })
-        : null;
-      setSessionTurnStatusPill(payload.sessionId, PILL_SOURCES.TURN_NEEDS_APPROVAL, {
-        message: approvalCopy && approvalCopy.message ? approvalCopy.message : jt('chat.toolStatus.approvalNeeded', 'Approval needed'),
-        tone: approvalCopy ? approvalCopy.tone : 'warning',
-        spinner: approvalCopy ? approvalCopy.spinner : false,
-        badgeText: approvalCopy ? approvalCopy.badgeText : 'Approval',
-      });
-      clearSessionTurnStatusPill(payload.sessionId, PILL_SOURCES.TURN_RUNNING_TOOL);
       if (!isCurrentSession(payload.sessionId)) {
         showApprovalToast(payload.sessionId);
       }
@@ -556,7 +524,30 @@
       return { buffered: false, terminal: false };
     }
 
+    // Main suspended these questions for a runtime pause: the waiter is gone, but
+    // the tool row stays pending for the checkpoint, so only the chat's "Input
+    // needed" attention for that exact question ref leaves (Resume re-offers
+    // the questions under a new ref on a new stream).
+    function withdrawUserQuestions(payload) {
+      const callId = extractToolCallId(payload);
+      const questionRef = String(payload.questionRef || payload.question_ref || '').trim();
+      const messages = [...getSessionMessages(payload.sessionId)];
+      const index = questionRef ? messages.findIndex((message) => message?.kind === 'tool_use'
+        && message.tool_call?.status === 'pending_user_input' && message.tool_call.call_id === callId
+        && String(message.tool_call.question_ref || '').trim() === questionRef) : -1;
+      if (index === -1) return { buffered: false, terminal: false };
+      messages[index] = { ...messages[index], tool_call: { ...messages[index].tool_call, user_questions_withdrawn: true } };
+      setSessionMessages(payload.sessionId, messages, `session_${payload.sessionId}`);
+      queueToolSessionRender(payload, 'user_questions_withdrawn', {
+        sessions: true,
+        header: true,
+        composerStatus: true,
+      }, { allowLivePatch: false });
+      return { buffered: false, terminal: false };
+    }
+
     async function handleUserQuestionsRequested(payload) {
+      if (payload.type === 'user_questions_withdrawn') return withdrawUserQuestions(payload);
       const callId = extractToolCallId(payload);
       const logicalTurnId = resolvePayloadTurnId(payload);
       const toolUseMessageId = buildToolUseMessageId(payload, callId);
@@ -573,11 +564,13 @@
         kind: 'tool_use', callId, streamId: payload.streamId, preferredId: toolUseMessageId,
       });
       if (toolUseIndex !== -1) {
+        // A fresh offer is answerable again, even on a row a pause withdrew.
+        const { user_questions_withdrawn: _withdrawn, ...toolCall } = activeMessages[toolUseIndex].tool_call || {};
         activeMessages[toolUseIndex] = {
           ...activeMessages[toolUseIndex],
           ...(logicalTurnId ? { turn_id: logicalTurnId } : {}),
           tool_call: {
-            ...activeMessages[toolUseIndex].tool_call,
+            ...toolCall,
             status: 'pending_user_input',
             user_questions: questions,
             question_ref: questionRef,
@@ -627,7 +620,7 @@
       // W2-1: live tail for the running tool row. Only the visible session's
       // DOM is patched; chunks for other sessions are simply dropped — the
       // final tool_result carries the authoritative output everywhere.
-      if (!isCurrentSession(payload.sessionId)) {
+      if (!isToolLiveOutputSession(payload.sessionId)) {
         return { buffered: false, terminal: false };
       }
       try {
@@ -644,7 +637,7 @@
       const approvalId = normalizeApprovalId(payload, callId);
       try {
         // W2-1: the settled row owns its Output panel — remove the live tail.
-        settleToolLiveOutput(callId);
+        settleToolLiveOutput({ sessionId: payload.sessionId, streamId: payload.streamId, callId });
       } catch (_error) { /* ephemeral UI only */ }
       const toolUseMessageId = buildToolUseMessageId(payload, callId);
       const toolResultMessageId = buildToolResultMessageId(payload, callId);
@@ -705,8 +698,9 @@
           summary: String(payload.summary || ''),
           is_error: Boolean(payload.isError),
           error_code: String(payload.errorCode || ''),
-          exit_code: payload.metadata && payload.metadata.exitCode != null
-            ? Number(payload.metadata.exitCode)
+          // exit_code is the sidecar shell tool's wire key; exitCode the older shape.
+          exit_code: payload.metadata && (payload.metadata.exitCode ?? payload.metadata.exit_code) != null
+            ? Number(payload.metadata.exitCode ?? payload.metadata.exit_code)
             : null,
           duration_ms: payload.durationMs || 0,
           parent_stream_id: payload.streamId,
@@ -787,8 +781,6 @@
         } catch (_error) { /* optional task-rail affordance only */ }
       }
       clearSessionComposerNotice(payload.sessionId);
-      clearSessionTurnStatusPill(payload.sessionId, PILL_SOURCES.TURN_RUNNING_TOOL);
-      clearSessionTurnStatusPill(payload.sessionId, PILL_SOURCES.TURN_NEEDS_APPROVAL);
       queueToolSessionRender(payload, 'tool_result', {
         messages: true,
         composerStatus: true,

@@ -71,6 +71,7 @@ test('context compaction entries are bounded and cloned into assistant fields', 
     inputComplete: 1,
     droppedMessages: 3.9,
     droppedBytes: Infinity,
+    summarySourceDroppedMessages: 5.7,
     summaryPersisted: 'yes',
     summaryExcerpt: ` ${' excerpt '.repeat(200)} `,
     occurredAt: '2026-09-21T12:00:00.000Z',
@@ -85,6 +86,7 @@ test('context compaction entries are bounded and cloned into assistant fields', 
   assert.equal(stored.inputComplete, true);
   assert.equal(stored.droppedMessages, 3);
   assert.equal(stored.droppedBytes, 0);
+  assert.equal(stored.summarySourceDroppedMessages, 5);
   assert.equal(stored.summaryPersisted, true);
   assert.equal(stored.summaryExcerpt.length, 1200);
   assert.equal(stored.occurredAt, '2026-09-21T12:00:00.000Z');

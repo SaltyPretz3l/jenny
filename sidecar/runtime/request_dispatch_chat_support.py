@@ -44,14 +44,11 @@ from sidecar.runtime.chat_normalization import (
 from sidecar.runtime.chat_serialization import _serialize_loop_event, _serialize_turn_event
 from sidecar.runtime.multiplexer import TurnCancellationHandle
 from sidecar.runtime.outcomes import ProcessOutcome, chat_error_outcome
-from sidecar.runtime.plugin_workflow_bridge import PluginWorkflowBridge as _PluginWorkflowBridge
-from sidecar.runtime.plugin_workflow_bridge import workflow_usage_payload as _workflow_usage_payload
 from sidecar.runtime.rpc import error_response, result_response
 from sidecar.runtime.turn_retry import InnerRetryableTurnError
 from sidecar.runtime.turn_state import (
     TERMINAL_SUBCODE_PREEMPTED_PLAN_DRIFT,
     TURN_STATE_CANCELLED,
-    TURN_STATE_COMPLETED,
     TURN_STATE_PREEMPTED,
     TURN_STATE_RUNTIME_ERROR,
     TURN_STATE_TIMEOUT,
@@ -431,19 +428,6 @@ def _build_chat_response(
         )
 
     def _execute_attempt(attempt_params: dict[str, Any]) -> Any:
-        from sidecar.ai.engines.plugin_host import bind_plugin_host_transport
-        from sidecar.runtime.plugin_host_bridge import invoke_plugin_host
-
-        request_id = str(attempt_params.get("request_id") or "")
-        def invoke(request: dict[str, Any]) -> Any:
-            return invoke_plugin_host(
-                request, request_id=request_id, write_message=write_message,
-                response_reader_factory=approval_response_waiter_factory,
-            )
-        with bind_plugin_host_transport(invoke):
-            return _execute_attempt_bound(attempt_params)
-
-    def _execute_attempt_bound(attempt_params: dict[str, Any]) -> Any:
         if approval_plan is not None:
             return _rd_hub.resume_chat_send_response_from_approval_plan(
                 approval_plan,
@@ -475,81 +459,3 @@ def _build_chat_response(
             canonical_seq_state=canonical_seq_state,
         )
     return _execute_attempt(params)
-
-
-def _build_plugin_workflow_response(
-    *, resolution: Any, brain_container: BrainContainer, params: dict[str, Any],
-    request_id: str, trace_id: str, session_id: str,
-    write_message: Callable[[dict[str, Any]], None], read_message: Callable[[], dict[str, Any]],
-    stream_notifications: bool,
-    approval_response_reader: Callable[[float], dict[str, Any]] | None,
-    approval_response_waiter_factory: Callable[..., Callable[[float], dict[str, Any]]] | None,
-    approval_timeout_seconds: float, cancel_handle: TurnCancellationHandle | None,
-    logger: logging.Logger,
-) -> Any:
-    from sidecar.ai.plugins.workflow_interpreter import (
-        WorkflowExecutionContext,
-        execute_workflow,
-    )
-    from sidecar.ai.routing.loop_events import TokenDeltaEvent
-    from sidecar.protocol import CHAT_DONE_METHOD
-    from sidecar.runtime.chat_helpers import estimate_text_tokens, notification_context
-    from sidecar.runtime.chat_response_builders import _terminal_chat_response
-    from sidecar.runtime.rpc import notification
-
-    workflow_cancel_handle = cancel_handle or TurnCancellationHandle(
-        request_id=request_id,
-        trace_id=trace_id,
-        session_id=session_id,
-    )
-    registry = brain_container._plugin_registry()
-    unregister = registry.register_workflow_cancellation(
-        resolution.generation.authority,
-        lambda: workflow_cancel_handle.cancel(reason="plugin_generation_withdrawn"),
-    )
-    bridge = _PluginWorkflowBridge(
-        brain_container=brain_container, params=params, request_id=request_id,
-        trace_id=trace_id, session_id=session_id, write_message=write_message,
-        read_message=read_message, stream_notifications=stream_notifications,
-        approval_response_reader=approval_response_reader,
-        approval_response_waiter_factory=approval_response_waiter_factory,
-        approval_timeout_seconds=approval_timeout_seconds,
-        cancel_handle=workflow_cancel_handle,
-        logger=logger,
-    )
-    try:
-        result = execute_workflow(
-            resolution,
-            WorkflowExecutionContext(
-                prompt_runner=bridge.prompt_runner,
-                tool_runner=lambda tool_id, args, node_id, timeout_ms: bridge.tool_runner(
-                    resolution, tool_id, args, node_id, timeout_ms,
-                ),
-                emit_status=bridge.emit_status,
-                is_cancelled=lambda: workflow_cancel_handle.cancelled,
-            ),
-        )
-    finally:
-        unregister()
-    if not result.ok:
-        raise ChatRequestError(
-            request_id=request_id, trace_id=trace_id, session_id=session_id,
-            code=CMP_CHAT_STREAM_FAILED,
-            message=f"Plugin workflow stopped: {str(result.code)[:80]}",
-            rpc_code=INTERNAL_ERROR_CODE, retryable=False,
-        )
-    bridge._emit(TokenDeltaEvent(delta=result.output, token_index=1))
-    output_tokens = estimate_text_tokens(result.output)
-    done = notification(CHAT_DONE_METHOD, {
-        **notification_context(request_id, trace_id=trace_id, session_id=session_id),
-        "usage": _workflow_usage_payload(bridge, output_tokens),
-        "stop_reason": "end_turn", "model": str(brain_container.stack.config.model),
-        "provider": str(brain_container.stack.config.engine_type),
-        "response_text": result.output, "completion_source": "plugin_workflow",
-    })
-    bridge._publish(done)
-    return _terminal_chat_response(
-        request_id=request_id, status=TURN_STATE_COMPLETED,
-        notifications=bridge.notifications, tool_observation_stack=brain_container.stack,
-        response_text=result.output, completion_source="plugin_workflow",
-    )

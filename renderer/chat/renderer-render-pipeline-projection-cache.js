@@ -236,6 +236,8 @@
       buildInteractiveRecapModel = () => null,
       resolveTurnArticleMessageId = (messageId) => String(messageId || ''),
       resolveVisibleMessageDomTarget = () => null,
+      // Split view W1-4a: the session this pane shows (one pane: currentSessionId).
+      getPaneSessionId = () => String(state.currentSessionId || '').trim(),
     } = callbacks;
 
     function buildCanonicalTranscriptMessages(messages) {
@@ -409,7 +411,7 @@
     }
 
     function logToolRowProjectionFallbackOnce(messageId, reason) {
-      const normalizedSessionId = String(state.currentSessionId || '').trim();
+      const normalizedSessionId = getPaneSessionId();
       const normalizedMessageId = String(messageId || '').trim();
       const normalizedReason = String(reason || 'missing_projected_row').trim();
       if (!normalizedSessionId || !normalizedMessageId) {
@@ -437,7 +439,7 @@
     }
 
     function logToolRowProjectionFailureOnce(reason, payload) {
-      const normalizedSessionId = String(state.currentSessionId || '').trim();
+      const normalizedSessionId = getPaneSessionId();
       const normalizedReason = String(reason || 'project_turn_rows_failed').trim();
       if (!normalizedSessionId) {
         return;
@@ -497,7 +499,7 @@
       if (!chatTimeline) {
         return null;
       }
-      const activeProjectionContext = projectionContext || getCurrentProjectionContext(state.currentSessionId);
+      const activeProjectionContext = projectionContext || getCurrentProjectionContext(getPaneSessionId());
       const articleMessageId = resolveTurnArticleMessageId(messageId, activeProjectionContext);
       const target = resolveVisibleMessageDomTarget(chatTimeline, articleMessageId);
       if (!target) {
@@ -519,7 +521,7 @@
     }
 
     function recordTurnArticleRolloutSignal(signal, details) {
-      const normalizedSessionId = String(state.currentSessionId || '').trim();
+      const normalizedSessionId = getPaneSessionId();
       if (!normalizedSessionId) {
         return { logged: false, count: 0 };
       }

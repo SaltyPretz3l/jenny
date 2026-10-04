@@ -507,32 +507,37 @@ class ArtifactWorkspaceService {
         'Artifact file is unavailable.'
       );
     }
-    if (!artifact.editable) {
-      const mimeType = normalizeMimeType(artifact.mime_type);
-      if (artifact.artifact_kind === 'image' && isDataUrlPreviewMimeType(mimeType)) {
-        this._assertSessionScopeCurrent(scope);
-        const stats = await this._fs.stat(artifact.absolute_path).catch(() => null);
-        this._assertSessionScopeCurrent(scope);
-        if (stats?.isFile() && Number(stats.size || 0) <= MAX_BINARY_ARTIFACT_BYTES) {
-          this._assertSessionScopeCurrent(scope);
-          const buffer = await this._fs.readFile(artifact.absolute_path);
-          this._assertSessionScopeCurrent(scope);
-          if (buffer.length > MAX_BINARY_ARTIFACT_BYTES) {
-            return { artifact: toRendererSafeArtifact(artifact), content: '' };
-          }
-          return {
-            artifact: toRendererSafeArtifact(artifact),
-            content: '',
-            asset_data_url: `data:${mimeType};base64,${buffer.toString('base64')}`,
-          };
-        }
+    const mimeType = normalizeMimeType(artifact.mime_type);
+    const binary = artifact.artifact_kind === 'image' && isDataUrlPreviewMimeType(mimeType);
+    if (!artifact.editable && !binary) return { artifact: toRendererSafeArtifact(artifact), content: '' };
+    const maxBytes = binary ? MAX_BINARY_ARTIFACT_BYTES : MAX_EDITABLE_BYTES;
+    const readPath = await this._fs.realpath(artifact.absolute_path);
+    const handle = await this._fs.open(readPath, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0));
+    try {
+      const opened = await handle.stat();
+      this._assertSessionScopeCurrent(scope);
+      if (!opened.isFile()) throw artifactError(ARTIFACT_ERROR_CODES.FILE_UNAVAILABLE, 'Artifact file is unavailable.');
+      const buffer = Buffer.allocUnsafe(maxBytes + 1);
+      let used = 0;
+      while (used < buffer.length) {
+        const { bytesRead } = await handle.read(buffer, used, buffer.length - used, null);
+        if (!bytesRead) break;
+        used += bytesRead;
       }
-      return { artifact: toRendererSafeArtifact(artifact), content: '' };
+      const after = await this._fs.stat(artifact.absolute_path);
+      if (after.dev !== opened.dev || after.ino !== opened.ino
+        || await this._fs.realpath(artifact.absolute_path) !== readPath) {
+        throw artifactError(ARTIFACT_ERROR_CODES.FILE_UNAVAILABLE, 'Artifact file changed while reading.');
+      }
+      this._assertSessionScopeCurrent(scope);
+      if (used > maxBytes) return { artifact: toRendererSafeArtifact({ ...artifact, editable: false }), content: '' };
+      const bytes = buffer.subarray(0, used);
+      return binary
+        ? { artifact: toRendererSafeArtifact(artifact), content: '', asset_data_url: `data:${mimeType};base64,${bytes.toString('base64')}` }
+        : { artifact: toRendererSafeArtifact(artifact), content: bytes.toString('utf8') };
+    } finally {
+      await handle.close();
     }
-    this._assertSessionScopeCurrent(scope);
-    const content = await this._fs.readFile(artifact.absolute_path, 'utf8');
-    this._assertSessionScopeCurrent(scope);
-    return { artifact: toRendererSafeArtifact(artifact), content };
   }
 
   async saveArtifact(sessionId, artifactId, content) {
@@ -871,16 +876,13 @@ class ArtifactWorkspaceService {
     );
   }
 
-  /**
-   * @param {string[]|Function} activeSessionIds - Active session ids, or a
-   *   provider re-invoked immediately before each deletion. Callers should
-   *   pass a provider: a fork can persist a branch session (and release its
-   *   prune protection) while a prune pass is mid-flight, and only a fresh
-   *   re-resolve keeps that branch's freshly copied dir from being deleted
-   *   on a stale snapshot.
-   */
+  getRetentionScopes() {
+    return this._sessionAuthority.retentionScopes(this._fs, this._path);
+  }
+
+  // Re-read session ids immediately before mutation to protect in-flight forks.
   async pruneOrphanedArtifacts(activeSessionIds) {
-    if (this._sessionAuthority.hasProvider) return { removed: 0 };
+    if (this._sessionAuthority.hasProvider) return this._sessionAuthority.pruneOrphans(this, activeSessionIds);
     return this._pruneOrphanedArtifacts(activeSessionIds, null, null); }
 
   async _pruneOrphanedArtifacts(activeSessionIds, admittedAuthority, admittedSessionId) {

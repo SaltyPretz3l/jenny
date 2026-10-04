@@ -481,7 +481,7 @@ test('F10: stream handler notifies unread hook when a visible tool-use row is cr
   }]);
 });
 
-test('stream handler forwards phase and terminal presence events for comet/overlay consumers', async (t) => {
+test('stream handler forwards phase and terminal presence events to the presence seam', async (t) => {
   const harness = createHarness();
   t.after(() => harness.restore());
 

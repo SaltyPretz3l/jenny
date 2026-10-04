@@ -1,5 +1,6 @@
 const net = require('net');
-const { spawn, spawnSync } = require('child_process');
+const fs = require('fs');
+const { spawn, spawnSync, execFile } = require('child_process');
 
 function wait(ms) {
   return new Promise((resolve) => {
@@ -153,6 +154,57 @@ function normalizeProcessCommandLine(value) {
     .toLowerCase();
 }
 
+// Bind a PID to its OS creation time, never to workspace-writable metadata.
+// An empty result grants no authority to signal the process.
+function getProcessStartTimeSync(pid, {
+  platform = process.platform,
+  spawnSyncImpl = spawnSync,
+  readFileSyncImpl = fs.readFileSync,
+} = {}) {
+  if (!Number.isInteger(pid) || pid <= 0) return '';
+  try {
+    if (platform === 'linux') {
+      const stat = String(readFileSyncImpl(`/proc/${pid}/stat`, 'utf8'));
+      return stat.slice(stat.lastIndexOf(')') + 2).split(' ')[19] || '';
+    }
+    const result = spawnSyncImpl(platform === 'win32' ? 'powershell.exe' : 'ps',
+      platform === 'win32' ? ['-NoProfile', '-NonInteractive', '-Command',
+        `(Get-CimInstance Win32_Process -Filter "ProcessId=${pid}").CreationDate.ToUniversalTime().Ticks`]
+        : ['-p', String(pid), '-o', 'lstart='],
+      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true, timeout: 1000 });
+    return !result.error && result.status === 0 ? String(result.stdout || '').trim() : '';
+  } catch (_error) {
+    return '';
+  }
+}
+
+// Async twin of getProcessStartTimeSync for the Electron main process: the
+// Windows CIM query takes hundreds of milliseconds and must not block it.
+function getProcessStartTime(pid, {
+  platform = process.platform,
+  execFileImpl = execFile,
+  readFileImpl = fs.promises.readFile,
+} = {}) {
+  if (!Number.isInteger(pid) || pid <= 0) return Promise.resolve('');
+  if (platform === 'linux') {
+    return Promise.resolve(readFileImpl(`/proc/${pid}/stat`, 'utf8'))
+      .then((stat) => String(stat).slice(String(stat).lastIndexOf(')') + 2).split(' ')[19] || '')
+      .catch(() => '');
+  }
+  return new Promise((resolve) => {
+    try {
+      execFileImpl(platform === 'win32' ? 'powershell.exe' : 'ps',
+        platform === 'win32' ? ['-NoProfile', '-NonInteractive', '-Command',
+          `(Get-CimInstance Win32_Process -Filter "ProcessId=${pid}").CreationDate.ToUniversalTime().Ticks`]
+          : ['-p', String(pid), '-o', 'lstart='],
+        { encoding: 'utf8', windowsHide: true, timeout: 5000 },
+        (error, stdout) => resolve(error ? '' : String(stdout || '').trim()));
+    } catch (_error) {
+      resolve('');
+    }
+  });
+}
+
 function processCommandMatchesStored(commandLine, storedCommand) {
   const normalizedStored = normalizeProcessCommandLine(storedCommand);
   return Boolean(normalizedStored)
@@ -245,12 +297,16 @@ async function killProcessTree(pid, {
     } catch (_error) {
       return { terminated: false };
     }
+    let helperExitCode = null;
+    const recordExitCode = (code) => { helperExitCode = code; };
+    child.once('exit', recordExitCode);
     const helperExited = await waitForChildExitBounded(child, deadline - nowImpl(), {
       setTimeoutImpl,
       clearTimeoutImpl,
     });
+    child.removeListener('exit', recordExitCode);
     if (!helperExited) return { terminated: false };
-    if (!confirmExit) return { terminated: true };
+    if (!confirmExit) return { terminated: helperExitCode === 0 };
     const remainingMs = deadline - nowImpl();
     if (remainingMs <= 0) return { terminated: false };
     const confirmation = await waitForResultBounded(
@@ -294,6 +350,8 @@ module.exports = {
   getFreePort,
   getProcessCommandLine,
   getProcessCommandLineSync,
+  getProcessStartTimeSync,
+  getProcessStartTime,
   isPortOpen,
   isProcessAlive,
   killProcessTree,

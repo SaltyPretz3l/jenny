@@ -84,6 +84,7 @@ def _serialize_context_compacted(
         "input_complete": bool(event.input_complete),
         "dropped_messages": max(0, int(event.dropped_messages)),
         "dropped_bytes": max(0, int(event.dropped_bytes)),
+        "summary_source_dropped_messages": max(0, int(event.summary_source_dropped_messages)),
     }
     if event.reason_code:
         compacted_payload["reason_code"] = str(event.reason_code)[:80]
@@ -96,6 +97,8 @@ def _serialize_context_compacted(
         compacted_payload["covered_through_tool_call_id"] = str(
             event.covered_through_tool_call_id
         )[:128]
+    if event.window_shape is not None:
+        compacted_payload["window_shape"] = [dict(row) for row in event.window_shape]
     return notification(CONTEXT_COMPACTED_METHOD, compacted_payload)
 
 

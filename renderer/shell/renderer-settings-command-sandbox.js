@@ -29,15 +29,6 @@
   const UNVERIFIED_PLATFORMS = new Set(['linux', 'darwin', 'macos', 'mac']);
   const DEFAULT_PLATFORM = 'unknown';
 
-  function escapeHtml(value) {
-    return String(value == null ? '' : value)
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;')
-      .replace(/'/g, '&#39;');
-  }
-
   function normalizePlatform(value) {
     const platform = String(value || DEFAULT_PLATFORM).trim().toLowerCase();
     if (platform === 'win32' || platform === 'windows') return 'windows';
@@ -106,18 +97,6 @@
     return jt('settings.commandSandbox.platformUnknown', 'Unknown platform');
   }
 
-  function stateLabel(state) {
-    const labels = {
-      disabled: jt('settings.commandSandbox.stateDisabled', 'Disabled'),
-      unavailable: jt('settings.commandSandbox.stateUnavailable', 'Unavailable'),
-      preparing: jt('settings.commandSandbox.statePreparing', 'Preparing'),
-      ready: jt('settings.commandSandbox.stateReady', 'Ready'),
-      busy: jt('settings.commandSandbox.stateBusy', 'Busy'),
-      'recovery-required': jt('settings.commandSandbox.stateRecoveryRequired', 'Recovery required'),
-    };
-    return labels[state] || labels.unavailable;
-  }
-
   function stateMessage(state, reason = '') {
     if (reason === 'docker_missing') return jt('settings.commandSandbox.dockerMissing', 'Install and start Docker independently, then Retry.');
     if (reason === 'docker_local_daemon_required') return jt('settings.commandSandbox.localDaemon', 'Select a local Docker context, then Retry. Remote Docker daemons are unavailable.');
@@ -136,19 +115,14 @@
     return messages[state] || messages.unavailable;
   }
 
-  function stateTone(state) {
-    if (state === 'ready') return 'success';
-    if (state === 'preparing' || state === 'busy') return 'pending';
-    if (state === 'recovery-required') return 'danger';
-    if (state === 'unavailable') return 'warning';
-    return 'default';
-  }
-
   function createCommandSandboxController(options = {}) {
     const windowRef = options.windowRef || (typeof globalThis !== 'undefined' ? globalThis.window || globalThis : null);
     const documentRef = options.documentRef || windowRef?.document || (typeof globalThis !== 'undefined' ? globalThis.document : null);
     const host = options.host || documentRef?.getElementById?.('toolsCommandSandboxHost') || null;
     const inventory = options.inventory || windowRef?.inventory || (typeof globalThis !== 'undefined' ? globalThis.inventory : null) || {};
+    // The inventory barrel attaches setDisabled to the switch renderer; a bare render function falls back to the module.
+    const setSwitchDisabled = inventory.toggleSwitch?.setDisabled
+      || (typeof require === 'function' ? require('../inventory/toggle-switch').setDisabled : null);
     const getBridge = typeof options.getBridge === 'function'
       ? options.getBridge
       : () => options.bridge || windowRef?.jennyShell?.commandSandbox || null;
@@ -158,6 +132,8 @@
     let unsubscribe = null;
     let actionPromise = null;
     let requestGeneration = 0;
+    // The row depends on the Terminal commands switch; the Tools render passes that switch's state.
+    let parentOn = true;
     const listeners = [];
 
     function setState(rawState) {
@@ -178,67 +154,65 @@
       });
     }
 
+    // One rule for the locks, so a full render and the in-place parent patch agree.
+    function retryLocked() {
+      return Boolean(actionPromise) || !parentOn || !getBridge();
+    }
+    function toggleLocked() {
+      return retryLocked() || currentState.state === 'preparing' || currentState.state === 'busy';
+    }
+
+    // The binding module loads after this one, so it resolves when a row is built or bound.
+    function fieldBinding() {
+      return globalThis.rendererSettingsFieldBinding
+        || (typeof require === 'function' ? require('./renderer-settings-field-binding') : null);
+    }
+
     function getMarkup() {
       const state = currentState;
-      const toggleSwitch = typeof inventory.toggleSwitch === 'function' ? inventory.toggleSwitch : null;
-      const statusRow = typeof inventory.statusRow === 'function' ? inventory.statusRow : null;
-      const actionButton = typeof inventory.actionButton === 'function' ? inventory.actionButton : null;
-      const pending = Boolean(actionPromise);
-      const stateLocksToggle = state.state === 'preparing' || state.state === 'busy';
-      const toggleMarkup = toggleSwitch
-        ? toggleSwitch({
-          id: 'commandSandboxEnabled',
-          label: jt('settings.commandSandbox.enable', 'Enable command sandbox'),
-          description: jt('settings.commandSandbox.enableDescription', 'Run eligible run_command calls in a disposable copy with no network.'),
-          checked: state.enabled,
-          disabled: pending || stateLocksToggle || !getBridge(),
-        })
-        : '';
-      const statusMarkup = statusRow
-        ? statusRow({
-          tone: stateTone(state.state),
-          label: stateLabel(state.state),
-          message: state.message || stateMessage(state.state, state.reason),
-          badgeText: state.reason ? state.reason : '',
-          spinner: state.state === 'preparing' || state.state === 'busy',
-          ariaLive: 'polite',
-        })
-        : '';
-      const retryMarkup = actionButton && RETRY_STATES.has(state.state)
-        ? actionButton({
-          id: 'commandSandboxRetry',
-          label: jt('settings.commandSandbox.retry', 'Retry'),
-          variant: 'secondary',
-          disabled: pending || !getBridge(),
-        })
-        : '';
+      const parentOff = !parentOn;
+      const retryMarkup = typeof inventory.actionButton === 'function' && RETRY_STATES.has(state.state)
+        ? inventory.actionButton({
+          id: 'commandSandboxRetry', label: jt('settings.commandSandbox.retry', 'Retry'), variant: 'secondary',
+          disabled: retryLocked(),
+        }) : '';
       const platformMarkup = UNVERIFIED_PLATFORMS.has(state.platform)
         ? jt('settings.commandSandbox.unverifiedPlatform', 'Linux/macOS support is unverified on this build.')
         : state.platform === 'windows'
           ? jt('settings.commandSandbox.qualifiedPlatform', 'Windows is the qualified platform for this build.')
           : jt('settings.commandSandbox.unknownPlatform', 'Platform qualification is unavailable.');
-      return '<h4 class="settings-group-heading" id="toolsCommandSandboxHeading">'
-        + escapeHtml(jt('settings.commandSandbox.heading', 'Command sandbox'))
-        + '</h4>'
-        + '<p class="settings-group-copy">'
-        + escapeHtml(jt('settings.commandSandbox.description', 'Optional Docker sandbox for foreground Linux shell commands. Files are discarded after each run; typed tools keep their durable workspace behavior.'))
-        + '</p>'
-        + '<p class="settings-field-note">'
-        + escapeHtml(jt('settings.commandSandbox.boundary', 'Foreground Linux shell only. Network is disabled; executable tools remain unavailable.'))
-        + '</p>'
-        + '<div class="settings-toggle-list" aria-live="polite">'
-        + toggleMarkup
-        + '</div>'
-        + '<div class="settings-note">'
-        + escapeHtml(jt('settings.commandSandbox.dockerPrerequisite', 'Requires Docker. Install Docker Desktop if Docker is not available.'))
-        + '</div>'
-        + (statusMarkup || '<p class="settings-note" role="status" aria-live="polite">'
-          + escapeHtml(state.message || stateMessage(state.state, state.reason)) + '</p>')
-        + '<p class="settings-field-note">'
-        + escapeHtml(jt('settings.commandSandbox.platformLine', 'Platform: {platform} · Workspace: disposable copy · Network: none', { platform: platformLabel(state.platform) }))
-        + '</p>'
-        + '<p class="settings-field-note">' + escapeHtml(platformMarkup) + '</p>'
-        + (retryMarkup ? '<div class="settings-actions">' + retryMarkup + '</div>' : '');
+      // A failure is announced from the row's error slot; a state in progress replaces the help.
+      const failure = state.reason ? state.message || stateMessage(state.state, state.reason) : '';
+      const help = failure || state.state === 'disabled' || state.state === 'ready'
+        ? jt('settings.commandSandbox.rowHelp', 'A disposable copy with no network. Needs Docker.')
+        : state.message || stateMessage(state.state, state.reason);
+      const detail = jt('settings.commandSandbox.rowDetail', 'Foreground Linux shell only. Files are discarded after each run; the other file tools still work in your workspace as usual.')
+        + ' ' + jt('settings.commandSandbox.platformLine', 'Platform: {platform} · Workspace: disposable copy · Network: none', { platform: platformLabel(state.platform) })
+        + ' ' + platformMarkup;
+      return fieldBinding().renderToggleRow({
+        id: 'commandSandboxEnabled', controlId: 'commandSandboxEnabled', sub: true, parentOff, inventory,
+        label: jt('settings.commandSandbox.rowLabel', 'Run commands in a sandbox'), help, detail, error: failure,
+        controlPrefixHtml: retryMarkup, checked: state.enabled === true, disabled: toggleLocked(),
+      });
+    }
+
+    // The parent switch patches the rendered row in place: a repaint would replace
+    // the row's alert node, and a screen reader would announce the failure again.
+    function setParentOn(value) {
+      if (parentOn === (value === true)) return;
+      parentOn = value === true;
+      const row = disposed ? null : host?.querySelector?.('[data-settings-field="commandSandboxEnabled"]');
+      if (!row) return;
+      if (parentOn) row.removeAttribute('data-setting-parent-off');
+      else row.setAttribute('data-setting-parent-off', 'true');
+      const track = row.querySelector('[data-inv-toggle="commandSandboxEnabled"]');
+      if (track && setSwitchDisabled) {
+        setSwitchDisabled(track, toggleLocked());
+        // A write the settings binding has in flight keeps its own lock.
+        if (track.hasAttribute('data-setting-busy')) track.disabled = true;
+      }
+      const retry = row.querySelector('[data-action="commandSandboxRetry"]');
+      if (retry) retry.disabled = retryLocked();
     }
 
     function render() {
@@ -286,9 +260,9 @@
       }
       const previous = actionPromise;
       const generation = ++requestGeneration;
+      // The switch keeps the acknowledged value until the bridge echoes a new one.
       setState({
         ...currentState,
-        enabled: method === 'setEnabled' ? args.enabled === true : currentState.enabled,
         state: 'preparing',
         reason: '',
         message: jt('settings.commandSandbox.messagePreparing', 'Preparing the Docker sandbox…'),
@@ -318,15 +292,39 @@
       return operation;
     }
 
-    function onToggle(event) {
-      const detail = event?.detail || {};
-      if (detail.id !== 'commandSandboxEnabled' || typeof detail.checked !== 'boolean') return;
-      void invokeAction('setEnabled', { enabled: detail.checked }, 'unavailable', 'set_enabled_failed', jt('settings.commandSandbox.updateFailed', 'Command sandbox setting could not be saved.'));
+    // The switch persists through the shared Settings binding. The controller
+    // binds once for the app's lifetime, so its registry (one coordinator) lives here.
+    function bindEnabledSwitch(registerListener) {
+      const binding = fieldBinding();
+      if (typeof binding?.bindSettingFields !== 'function') return;
+      const updateFailed = () => jt('settings.commandSandbox.updateFailed', 'Command sandbox setting could not be saved.');
+      const registry = binding.createSettingsAdapterRegistry();
+      registry.register({
+        id: 'commandSandbox',
+        mode: 'patch',
+        optimistic: false,
+        read: () => ({ enabled: currentState.enabled }),
+        normalize: (value) => ({ enabled: value?.enabled === true }),
+        // invokeAction owns the transport and surfaces an unavailable or failed call itself.
+        write: (patch) => invokeAction('setEnabled', { enabled: patch.enabled }, 'unavailable', 'set_enabled_failed', updateFailed()),
+        ack: (echo, patch) => {
+          // The row shows one reason: the one invokeAction recorded, when there is one.
+          if (echo?.enabled !== patch.enabled) throw new Error((currentState.reason && currentState.message) || updateFailed());
+          return { enabled: echo.enabled };
+        },
+        // invokeAction already adopted the echoed state; repaint from it.
+        apply: () => render(),
+        // A failure the bridge or invokeAction already explained keeps its own reason.
+        onError: (error) => {
+          if (!currentState.reason) setState({ ...currentState, reason: 'set_enabled_failed', message: errorMessage(error, updateFailed()) });
+        },
+      });
+      binding.bindSettingFields({ container: host, ids: ['commandSandboxEnabled'], registry, registerListener, inventory });
     }
 
     function onClick(event) {
       const target = event?.target?.closest?.('[data-action="commandSandboxRetry"]');
-      if (!target || !host?.contains?.(target)) return;
+      if (!target || target.disabled || !host?.contains?.(target)) return;
       const fallbackState = currentState.state === 'unavailable' ? 'unavailable' : 'recovery-required';
       void invokeAction('retry', undefined, fallbackState, 'retry_failed', jt('settings.commandSandbox.retryFailed', 'Command sandbox recovery could not be completed.'));
     }
@@ -335,10 +333,12 @@
       if (bound || disposed) return;
       bound = true;
       if (host?.addEventListener) {
-        host.addEventListener('inv-toggle-change', onToggle);
-        host.addEventListener('click', onClick);
-        listeners.push(() => host.removeEventListener('inv-toggle-change', onToggle));
-        listeners.push(() => host.removeEventListener('click', onClick));
+        const registerListener = (target, type, handler, listenerOptions) => {
+          target.addEventListener(type, handler, listenerOptions);
+          listeners.push(() => target.removeEventListener(type, handler, listenerOptions));
+        };
+        registerListener(host, 'click', onClick);
+        bindEnabledSwitch(registerListener);
       }
       const bridge = getBridge();
       if (bridge && typeof bridge.onChanged === 'function') {
@@ -370,20 +370,33 @@
       dispose,
       render,
       refresh,
+      setParentOn,
       getState: () => ({ ...currentState }),
     };
   }
 
+  // The controller Settings bound; the Tools render passes the Terminal commands switch to it.
+  let boundController = null;
+
   function bindCommandSandboxSettings(windowRef, registerCleanup) {
     const controller = createCommandSandboxController({ windowRef, documentRef: windowRef.document,
       host: windowRef.document?.getElementById?.('toolsCommandSandboxHost') || null });
+    boundController = controller;
     controller.bind();
-    registerCleanup(() => controller.dispose());
+    registerCleanup(() => {
+      controller.dispose();
+      if (boundController === controller) boundController = null;
+    });
+  }
+
+  function onParentChange(parentOn) {
+    boundController?.setParentOn(parentOn);
   }
 
   return {
     bindCommandSandboxSettings,
     createCommandSandboxController,
+    onParentChange,
     normalizeState,
     stateMessage,
   };

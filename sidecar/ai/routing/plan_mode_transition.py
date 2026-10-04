@@ -6,7 +6,11 @@ import logging
 from dataclasses import replace
 from typing import Any, Iterable, Sequence
 
-from sidecar.ai.context.builder_shared import RuntimeToolStatus
+from sidecar.ai.context.builder_shared import (
+    RuntimeToolStatus,
+    loadable_tool_names,
+    render_not_loaded_tools_line,
+)
 from sidecar.ai.context.prompt_modes import (
     build_approved_plan_overlay,
     build_plan_revision_overlay,
@@ -16,6 +20,7 @@ from sidecar.ai.context.runtime_message_markers import (
     PLAN_REVISION_OVERLAY_HEADING,
     RESTORED_TOOL_CONTRACT_HEADING,
 )
+from sidecar.ai.context.turn_context import is_turn_context_row
 from sidecar.ai.tools.preconditions import PRECONDITION_RENDER
 from sidecar.runtime.diagnostics import log_event
 
@@ -105,6 +110,9 @@ def build_restored_tool_contract_overlay(
             reason = " ".join(pair[0] for pair in pairs)
             fix = " ".join(pair[1] for pair in pairs)
             lines.append(f"- `{status.name}` — {reason} Fix: {fix}")
+    not_loaded = render_not_loaded_tools_line(loadable_tool_names(tool_statuses))
+    if not_loaded:
+        lines.append(not_loaded)
     return "\n".join(line.rstrip() for line in lines)
 
 
@@ -114,8 +122,13 @@ def _insert_transition_system_message(
     # These are authoritative policy changes, not recency nudges. Providers
     # demote system rows after the leading run to user messages; appending here
     # would leave the stale read-only digest at higher instruction authority.
+    # A trailing turn-context row ends the leading run too (it is demoted).
     index = next(
-        (i for i, message in enumerate(working_messages) if message.get("role") != "system"),
+        (
+            i
+            for i, message in enumerate(working_messages)
+            if message.get("role") != "system" or is_turn_context_row(message)
+        ),
         len(working_messages),
     )
     working_messages.insert(index, {"role": "system", "content": content})
@@ -296,6 +309,7 @@ def transition_after_exit_outcome(  # noqa: PLR0911
         approval_mode=approval_mode,
         plan_decision="",
         plan_feedback="",
+        plan_approved_in_turn=True,
     )
 
 

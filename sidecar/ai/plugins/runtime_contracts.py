@@ -176,7 +176,6 @@ def parsed_content(  # noqa: C901
             1: "PluginDeclarativeContentV1",
             STAGE4B_SCHEMA_VERSION: "PluginDeclarativeContentV2",
             STAGE5_SCHEMA_VERSION: "PluginDeclarativeContentV3",
-            STAGE6_SCHEMA_VERSION: "PluginRestrictedContentV4",
         }.get(expected_row[2])
         if contract_name is None:
             raise contract_rejection("runtime_content_schema_unsupported")

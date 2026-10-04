@@ -13,6 +13,7 @@ from sidecar.ai.context.compaction import CompactionResult
 from sidecar.ai.context.prompt_cache import StructuredSystemPrompt
 from sidecar.ai.context.runtime_message_markers import PLAN_MODE_OVERLAY_HEADING
 from sidecar.ai.context.token_budget import apply_budget_check
+from sidecar.ai.context.turn_context import TURN_CONTEXT_HEADER
 from sidecar.ai.engines.factory import EngineSelection
 from sidecar.ai.engines.provider_http import ProviderHttpError
 from sidecar.ai.error_codes import (
@@ -40,8 +41,8 @@ from sidecar.ai.memory.contracts import GENERAL_PROJECT_ID
 from sidecar.ai.memory.store import ApprovedMemory
 from sidecar.ai.routing import generation_runtime
 from sidecar.ai.routing.loop_events import (
-    ContextCompactionStartedEvent,
     ContextCompactedEvent,
+    ContextCompactionStartedEvent,
     FallbackTriggeredEvent,
     StopEvent,
     StreamResetEvent,
@@ -261,6 +262,15 @@ def _budget_pressure_text() -> str:
     return "pressure text " * 1000
 
 
+def _turn_context_text(call: dict[str, Any]) -> str:
+    """The trailing ``## Turn Context`` row a local engine receives."""
+    return next(
+        str(message["content"])
+        for message in call["messages"]
+        if str(message["content"]).startswith(TURN_CONTEXT_HEADER)
+    )
+
+
 def _build_router(
     *,
     config: RuntimeConfig,
@@ -370,7 +380,7 @@ def test_router_excludes_prompt_runtime_overlays_from_compaction_input(monkeypat
     captured: dict[str, list[dict[str, Any]]] = {}
     events: list[object] = []
 
-    def fake_compact_context(messages, *_args, **_kwargs):  # noqa: ANN001
+    def fake_compact_context(messages, *_args, **_kwargs):
         captured["messages"] = [dict(message) for message in messages]
         started = events[-1]
         assert isinstance(started, ContextCompactionStartedEvent)
@@ -456,7 +466,7 @@ def test_router_returns_terminal_when_runtime_overlays_exceed_post_compaction_bu
         ]
     )
 
-    def fake_compact_context(messages, *_args, **_kwargs):  # noqa: ANN001
+    def fake_compact_context(messages, *_args, **_kwargs):
         return CompactionResult(
             messages=[
                 {"role": "system", "content": "Compacted system prompt."},
@@ -893,16 +903,23 @@ def test_router_builds_request_scoped_executable_tools_prompt_block() -> None:
     )
 
     system_prompt = str(engine.calls[0]["system"])
+    turn_context = _turn_context_text(engine.calls[0])
     assert "## Executable Tools" in system_prompt
     assert "`read_file`" in system_prompt
     assert "`web_search`: config disabled" not in system_prompt
-    assert "`web_search` is unavailable for this request: config disabled" in system_prompt
     assert "Only tools listed as available in this block may be called." in system_prompt
     assert (
         "Any tool not listed as available in this block is unavailable for this request."
         in system_prompt
     )
-    assert "This request likely needs up-to-date external information." in system_prompt
+    # A local engine gets the per-turn notes in the trailing row, so the
+    # system prompt stays byte-stable across the turns of a session.
+    unavailable = "`web_search` is unavailable for this request: config disabled"
+    current_info = "This request likely needs up-to-date external information."
+    assert unavailable in turn_context
+    assert current_info in turn_context
+    assert unavailable not in system_prompt
+    assert current_info not in system_prompt
 
 
 def test_router_logs_when_current_info_request_skips_available_web_search(
@@ -1064,7 +1081,8 @@ def test_router_request_tool_preferences_remove_disabled_tools_from_payload() ->
     system_prompt = str(engine.calls[0]["system"])
     assert "`web_search`: request preference disabled" not in system_prompt
     assert (
-        "`web_search` is unavailable for this request: request preference disabled" in system_prompt
+        "`web_search` is unavailable for this request: request preference disabled"
+        in _turn_context_text(engine.calls[0])
     )
     tool_names = [str(item.get("name") or "") for item in engine.calls[0]["tools"]]
     assert "web_search" not in tool_names
@@ -2030,8 +2048,8 @@ def test_router_injects_expected_read_snapshot_from_canonical_session_messages()
     )
 
     assert decision.response_text == "Done."
-    assert router._mcp_client.last_execute is not None  # noqa: SLF001
-    _, arguments = router._mcp_client.last_execute  # noqa: SLF001
+    assert router._mcp_client.last_execute is not None
+    _, arguments = router._mcp_client.last_execute
     assert arguments["expected_read_snapshot"] == {
         "path": "notes.txt",
         "scope": "full",
@@ -3849,6 +3867,64 @@ def test_router_enforces_per_turn_tool_cap() -> None:
         assert outcome.metadata.get("scope") == "turn"
 
 
+def _cap_router(plans: list[_ToolPlan]) -> tuple[Any, _StubEngine]:
+    descriptor = MCPToolDescriptor(
+        name="read_0",
+        description="Read a file",
+        input_schema={"type": "object", "properties": {"path": {"type": "string"}}},
+        side_effecting=False,
+        server_name="tools",
+    )
+    engine = _StubEngine(plans=plans)
+    router = _build_router(
+        config=RuntimeConfig(engine_type="mock", model="mock-v1", max_tools_per_turn=1),
+        engine=engine,
+        mcp_client=_StubMCPClient(
+            {"read_0": descriptor},
+            results={"read_0": MCPToolResult(tool_name="read_0", output="ok", success=True)},
+        ),
+    )
+    router.build_chat_decision(
+        request_id="req_cap_prefix",
+        messages=[{"role": "user", "content": "read it"}],
+        latest_user_content="read it",
+        mode="assist",
+        approvals_pre_granted=False,
+    )
+    return router, engine
+
+
+def _read_call() -> GenerationResult:
+    return GenerationResult(
+        content="",
+        tool_calls=(ToolCallRequest(tool_id="read_0", arguments={"path": "a.txt"}),),
+        finish_reason="tool_calls",
+    )
+
+
+def test_tool_cap_keeps_the_tool_list_offered_for_prefix_reuse() -> None:
+    """F15: the leg after the cap offers the same tools, so the prompt prefix holds."""
+    _router, engine = _cap_router([
+        _ToolPlan(result=_read_call()),
+        _ToolPlan(result=GenerationResult(content="Done.", finish_reason="stop")),
+    ])
+    assert len(engine.calls) == 2
+    assert engine.calls[0]["tools"]
+    assert engine.calls[1]["tools"] == engine.calls[0]["tools"]
+
+
+def test_tool_cap_drops_the_tool_list_once_a_call_follows_the_cap() -> None:
+    """F15: a model still calling after the cap notice loses the list, bounding the loop."""
+    _router, engine = _cap_router([
+        _ToolPlan(result=_read_call()),
+        _ToolPlan(result=_read_call()),
+        _ToolPlan(result=GenerationResult(content="Done.", finish_reason="stop")),
+    ])
+    assert len(engine.calls) == 3
+    assert engine.calls[1]["tools"] == engine.calls[0]["tools"]
+    assert not engine.calls[2]["tools"]
+
+
 def test_router_allows_all_tools_within_cap() -> None:
     """When tool count is within the cap, all execute normally."""
     tool_calls = tuple(
@@ -4667,8 +4743,10 @@ def test_router_stops_when_compaction_cannot_free_enough_context() -> None:
     assert "too long to continue" in decision.response_text.lower()
     assert decision.terminal_error_code == CMP_CTX_BUDGET_EXHAUSTED
     assert decision.terminal_error_retryable is False
-    assert len(engine.calls) == 1
-    assert engine.calls[0]["prompt"] == ""
+    # The sectionless summary is retried once (sweep W3-F12), so the summariser
+    # is called twice; both calls are compaction calls, never a chat turn.
+    assert len(engine.calls) == 2
+    assert all(call["prompt"] == "" for call in engine.calls)
 
 
 def test_router_budget_tracking_uses_current_context_not_cumulative_usage() -> None:
@@ -6365,10 +6443,10 @@ class _CountingBackend:
         # would then differ in the returned number as well as the empty log.
         return max(1, len(text) // 2)
 
-    def get_context_window(self, model: str) -> int:  # noqa: ARG002
+    def get_context_window(self, model: str) -> int:
         return 100_000
 
-    def get_max_output_tokens(self, model: str) -> int:  # noqa: ARG002
+    def get_max_output_tokens(self, model: str) -> int:
         return 16_384
 
 

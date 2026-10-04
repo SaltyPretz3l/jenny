@@ -50,14 +50,16 @@ def test_tool_overhead_is_the_capped_reserve_effective_context_subtracts() -> No
     assert budget.tool_overhead(0) == 0
     # Capped at a quarter of the window, like effective_context always was.
     assert budget.tool_overhead(1_000) == 65_536 // 4
-    assert budget.effective_context(29) == 65_536 - 16_384 - 8_192 - 29 * 500
+    # The summary reservation overlaps the larger output reservation (TR-006).
+    assert budget.effective_context(29) == 65_536 - 16_384 - 29 * 500
 
 
 def test_meter_threshold_adds_the_tool_reserve_back_to_the_trigger() -> None:
     budget = TokenBudget(context_window=65_536, max_output_tokens=16_384)
-    # The owner's 2026-09-18 reading: 29 tools on a 64k window showed "23.8k".
-    assert budget.auto_compact_threshold(29) == 23_814
-    assert budget.meter_compact_threshold(29) == 23_814 + 29 * 500
+    # The owner's 2026-09-18 reading of 29 tools on a 64k window was "23.8k";
+    # without the stacked summary reservation it is 31,186.
+    assert budget.auto_compact_threshold(29) == 31_186
+    assert budget.meter_compact_threshold(29) == 31_186 + 29 * 500
     assert budget.meter_compact_threshold(0) == budget.auto_compact_threshold(0)
 
 
@@ -156,3 +158,27 @@ def test_attach_compact_threshold_returns_the_reserve_it_published() -> None:
     nothing: dict[str, object] = {}
     assert attach_compact_threshold(nothing, None, None, tool_overhead_tokens=6_500) == 0
     assert "compact_threshold_tokens" not in nothing
+
+
+def test_dogfood_64k_window_with_42_tools_compacts_at_the_measured_threshold() -> None:
+    """TR-006 (dogfood 2026-09-28): Bonsai on a 64k llama-server window with 42
+    tools compacted mid-turn at 26.4k-28.6k message tokens. The measured
+    schema reserve was already live (the session's meter published
+    compact_threshold_tokens 38,031, i.e. trigger 26,355); the trigger sat low
+    because the 8,192 summary reservation was stacked on the 16,384 output
+    reservation. Only the larger is held back now, so the trigger is ~33.7k."""
+    measured = 9_320  # chars//4 of the 42 full schemas
+    _messages, budget, _tracker = apply_budget_check(
+        [], _Config(), _Engine(), num_tools=42, tool_schema_tokens=measured,  # type: ignore[arg-type]
+    )
+    assert budget is not None
+    assert budget.tool_overhead_per_tool == 278  # ceil(9320 * 1.25 / 42)
+    assert budget.tool_overhead(42) == 11_676
+    # max(16,384 output, 8,192 summary) + 11,676 tools reserved.
+    assert budget.effective_context(42) == 65_536 - 16_384 - 11_676 == 37_476
+    assert budget.auto_compact_threshold(42) == 33_728
+    assert budget.meter_compact_threshold(42) == 45_404
+
+    flat = TokenBudget(context_window=65_536, max_output_tokens=16_384)
+    assert flat.tool_overhead(42) == 65_536 // 4  # 42 x 500 capped at a quarter
+    assert flat.auto_compact_threshold(42) == 29_491

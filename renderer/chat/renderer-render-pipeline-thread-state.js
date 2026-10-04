@@ -88,6 +88,8 @@
       pruneInteractiveRoundRecapExpansionState = null,
       shouldShowThreadToggle = () => false,
       renderMessages = () => {},
+      // Split view W1-4a: the session this pane shows (one pane: currentSessionId).
+      getPaneSessionId = () => String(state?.currentSessionId || '').trim(),
     } = callbacks;
 
     const isRecapExpanded = typeof isInteractiveRoundRecapExpanded === 'function'
@@ -176,7 +178,9 @@
     }
 
     function getThreadCollapsedSet(sessionId, options) {
-      return getThreadCollapsedSetForState(state, sessionId, options);
+      // Resolved here, not by the module helper's currentSessionId fallback.
+      const paneSessionId = String(sessionId || getPaneSessionId() || '').trim();
+      return paneSessionId ? getThreadCollapsedSetForState(state, paneSessionId, options) : null;
     }
 
     function isThreadBranchCollapsed(messageId, sessionId) {
@@ -202,7 +206,7 @@
         }
       });
       if (collapsedSet.size === 0) {
-        ensureThreadBranchesCollapsedMap(state).delete(String(sessionId || state.currentSessionId || '').trim());
+        ensureThreadBranchesCollapsedMap(state).delete(String(sessionId || getPaneSessionId() || '').trim());
       }
     }
 
@@ -238,7 +242,7 @@
 
     function toggleThreadBranch(messageId) {
       const normalizedMessageId = String(messageId || '').trim();
-      const normalizedSessionId = String(state.currentSessionId || '').trim();
+      const normalizedSessionId = getPaneSessionId();
       if (!normalizedMessageId || !normalizedSessionId) {
         return;
       }
@@ -259,7 +263,7 @@
 
     function isRecapExpandedForSession(recapId, sessionId) {
       const normalizedRecapId = String(recapId || '').trim();
-      const normalizedSessionId = String(sessionId || state.currentSessionId || '').trim();
+      const normalizedSessionId = String(sessionId || getPaneSessionId() || '').trim();
       if (!normalizedRecapId || !normalizedSessionId) {
         return false;
       }

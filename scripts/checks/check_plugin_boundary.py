@@ -33,8 +33,8 @@ if str(ROOT) not in sys.path:
 from scripts.checks.bounded_process import resolve_executable, run_bounded  # noqa: E402
 
 # This check runs under the blocking pre-commit gate (scripts/checks/run_all.py)
-# and its inspect_javascript() is imported by check_plugin_stage5_budgets.py,
-# check_plugin_stage8_boundary.py, and tests/sidecar/test_policy_checks.py, so an
+# and its inspect_javascript() is imported by check_plugin_stage5_budgets.py
+# and tests/sidecar/test_policy_checks.py, so an
 # unbounded Node probe can hang a commit or a test run with no error to read. The
 # whole check is ~3.5s end to end; the ceiling only has to sit far enough above
 # that to never fire on a loaded machine.
@@ -63,17 +63,12 @@ JS_CORE_ALLOWLIST: frozenset[str] = frozenset({
     "services/main/plugins-bundled-install-wiring.js",  # Official inventory startup seam.
     "services/main/plugins-ipc-registration.js",
     "services/main/plugins-developer-profile.js",
-    "services/main/plugin-stage8-registration.js",
 })
 # Sidecar files allowed to import sidecar.ai.plugins. Stage 4A opened the
-# plugin-only initialize seam; Stage 4B adds command/workflow admission and the
-# existing tool-dispatch recheck. Keeping the exact callers here makes the
+# plugin-only initialize seam. Keeping the exact callers here makes the
 # cross-layer seam reviewable rather than allowing an entire directory.
 PY_CORE_ALLOWLIST: frozenset[str] = frozenset({
     "sidecar/ai/container.py",
-    "sidecar/runtime/plugin_workflow_bridge.py",
-    "sidecar/runtime/request_dispatch_chat.py",
-    "sidecar/runtime/request_dispatch_chat_support.py",
 })
 
 # Match module-resolution forms only (require/import specifiers), not prose or

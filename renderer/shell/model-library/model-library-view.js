@@ -54,14 +54,8 @@
     menu: true,
   };
 
-  function escapeHtml(value) {
-    return String(value == null ? '' : value)
-      .replaceAll('&', '&amp;')
-      .replaceAll('<', '&lt;')
-      .replaceAll('>', '&gt;')
-      .replaceAll('"', '&quot;')
-      .replaceAll("'", '&#39;');
-  }
+  const escapeHtml = ((typeof globalThis !== 'undefined' && globalThis.stringUtils)
+    || (typeof require === 'function' ? require('../../shared/string-utils') : null)).escapeHtml;
 
   function objectOrEmpty(value) {
     return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
@@ -88,13 +82,28 @@
     return formatted ? '~' + formatted + ' download' : '';
   }
 
-  var FIT_SOURCE_SUFFIX = {
-    estimated: ' · estimated',
-    observed: ' · measured',
-  };
+  function fitText(card, label, full) {
+    if (card.fitSource === 'estimated') {
+      return full
+        ? jt('models.library.estimatedFitDescription', '{label} \u00b7 estimated', { label: label })
+        : jt('models.library.estimatedFitCompact', '~{label}', { label: label });
+    }
+    return card.fitSource === 'observed'
+      ? jt('models.library.measuredFitDescription', '{label} · measured', { label: label })
+      : label;
+  }
 
-  function fitSourceSuffix(card) {
-    return FIT_SOURCE_SUFFIX[String(card && card.fitSource || '')] || '';
+  function renderFitText(card, label) {
+    var estimated = card.fitSource === 'estimated';
+    var full = fitText(card, label, true);
+    return '<span class="model-row-fit-text' + (estimated ? ' model-row-fit-text--estimated' : '') + '"'
+      + (estimated ? ' title="' + escapeHtml(full) + '" aria-label="' + escapeHtml(full) + '"' : '')
+      + '>' + escapeHtml(fitText(card, label, false)) + '</span>';
+  }
+
+  function formatQuant(value) {
+    var quant = String(value || '').trim();
+    return quant.toLowerCase() === 'unknown' ? '' : quant;
   }
 
   function formatDisk(card) {
@@ -201,6 +210,9 @@
         size: 'sm',
         text: 'Serving' + (model.servingPort > 0 ? ' on :' + model.servingPort : ''),
       }));
+    } else if (model.servingPaused === true) {
+      // llama-server is parked while an image render holds the GPU.
+      badges.push(inventoryBadge({ tone: 'muted', size: 'sm', text: jt('models.library.pausedForImageRender', 'Paused for an image render') }));
     }
     if (model.selectedEngine === 'llama-server') {
       // A model on its own llama-server build names it; the bundled build is implied.
@@ -245,17 +257,24 @@
     var budgetMb = positiveNumber(card.budgetMb);
     var proportional = budgetMb > 0 && !unknown;
     var name = String(card.displayName || card.tag || 'model');
+    var estimated = card.fitSource === 'estimated';
+    var fitLabel = unknown
+      ? String(card.fitLabel || jt('models.library.fitUnknown', 'Fit unknown'))
+      : String(card.fitLabel || '');
+    var full = fitText(card, fitLabel, true);
     return inventoryProgressBar({
       value: proportional ? positiveNumber(card.vramRequiredMb) : 0,
       max: proportional ? budgetMb : 1,
       // Thresholds above 1 suppress primitive tone; fitState owns the bar tone.
       warningThreshold: 2,
       dangerThreshold: 2,
-      displayText: (unknown
-        ? String(card.fitLabel || jt('models.library.fitUnknown', 'Fit unknown'))
-        : String(card.fitLabel || '')) + fitSourceSuffix(card),
-      label: jt('models.library.vramFitFor', 'VRAM fit for {model}', { model: name }),
-      className: 'model-card-fit model-card-fit--' + mergeUtils.fitTone(card),
+      displayText: fitText(card, fitLabel, false),
+      label: estimated
+        ? jt('models.library.estimatedVramFitFor', 'VRAM fit for {model}: {fit}', { model: name, fit: full })
+        : jt('models.library.vramFitFor', 'VRAM fit for {model}', { model: name }),
+      className: 'model-card-fit model-card-fit--' + mergeUtils.fitTone(card)
+        + (estimated ? ' model-card-fit--estimated' : ''),
+      title: estimated ? full : '',
     });
   }
 
@@ -321,7 +340,8 @@
     if (model.libraryGguf === true) meta.push(jt('models.library.localGguf', 'Local GGUF'));
     if (!sourceInstalled && tag) meta.push(tag);
     if (model.params) meta.push(String(model.params));
-    if (model.quant) meta.push(String(model.quant));
+    var quant = formatQuant(model.quant);
+    if (quant) meta.push(quant);
     if (context) meta.push(context + ' context');
     if (cloud) {
       meta.push(jt('models.library.hosted', 'Hosted'));
@@ -353,14 +373,11 @@
       fitHtml = '<span class="model-row-fit-none" aria-hidden="true">—</span>';
     } else if (model.fitState === 'unknown') {
       var unknownLabel = String(model.fitLabel || '').trim();
-      fitHtml = '<span class="model-row-fit-text">'
-        + escapeHtml((model.fitSource && unknownLabel
-          ? unknownLabel
-          : jt('models.library.notInCatalogFitUnknown', 'Not in catalog · fit unknown')) + fitSourceSuffix(model))
-        + '</span>';
+      fitHtml = renderFitText(model, model.fitSource && unknownLabel
+        ? unknownLabel
+        : jt('models.library.notInCatalogFitUnknown', 'Not in catalog · fit unknown'));
     } else {
-      fitHtml = '<span class="model-row-fit-text">'
-        + escapeHtml(String(model.fitLabel || '') + fitSourceSuffix(model)) + '</span>'
+      fitHtml = renderFitText(model, String(model.fitLabel || ''))
         + renderFitBar(model);
     }
 
@@ -393,7 +410,7 @@
     var icon = Array.from(name.trim())[0] || '?';
     var stats = [
       model.params ? String(model.params) : '',
-      model.quant ? String(model.quant) : '',
+      formatQuant(model.quant),
       formatContext(model.contextLength) ? formatContext(model.contextLength) + ' context' : '',
       formatDisk(model),
     ].filter(Boolean);
@@ -436,8 +453,15 @@
     return number ? (Math.round((number / 1024) * 10) / 10) + ' GB' : '';
   }
 
-  function buildHardwareSummaryLine(hardware) {
+  // options.pending: the probe has not run yet (no read, or a read taken
+  // before the managed sidecar was ready). That is no verdict, so the line
+  // reads neutral instead of a bare "not detected".
+  function buildHardwareSummaryLine(hardware, options) {
     var profile = objectOrEmpty(hardware);
+    if (profile.detected !== true && objectOrEmpty(options).pending === true) {
+      return '<div class="model-library-hardware-summary" data-hardware-pending="true">'
+        + escapeHtml(jt('models.library.hardwareChecking', 'Checking hardware…')) + '</div>';
+    }
     if (profile.detected !== true) {
       return '<div class="model-library-hardware-summary">' + escapeHtml(jt('models.library.hardwareNotDetected', 'Hardware not detected')) + '</div>';
     }

@@ -10,7 +10,9 @@ const { parseSignatureBundle, parseJsonBytes, contextBytesFor,
   MAX_PLUGIN_CONTEXT_BYTES, MAX_CAPTURED_PACKAGE_METADATA_BYTES,
   MANIFEST_PATH, SIGNATURE_BUNDLE_PATH } = require('./local-package-intake');
 const { validateDeclarativeContent } = require('../data/declarative-content-validator');
-const { validateRestrictedContent } = require('../restricted-host/contribution-compiler');
+const {
+  RESTRICTED_KIND_SET: RESTRICTED_KINDS, validateRestrictedContent,
+} = require('./restricted-content-validator');
 const { verifyPackage, CONTRACT_VERSION_MAXIMA_V3, CONTRACT_VERSION_MAXIMA_V4,
   CONTRACT_VERSION_MAXIMA_V5, CONTRACT_VERSION_MAXIMA_V6 } = require('./package-verifier');
 const { findTrustedPublisher } = require('./trusted-publisher-roots');
@@ -21,9 +23,6 @@ const MAX_CONTROL_BYTES = 256 * 1024;
 const DEVELOPER_UNSIGNED_KEY_ID = crypto.createHash('sha256')
   .update('developer-unsigned', 'ascii').digest('hex');
 const PRIVILEGED_KINDS = new Set(['native_mcp', 'session_provider', 'engine_adapter', 'hook']);
-const RESTRICTED_KINDS = new Set([
-  'restricted_transform', 'restricted_formatter', 'restricted_renderer', 'restricted_compute',
-]);
 const VIEW_KINDS = new Set(['setup_scene', 'panel', 'artifact_renderer']);
 function fail(reason, detail = null, code = null) {
   return { ok: false, ...(code ? { code } : {}), reason, detail };
@@ -36,10 +35,31 @@ function contractForManifest(version) {
   return [1, 2, 3, 4, 5, 6].includes(version) ? `PluginManifestV${version}` : null;
 }
 
+function retainedCapturePaths(first, paths, retiredPaths, entryLimit, totalLimit) {
+  const selected = new Set(paths);
+  const retired = new Set(retiredPaths);
+  const retained = [];
+  let usedBytes = 0;
+  for (const entry of first.entries) {
+    if (!selected.has(entry.path) || entry.uncompressedSize > entryLimit
+      || entry.uncompressedSize > totalLimit - usedBytes) continue;
+    // Preserve the original capture-budget decisions and failure precedence.
+    // Retired binaries already passed streaming digest/size checks in `first`.
+    usedBytes += entry.uncompressedSize;
+    if (!retired.has(entry.path)) retained.push(entry.path);
+  }
+  return retained;
+}
+
 async function verifyStage8Payload({ bytes, first, manifest }) {
   const paths = first.entries.filter((entry) => !entry.isDirectory).map((entry) => entry.path);
+  const retiredPaths = manifest.contributions.flatMap((item) => (
+    PRIVILEGED_KINDS.has(item.kind) ? [item.executable_path]
+      : (RESTRICTED_KINDS.has(item.kind) ? [item.component_path] : [])
+  )).filter((path) => !manifest.contributions.some((item) => item.content_path === path));
   const captured = await readZipPackage(bytes, {
-    capturePaths: paths,
+    capturePaths: retainedCapturePaths(first, paths, retiredPaths,
+      256 * 1024 * 1024, 300 * 1024 * 1024),
     maxCapturedEntryBytes: 256 * 1024 * 1024,
     maxTotalCapturedBytes: 300 * 1024 * 1024,
     digestUncaptured: false,
@@ -92,7 +112,7 @@ async function verifyStage8Payload({ bytes, first, manifest }) {
       }
       fullHostContents.push(value);
       executables.push({ executable_digest: contribution.executable_sha256,
-        bytes: captured.bytesOf(contribution.executable_path) });
+        bytes: null });
       allowedContributionPaths.push(contribution.executable_path);
     }
     if (restricted) {
@@ -102,7 +122,7 @@ async function verifyStage8Payload({ bytes, first, manifest }) {
       if (!componentEntry || first.digests.get(contribution.component_path)
         !== contribution.component_sha256) return fail('restricted_component_digest_mismatch');
       restrictedComponents.push({ component_digest: contribution.component_sha256,
-        bytes: captured.bytesOf(contribution.component_path) });
+        bytes: null });
       allowedContributionPaths.push(contribution.component_path);
     }
     if (VIEW_KINDS.has(contribution.kind)) {
@@ -110,8 +130,11 @@ async function verifyStage8Payload({ bytes, first, manifest }) {
         const entry = first.entries.find((candidate) => candidate.path === asset.path);
         if (!entry || first.digests.get(asset.path) !== asset.sha256
           || entry.uncompressedSize !== asset.bytes) return fail('stage7_view_asset_mismatch');
+        const assetBytes = captured.bytesOf(asset.path);
+        // An asset aliasing a retired binary path is never captured.
+        if (!Buffer.isBuffer(assetBytes)) return fail('stage7_view_asset_mismatch');
         assets.set(asset.path, { path: asset.path, sha256: asset.sha256,
-          media_type: asset.media_type, bytes: captured.bytesOf(asset.path) });
+          media_type: asset.media_type, bytes: assetBytes });
         allowedContributionPaths.push(asset.path);
       }
     }
@@ -321,7 +344,11 @@ async function verifyDistributionPackage({
     }
   }
   const captured = await readZipPackage(bytes, {
-    capturePaths: [...contributionPaths, ...componentPaths],
+    capturePaths: retainedCapturePaths(first, [...contributionPaths, ...componentPaths],
+      componentPaths.filter((path) => !contributionPaths.includes(path)),
+      manifest.manifest_schema_version === 4 ? 64 * 1024 * 1024 : MAX_CONTROL_BYTES,
+      manifest.manifest_schema_version === 4
+        ? 68 * 1024 * 1024 : MAX_CAPTURED_PACKAGE_METADATA_BYTES),
     maxCapturedEntryBytes: manifest.manifest_schema_version === 4 ? 64 * 1024 * 1024 : MAX_CONTROL_BYTES,
     maxTotalCapturedBytes: manifest.manifest_schema_version === 4
       ? 68 * 1024 * 1024 : MAX_CAPTURED_PACKAGE_METADATA_BYTES,
@@ -379,7 +406,7 @@ async function verifyDistributionPackage({
     declarative_content_texts: declarativeContentTexts,
     restricted_component_bytes: componentPaths.map((componentPath) => ({
       component_digest: manifest.contributions.find((item) => item.component_path === componentPath).component_sha256,
-      bytes: captured.bytesOf(componentPath),
+      bytes: null,
     })),
     package_record: record.value,
     package_metadata: packageMetadata,

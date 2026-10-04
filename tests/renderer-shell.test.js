@@ -329,10 +329,10 @@ test('renderer regenerate action resends the source prompt and replayable image 
 
 test('renderer capture action saves a staged screen attachment and releases it when removed', async (t) => {
   const { window, shell } = await loadRendererTestApp(t);
-  const composerSettingsButton = window.document.getElementById('composerSettingsButton');
+  const composerAttachShortcut = window.document.getElementById('composerAttachShortcut');
   const captureScreenButton = window.document.getElementById('captureScreenButton');
 
-  composerSettingsButton.click();
+  composerAttachShortcut.click();
   captureScreenButton.click();
   await waitForUi(window, 30);
 
@@ -346,4 +346,41 @@ test('renderer capture action saves a staged screen attachment and releases it w
 
   assert.equal(shell.__state.attachmentReleaseCalls.length, 1);
   assert.equal(shell.__state.attachmentReleaseCalls[0][0], 'C:/attachments/image-1.png');
+});
+
+test('renderer boot wires the split-view pane layout live and starts at exactly one pane', async (t) => {
+  const { window } = await loadRendererTestApp(t);
+  ['rendererPaneSessionContext', 'rendererPaneLayoutController', 'rendererChatPaneResizer', 'rendererAppPaneComposition']
+    .forEach((name) => assert.equal(typeof window[name], 'object', `${name} global is loaded`));
+  const composition = window.rendererAppPaneComposition.getPaneComposition();
+  assert.ok(composition, 'app.js publishes the live pane composition');
+  assert.equal(composition.getPaneCount(), 1);
+  const chatView = window.document.getElementById('chatView');
+  assert.equal(chatView.getAttribute('data-pane-count'), '1');
+  assert.equal(chatView.querySelectorAll(':scope > .chat-pane').length, 1);
+  const divider = window.document.getElementById('chatPaneResizer');
+  assert.equal(divider.classList.contains('hidden'), true);
+  assert.equal(divider.getAttribute('tabindex'), '-1');
+  assert.equal(window.document.getElementById('chatPaneKicker').hidden, true);
+});
+
+test('active-file action renders as a menu item, arms the file and dismisses the attach menu', async (t) => {
+  const { window } = await loadRendererTestApp(t, { shell: { features: { state: { featureFlags: { workspace_active_file_context: true } } } } });
+  const doc = window.document;
+  window.rendererIdeActiveEditorReader = {
+    getActivePath: () => 'src/example.js',
+    getCursorInfo: () => ({ lineNumber: 1, column: 1 }),
+    getValue: () => 'const answer = 42;',
+  };
+  window.dispatchEvent(new window.CustomEvent('ide:active-file-changed', { detail: { path: 'src/example.js' } }));
+  const host = doc.getElementById('composerActiveFileActionHost');
+  assert.equal(host.classList.contains('hidden'), false);
+  const action = host.querySelector('[data-active-file-arm]');
+  assert.equal(action.getAttribute('role'), 'menuitem');
+  doc.getElementById('composerAttachShortcut').click();
+  doc.activeElement.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'End', bubbles: true, cancelable: true }));
+  assert.equal(doc.activeElement, action);
+  action.click();
+  assert.equal(host.querySelector('[data-active-file-arm]').getAttribute('aria-pressed'), 'true');
+  assert.equal(doc.getElementById('composerAttachMenu').classList.contains('hidden'), true);
 });

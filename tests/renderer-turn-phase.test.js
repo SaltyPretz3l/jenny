@@ -1,17 +1,16 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
+const turnPhase = require('../renderer/chat/renderer-turn-phase');
+
 const {
   TURN_PHASES,
   TERMINAL_SUBSTATUS,
   PHASE_HINT_MAP,
   deriveTurnPhase,
-  phaseKindToPresenceState,
-  phaseToComposerCopy,
-  phaseToPresenceState,
   normalizeTerminalStatus,
   normalizeSendLifecycle,
-} = require('../renderer/chat/renderer-turn-phase');
+} = turnPhase;
 
 const LOCKED_PHASE_VALUES = [
   'sending',
@@ -29,17 +28,6 @@ const LOCKED_TERMINAL_VALUES = [
   'preempted',
   'interrupted',
 ];
-
-const COMET_STATE_ALLOWLIST = new Set([
-  'idle',
-  'listening',
-  'thinking',
-  'responding',
-  'tool-use',
-  'alert',
-  'happy',
-  'concerned',
-]);
 
 test('TURN_PHASES exposes only the locked six phases with canonical string values', () => {
   assert.deepEqual(
@@ -120,170 +108,10 @@ test('deriveTurnPhase accepts a realistic Phase 2 view-model shape without re-wa
   assert.equal(deriveTurnPhase(vm), 'needs_approval');
 });
 
-test('phaseToComposerCopy: sending echoes the Phase 3 umbrella over preflight/streaming/settling', () => {
-  const preflight = phaseToComposerCopy('sending', { sendLifecycle: 'preflight' });
-  assert.equal(preflight.phase, 'sending');
-  assert.equal(preflight.tone, 'pending');
-  assert.equal(preflight.spinner, true);
-  assert.ok(preflight.message.length > 0);
-
-  const streaming = phaseToComposerCopy('sending', { sendLifecycle: 'streaming' });
-  assert.equal(streaming.tone, 'pending');
-  assert.equal(streaming.spinner, true);
-
-  const settling = phaseToComposerCopy('sending', { sendLifecycle: 'settling' });
-  assert.equal(settling.tone, 'pending');
-  assert.equal(settling.spinner, true);
-});
-
-test('phaseToComposerCopy: thinking differentiates reasoning vs assistant-streaming copy', () => {
-  const thinking = phaseToComposerCopy('thinking', {});
-  assert.equal(thinking.phase, 'thinking');
-  assert.equal(thinking.spinner, true);
-  assert.ok(/Thinking/i.test(thinking.message));
-
-  const responding = phaseToComposerCopy('thinking', { assistantStreaming: true });
-  assert.equal(responding.phase, 'thinking');
-  assert.equal(responding.spinner, true);
-  assert.ok(/Respond/i.test(responding.message));
-});
-
-test('phaseToComposerCopy: needs_approval uses approval label when provided', () => {
-  const withTool = phaseToComposerCopy('needs_approval', { approvalToolName: 'Bash' });
-  assert.equal(withTool.phase, 'needs_approval');
-  assert.ok(withTool.message.includes('Bash'));
-  assert.equal(withTool.spinner, false);
-
-  const fallback = phaseToComposerCopy('needs_approval', {});
-  assert.equal(fallback.phase, 'needs_approval');
-  assert.ok(fallback.message.length > 0);
-
-  const withDisplay = phaseToComposerCopy('needs_approval', {
-    approvalToolName: 'Bash',
-    approvalToolDisplayName: 'Terminal',
-  });
-  assert.ok(withDisplay.message.includes('Terminal'));
-});
-
-test('phaseToComposerCopy: running_tool interpolates the tool label with a fallback', () => {
-  const withTool = phaseToComposerCopy('running_tool', { toolName: 'Read' });
-  assert.ok(withTool.message.includes('Read'));
-  assert.equal(withTool.spinner, true);
-  assert.equal(withTool.tone, 'pending');
-
-  const withoutTool = phaseToComposerCopy('running_tool', {});
-  assert.ok(withoutTool.message.length > 0);
-  assert.equal(withoutTool.spinner, true);
-});
-
-test('phaseToComposerCopy: review_artifact only surfaces copy when artifactReviewActive', () => {
-  const active = phaseToComposerCopy('review_artifact', { artifactReviewActive: true });
-  assert.ok(active.message.length > 0);
-
-  const inactive = phaseToComposerCopy('review_artifact', {});
-  assert.equal(inactive.message, '');
-  assert.equal(inactive.spinner, false);
-});
-
-test('phaseToComposerCopy: done branches on terminal substatus', () => {
-  const cancelled = phaseToComposerCopy('done', { terminalStatus: 'cancelled' });
-  assert.equal(cancelled.message, 'Cancelled');
-  assert.equal(cancelled.spinner, false);
-
-  const preempted = phaseToComposerCopy('done', { terminalStatus: 'preempted' });
-  assert.equal(preempted.message, 'Cancelled');
-
-  const timedOut = phaseToComposerCopy('done', { terminalStatus: 'timed_out' });
-  assert.equal(timedOut.message, 'Timed out');
-  assert.equal(timedOut.tone, 'danger');
-
-  // Backend-native 'timeout' must normalize to 'timed_out'.
-  const timeoutRaw = phaseToComposerCopy('done', { terminalStatus: 'timeout' });
-  assert.equal(timeoutRaw.message, 'Timed out');
-
-  const interrupted = phaseToComposerCopy('done', { terminalStatus: 'interrupted' });
-  assert.equal(interrupted.message, 'Interrupted');
-
-  const completed = phaseToComposerCopy('done', { terminalStatus: 'completed' });
-  assert.equal(completed.message, '');
-  assert.equal(completed.spinner, false);
-
-  const idle = phaseToComposerCopy('done', {});
-  assert.equal(idle.message, '');
-});
-
-test('phaseToComposerCopy: unknown or missing phase inputs fall through to done', () => {
-  const missing = phaseToComposerCopy(undefined, {});
-  assert.equal(missing.phase, 'done');
-  assert.equal(missing.message, '');
-
-  const bogus = phaseToComposerCopy('NOT_A_PHASE', {});
-  assert.equal(bogus.phase, 'done');
-});
-
-test('phaseToComposerCopy: outputs are deterministic for the same inputs', () => {
-  const ctx = { sendLifecycle: 'preflight', toolName: 'Read' };
-  const first = phaseToComposerCopy('sending', ctx);
-  const second = phaseToComposerCopy('sending', ctx);
-  assert.deepEqual(first, second);
-
-  const doneCtx = { terminalStatus: 'timed_out' };
-  assert.deepEqual(
-    phaseToComposerCopy('done', doneCtx),
-    phaseToComposerCopy('done', doneCtx)
-  );
-});
-
-test('phaseToPresenceState: every phase maps into the existing comet vocabulary', () => {
-  for (const phase of LOCKED_PHASE_VALUES) {
-    const presence = phaseToPresenceState(phase, {});
-    assert.ok(
-      COMET_STATE_ALLOWLIST.has(presence),
-      `phase ${phase} mapped to "${presence}" which is not in the comet vocabulary`
-    );
-  }
-});
-
-test('phaseToPresenceState: thinking branches on assistantStreaming context', () => {
-  assert.equal(phaseToPresenceState('thinking', {}), 'thinking');
-  assert.equal(phaseToPresenceState('thinking', { assistantStreaming: true }), 'responding');
-  assert.equal(phaseToPresenceState('thinking', { assistantStreaming: false }), 'thinking');
-});
-
-test('phaseKindToPresenceState: maps protocol phase kinds through canonical comet presence', () => {
-  assert.equal(phaseKindToPresenceState('reasoning'), 'thinking');
-  assert.equal(phaseKindToPresenceState('text'), 'responding');
-  assert.equal(phaseKindToPresenceState('tool_use'), 'tool-use');
-  assert.equal(phaseKindToPresenceState('tool_result'), 'tool-use');
-  assert.equal(phaseKindToPresenceState('approval_wait'), 'alert');
-  assert.equal(phaseKindToPresenceState('unknown'), '');
-});
-
-test('phaseToPresenceState: core phase → comet presence mapping', () => {
-  assert.equal(phaseToPresenceState('sending', {}), 'listening');
-  assert.equal(phaseToPresenceState('needs_approval', {}), 'alert');
-  assert.equal(phaseToPresenceState('running_tool', {}), 'tool-use');
-  assert.equal(phaseToPresenceState('review_artifact', {}), 'alert');
-});
-
-test('phaseToPresenceState: done branches on terminal substatus matching renderer/app.js precedent', () => {
-  assert.equal(phaseToPresenceState('done', { terminalStatus: 'cancelled' }), 'idle');
-  assert.equal(phaseToPresenceState('done', { terminalStatus: 'preempted' }), 'idle');
-  assert.equal(phaseToPresenceState('done', { terminalStatus: 'timed_out' }), 'concerned');
-  assert.equal(phaseToPresenceState('done', { terminalStatus: 'interrupted' }), 'concerned');
-  assert.equal(phaseToPresenceState('done', { terminalStatus: 'completed' }), 'happy');
-  assert.equal(phaseToPresenceState('done', {}), 'idle');
-});
-
-test('phaseToPresenceState: unknown phase falls through to done semantics', () => {
-  assert.equal(phaseToPresenceState('NOT_A_PHASE', {}), 'idle');
-  assert.equal(phaseToPresenceState(undefined, { terminalStatus: 'completed' }), 'happy');
-});
-
-test('phaseToPresenceState: determinism check', () => {
-  const ctx = { terminalStatus: 'completed', assistantStreaming: true };
-  assert.equal(phaseToPresenceState('thinking', ctx), phaseToPresenceState('thinking', ctx));
-  assert.equal(phaseToPresenceState('done', ctx), phaseToPresenceState('done', ctx));
+test('the removed comet presence mapping is no longer exported', () => {
+  assert.equal(Object.hasOwn(turnPhase, 'phaseToPresenceState'), false);
+  assert.equal(Object.hasOwn(turnPhase, 'phaseKindToPresenceState'), false);
+  assert.equal(Object.hasOwn(turnPhase, 'phaseToComposerCopy'), false);
 });
 
 test('normalizeTerminalStatus maps raw backend timeout into canonical timed_out', () => {
@@ -312,10 +140,4 @@ test('helpers never mutate inputs', () => {
   const vmSnapshot = JSON.stringify(vm);
   deriveTurnPhase(vm);
   assert.equal(JSON.stringify(vm), vmSnapshot);
-
-  const ctx = { sendLifecycle: 'preflight', toolName: 'Read' };
-  const ctxSnapshot = JSON.stringify(ctx);
-  phaseToComposerCopy('running_tool', ctx);
-  phaseToPresenceState('running_tool', ctx);
-  assert.equal(JSON.stringify(ctx), ctxSnapshot);
 });

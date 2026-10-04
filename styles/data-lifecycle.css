@@ -28,16 +28,15 @@
 
 .data-lifecycle-eyebrow {
   color: var(--settings-shell-accent);
-  font-size: var(--font-size-xs);
-  font-weight: 700;
-  letter-spacing: 0.12em;
+  font-size: var(--font-size-caption);
+  font-weight: 500;
 }
 
 .data-lifecycle-header h1 {
   margin: var(--space-2) 0 var(--space-2);
   color: var(--text-primary);
   font-family: var(--font-family-display);
-  font-size: var(--font-size-2xl);
+  font-size: var(--font-size-title);
   line-height: 1.12;
 }
 
@@ -87,7 +86,7 @@
 
 .data-lifecycle-summary-item strong {
   color: var(--text-bright);
-  font-size: var(--font-size-sm);
+  font-size: var(--font-size-footnote);
 }
 
 .data-lifecycle-lane,
@@ -137,7 +136,7 @@
   border-radius: var(--radius-pill);
   color: var(--status-fg-success);
   background: var(--status-bg-success);
-  font-weight: 800;
+  font-weight: 500;
 }
 
 .data-lifecycle-lane--danger .data-lifecycle-glyph,
@@ -152,7 +151,7 @@
 .data-lifecycle-progress h2 {
   margin: 0 0 var(--space-2);
   color: var(--text-primary);
-  font-size: var(--font-size-lg);
+  font-size: var(--font-size-heading);
 }
 
 .data-lifecycle-lane dl,
@@ -179,7 +178,7 @@
   margin: var(--space-1) 0 0;
   overflow-wrap: anywhere;
   color: var(--text-primary);
-  font-size: var(--font-size-sm);
+  font-size: var(--font-size-footnote);
 }
 
 .data-lifecycle-lane-actions {
@@ -217,7 +216,7 @@
 
 .data-lifecycle-check-list li span {
   color: var(--status-fg-success);
-  font-weight: 800;
+  font-weight: 500;
 }
 
 .data-lifecycle-review-card--danger .data-lifecycle-check-list li:first-child span {
@@ -264,8 +263,8 @@
 .settings-overflow > summary {
   color: var(--text-muted);
   cursor: pointer;
-  font-size: 0.78rem;
-  font-weight: 650;
+  font-size: var(--font-size-caption);
+  font-weight: 500;
 }
 
 .data-lifecycle-advanced[open] > summary,
@@ -276,7 +275,7 @@
 .data-lifecycle-privacy-warning {
   margin: 0 0 var(--space-4);
   color: var(--text-secondary);
-  font-size: var(--font-size-sm);
+  font-size: var(--font-size-footnote);
   line-height: 1.5;
 }
 
@@ -344,7 +343,9 @@
 }
 
 .data-lifecycle-settings-row {
-  align-items: flex-start;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
 }
 
 .data-lifecycle-settings-counts {
@@ -361,11 +362,12 @@
   color: var(--settings-shell-chip-color);
   background: var(--settings-shell-chip-bg);
   font-size: var(--font-size-xs);
+  white-space: nowrap;
 }
 
 .data-lifecycle-settings-actions {
   flex-wrap: wrap;
-  justify-content: flex-end;
+  justify-content: flex-start;
 }
 
 .data-lifecycle-modal-backdrop {

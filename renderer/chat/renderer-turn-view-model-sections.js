@@ -221,6 +221,10 @@
       } else if (effectiveVisibleApproval === 'cancelled' || toolUseVisibleStatus === 'cancelled') {
         state = 'cancelled';
         rawTerminal = (effectiveRawApproval === 'preempted' || toolUseRawStatus === 'preempted') ? 'preempted' : 'cancelled';
+      } else if (resultIsError && resultMetadata && (resultMetadata.timed_out === true || resultMetadata.timedOut === true)) {
+        // The shell tool stopped the command at its time limit (B11): the
+        // row reads Timed out, as tool-call-utils statusForToolResult says.
+        state = 'timed_out'; rawTerminal = 'timeout';
       } else if (resultIsError) {
         state = 'errored'; rawTerminal = 'errored';
       } else if (resultEvent) {

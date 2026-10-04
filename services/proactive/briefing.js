@@ -1,4 +1,5 @@
 const { execFile } = require('child_process');
+const GIT_TIMEOUT_MS = 10000;
 
 const { clipText, normalizeString } = require('../backend/path-utils');
 const { t } = require('../i18n-main');
@@ -48,39 +49,46 @@ function formatHomeDateLabel(date, timeZone) {
   }
 }
 
-function gitExec(execFileImpl, workspaceRoot, args) {
+function gitExec(execFileImpl, workspaceRoot, args, timeoutMs = GIT_TIMEOUT_MS) {
   return new Promise((resolve, reject) => {
-    execFileImpl(
-      'git',
-      ['-C', workspaceRoot, ...args],
-      { windowsHide: true, maxBuffer: 1024 * 1024 },
-      (error, stdout, stderr) => {
-        if (error) {
-          reject(new Error(String(stderr || error.message || error)));
-          return;
+    let child;
+    const timer = setTimeout(() => {
+      reject(new Error('Git activity timed out.'));
+      try { child?.kill(); } catch (_error) { /* deadline still settles the read */ }
+    }, timeoutMs);
+    try {
+      child = execFileImpl(
+        'git',
+        ['-C', workspaceRoot, ...args],
+        { windowsHide: true, maxBuffer: 1024 * 1024, timeout: timeoutMs },
+        (error, stdout, stderr) => {
+          clearTimeout(timer);
+          if (error) {
+            reject(new Error(String(stderr || error.message || error)));
+            return;
+          }
+          resolve(String(stdout || ''));
         }
-        resolve(String(stdout || ''));
-      }
-    );
+      );
+    } catch (error) {
+      clearTimeout(timer);
+      reject(error);
+    }
   });
 }
 
 async function readGitSnapshot(workspaceRoot, execFileImpl = execFile) {
+  // One deadline for the whole snapshot, so Home waits at most GIT_TIMEOUT_MS.
+  const deadline = Date.now() + GIT_TIMEOUT_MS;
+  const git = (args) => gitExec(execFileImpl, workspaceRoot, args, Math.max(1, deadline - Date.now()));
   try {
-    const branch = clipText(
-      await gitExec(execFileImpl, workspaceRoot, ['rev-parse', '--abbrev-ref', 'HEAD']),
-      80
-    ) || 'unknown';
-    const statusRaw = await gitExec(execFileImpl, workspaceRoot, ['status', '--porcelain']);
+    const branch = clipText(await git(['rev-parse', '--abbrev-ref', 'HEAD']), 80) || 'unknown';
+    const statusRaw = await git(['status', '--porcelain']);
     const statusLines = statusRaw
       .split(/\r?\n/)
       .map((line) => line.trimEnd())
       .filter(Boolean);
-    const recentCommitsRaw = await gitExec(
-      execFileImpl,
-      workspaceRoot,
-      ['log', '-3', '--pretty=format:%h %s']
-    ).catch(() => '');
+    const recentCommitsRaw = await git(['log', '-3', '--pretty=format:%h %s']).catch(() => '');
     const recentCommits = recentCommitsRaw
       .split(/\r?\n/)
       .map((line) => clipText(line, 120))
@@ -112,6 +120,8 @@ async function readGitSnapshot(workspaceRoot, execFileImpl = execFile) {
       branch: '',
       recentCommits: [],
       summary: t('main.briefing.gitActivityUnavailable', 'Git activity could not be read for this workspace.'),
+      // A timeout or transient failure is not cached for the day.
+      retryable: true,
     };
   }
 }

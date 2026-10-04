@@ -651,9 +651,13 @@ function runDirectNativeContextConformance({ effectId, factory, options }) {
       timeStamp: 0, clientX: 10, clientY: 10, surfaceRole: 'chat-left', localX: 10, localY: 10,
       sceneX: 10, sceneY: 10, generation: 1,
     }), effectId + ' handleInput accepts a normalized payload');
-    assert.doesNotThrow(() => controller.setActivity({
-      scopeEpoch: 1, phase: 'idle', phaseRevision: 1, targetEnergy: 0.08, attentionScale: 1,
-    }), effectId + ' setActivity accepts a snapshot');
+    // Effects with registry activityMode 'none' (reactive-grid) omit the
+    // activity channel entirely; only call it when the controller exposes it.
+    if (typeof controller.setActivity === 'function') {
+      assert.doesNotThrow(() => controller.setActivity({
+        scopeEpoch: 1, phase: 'idle', phaseRevision: 1, targetEnergy: 0.08, attentionScale: 1,
+      }), effectId + ' setActivity accepts a snapshot');
+    }
 
     if (options.defects && options.defects.throwInFrame) {
       assert.equal(reportCalls.length, 1,

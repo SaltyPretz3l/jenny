@@ -75,3 +75,63 @@ test('the chats overflow trigger reveals on hover, focus, and while its menu is 
   assert.ok(rule, 'a combined reveal rule should exist');
   assert.match(rule[1], /opacity\s*:\s*1/, 'all three states must paint the trigger');
 });
+
+// ---- Chat tab rail (shell-chrome area 2) ----
+
+function cssRules(css) {
+  const rules = [];
+  const stripped = css.replace(/\/\*[\s\S]*?\*\//g, '');
+  const re = /([^{}]+)\{([^{}]*)\}/g;
+  let match;
+  while ((match = re.exec(stripped))) {
+    rules.push({ selector: match[1].trim(), body: match[2] });
+  }
+  return rules;
+}
+
+test('a tab keeps a 134px minimum so about 14 characters of title survive (real-app gate C2)', () => {
+  const css = readRepoFile('styles/workspace-rail.css');
+  const rule = css.match(/^\.workspace-rail-tab \{([^}]*)\}/m);
+  assert.ok(rule, '.workspace-rail-tab rule should exist');
+  assert.match(rule[1], /min-width\s*:\s*134px/);
+  assert.match(rule[1], /max-width\s*:\s*220px/);
+});
+
+test('the rail state dot shares the sidebar state tokens', () => {
+  const css = readRepoFile('styles/workspace-rail.css');
+  assert.match(css, /\.workspace-rail-state-dot\s*\{/);
+  assert.match(css, /\[data-session-dominant-state="streaming"\][^{]*\.workspace-rail-state-dot\s*\{[^}]*var\(--sidebar-state-streaming-color\)/);
+  assert.match(css, /\[data-session-dominant-state="approval"\][^{]*\.workspace-rail-state-dot\s*\{[^}]*var\(--sidebar-state-approval-color\)/);
+  assert.doesNotMatch(css, /\.workspace-rail-indicator/, 'the state word is retired from the tab');
+});
+
+test('the rail fades the clipped edge when tabs overflow', () => {
+  const css = readRepoFile('styles/workspace-rail.css');
+  const rules = cssRules(css);
+  const start = rules.find((entry) => /^\.workspace-rail\[data-overflow-start\]$/.test(entry.selector));
+  const end = rules.find((entry) => /^\.workspace-rail\[data-overflow-end\]$/.test(entry.selector));
+  const both = rules.find((entry) => /^\.workspace-rail\[data-overflow-start\]\[data-overflow-end\]$/.test(entry.selector));
+  for (const rule of [start, end, both]) {
+    assert.ok(rule, 'each overflow edge combination needs a mask rule');
+    assert.match(rule.body, /mask-image\s*:\s*linear-gradient/);
+  }
+});
+
+test('the rail glyph buttons use a role type token', () => {
+  const css = readRepoFile('styles/workspace-rail.css');
+  assert.doesNotMatch(css, /--font-size-sm\b/);
+});
+
+test('the retired per-tab link button leaves no styles behind', () => {
+  const css = readRepoFile('styles/workspace-rail.css');
+  assert.doesNotMatch(css, /workspace-rail-link-button/);
+});
+
+test('a chat open as a tab shows a ring in the sidebar dot slot', () => {
+  const css = readRepoFile('styles/chats-panel.css');
+  const rule = cssRules(css).find((entry) => /\[data-session-dominant-state="open"\]/.test(entry.selector) && /\.session-row__dot/.test(entry.selector) && /box-shadow/.test(entry.body));
+  assert.ok(rule, 'a ring rule keyed on the open dominant state should exist');
+  assert.doesNotMatch(css, /data-session-tab-open/, 'the open mark is the dominant state, not a second attribute');
+  assert.match(rule.body, /box-shadow\s*:\s*inset 0 0 0 1px var\(--text-decorative\)/);
+  assert.doesNotMatch(rule.selector, /streaming|approval/, 'the ring marks idle rows; state dots keep their fill');
+});

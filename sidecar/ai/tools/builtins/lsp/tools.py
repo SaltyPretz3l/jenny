@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+from contextlib import nullcontext
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Mapping
@@ -21,12 +22,8 @@ from sidecar.ai.tools.builtins.lsp.limits import (
     MAX_LSP_ITEMS,
 )
 from sidecar.ai.tools.builtins.lsp.manager import (
-    LSPLanguage,
     LSPManager,
     LSPProtocolError,
-    LSPServerCommand,
-    LSPUnavailableResult,
-    detect_language_servers,
 )
 from sidecar.ai.tools.builtins.lsp.normalizers import (
     normalize_definitions,
@@ -39,6 +36,12 @@ from sidecar.ai.tools.builtins.lsp.paths import (
     parse_lsp_position,
     resolve_lsp_target,
     server_language_for_target,
+)
+from sidecar.ai.tools.builtins.lsp.server_detection import (
+    LSPLanguage,
+    LSPServerCommand,
+    LSPUnavailableResult,
+    detect_language_servers,
 )
 from sidecar.ai.tools.builtins.lsp_settings import (
     _STATE,
@@ -246,43 +249,48 @@ def _run_lsp_request(
         )
     try:
         workspace_root = workspace.require_root()
-        # Bounded cleanup checkpoint: reap idle language servers before
-        # acquiring, so sessions cannot accumulate for the process lifetime.
-        _STATE.manager.evict_idle_sessions()
-        session = _STATE.manager.ensure_session(
+        manager = _STATE.manager
+        manager.evict_idle_sessions()
+        session_for_request = getattr(manager, "session_for_request", None)
+        acquire = session_for_request if callable(session_for_request) else manager.ensure_session
+        acquired = acquire(
             language=server_language_for_target(target.language),
             workspace_root=workspace_root,
             command=_command_for_server(server),
         )
-        _ensure_initialized(
-            session=session,
-            language=target.language,
-            workspace_root=workspace_root,
-        )
-        sync_result = _STATE.manager.sync_document(
-            session=session,
-            language=target.language,
-            file_path=target.absolute_path,
-        )
-        if sync_result.stale_content:
-            return _failure_result(
-                result_kind=spec.result_kind,
-                target=target,
-                status="stale_content",
-                error_code=CMP_TOOL_IO_FAILED,
-                payload_extra={
-                    **failure_payload_extra,
-                    "stale_content": True,
-                    "reason": sync_result.reason,
-                    "sync_version": sync_result.version,
-                },
+        lease = acquired if callable(session_for_request) else nullcontext(acquired)
+        with lease as session:
+            _ensure_initialized(
+                manager=manager,
+                session=session,
+                language=target.language,
+                workspace_root=workspace_root,
             )
-        raw_result = _request_language_feature(
-            session=session,
-            method=spec.method,
-            uri=target.uri,
-            params=spec.request_params,
-        )
+            sync_result = manager.sync_document(
+                session=session,
+                language=target.language,
+                file_path=target.absolute_path,
+            )
+            if sync_result.stale_content:
+                return _failure_result(
+                    result_kind=spec.result_kind,
+                    target=target,
+                    status="stale_content",
+                    error_code=CMP_TOOL_IO_FAILED,
+                    payload_extra={
+                        **failure_payload_extra,
+                        "stale_content": True,
+                        "reason": sync_result.reason,
+                        "sync_version": sync_result.version,
+                    },
+                )
+            raw_result = _request_language_feature(
+                manager=manager,
+                session=session,
+                method=spec.method,
+                uri=target.uri,
+                params=spec.request_params,
+            )
     except ToolExecutionFailure:
         raise
     except LSPProtocolError as error:
@@ -319,8 +327,10 @@ def _run_lsp_request(
     )
 
 
-def _ensure_initialized(*, session: Any, language: LSPLanguage, workspace_root: Path) -> None:
-    ensure_initialized = getattr(_STATE.manager, "ensure_initialized", None)
+def _ensure_initialized(
+    *, manager: Any, session: Any, language: LSPLanguage, workspace_root: Path
+) -> None:
+    ensure_initialized = getattr(manager, "ensure_initialized", None)
     if callable(ensure_initialized):
         ensure_initialized(
             session=session,
@@ -331,6 +341,7 @@ def _ensure_initialized(*, session: Any, language: LSPLanguage, workspace_root: 
 
 def _request_language_feature(
     *,
+    manager: Any,
     session: Any,
     method: str,
     uri: str,
@@ -338,7 +349,7 @@ def _request_language_feature(
 ) -> object:
     if method == "textDocument/diagnostic":
         request_document_diagnostics = getattr(
-            _STATE.manager,
+            manager,
             "request_document_diagnostics",
             None,
         )

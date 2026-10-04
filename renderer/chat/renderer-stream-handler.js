@@ -76,6 +76,8 @@
     : function noopCreateStreamActivityRow() {
       return { noteStreamEvent() {}, tick() {}, reset() {}, dispose() {} };
     };
+  const createWaitingRowWiring = resolveDependencyModule('rendererStreamWaitingLine', './renderer-stream-waiting-line')?.createWaitingRowWiring
+    || (() => ({ rowOptions: {} }));
   // Optional (UIUX-029): the shared live-announcer factory. Absence degrades to
   // silent tool-status transitions, never a load failure.
   const _liveAnnouncerUtils = resolveDependencyModule('rendererLiveAnnouncer', '../shared/renderer-live-announcer');
@@ -205,8 +207,9 @@
     const {
       renderAll,
       renderHeader,
-      renderMessages,
+      renderMessages, renderSessionPane,
       syncTurnElapsedClock = () => {},
+      scheduleMessageViewportSync = () => {},
       renderSessions,
       renderSettings,
       renderComposerState,
@@ -218,9 +221,6 @@
       createNormalizedMessage,
       setComposerStatusNotice,
       clearComposerStatusNotice,
-      setTurnStatusPill = () => {},
-      clearTurnStatusPill = () => {},
-      clearTurnStatusPillSources = () => {},
       normalizePendingQuestionBatch,
       getInteractiveSequenceState,
       clearInteractiveDraft,
@@ -381,6 +381,8 @@
         ?? (current?.ui?.activeView === 'chat');
     }
     function isVisibleChatSession(sessionId) { return (globalThis.rendererPaneVisibilityUtils || {}).isSessionVisibleInAnyPane?.(state, sessionId) ?? (isCurrentSession(sessionId) && isChatSurfaceLive(state)); }
+    // W1-4c: direct DOM patches (tool rows, live output) reach pane 0's timeline only; another pane's rows take the routed re-render.
+    const isPaneZeroSession = (id) => (globalThis.rendererPaneVisibilityUtils || {}).isSessionVisibleInPane?.(state, id, 0) ?? isVisibleChatSession(id);
     const timelineVisibilityTracker = getTimelineVisibilityTracker(state, { appendClientLog });
     const sessionHelpers = createStreamSessionHelpers({
       state,
@@ -397,9 +399,6 @@
       queueRender: (...args) => queueRender(...args),
       setComposerStatusNotice,
       clearComposerStatusNotice,
-      setTurnStatusPill,
-      clearTurnStatusPill,
-      clearTurnStatusPillSources,
       showToastMessage, dismissToast,
       toastSource: TOAST_SOURCE,
       approvalToastSessionIds,
@@ -418,9 +417,6 @@
       refreshSessionMetadata,
       setSessionComposerNotice,
       clearSessionComposerNotice,
-      setSessionTurnStatusPill,
-      clearSessionTurnStatusPill,
-      clearSessionTurnStatusPillSources,
       showApprovalToast, dismissApprovalToast,
     } = sessionHelpers;
 
@@ -431,7 +427,7 @@
       appendClientLog,
       renderAll,
       renderHeader,
-      renderMessages,
+      renderMessages, renderSessionPane,
       renderSessions,
       renderSettings,
       renderComposerState,
@@ -444,8 +440,6 @@
       getQueuedSend,
       restoreQueuedSendDraft,
       clearSessionComposerNotice,
-      clearSessionTurnStatusPill,
-      clearSessionTurnStatusPillSources,
       getChatSendLifecycle,
       setChatSendLifecycle,
       clearChatSendLifecycle,
@@ -472,14 +466,15 @@
     const releaseApprovalToastSessions = runtime.releaseApprovalToastSessions
       ? (sessionIds) => runtime.releaseApprovalToastSessions(approvalToastSessionIds, sessionIds)
       : function noopReleaseApprovalToastSessions() {};
-    const clearTerminalStreamState = runtime.clearTerminalStreamState
-      ? (streamId) => runtime.clearTerminalStreamState(
-        approvalToastSessionIds,
-        streamSegmentState,
-        streamPhaseState,
-        streamId
-      )
-      : function noopClearTerminalStreamState() {};
+    // W2-1: live output tail for running tool rows (ephemeral DOM patches).
+    const toolLiveTail = createToolLiveTail({
+      getChatTimeline: () => chatTimeline,
+      isSessionVisible: isPaneZeroSession,
+    });
+    const clearTerminalStreamState = (streamId) => {
+      toolLiveTail.settleStream(streamId);
+      runtime.clearTerminalStreamState?.(approvalToastSessionIds, streamSegmentState, streamPhaseState, streamId);
+    };
     const finalizeTerminalStream = runtime.finalizeTerminalStream
       ? (payload, options) => runtime.finalizeTerminalStream(
         approvalToastSessionIds,
@@ -530,7 +525,7 @@
       chatTimeline,
       timelineVirtualizer,
       appendClientLog,
-      isVisibleChatSession,
+      isVisibleChatSession: isPaneZeroSession,
       shouldBlockLivePatch() {
         return state.ui?.editCommitting === true || state.ui?.bulkTruncateCommitting === true;
       },
@@ -620,20 +615,21 @@
     });
     const { handleThinkingStatus, handlePhaseStarted, handlePhaseCompleted } = reasoningPhaseStatusHandlers;
 
-    // W2-1: live output tail for running tool rows (ephemeral DOM patches).
-    const toolLiveTail = createToolLiveTail({
-      getChatTimeline: () => chatTimeline,
-    });
     // Phantom activity row: covers the silent window while the model
     // generates tool-call arguments (no provider events exist to render).
     // Ephemeral DOM only — never enters the row model or persistence.
+    const waitingRowWiring = createWaitingRowWiring({ state, queueSessionRender });
     const streamActivityRow = createStreamActivityRow({
+      ...waitingRowWiring.rowOptions,
       getChatTimeline: () => chatTimeline,
+      onRowMounted: (sessionId, node) => scheduleMessageViewportSync(getSessionMessages(sessionId) || [], {
+        patchedRoot: node?.closest?.('.chat-entry') || node,
+      }),
       isStreamLive: (sessionId, streamId) => (
         multiStreamController?.isSessionStreaming?.(sessionId) === true
         && multiStreamController?.isStreamFinalized?.(streamId) !== true
       ),
-      isSessionVisible: (sessionId) => isVisibleChatSession(sessionId),
+      isSessionVisible: (sessionId) => (globalThis.rendererPaneVisibilityUtils || {}).isSessionVisibleInPane?.(state, sessionId, 0) ?? isVisibleChatSession(sessionId),
       hasBlockingToolState: (sessionId, streamId) => {
         const streamTools = state.toolCallsByStream.get(streamId) || [];
         const hasBlockingTool = streamTools.some((tool) => {
@@ -653,6 +649,7 @@
         return false;
       },
     });
+    state.streamWaits = streamActivityRow; // read by the Pause control and the queue strip
     const toolHandlers = createStreamToolHandlers({
       state,
       appendClientLog,
@@ -663,8 +660,6 @@
       createNormalizedMessage,
       releaseApprovalToastSessions,
       clearSessionComposerNotice,
-      setSessionTurnStatusPill,
-      clearSessionTurnStatusPill,
       patchSessionSummary,
       queueSessionRender,
       scheduleLiveToolPatch: (payload, details) => liveToolPatchController.queueToolPatch(payload, details),
@@ -677,7 +672,8 @@
       MESSAGE_STATUS,
       publishToolStartImpulse,
       applyToolLiveOutputChunk: (payload) => toolLiveTail.appendChunk(payload),
-      settleToolLiveOutput: (callId) => toolLiveTail.settle(callId),
+      isToolLiveOutputSession: isPaneZeroSession,
+      settleToolLiveOutput: (identity) => toolLiveTail.settle(identity),
     });
     const handleToolUse = toolHandlers.handleToolUse || (async function noopHandleToolUse() {
       return { buffered: false, terminal: false };
@@ -794,6 +790,7 @@
       dropReasoningStream: (streamId) => reasoningStreamMerger.drop(streamId),
       rawHandleComplete,
       rawHandleError,
+      onTerminal: (event) => state.desktopNotificationsController?.onTerminal?.(event),
     });
 
     const liveEventHandlers = createStreamLiveEventHandlers({
@@ -868,6 +865,7 @@
         handleStreamReset,
         handleContextCompacted,
         handleContextUsage,
+        handleRuntimeWaiting: waitingRowWiring.handleRuntimeWaiting,
         handleDelta,
         handleQuestionBatch,
         handleMessageUpdated,
@@ -1000,8 +998,10 @@
       dropBufferedStreamEvents,
       rehydrateSessionFromPersistedTurnEvents,
       dispose() {
+        if (state.streamWaits === streamActivityRow) state.streamWaits = null;
         streamActivityRow.dispose?.();
         liveToolPatchController.dispose?.();
+        toolLiveTail.dispose();
         streamRecoveryController.dispose();
         disposeLifecycle();
       },

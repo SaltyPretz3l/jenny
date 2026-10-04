@@ -3,11 +3,10 @@
 // chatgptPlanUsage.* IPC namespace: renderer read + live push of the ChatGPT
 // plan-usage meter (composer footer ring). Composes the persisted store
 // (services/backend/chatgpt-plan-usage-store.js), attaches the already-
-// composed chatgptAuthService (Stage 7 plugin auth owner, see
-// services/main/plugins-ipc-registration.js), and forwards `changed` / auth /
-// backend-engine-status changes as one push channel. Flag-off or a missing
-// backendService registers nothing -- byte-identical rollback. See
-// docs/plans "ChatGPT plan-usage meter" W2.
+// composed chatgptAuthService (core owner, see
+// services/main/cloud-models-registration.js), and forwards `changed` / auth /
+// backend-engine-status changes as one push channel. A missing backendService
+// registers nothing. See docs/plans "ChatGPT plan-usage meter" W2.
 
 const path = require('node:path');
 
@@ -58,8 +57,7 @@ function registerChatGptPlanUsageIpc(ipcMainLike, {
   app,
   log = null,
 } = {}) {
-  const flagOff = backendService?.featureFlags?.chatgpt_plan_meter === false;
-  if (!backendService || flagOff) {
+  if (!backendService) {
     return noop;
   }
 
@@ -73,7 +71,6 @@ function registerChatGptPlanUsageIpc(ipcMainLike, {
         return '';
       }
     },
-    getFeatureFlags: () => backendService?.featureFlags || {},
     logger: log,
   });
   backendService.chatgptPlanUsageStore = store;

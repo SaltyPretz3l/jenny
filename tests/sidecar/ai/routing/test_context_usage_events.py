@@ -10,8 +10,6 @@ stream that publishes it:
   and the figures the loop actually computed;
 * zero snapshots when ``token_budget`` is off (no tracker => byte-identical
   pre-feature behavior);
-* zero snapshots when ``context_usage_live`` is off (the sidecar half of the
-  two-layer kill switch);
 * no repeat snapshot when a reading has not changed.
 """
 
@@ -25,7 +23,6 @@ import pytest
 from sidecar.ai.context.token_budget import BudgetTracker, TokenBudget
 from sidecar.ai.feature_flags import (
     FEATURE_CONTEXT_COMPACTION,
-    FEATURE_CONTEXT_USAGE_LIVE,
     FEATURE_TOKEN_BUDGET,
 )
 from sidecar.ai.mcp.models import MCPToolDescriptor
@@ -256,23 +253,6 @@ def test_token_budget_off_emits_no_snapshots(monkeypatch: pytest.MonkeyPatch) ->
     """No tracker => no meter stream => byte-identical pre-feature behavior."""
     _install_iteration_context_tokens(monkeypatch, [9_000, 12_000, 15_000])
     router = _router(flags={}, plans=_three_tool_plans())
-    events: list[object] = []
-
-    _run(router, events)
-
-    assert _usage_events(events) == []
-
-
-def test_context_usage_live_off_emits_no_snapshots(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Sidecar half of the two-layer kill switch."""
-    _install_budget(monkeypatch, _tracker())
-    _install_iteration_context_tokens(monkeypatch, [9_000, 12_000, 15_000])
-    router = _router(
-        flags={FEATURE_TOKEN_BUDGET: True, FEATURE_CONTEXT_USAGE_LIVE: False},
-        plans=_three_tool_plans(),
-    )
     events: list[object] = []
 
     _run(router, events)

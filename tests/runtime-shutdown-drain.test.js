@@ -617,7 +617,8 @@ test('stopRuntimeBeforeQuit flushes process logging last with a two-second bound
 
   await controller.stopRuntimeBeforeQuit();
 
-  assert.deepEqual(flushCalls, [{ timeoutMs: 2000 }]);
+  // The bounded confirmed drain, then a short best-effort drain for the outcome records.
+  assert.deepEqual(flushCalls, [{ timeoutMs: 2000 }, { timeoutMs: 250 }]);
   assert.equal(order.at(-1), 'logs.flush');
   assert.ok(order.indexOf('backend.stop') < order.indexOf('logs.flush'));
   const shutdownStages = logs.filter((entry) => entry.event === 'runtime.shutdown_stage');
@@ -652,16 +653,17 @@ test('process log flush failure is logged and cannot block shutdown', async () =
 //
 // Regression cover for the async-dispose race. Terminal teardown moved off an
 // app.once('will-quit', …) hook — which drops async work and cannot delay quit —
-// into this awaited sequence. WorkspaceTerminalService.dispose() is async (it
-// awaits a Windows `taskkill /T /F` tree kill); WorkspacePtyService.dispose() is
-// synchronous. Both must run before the controller delegates to runtime-stop, a
-// throwing disposer must be isolated + logged, and — end to end — the process
-// appExit must not fire until the async dispose has completed.
+// into this awaited sequence. WorkspacePtyService.dispose() is async (it awaits
+// the native exit event, bounded by its termination timeout). It must run
+// before the controller delegates to runtime-stop, a throwing disposer must be
+// isolated + logged, and — end to end — the process appExit must not fire until
+// the async dispose has completed. (The piped line terminal that used to share
+// this path was retired in the post-1.2.0 sweep, S8.)
 // ---------------------------------------------------------------------------
 
 function createTerminalDrivenController({
-  terminalService,
   ptyService,
+  runTaskService = null,
   testRunnerService = null,
   backendService,
   log,
@@ -674,8 +676,8 @@ function createTerminalDrivenController({
     clearSuggestionCache: () => {},
     suggestionCache: null,
     getBackendService: () => backendService,
-    getWorkspaceTerminalService: () => terminalService,
     getWorkspacePtyService: () => ptyService,
+    getWorkspaceRunTaskService: () => runTaskService,
     getWorkspaceTestRunnerService: () => testRunnerService,
     log: log || (() => {}),
     // Neutralize the destructive sync shutdown helpers reached via the finally.
@@ -683,7 +685,7 @@ function createTerminalDrivenController({
   });
 }
 
-test('stopRuntimeBeforeQuit awaits an async workspace-terminal dispose before delegating to runtime-stop', async (t) => {
+test('stopRuntimeBeforeQuit awaits an async PTY terminal dispose before delegating to runtime-stop', async (t) => {
   const originalStart = llamaLifecycle.startLlamaServer;
   llamaLifecycle.startLlamaServer = async () => ({ reused: false, baseUrl: '', pid: 0 });
   t.after(() => { llamaLifecycle.startLlamaServer = originalStart; });
@@ -691,44 +693,43 @@ test('stopRuntimeBeforeQuit awaits an async workspace-terminal dispose before de
   const order = [];
   let resolveDispose;
   const disposeGate = new Promise((resolve) => { resolveDispose = resolve; });
-  const terminalService = {
-    async dispose() { await disposeGate; order.push('terminalDispose'); },
+  const ptyService = {
+    async dispose() { await disposeGate; order.push('ptyDispose'); },
   };
   const backendService = { async stop() { order.push('backendStop'); } };
 
-  const controller = createTerminalDrivenController({ terminalService, ptyService: null, backendService });
+  const controller = createTerminalDrivenController({ ptyService, backendService });
 
   const shutdownPromise = controller.stopRuntimeBeforeQuit();
-  // Flush every ungated microtask; the sequence must PARK on the pending terminal
+  // Flush every ungated microtask; the sequence must PARK on the pending PTY
   // dispose and never reach runtime-stop (backendService.stop) until it resolves.
   await new Promise((resolve) => setImmediate(resolve));
-  assert.deepEqual(order, [], 'runtime-stop must NOT run while the async terminal dispose is pending');
+  assert.deepEqual(order, [], 'runtime-stop must NOT run while the async PTY dispose is pending');
 
   resolveDispose();
   await shutdownPromise;
 
   assert.deepEqual(
     order,
-    ['terminalDispose', 'backendStop'],
-    'the async terminal dispose must complete BEFORE runtime-stop calls backendService.stop'
+    ['ptyDispose', 'backendStop'],
+    'the async PTY dispose must complete BEFORE runtime-stop calls backendService.stop'
   );
 });
 
-test('stopRuntimeBeforeQuit disposes BOTH the async line-terminal and the sync pty services', async (t) => {
+test('stopRuntimeBeforeQuit disposes the PTY terminal and the run-task service', async (t) => {
   const originalStart = llamaLifecycle.startLlamaServer;
   llamaLifecycle.startLlamaServer = async () => ({ reused: false, baseUrl: '', pid: 0 });
   t.after(() => { llamaLifecycle.startLlamaServer = originalStart; });
 
   const disposed = [];
-  const terminalService = { async dispose() { disposed.push('terminal'); } };
-  const ptyService = { dispose() { disposed.push('pty'); } }; // synchronous, mirrors WorkspacePtyService
+  const ptyService = { async dispose() { disposed.push('pty'); } };
+  const runTaskService = { async dispose() { disposed.push('runTask'); } };
   const backendService = { async stop() {} };
 
-  const controller = createTerminalDrivenController({ terminalService, ptyService, backendService });
+  const controller = createTerminalDrivenController({ ptyService, runTaskService, backendService });
   await controller.stopRuntimeBeforeQuit();
 
-  assert.ok(disposed.includes('terminal'), 'the piped line-terminal service must be disposed');
-  assert.ok(disposed.includes('pty'), 'the ConPTY pty service must be disposed');
+  assert.deepEqual(disposed.sort(), ['pty', 'runTask'], 'both workspace process owners must be disposed');
 });
 
 test('stopRuntimeBeforeQuit awaits the workspace test runner before backend shutdown', async (t) => {
@@ -747,7 +748,6 @@ test('stopRuntimeBeforeQuit awaits the workspace test runner before backend shut
   };
   const backendService = { async stop() { order.push('backendStop'); } };
   const controller = createTerminalDrivenController({
-    terminalService: null,
     ptyService: null,
     testRunnerService,
     backendService,
@@ -771,8 +771,8 @@ test('a failing workspace test runner disposer is isolated and identified', asyn
   const disposed = [];
   let backendStopped = false;
   const controller = createTerminalDrivenController({
-    terminalService: { dispose() { disposed.push('terminal'); } },
     ptyService: { dispose() { disposed.push('pty'); } },
+    runTaskService: { dispose() { disposed.push('runTask'); } },
     testRunnerService: { async dispose() { throw new Error('runner-tree-kill-failed'); } },
     backendService: { async stop() { backendStopped = true; } },
     log: (level, event, fields) => { logs.push({ level, event, fields }); },
@@ -784,11 +784,11 @@ test('a failing workspace test runner disposer is isolated and identified', asyn
   assert.ok(failure, 'the failing runner disposer must emit a process disposal warning');
   assert.equal(failure.fields.service, 'workspaceTestRunner');
   assert.equal(failure.fields.message, 'runner-tree-kill-failed');
-  assert.deepEqual(disposed.sort(), ['pty', 'terminal']);
+  assert.deepEqual(disposed.sort(), ['pty', 'runTask']);
   assert.equal(backendStopped, true);
 });
 
-test('a throwing terminal disposer is logged and does not block the pty disposer or backend shutdown', async (t) => {
+test('a rejecting PTY disposer is logged and does not block the sibling disposer or backend shutdown', async (t) => {
   const originalStart = llamaLifecycle.startLlamaServer;
   llamaLifecycle.startLlamaServer = async () => ({ reused: false, baseUrl: '', pid: 0 });
   t.after(() => { llamaLifecycle.startLlamaServer = originalStart; });
@@ -796,13 +796,13 @@ test('a throwing terminal disposer is logged and does not block the pty disposer
   const logs = [];
   const disposed = [];
   let backendStopped = false;
-  const terminalService = { async dispose() { throw new Error('taskkill-exploded'); } };
-  const ptyService = { dispose() { disposed.push('pty'); } };
+  const ptyService = { async dispose() { throw new Error('conpty-exploded'); } };
+  const runTaskService = { dispose() { disposed.push('runTask'); } };
   const backendService = { async stop() { backendStopped = true; } };
 
   const controller = createTerminalDrivenController({
-    terminalService,
     ptyService,
+    runTaskService,
     backendService,
     log: (level, event, fields) => { logs.push({ level, event, fields }); },
   });
@@ -810,12 +810,12 @@ test('a throwing terminal disposer is logged and does not block the pty disposer
   await controller.stopRuntimeBeforeQuit();
 
   const failLog = logs.find((entry) => entry.event === 'workspace.process.dispose_failed');
-  assert.ok(failLog, 'a failing terminal dispose must be logged as workspace.process.dispose_failed');
+  assert.ok(failLog, 'a failing PTY dispose must be logged as workspace.process.dispose_failed');
   assert.equal(failLog.level, 'WARN');
-  assert.equal(failLog.fields.service, 'workspaceTerminal', 'the log must name which disposer failed');
-  assert.equal(failLog.fields.message, 'taskkill-exploded');
-  assert.ok(disposed.includes('pty'), 'the pty disposer must still run after the terminal disposer throws');
-  assert.equal(backendStopped, true, 'a failing terminal dispose must not block backend shutdown');
+  assert.equal(failLog.fields.service, 'workspacePty', 'the log must name which disposer failed');
+  assert.equal(failLog.fields.message, 'conpty-exploded');
+  assert.ok(disposed.includes('runTask'), 'the sibling disposer must still run after the PTY disposer rejects');
+  assert.equal(backendStopped, true, 'a failing PTY dispose must not block backend shutdown');
 });
 
 test('a SYNCHRONOUSLY-throwing disposer is isolated (converted to a rejection), logged, and still runs the sibling', async (t) => {
@@ -826,17 +826,17 @@ test('a SYNCHRONOUSLY-throwing disposer is isolated (converted to a rejection), 
   const logs = [];
   const disposed = [];
   let backendStopped = false;
-  // NON-async: dispose() throws synchronously (the real WorkspacePtyService.dispose
-  // is synchronous). The Promise.resolve().then(...) wrapper must turn that into an
-  // isolated rejection rather than an uncaught throw that aborts the .map() and
-  // skips the sibling disposer — this is the wrapper's whole reason to exist.
-  const terminalService = { dispose() { throw new Error('sync-taskkill-exploded'); } };
-  const ptyService = { dispose() { disposed.push('pty'); } };
+  // NON-async: dispose() throws synchronously. The Promise.resolve().then(...)
+  // wrapper must turn that into an isolated rejection rather than an uncaught
+  // throw that aborts the .map() and skips the sibling disposer — this is the
+  // wrapper's whole reason to exist.
+  const ptyService = { dispose() { throw new Error('sync-conpty-exploded'); } };
+  const runTaskService = { dispose() { disposed.push('runTask'); } };
   const backendService = { async stop() { backendStopped = true; } };
 
   const controller = createTerminalDrivenController({
-    terminalService,
     ptyService,
+    runTaskService,
     backendService,
     log: (level, event, fields) => { logs.push({ level, event, fields }); },
   });
@@ -845,13 +845,13 @@ test('a SYNCHRONOUSLY-throwing disposer is isolated (converted to a rejection), 
 
   const failLog = logs.find((entry) => entry.event === 'workspace.process.dispose_failed');
   assert.ok(failLog, 'a synchronous throw in a disposer must be caught and logged as workspace.process.dispose_failed');
-  assert.equal(failLog.fields.service, 'workspaceTerminal', 'the log must name which disposer threw');
-  assert.equal(failLog.fields.message, 'sync-taskkill-exploded');
-  assert.ok(disposed.includes('pty'), 'the sibling disposer must still run after a SYNC throw in the first disposer');
+  assert.equal(failLog.fields.service, 'workspacePty', 'the log must name which disposer threw');
+  assert.equal(failLog.fields.message, 'sync-conpty-exploded');
+  assert.ok(disposed.includes('runTask'), 'the sibling disposer must still run after a SYNC throw in the first disposer');
   assert.equal(backendStopped, true, 'a synchronous disposer throw must not block backend shutdown');
 });
 
-test('the full quit path (MainLifecycleController) awaits terminal disposal before appExit', async (t) => {
+test('the full quit path (MainLifecycleController) awaits PTY terminal disposal before appExit', async (t) => {
   const originalStart = llamaLifecycle.startLlamaServer;
   llamaLifecycle.startLlamaServer = async () => ({ reused: false, baseUrl: '', pid: 0 });
   t.after(() => { llamaLifecycle.startLlamaServer = originalStart; });
@@ -859,12 +859,12 @@ test('the full quit path (MainLifecycleController) awaits terminal disposal befo
   const order = [];
   let resolveDispose;
   const disposeGate = new Promise((resolve) => { resolveDispose = resolve; });
-  const terminalService = {
-    async dispose() { await disposeGate; order.push('terminalDispose'); },
+  const ptyService = {
+    async dispose() { await disposeGate; order.push('ptyDispose'); },
   };
   const backendService = { async stop() {} };
 
-  const controller = createTerminalDrivenController({ terminalService, ptyService: null, backendService });
+  const controller = createTerminalDrivenController({ ptyService, backendService });
   const lifecycle = new MainLifecycleController({
     appExit: () => order.push('appExit'),
     stopRuntime: () => controller.stopRuntimeBeforeQuit(),
@@ -875,15 +875,15 @@ test('the full quit path (MainLifecycleController) awaits terminal disposal befo
   assert.equal(preventDefaulted, true, 'before-quit must be preventDefault-ed so async shutdown can run');
 
   await new Promise((resolve) => setImmediate(resolve));
-  assert.deepEqual(order, [], 'appExit must NOT fire while terminal disposal is still pending');
+  assert.deepEqual(order, [], 'appExit must NOT fire while PTY disposal is still pending');
 
   resolveDispose();
   await quitPromise;
 
   assert.deepEqual(
     order,
-    ['terminalDispose', 'appExit'],
-    'terminal disposal must complete (happen-before) the appExit that ends the process'
+    ['ptyDispose', 'appExit'],
+    'PTY disposal must complete (happen-before) the appExit that ends the process'
   );
 });
 

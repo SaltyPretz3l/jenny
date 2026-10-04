@@ -14,6 +14,7 @@ import http.client
 import json
 import select
 import socket
+import ssl
 import time
 import urllib.parse
 from typing import Any
@@ -110,16 +111,12 @@ def _register_connection_cancel_callback(
         return lambda: None
 
     def close_connection(_reason: str) -> None:
-        connection_socket = getattr(conn, "sock", None)
+        connection_socket = getattr(conn, "sock", None) or _response_socket(conn)
         if connection_socket is not None:
             try:
                 connection_socket.shutdown(socket.SHUT_RDWR)
             except OSError:
                 pass
-        try:
-            conn.close()
-        except (OSError, http.client.HTTPException):
-            pass
 
     unregister = register(close_connection)
     return unregister if callable(unregister) else lambda: None
@@ -173,11 +170,23 @@ def _read_response_chunk(
 ) -> bytes:
     if getattr(response, "length", None) == 0:
         return b""
-    _wait_for_socket_readable(
-        _response_socket(response),
-        deadline=deadline,
-        cancel_handle=cancel_handle,
-    )
+    _raise_if_cancelled(cancel_handle, message="http request cancelled")
+    remaining = _remaining(deadline)
+    if remaining <= 0:
+        raise SSEHttpError("response timed out", retryable=True)
+    connection_socket = _response_socket(response)
+    if connection_socket is not None:
+        # Header parsing may have buffered the body while the socket is idle.
+        connection_socket.settimeout(0)
+        try:
+            buffered = response.fp.peek(1)
+        except (BlockingIOError, ssl.SSLWantReadError):
+            buffered = b""
+        finally:
+            connection_socket.settimeout(remaining)
+        if not buffered:
+            _wait_for_socket_readable(connection_socket, deadline=deadline,
+                                      cancel_handle=cancel_handle)
     read = getattr(response, "read1", None)
     if not callable(read):
         read = response.read
@@ -211,6 +220,7 @@ def post_jsonrpc(  # noqa: PLR0913 -- stable Streamable-HTTP transport boundary
     parsed = urllib.parse.urlparse(url)
     conn = _connection_for(parsed, timeout_seconds=timeout_seconds, pinned_ip=pinned_ip)
     unregister_cancel = _register_connection_cancel_callback(cancel_handle, conn)
+    unregister_response = _register_connection_cancel_callback(None, conn)
     try:
         _raise_if_cancelled(cancel_handle, message="http request cancelled")
         send_headers = dict(headers)
@@ -225,6 +235,7 @@ def post_jsonrpc(  # noqa: PLR0913 -- stable Streamable-HTTP transport boundary
                 cancel_handle=cancel_handle,
             )
             response = conn.getresponse()
+            unregister_response = _register_connection_cancel_callback(cancel_handle, response)
         except (OSError, http.client.HTTPException) as error:
             raise SSEHttpError(
                 f"http request failed: {type(error).__name__}",
@@ -283,6 +294,7 @@ def post_jsonrpc(  # noqa: PLR0913 -- stable Streamable-HTTP transport boundary
     except TerminalChatStateError as error:
         raise SSEHttpError("http request cancelled", retryable=True) from error
     finally:
+        unregister_response()
         unregister_cancel()
         try:
             conn.close()
@@ -310,6 +322,7 @@ def post_notification(  # noqa: PLR0913 -- stable notification transport boundar
     parsed = urllib.parse.urlparse(url)
     conn = _connection_for(parsed, timeout_seconds=timeout_seconds, pinned_ip=pinned_ip)
     unregister_cancel = _register_connection_cancel_callback(cancel_handle, conn)
+    unregister_response = _register_connection_cancel_callback(None, conn)
     try:
         _raise_if_cancelled(cancel_handle, message="http request cancelled")
         send_headers = dict(headers)
@@ -324,6 +337,7 @@ def post_notification(  # noqa: PLR0913 -- stable notification transport boundar
                 cancel_handle=cancel_handle,
             )
             response = conn.getresponse()
+            unregister_response = _register_connection_cancel_callback(cancel_handle, response)
         except (OSError, http.client.HTTPException) as error:
             raise SSEHttpError(
                 f"http request failed: {type(error).__name__}",
@@ -345,6 +359,7 @@ def post_notification(  # noqa: PLR0913 -- stable notification transport boundar
     except TerminalChatStateError as error:
         raise SSEHttpError("http request cancelled", retryable=True) from error
     finally:
+        unregister_response()
         unregister_cancel()
         try:
             conn.close()
@@ -415,7 +430,7 @@ def _read_json_reply(
 def _parse_jsonrpc_object(raw: bytes) -> dict[str, Any]:
     try:
         data = json.loads(raw.decode("utf-8"))
-    except (json.JSONDecodeError, UnicodeDecodeError) as error:
+    except (json.JSONDecodeError, UnicodeDecodeError, RecursionError) as error:
         raise SSEHttpError(f"invalid json reply: {type(error).__name__}") from error
     if not isinstance(data, dict):
         raise SSEHttpError("json reply was not an object")
@@ -512,7 +527,7 @@ def _match_sse_payload(payload_text: str, *, request_id: Any) -> dict[str, Any] 
         return None
     try:
         data = json.loads(payload_text)
-    except json.JSONDecodeError as error:
+    except (json.JSONDecodeError, RecursionError) as error:
         raise SSEHttpError(f"invalid json in sse event: {type(error).__name__}") from error
     if not isinstance(data, dict):
         return None

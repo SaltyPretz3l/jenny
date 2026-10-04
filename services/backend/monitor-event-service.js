@@ -102,7 +102,7 @@ function normalizeMonitor(currentMonitor, params) {
     version: 1,
     monitor_id: normalizeString(params.monitor_id || currentMonitor.monitor_id),
     description: normalizeString(currentMonitor.description),
-    state: normalizeString(params.state || currentMonitor.state || 'running'),
+    state: normalizeString(currentMonitor.terminal === true ? currentMonitor.state : params.state || currentMonitor.state || 'running'),
     persistent: currentMonitor.persistent === true,
     timeout_ms: Number.isFinite(Number(currentMonitor.timeout_ms))
       ? Number(currentMonitor.timeout_ms)
@@ -120,7 +120,6 @@ function normalizeMonitor(currentMonitor, params) {
       : [],
   };
   monitor.monitor_id = normalizeString(params.monitor_id || monitor.monitor_id);
-  monitor.state = normalizeString(params.state || monitor.state || 'running');
   return monitor;
 }
 
@@ -128,12 +127,20 @@ function appendNormalizedOutputEvents(monitor, normalizedEvents) {
   if (!normalizedEvents.length) {
     return monitor;
   }
-  monitor.events = monitor.events.concat(normalizedEvents);
-  monitor.event_count += normalizedEvents.length;
+  const cursor = Math.max(Number(monitor.output_sequence) || 0, ...monitor.events.map((event) => Number(event.sequence) || 0));
+  const seen = new Set();
+  const fresh = normalizedEvents.filter((event) => {
+    if (event.sequence <= cursor || seen.has(event.sequence)) return false;
+    seen.add(event.sequence);
+    return true;
+  }).sort((left, right) => left.sequence - right.sequence);
+  monitor.events = monitor.events.concat(fresh);
+  monitor.event_count += fresh.length;
+  monitor.output_sequence = Math.max(cursor, ...fresh.map((event) => event.sequence));
   if (monitor.events.length > MAX_MONITOR_EVENTS) {
     const dropped = monitor.events.length - MAX_MONITOR_EVENTS;
     monitor.events = monitor.events.slice(dropped);
-    monitor.dropped_event_count += dropped;
+    monitor.display_dropped_event_count = (Number(monitor.display_dropped_event_count) || 0) + dropped;
   }
   return monitor;
 }
@@ -152,7 +159,7 @@ function normalizeOutputEvent(params, fallbackSequence) {
     return null;
   }
   return {
-    sequence: Number.isFinite(Number(params.sequence)) ? Number(params.sequence) : fallbackSequence,
+    sequence: Number.isSafeInteger(params.sequence) && params.sequence > 0 ? params.sequence : fallbackSequence,
     kind: normalizeString(params.kind || 'output') || 'output',
     stream: normalizeString(params.stream || 'stdout') || 'stdout',
     text,
@@ -201,6 +208,16 @@ function updateMonitorFromEvent(currentMonitor, params) {
     } else {
       appendOutputEvent(monitor, params);
     }
+  }
+  for (const key of ['event_count', 'dropped_event_count', 'suppressed_event_count']) {
+    if (Number.isSafeInteger(params[key]) && params[key] >= 0) {
+      monitor[key] = Math.max(Number(currentMonitor[key]) || 0, params[key]);
+    }
+  }
+  if (params.salience_gate_disabled === true) {
+    monitor.salience_gate_disabled = true;
+    const reason = normalizeString(params.salience_gate_disabled_reason);
+    if (reason && reason.length <= 64) monitor.salience_gate_disabled_reason = reason;
   }
   applyTerminalFields(monitor, params);
   return monitor;

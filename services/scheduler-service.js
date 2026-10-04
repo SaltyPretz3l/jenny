@@ -1,7 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const { EventEmitter } = require('events');
-const { normalizeString } = require('../renderer/shared/string-utils');
+const { normalizeString } = require('./shared/normalize');
 const { collapseRedactedPathTails, redactLogValue } = require('./log-entry-normalizer');
 const {
   SCHEDULED_TASKS_SCHEMA_VERSION,
@@ -340,11 +340,10 @@ class SchedulerService extends EventEmitter {
     }
     if (policy.defer_when_chat_active === true && this._hasActiveChatStreams()) {
       const result = {
-        status: 'skipped',
+        status: 'deferred',
         task: taskName,
         reason: 'active_chat_stream',
       };
-      await this._safeRecordTaskResult(tasksPath, result, taskId, { reason, taskName });
       this._logTaskResult(reason, task, result);
       return;
     }
@@ -724,7 +723,7 @@ class SchedulerService extends EventEmitter {
     });
   }
 
-  async _recordTaskResult(tasksPath, result = {}, taskId = '') {
+  async _recordTaskResult(tasksPath, result = {}, taskId = '', admit = null) {
     return this._withTaskFileLock(tasksPath, async () => {
       const rawPayload = readScheduledTasksJsonPayload(tasksPath, { fsImpl: this.fs });
       if (this._shouldBlockScheduledTasksWrite(tasksPath, rawPayload)) {
@@ -735,8 +734,9 @@ class SchedulerService extends EventEmitter {
         || normalizeString(result.task_id);
       const task = payload.tasks.find((entry) => entry.id === resolvedTaskId);
       if (!task) {
-        return true;
+        return false;
       }
+      if (admit && !admit(task)) return false;
       const nowIso = this.nowProvider().toISOString();
       const status = normalizeString(result.status).toLowerCase() || 'skipped';
       const patch = {

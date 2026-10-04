@@ -13,8 +13,9 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
 
+  // Kept local: uninstall.html loads this primitive without renderer/shared/string-utils.js.
   function escapeHtml(value) {
-    return String(value || '')
+    return String(value == null ? '' : value)
       .replaceAll('&', '&amp;')
       .replaceAll('<', '&lt;')
       .replaceAll('>', '&gt;')
@@ -42,6 +43,7 @@
    * @param {number} [opts.warningThreshold=0.8] - Fraction at which tone shifts to warning
    * @param {number} [opts.dangerThreshold=0.95] - Fraction at which tone shifts to danger
    * @param {string} [opts.className] - Additional class names
+   * @param {string} [opts.title] - Hover text
    * @returns {string} HTML string
    */
   function progressBar(opts) {
@@ -70,6 +72,7 @@
       + ' aria-valuemin="0"'
       + ' aria-valuemax="' + max + '"'
       + ' aria-label="' + escapeHtml(label) + '"'
+      + (o.title ? ' title="' + escapeHtml(o.title) + '"' : '')
       + ' style="--progress: ' + percent + '%">'
       + '<div class="inv-progress-track">'
       + '<div class="inv-progress-fill"></div>'

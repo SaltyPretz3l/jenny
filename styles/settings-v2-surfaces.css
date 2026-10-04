@@ -30,8 +30,8 @@
 
 .settings-progress-percent {
   font-family: var(--font-family-display);
-  font-size: var(--font-size-3xl);
-  font-weight: 700;
+  font-size: var(--font-size-title);
+  font-weight: 500;
   color: var(--text-primary);
   font-variant-numeric: tabular-nums;
 }
@@ -69,7 +69,7 @@
 .settings-progress-summary {
   margin: 0;
   color: var(--text-secondary);
-  font-size: var(--font-size-sm);
+  font-size: var(--font-size-caption);
 }
 
 .settings-progress-list {
@@ -130,13 +130,11 @@
 
 .settings-progress-label {
   color: var(--text-primary);
-  font-size: var(--font-size-sm);
-  font-weight: 600;
+  font-size: var(--font-size-body);
+  font-weight: 500;
 }
 
 .settings-progress-status {
   color: var(--text-muted);
-  font-size: var(--font-size-xs);
-  text-transform: uppercase;
-  letter-spacing: var(--tracking-kicker-sm);
+  font-size: var(--font-size-caption);
 }

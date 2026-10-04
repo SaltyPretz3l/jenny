@@ -66,7 +66,7 @@ def test_plan_approval_context_forwards_edited_plan() -> None:
         approvals_pre_granted=False, plan_mode=True, read_only=True,
     )
 
-    updated = dispatch_chat._context_with_plan_approval(  # noqa: SLF001
+    updated = dispatch_chat._context_with_plan_approval(
         context,
         ApprovalResolution(
             approved=True,
@@ -119,7 +119,7 @@ def test_a_turn_needing_two_approvals_is_asked_twice_and_completes(monkeypatch) 
         resume_calls.append(kwargs)
         return legs[len(resume_calls) - 1]
 
-    def _fake_request_tool_approval(approval_request, **_kwargs: Any):  # noqa: ANN001
+    def _fake_request_tool_approval(approval_request, **_kwargs: Any):
         approvals_asked.append(str(approval_request.get("tool_call_id")))
         return ApprovalResolution(approved=True, status="approved", decision="approved")
 
@@ -176,7 +176,7 @@ def test_approval_rounds_are_bounded_by_the_turn_tool_budget(monkeypatch) -> Non
             status="awaiting_approval",
         )
 
-    def _fake_request_tool_approval(approval_request, **_kwargs: Any):  # noqa: ANN001
+    def _fake_request_tool_approval(approval_request, **_kwargs: Any):
         approvals_asked.append(str(approval_request.get("tool_call_id")))
         return ApprovalResolution(approved=True, status="approved", decision="approved")
 

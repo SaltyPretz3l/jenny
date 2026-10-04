@@ -81,10 +81,10 @@ for (const [kind, reconstruct, publicationFailure, policyDrift = false] of [
       await backend.start();
       const sessionId = (await backend.createSession({ title: 'Decision checkpoint' })).data.id;
       const projects = backend.projectApplicationService;
-      const created = projects.createProject({ name: 'Fixture workspace' });
+      // The Workspace folder is already a project (provisioned by createSession);
+      // bindRoot refuses a second owner, so the fixture uses that project.
+      const created = backend.ensureWorkspaceProject(workspace, 'test_fixture');
       assert.equal(created.ok, true, JSON.stringify(created));
-      assert.equal(projects.bindProjectRoot({ project_id: created.project.id, root_path: workspace,
-        expected_root_revision: created.project.root_revision }).ok, true);
       assert.equal(projects.assignSessionProject({ session_id: sessionId, project_id: created.project.id }).ok, true);
       const request = { session_id: sessionId, prompt: 'List and read the fixture.', idempotency_key: 'decision_fixture' };
       const sent = reconstruct ? await backend.runtimeApplicationService.start({ ...request,

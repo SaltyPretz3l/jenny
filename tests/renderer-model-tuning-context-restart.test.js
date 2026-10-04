@@ -169,9 +169,50 @@ test('a rejected context update never restarts and keeps the rejection message',
     assert.equal(harness.confirmCalls.length, 0, reason);
     const status = host.querySelector('.model-tuning-drawer-status').textContent;
     assert.doesNotMatch(status, /is live|next time llama-server starts/i, reason);
-    assert.match(status, /^Not applied|stream/i, reason);
+    assert.match(status, reason === 'active_stream'
+      ? /^Finish the current reply first, then Apply again\.$/ : /^Not applied/, reason);
     harness.controller.dispose();
   }
+});
+
+// F31: an Apply refused while an image render holds the GPU must say why and
+// keep the pending change in the open drawer, so Apply can simply be pressed
+// again after the render (never a silent re-render back to the saved value).
+test('an Apply refused while an image holds the GPU names the reason and keeps the draft', async () => {
+  const harness = createHarness({
+    status: { ok: false, state: 'stopped', lastError: 'gpu_lease_held' },
+    streamingSessionIds: ['session-1'],
+    updateResult: { status: 'rejected', reason: 'gpu_lease_held', state: tuningState() },
+  });
+  const host = await applyContext(harness);
+
+  assert.equal(harness.restartCalls.length, 0);
+  assert.equal(harness.confirmCalls.length, 0);
+  assert.ok(host.querySelector('.inv-drawer-panel'), 'the drawer stays open');
+  assert.equal(host.querySelector('.model-tuning-drawer-status').textContent,
+    'An image is being drawn. Apply again when it finishes.');
+  assert.equal(host.querySelector('#modelTuningContextLength').value, '8192', 'the pending change survives the refusal');
+  const save = host.querySelector('[data-action="save-model-tuning"]');
+  assert.equal(save.textContent, 'Apply 1 change');
+  assert.equal(save.disabled, false);
+  harness.controller.dispose();
+});
+
+// Gate re-run 2026-10-02: "Finish the current reply first, then Apply again"
+// must leave the change to apply again, like the image-render refusal.
+test('an Apply refused during a streaming reply keeps the draft', async () => {
+  const harness = createHarness({
+    streamingSessionIds: ['session-1'],
+    updateResult: { status: 'rejected', reason: 'active_stream', state: tuningState() },
+  });
+  const host = await applyContext(harness);
+
+  assert.equal(harness.restartCalls.length, 0);
+  assert.equal(host.querySelector('.model-tuning-drawer-status').textContent,
+    'Finish the current reply first, then Apply again.');
+  assert.equal(host.querySelector('#modelTuningContextLength').value, '8192', 'the pending change survives the refusal');
+  assert.equal(host.querySelector('[data-action="save-model-tuning"]').textContent, 'Apply 1 change');
+  harness.controller.dispose();
 });
 
 test('a rejected restart reports failure and releases the pending latch', async () => {

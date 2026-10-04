@@ -15,7 +15,7 @@ Jenny can run foreground commands in a disposable Linux Docker worker while Elec
 4. Wait for Ready. Initial preparation builds the application-owned worker image locally from a digest-pinned Linux amd64 base and may download build dependencies. Subsequent commands have no network access. Required emulation must work on non-amd64 hosts.
 5. Chat and approve foreground commands normally. Existing current Electron auto/deny policy still applies. Plan/read-only mode prevents command admission.
 
-For source testing, use the repository's normal launch instructions. The 1.1 candidate has not yet been qualified as an installed package; consult this release's notes before assuming an older installation contains the sandbox.
+For source testing, use the repository's normal launch instructions. The sandbox shipped in 1.1; installed-package qualification is still an owner gate (see NEXT_STEPS.md); consult this release's notes before assuming an older installation contains the sandbox.
 
 ## Files and commands
 

@@ -56,6 +56,8 @@ function runTestCommand({
   outputLimit = DEFAULT_OUTPUT_LIMIT,
   platform = process.platform,
   killProcessTree = null,
+  processKillImpl = (pid, signal) => process.kill(pid, signal),
+  killProcessTreeImpl = killProcessTreeByPid,
   terminationTimeoutMs = 4000,
   setTimeoutImpl = setTimeout,
   clearTimeoutImpl = clearTimeout,
@@ -74,21 +76,54 @@ function runTestCommand({
     let childError = false;
     let readersClosed = false;
     const readerWaiters = new Set();
+    // An empty process group proves every process still in the child's group is
+    // gone (the child is spawned detached, so pgid === pid). A descendant that
+    // deliberately left the group (setsid/setpgid daemon) is outside what POSIX
+    // lets this runner observe.
+    const groupIsEmpty = (pid) => {
+      try {
+        processKillImpl(-pid, 0);
+        return false;
+      } catch (error) {
+        return error?.code === 'ESRCH';
+      }
+    };
+    const waitForGroupEmpty = async (pid) => {
+      const deadline = Date.now() + terminationTimeoutMs;
+      while (!groupIsEmpty(pid)) {
+        if (Date.now() >= deadline) return false;
+        await new Promise((resolvePoll) => setTimeoutImpl(resolvePoll, 50)?.unref?.());
+      }
+      return true;
+    };
     const terminateTree = typeof killProcessTree === 'function'
       ? killProcessTree
       : async (ownedChild) => {
         const pid = ownedChild && ownedChild.pid;
         if (!pid) return { terminated: true, containmentConfirmed: true };
-        const outcome = await killProcessTreeByPid(pid, {
+        if (platform === 'win32') {
+          const outcome = await killProcessTreeImpl(pid, {
+            force: true,
+            processGroup: false,
+            confirmExit: true,
+            timeoutMs: terminationTimeoutMs,
+            platform,
+          });
+          // killProcessTree confirms only the root PID. It cannot prove a child
+          // that detached from the shell's tree is gone; production Windows uses
+          // the contained helper runner instead.
+          return { ...outcome, containmentConfirmed: false };
+        }
+        if (groupIsEmpty(pid)) return { terminated: true, containmentConfirmed: true };
+        const outcome = await killProcessTreeImpl(pid, {
           force: true,
-          processGroup: platform !== 'win32',
+          processGroup: true,
           confirmExit: true,
           timeoutMs: terminationTimeoutMs,
           platform,
         });
-        // killProcessTree confirms only the root PID. It cannot prove a child
-        // that detached from the shell's tree/process group is gone.
-        return { ...outcome, containmentConfirmed: false };
+        const empty = await waitForGroupEmpty(pid);
+        return { ...outcome, containmentConfirmed: outcome?.terminated === true && empty };
       };
 
     function finish(payload) {

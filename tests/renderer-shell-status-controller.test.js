@@ -47,7 +47,6 @@ function stubStatusDeps() {
         beginModelSwitch() {},
         updateModelSwitch() {},
         failModelSwitch() {},
-        publishLifecycleStatus() {},
       };
     },
   };
@@ -119,6 +118,8 @@ test('backend notice stays silent for every phase the health pill already narrat
   try {
     for (const phase of ['ready', 'starting', 'sidecar_spawned', 'model_acquiring', 'model_loading']) {
       const h = createNoticeHarness({ backend: { phase, detail: 'some detail' } });
+      h.controller.notifyBootViewReady();
+      h.controller.notifyShellHydrated();
       h.controller.syncBackendNotice();
       assert.deepEqual(h.toasts, [], phase + ': must not toast');
       assert.deepEqual(h.dismissed, ['shell.backend'], phase + ': clears any stale backend toast');
@@ -136,7 +137,7 @@ test('backend notice raises a danger toast for model_unavailable without forward
 
     assert.equal(h.toasts.length, 1, 'exactly one toast');
     const { message, options } = h.toasts[0];
-    assert.match(message, /Send a message to retry, or pick another model in Settings\./);
+    assert.match(message, /^Retry restarts the engine, or pick another model in Settings\.$/, 'the Retry action restarts the backend; the copy says so (F13)');
     assert.equal(options.tone, 'danger');
     assert.equal(options.title, 'Model failed to load');
     assert.equal(options.source, 'shell.backend');
@@ -312,7 +313,6 @@ test('shell status controller forwards activity and lifecycle controller interfa
         beginModelSwitch() { calls.push('beginModelSwitch'); },
         updateModelSwitch() { calls.push('updateModelSwitch'); },
         failModelSwitch() { calls.push('failModelSwitch'); },
-        publishLifecycleStatus() { calls.push('publishLifecycleStatus'); },
       };
     },
   };
@@ -361,7 +361,6 @@ test('shell status controller forwards activity and lifecycle controller interfa
     controller.beginModelSwitch();
     controller.updateModelSwitch();
     controller.failModelSwitch();
-    controller.publishLifecycleStatus();
     controller.dispose();
 
     assert.deepEqual(calls, [
@@ -374,7 +373,6 @@ test('shell status controller forwards activity and lifecycle controller interfa
       'beginModelSwitch',
       'updateModelSwitch',
       'failModelSwitch',
-      'publishLifecycleStatus',
     ]);
   } finally {
     global.rendererActivityPrefsUtils = previousActivityPrefsUtils;
@@ -397,7 +395,6 @@ test('shell status controller threads setSessionPreferences into the real activi
         beginModelSwitch() {},
         updateModelSwitch() {},
         failModelSwitch() {},
-        publishLifecycleStatus() {},
       };
     },
   };
@@ -451,11 +448,12 @@ test('shell status controller threads setSessionPreferences into the real activi
   }
 });
 
-test('shell status controller forwards notifyBootViewReady to the lifecycle progress controller', () => {
+test('shell status controller forwards both readiness inputs to the lifecycle progress controller', () => {
   const previousActivityPrefsUtils = global.rendererActivityPrefsUtils;
   const previousLifecycleProgressUtils = global.lifecycleProgressUtils;
 
   let notifyCalls = 0;
+  let hydratedCalls = 0;
   global.rendererActivityPrefsUtils = {
     createActivityPrefsController() {
       return {
@@ -473,10 +471,10 @@ test('shell status controller forwards notifyBootViewReady to the lifecycle prog
         handleLifecycleProgress() {},
         handleBackendStatus() {},
         notifyBootViewReady() { notifyCalls += 1; },
+        notifyShellHydrated() { hydratedCalls += 1; },
         beginModelSwitch() {},
         updateModelSwitch() {},
         failModelSwitch() {},
-        publishLifecycleStatus() {},
       };
     },
   };
@@ -512,6 +510,9 @@ test('shell status controller forwards notifyBootViewReady to the lifecycle prog
     assert.equal(typeof controller.notifyBootViewReady, 'function', 're-exported on the controller');
     controller.notifyBootViewReady();
     assert.equal(notifyCalls, 1, 'forwards through to the lifecycle progress controller');
+    assert.equal(typeof controller.notifyShellHydrated, 'function', 'shared hydration is re-exported on the controller');
+    controller.notifyShellHydrated();
+    assert.equal(hydratedCalls, 1);
   } finally {
     global.rendererActivityPrefsUtils = previousActivityPrefsUtils;
     global.lifecycleProgressUtils = previousLifecycleProgressUtils;

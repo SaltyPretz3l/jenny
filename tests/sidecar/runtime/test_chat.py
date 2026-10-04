@@ -228,7 +228,7 @@ class _StubContextBuilder:
         self.last_learned_lessons = None
         self.last_include_reasoning_status_markers = False
 
-    def build_system_prompt(  # noqa: ANN001
+    def build_system_prompt(
         self,
         runtime_system_prompt: str,
         learned_lessons=None,
@@ -240,10 +240,10 @@ class _StubContextBuilder:
         self.last_include_reasoning_status_markers = include_reasoning_status_markers
         return f"{runtime_system_prompt}\n\nLESSONS:{len(learned_lessons or [])}"
 
-    def build_skills_system_message(self, *, tool_statuses=None) -> str:  # noqa: ANN001
+    def build_skills_system_message(self, *, tool_statuses=None) -> str:
         return self._runtime_builder.build_skills_system_message(tool_statuses=tool_statuses)
 
-    def build_memory_recall_system_message(self, recalled_memories=None) -> str:  # noqa: ANN001
+    def build_memory_recall_system_message(self, recalled_memories=None) -> str:
         return self._runtime_builder.build_memory_recall_system_message(recalled_memories)
 
     def build_context_pressure_advisory(self, budget_status: object) -> str:
@@ -330,7 +330,7 @@ class _RepetitiveThinkingStreamEngine:
             response_format,
             cancel_handle,
         )
-        repeated = "Checking the request intent carefully. "
+        repeated = "Checking the request intent carefully. " * 14  # two guard windows
         yield SimpleNamespace(kind="thinking", text=repeated)
         yield SimpleNamespace(kind="thinking", text=repeated)
         yield SimpleNamespace(kind="thinking", text=repeated)
@@ -2621,14 +2621,19 @@ def test_build_chat_send_response_suppresses_repetitive_live_thinking_chunks() -
     )
 
     assert response.notifications == []
-    assert [item["method"] for item in written] == [
+    # A synthesized status row may lead; the three reasoning deltas before the
+    # guard trips are what matter.
+    reasoning = [
+        item for item in written if item["params"].get("kind") != "status"
+    ]
+    assert [item["method"] for item in reasoning] == [
         "chat.thinking",
         "chat.thinking",
         "chat.thinking",
         "chat.token",
         "chat.done",
     ]
-    assert written[3]["params"]["delta"] == "Ready."
+    assert reasoning[3]["params"]["delta"] == "Ready."
 
 
 def test_streaming_reasoning_only_done_chunk_surfaces_chat_error() -> None:
@@ -2676,7 +2681,7 @@ def test_streaming_ignores_stale_engine_finish_reason_attribute() -> None:
     engine = _ThinkingStreamEngine()
     # A previous request's verdict left on the shared engine object must not
     # fail THIS stream (the pre-fix code read engine._last_finish_reason).
-    engine._last_finish_reason = "reasoning_only"  # noqa: SLF001
+    engine._last_finish_reason = "reasoning_only"
     written: list[dict[str, object]] = []
 
     build_chat_send_response(
@@ -4385,7 +4390,7 @@ def test_resume_chat_send_response_from_approval_plan_respects_remaining_iterati
         lambda *args, **kwargs: ([(plan.tool_calls[0], 0)], 0),
     )
 
-    def fake_execute_tool_calls_sequentially(**kwargs):  # noqa: ANN003
+    def fake_execute_tool_calls_sequentially(**kwargs):
         assert kwargs["runtime"].logical_turn_id == "logical-resumed-turn"
         from sidecar.ai.routing.loop_event_emit import emit_tool_result
         outcome = ToolExecutionOutcome(tool_name="write_file", output="notes.md saved",
@@ -4402,7 +4407,7 @@ def test_resume_chat_send_response_from_approval_plan_respects_remaining_iterati
 
     captured: dict[str, object] = {}
 
-    def fake_run_tool_loop(**kwargs):  # noqa: ANN003
+    def fake_run_tool_loop(**kwargs):
         captured["max_iterations"] = kwargs["runtime"].max_iterations
         captured["tool_payload"] = kwargs["tool_payload"]
         captured["outcomes"] = tuple(kwargs["initial_outcomes"])
@@ -4524,7 +4529,7 @@ def test_resume_from_approval_plan_rewraps_tool_execution_failure_with_observati
         lambda *args, **kwargs: ([(plan.tool_calls[0], 0)], 0),
     )
 
-    def fake_execute_tool_calls_sequentially(**kwargs):  # noqa: ANN003
+    def fake_execute_tool_calls_sequentially(**kwargs):
         kwargs["outcomes"].append(
             ToolExecutionOutcome(
                 tool_name="write_file",
@@ -4539,7 +4544,7 @@ def test_resume_from_approval_plan_rewraps_tool_execution_failure_with_observati
         fake_execute_tool_calls_sequentially,
     )
 
-    def failing_run_tool_loop(**kwargs):  # noqa: ANN003
+    def failing_run_tool_loop(**kwargs):
         raise ToolExecutionFailure(
             code=CMP_TOOL_APPROVAL_DENIED,
             message="resume-tool-failed",
@@ -4653,11 +4658,11 @@ def test_resume_chat_send_response_from_approval_plan_executes_only_approved_win
     )
     captured: dict[str, object] = {}
 
-    def fake_pre_filter_tool_calls(tool_calls, **kwargs):  # noqa: ANN001, ANN003
+    def fake_pre_filter_tool_calls(tool_calls, **kwargs):
         captured["prefilter_tool_ids"] = [call.tool_id for call in tool_calls]
         return [(approved_call, 2)], 2
 
-    def fake_execute_tool_calls_sequentially(**kwargs):  # noqa: ANN003
+    def fake_execute_tool_calls_sequentially(**kwargs):
         captured["audit_call_ids"] = sorted(kwargs["audit_metadata_by_call"].keys())
         kwargs["outcomes"].append(
             ToolExecutionOutcome(
@@ -4668,7 +4673,7 @@ def test_resume_chat_send_response_from_approval_plan_executes_only_approved_win
             )
         )
 
-    def fake_run_tool_loop(**kwargs):  # noqa: ANN003
+    def fake_run_tool_loop(**kwargs):
         captured["approvals_pre_granted"] = kwargs["approvals_pre_granted"]
         captured["iteration_base"] = kwargs["runtime"].iteration_base
         captured["current_iteration"] = kwargs["runtime"].current_iteration
@@ -4939,7 +4944,7 @@ def test_resume_chat_send_response_from_approval_plan_reprompts_for_a_second_app
         lambda *args, **kwargs: ([], 0),
     )
 
-    def fake_run_tool_loop(**kwargs):  # noqa: ANN003
+    def fake_run_tool_loop(**kwargs):
         assert kwargs["approvals_pre_granted"] is False
         return SimpleNamespace(
             thinking_text="",
@@ -5247,9 +5252,9 @@ def test_build_chat_send_response_derives_compact_threshold_from_engine() -> Non
     )
 
     usage = _done_notification(response)["params"]["usage"]
-    # TokenBudget(131072, 16384): effective = 131072 - 16384 (output
-    # reservation) - 8192 (summary reservation) = 106496; x 0.90 = 95846.
-    assert usage["compact_threshold_tokens"] == 95846
+    # TokenBudget(131072, 16384): effective = 131072 - max(16384 output,
+    # 8192 summary) reservation = 114688; x 0.90 = 103219.
+    assert usage["compact_threshold_tokens"] == 103219
 
 
 def _vision_attachment(asset_path: str) -> dict[str, str]:

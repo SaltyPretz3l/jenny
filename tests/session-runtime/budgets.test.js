@@ -10,6 +10,7 @@ const test = require('node:test');
 const {
   MAX_OPERATIONS_PER_ROOT,
   RootRunBudgetStore,
+  readPortableBudgetSnapshot,
 } = require('../../services/session-runtime/budgets');
 const { createRuntimeStoreIO } = require('../../services/session-runtime/store');
 
@@ -150,7 +151,7 @@ test('a write failure blocks the owner until exact before/after state is recover
   assert.equal(store.reserve(reservation()).created, true);
 });
 
-test('restart after a pre-write create crash preserves the unresolved owner directory', t => {
+test('restart after a pre-write create crash recovers an empty unpublished directory', t => {
   const root = makeRoot(t);
   const io = faultingIO();
   const first = new RootRunBudgetStore(root, { io, now: clock() });
@@ -160,10 +161,9 @@ test('restart after a pre-write create crash preserves the unresolved owner dire
   const directory = ownerDirectory(root, 'root_run_1');
   assert.deepEqual(fs.readdirSync(directory), []);
   const reopened = new RootRunBudgetStore(root, { now: clock() });
-  assert.equal(reopened.snapshot().read_only, true);
-  assert.equal(reopened.snapshot().reason, 'budget_entry_unresolved');
-  assert.throws(() => reopened.create(creation()), { code: 'budget_entry_unresolved' });
-  assert.deepEqual(fs.readdirSync(directory), []);
+  assert.equal(reopened.snapshot().read_only, false);
+  assert.equal(reopened.create(creation()).created, true);
+  assert.deepEqual(fs.readdirSync(directory), ['record.json']);
 });
 
 test('recovery must persist known settlement overage before admitting any later reservation', t => {
@@ -357,4 +357,53 @@ test('future or unindexed owner data is preserved and never overwritten', t => {
   assert.throws(() => live.create(creation()), error => error?.code === 'budget_create_failed');
   assert.equal(live.snapshot().read_only, true);
   assert.deepEqual(JSON.parse(fs.readFileSync(path.join(intruder, 'record.json'), 'utf8')), future);
+});
+
+test('portable export treats a missing budget root as empty and still fails closed on an unsafe root', t => {
+  const userData = makeRoot(t);
+  const root = path.join(userData, 'session-runtime-budgets');
+  const store = new RootRunBudgetStore(root, { now: clock() });
+  fs.rmSync(root, { recursive: true, force: true });
+  assert.deepEqual(store.exportPortableSnapshot(), { schema_version: 1, records: [] });
+  assert.deepEqual(readPortableBudgetSnapshot(root), { schema_version: 1, records: [] });
+  assert.equal(store.snapshot().read_only, false);
+
+  fs.writeFileSync(root, '');
+  assert.throws(() => store.exportPortableSnapshot(), { code: 'budget_root_changed' });
+  assert.throws(() => readPortableBudgetSnapshot(root), { code: 'budget_root_changed' });
+  fs.rmSync(root, { force: true });
+  const outside = path.join(userData, 'outside');
+  fs.mkdirSync(outside);
+  fs.symlinkSync(outside, root, process.platform === 'win32' ? 'junction' : 'dir');
+  assert.throws(() => store.exportPortableSnapshot(), { code: 'budget_root_changed' });
+  assert.throws(() => readPortableBudgetSnapshot(root), { code: 'budget_root_changed' });
+
+  const registeredRoot = makeRoot(t);
+  const registered = new RootRunBudgetStore(registeredRoot, { now: clock() });
+  registered.create(creation());
+  fs.rmSync(registeredRoot, { recursive: true, force: true });
+  assert.throws(() => registered.exportPortableSnapshot(), { code: 'budget_root_changed' });
+});
+
+test('portable budgets reader rejects a record path replaced during its descriptor read', t => {
+  const root = makeRoot(t);
+  new RootRunBudgetStore(root).create(creation());
+  const target = path.join(root, fs.readdirSync(root)[0], 'record.json');
+  const backup = `${root}-original`;
+  t.after(() => fs.rmSync(backup, { force: true }));
+  const bytes = fs.readFileSync(target);
+  const open = fs.openSync;
+  let swapped = false;
+  fs.openSync = (file, ...args) => {
+    const descriptor = open(file, ...args);
+    if (file === target && !swapped) {
+      swapped = true;
+      fs.renameSync(target, backup);
+      fs.writeFileSync(target, bytes);
+    }
+    return descriptor;
+  };
+  try { assert.throws(() => readPortableBudgetSnapshot(root), /budget_record_unreadable/); }
+  finally { fs.openSync = open; }
+  assert.equal(swapped, true);
 });

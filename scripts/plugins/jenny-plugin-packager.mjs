@@ -77,6 +77,8 @@ const THEME_TOKENS = Object.freeze([
   ['color.accent_text', '#FFFFFF'],
 ]);
 
+// Stage 4 (2026-10-02) retired workflow, command and mcp_descriptor; a new
+// package declaring them is refused at install.
 function contributionDefinitions() {
   return [
     {
@@ -120,80 +122,6 @@ function contributionDefinitions() {
       payload: {
         kind: 'theme',
         tokens: THEME_TOKENS.map(([token, value]) => ({ token, value })),
-      },
-    },
-    {
-      kind: 'workflow',
-      contributionId: 'workflow-read',
-      name: 'Owner Smoke Read Workflow',
-      payload: {
-        kind: 'workflow',
-        entry_node_id: 'prepare',
-        nodes: [
-          {
-            type: 'prompt',
-            node_id: 'prepare',
-            target_contribution_id: 'prompt-main',
-            bindings: [{
-              target: 'path',
-              value: { source: 'setting', settings_contribution_id: 'settings-main', key: 'path' },
-            }],
-            max_attempts: 1,
-            timeout_ms: 60_000,
-          },
-          {
-            type: 'tool',
-            node_id: 'read',
-            tool_id: 'read_file',
-            bindings: [{
-              target: 'path',
-              value: { source: 'setting', settings_contribution_id: 'settings-main', key: 'path' },
-            }],
-            max_attempts: 1,
-            timeout_ms: 120_000,
-          },
-        ],
-        edges: [{ from_node_id: 'prepare', to_node_id: 'read' }],
-        total_timeout_ms: 240_000,
-      },
-    },
-    {
-      kind: 'command',
-      contributionId: 'command-prompt',
-      name: 'Run Owner Smoke Prompt',
-      payload: {
-        kind: 'command',
-        target_kind: 'prompt',
-        target_contribution_id: 'prompt-main',
-        inputs: [{
-          type: 'string',
-          key: 'path',
-          label: 'Workspace file',
-          default: SMOKE_WORKSPACE_PATH,
-          max_length: 240,
-        }],
-      },
-    },
-    {
-      kind: 'command',
-      contributionId: 'command-workflow',
-      name: 'Run Owner Smoke Workflow',
-      payload: {
-        kind: 'command',
-        target_kind: 'workflow',
-        target_contribution_id: 'workflow-read',
-        inputs: [],
-      },
-    },
-    {
-      kind: 'mcp_descriptor',
-      contributionId: 'mcp-inspect',
-      name: 'Owner Smoke MCP Metadata',
-      payload: {
-        kind: 'mcp_descriptor',
-        display_name: 'Owner Smoke MCP Metadata',
-        transport_class: 'native_stdio',
-        capabilities: ['tools.list'],
       },
     },
   ];

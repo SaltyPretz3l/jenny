@@ -2,11 +2,19 @@
 
 The default is informational and exits 0 while calibration continues. Use
 ``--strict`` to exit 1 when candidates remain.
+
+Reachability is a breadth-first walk from ``ENTRYPOINTS``, the dynamic entry
+globs, and every local file an npm script in ``package.json`` runs. Each
+reached file contributes its static ``require``/``import``/``import()`` targets,
+``<script src>`` tags, ``path.join(__dirname, ...)`` literals, and app-root
+``renderer/...js`` literals (the ``ensureScript`` lazy panes and script-tag
+injections resolve against the app root, not the importing file).
 """
 from __future__ import annotations
 
 import argparse
 import ast
+import json
 import os
 import re
 from pathlib import Path
@@ -15,15 +23,27 @@ ROOT = Path(__file__).resolve().parents[2]
 
 ENTRYPOINTS = [
     ROOT / "index.html",
-    ROOT / "renderer.html",
-    ROOT / "overlay.html",
     ROOT / "mermaid-frame.html",
+    # Hosted browser client: scripts/build-browser.js copies this page and
+    # bundles its app.js with esbuild (the page's <script src> names it).
+    ROOT / "renderer" / "browser" / "index.html",
     ROOT / "main.js",
     ROOT / "preload.js",
     ROOT / "tests" / "helpers" / "renderer-shell-harness-support.js",
     ROOT / "package.json",
     ROOT / "scripts" / "checks" / "run_all.py",
 ]
+
+# Files loaded by a computed path no static pattern can follow. Globs are
+# relative to ROOT and evaluated at scan time.
+DYNAMIC_ENTRY_GLOBS = (
+    # renderer/shared/i18n-bootstrap.js document.write()s
+    # "locales/<tag>.catalog.js" for the active non-English locale.
+    "locales/*.catalog.js",
+)
+
+# npm-script tokens that name a local file worth traversing.
+PACKAGE_SCRIPT_SUFFIXES = (".js", ".mjs", ".cjs", ".py")
 
 IGNORE_DIRS = {
     ".git",
@@ -53,12 +73,22 @@ TEST_DIRS = {
 }
 
 RE_JS = re.compile(
-    r"(?:require\s*\(\s*|import\s+(?:[^;\n]*?\s+from\s+)?)"
+    r"(?:require\s*\(\s*|import\s*\(\s*|import\s+(?:[^;\n]*?\s+from\s+)?)"
     r"(?P<quote>['\"])(?P<ref>[^'\"]+)(?P=quote)"
 )
 RE_HTML_SCRIPT = re.compile(
     r"<script\b[^>]*\bsrc\s*=\s*(?P<quote>['\"])(?P<ref>[^'\"]+)(?P=quote)"
 )
+# App-root-relative lazy script paths: ensureScript({ src: 'renderer/...js' }),
+# script.src = 'renderer/...js', lazy-pane tables, and './renderer/...' workers.
+RE_APP_ROOT_SCRIPT = re.compile(
+    r"(?P<quote>['\"])(?:\./)?(?P<ref>renderer/[A-Za-z0-9_./-]+\.js)(?P=quote)"
+)
+# path.join(__dirname, 'a', 'b.js') / path.resolve(__dirname, '..', 'x.html')
+RE_DIRNAME_JOIN = re.compile(
+    r"path\.(?:join|resolve)\(\s*__dirname(?P<segments>(?:\s*,\s*['\"][^'\"]+['\"])+)\s*\)"
+)
+RE_QUOTED = re.compile(r"['\"](?P<value>[^'\"]+)['\"]")
 
 
 def normalize_ref(raw: str, referencing_file: Path) -> Path | None:
@@ -133,9 +163,55 @@ def collect_python_references(content: str, referencing_file: Path) -> set[Path]
     return refs
 
 
+def collect_js_references(content: str, referencing_file: Path) -> set[Path]:
+    targets = {
+        target
+        for match in RE_JS.finditer(content)
+        if (target := normalize_ref(match.group("ref"), referencing_file)) is not None
+    }
+    for match in RE_APP_ROOT_SCRIPT.finditer(content):
+        candidate = (ROOT / match.group("ref")).resolve()
+        if candidate.is_file():
+            targets.add(candidate)
+    for match in RE_DIRNAME_JOIN.finditer(content):
+        segments = [m.group("value") for m in RE_QUOTED.finditer(match.group("segments"))]
+        candidate = referencing_file.parent.joinpath(*segments).resolve()
+        if candidate.is_file():
+            targets.add(candidate)
+    return targets
+
+
+def package_script_targets(root: Path) -> set[Path]:
+    """Local files that ``package.json`` npm scripts execute (traversed, not just marked)."""
+    package_path = root / "package.json"
+    if not package_path.is_file():
+        return set()
+    try:
+        data = json.loads(package_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return set()
+    targets: set[Path] = set()
+    for cmd in (data.get("scripts", {}) or {}).values():
+        if not isinstance(cmd, str):
+            continue
+        for token in cmd.split():
+            if token.endswith(PACKAGE_SCRIPT_SUFFIXES) and (token[0].isalnum() or token[0] == "."):
+                target = normalize_ref(token, package_path)
+                if target and target.is_file():
+                    targets.add(target)
+    return targets
+
+
+def _initial_entries() -> list[Path]:
+    entries = {p.resolve() for p in ENTRYPOINTS if p.exists()}
+    for pattern in DYNAMIC_ENTRY_GLOBS:
+        entries.update(p.resolve() for p in ROOT.glob(pattern) if p.is_file())
+    entries.update(package_script_targets(ROOT))
+    return sorted(entries, key=str)
+
+
 def collect_references() -> set[Path]:
-    refs: set[Path] = set()
-    entry_queue = [p for p in ENTRYPOINTS if p.exists()]
+    entry_queue = _initial_entries()
     visited = set(entry_queue)
 
     while entry_queue:
@@ -147,13 +223,16 @@ def collect_references() -> set[Path]:
 
         if path.suffix == ".py":
             targets = collect_python_references(content, path)
-        else:
-            pattern = RE_HTML_SCRIPT if path.suffix == ".html" else RE_JS
+        elif path.suffix == ".html":
             targets = {
                 target
-                for match in pattern.finditer(content)
+                for match in RE_HTML_SCRIPT.finditer(content)
                 if (target := normalize_ref(match.group("ref"), path)) is not None
             }
+        elif path.suffix == ".json":
+            targets = set()
+        else:
+            targets = collect_js_references(content, path)
 
         for target in targets:
             if (
@@ -165,21 +244,7 @@ def collect_references() -> set[Path]:
                 visited.add(target)
                 entry_queue.append(target)
 
-    # include obvious JSON manifest script lists and npm scripts that reference local js
-    package_path = ROOT / "package.json"
-    if package_path.exists():
-        import json
-
-        data = json.loads(package_path.read_text(encoding="utf-8"))
-        scripts = data.get("scripts", {}) or {}
-        for cmd in scripts.values():
-            if isinstance(cmd, str):
-                for token in cmd.split():
-                    if token.endswith(".js") and token[0].isalnum():
-                        target = normalize_ref(token, package_path)
-                        if target and target.is_file():
-                            refs.add(target)
-    return visited | refs
+    return visited
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -17,7 +17,7 @@ def _load_module() -> ModuleType:
     return module
 
 
-def _run(module, monkeypatch, capsys, repo_root: Path, files: dict[str, str], allowlist=None):
+def _run(module, monkeypatch, capsys, repo_root: Path, files: dict[str, str], allowlist=None):  # noqa: PLR0913  # fixture
     for rel, body in files.items():
         path = repo_root / rel
         path.parent.mkdir(parents=True, exist_ok=True)

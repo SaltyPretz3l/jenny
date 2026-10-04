@@ -89,3 +89,35 @@ test('collapsible code blocks interpolate between the collapsed cap and max-cont
   assert.match(expandedRule, /transition:\s*max-height/);
   assert.match(collapsedRule, /max-height:\s*250px/);
 });
+
+test('streamed stream-unit bodies drop edge margins on the same blocks as the settled flat body', () => {
+  const { JSDOM } = require('jsdom');
+  // Selectors come from the stylesheet itself, so a rule edit re-runs here.
+  const selectorBefore = (marker) => {
+    const index = css.indexOf(marker);
+    assert.ok(index >= 0, `missing rule: ${marker}`);
+    const start = css.lastIndexOf('}', index) + 1;
+    return css.slice(start, css.indexOf('{', index)).replace(/\/\*[\s\S]*?\*\//g, '').trim();
+  };
+  const pReset = selectorBefore('.chat-bubble-markdown p:last-child');
+  const preReset = selectorBefore(':is(.chat-bubble-markdown, .tool-result-body) pre:last-child');
+  const headingReset = selectorBefore('.chat-bubble-markdown h6:first-child');
+  const pRestore = selectorBefore('.chat-bubble-markdown > :is(.chat-stream-unit, .reasoning-stream-unit):not(:last-child) > p:last-child');
+  const preRestore = selectorBefore('.chat-bubble-markdown > :is(.chat-stream-unit, .reasoning-stream-unit):not(:last-child) > pre:last-child');
+  const headingRestore = selectorBefore('.chat-bubble-markdown > :is(.chat-stream-unit, .reasoning-stream-unit):not(:first-child) > :is(h1');
+
+  const chunks = ['<p>a</p>', '<p>b</p>', '<h2>H</h2><p>c</p>', '<pre>x</pre>', '<h3>I</h3>', '<p>d</p><pre>y</pre>'];
+  for (const unitClass of ['chat-stream-unit', 'reasoning-stream-unit']) {
+    const streamed = chunks.map((html, i) => `<div class="${unitClass}" data-stream-unit-index="${i}">${html}</div>`).join('');
+    const { document } = new JSDOM(`<div id="flat" class="chat-bubble-markdown">${chunks.join('')}</div>`
+      + `<div id="streamed" class="chat-bubble-markdown">${streamed}</div>`).window;
+    const blocks = (id) => [...document.querySelectorAll(`#${id} :is(p, pre, h2, h3)`)];
+    const edgeless = (el, reset, restore) => el.matches(reset) && !el.matches(restore);
+    const profile = (id) => blocks(id).map((el) => [
+      el.tagName,
+      edgeless(el, pReset, pRestore) || edgeless(el, preReset, preRestore) ? 'no-bottom' : 'bottom',
+      edgeless(el, headingReset, headingRestore) ? 'no-top' : 'top',
+    ].join(':'));
+    assert.deepEqual(profile('streamed'), profile('flat'), unitClass);
+  }
+});

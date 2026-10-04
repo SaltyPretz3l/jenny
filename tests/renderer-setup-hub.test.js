@@ -1,156 +1,12 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { JSDOM } = require('jsdom');
 
 const { createSetupHub } = require('../renderer/features/renderer-setup-hub');
 const { createSetupController } = require('../renderer/features/renderer-setup-controller');
 const { createScene: createSetupHubScene } = require('../renderer/features/setup-scenes/scene-setup-hub');
-const sceneUtils = require('../renderer/features/setup-scenes/scene-utils');
-const { normalizeSetupPayload } = require('../renderer/services/renderer-setup-service');
-const inventoryStepModal = require('../renderer/inventory/step-modal');
 const { createShellServiceRegistry } = require('../renderer/shell/renderer-shell-service-registry');
 
-const DEFAULT_STEPS = {
-  workspace_root: 'pending', local_model: 'pending', endpoint: 'pending',
-  personality: 'pending', skills: 'pending', capabilities: 'pending',
-};
-
-function payload({ steps = DEFAULT_STEPS, firstRunCompleted = false, setupComplete = false, completedAt = '',
-  readiness = {}, workspaceRoot = '', agentName = 'Jenny', preferredLocalModel = '' } = {}) {
-  return normalizeSetupPayload({
-    setup_complete: setupComplete,
-    setup_state: {
-      acknowledged_version: '1',
-      first_run_completed: firstRunCompleted,
-      setup_complete: setupComplete,
-      completed_at: completedAt,
-      steps: { ...steps },
-      readiness,
-      tools_workspace_root: workspaceRoot,
-      tools_workspace_root_configured: Boolean(workspaceRoot),
-      assistant_identity: { agent_name: agentName, profile: 'balanced' },
-      preferred_local_model: preferredLocalModel,
-    },
-  });
-}
-
-function settle() {
-  return new Promise((resolve) => setImmediate(() => setImmediate(resolve)));
-}
-
-function buildHarness(t, options = {}) {
-  const dom = new JSDOM('<!doctype html><html><body><div id="appShell"></div><div id="homeSetupModalRoot"></div></body></html>');
-  const { document } = dom.window;
-  const patches = [];
-  const views = [];
-  const sceneDeps = {};
-  const mounts = [];
-  const logs = [];
-  const disposals = [];
-  let snapshot = payload(options);
-  let completeCalls = 0;
-  let getStateCalls = 0;
-  let freshProbeApplied = false;
-  let releaseFreshProbe = null;
-  const freshProbeHeld = options.holdFreshProbe
-    ? new Promise((resolve) => { releaseFreshProbe = resolve; })
-    : null;
-  let releaseCompleteDelay = null;
-  const completeDelay = options.completeDelay
-    ? new Promise((resolve) => { releaseCompleteDelay = resolve; })
-    : null;
-  const state = {};
-  const setupService = {
-    async getState() {
-      getStateCalls += 1;
-      // A later backend probe can see what init's probe could not (a model that finished loading).
-      if (options.freshProbe && !freshProbeApplied && getStateCalls > Number(options.freshProbeAfterCalls || 1)) {
-        if (freshProbeHeld) await freshProbeHeld;
-        freshProbeApplied = true;
-        snapshot = payload({ ...options, ...options.freshProbe });
-      }
-      return snapshot;
-    },
-    async updateState(patch) {
-      patches.push(patch);
-      if (options.updateStateReject) throw new Error('update failed');
-      const nextSteps = { ...DEFAULT_STEPS };
-      Object.entries(snapshot.steps || {}).forEach(([key, value]) => {
-        nextSteps[sceneUtils.snakeStepKey(key)] = value;
-      });
-      Object.assign(nextSteps, patch.steps || {});
-      snapshot = payload({
-        steps: nextSteps,
-        firstRunCompleted: patch.firstRunCompleted === true || snapshot.firstRunCompleted,
-        setupComplete: patch.setupComplete === false ? false : snapshot.setupComplete,
-        completedAt: snapshot.completedAt,
-        readiness: options.readiness || {},
-        workspaceRoot: options.workspaceRoot || '',
-        agentName: options.agentName || 'Jenny',
-        preferredLocalModel: options.preferredLocalModel || '',
-      });
-      return snapshot;
-    },
-    async complete() {
-      completeCalls += 1;
-      if (completeDelay) await completeDelay;
-      if (completeCalls <= Number(options.completeRefusals || 0)) {
-        snapshot = payload({ ...options, setupComplete: false });
-        return snapshot;
-      }
-      snapshot = payload({
-        ...options,
-        ...(freshProbeApplied ? options.freshProbe : {}),
-        firstRunCompleted: true,
-        setupComplete: true,
-        completedAt: '2026-08-31T12:00:00.000Z',
-      });
-      return snapshot;
-    },
-    detectOllama: options.detectOllama || (async () => ({ installed: false, running: false, version: '' })),
-  };
-  const factoryFor = (name) => (deps) => {
-    sceneDeps[name] = deps;
-    return {
-      mount(rootElement) {
-        mounts.push(name);
-        rootElement.innerHTML = '<div data-test-setup-scene="' + name + '">' + name + '</div>';
-      },
-      dispose() { disposals.push(name); },
-    };
-  };
-  const scenes = { setupHub: createSetupHubScene };
-  Object.entries(sceneUtils.STEP_SCENE).forEach(([, sceneName]) => { scenes[sceneName] = factoryFor(sceneName); });
-  const controller = createSetupController({
-    state,
-    documentRef: document,
-    setupService,
-    dom: { homeSetupModalRoot: document.getElementById('homeSetupModalRoot') },
-    modules: options.omitHub
-      ? { scenes: {}, stepModal: inventoryStepModal }
-      : { setupHub: { createSetupHub }, scenes, stepModal: inventoryStepModal },
-    callbacks: {
-      appendClientLog(level, event, detail) { logs.push({ level, event, detail }); },
-      showShellErrorToast() {}, showToastMessage() {},
-      setActiveView(view) { views.push(view); },
-    },
-  });
-  controller.bind();
-  t.after(() => { controller.dispose(); dom.window.close(); });
-  return {
-    controller, document, root: document.getElementById('homeSetupModalRoot'),
-    patches, views, sceneDeps, mounts, disposals, setupService, state, logs,
-    releaseComplete() {
-      if (!releaseCompleteDelay) return;
-      var release = releaseCompleteDelay;
-      releaseCompleteDelay = null;
-      release();
-    },
-    get completeCalls() { return completeCalls; },
-    get getStateCalls() { return getStateCalls; },
-    releaseFreshProbe() { if (releaseFreshProbe) releaseFreshProbe(); },
-  };
-}
+const { DEFAULT_STEPS, payload, settle, buildHarness, MODEL_LOADED_PROBE } = require('./helpers/setup-hub-harness');
 
 test('shell registry gates the hub factories but always registers standalone model scenes', () => {
   const ollamaEngine = () => {};
@@ -188,17 +44,21 @@ test('shell registry gates the hub factories but always registers standalone mod
   assert.equal(disabled.scenes.modelLibrary, modelLibrary);
 });
 
-test('checklist renders every registry step in order and marks exactly the required specs', async (t) => {
+test('hub labels stay local while workspace and personality retain their values', async (t) => {
   const h = buildHarness(t, { workspaceRoot: 'C:/dev/jenny', agentName: 'June', preferredLocalModel: 'qwen3:8b' });
   await h.controller.init();
-
   const rows = [...h.root.querySelectorAll('[data-setup-step-id]')];
-  assert.deepEqual(rows.map((row) => row.dataset.setupStepId), sceneUtils.STEP_ORDER);
-  assert.deepEqual(rows.filter((row) => row.querySelector('.setup-hub-required')).map((row) => row.dataset.setupStepId),
-    ['workspaceRoot', 'localModel', 'endpoint']);
+  assert.deepEqual(rows.map(row => row.dataset.setupStepId), ['workspaceRoot', 'personality', 'skills', 'capabilities']);
+  assert.equal(h.root.querySelector('.setup-hub-required'), null);
   assert.match(rows[0].textContent, /C:\/dev\/jenny/);
-  assert.match(rows[1].textContent, /qwen3:8b/);
-  assert.match(rows[3].textContent, /June/);
+  assert.match(rows[1].querySelector('.setup-hub-row-title').textContent, /June/);
+});
+
+test('hub step numbers follow the rendered row order', async (t) => {
+  const h = buildHarness(t);
+  await h.controller.init();
+  const glyphs = [...h.root.querySelectorAll('.setup-hub-list > .setup-hub-row .setup-hub-glyph')];
+  assert.deepEqual(glyphs.map((glyph) => glyph.textContent), ['1', '2', '3', '4', '5']);
 });
 
 test('hub opens standalone steps in any order and their close override returns to the checklist', async (t) => {
@@ -210,6 +70,7 @@ test('hub opens standalone steps in any order and their close override returns t
   h.sceneDeps.personality.closeModal();
   assert.ok(h.root.querySelector('[data-setup-step-id="workspaceRoot"]'));
 
+  h.root.querySelector('input[value="endpoint"]').click();
   h.root.querySelector('[data-action="openStep"][data-step-id="endpoint"]').click();
   assert.deepEqual(h.mounts, ['personality', 'endpoint']);
 });
@@ -223,7 +84,7 @@ test('per-step skip patches one step, rerenders it, and leaves every other step 
 
   assert.deepEqual(h.patches, [{ steps: { personality: 'skipped' } }]);
   assert.match(h.root.querySelector('[data-setup-step-id="personality"]').textContent, /Skipped/);
-  for (const stepId of sceneUtils.STEP_ORDER.filter((id) => id !== 'personality')) {
+  for (const stepId of ['workspaceRoot', 'skills', 'capabilities']) {
     assert.equal(h.root.querySelector(`[data-setup-step-id="${stepId}"] .setup-hub-glyph`).getAttribute('aria-label'), 'Pending');
   }
 });
@@ -251,20 +112,20 @@ test('failed skip persistence keeps the row pending and logs a handled warning',
   assert.ok(h.logs.some((entry) => entry.level === 'WARN' && entry.event === 'setup.hub_action_failed'));
 });
 
-for (const [name, detectOllama, expected, expectAction] of [
-  ['running', async () => ({ installed: true, running: true, version: '0.6.8' }), /Running v0\.6\.8/, false],
-  ['upgrade required', async () => ({ installed: true, running: true, version: '0.1.0', upgradeRequired: true }), /Update required/, true],
-  ['not running', async () => ({ installed: true, running: false, version: '0.6.8' }), /Not running/, true],
-  ['not installed', async () => ({ installed: false, running: false, version: '' }), /Not installed/, true],
-  ['rejected', async () => { throw new Error('probe failed'); }, /Not detected/, true],
+for (const [name, detectOllama, expected, expectedStep] of [
+  ['running', async () => ({ installed: true, running: true, version: '0.6.8' }), /Running v0\.6\.8/, 'localModel'],
+  ['upgrade required', async () => ({ installed: true, running: true, version: '0.1.0', upgradeRequired: true }), /Update required/, 'localEngine'],
+  ['not running', async () => ({ installed: true, running: false, version: '0.6.8' }), /Not running/, 'localEngine'],
+  ['not installed', async () => ({ installed: false, running: false, version: '' }), /Not installed/, 'localEngine'],
+  ['rejected', async () => { throw new Error('probe failed'); }, /Not detected/, 'localModel'],
 ]) {
-  test(`Local engine derived row tolerates ${name} detection`, async (t) => {
+  test(`Model route status tolerates ${name} detection`, async (t) => {
     const h = buildHarness(t, { detectOllama });
     await h.controller.init();
     await settle();
-    const row = h.root.querySelector('[data-setup-derived="local-engine"]');
+    const row = h.root.querySelector('[data-setup-model-route]');
     assert.match(row.textContent, expected);
-    assert.equal(Boolean(row.querySelector('[data-action="openStep"]')), expectAction);
+    assert.equal(row.querySelector('[data-action="openStep"]').dataset.stepId, expectedStep);
   });
 }
 
@@ -273,14 +134,14 @@ test('Local engine action targets localEngine and mounts the Ollama engine gate'
   await h.controller.init();
   await settle();
 
-  const action = h.root.querySelector('[data-setup-derived="local-engine"] [data-action="openStep"]');
+  const action = h.root.querySelector('[data-setup-model-route] [data-action="openStep"]');
   assert.ok(action);
   assert.equal(action.dataset.stepId, 'localEngine');
   action.click();
   assert.deepEqual(h.mounts, ['ollamaEngine']);
 
   h.sceneDeps.ollamaEngine.closeModal();
-  assert.ok(h.root.querySelector('[data-setup-derived="local-engine"]'));
+  assert.ok(h.root.querySelector('[data-setup-model-route]'));
 });
 
 test('footer health reports complete and Finish setup calls the completion service', async (t) => {
@@ -292,7 +153,7 @@ test('footer health reports complete and Finish setup calls the completion servi
     steps: { ...DEFAULT_STEPS, workspace_root: 'done', local_model: 'done' }, readiness: ready,
   });
   await h.controller.init();
-  assert.match(h.root.querySelector('.setup-hub-health').textContent, /2 of 2 required steps complete/);
+  assert.match(h.root.querySelector('.setup-hub-health').textContent, /Start Ollama to chat/);
 
   h.root.querySelector('[data-step-modal-action="finishSetup"]').click();
   await settle();
@@ -303,7 +164,7 @@ test('footer health reports complete and Finish setup calls the completion servi
 test('degraded finish gate names the workspace consequence, opens the fix, and Finish anyway stays incomplete', async (t) => {
   const h = buildHarness(t);
   await h.controller.init();
-  assert.match(h.root.querySelector('.setup-hub-health').textContent, /0 of 2 required steps complete/);
+  assert.match(h.root.querySelector('.setup-hub-health').textContent, /Choose a model route to start chatting \u00b7 file tools need a folder/);
 
   h.root.querySelector('[data-step-modal-action="finishSetup"]').click();
   await settle();
@@ -333,7 +194,7 @@ test('finish gate names the local-chat consequence when only model access is unr
 
   const warning = h.root.querySelector('.setup-hub-finish-warning');
   assert.match(warning.textContent, /No model configured — chats can't run locally\./);
-  assert.equal(warning.querySelector('[data-action="fixRequired"]').dataset.stepId, 'localModel');
+  assert.equal(warning.querySelector('[data-action="fixRequired"]').dataset.stepId, 'localEngine');
   assert.match(warning.querySelector('[data-action="fixRequired"]').textContent, /Configure model/);
 });
 
@@ -370,7 +231,7 @@ test('stale empty readiness does not block the backend-authoritative finish atte
     steps: { ...DEFAULT_STEPS, workspace_root: 'done', local_model: 'done' },
   });
   await h.controller.init();
-  assert.match(h.root.querySelector('.setup-hub-health').textContent, /2 of 2 required steps complete/);
+  assert.match(h.root.querySelector('.setup-hub-health').textContent, /Start Ollama to chat/);
 
   h.root.querySelector('[data-step-modal-action="finishSetup"]').click();
   await settle();
@@ -495,17 +356,6 @@ test('flag-off Run-setup-again is not auto-finished out from under the user', as
   assert.equal(h.state.setup.setupComplete, false, 'the reset the user asked for survives');
 });
 
-// F1 (1.2.0 gate C1): Ornith finished loading after app init, so init's probe
-// saw no model; the hub must re-probe instead of trusting that snapshot.
-const MODEL_LOADED_PROBE = {
-  steps: { ...DEFAULT_STEPS, workspace_root: 'done', local_model: 'done', endpoint: 'done' },
-  readiness: {
-    workspace_root: { ready: true, configured: true },
-    local_model: { ready: true, model_count: 1 },
-    endpoint: { ready: true, engine_type: 'ollama' },
-  },
-};
-
 test('the hub re-probes on open and shows the model step an active model already satisfies', async (t) => {
   const h = buildHarness(t, {
     steps: { ...DEFAULT_STEPS, workspace_root: 'done' },
@@ -516,8 +366,8 @@ test('the hub re-probes on open and shows the model step an active model already
   await settle();
 
   assert.ok(h.getStateCalls >= 2, 'the hub asked the backend for a fresh probe');
-  assert.match(h.root.querySelector('.setup-hub-health').textContent, /2 of 2 required steps complete/);
-  const modelRow = h.root.querySelector('[data-setup-step-id="localModel"]');
+  assert.match(h.root.querySelector('.setup-hub-health').textContent, /Start Ollama to chat/);
+  const modelRow = h.root.querySelector('[data-setup-model-route]');
   assert.equal(modelRow.querySelector('.setup-hub-glyph').getAttribute('aria-label'), 'Done');
 });
 
@@ -531,7 +381,7 @@ test('Finish setup re-probes a stale snapshot and completes once an active model
   });
   await h.controller.init();
   await settle();
-  assert.match(h.root.querySelector('.setup-hub-health').textContent, /1 of 2 required steps complete/);
+  assert.match(h.root.querySelector('.setup-hub-health').textContent, /Choose a model route to start chatting/);
 
   h.root.querySelector('[data-step-modal-action="finishSetup"]').click();
   await settle();
@@ -590,7 +440,7 @@ test('a rerender from the on-open probe keeps focus on the control the user was 
   h.releaseFreshProbe();
   await settle();
 
-  assert.match(h.root.querySelector('.setup-hub-health').textContent, /2 of 2 required steps complete/);
+  assert.match(h.root.querySelector('.setup-hub-health').textContent, /Start Ollama to chat/);
   const focused = h.document.activeElement;
   assert.equal(focused.getAttribute('data-action'), 'openStep');
   assert.equal(focused.getAttribute('data-step-id'), 'personality');

@@ -16,8 +16,8 @@
 
 .model-library-folders-title {
   color: var(--text-secondary);
-  font-size: 0.78rem;
-  font-weight: 600;
+  font-size: var(--font-size-body);
+  font-weight: 500;
 }
 
 .model-library-folders-list {
@@ -53,7 +53,7 @@
 .model-library-folders-empty,
 .model-library-folders-status {
   color: var(--text-muted);
-  font-size: 0.76rem;
+  font-size: var(--font-size-caption);
 }
 
 .model-library-folders-status:empty {

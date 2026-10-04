@@ -669,6 +669,7 @@ test('normalizeContextCompaction bounds persisted camelCase fields', () => {
     inputComplete: 1,
     droppedMessages: 4.8,
     droppedBytes: Infinity,
+    summarySourceDroppedMessages: 5.7,
     summaryPersisted: 'yes',
     historyScopeFallback: ` ${'recent'.repeat(10)} `,
     summaryExcerpt: ` ${'excerpt '.repeat(200)} `,
@@ -685,6 +686,8 @@ test('normalizeContextCompaction bounds persisted camelCase fields', () => {
   assert.equal(result.inputComplete, true);
   assert.equal(result.droppedMessages, 4);
   assert.equal(result.droppedBytes, 0);
+  assert.equal(result.summarySourceDroppedMessages, 5);
+  assert.equal(normalizeContextCompaction({ summarySourceDroppedMessages: -3 }).summarySourceDroppedMessages, 0);
   assert.equal(result.summaryPersisted, true);
   assert.equal(result.summaryExcerpt.length, 1200);
   assert.equal(result.occurredAt, '2026-09-21T12:00:00.000Z');

@@ -15,9 +15,13 @@ from sidecar.ai.context.compaction import (
 )
 from sidecar.ai.context.compaction_prompts import build_full_compaction_messages
 from sidecar.ai.context.compaction_window import (
+    MID_TURN_ANSWERED_TASK_PREFIX,
+    MID_TURN_APPROVED_PLAN_NUDGE,
     MID_TURN_NUDGE,
     MID_TURN_NUDGE_PREFIX,
     MID_TURN_TASK_STUB,
+    _find_task_index,
+    is_mid_turn_nudge_content,
     summary_input_limit,
 )
 from sidecar.ai.context.token_budget import (
@@ -95,14 +99,14 @@ def _mid_turn_big_tool_messages(
 def _small_budget() -> TokenBudget:
     """Budget where typical tool messages will exceed auto_compact.
 
-    effective_context = 2000 - 200 - 200 = 1600
+    effective_context = 1800 - max(200 output, 200 summary) = 1600
     auto_compact_threshold (90%) = 1440
     error_threshold (95%) = 1520
     10 tool messages at 500 chars ≈ 1382 tokens ... use content_len=800
     to reliably push over the threshold.
     """
     return TokenBudget(
-        context_window=2_000,
+        context_window=1_800,
         max_output_tokens=200,
         reserved_for_summary=200,
     )
@@ -591,7 +595,7 @@ class TestCompactContext:
         prompt_tokens = estimate_messages_tokens(
             build_full_compaction_messages([]), backend
         )
-        limit = summary_input_limit(budget, prompt_tokens=prompt_tokens)
+        limit = summary_input_limit(budget, prompt_tokens=prompt_tokens, backend=backend)
         assert result.strategy == "full"
         assert len(captured) == 1
         assert estimate_messages_tokens([captured[0][1]], backend) <= limit
@@ -1021,6 +1025,151 @@ class TestMidTurnCompaction:
         assert "OLD-SUMMARY" not in summaries[0]
         assert len(nudges) == 1
 
+    def test_mid_turn_mode_keeps_the_approved_plan_overlay_ahead_of_the_task_pin(
+        self,
+    ) -> None:
+        # TR-014 (dogfood G3): a Plan -> "Build it" turn keeps the approved-plan
+        # overlay in the leading system block; after compaction it must still
+        # precede the summary and the re-pinned original prompt, and carry the
+        # clause that the plan-first request is already satisfied.
+        from sidecar.ai.context.prompt_modes import build_approved_plan_overlay
+
+        primary = "PRIMARY-SYSTEM-PROMPT: you are Jenny."
+        overlay = build_approved_plan_overlay({"title": "G3", "steps": ["Write M4"]})
+        task = "Plan it first and show me the plan; I'll approve before you build."
+
+        result = compact_context(
+            [
+                {"role": "system", "content": primary},
+                {"role": "system", "content": overlay},
+                *_mid_turn_big_tool_messages(10, task=task),
+            ],
+            _small_budget(),
+            generate_fn=lambda _messages: _CANNED_RESPONSE,
+            circuit_breaker=CompactionCircuitBreaker(),
+            mode="mid_turn",
+        )
+
+        def check(messages: list[dict[str, object]]) -> None:
+            contents = [str(message.get("content") or "") for message in messages]
+            assert messages[1] == {"role": "system", "content": overlay}
+            assert contents.count(overlay) == 1
+            summary_index = next(
+                index
+                for index, text in enumerate(contents)
+                if text.startswith(COMPACTED_SUMMARY_HEADING)
+            )
+            assert summary_index > 1
+            assert {"role": "user", "content": task} in messages
+            assert contents.index(task) > summary_index
+            assert "do not re-present the plan or ask for approval of this plan again" in (
+                contents[1]
+            )
+
+        assert result.strategy == "full"
+        check(result.messages)
+
+        # A second pass (more tool rounds after the first compaction) keeps one
+        # overlay copy in the same place, ahead of the refolded summary.
+        more_rounds = _mid_turn_big_tool_messages(10, task=task)[1:]
+        for message in more_rounds:
+            if "tool_call_id" in message:
+                message["tool_call_id"] = f"second_{message['tool_call_id']}"
+            for call in message.get("tool_calls", []) or []:
+                call["id"] = f"second_{call['id']}"
+        second = compact_context(
+            [*result.messages, *more_rounds],
+            _small_budget(),
+            generate_fn=lambda _messages: _CANNED_RESPONSE,
+            circuit_breaker=CompactionCircuitBreaker(),
+            mode="mid_turn",
+        )
+        assert second.strategy == "full"
+        check(second.messages)
+
+    def test_mid_turn_mode_marks_the_pinned_task_answered_after_an_in_turn_plan_approval(
+        self,
+    ) -> None:
+        # TR-014 Fix A: the approval arrives as a tool result, so the re-pinned
+        # pre-approval prompt must not read as a live request.
+        from sidecar.ai.context.prompt_modes import build_approved_plan_overlay
+
+        overlay = build_approved_plan_overlay({"title": "G4", "steps": ["Write M4"]})
+        task = "Present the plan for my approval.\nAcceptance: reconcile.py exits 0."
+        pinned = MID_TURN_ANSWERED_TASK_PREFIX + task
+
+        def compact(messages: list[dict[str, object]]) -> object:
+            return compact_context(
+                messages,
+                _small_budget(),
+                generate_fn=lambda _messages: _CANNED_RESPONSE,
+                circuit_breaker=CompactionCircuitBreaker(),
+                mode="mid_turn",
+                task_content=task,
+                plan_approved_in_turn=True,
+            )
+
+        def check(messages: list[dict[str, object]]) -> None:
+            assert messages[-1] == {"role": "system", "content": MID_TURN_APPROVED_PLAN_NUDGE}
+            assert {"role": "user", "content": pinned} in messages
+            assert {"role": "user", "content": task} not in messages
+            contents = [str(message.get("content") or "") for message in messages]
+            assert contents.count(MID_TURN_APPROVED_PLAN_NUDGE) == 1
+            assert contents.count(pinned) == 1
+            assert MID_TURN_NUDGE not in contents
+            assert not any(
+                text.startswith(MID_TURN_ANSWERED_TASK_PREFIX * 2) for text in contents
+            )
+
+        result = compact(
+            [
+                {"role": "system", "content": "PRIMARY-SYSTEM-PROMPT"},
+                {"role": "system", "content": overlay},
+                *_mid_turn_big_tool_messages(10, task=task),
+            ]
+        )
+        assert result.strategy == "full"
+        check(result.messages)
+
+        more_rounds = _mid_turn_big_tool_messages(10, task=task)[1:]
+        for message in more_rounds:
+            if "tool_call_id" in message:
+                message["tool_call_id"] = f"second_{message['tool_call_id']}"
+            for call in message.get("tool_calls", []) or []:
+                call["id"] = f"second_{call['id']}"
+        second = compact([*result.messages, *more_rounds])
+        assert second.strategy == "full"
+        check(second.messages)
+
+    def test_mid_turn_mode_with_a_carried_approved_plan_but_no_in_turn_approval_is_unchanged(
+        self,
+    ) -> None:
+        from sidecar.ai.context.prompt_modes import build_approved_plan_overlay
+
+        overlay = build_approved_plan_overlay({"title": "G4", "steps": ["Write M4"]})
+        task = "Continue building the plan."
+
+        result = compact_context(
+            [
+                {"role": "system", "content": "PRIMARY-SYSTEM-PROMPT"},
+                {"role": "system", "content": overlay},
+                *_mid_turn_big_tool_messages(10, task=task),
+            ],
+            _small_budget(),
+            generate_fn=lambda _messages: _CANNED_RESPONSE,
+            circuit_breaker=CompactionCircuitBreaker(),
+            mode="mid_turn",
+            task_content=task,
+        )
+
+        assert result.strategy == "full"
+        assert {"role": "user", "content": task} in result.messages
+        assert result.messages[-1] == {"role": "system", "content": MID_TURN_NUDGE}
+        assert not any(
+            str(message.get("content") or "").startswith(MID_TURN_ANSWERED_TASK_PREFIX)
+            for message in result.messages
+        )
+
     def test_mid_turn_result_reports_covered_through_tool_call_id(self) -> None:
         result = compact_context(
             _mid_turn_big_tool_messages(10),
@@ -1076,6 +1225,27 @@ class TestMidTurnCompaction:
                 *messages[last_user:],
             ]
             assert result.covered_through_tool_call_id is None
+
+
+def test_is_mid_turn_nudge_content_accepts_the_approved_variant() -> None:
+    assert is_mid_turn_nudge_content(MID_TURN_NUDGE)
+    assert is_mid_turn_nudge_content(f"  {MID_TURN_APPROVED_PLAN_NUDGE}\n")
+    assert MID_TURN_APPROVED_PLAN_NUDGE.startswith(MID_TURN_NUDGE_PREFIX)
+    assert not is_mid_turn_nudge_content("Build the approved plan.")
+
+
+def test_find_task_index_recognises_the_answered_task_prefix() -> None:
+    task = "Present the plan for approval."
+    rows = [
+        {"role": "system", "content": "summary"},
+        {"role": "user", "content": MID_TURN_ANSWERED_TASK_PREFIX + task},
+        {"role": "assistant", "content": "working"},
+        {"role": "user", "content": "Continue with the tools available."},
+    ]
+
+    assert _find_task_index(rows, task) == 1
+    assert _find_task_index(rows, "A different request.") == 3
+    assert _find_task_index(rows, None) == 3
 
 
 def test_force_compacts_below_threshold() -> None:
@@ -1179,3 +1349,34 @@ def test_full_compaction_reports_mandated_summary_section_count() -> None:
 
     assert result.strategy == "full"
     assert result.summary_section_count == 4
+
+
+# Astra B5 review: the oversized-task stub must stay verbatim, and both task
+# recognisers compare the bare text, so a third compaction pass still anchors.
+def test_mid_turn_task_pin_never_prefixes_the_oversized_task_stub() -> None:
+    from sidecar.ai.context.compaction_window import mid_turn_task_pin
+
+    stub_row = {"role": "user", "content": MID_TURN_TASK_STUB}
+    assert mid_turn_task_pin(stub_row, plan_approved_in_turn=True) == stub_row
+
+    task_row = {"role": "user", "content": "Build M4"}
+    once = mid_turn_task_pin(task_row, plan_approved_in_turn=True)
+    twice = mid_turn_task_pin(once, plan_approved_in_turn=True)
+    assert once["content"] == MID_TURN_ANSWERED_TASK_PREFIX + "Build M4"
+    assert twice == once
+
+
+def test_find_task_index_recognises_a_prefixed_stub_and_a_prefixed_task() -> None:
+    from sidecar.ai.context.compaction_window import _find_task_index
+
+    rows = [
+        {"role": "system", "content": "sys"},
+        {"role": "user", "content": MID_TURN_ANSWERED_TASK_PREFIX + MID_TURN_TASK_STUB},
+        {"role": "assistant", "content": "ok"},
+        {"role": "user", "content": "a later corrective row"},
+    ]
+    assert _find_task_index(rows, "Build M4") == 1
+
+    rows[1] = {"role": "user", "content": MID_TURN_ANSWERED_TASK_PREFIX + "Build M4\n"}
+    assert _find_task_index(rows, "Build M4") == 1
+    assert _find_task_index(rows, "Something else") == 3

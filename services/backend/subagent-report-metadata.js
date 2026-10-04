@@ -1,6 +1,6 @@
 'use strict';
 
-const { redactSensitiveLikeText } = require('./tool-loop-input-sanitization');
+const { redactSecretLikeText, redactSensitiveLikeText } = require('./tool-loop-input-sanitization');
 
 const MAX_SUMMARY_CHARS = 1000;
 const MAX_FIELD_CHARS = 300;
@@ -13,6 +13,10 @@ const MAX_BATCH_TASKS = 3;
 const MAX_BATCH_TASK_CANDIDATES = 12;
 const MAX_TOKEN_COUNT = 2147483647;
 const MAX_ROUTES = 6;
+const MAX_ANSWER_CHARS = 4000;
+const MAX_STEPS = 40;
+const MAX_STEP_NAME_CHARS = 64;
+const MAX_STEP_TEXT_CHARS = 160;
 const REPORT_STATUSES = new Set([
   'completed', 'partial', 'failed', 'cancelled', 'rejected', 'skipped_budget',
 ]);
@@ -38,7 +42,9 @@ function normalizeSubagentMetadata(metadata) {
 function normalizeSubagentReport(value) {
   if (!isRecord(value)) return null;
   const taskId = safeText(value.task_id, MAX_ID_CHARS);
-  const summary = safeText(value.summary, MAX_SUMMARY_CHARS);
+  // The label, summary and answer are read in the app (the monitor, the
+  // inline card): real paths, like the timeline (HB-012); secrets redacted.
+  const summary = safeText(value.summary, MAX_SUMMARY_CHARS, KEEP_PATHS);
   const status = safeEnum(value.status, REPORT_STATUSES, null);
   if (!taskId || !summary || !status
     || !Array.isArray(value.evidence)
@@ -46,7 +52,7 @@ function normalizeSubagentReport(value) {
     || !Array.isArray(value.uncertainties)) return null;
   const report = {
     task_id: taskId,
-    label: safeText(value.label, MAX_LABEL_CHARS) || 'Research subagent',
+    label: safeText(value.label, MAX_LABEL_CHARS, KEEP_PATHS) || 'Research subagent',
     summary,
     evidence: normalizeEvidence(value.evidence),
     tools_used: normalizeStringList(value.tools_used, MAX_TOOLS, 64),
@@ -59,6 +65,11 @@ function normalizeSubagentReport(value) {
     terminal_reason: safeEnum(value.terminal_reason, TERMINAL_REASONS, null),
     error: normalizeError(value.error),
   };
+  // UI-only monitor fields; absent on older reports and omitted when empty.
+  const answer = safeMultilineText(value.answer, MAX_ANSWER_CHARS, KEEP_PATHS);
+  if (answer) report.answer = answer;
+  const steps = normalizeSteps(value.steps);
+  if (steps.length) report.steps = steps;
   return report;
 }
 
@@ -161,6 +172,71 @@ function normalizeEvidence(value) {
   }).filter(Boolean);
 }
 
+function normalizeSteps(value) {
+  if (!Array.isArray(value)) return [];
+  return value.slice(0, MAX_STEPS).map((entry) => {
+    if (!isRecord(entry)) return null;
+    const tool = safeText(entry.tool, MAX_STEP_NAME_CHARS);
+    if (!tool) return null;
+    const step = {
+      tool,
+      display: safeText(entry.display, MAX_STEP_NAME_CHARS) || tool,
+      ok: entry.ok === true,
+    };
+    // Only an admitted (ok) call keeps a target: a refused one may name a path
+    // outside the workspace, so its row carries the scrubbed error alone. Only
+    // a refused call keeps an error line: a successful one has no output here.
+    if (step.ok) {
+      // Gate the raw value: the shared redactor keeps a basename, which could pass the check.
+      const raw = typeof entry.target === 'string' ? entry.target.replace(INVISIBLE_RE, '') : '';
+      const target = raw && !namesOutsidePath(raw) ? safeText(raw, MAX_STEP_TEXT_CHARS) : '';
+      if (target) step.target = target;
+      return step;
+    }
+    const errorCode = safeText(entry.error_code, MAX_STEP_NAME_CHARS);
+    if (errorCode) step.error_code = errorCode;
+    // Scrub before safeText: its path redaction keeps the basename, which can name an outside file.
+    const detail = safeText(scrubStepPaths(entry.detail), MAX_STEP_TEXT_CHARS);
+    if (detail) step.detail = detail;
+    return step;
+  }).filter(Boolean);
+}
+
+// A target is a relative path, or `"pattern" in <relative path>`; an absolute,
+// UNC, home-relative or parent-relative run anywhere after a space (or at the
+// start) names a location outside the workspace.
+function namesOutsidePath(text) {
+  return /[A-Za-z]:[\\/]/.test(text)
+    || /(^|[\s"'(=:])(?:[\\/]|~[\\/])/.test(text)
+    || /(^|[\s\\/])\.\.([\\/]|$)/.test(text);
+}
+
+// Defence in depth over the sidecar's own scrub: quoted paths, UNC shares,
+// drive, home-relative and parent-relative paths in an error line become
+// `<path>` before persistence. Invisible characters go first so they cannot
+// split a path past the patterns; a path run keeps eating words that hold a
+// separator so a spaced directory name does not survive the first match.
+const SPACED_PATH_TAIL = String.raw`(?: [^\s"'\x60<>|()]*[\\/][^\s"'\x60<>|()]*)*`;
+const QUOTED_PATH_RE = /(['"])(?=[^'"\n]*[\\/])[^'"\n]*\1/g;
+const UNC_PATH_RE = new RegExp(String.raw`(?:\\\\|//)[^\s"'\x60<>|\\/()]+[\\/][^\s"'\x60<>|()]*` + SPACED_PATH_TAIL, 'g');
+const DRIVE_PATH_RE = new RegExp(String.raw`[A-Za-z]:[\\/][^\s"'\x60<>|()]*` + SPACED_PATH_TAIL, 'g');
+const PARENT_PATH_RE = /(?:\.\.[\\/])+[^\s"'`<>|()]*/g;
+const HOME_PATH_RE = /(^|[^\w.])~[\\/][^\s"'`<>|()]*/g;
+const POSIX_PATH_RE = new RegExp(String.raw`(^|[\s"'(=:])/[^\s"'\x60<>|()]+` + SPACED_PATH_TAIL, 'g');
+// eslint-disable-next-line no-control-regex -- strips untrusted wire controls before the path scrub.
+const INVISIBLE_RE = /[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u2028-\u202e\u2060-\u2064\u2066-\u2069\ufeff]/g;
+
+function scrubStepPaths(text) {
+  return String(typeof text === 'string' ? text : '').slice(0, 2000)
+    .replace(INVISIBLE_RE, '')
+    .replace(QUOTED_PATH_RE, '<path>')
+    .replace(UNC_PATH_RE, '<path>')
+    .replace(DRIVE_PATH_RE, '<path>')
+    .replace(PARENT_PATH_RE, '<path>')
+    .replace(HOME_PATH_RE, '$1<path>')
+    .replace(POSIX_PATH_RE, '$1<path>');
+}
+
 function normalizeBudget(value) {
   if (!isRecord(value)) return {};
   const result = {};
@@ -217,12 +293,35 @@ function safeRoute(value) {
   return text && !/[\\/]/.test(text) ? text : '';
 }
 
-function safeText(value, maxChars) {
+// Bidi overrides, zero-width and C1 controls: never wire-meaningful, only spoof what a row says.
+const FORMAT_CONTROL_RE = /[\u0080-\u009f\u200b-\u200f\u2028-\u202e\u2060-\u2064\u2066-\u2069\ufeff]/g;
+
+// The app shows real paths (HB-012): the fields a person reads keep them and
+// redact secrets only; identifiers, routes and step text keep the full redactor.
+const KEEP_PATHS = { keepPaths: true };
+
+function redactFor(options) {
+  return options?.keepPaths === true ? redactSecretLikeText : redactSensitiveLikeText;
+}
+
+function safeText(value, maxChars, options = null) {
   if (typeof value !== 'string') return '';
   // eslint-disable-next-line no-control-regex -- strip untrusted wire controls before persistence.
-  return Array.from(redactSensitiveLikeText(value).replace(/[\u0000-\u001f\u007f]/g, ' ').trim())
+  return Array.from(redactFor(options)(value).replace(FORMAT_CONTROL_RE, '').replace(/[\u0000-\u001f\u007f]/g, ' ').trim())
     .slice(0, maxChars)
     .join('');
+}
+
+// Like safeText but keeps line breaks and tabs so a markdown answer stays readable.
+function safeMultilineText(value, maxChars, options = null) {
+  if (typeof value !== 'string') return '';
+  const cleaned = redactFor(options)(value)
+    .replace(FORMAT_CONTROL_RE, '')
+    .replace(/\r\n?/g, '\n')
+    // eslint-disable-next-line no-control-regex -- strip untrusted wire controls, keep \n and \t.
+    .replace(/[\u0000-\u0008\u000b-\u001f\u007f]/g, ' ')
+    .trim();
+  return Array.from(cleaned).slice(0, maxChars).join('');
 }
 
 function safeEnum(value, allowed, fallback) {

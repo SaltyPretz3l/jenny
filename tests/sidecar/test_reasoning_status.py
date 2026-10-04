@@ -138,17 +138,6 @@ def test_synthesizer_deduplicates_status() -> None:
     assert second is None
 
 
-def test_synthesizer_disabled_by_organic_marker() -> None:
-    synth = ReasoningStatusSynthesizer()
-    synth.mark_organic()
-
-    result = synth.feed(
-        "This is a very long reasoning text that should definitely exceed the "
-        "character threshold for synthesizing a status update from the stream."
-    )
-    assert result is None
-
-
 def test_synthesizer_produces_clean_output() -> None:
     synth = ReasoningStatusSynthesizer()
 

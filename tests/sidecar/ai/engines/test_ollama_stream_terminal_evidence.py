@@ -30,19 +30,19 @@ from sidecar.ai.routing.provider_stream_normalizer import (
 def _build_engine() -> OllamaEngine:
     engine = object.__new__(OllamaEngine)
     engine.host = "http://localhost:11434"
-    engine._request_timeout_seconds = 300  # noqa: SLF001
+    engine._request_timeout_seconds = 300
     engine.model_name = "test-model"
-    engine._ready = True  # noqa: SLF001
-    engine._vision = False  # noqa: SLF001
-    engine._thinking = False  # noqa: SLF001
-    engine._tool_calls_enabled = True  # noqa: SLF001
-    engine._tool_call_http_400_streak = 0  # noqa: SLF001
-    engine._context_length = None  # noqa: SLF001
-    engine._configured_context_length = None  # noqa: SLF001
-    engine._thinking_capability_source = "unsupported"  # noqa: SLF001
-    engine._cached_tools_key = None  # noqa: SLF001
-    engine._cached_tools_payload = None  # noqa: SLF001
-    engine._request_context_lock = threading.Lock()  # noqa: SLF001
+    engine._ready = True
+    engine._vision = False
+    engine._thinking = False
+    engine._tool_calls_enabled = True
+    engine._tool_call_http_400_streak = 0
+    engine._context_length = None
+    engine._configured_context_length = None
+    engine._thinking_capability_source = "unsupported"
+    engine._cached_tools_key = None
+    engine._cached_tools_payload = None
+    engine._request_context_lock = threading.Lock()
     return engine
 
 
@@ -54,7 +54,7 @@ class _FakeStreamingResponse:
     def __enter__(self) -> "_FakeStreamingResponse":
         return self
 
-    def __exit__(self, exc_type, exc, tb) -> None:  # noqa: ANN001
+    def __exit__(self, exc_type, exc, tb) -> None:
         self.close()
 
     def __iter__(self):
@@ -214,8 +214,8 @@ class TestPlainStreamTerminalEvidence:
             if getattr(record, "event", "") == "ai.engines.ollama.stream_incomplete"
         ]
         assert len(incomplete) == 1
-        assert incomplete[0].code == CMP_STREAM_INCOMPLETE
-        assert incomplete[0].finish_reason == FINISH_REASON_INCOMPLETE
+        assert incomplete[0].data["code"] == CMP_STREAM_INCOMPLETE
+        assert incomplete[0].data["finish_reason"] == FINISH_REASON_INCOMPLETE
 
     def test_clean_stream_logs_no_incomplete_event(self, monkeypatch, caplog) -> None:
         engine = _build_engine()

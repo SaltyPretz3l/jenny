@@ -512,7 +512,8 @@ test('successful deletion settles its receipt and exact retries do not repeat de
   const remove = f.backend.deleteSession.bind(f.backend);
   f.backend.deleteSession = (id) => { calls++; return remove(id); };
   const result = await f.router.dispatch(request, f.contextA);
-  assert.deepEqual(result, { ok: true, session_id: sessionId, deleted: true });
+  assert.deepEqual(result, { ok: true, session_id: sessionId, deleted: true,
+    cleanup_status: 'complete', cleanup_errors: [] });
   assert.equal(f.router.snapshot(sessionId), null);
   assert.deepEqual(await f.router.dispatch(request, f.contextA), result);
   assert.equal(calls, 1);

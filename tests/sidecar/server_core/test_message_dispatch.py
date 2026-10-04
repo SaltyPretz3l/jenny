@@ -246,3 +246,24 @@ def test_models_list_marks_archived_cloud_provider_unavailable() -> None:
     assert result["available"] is False
     assert result["models"] == []
     assert result["reason"] == "provider 'openai' is archived"
+
+
+
+def test_models_list_updates_the_current_engine_from_host_catalog(monkeypatch) -> None:
+    from sidecar.ai.config import RuntimeConfig
+
+    row = {"id": "gpt-6.1-sol", "label": "GPT-6.1 Sol", "context_length": 128_000,
+           "reasoning_efforts": ["low", "medium"],
+           "default_reasoning_effort": "medium", "vision": True}
+    updates = []
+    engine = SimpleNamespace(_ENGINE_TYPE="chatgpt", set_model_catalog=updates.append)
+    container = SimpleNamespace(stack=SimpleNamespace(config=RuntimeConfig(chatgpt_access_token="fixture-token"),
+                                                       engine=engine))
+    monkeypatch.setattr(server, "_BRAIN_CONTAINER", container)
+    outcome = server.process_message({"jsonrpc": "2.0", "id": 901, "method": "models.list",
+        "params": {"accept_version": API_VERSION, "engine_type": "chatgpt", "chatgpt_model_catalog": [row]}},
+        initialized=True)
+    assert outcome.response is not None
+    assert outcome.response["result"]["models"][0]["id"] == row["id"]
+    assert updates == [(row,)]
+    assert container.stack.config.chatgpt_model_catalog == ()

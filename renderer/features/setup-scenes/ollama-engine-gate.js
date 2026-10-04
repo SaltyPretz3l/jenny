@@ -78,9 +78,8 @@
       return disposed || !rootEl || !lifecycleGate.isCurrent(token);
     }
 
-    function escapeHtml(value) {
-      return sceneUtils.escapeHtml(value);
-    }
+    const escapeHtml = ((typeof globalThis !== 'undefined' && globalThis.stringUtils)
+      || (typeof require === 'function' ? require('../../shared/string-utils') : null)).escapeHtml;
 
     function installOptInLabel(actionLabel, size) {
       return '<label class="setup-hw-optin"><input type="checkbox" id="setup-hw-optin"'

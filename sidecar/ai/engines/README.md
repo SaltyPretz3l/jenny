@@ -1,30 +1,36 @@
 # Engines
 
-Engine abstraction layer for local-first LLM integration.
+Engine abstraction layer for local-first inference with explicit optional cloud
+routes. `factory.py` selects the actual post-fallback engine and returns an
+`EngineSelection`; routing budgets and capabilities follow that actual engine.
 
-## Local-First Posture
+## Active engines
 
-Development and runtime selection target local inference engines. The retired
-cloud provider engines are preserved under `archive/cloud-engines/` as historical
-source, but they are not active imports or feature-flagged runtime options.
+| Engine type | Implementation | Posture |
+|---|---|---|
+| `ollama` | `ollama.py` | Default local engine; discovers daemon models at runtime. |
+| `vllm` | `vllm_engine.py` | Local OpenAI-style inference; factory default `Qwen/Qwen3.5-9B`. |
+| `openai-compatible` | `openai_compatible.py` | Local-compatible HTTP endpoints, including managed or user-run llama-server. Factory enforces loopback/private/link-local hosts. |
+| `chatgpt` | `responses_descriptor.py`, `chatgpt_subscription.py`, `chatgpt_provider_descriptor.py` | Core optional ChatGPT sign-in route. Jenny's own OAuth service supplies the access token; no external plugin is required. Factory fallback model is `gpt-5.5`; live discovery owns selection. |
+| `codex-cli` | `codex_cli.py` | Explicit opt-in CLI subprocess transport; the CLI uses its own login. Jenny never reads or copies its credentials. |
+| `mock` | `mock.py` | Deterministic test engine and fail-closed selection fallback. |
+| `replay` | `replay.py` | Fixture-driven local engine for tests and authorized app automation. |
 
-### Always-available Engines
+Unknown selections, invalid configuration and engine initialization failures fall
+back to `MockEngine` with bounded fallback metadata. A fallback does not establish
+that the requested provider or model is ready. The legacy API-key cloud engines
+under `archive/cloud-engines/` remain historical source and are not active imports.
 
-| Engine | File | Notes |
-|--------|------|-------|
-| **Ollama** | `ollama.py` | Primary local engine; model discovered at runtime via `/api/tags` or local manifests. |
-| **vLLM** | `vllm_engine.py` | OpenAI-compatible local inference; default model `Qwen/Qwen3.5-9B`. |
-| **Mock** | `mock.py` | Deterministic stub for tests and fallback. |
+## Shared infrastructure
 
-## Shared Infrastructure
+- `base.py` — `BaseEngine` and normalized generation/streaming contracts.
+- `factory.py` / `provider_registry.py` — selection and lazy implementation imports.
+- `catalog.py` / `chatgpt_model_catalog.py` — model discovery and capability metadata.
+- `provider_http.py` / `http_utils.py` — bounded HTTP helpers.
+- `provider_call_finalize.py` — exactly one terminal provider-call diagnostic row.
+- `response_format.py` — response-format contract.
 
-- `base.py` - abstract `BaseEngine` contract.
-- `proxy.py` - transparent engine wrapper.
-- `factory.py` - runtime engine selection with fallback.
-- `catalog.py` - dynamic model discovery for Ollama and vLLM.
-- `provider_registry.py` - active local engine class imports.
-- `provider_http.py` / `http_utils.py` - shared HTTP helpers used by vLLM.
-- `response_format.py` - normalized response envelope.
-
-Retired `PORT_BUNDLES` salvage hooks are not active runtime code. Use the
-reference-only docs and policy checks for historical salvage context.
+Model lifecycles and application authority remain with the host services; engines
+hold no canonical conversation history. Request cancellation/deadlines arrive
+through the request context. See Sidecar Runtime
+and Concurrency Model.

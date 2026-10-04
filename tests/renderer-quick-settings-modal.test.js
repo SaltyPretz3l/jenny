@@ -424,7 +424,7 @@ test('font-scale writes ONLY through the appearance adapter; zoom is untouched',
   controller.open();
   const zoomSlot = documentRef.querySelector('[data-slot="zoom"]');
   const fontScaleControl = zoomSlot.querySelector('.quick-settings-row-control');
-  // Presets: small/default/large/xlarge = 4 entries -> rendered as a SegmentedControl.
+  // Presets: small/default/large = 3 entries -> rendered as a SegmentedControl.
   const segmented = fontScaleControl.querySelector('[role="radiogroup"]');
   assert.ok(segmented, 'font-scale renders as a segmented control for a 2-4 preset catalog');
   const largeOption = segmented.querySelector('[data-value="large"]');
@@ -435,19 +435,14 @@ test('font-scale writes ONLY through the appearance adapter; zoom is untouched',
   assert.equal(harness.zoomAdapter._writeCalls.length, 0, 'zoom adapter must never see a font-scale write');
 });
 
-test('chat-zoom writes ONLY through the zoom adapter; appearance is untouched', () => {
+test('the retired chat zoom has no quick-settings control', () => {
   const documentRef = buildDom();
   const harness = buildDeps(documentRef);
   const controller = createQuickSettingsModal(harness.deps);
 
   controller.open();
-  const zoomSelect = documentRef.querySelector('[data-slot="zoom"] select');
-  zoomSelect.value = '110';
-  zoomSelect.dispatchEvent(new documentRef.defaultView.Event('change', { bubbles: true }));
-
-  assert.equal(harness.zoomAdapter._writeCalls.length, 1);
-  assert.equal(harness.zoomAdapter._writeCalls[0], 110);
-  assert.equal(harness.appearanceAdapter._writeCalls.length, 0, 'appearance adapter must never see a chat-zoom write');
+  assert.equal(documentRef.querySelector('#quickSettingsChatZoom'), null);
+  assert.equal(documentRef.querySelector('[data-slot="zoom"] select'), null);
 });
 
 test('palette select writes through the appearance adapter, preserving the other appearance fields', () => {

@@ -116,7 +116,7 @@
   border: 0;
   background: transparent;
   color: inherit;
-  font-size: 12px;
+  font-size: var(--font-size-body);
   cursor: pointer;
 }
 
@@ -156,7 +156,7 @@
   border-radius: 4px;
   background: transparent;
   color: var(--text-muted);
-  font-size: 13px;
+  font-size: var(--font-size-body);
   line-height: 1;
   cursor: pointer;
   opacity: 0;
@@ -213,7 +213,7 @@
   background: var(--bg-base);
   color: var(--text-primary);
   font-family: var(--font-family-mono);
-  font-size: 13px;
+  font-size: var(--font-size-body);
   line-height: 1.5;
 }
 
@@ -363,16 +363,14 @@
 
 .ide-rail-placeholder-title {
   color: var(--text-primary);
-  font-size: 12px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
+  font-size: var(--font-size-caption);
+  font-weight: 500;
 }
 
 .ide-rail-placeholder-copy {
   margin: 0;
   color: var(--text-muted);
-  font-size: 12px;
+  font-size: var(--font-size-footnote);
   line-height: 1.5;
 }
 
@@ -380,7 +378,7 @@
 
 .ide-tree {
   padding: 6px 0;
-  font-size: 12px;
+  font-size: var(--font-size-body);
   user-select: none;
 }
 
@@ -444,7 +442,7 @@
   flex-shrink: 0;
   width: 12px;
   text-align: center;
-  font-size: 9px;
+  font-size: var(--font-size-caption);
   color: var(--text-muted);
 }
 
@@ -458,7 +456,7 @@
 .ide-tree-status {
   padding-block: 4px; padding-inline-end: 8px; padding-inline-start: calc(22px + var(--ide-tree-depth, 0) * 14px);
   color: var(--text-muted);
-  font-size: 11px;
+  font-size: var(--font-size-caption);
   font-style: italic;
   white-space: normal;
 }
@@ -489,7 +487,7 @@
   border-radius: 3px;
   background: var(--bg-base);
   color: var(--text-primary);
-  font-size: 12px;
+  font-size: var(--font-size-body);
   line-height: 1.4;
 }
 
@@ -518,8 +516,8 @@
   border: 0;
   background: transparent;
   color: var(--text-muted);
-  font-size: 11px;
-  font-weight: 600;
+  font-size: var(--font-size-caption);
+  font-weight: 500;
   white-space: nowrap;
   cursor: pointer;
 }
@@ -541,7 +539,7 @@
   border-radius: 4px;
   background: transparent;
   color: var(--text-muted);
-  font-size: 12px;
+  font-size: var(--font-size-body);
   line-height: 1;
   cursor: pointer;
 }
@@ -568,7 +566,7 @@
   flex-direction: column;
   gap: 8px;
   padding: 10px 10px 16px;
-  font-size: 12px;
+  font-size: var(--font-size-body);
 }
 
 .ide-search-field {
@@ -584,7 +582,7 @@
   border-radius: 4px;
   background: var(--bg-base);
   color: var(--text-primary);
-  font-size: 12px;
+  font-size: var(--font-size-body);
   line-height: 1.4;
 }
 
@@ -595,14 +593,14 @@
 
 .ide-search-status {
   color: var(--text-muted);
-  font-size: 11px;
+  font-size: var(--font-size-caption);
 }
 
 /* Search result-row and replace-action styles live in styles/ide-view-replace.css. */
 
 .ide-search-hit {
   color: var(--accent);
-  font-weight: 700;
+  font-weight: 500;
 }
 
 /* ── Diff review surface (W5) ── */
@@ -636,7 +634,7 @@
   background: var(--bg-base);
   color: var(--text-secondary);
   font-family: var(--font-family-mono);
-  font-size: 12px;
+  font-size: var(--font-size-body);
   line-height: 1.5;
   user-select: text;
   -webkit-user-select: text;
@@ -656,7 +654,7 @@
   flex-direction: column;
   gap: 10px;
   padding: 10px 10px 16px;
-  font-size: 12px;
+  font-size: var(--font-size-body);
 }
 
 .ide-changes-section {
@@ -671,10 +669,8 @@
   gap: 6px;
   padding: 2px 4px 6px;
   color: var(--text-primary);
-  font-weight: 600;
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
+  font-weight: 500;
+  font-size: var(--font-size-caption);
 }
 
 .ide-changes-count {
@@ -682,7 +678,7 @@
   border-radius: 8px;
   background: var(--bg-panel);
   color: var(--text-muted);
-  font-size: 10px;
+  font-size: var(--font-size-caption);
   line-height: 1.6;
   text-transform: none;
   letter-spacing: normal;
@@ -691,7 +687,7 @@
 .ide-changes-empty {
   padding: 8px 4px;
   color: var(--text-muted);
-  font-size: 11px;
+  font-size: var(--font-size-footnote);
   line-height: 1.5;
 }
 
@@ -702,7 +698,7 @@
   min-width: 0;
   padding: 4px;
   color: var(--text-primary);
-  font-weight: 600;
+  font-weight: 500;
   white-space: nowrap;
 }
 
@@ -719,7 +715,7 @@
   text-overflow: ellipsis;
   color: var(--text-muted);
   font-weight: 400;
-  font-size: 10px;
+  font-size: var(--font-size-caption);
 }
 
 .ide-changes-row {
@@ -771,27 +767,27 @@
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--text-muted);
-  font-size: 10px;
+  font-size: var(--font-size-caption);
 }
 
 .ide-changes-row-hint {
   flex-shrink: 0;
   margin-inline-start: auto;
   color: var(--text-muted);
-  font-size: 10px;
+  font-size: var(--font-size-caption);
 }
 
 .ide-changes-status {
   flex-shrink: 0;
   min-width: 58px;
-  font-size: 11px;
+  font-size: var(--font-size-caption);
 }
 
 .ide-changes-counts {
   display: flex;
   gap: 6px;
   font-family: var(--font-family-mono);
-  font-size: 11px;
+  font-size: var(--font-size-caption);
 }
 
 .ide-changes-add {
@@ -817,14 +813,14 @@
 .ide-changes-batch-actions .btn,
 .ide-changes-op-row .btn,
 .ide-recovery-conflict-choices .btn {
-  min-height: 24px; padding: 2px 7px; font-size: 11px;
+  min-height: 24px; padding: 2px 7px; font-size: var(--font-size-footnote);
 }
 
 .ide-changes-batch-detail {
   display: flex; flex-direction: column; gap: 4px;
   margin-block: 0 6px; margin-inline-end: 4px; margin-inline-start: 20px; padding: 6px 8px;
   border: 1px solid var(--line);
-  border-radius: 6px; font-size: 11px; color: var(--text-secondary);
+  border-radius: 6px; font-size: var(--font-size-footnote); color: var(--text-secondary);
 }
 
 .ide-changes-op-row {
@@ -844,7 +840,7 @@
 .ide-recovery-conflict { margin-bottom: 12px; }
 
 .ide-recovery-conflict-path {
-  overflow-wrap: anywhere; font-weight: 600;
+  overflow-wrap: anywhere; font-weight: 500;
 }
 
 .ide-recovery-conflict-choices {
@@ -920,10 +916,8 @@
 
 .ide-welcome-heading {
   margin: 0;
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
+  font-size: var(--font-size-caption);
+  font-weight: 500;
   color: var(--text-secondary, var(--ink-2, #8a8a8a));
 }
 
@@ -967,12 +961,12 @@
 }
 
 .ide-welcome-recent-name {
-  font-size: 13px;
+  font-size: var(--font-size-body);
   color: var(--text-primary, var(--ink-1, inherit));
 }
 
 .ide-welcome-recent-dir {
-  font-size: 11px;
+  font-size: var(--font-size-caption);
   color: var(--text-secondary, var(--ink-2, #8a8a8a));
   white-space: nowrap;
   overflow: hidden;
@@ -992,7 +986,7 @@
 /* ── Dirty-tab close confirm (rendered in the inventory help-overlay body) ── */
 .ide-confirm-message {
   margin: 0 0 10px;
-  font-size: 13px;
+  font-size: var(--font-size-body);
 }
 
 .ide-confirm-list {
@@ -1000,7 +994,7 @@
   padding-inline-start: 18px;
   max-height: 160px;
   overflow: auto;
-  font-size: 12px;
+  font-size: var(--font-size-footnote);
   color: var(--text-secondary, var(--ink-2, #8a8a8a));
 }
 

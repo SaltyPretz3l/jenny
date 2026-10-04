@@ -5,6 +5,8 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { CONFIG_VERSION, normalizeState } = require('../services/shell-config-state');
+const { seedDemoProfile, cleanupDemoProfile } = require('../scripts/demo/demo-profile');
 
 const {
   FIXTURE_FILES,
@@ -49,4 +51,21 @@ test('materialize writes every fixture file unchanged', (t) => {
 test('the fixture test script is the bare node runner (Node 22+ rejects a `test/` directory argument)', () => {
   const pkg = JSON.parse(FIXTURE_FILES['package.json']);
   assert.strictEqual(pkg.scripts.test, 'node --test');
+});
+
+test('seeded demo profile keeps its intentional 100 percent zoom at the current config version', (t) => {
+  const mkdtempSync = fs.mkdtempSync;
+  // Keep the real seeder's recording workspace inside the writable temp root.
+  t.mock.method(fs, 'mkdtempSync', (prefix, options) => mkdtempSync(
+    path.basename(prefix) === 'ledger-cli-' ? path.join(os.tmpdir(), 'ledger-cli-') : prefix,
+    options
+  ));
+  const seeded = seedDemoProfile({});
+  t.after(() => cleanupDemoProfile(seeded));
+  const config = JSON.parse(fs.readFileSync(path.join(seeded.profile, 'shell-config.json'), 'utf8'));
+  assert.strictEqual(config.version, CONFIG_VERSION);
+  assert.strictEqual(config.windowUi.appZoomPercent, 100);
+  assert.strictEqual(normalizeState(config).windowUi.appZoomPercent, 100);
+  // The seed went through the whole migration chain, not just a version stamp.
+  assert.strictEqual(config.home.showContextualTips, false, 'v45 turned tips off for versioned configs');
 });

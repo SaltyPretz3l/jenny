@@ -89,6 +89,68 @@ test('refreshManagedConfig forwards the sign-out reconfiguration bounds into the
   ]);
 });
 
+function readyServiceWhoseRefreshFails(overrides = {}) {
+  const pushes = [];
+  const service = {
+    sidecarClient: {},
+    sidecarManager: { process: {}, getStatus: () => ({ phase: 'ready', detail: '' }) },
+    currentModel: 'ornith-1.5-9b-q6_k',
+    currentEngineType: 'openai-compatible',
+    reasoningEffortSupport: '',
+    currentStatus: { model: 'ornith-1.5-9b-q6_k', model_loaded: true },
+    _lastEngineFallback: null,
+    _managedPendingModel: '',
+    _modelLifecycle: { state: 'ready', requested_model: 'ornith-1.5-9b-q6_k', engine: 'openai-compatible' },
+    _emitServiceLog() {},
+    emit(event, status) { if (event === 'backend-status') pushes.push(status.phase); },
+    // What a timed-out initialize flight leaves behind before it rejects.
+    async _initializeManagedSidecar() {
+      service.currentModel = '';
+      service._modelLifecycle = { state: 'unavailable', requested_model: 'ornith-1.5-9b-q6_k', engine: 'openai-compatible' };
+      service.emit('backend-status', { phase: 'model_unavailable' });
+      throw new Error('Managed sidecar initialization inactivity timed out after 8000ms.');
+    },
+    async refreshStatusSnapshot() { return null; },
+    ...overrides,
+  };
+  return { service, pushes };
+}
+
+test('a failed background refresh re-publishes the restored ready status', async () => {
+  const { service, pushes } = readyServiceWhoseRefreshFails();
+
+  await assert.rejects(refreshManagedConfig(service, 'plugin_provider_changed'), /timed out/);
+
+  assert.equal(service.currentModel, 'ornith-1.5-9b-q6_k');
+  assert.equal(service._modelLifecycle.state, 'ready');
+  assert.deepEqual(pushes, ['model_unavailable', 'ready']);
+});
+
+test('a refresh that fails during shutdown pushes no corrective status', async () => {
+  const { service, pushes } = readyServiceWhoseRefreshFails({ _stopping: true });
+
+  await assert.rejects(refreshManagedConfig(service, 'plugin_provider_changed'), /timed out/);
+
+  assert.deepEqual(pushes, ['model_unavailable']);
+});
+
+test('a refresh that fails after the process was replaced neither restores nor publishes its snapshot', async () => {
+  const { service, pushes } = readyServiceWhoseRefreshFails();
+  // A restart swaps the process while the refresh RPC is still pending.
+  service._initializeManagedSidecar = async () => {
+    service.sidecarManager.process = {};
+    service.currentModel = '';
+    service._modelLifecycle = { state: 'loading', requested_model: 'new-model', engine: 'openai-compatible' };
+    throw new Error('Sidecar client disposed.');
+  };
+
+  await assert.rejects(refreshManagedConfig(service, 'plugin_provider_changed'), /disposed/);
+
+  assert.equal(service.currentModel, '');
+  assert.equal(service._modelLifecycle.requested_model, 'new-model');
+  assert.deepEqual(pushes, []);
+});
+
 test('workspace root refresh is deferred while captured request streams are active', async () => {
   const observed = [];
   const service = {

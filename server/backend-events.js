@@ -67,6 +67,17 @@ function streamEventDto(event) {
   return dto;
 }
 
+// A runtime pause withdraws a live waiter without ending the stream. The browser
+// re-reads its decision snapshot (the live maps stay the source of truth) instead
+// of learning a new stream event type.
+function withdrawalDto(event) {
+  const key = event?.type === 'tool_approval_withdrawn' ? ['approvalId', 'approval_id']
+    : event?.type === 'user_questions_withdrawn' ? ['questionRef', 'question_ref'] : null;
+  if (!key || !validId(event.sessionId) || !validId(event.streamId)
+    || typeof event[key[0]] !== 'string' || !event[key[0]]) return null;
+  return { session_id: event.sessionId, stream_id: event.streamId, [key[1]]: event[key[0]].slice(0, 512) };
+}
+
 class BackendEvents {
   constructor({ backend, bootEpoch, now = Date.now }) {
     this.backend = backend;
@@ -74,6 +85,11 @@ class BackendEvents {
     this.live = new Map();
     this.active = new Map();
     this.onStream = (event) => {
+      const withdrawal = withdrawalDto(event);
+      if (withdrawal) {
+        this.events.publish('decision_changed', withdrawal);
+        return;
+      }
       const dto = streamEventDto(event);
       if (!dto) return;
       if (dto.type === 'started') {

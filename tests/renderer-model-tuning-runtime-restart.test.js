@@ -279,7 +279,7 @@ test('a failed tuning follow-up keeps its message and leaves one restart for the
   await click(host, 'choose-llama-server-runtime');
   await apply(host);
   assert.deepEqual(h.calls.order, ['engine', 'tuning']);
-  assert.equal(statusText(host), 'Not applied: active stream.');
+  assert.equal(statusText(host), 'Finish the current reply first, then Apply again.');
   assert.equal(h.saved().runtimePath, FORK, 'the engine half landed');
 
   setField(host, '#modelTuningTemperature', '0.4');
@@ -309,7 +309,9 @@ test('a later engine write settles an owed restart: once with its build copy, or
   let host = await owe(superseded);
   await click(host, 'choose-model-gguf');
   await apply(host);
-  assert.deepEqual(superseded.calls.order, ['engine', 'tuning', 'engine', 'restart']);
+  // The refused temperature stays in the drawer ("Apply again"), so this Apply
+  // carries it too before the owed restart.
+  assert.deepEqual(superseded.calls.order, ['engine', 'tuning', 'engine', 'tuning', 'restart']);
   assert.equal(statusText(host), RESTARTED_BUILD, 'the owed build change still names its build');
 
   const dropped = createHarness(t, { picks: [FORK_PICK], tuningResults: rejected });
@@ -318,7 +320,8 @@ test('a later engine write settles an owed restart: once with its build copy, or
   await apply(host);
   setField(host, '#modelTuningTemperature', '0.5');
   await apply(host);
-  assert.deepEqual(dropped.calls.order, ['engine', 'tuning', 'engine', 'tuning'], 'no llama-server restart for an Ollama model');
+  // The engine switch carries the kept 0.4, the next Apply the 0.5; still no restart.
+  assert.deepEqual(dropped.calls.order, ['engine', 'tuning', 'engine', 'tuning', 'tuning'], 'no llama-server restart for an Ollama model');
 });
 
 // A restart owed on the served model survives a closed drawer (R2-B).
@@ -328,7 +331,7 @@ test('a restart owed by a failed follow-up survives close and reopen, and runs o
   setField(host, '#modelTuningTemperature', '0.4');
   await click(host, 'choose-llama-server-runtime');
   await apply(host);
-  assert.equal(statusText(host), 'Not applied: active stream.');
+  assert.equal(statusText(host), 'Finish the current reply first, then Apply again.');
   h.controller.close();
   host = await openServed(h);
   assert.equal(applyLabel(host), 'Apply 0 changes', 'the build is saved: the restart is owed, not a draft change');
@@ -353,7 +356,7 @@ test('an engine Apply whose follow-up fails keeps a restart owed by key through 
   setField(host, '#modelTuningTemperature', '0.4');
   await apply(host);
   assert.deepEqual(h.calls.order, ['engine', 'engine', 'tuning'], 'still streaming: the engine half lands, the follow-up is refused');
-  assert.equal(statusText(host), 'Not applied: active stream.');
+  assert.equal(statusText(host), 'Finish the current reply first, then Apply again.');
   streaming = [];
   h.controller.close();
   host = await openServed(h);

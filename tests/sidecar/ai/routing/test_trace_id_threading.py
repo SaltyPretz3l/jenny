@@ -10,7 +10,10 @@ external servers never receive surprise ``_jenny_*`` keys.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
+
+import pytest
 
 from sidecar.ai.routing.tool_execution import inject_dispatch_trace_id
 from sidecar.ai.routing.tool_observation import tool_argument_fingerprint
@@ -86,3 +89,26 @@ def test_trace_id_never_perturbs_observation_fingerprints() -> None:
     other_trace = {"path": "a.txt", "_jenny_trace_id": "trace_zzz.call_9"}
     assert tool_argument_fingerprint(base) == tool_argument_fingerprint(with_trace)
     assert tool_argument_fingerprint(with_trace) == tool_argument_fingerprint(other_trace)
+
+
+class _FrozenArguments(dict):
+    def __setitem__(self, key: str, value: object) -> None:
+        raise TypeError("arguments are frozen")
+
+
+def test_injection_failure_is_logged_and_leaves_arguments_untouched(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    args = _FrozenArguments(path="a.txt")
+    with caplog.at_level(logging.DEBUG, logger="sidecar.ai.routing.tool_execution"):
+        out = inject_dispatch_trace_id(
+            args,
+            descriptor=_Descriptor(source_kind="builtin"),
+            runtime=_Runtime(trace_id="trace_abc"),
+            call=_call("call_7"),
+        )
+    assert out is args
+    assert "_jenny_trace_id" not in out
+    failures = [r for r in caplog.records if "dispatch trace id not injected" in r.getMessage()]
+    assert len(failures) == 1
+    assert failures[0].exc_info is not None

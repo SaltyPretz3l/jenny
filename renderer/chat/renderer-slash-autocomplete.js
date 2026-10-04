@@ -53,8 +53,10 @@
     let completing = false;
     const savedAttributes = new Map();
 
+    // Split view: a second pane's menu keys on ITS session (getSessionId).
     function contextKey() {
-      return JSON.stringify([state?.currentSessionId, state?.ui?.activeView]);
+      const sessionId = typeof options.getSessionId === 'function' ? options.getSessionId() : state?.currentSessionId;
+      return JSON.stringify([sessionId, state?.ui?.activeView]);
     }
     function owner() { return mode === 'button' ? search : input; }
     function remember(el, names) {
@@ -258,7 +260,8 @@
       input = options.getInput?.() || doc.getElementById('chatInput');
       if (!input) return dispose;
       attached = true;
-      button = doc.getElementById('composerTerminalShortcut');
+      // The Commands button is pane 0's document chrome; a second pane's menu passes getButton: () => null.
+      button = typeof options.getButton === 'function' ? options.getButton() : doc.getElementById('composerTerminalShortcut');
       remember(input, ['role', 'aria-autocomplete', 'aria-controls', 'aria-expanded', 'aria-activedescendant']);
       remember(button, ['aria-haspopup', 'aria-controls', 'aria-expanded', 'data-slash-menu-owned']);
       button?.setAttribute('data-slash-menu-owned', 'true');

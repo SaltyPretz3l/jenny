@@ -132,7 +132,7 @@ _SMART_QUOTES = {
 }
 
 _FENCE_RE = re.compile(r"^\s*```[a-zA-Z_]*\s*\n?|\n?\s*```\s*$")
-_TOOL_CALL_TAG_RE = re.compile(r"</?tool_call>", re.IGNORECASE)
+_TOOL_CALL_TAG_RE = re.compile(r"^\s*<tool_call>\s*|\s*</tool_call>\s*$", re.IGNORECASE)
 
 
 def _try_parse_dict(text: str) -> dict | None:
@@ -181,7 +181,7 @@ def _in_any_span(index: int, spans: list[tuple[int, int]]) -> bool:
 
 
 def _strip_debris(text: str) -> str:
-    """Remove ``<tool_call>`` tags from arbitrary text."""
+    """Remove envelope tags only at the payload boundaries."""
     return _TOOL_CALL_TAG_RE.sub("", text)
 
 
@@ -230,10 +230,28 @@ def _strip_wrapping(raw: str) -> tuple[str, tuple[str, ...]]:
 
 
 def _replace_smart_quotes(text: str) -> str:
-    """Map curly quotes to their ASCII equivalents."""
-    for smart, ascii_ch in _SMART_QUOTES.items():
-        text = text.replace(smart, ascii_ch)
-    return text
+    """Normalize quote delimiters while preserving established string contents."""
+    out: list[str] = []
+    closing: str | None = None
+    escaped = False
+    for ch in text:
+        if closing is not None:
+            if escaped:
+                out.append(ch)
+                escaped = False
+            elif ch == "\\":
+                out.append(ch)
+                escaped = True
+            elif ch == closing:
+                out.append(_SMART_QUOTES.get(ch, ch))
+                closing = None
+            else:
+                out.append(ch)
+        else:
+            if ch in {'"', "'", "\u201c", "\u2018"}:
+                closing = {"\u201c": "\u201d", "\u2018": "\u2019"}.get(ch, ch)
+            out.append(_SMART_QUOTES.get(ch, ch))
+    return "".join(out)
 
 
 def _replace_python_literals(text: str) -> str:

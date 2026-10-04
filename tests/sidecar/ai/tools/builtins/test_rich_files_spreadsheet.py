@@ -276,7 +276,7 @@ def test_spreadsheet_lazy_worksheet_parse_failure_returns_unsupported(tmp_path: 
         WorkspaceGuard(str(workspace_root)),
     )
 
-    assert result.success is True
+    assert result.success is False
     assert result.metadata["status"] == "unsupported"
     assert result.metadata["failure"]["reason"] == "spreadsheet_parse_failed"
 
@@ -302,7 +302,7 @@ def test_spreadsheet_inspect_dependency_missing_degrades(
         WorkspaceGuard(str(workspace_root)),
     )
 
-    assert result.success is True
+    assert result.success is False
     assert result.metadata["status"] == "unavailable"
     assert result.metadata["failure"]["error_code"] == CMP_TOOL_RICH_FILES_DEPENDENCY_MISSING
 
@@ -328,7 +328,7 @@ def test_spreadsheet_inspect_requires_xml_bomb_protection(
         WorkspaceGuard(str(workspace_root)),
     )
 
-    assert result.success is True
+    assert result.success is False
     assert result.metadata["status"] == "unavailable"
     assert result.metadata["failure"]["error_code"] == CMP_TOOL_RICH_FILES_DEPENDENCY_MISSING
     assert "defusedxml" in result.metadata["failure"]["reason"]
@@ -344,7 +344,7 @@ def test_spreadsheet_inspect_unsupported_extension_is_nonfatal(tmp_path: Path) -
         WorkspaceGuard(str(workspace_root)),
     )
 
-    assert result.success is True
+    assert result.success is False
     assert result.metadata["status"] == "unsupported"
     assert result.metadata["failure"]["reason"] == "spreadsheet_format_unsupported"
 
@@ -360,6 +360,127 @@ def test_spreadsheet_inspect_corrupt_workbook_returns_unsupported(tmp_path: Path
         WorkspaceGuard(str(workspace_root)),
     )
 
-    assert result.success is True
+    assert result.success is False
     assert result.metadata["status"] == "unsupported"
     assert result.metadata["failure"]["reason"] == "spreadsheet_parse_failed"
+
+
+
+def test_spreadsheet_parses_same_bytes_as_preflight(tmp_path, monkeypatch):
+    from sidecar.ai.tools.builtins.rich_files import ooxml
+    path = tmp_path / "sample.xlsx"
+    _write_workbook(path)
+    replacement = tmp_path / "replacement.xlsx"
+    openpyxl = pytest.importorskip("openpyxl")
+    book = openpyxl.Workbook()
+    book.active["A1"] = "replacement data"
+    book.save(replacement)
+    original = ooxml.preflight_ooxml_archive
+    def replace_after_preflight(archive):
+        result = original(archive)
+        path.write_bytes(replacement.read_bytes())
+        return result
+    monkeypatch.setattr(ooxml, "preflight_ooxml_archive", replace_after_preflight)
+    module = _spreadsheet_module()
+    if hasattr(module, "preflight_ooxml_archive"):
+        monkeypatch.setattr(module, "preflight_ooxml_archive", replace_after_preflight)
+    result = module.spreadsheet_inspect_tool({"path": "sample.xlsx"}, WorkspaceGuard(str(tmp_path)))
+    assert result.success is True
+    assert result.metadata["summary"]["sheets"][0]["sampled_rows"][0][0] == "Name"
+    assert "replacement data" not in result.output
+
+
+def test_spreadsheet_hidden_prefix_does_not_materialize_rectangle(tmp_path, monkeypatch):
+    openpyxl = pytest.importorskip("openpyxl")
+    path = tmp_path / "prefix.xlsx"
+    book = openpyxl.Workbook()
+    sheet = book.active
+    sheet.cell(row=500, column=3000, value="visible")
+    for row in range(1, 500):
+        sheet.row_dimensions[row].hidden = True
+    sheet.column_dimensions.group("A", "DKI", hidden=True)
+    book.save(path)
+    from openpyxl.worksheet._read_only import ReadOnlyWorksheet
+    original = ReadOnlyWorksheet.iter_rows
+    rectangles = []
+    def bounded_rows(self, **kwargs):
+        rows = kwargs.get("max_row", 1) - kwargs.get("min_row", 1) + 1
+        cols = kwargs.get("max_col", 1) - kwargs.get("min_col", 1) + 1
+        rectangles.append(rows * cols)
+        if rows * cols > 20_000:
+            raise AssertionError("hidden prefix rectangle exceeds traversal budget")
+        return original(self, **kwargs)
+    monkeypatch.setattr(ReadOnlyWorksheet, "iter_rows", bounded_rows)
+    result = _spreadsheet_tool()({"path": "prefix.xlsx", "max_rows_per_sheet": 1,
+                                "max_columns_per_sheet": 1}, WorkspaceGuard(str(tmp_path)))
+    assert result.success is True
+    assert result.metadata["summary"]["sheets"][0]["sampled_rows"] == [["visible"]]
+    assert rectangles and max(rectangles) <= 20_000
+
+
+
+def test_spreadsheet_parser_rejects_redirected_handle_after_validation(tmp_path, monkeypatch):
+    import builtins
+    import io
+
+    from sidecar.ai.error_codes import CMP_TOOL_OUTSIDE_WORKSPACE
+
+    module = _spreadsheet_module()
+    root = tmp_path / "workspace"
+    root.mkdir()
+    path = root / "sample.xlsx"
+    outside = tmp_path / "outside.xlsx"
+    _write_workbook(path)
+    _write_workbook(outside)
+    original_validate = module.validate_rich_file_source
+    original_open, original_io_open = builtins.open, io.open
+    def validate_then_redirect(**kwargs):
+        source = original_validate(**kwargs)
+        def redirect(file, *args, **options):
+            target = outside if isinstance(file, (str, Path)) and Path(file) == path else file
+            return original_open(target, *args, **options)
+        def redirect_io(file, *args, **options):
+            target = outside if isinstance(file, (str, Path)) and Path(file) == path else file
+            return original_io_open(target, *args, **options)
+        monkeypatch.setattr(builtins, "open", redirect)
+        monkeypatch.setattr(io, "open", redirect_io)
+        return source
+    monkeypatch.setattr(module, "validate_rich_file_source", validate_then_redirect)
+    with pytest.raises(ToolExecutionFailure) as exc:
+        module.spreadsheet_inspect_tool({"path": "sample.xlsx"}, WorkspaceGuard(str(root)))
+    assert exc.value.code == CMP_TOOL_OUTSIDE_WORKSPACE
+
+
+def test_spreadsheet_dimension_work_is_bounded_before_sampling(tmp_path, monkeypatch):
+    module = _spreadsheet_module()
+    path = tmp_path / "large.xlsx"
+    _write_workbook(path)
+    calls = []
+    def bounded_dimensions(archive, *, worksheet, element_tree, max_rows, max_columns):
+        calls.append((max_rows, max_columns))
+        assert max_rows <= 10_000
+        assert max_columns <= 16_384
+        return set(), set()
+    monkeypatch.setattr(module, "_hidden_dimensions", bounded_dimensions)
+    sheet = SimpleNamespace(max_row=10**9, max_column=10**9, sheet_state="visible", title="Large",
+                            iter_rows=lambda **kwargs: iter([("first",)]))
+    payload = module._inspect_sheet(archive=None, element_tree=None, worksheet=sheet,
+                                   max_rows=1, max_columns=1)
+    assert calls == [(10_000, 16_384)]
+    assert payload["sample_truncated"] is True
+
+
+def test_spreadsheet_sparse_range_work_is_bounded_before_iteration(monkeypatch):
+    module = _spreadsheet_module()
+    calls = []
+    def iterate(**kwargs):
+        calls.append(kwargs)
+        return iter([])
+    worksheet = SimpleNamespace(iter_rows=iterate)
+    sampled, formulas, count = module._sample_visible_cells(
+        worksheet=worksheet, visible_rows=list(range(1, 201, 2)),
+        visible_columns=list(range(1, 101, 2)),
+    )
+    assert calls == []
+    assert sampled == []
+    assert formulas is False and count == 0

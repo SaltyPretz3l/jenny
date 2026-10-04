@@ -60,9 +60,14 @@ test('the closed vocabulary covers every refusal the runtime can hand the compos
     'runtime_pause_refused', 'pause_attempt_unavailable', 'runtime_resume_refused',
     'work_not_found', 'runtime_work_not_found',
     'runtime_no_running_reply', 'work_not_paused', 'runtime_checkpoint_required',
+    /* Split view: a turn on another model waits for the running one. */
+    'runtime_model_switch_busy',
   ]) {
     assert.ok(RUNTIME_REFUSAL_REASONS.includes(reason), reason);
   }
+  const { reason: _switch, ...switchCopy } = describeRuntimeRefusal({ reason: 'runtime_model_switch_busy' });
+  const { reason: _lane, ...laneCopy } = describeRuntimeRefusal({ reason: 'lane_capacity' });
+  assert.deepEqual(switchCopy, laneCopy);
 });
 
 test('a refused pause or resume names what failed and what is left to try', () => {
@@ -110,7 +115,7 @@ test('waiting on a reply, a shutdown or the user own run-mode flip stays calm', 
 test('an off runtime and an exhausted budget point at one concrete next step', () => {
   const off = describeRuntimeRefusal('runtime_disabled');
   assert.equal(off.action, 'open_settings');
-  assert.match(off.hint, /Settings/);
+  assert.match(off.hint, /Diagnostics › Runs/);
   assert.equal(describeRuntimeRefusal('budget_exhausted').action, 'open_settings');
   assert.equal(describeRuntimeRefusal('inference_authority_stale').action, 'retry_turn');
   assert.equal(describeRuntimeRefusal('runtime_submission_refused').action, 'open_diagnostics');
@@ -139,6 +144,26 @@ test('an IPC failure, a thrown error and a bare string resolve the same reason',
     assert.equal(described.severity, 'calm');
     assert.match(described.title, /shutting down/i);
   }
+});
+
+// Owner gate P4: a send refused because an image render holds the GPU said
+// "Jenny couldn't queue that. The runtime didn't accept the message." The
+// admission code (`gpu_busy_plugin`, chat-turn-admission.js) now names the
+// render; the generic copy stays for every other refused submission.
+test('a send refused while an image render holds the GPU says so and asks for a resend', () => {
+  for (const input of [
+    { ok: false, acceptance: 'rejected', error: { code: 'CMP-RUNTIME-0005', reason: 'gpu_busy_plugin' } },
+    'gpu_lease_held',
+  ]) {
+    const described = describeRuntimeRefusal(input);
+    assert.equal(described.title, 'An image is being drawn');
+    assert.equal(described.hint, 'Send again when it finishes — your draft is back in the composer.');
+    assert.equal(described.severity, 'calm');
+    assert.equal(described.action, null);
+  }
+  const generic = describeRuntimeRefusal({ error: { code: 'CMP-RUNTIME-0005', reason: 'runtime_submission_refused' } });
+  assert.equal(generic.title, "Jenny couldn't queue that");
+  assert.equal(generic.hint, "The runtime didn't accept the message. Your draft is back in the composer.");
 });
 
 test('an unrecognised reason falls back without losing the raw reason or inventing a step', () => {

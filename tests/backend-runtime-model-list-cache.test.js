@@ -105,3 +105,70 @@ test('listModels retries after a rejected request', async () => {
   assert.equal(requestCount, 2);
   assert.deepEqual(result.data, [{ id: 'llama3.2:latest', engine_type: 'ollama' }]);
 });
+
+
+test('ChatGPT discovery metadata reaches the real model-list transport options', async () => {
+  const { listModelsForEngine } = require('../services/backend/backend-runtime');
+  const rows = [{ id: 'gpt-6.1-sol', label: 'GPT-6.1 Sol', context_length: 272000,
+    reasoning_efforts: ['low', 'medium'], default_reasoning_effort: 'medium', vision: true }];
+  let transmitted;
+  const service = {
+    currentEngineType: 'chatgpt', currentModel: 'gpt-5.6-sol',
+    chatgptModelCatalogService: { snapshot: () => ({ models: rows }),
+      refresh: async () => ({ models: rows, stale: false, source: 'chatgpt_authenticated_catalog' }) },
+    sidecarClient: { modelsList: async (engine, options) => {
+      transmitted = { engine, options };
+      return { models: [{ id: 'gpt-6.1-sol', label: 'GPT-6.1 Sol', capabilities: {
+        reasoning_efforts: ['low', 'medium'] } }], available: true };
+    } },
+  };
+  const result = await listModelsForEngine(service, 'chatgpt');
+  assert.deepEqual(transmitted.options.chatgptModelCatalog, rows);
+  assert.equal(result.source, 'chatgpt_authenticated_catalog');
+  assert.equal(result.stale, false);
+  assert.equal(result.data[0].engine_type, 'chatgpt');
+  assert.equal(result.data[0].label, 'GPT-6.1 Sol');
+  assert.equal(result.active_model, 'gpt-5.6-sol');
+});
+
+test('revoked model-list requests cannot repopulate the result cache', async () => {
+  const { listModelsForEngine } = require('../services/backend/backend-runtime');
+  let release;
+  const service = { currentEngineType: 'chatgpt',
+    sidecarClient: { modelsList: () => new Promise((resolve) => { release = resolve; }) } };
+  const pending = listModelsForEngine(service, 'chatgpt');
+  await new Promise((resolve) => setImmediate(resolve));
+  service._modelCatalogEpoch = 1;
+  release({ models: [{ id: 'gpt-6.1-sol' }], available: true });
+  await assert.rejects(pending, /authority changed/);
+  assert.equal(service._modelEngineHints, undefined);
+  assert.equal(service._modelListForEngineLastResults.size, 0);
+});
+
+
+test('revocation during discovery prevents publication to the sidecar', async () => {
+  const { listModelsForEngine } = require('../services/backend/backend-runtime');
+  let requests = 0;
+  const service = { currentEngineType: 'chatgpt',
+    chatgptModelCatalogService: { snapshot() {}, refresh: async () => {
+      service._modelCatalogEpoch = 1;
+      return { models: [{ id: 'old-account-model' }] };
+    } }, sidecarClient: { modelsList: async () => { requests += 1; return {}; } } };
+  await assert.rejects(listModelsForEngine(service, 'chatgpt'), /authority changed/);
+  assert.equal(requests, 0);
+});
+
+test('generic picker reads reject revoked catalogs while merging local models', async () => {
+  let release;
+  const service = { currentEngineType: 'chatgpt', currentModel: 'gpt-6.1-sol',
+    listModelsForEngine: (engine) => engine === 'chatgpt'
+      ? Promise.resolve({ data: [{ id: 'old-account-model' }], available: true })
+      : new Promise((resolve) => { release = resolve; }) };
+  const pending = listModels(service);
+  await new Promise((resolve) => setImmediate(resolve));
+  service._modelCatalogEpoch = 1;
+  release({ data: [], available: false });
+  await assert.rejects(pending, /authority changed/);
+  assert.equal(service._modelEngineHints, undefined);
+  assert.equal(service._modelListLastResult, undefined);
+});

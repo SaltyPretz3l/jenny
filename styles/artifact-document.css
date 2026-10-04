@@ -29,9 +29,8 @@
   padding: 0 var(--space-2);
   background: color-mix(in srgb, var(--surface-toolbar-background) 86%, transparent);
   color: var(--text-secondary);
-  font-size: var(--font-size-xs);
-  font-weight: 800;
-  letter-spacing: 0;
+  font-size: var(--font-size-caption);
+  font-weight: 500;
 }
 
 .artifact-document-kind-badge[hidden] {
@@ -61,9 +60,8 @@
   background: color-mix(in srgb, var(--surface-toolbar-background) 88%, transparent);
   color: var(--text-secondary);
   font: inherit;
-  font-size: var(--font-size-xs);
-  font-weight: 700;
-  letter-spacing: 0;
+  font-size: var(--font-size-caption);
+  font-weight: 500;
   cursor: pointer;
   transition:
     background var(--motion-duration-fast) var(--motion-ease-standard),
@@ -173,9 +171,8 @@
   cursor: pointer;
   padding: var(--space-2) var(--space-3);
   color: var(--text-secondary);
-  font-size: var(--font-size-xs);
-  font-weight: 850;
-  letter-spacing: 0;
+  font-size: var(--font-size-caption);
+  font-weight: 500;
 }
 
 .artifact-document-outline-summary:focus-visible {
@@ -204,9 +201,8 @@
   color: var(--text-secondary);
   cursor: pointer;
   font: inherit;
-  font-size: var(--font-size-xs);
-  font-weight: 700;
-  letter-spacing: 0;
+  font-size: var(--font-size-body);
+  font-weight: 500;
   line-height: 1.35;
   text-align: start;
 }
@@ -217,7 +213,7 @@
 
 .artifact-document-outline-button-level-3 {
   padding-inline-start: var(--space-5);
-  font-weight: 650;
+  font-weight: 400;
 }
 
 .artifact-document-outline-button:hover,
@@ -240,6 +236,7 @@
   border-radius: 8px;
   background: var(--artifact-document-page-bg);
   color: var(--text-primary);
+  font-size: var(--font-size-prose);
   box-shadow: var(--shadow-panel, 0 18px 42px rgba(0, 0, 0, 0.24));
 }
 
@@ -267,9 +264,9 @@
 .artifact-document-page h1 {
   margin: 0 0 var(--space-4);
   color: var(--text-primary);
-  font-size: 2rem;
-  line-height: 1.12;
-  letter-spacing: 0;
+  font-size: var(--font-size-5xl);
+  font-weight: 500;
+  line-height: 1.2;
 }
 
 .artifact-document-page h2 {
@@ -277,17 +274,17 @@
   padding-top: var(--space-3);
   border-top: 1px solid color-mix(in srgb, var(--line) 72%, transparent);
   color: var(--text-primary);
-  font-size: 1.28rem;
-  line-height: 1.22;
-  letter-spacing: 0;
+  font-size: var(--font-size-title);
+  font-weight: 500;
+  line-height: 1.3;
 }
 
 .artifact-document-page h3 {
   margin: var(--space-5) 0 var(--space-2);
   color: var(--text-primary);
-  font-size: var(--font-size-md);
-  line-height: 1.28;
-  letter-spacing: 0;
+  font-size: var(--font-size-heading);
+  font-weight: 500;
+  line-height: 1.35;
 }
 
 .artifact-document-page p,
@@ -333,7 +330,7 @@
 .artifact-document-page th {
   background: color-mix(in srgb, var(--surface-toolbar-background) 88%, var(--text-primary) 4%);
   color: var(--text-primary);
-  font-weight: 800;
+  font-weight: 500;
 }
 
 .artifact-document-page tr:last-child td {
@@ -355,9 +352,8 @@
 
 .artifact-document-callout .artifact-document-callout-label {
   margin-bottom: var(--space-1);
-  font-size: var(--font-size-xs);
-  font-weight: 850;
-  letter-spacing: 0;
+  font-size: var(--font-size-caption);
+  font-weight: 500;
 }
 
 .artifact-document-callout-important {
@@ -421,9 +417,8 @@
   color: var(--text-secondary);
   cursor: pointer;
   font: inherit;
-  font-size: var(--font-size-xs);
-  font-weight: 750;
-  letter-spacing: 0;
+  font-size: var(--font-size-caption);
+  font-weight: 500;
 }
 
 .artifact-document-back-to-top[hidden] {

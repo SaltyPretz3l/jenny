@@ -105,11 +105,16 @@ function makeSnapshot(rows = makeRows()) {
 }
 
 function harness(options = {}) {
-  const jsdom = new JSDOM('<!doctype html><body>' + [
-    'usageBadge', 'usageScope', 'usageStats', 'usageByModel', 'usageRecentMeta',
-    'usageRecentTurns', 'usageMore', 'usageRetentionSummary', 'usageRecordWarning',
-    'usageActions', 'usageActionStatus',
-  ].map((id) => `<div id="${id}"></div>`).join('') + '</body>', { url: 'http://localhost' });
+  // Mirrors the Usage card's group structure in index.html.
+  const div = (id) => `<div id="${id}"></div>`;
+  const group = (name, ids) => `<div class="settings-group" data-usage-group="${name}">${ids.map(div).join('')}</div>`;
+  const jsdom = new JSDOM('<!doctype html><body><section class="settings-card usage-card">'
+    + div('usageBadge')
+    + group('scope', ['usageScope', 'usageStats'])
+    + group('model', ['usageByModel'])
+    + group('recent', ['usageRecentMeta', 'usageRecentTurns', 'usageMore'])
+    + group('retention', ['usageRetentionSummary', 'usageRecordWarning', 'usageActions', 'usageActionStatus'])
+    + '</section></body>', { url: 'http://localhost' });
   const document = jsdom.window.document;
   const dom = Object.fromEntries([...document.querySelectorAll('[id]')].map((node) => [node.id, node]));
   const calls = [];
@@ -297,8 +302,17 @@ test('empty, read-only, record-failure, retention-pressure, and unmeasured state
   const empty = harness({ snapshot: makeSnapshot([]) });
   await empty.controller.activate();
   assert.equal(empty.dom.usageScope.hidden, true);
-  assert.match(empty.dom.usageStats.textContent, /Nothing measured yet/);
-  assert.match(empty.dom.usageStats.textContent, /Numbers appear here after your first retained turn/);
+  const emptyState = empty.document.querySelectorAll('[data-usage-empty]');
+  assert.equal(emptyState.length, 1, 'one empty state stands in for the data groups');
+  assert.equal(emptyState[0].textContent, 'No turns recorded yet. Usage appears here after your first reply.');
+  assert.equal(emptyState[0].hidden, false);
+  assert.equal(empty.document.querySelector('.empty-state-claim'), null, 'no serif claim on the Usage page');
+  for (const name of ['scope', 'model', 'recent']) {
+    assert.equal(empty.document.querySelector(`[data-usage-group="${name}"]`).hidden, true, `${name} group hides without data`);
+  }
+  assert.equal(empty.document.querySelector('[data-usage-group="retention"]').hidden, false, 'retention keeps showing');
+  assert.equal(empty.dom.usageRetentionSummary.textContent, 'Kept on this device: 0 of 500 turns.');
+  assert.doesNotMatch(empty.dom.usageRetentionSummary.textContent, /oldest/);
   assert.equal(empty.document.querySelector('[data-usage-action="clear"]').disabled, true);
   empty.controller.dispose();
 
@@ -334,6 +348,30 @@ test('empty, read-only, record-failure, retention-pressure, and unmeasured state
   pressure.controller.dispose();
 });
 
+test('data groups return once turns exist and the empty state steps aside', async () => {
+  let current = makeSnapshot([]);
+  const ctx = harness({ getSnapshot: () => current });
+  await ctx.controller.activate();
+  assert.equal(ctx.document.querySelector('[data-usage-group="model"]').hidden, true);
+
+  current = makeSnapshot(makeRows(3));
+  await ctx.controller.refresh();
+  for (const name of ['scope', 'model', 'recent', 'retention']) {
+    assert.equal(ctx.document.querySelector(`[data-usage-group="${name}"]`).hidden, false, `${name} group shows with data`);
+  }
+  assert.equal(ctx.document.querySelector('[data-usage-empty]').hidden, true);
+  assert.equal(ctx.dom.usageScope.hidden, false);
+  assert.ok(ctx.dom.usageStats.textContent.trim(), 'stats repaint after the empty state');
+  assert.match(ctx.dom.usageRetentionSummary.textContent, /Kept on this device: 3 of 500 turns, oldest /);
+
+  current = { ...makeSnapshot([]), available: false, persistence: { available: false, durable: false, read_only_reason: null } };
+  await ctx.controller.refresh();
+  assert.equal(ctx.document.querySelectorAll('[data-usage-empty]').length, 1);
+  assert.equal(ctx.document.querySelector('[data-usage-empty]').textContent, 'Usage data is unavailable.');
+  assert.equal(ctx.document.querySelector('[data-usage-group="recent"]').hidden, true);
+  ctx.controller.dispose();
+});
+
 test('row actions route to chat and trace, and live refresh is trailing and coalesced', async () => {
   const timers = [];
   let nowMs = Date.parse('2026-08-18T13:00:00.000Z');
@@ -359,7 +397,7 @@ test('row actions route to chat and trace, and live refresh is trailing and coal
     },
   });
   await controller.activate();
-  assert.equal(ctx.document.querySelector('[data-usage-action="chat"]').getAttribute('title'), 'Open this turn in chat');
+  assert.equal(ctx.document.querySelector('[data-usage-action="chat"]').getAttribute('title'), 'Open this chat');
   assert.equal(ctx.document.querySelector('[data-usage-action="trace"]').getAttribute('title'), 'Open the diagnostics trace for this turn');
   ctx.document.querySelector('[data-usage-action="chat"]').click();
   ctx.document.querySelector('[data-usage-action="trace"]').click();

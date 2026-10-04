@@ -341,3 +341,58 @@ test('normalizeCodexCliModelId keeps default out of custom config', () => {
   assert.equal(normalizeCodexCliModelId(' gpt-5.5 ', { allowDefault: false }), 'codex-cli/gpt-5.5');
   assert.equal(normalizeCodexCliModelId('codex-cli/o4-mini', { allowDefault: false }), 'codex-cli/o4-mini');
 });
+
+
+test('enabled integration checks auth on ordinary reads and after enablement', async () => {
+  let enabled = false;
+  let calls = 0;
+  const service = createCodexCliRuntimeService({
+    userDataPath: 'C:/Users/Jenny/AppData/Roaming/jenny',
+    configService: { getState: () => ({ codexCli: { enabled } }) },
+    authService: { async getState() {
+      calls += 1;
+      return { configured: true, authType: 'chatgpt', commandPath: 'C:/Tools/codex.exe' };
+    } },
+  });
+  service.getState();
+  assert.equal(calls, 0);
+  enabled = true;
+  service.getManagedConfigPatch();
+  service.getModelCatalog();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(calls, 1);
+  assert.equal(service.getState().status, 'ready');
+  assert.equal(service.isModelAvailable('codex-cli/default').available, true);
+});
+
+
+test('disabling through catalog reads invalidates readiness before re-enabling', async () => {
+  let enabled = true;
+  let calls = 0;
+  const service = createCodexCliRuntimeService({
+    userDataPath: 'C:/Users/Jenny/AppData/Roaming/jenny',
+    configService: { getState: () => ({ codexCli: { enabled } }) },
+    authService: { async getState() { calls += 1; return { ok: true, authType: 'chatgpt' }; } },
+  });
+  await service.refresh();
+  enabled = false;
+  assert.equal(service.getModelCatalog()[0].available, false);
+  enabled = true;
+  service.getModelCatalog();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(calls, 2);
+});
+
+test('the hosted host never starts an automatic Codex CLI auth check', async () => {
+  let calls = 0;
+  const service = createCodexCliRuntimeService({
+    userDataPath: '/data/jenny',
+    configService: { getState: () => ({ codexCli: { enabled: true } }) },
+    authService: { async getState() { calls += 1; return { configured: true, authType: 'chatgpt' }; } },
+    autoRefresh: false,
+  });
+  service.getState();
+  service.getModelCatalog();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(calls, 0);
+});

@@ -1,7 +1,8 @@
-/* global cancelAnimationFrame, document, requestAnimationFrame */
+/* global cancelAnimationFrame, document, requestAnimationFrame, window */
 /* Atomic Burst native contractVersion 3 controller (Background Effects v3, S7).
- * Hosts, normalized input, and activity are manager-owned; deterministic
- * simulation and drawing live in renderer-atomic-burst-core.js. */
+ * Hosts and normalized input are manager-owned; deterministic simulation and
+ * drawing live in renderer-atomic-burst-core.js. Background posture: the field
+ * never reacts to the model, only to the pointer and its own idle breathing. */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) {
     module.exports = factory(
@@ -18,11 +19,13 @@
   'use strict';
 
   var CANVAS_CLASS = 'widget-atomic-burst-canvas';
-  var IDLE_TARGET_ENERGY = 0.08;
-  var ENERGY_TIME_CONSTANT_MS = 360;
-  var STREAM_PULSE_PERIOD_MS = 1600;
-  var STREAM_BRIGHTNESS_MIN = 0.025;
-  var STREAM_BRIGHTNESS_MAX = 0.12;
+  // Frame budget: ~30 fps while nothing answers the user (and always while the
+  // window is unfocused); full display rate otherwise. The breathing field keeps
+  // the loop alive, so the budget is what keeps it cheap.
+  var IDLE_FRAME_MS = 1000 / 30;
+  var FRAME_SLACK_MS = 4;
+  var STATIC_TIMING = { dtMs: 0, longGap: false };
+  var EMPTY_STYLE = { getPropertyValue: function () { return ''; } };
 
   function getNow() {
     return typeof performance !== 'undefined' && performance && typeof performance.now === 'function'
@@ -47,6 +50,8 @@
       throw new Error('atomic-burst v3 requires renderer-atomic-burst-core.js');
     }
     var documentRef = opts.documentRef || (typeof document !== 'undefined' ? document : null);
+    var windowRef = opts.windowRef || (documentRef && documentRef.defaultView)
+      || (typeof window !== 'undefined' ? window : null);
     var reducedMotionQuery = opts.reducedMotionQuery || null;
     var effectId = opts.effectId || 'atomic-burst';
     var launchSeed = Number.isFinite(opts.rendererLaunchSeed) ? opts.rendererLaunchSeed : 1;
@@ -59,15 +64,17 @@
     var frameHandle = 0;
     var removeVisibilityMotionListeners = function noop() {};
     var bound = false, disposed = false, staged = false;
-    var reducedMotion = false, documentHidden = false;
-    var generation = 0, scopeEpoch = null, phase = 'idle', phaseRevision = 0;
-    var currentEnergy = IDLE_TARGET_ENERGY, targetEnergy = IDLE_TARGET_ENERGY, attentionScale = 1;
-    var lastImpulseSequence = -1;
-    var sceneWidth = 0, sceneHeight = 0;
+    var generation = 0;
+    var reducedMotion = false, documentHidden = false, windowFocused = true;
+    var lastPaintAt = 0, lastDeviceDpr = 0;
+    var sceneSeed = seedForRole('chat-left');
     var sceneRectSnapshot = { left: 0, top: 0, width: 0, height: 0 };
-    var spawnAvoidanceRects = [], fieldLayoutSignature = '';
-    var scenePointer = { active: false, x: 0, y: 0 };
-    var lastActivityBrightnessScale = 1;
+    var sceneWidth = 0, sceneHeight = 0;
+    var spawnAvoidanceRects = [];
+    // One scene-advance entry/env refilled in place: no per-frame allocation.
+    var advanceEntry = { simulation: sceneSimulation, config: null, w: 0, h: 0 };
+    var advanceEnv = { timestamp: 0, dtMs: 0, longGap: false, reducedMotion: false };
+    var sourceEntry = null, paintFrame = null;
 
     function seedForRole(role) {
       return runtime.computeSceneSeed({
@@ -79,12 +86,25 @@
 
     function docFor(entry) { return (entry && entry.host && entry.host.ownerDocument) || documentRef; }
 
-    function windowFor(entry) { return core.getWindow(docFor(entry)); }
+    function deviceDpr() { return (windowRef && windowRef.devicePixelRatio) || 1; }
+
+    function styleFor(entry) {
+      var doc = docFor(entry);
+      var win = (doc && doc.defaultView) || windowRef;
+      if (win && typeof win.getComputedStyle === 'function') { return win.getComputedStyle(entry.host); }
+      return entry.host && entry.host.style ? entry.host.style : EMPTY_STYLE;
+    }
+
+    function isDrawableEntry(entry) {
+      return Boolean(entry.host && entry.host.isConnected !== false && entry.ctx && entry.canvas
+        && entry.w > 0 && entry.h > 0);
+    }
 
     function makeEntry(host, role) {
       return {
         host: host,
         role: role,
+        simulation: sceneSimulation,
         canvas: null,
         ctx: null,
         readyShown: false,
@@ -93,11 +113,10 @@
         h: 0,
         dpr: 1,
         hostRect: { left: 0, top: 0, width: 0, height: 0 },
+        viewport: { viewportX: 0, viewportY: 0 },
         paintOcclusionRects: [],
-        seed: seedForRole(role),
         config: null,
         configSignature: '',
-        simulation: sceneSimulation,
       };
     }
 
@@ -109,7 +128,7 @@
     }
 
     function readStyles(entry) {
-      var style = core.getComputedStyleSafe(entry.host, windowFor(entry));
+      var style = styleFor(entry);
       var previousSignature = entry.configSignature;
       var flareColor = runtime.readStyleToken(style, '--widget-atomic-burst-flare-color');
       entry.config = {
@@ -121,10 +140,8 @@
         flareColor: flareColor,
         linkColor: readColorWithFallback(style, '--widget-atomic-burst-link-color', flareColor),
         waveColor: readColorWithFallback(style, '--widget-atomic-burst-wave-color', flareColor),
-        bloom: runtime.readStyleToken(style, '--widget-atomic-burst-bloom'),
         linkRadius: runtime.readStyleToken(style, '--widget-atomic-burst-link-radius'),
         linkMax: runtime.readStyleToken(style, '--widget-atomic-burst-link-max'),
-        waveSpeed: runtime.readStyleToken(style, '--widget-atomic-burst-wave-speed'),
         waveLifetime: runtime.readStyleToken(style, '--widget-atomic-burst-wave-lifetime'),
       };
       entry.configSignature = [entry.config.baseSize, entry.config.density].join('|');
@@ -140,6 +157,16 @@
         entry.readyShown = true;
         if (canvas.classList) { canvas.classList.add('surface-canvas-ready'); }
       });
+    }
+
+    function detachCanvas(canvas) {
+      if (canvas && canvas.parentNode) {
+        if (typeof canvas.parentNode.removeChild === 'function') {
+          canvas.parentNode.removeChild(canvas);
+        } else if (typeof canvas.remove === 'function') {
+          canvas.remove();
+        }
+      }
     }
 
     function ensureCanvas(entry) {
@@ -158,7 +185,13 @@
         return false;
       }
       var ctx = runtime.ensureCanvas2d(canvas);
-      if (!ctx) { return false; }
+      if (!ctx) {
+        // The runtime normally removes it; never rely on that for a dead canvas.
+        detachCanvas(canvas);
+        entry.canvas = null;
+        entry.ctx = null;
+        return false;
+      }
       entry.canvas = canvas;
       entry.ctx = ctx;
       entry.readyShown = false;
@@ -168,13 +201,7 @@
 
     function removeEntryCanvas(entry) {
       if (entry.markReadyHandle) { cancelFrame(entry.markReadyHandle); entry.markReadyHandle = 0; }
-      if (entry.canvas && entry.canvas.parentNode) {
-        if (typeof entry.canvas.parentNode.removeChild === 'function') {
-          entry.canvas.parentNode.removeChild(entry.canvas);
-        } else if (typeof entry.canvas.remove === 'function') {
-          entry.canvas.remove();
-        }
-      }
+      detachCanvas(entry.canvas);
       entry.canvas = null;
       entry.ctx = null;
       entry.readyShown = false;
@@ -182,15 +209,10 @@
 
     function rebuildField(entry) {
       if (!entry.config || sceneWidth <= 0 || sceneHeight <= 0) { return; }
-      core.rebuildField(
-        entry.simulation, sceneWidth, sceneHeight, entry.config, entry.seed, runtime.makeRng,
-        function (x, y) {
-          return !runtime.scenePointInClientRects(spawnAvoidanceRects, sceneRectSnapshot, x, y);
-        },
-      );
+      core.rebuildField(sceneSimulation, sceneWidth, sceneHeight, entry.config, sceneSeed, runtime.makeRng);
     }
 
-    function resizeCanvas(entry, forceRebuild) {
+    function resizeCanvas(entry) {
       var width = Math.round(Math.max(Number(entry.hostRect.width) || 0, 0));
       var height = Math.round(Math.max(Number(entry.hostRect.height) || 0, 0));
       if (width <= 0 || height <= 0) {
@@ -199,73 +221,86 @@
         removeEntryCanvas(entry);
         return false;
       }
-      var win = windowFor(entry);
-      var dpr = runtime.computeEffectiveDpr({
-        deviceDpr: (win && win.devicePixelRatio) || 1,
+      entry.w = width;
+      entry.h = height;
+      entry.dpr = runtime.computeEffectiveDpr({
+        deviceDpr: deviceDpr(),
         cssWidth: width,
         cssHeight: height,
       });
-      var changed = width !== entry.w || height !== entry.h || dpr !== entry.dpr;
-      entry.w = width;
-      entry.h = height;
-      entry.dpr = dpr;
       if (!ensureCanvas(entry)) { return false; }
       runtime.resizeCanvasBacking(entry.canvas, {
-        cssWidth: width, cssHeight: height, effectiveDpr: dpr,
+        cssWidth: width, cssHeight: height, effectiveDpr: entry.dpr,
       });
       if (entry.canvas.style) {
         var cssWidth = width + 'px', cssHeight = height + 'px';
         if (entry.canvas.style.width !== cssWidth) { entry.canvas.style.width = cssWidth; }
         if (entry.canvas.style.height !== cssHeight) { entry.canvas.style.height = cssHeight; }
       }
-      if (changed || forceRebuild || !entry.simulation.sparkles.length) { rebuildField(entry); }
+      rebuildField(entry);
       return true;
     }
 
-    function activityBrightness(timestamp) {
-      if (reducedMotion || phase !== 'streaming') { return 1; }
-      var energy = core.clamp(currentEnergy - IDLE_TARGET_ENERGY, 0, 1);
-      var peak = core.clamp(STREAM_BRIGHTNESS_MIN + energy * 0.24, STREAM_BRIGHTNESS_MIN, STREAM_BRIGHTNESS_MAX);
-      var pulse = (Math.sin((timestamp / STREAM_PULSE_PERIOD_MS) * Math.PI * 2) + 1) * 0.5;
-      return 1 + peak * (0.35 + pulse * 0.65) * core.clamp(attentionScale, 0, 1);
+    function refreshDeviceDpr() {
+      var dpr = deviceDpr();
+      if (dpr === lastDeviceDpr) { return; }
+      lastDeviceDpr = dpr;
+      trackedHosts.forEach(resizeCanvas);
     }
 
-    function drawEntry(entry, timestamp, timing) {
-      if (documentHidden || !entry || !entry.ctx || !entry.canvas || entry.w <= 0 || entry.h <= 0) { return; }
-      if (!entry.host || entry.host.isConnected === false) { return; }
+    function reportFrameFault(error) {
+      faultReporter.reportFault({ effectId: effectId, stage: 'frame', recoverable: true, error: error });
+    }
+
+    function collectSource(entry) {
+      if (!sourceEntry && isDrawableEntry(entry)) { sourceEntry = entry; }
+    }
+
+    function paintEntry(entry) {
+      if (!isDrawableEntry(entry)) { return; }
       try {
-        var viewportX = entry.hostRect.left - sceneRectSnapshot.left;
-        var viewportY = entry.hostRect.top - sceneRectSnapshot.top;
-        var sceneEntry = Object.assign({}, entry, { w: sceneWidth, h: sceneHeight });
-        core.drawViewport(sceneEntry, {
-          timestamp: timestamp,
-          dtMs: timing && timing.dtMs,
-          longGap: Boolean(timing && timing.longGap),
-          reducedMotion: reducedMotion,
-          activityBrightnessScale: lastActivityBrightnessScale,
-          scenePointer: scenePointer,
-          sceneWidth: sceneWidth,
-          sceneHeight: sceneHeight,
-          viewportX: viewportX,
-          viewportY: viewportY,
-          viewportWidth: entry.w,
-          viewportHeight: entry.h,
-        });
+        entry.viewport.viewportX = entry.hostRect.left - sceneRectSnapshot.left;
+        entry.viewport.viewportY = entry.hostRect.top - sceneRectSnapshot.top;
+        core.drawViewport(entry, paintFrame, entry.viewport);
         runtime.clearCanvasOcclusions(entry.ctx, entry.paintOcclusionRects, entry.dpr);
       } catch (error) {
-        faultReporter.reportFault({ effectId: effectId, stage: 'frame', recoverable: true, error: error });
+        reportFrameFault(error);
       }
     }
 
-    function hasDrawableEntries() {
-      var drawable = false;
-      trackedHosts.forEach(function (entry) {
-        if (entry.host && entry.host.isConnected !== false && entry.ctx && entry.w > 0 && entry.h > 0) {
-          drawable = true;
-        }
-      });
-      return drawable;
+    function drawScene(timestamp, timing) {
+      sourceEntry = null;
+      trackedHosts.forEach(collectSource);
+      var source = sourceEntry;
+      sourceEntry = null;
+      if (!source || sceneWidth <= 0 || sceneHeight <= 0) { return; }
+      advanceEntry.config = source.config;
+      advanceEntry.w = sceneWidth;
+      advanceEntry.h = sceneHeight;
+      advanceEnv.timestamp = timestamp;
+      advanceEnv.dtMs = timing.dtMs;
+      advanceEnv.longGap = Boolean(timing.longGap);
+      advanceEnv.reducedMotion = reducedMotion;
+      try {
+        paintFrame = core.advanceFrame(advanceEntry, advanceEnv);
+      } catch (error) {
+        reportFrameFault(error);
+        return;
+      }
+      trackedHosts.forEach(paintEntry);
+      paintFrame = null;
     }
+
+    // Hoisted counter: shouldAnimate() runs every frame, so no per-call closure.
+    var drawableScratch = 0;
+    function countDrawable(entry) { if (isDrawableEntry(entry)) { drawableScratch += 1; } }
+    function drawableEntryCount() {
+      drawableScratch = 0;
+      trackedHosts.forEach(countDrawable);
+      return drawableScratch;
+    }
+
+    function hasDrawableEntries() { return drawableEntryCount() > 0; }
 
     function shouldAnimate() {
       return bound && !disposed && !reducedMotion && !documentHidden && hasDrawableEntries();
@@ -274,47 +309,36 @@
     function stopLoop() { if (frameHandle) { cancelFrame(frameHandle); frameHandle = 0; } }
 
     function scheduleFrame() {
-      if (shouldAnimate() && !frameHandle) { frameHandle = requestFrame(stepFrame); }
+      if (!shouldAnimate() || frameHandle) { return; }
+      frameHandle = requestFrame(stepFrame);
     }
 
     function stepFrame(timestamp) {
       frameHandle = 0;
       if (!shouldAnimate()) { return; }
       var now = Number.isFinite(timestamp) ? timestamp : getNow();
+      var fullRate = windowFocused && core.isResponding(sceneSimulation);
+      if (!fullRate && lastPaintAt && now >= lastPaintAt
+        && now - lastPaintAt < IDLE_FRAME_MS - FRAME_SLACK_MS) {
+        frameHandle = requestFrame(stepFrame);
+        return;
+      }
+      lastPaintAt = now;
       var timing = frameClock.advance(now);
-      currentEnergy = runtime.approachExponential(
-        currentEnergy, targetEnergy, timing.dtMs > 0 ? timing.dtMs : 16.67, ENERGY_TIME_CONSTANT_MS,
-      );
-      lastActivityBrightnessScale = activityBrightness(now);
-      core.advanceFrame(sceneSimulation, {
-        timestamp: now,
-        dtMs: timing && timing.dtMs,
-        longGap: Boolean(timing && timing.longGap),
-        reducedMotion: reducedMotion,
-        activityBrightnessScale: lastActivityBrightnessScale,
-        scenePointer: scenePointer,
-        sceneWidth: sceneWidth,
-        sceneHeight: sceneHeight,
-      });
-      trackedHosts.forEach(function (entry) { drawEntry(entry, now, timing); });
+      refreshDeviceDpr();
+      drawScene(now, timing);
+      // drawScene's fault report can dispose us synchronously (manager kill switch).
       scheduleFrame();
     }
 
     function drawAllStatic() {
       if (disposed || documentHidden) { return; }
-      lastActivityBrightnessScale = 1;
-      var now = getNow();
-      core.advanceFrame(sceneSimulation, {
-        timestamp: now,
-        dtMs: 0,
-        longGap: false,
-        reducedMotion: reducedMotion,
-        activityBrightnessScale: lastActivityBrightnessScale,
-        scenePointer: scenePointer,
-        sceneWidth: sceneWidth,
-        sceneHeight: sceneHeight,
-      });
-      trackedHosts.forEach(function (entry) { drawEntry(entry, now, { dtMs: 0, longGap: false }); });
+      refreshDeviceDpr();
+      drawScene(getNow(), STATIC_TIMING);
+    }
+
+    function requestRedraw() {
+      if (reducedMotion) { drawAllStatic(); } else { scheduleFrame(); }
     }
 
     function removeEntry(host) {
@@ -327,11 +351,17 @@
     function handleVisibilityChange(hidden) {
       documentHidden = Boolean(hidden);
       frameClock.reset();
-      if (documentHidden) { stopLoop(); clearAllTransient(true); }
-      else {
+      if (documentHidden) {
+        stopLoop();
+      } else {
         trackedHosts.forEach(scheduleMarkReady);
-        if (reducedMotion) { drawAllStatic(); } else { scheduleFrame(); }
+        requestRedraw();
       }
+    }
+
+    function handleFocusChange(focused) {
+      windowFocused = Boolean(focused);
+      scheduleFrame();
     }
 
     function handleMotionPreferenceChange(matches) {
@@ -339,33 +369,44 @@
       frameClock.reset();
       if (reducedMotion) {
         stopLoop();
-        trackedHosts.forEach(function (entry) { core.clearTransient(entry.simulation, false); });
+        core.resetMotion(sceneSimulation, { clearPointer: false, clearParallax: true });
         drawAllStatic();
       } else {
         scheduleFrame();
       }
     }
 
+    // Client-space avoidance rects to scene space, once per layout refresh.
+    function sceneAvoidance(rects) {
+      var out = [];
+      for (var i = 0; i < rects.length; i += 1) {
+        var rect = rects[i];
+        if (!rect) { continue; }
+        out.push({
+          left: Number(rect.left) - sceneRectSnapshot.left,
+          top: Number(rect.top) - sceneRectSnapshot.top,
+          width: Number(rect.width),
+          height: Number(rect.height),
+        });
+      }
+      return out;
+    }
+
     function applyContext(context) {
-      var nextContext = context || {}, wasStaged = staged;
+      var nextContext = context || {};
+      var wasStaged = staged;
       staged = Boolean(nextContext.staged);
       generation = Number.isFinite(nextContext.generation) ? nextContext.generation : generation;
       var layout = nextContext.layout || {};
-      var sceneRect = layout.sceneRect;
-      sceneRectSnapshot = sceneRect || sceneRectSnapshot;
-      sceneWidth = Math.max(Number(sceneRect && sceneRect.width) || 0, 0);
-      sceneHeight = Math.max(Number(sceneRect && sceneRect.height) || 0, 0);
+      sceneRectSnapshot = layout.sceneRect || sceneRectSnapshot;
+      sceneWidth = Math.max(Number(sceneRectSnapshot.width) || 0, 0);
+      sceneHeight = Math.max(Number(sceneRectSnapshot.height) || 0, 0);
       spawnAvoidanceRects = Array.isArray(layout.spawnAvoidanceRects) ? layout.spawnAvoidanceRects : [];
-      var nextFieldLayoutSignature = [sceneWidth, sceneHeight].concat(spawnAvoidanceRects.map(function (rect) {
-        return [rect.left, rect.top, rect.width, rect.height].join(',');
-      })).join('|');
-      var fieldLayoutChanged = nextFieldLayoutSignature !== fieldLayoutSignature;
-      if (fieldLayoutChanged) {
-        fieldLayoutSignature = nextFieldLayoutSignature;
-        sceneSimulation.fieldSignature = '';
-      }
+      // Avoidance is applied at draw time: it never rebuilds the field or clears rings/flares.
+      core.setAvoidance(sceneSimulation, sceneAvoidance(spawnAvoidanceRects));
       var hostRects = Array.isArray(layout.hostRects) ? layout.hostRects : [];
       var descriptors = Array.isArray(nextContext.hosts) ? nextContext.hosts : [];
+      sceneSeed = seedForRole(descriptors[0] && descriptors[0].role);
       var nextHosts = new Set(descriptors.map(function (descriptor) {
         return descriptor && descriptor.element;
       }).filter(Boolean));
@@ -375,38 +416,24 @@
       descriptors.forEach(function (descriptor, index) {
         if (!descriptor || !descriptor.element) { return; }
         var entry = trackedHosts.get(descriptor.element);
-        if (!entry) {
+        var isNew = !entry;
+        if (isNew) {
           entry = makeEntry(descriptor.element, descriptor.role);
           trackedHosts.set(descriptor.element, entry);
-          entry.hostRect = hostRects[index] || entry.hostRect;
-          entry.paintOcclusionRects = runtime.projectClientRectsToHost(
-            layout.paintOcclusionRects, entry.hostRect,
-          );
-          readStyles(entry);
-          resizeCanvas(entry, true);
-          return;
+        } else {
+          entry.role = descriptor.role;
         }
         entry.hostRect = hostRects[index] || entry.hostRect;
         entry.paintOcclusionRects = runtime.projectClientRectsToHost(
           layout.paintOcclusionRects, entry.hostRect,
         );
-        if (entry.role !== descriptor.role) {
-          entry.role = descriptor.role;
-          entry.seed = seedForRole(descriptor.role);
-          readStyles(entry);
-          resizeCanvas(entry, true);
-          return;
-        }
-        var fieldChanged = readStyles(entry);
-        resizeCanvas(entry, fieldChanged);
+        readStyles(entry);
+        resizeCanvas(entry);
       });
-      if (fieldLayoutChanged) {
-        var firstEntry = trackedHosts.values().next().value;
-        if (firstEntry) { rebuildField(firstEntry); }
-      }
+      lastDeviceDpr = deviceDpr();
       if (wasStaged && !staged) { trackedHosts.forEach(scheduleMarkReady); }
       if (!hasDrawableEntries()) { stopLoop(); return; }
-      if (reducedMotion) { drawAllStatic(); } else { scheduleFrame(); }
+      requestRedraw();
     }
 
     function bind(context) {
@@ -415,11 +442,14 @@
       bound = true;
       reducedMotion = Boolean(reducedMotionQuery && reducedMotionQuery.matches);
       documentHidden = Boolean(documentRef && (documentRef.hidden || documentRef.visibilityState === 'hidden'));
+      windowFocused = !(documentRef && typeof documentRef.hasFocus === 'function') || documentRef.hasFocus();
       removeVisibilityMotionListeners = runtime.bindVisibilityAndMotionListeners({
         documentRef: documentRef,
         reducedMotionQuery: reducedMotionQuery,
         onVisibilityChange: handleVisibilityChange,
         onMotionPreferenceChange: handleMotionPreferenceChange,
+        windowRef: windowRef,
+        onFocusChange: handleFocusChange,
       });
       applyContext(context);
     }
@@ -432,110 +462,44 @@
       return match;
     }
 
-    function clearPointers() {
-      trackedHosts.forEach(function (entry) { core.clearPointer(entry.simulation); });
-      scenePointer.active = false;
-    }
-
-    function clearAllTransient(clearPointerToo) {
-      trackedHosts.forEach(function (entry) { core.clearTransient(entry.simulation, clearPointerToo); });
-      if (clearPointerToo) { scenePointer.active = false; }
+    function spawnAllowed(x, y) {
+      return !runtime.scenePointInClientRects(spawnAvoidanceRects, sceneRectSnapshot, x, y);
     }
 
     function handleInput(payload) {
       if (!bound || disposed || !payload) { return; }
+      // A second finger or pen contact never drives hover or click, so its
+      // cancel must not clear the primary pointer's hover either.
+      if (payload.isPrimary === false) { return; }
       if (payload.type === 'cancel') {
-        clearAllTransient(true);
-        if (reducedMotion) { drawAllStatic(); } else { scheduleFrame(); }
+        // Pointer state only: rings and flares settle by their own timing.
+        core.clearPointer(sceneSimulation);
+        requestRedraw();
         return;
       }
       var entry = entryForRole(payload.surfaceRole);
       if (!entry) { return; }
       if (payload.type === 'enter' || payload.type === 'move') {
-        clearPointers();
-        core.updatePointer(entry.simulation, Object.assign({}, payload, {
-          localX: payload.sceneX,
-          localY: payload.sceneY,
-        }));
-        if (Number.isFinite(Number(payload.sceneX)) && Number.isFinite(Number(payload.sceneY))) {
-          scenePointer.active = true;
-          scenePointer.x = Number(payload.sceneX);
-          scenePointer.y = Number(payload.sceneY);
-        }
+        core.updatePointer(sceneSimulation, Number(payload.sceneX), Number(payload.sceneY));
       } else if (payload.type === 'leave') {
-        clearPointers();
+        core.clearPointer(sceneSimulation);
       } else if (payload.type === 'click') {
-        if (!reducedMotion && Number.isFinite(Number(payload.sceneX)) && Number.isFinite(Number(payload.sceneY))
-          && !runtime.scenePointInClientRects(
-            spawnAvoidanceRects, sceneRectSnapshot, Number(payload.sceneX), Number(payload.sceneY),
-          )) {
-          core.spawnWave(entry.simulation, {
-            x: Number(payload.sceneX),
-            y: Number(payload.sceneY),
+        if (!reducedMotion && Number.isFinite(payload.sceneX) && Number.isFinite(payload.sceneY)
+          && spawnAllowed(payload.sceneX, payload.sceneY)) {
+          core.spawnWave(sceneSimulation, {
+            x: payload.sceneX,
+            y: payload.sceneY,
             startTime: Number.isFinite(payload.timeStamp) ? payload.timeStamp : getNow(),
             config: entry.config,
-            sceneSeed: entry.seed,
-            makeRng: runtime.makeRng,
             kind: 'click',
           });
         }
       }
-      if (reducedMotion) { drawAllStatic(); } else { scheduleFrame(); }
-    }
-
-    function setActivity(snapshot) {
-      if (disposed || !snapshot) { return; }
-      if (scopeEpoch !== null && snapshot.scopeEpoch !== scopeEpoch) {
-        clearAllTransient(false);
-        lastImpulseSequence = -1;
-      }
-      scopeEpoch = snapshot.scopeEpoch;
-      if (typeof snapshot.phase === 'string' && snapshot.phase) { phase = snapshot.phase; }
-      if (Number.isFinite(snapshot.phaseRevision)) { phaseRevision = snapshot.phaseRevision; }
-      if (Number.isFinite(snapshot.targetEnergy)) { targetEnergy = core.clamp(snapshot.targetEnergy, 0, 1); }
-      if (Number.isFinite(snapshot.attentionScale)) { attentionScale = core.clamp(snapshot.attentionScale, 0, 1); }
-      if (phase === 'failed') { clearAllTransient(false); }
-      if (reducedMotion) { currentEnergy = targetEnergy; drawAllStatic(); } else { scheduleFrame(); }
-    }
-
-    function spawnCompletionSweep(startTime) {
-      var entry = trackedHosts.values().next().value;
-      if (entry && entry.ctx && sceneWidth > 0 && sceneHeight > 0
-        && !runtime.scenePointInClientRects(
-          spawnAvoidanceRects, sceneRectSnapshot, sceneWidth / 2, sceneHeight / 2,
-        )) {
-        core.spawnWave(sceneSimulation, {
-          x: sceneWidth / 2,
-          y: sceneHeight / 2,
-          startTime: startTime,
-          config: entry.config,
-          sceneSeed: entry.seed,
-          makeRng: runtime.makeRng,
-          kind: 'complete',
-        });
-      }
-    }
-
-    function handleActivityImpulse(impulse) {
-      if (disposed || !impulse || scopeEpoch === null || impulse.scopeEpoch !== scopeEpoch) { return; }
-      var sequence = Number(impulse.sequence);
-      if (Number.isFinite(sequence) && sequence <= lastImpulseSequence) { return; }
-      if (Number.isFinite(sequence)) { lastImpulseSequence = sequence; }
-      if (impulse.kind === 'cancel') {
-        clearAllTransient(true);
-      } else if (!reducedMotion && impulse.kind === 'complete') {
-        spawnCompletionSweep(Number.isFinite(impulse.timeStamp) ? impulse.timeStamp : getNow());
-      }
-      if (reducedMotion) { drawAllStatic(); } else { scheduleFrame(); }
+      requestRedraw();
     }
 
     function getStatus() {
-      var drawable = 0;
-      trackedHosts.forEach(function (entry) {
-        if (entry.host && entry.host.isConnected !== false && entry.ctx && entry.w > 0 && entry.h > 0) {
-          drawable += 1;
-        }
-      });
+      var drawable = drawableEntryCount();
       return {
         state: drawable > 0 ? 'ready' : 'dormant',
         hostCount: trackedHosts.size,
@@ -552,13 +516,13 @@
           w: entry.w,
           h: entry.h,
           dpr: entry.dpr,
-          seed: entry.seed,
+          seed: sceneSeed,
           hasCanvas: Boolean(entry.canvas),
           readyShown: entry.readyShown,
           flareColor: entry.config && entry.config.flareColor,
           linkColor: entry.config && entry.config.linkColor,
           waveColor: entry.config && entry.config.waveColor,
-        }, core.inspectSimulation(entry.simulation)));
+        }, core.inspectSimulation(sceneSimulation)));
       });
       return {
         bound: bound,
@@ -567,14 +531,7 @@
         generation: generation,
         reducedMotion: reducedMotion,
         documentHidden: documentHidden,
-        scopeEpoch: scopeEpoch,
-        phase: phase,
-        phaseRevision: phaseRevision,
-        currentEnergy: currentEnergy,
-        targetEnergy: targetEnergy,
-        attentionScale: attentionScale,
-        activityBrightnessScale: lastActivityBrightnessScale,
-        pendingGestureCount: 0,
+        windowFocused: windowFocused,
         entries: entries,
       };
     }
@@ -588,7 +545,6 @@
       removeVisibilityMotionListeners = function noop() {};
       trackedHosts.forEach(removeEntryCanvas);
       trackedHosts.clear();
-      scenePointer.active = false;
     }
 
     return {
@@ -596,8 +552,6 @@
       refresh: refresh,
       dispose: dispose,
       handleInput: handleInput,
-      setActivity: setActivity,
-      handleActivityImpulse: handleActivityImpulse,
       getStatus: getStatus,
       _internals: { inspect: inspect },
     };

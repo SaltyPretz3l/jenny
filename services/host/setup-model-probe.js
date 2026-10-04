@@ -54,23 +54,28 @@ async function probeModels(endpoint, { apiKey = '', fetchImpl = globalThis.fetch
   } finally { clearTimeout(timer); }
 }
 
-async function probePrivateHttps(origin, { fetchImpl = globalThis.fetch, timeoutMs = 4000 } = {}) {
+// `/healthz` proves HTTP liveness; `/readyz` proves application readiness.
+const PROBES = Object.freeze({ health: { path: '/healthz', field: 'alive' }, ready: { path: '/readyz', field: 'ready' } });
+
+async function probePrivateHttps(origin, { fetchImpl = globalThis.fetch, timeoutMs = 4000, probe = 'health' } = {}) {
+  const { path, field } = PROBES[probe];
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const response = await fetchImpl(new URL('/healthz', origin), {
+    const response = await fetchImpl(new URL(path, origin), {
       redirect: 'error', signal: controller.signal, headers: { Origin: origin },
     });
     const body = response.ok ? await boundedJson(response) : null;
     if (!response.ok) await response.body?.cancel?.().catch(() => {});
-    return body?.alive === true;
+    return body?.[field] === true;
   } catch (_error) { return false; }
   finally { clearTimeout(timer); }
 }
 
 // The setup container's loopback is not the app. Reach the fixed Compose
 // service and retain the exact browser Host/Origin security checks.
-function probeLocalHost(config, { requestImpl = require('node:http').request, timeoutMs = 4000 } = {}) {
+function probeLocalHost(config, { requestImpl = require('node:http').request, timeoutMs = 4000, probe = 'health' } = {}) {
+  const { path, field } = PROBES[probe];
   return new Promise((resolve) => {
     let request;
     let settled = false;
@@ -83,7 +88,7 @@ function probeLocalHost(config, { requestImpl = require('node:http').request, ti
     };
     const timer = setTimeout(() => finish(false), timeoutMs);
     try {
-      request = requestImpl({ hostname: 'jenny', port: config.port, path: '/healthz', method: 'GET',
+      request = requestImpl({ hostname: 'jenny', port: config.port, path, method: 'GET',
         headers: { Host: new URL(config.canonicalOrigin).host, Origin: config.canonicalOrigin } }, (response) => {
         if (response.statusCode !== 200) { response.resume(); finish(false); return; }
         let bytes = 0;
@@ -95,7 +100,7 @@ function probeLocalHost(config, { requestImpl = require('node:http').request, ti
         });
         response.once('error', () => finish(false));
         response.once('end', () => {
-          try { finish(JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(Buffer.concat(chunks))).alive === true); }
+          try { finish(JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(Buffer.concat(chunks)))[field] === true); }
           catch { finish(false); }
         });
       });
@@ -105,4 +110,7 @@ function probeLocalHost(config, { requestImpl = require('node:http').request, ti
   });
 }
 
-module.exports = { probeModels, probePrivateHttps, probeLocalHost };
+const probePrivateReady = (origin, options = {}) => probePrivateHttps(origin, { ...options, probe: 'ready' });
+const probeLocalReady = (config, options = {}) => probeLocalHost(config, { ...options, probe: 'ready' });
+
+module.exports = { probeModels, probePrivateHttps, probeLocalHost, probePrivateReady, probeLocalReady };

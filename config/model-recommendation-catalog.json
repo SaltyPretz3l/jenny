@@ -1,8 +1,8 @@
 {
-  "catalogVersion": 8,
-  "updatedAt": "2026-08-19",
+  "catalogVersion": 9,
+  "updatedAt": "2026-10-03",
   "source": "bundled-default",
-  "_comment": "Hardware -> local model catalog. TUNABLE. VRAM/RAM values include runtime headroom; downloadSizeMb is the registry-displayed model size and disk headroom is derived at runtime. pullTag is the literal `ollama pull` argument. Accelerator fits rank first, otherwise the strongest model fitting available RAM is recommended for slower CPU inference. This file ships in the app and is the remote-refresh source. Bump catalogVersion on every change and keep it in sync with sidecar/runtime/hardware_profile.py::_FALLBACK_CATALOG.",
+  "_comment": "Hardware -> local model catalog. TUNABLE. VRAM/RAM values include runtime headroom; downloadSizeMb is the registry-displayed model size and disk headroom is derived at runtime. pullTag is the literal `ollama pull` argument. Accelerator fits rank first, otherwise the strongest model fitting available RAM is recommended for slower CPU inference. This file ships in the app and is the remote-refresh source. Bump catalogVersion on every change; this file is also bundled for standalone sidecar recommendations.",
   "models": [
     {
       "tier": "challenger",
@@ -60,10 +60,10 @@
       "displayName": "Gemma 4 12B (lean)",
       "params": "12B",
       "quant": "Q4_K",
-      "vramRequiredMb": 9000,
-      "ramRequiredMb": 12000,
+      "vramRequiredMb": 10600,
+      "ramRequiredMb": 13600,
       "downloadSizeMb": 7400,
-      "contextLength": 16384,
+      "contextLength": 32768,
       "pullTag": "batiai/gemma4-12b:q4"
     },
     {

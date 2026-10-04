@@ -43,9 +43,9 @@ def test_windows_trusted_roots_exclude_posix_system_paths(
 ) -> None:
     monkeypatch.setattr(transport_command_policy, "os", SimpleNamespace(name="nt"))
 
-    roots = transport_command_policy._trusted_command_roots()  # noqa: SLF001
+    roots = transport_command_policy._trusted_command_roots()
 
-    assert transport_command_policy._resolve_path(Path("/usr/bin")) not in roots  # noqa: SLF001
-    assert transport_command_policy._resolve_path(Path("/usr/local/bin")) not in roots  # noqa: SLF001
-    assert transport_command_policy._resolve_path(Path("/snap/bin")) not in roots  # noqa: SLF001
-    assert transport_command_policy._resolve_path(Path("/opt/homebrew/bin")) not in roots  # noqa: SLF001
+    assert transport_command_policy._resolve_path(Path("/usr/bin")) not in roots
+    assert transport_command_policy._resolve_path(Path("/usr/local/bin")) not in roots
+    assert transport_command_policy._resolve_path(Path("/snap/bin")) not in roots
+    assert transport_command_policy._resolve_path(Path("/opt/homebrew/bin")) not in roots

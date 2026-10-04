@@ -9,8 +9,8 @@ from sidecar.runtime.diagnostics import StructuredLogFormatter, log_tool_executi
 
 
 def test_log_tool_execution_adds_hashes_without_snippet_in_redacted_mode(caplog) -> None:
-    original_capture_mode = _diag_module._CAPTURE_MODE  # noqa: SLF001
-    _diag_module._CAPTURE_MODE = "redacted"  # noqa: SLF001
+    original_capture_mode = _diag_module._CAPTURE_MODE
+    _diag_module._CAPTURE_MODE = "redacted"
     try:
         logger = logging.getLogger("tests.sidecar.diagnostics.snippet.redacted")
         with caplog.at_level(logging.DEBUG, logger=logger.name):
@@ -21,12 +21,12 @@ def test_log_tool_execution_adds_hashes_without_snippet_in_redacted_mode(caplog)
         assert "tool_output_hash" in data
         assert "tool_output_snippet" not in data
     finally:
-        _diag_module._CAPTURE_MODE = original_capture_mode  # noqa: SLF001
+        _diag_module._CAPTURE_MODE = original_capture_mode
 
 
 def test_log_tool_execution_adds_bounded_snippet_in_sanitized_mode(caplog) -> None:
-    original_capture_mode = _diag_module._CAPTURE_MODE  # noqa: SLF001
-    _diag_module._CAPTURE_MODE = "sanitized_snippets"  # noqa: SLF001
+    original_capture_mode = _diag_module._CAPTURE_MODE
+    _diag_module._CAPTURE_MODE = "sanitized_snippets"
     try:
         logger = logging.getLogger("tests.sidecar.diagnostics.snippet.sanitized")
         output = "x" * 200
@@ -39,12 +39,12 @@ def test_log_tool_execution_adds_bounded_snippet_in_sanitized_mode(caplog) -> No
         assert "tool_output_snippet" in data
         assert len(data["tool_output_snippet"]) <= 160
     finally:
-        _diag_module._CAPTURE_MODE = original_capture_mode  # noqa: SLF001
+        _diag_module._CAPTURE_MODE = original_capture_mode
 
 
 def test_log_tool_execution_redacts_secrets_from_output_snippet(caplog) -> None:
-    original_capture_mode = _diag_module._CAPTURE_MODE  # noqa: SLF001
-    _diag_module._CAPTURE_MODE = "sanitized_snippets"  # noqa: SLF001
+    original_capture_mode = _diag_module._CAPTURE_MODE
+    _diag_module._CAPTURE_MODE = "sanitized_snippets"
     try:
         logger = logging.getLogger("tests.sidecar.diagnostics.snippet.secret")
         raw_secret = "secret-token-value"
@@ -55,12 +55,12 @@ def test_log_tool_execution_redacts_secrets_from_output_snippet(caplog) -> None:
         serialized_record = StructuredLogFormatter().format(caplog.records[-1])
         assert raw_secret not in serialized_record
     finally:
-        _diag_module._CAPTURE_MODE = original_capture_mode  # noqa: SLF001
+        _diag_module._CAPTURE_MODE = original_capture_mode
 
 
 def test_log_tool_execution_without_output_preserves_existing_data_shape(caplog) -> None:
-    original_capture_mode = _diag_module._CAPTURE_MODE  # noqa: SLF001
-    _diag_module._CAPTURE_MODE = "sanitized_snippets"  # noqa: SLF001
+    original_capture_mode = _diag_module._CAPTURE_MODE
+    _diag_module._CAPTURE_MODE = "sanitized_snippets"
     try:
         logger = logging.getLogger("tests.sidecar.diagnostics.snippet.absent")
         with caplog.at_level(logging.DEBUG, logger=logger.name):
@@ -73,12 +73,12 @@ def test_log_tool_execution_without_output_preserves_existing_data_shape(caplog)
             "cancelled": False,
         }
     finally:
-        _diag_module._CAPTURE_MODE = original_capture_mode  # noqa: SLF001
+        _diag_module._CAPTURE_MODE = original_capture_mode
 
 
 def test_builtin_server_success_path_captures_tool_output(caplog, tmp_path) -> None:
-    original_capture_mode = _diag_module._CAPTURE_MODE  # noqa: SLF001
-    _diag_module._CAPTURE_MODE = "sanitized_snippets"  # noqa: SLF001
+    original_capture_mode = _diag_module._CAPTURE_MODE
+    _diag_module._CAPTURE_MODE = "sanitized_snippets"
     try:
         output_text = "output from the real builtin server call site"
         tool = builtin_server.BuiltinTool(
@@ -89,7 +89,7 @@ def test_builtin_server_success_path_captures_tool_output(caplog, tmp_path) -> N
             handler=lambda _arguments, _workspace: output_text,
         )
         with caplog.at_level(logging.DEBUG, logger=builtin_server.logger.name):
-            response = builtin_server._handle_tools_call(  # noqa: SLF001
+            response = builtin_server._handle_tools_call(
                 "snippet-test-call",
                 {tool.name: tool},
                 WorkspaceGuard(str(tmp_path)),
@@ -104,4 +104,4 @@ def test_builtin_server_success_path_captures_tool_output(caplog, tmp_path) -> N
         assert records[0].data["tool_output_chars"] == len(output_text)
         assert records[0].data["tool_output_snippet"] == output_text
     finally:
-        _diag_module._CAPTURE_MODE = original_capture_mode  # noqa: SLF001
+        _diag_module._CAPTURE_MODE = original_capture_mode

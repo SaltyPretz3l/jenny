@@ -7,27 +7,11 @@ const { JSDOM } = require('jsdom');
 const { createRenderPipeline } = require('../../renderer/chat/renderer-render-pipeline-utils');
 const messageIndexUtils = require('../../renderer/chat/renderer-message-index-utils');
 
-function createPipelineHarness(options = {}) {
+/* The harness `state`. Exported so a split-view suite can build ONE state and
+ * hand it to two harnesses (`createPipelineHarness({ state })`), the way both
+ * panes read one `state` in production. */
+function createHarnessState(options = {}) {
   const settings = options || {};
-  const dom = settings.dom || null;
-  const documentRef = dom?.window.document || null;
-  const visibleMessages = Array.isArray(settings.visibleMessages) ? settings.visibleMessages : [];
-  const rolloutSignals = [];
-  const logs = [];
-  global.rendererMessageIndexUtils = messageIndexUtils;
-  // Split view W0-6: a caller may hand in the render-memo bag
-  // (`createPipelineHarness({ uiRuntime })`), so two harnesses can be driven
-  // with two pane runtimes over one shared session store -- or, for a negative
-  // control, with the one object the renderer used before that slice. Omitted,
-  // it is the private bag with the three session-keyed Maps this harness has
-  // always built, unchanged.
-  const uiRuntime = settings.uiRuntime && typeof settings.uiRuntime === 'object'
-    ? settings.uiRuntime
-    : {
-      projectionContextBySession: new Map(),
-      toolRowProjectionFallbacksBySession: new Map(),
-      toolRowProjectionFailuresBySession: new Map(),
-    };
   const state = {
     currentSessionId: settings.currentSessionId || 'session-source',
     streamThinkingStatusByStream: new Map(),
@@ -50,6 +34,41 @@ function createPipelineHarness(options = {}) {
   if (settings.turnEventsBySession instanceof Map) {
     state.turnEventsBySession = settings.turnEventsBySession;
   }
+  return state;
+}
+
+function createPipelineHarness(options = {}) {
+  const settings = options || {};
+  const dom = settings.dom || null;
+  const documentRef = dom?.window.document || null;
+  const visibleMessages = Array.isArray(settings.visibleMessages) ? settings.visibleMessages : [];
+  // Split view W1-4a: a shared session store (`messagesBySession`, a Map of
+  // session id -> messages) makes every message getter answer per session, the
+  // current-session ones through `state.currentSessionId`. Omitted, every getter
+  // returns `visibleMessages` whatever it is asked, exactly as before.
+  const messagesBySession = settings.messagesBySession instanceof Map ? settings.messagesBySession : null;
+  const readSessionMessages = (sessionId) => (messagesBySession
+    ? (messagesBySession.get(String(sessionId || '').trim()) || [])
+    : visibleMessages);
+  const rolloutSignals = [];
+  const logs = [];
+  global.rendererMessageIndexUtils = messageIndexUtils;
+  // Split view W0-6: a caller may hand in the render-memo bag
+  // (`createPipelineHarness({ uiRuntime })`), so two harnesses can be driven
+  // with two pane runtimes over one shared session store -- or, for a negative
+  // control, with the one object the renderer used before that slice. Omitted,
+  // it is the private bag with the three session-keyed Maps this harness has
+  // always built, unchanged.
+  const uiRuntime = settings.uiRuntime && typeof settings.uiRuntime === 'object'
+    ? settings.uiRuntime
+    : {
+      projectionContextBySession: new Map(),
+      toolRowProjectionFallbacksBySession: new Map(),
+      toolRowProjectionFailuresBySession: new Map(),
+    };
+  // Split view W1-4a: `state` may be injected so two harnesses SHARE one state
+  // (each with its own `uiRuntime.paneId`); omitted, it is built exactly as before.
+  const state = settings.state && typeof settings.state === 'object' ? settings.state : createHarnessState(settings);
   const pipeline = createRenderPipeline({
     state,
     constants: {
@@ -77,7 +96,7 @@ function createPipelineHarness(options = {}) {
         shouldAutoScroll() { return true; },
       },
       reducedMotionQuery: { matches: false },
-      thinkingIndicator: null,
+      thinkingIndicator: settings.thinkingIndicator || null,
     },
     runtime: {
       uiRuntime,
@@ -85,9 +104,10 @@ function createPipelineHarness(options = {}) {
     },
     callbacks: {
       escapeHtml(value) { return String(value || ''); },
-      getCurrentSessionMessages() { return visibleMessages; },
-      getCurrentVisibleMessages() { return visibleMessages; },
-      getVisibleSessionMessages() { return visibleMessages; },
+      getCurrentSessionMessages() { return readSessionMessages(state.currentSessionId); },
+      getCurrentVisibleMessages() { return readSessionMessages(state.currentSessionId); },
+      getVisibleSessionMessages(sessionId) { return readSessionMessages(sessionId); },
+      getSessionMessages(sessionId) { return readSessionMessages(sessionId); },
       getLatestAssistantMessageId() { return ''; },
       getLatestReplyAssistantMessageId() { return ''; },
       getLatestUserMessageId() { return ''; },
@@ -147,11 +167,9 @@ function createPipelineHarness(options = {}) {
       failActivity() {},
       beginActivity() {},
       getCurrentRuntimePreferences() { return {}; },
-      syncComposerModelSelectWidth() {},
       renderComposerEnhancements() {},
       renderMarkdown(text) { return String(text || ''); },
       renderStreamingMarkdownUnits(text) { return { html: String(text || ''), units: [], changedStart: -1 }; },
-      publishLifecycleStatus() {},
       renderBackendBanner() {},
       getChatSendLifecycle() { return 'idle'; },
       getChatTimelineRowModelEnabled() { return settings.rowModelEnabled === true; },
@@ -168,6 +186,10 @@ function createPipelineHarness(options = {}) {
         logs.push({ level, event, data });
       },
       renderHeader() {},
+      // Split view W1-4a: per-test overrides, applied last. A key set to
+      // `undefined` REMOVES that callback (e.g. the per-session getters, to
+      // prove the current-session fallback).
+      ...settings.callbacks,
     },
   });
   return { pipeline, uiRuntime, rolloutSignals, logs, state, dom };
@@ -223,4 +245,4 @@ function createRenderDom() {
   `);
 }
 
-module.exports = { createPipelineHarness, withWindowGlobals, createRenderDom };
+module.exports = { createPipelineHarness, createHarnessState, withWindowGlobals, createRenderDom };

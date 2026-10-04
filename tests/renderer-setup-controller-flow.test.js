@@ -383,3 +383,59 @@ test('resumeSetup is idempotent: calling it twice in a row keeps a single active
   controller.dispose();
   dom.window.close();
 });
+
+// --- LC-12: a failed firstRunCompleted save is reported, not swallowed ---
+
+async function runFinishWith(updateState) {
+  const dom = new JSDOM('<!doctype html><html><body><div id="homeSetupModalRoot"></div></body></html>');
+  const { document } = dom.window;
+  let hubDeps = null;
+  const errorToasts = [];
+  const logs = [];
+  const controller = createSetupController({
+    state: {},
+    documentRef: document,
+    setupService: {
+      async getState() { return normalizeSetupPayload(makeBackendPayload()); },
+      updateState,
+      subscribePullProgress() { return () => {}; },
+    },
+    dom: { homeSetupModalRoot: document.getElementById('homeSetupModalRoot') },
+    modules: {
+      setupHub: { createSetupHub },
+      scenes: { setupHub: (deps) => { hubDeps = deps; return { mount() {}, dispose() {} }; } },
+    },
+    callbacks: {
+      appendClientLog: (level, event) => logs.push(event),
+      showShellErrorToast: (message, options) => errorToasts.push({ message, options }),
+      showToastMessage: () => {},
+      setActiveView: () => {},
+    },
+  });
+  await controller.init();
+  await hubDeps.finish({ force: true });
+  controller.dispose();
+  dom.window.close();
+  return { errorToasts, logs };
+}
+
+test('finishing setup shows one error toast when the firstRunCompleted save fails', async () => {
+  const { errorToasts, logs } = await runFinishWith(async (patch) => {
+    if (patch && patch.firstRunCompleted === true) throw new Error('disk full');
+    return null;
+  });
+
+  assert.equal(errorToasts.length, 1);
+  assert.equal(
+    errorToasts[0].message,
+    "Couldn't save your setup choice. Setup may open again the next time you start Jenny."
+  );
+  assert.equal(errorToasts[0].options.title, 'Setup Update Failed');
+  assert.ok(logs.includes('setup.first_run_persist_failed'));
+});
+
+test('finishing setup shows no error toast when the firstRunCompleted save succeeds', async () => {
+  const { errorToasts } = await runFinishWith(async () => null);
+
+  assert.deepEqual(errorToasts, []);
+});

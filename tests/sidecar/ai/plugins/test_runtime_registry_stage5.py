@@ -66,6 +66,7 @@ def test_v3_apply_publishes_remote_tools_only_inside_the_turn_lease() -> None:
         assert len(descriptors) == 1
         assert descriptors[0].name == "acme-labs.remote-tools.remote-main:lookup"
         assert descriptors[0].server_name == "electron_tool_bridge"
+        assert descriptors[0].connection_id == "plugin:acme-labs:remote-tools"
         assert descriptors[0].source_kind == "mcp"
         assert descriptors[0].input_schema["properties"]["query"]["type"] == "string"
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import io
 import zipfile
 from typing import Any
 
@@ -11,6 +12,7 @@ from sidecar.ai.tools.builtins.rich_files.base import (
     RichInspectResult,
     build_dependency_missing_result,
     build_unsupported_result,
+    read_bounded_file_bytes,
     rich_inspect_result_to_tool_result,
     string_argument,
     validate_rich_file_source,
@@ -83,8 +85,16 @@ def document_inspect_tool(
             )
         )
 
+    raw_document = read_bounded_file_bytes(
+        source.absolute_path,
+        max_bytes=filesystem_content.MAX_MEDIA_FILE_BYTES,
+        authorized_root=workspace.require_root(),
+        message="document source changed beyond rich-file size limit",
+    )
     try:
-        result = _inspect_document(source=source, caps=caps, element_tree=element_tree)
+        result = _inspect_document(
+            source=source, raw_document=raw_document, caps=caps, element_tree=element_tree
+        )
     except Exception:  # noqa: BLE001
         return rich_inspect_result_to_tool_result(
             build_unsupported_result(
@@ -99,10 +109,11 @@ def document_inspect_tool(
 def _inspect_document(
     *,
     source: RichFileSource,
+    raw_document: bytes,
     caps: dict[str, int],
     element_tree: Any,
 ) -> RichInspectResult:
-    with zipfile.ZipFile(source.absolute_path) as archive:
+    with zipfile.ZipFile(io.BytesIO(raw_document)) as archive:
         part_names = preflight_ooxml_archive(archive)
         root = read_xml_root(archive, "word/document.xml", element_tree)
         if root is None:

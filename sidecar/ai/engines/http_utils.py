@@ -73,7 +73,7 @@ def read_json_response(resp: Any) -> Dict:
         if callable(get_charset):
             try:
                 charset = get_charset()
-            except Exception:
+            except Exception:  # noqa: BLE001  # boundary
                 charset = None
 
     text = decode_bytes(raw, charset=charset)

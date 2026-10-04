@@ -440,21 +440,12 @@ test('renderer renders run_command with empty output fallback and exit badge', a
 test('renderer auto-expands pending approval and denied tool rows', async (t) => {
   const sessionId = 'session-tool-auto-expand';
   const streamId = `stream-${sessionId}`;
-  // chat_tool_trace_rows_fix (Ht-E): the settled/unsettled per-call partition
-  // this test codifies is flag-gated while it soaks; the OFF path is pinned
-  // by the sibling "keeps the legacy block ... when the trace-rows fix is
-  // off" test below.
+  // Ht-E: settled calls re-project as trace rows; unsettled calls keep the
+  // classic approval block.
   const { window, shell } = await loadRendererTestApp(t, {
     shell: {
       chat: {
         startStream: createToolSessionStartStream(sessionId, 'Tool Auto Expand Session'),
-      },
-      features: {
-        state: {
-          featureFlags: {
-            chat_tool_trace_rows_fix: true,
-          },
-        },
       },
     },
   });
@@ -519,87 +510,6 @@ test('renderer auto-expands pending approval and denied tool rows', async (t) =>
   assert.equal(deniedRow.getAttribute('data-tool-status'), 'denied');
   assert.match(deniedRow.querySelector('.tool-call-status-label').textContent, /Denied/);
   assert.equal(window.document.querySelectorAll('.tool-call-row[data-tool-call-id="call-denied-1"]').length, 1);
-});
-
-test('renderer keeps the legacy block for a settled denied tool when the trace-rows fix is off', async (t) => {
-  // OFF-path pin for chat_tool_trace_rows_fix (rollback path — flag is
-  // default-ON since 2026-07-01, so this test forces it off explicitly):
-  // the EXACT mixed-turn input the flag-ON test above drives (pending
-  // approval + settled denied) must stay on the legacy .tool-call-block
-  // path for BOTH calls whenever the flag is rolled back via env.
-  const sessionId = 'session-tool-trace-fix-off';
-  const streamId = `stream-${sessionId}`;
-  const { window, shell } = await loadRendererTestApp(t, {
-    shell: {
-      chat: {
-        startStream: createToolSessionStartStream(sessionId, 'Trace Fix Off Session'),
-      },
-      features: {
-        state: {
-          featureFlags: {
-            chat_tool_trace_rows_fix: false,
-          },
-        },
-      },
-    },
-  });
-
-  await submitPrompt(window, 'Use a gated tool');
-
-  await shell.__emitChat({
-    type: 'tool_use',
-    sessionId,
-    streamId,
-    callId: 'call-pending-off',
-    toolName: 'run_command',
-    summary: 'run_command dangerous-op',
-    input: { command: 'dangerous-op' },
-    status: 'pending_approval',
-  });
-  await shell.__emitChat({
-    type: 'tool_use',
-    sessionId,
-    streamId,
-    callId: 'call-denied-off',
-    toolName: 'run_command',
-    summary: 'run_command denied-op',
-    input: { command: 'denied-op' },
-    status: 'completed',
-  });
-  await shell.__emitChat({
-    type: 'tool_result',
-    sessionId,
-    streamId,
-    callId: 'call-denied-off',
-    toolName: 'run_command',
-    input: { command: 'denied-op' },
-    summary: 'run_command denied-op',
-    content: 'Denied by user.',
-    isError: false,
-    approvalState: 'denied',
-    durationMs: 2,
-    metadata: {},
-  });
-  await waitForUi(window, 30);
-
-  const pendingBlock = window.document.querySelector('[data-call-id="call-pending-off"]');
-  assert.ok(pendingBlock, 'flag off: the pending call keeps its classic approval block');
-  assert.equal(pendingBlock.getAttribute('data-tool-status'), 'awaiting_approval');
-  assert.match(pendingBlock.textContent, /Allow|Always allow/);
-
-  const legacyBlock = window.document.querySelector('[data-call-id="call-denied-off"]');
-  assert.ok(legacyBlock, 'flag off: the settled denied call stays on the legacy block path');
-  assert.equal(legacyBlock.getAttribute('data-tool-status'), 'denied');
-  assert.equal(
-    window.document.querySelector('.tool-call-row[data-tool-call-id="call-denied-off"]'),
-    null,
-    'flag off: no trace tool-call-row is emitted for the settled call'
-  );
-  assert.equal(
-    window.document.querySelector('.tool-call-row[data-tool-call-id="call-pending-off"]'),
-    null,
-    'flag off: no trace tool-call-row is emitted for the pending call'
-  );
 });
 
 test('renderer keeps approved tool rows visibly distinguished when a later assistant continuation shows no result was recorded', async (t) => {

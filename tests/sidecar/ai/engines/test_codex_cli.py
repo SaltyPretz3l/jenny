@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import json
+import os
+import shutil
+import subprocess
 import sys
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
@@ -71,8 +74,8 @@ def test_codex_cli_engine_runs_default_model_without_model_override(tmp_path: Pa
         str(tmp_path),
         "--sandbox",
         "read-only",
-        "--ask-for-approval",
-        "never",
+        "-c",
+        'approval_policy="never"',
         "-c",
         "mcp_servers={}",
         "-c",
@@ -466,16 +469,72 @@ def test_codex_cli_pinned_profile_survives_a_custom_model(tmp_path: Path) -> Non
     engine.generate(prompt="hi")
 
     args = calls[0]["args"]
-    for flag, value in (
-        ("--sandbox", "read-only"),
-        ("--ask-for-approval", "never"),
+    assert args[args.index("--sandbox") + 1] == "read-only"
+    for override in (
+        'approval_policy="never"',
+        "mcp_servers={}",
+        "tools.web_search=false",
+        'sandbox_mode="read-only"',
     ):
-        assert args[args.index(flag) + 1] == value
-    for override in ("mcp_servers={}", "tools.web_search=false", 'sandbox_mode="read-only"'):
         assert override in args
         assert args[args.index(override) - 1] == "-c"
     assert args[-1] == "-"
     assert "--ephemeral" in args and "--skip-git-repo-check" in args
+
+
+def _full_argv(tmp_path: Path) -> list[str]:
+    """Every flag _build_args can emit: custom model plus a reasoning effort."""
+
+    engine = CodexCliEngine(command="codex", runtime_root=tmp_path, run_process=lambda **_: None)
+    engine.load_model("codex-cli/gpt-5.5")
+    return engine._build_args(tmp_path, reasoning_effort="high")
+
+
+# The flags Jenny passes to `codex exec`. clap rejects an unknown flag and the
+# whole turn fails, so a flag enters this set only after `codex exec --help`
+# lists it. Jenny sets no minimum CLI version: prefer `-c key=value` (parsed on
+# every version) over newer flags such as --ignore-user-config.
+# --ask-for-approval is TUI-only; codex-cli 0.153.3 rejects it on exec.
+_SUPPORTED_EXEC_FLAGS = frozenset(
+    {"--json", "--ephemeral", "--skip-git-repo-check", "--cd", "--sandbox", "-c", "--model"}
+)
+
+
+def test_codex_cli_argv_uses_only_supported_exec_flags(tmp_path: Path) -> None:
+    args = _full_argv(tmp_path)
+
+    assert args[0] == "exec"
+    assert {arg for arg in args if arg.startswith("-") and arg != "-"} == _SUPPORTED_EXEC_FLAGS
+    assert "--ask-for-approval" not in args
+    assert "--ignore-user-config" not in args
+
+
+def _real_codex_command() -> str | None:
+    return os.environ.get("JENNY_CODEX_CLI_COMMAND") or shutil.which("codex")
+
+
+@pytest.mark.skipif(
+    _real_codex_command() is None,
+    reason="codex not on PATH (set JENNY_CODEX_CLI_COMMAND to probe a specific binary)",
+)
+def test_real_codex_exec_parses_the_pinned_argv(tmp_path: Path) -> None:
+    """Parse-only probe against the installed CLI: `--help` exits before auth or
+    network, but clap has already rejected any unknown flag by then."""
+
+    command = cast(str, _real_codex_command())
+    result = subprocess.run(
+        [command, *_full_argv(tmp_path), "--help"],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        stdin=subprocess.DEVNULL,
+        timeout=60,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "codex exec" in result.stdout
 
 
 # F1: rejection used to be strictly post-hoc -- _parse_jsonl_output inspected
@@ -614,7 +673,7 @@ def test_windows_codex_teardown_tree_kills_before_closing_job(
     monkeypatch.setattr(codex_cli.os, "name", "nt")
     monkeypatch.setattr(codex_cli.subprocess, "run", run)
 
-    thread = codex_cli._terminate_codex_tree(  # noqa: SLF001
+    thread = codex_cli._terminate_codex_tree(
         _Process(),  # type: ignore[arg-type]
         _JobObject(),  # type: ignore[arg-type]
         wait=False,
@@ -675,10 +734,46 @@ def test_windows_codex_cancel_callback_returns_without_blocking_on_taskkill(
     monkeypatch.setattr(codex_cli.subprocess, "run", slow_taskkill)
 
     started = time.perf_counter()
-    thread = codex_cli._terminate_codex_tree(_Process(), None, wait=False)  # type: ignore[arg-type]  # noqa: SLF001
+    thread = codex_cli._terminate_codex_tree(_Process(), None, wait=False)  # type: ignore[arg-type]
     elapsed = time.perf_counter() - started
     release.set()
     assert thread is not None
     thread.join(timeout=5.0)
 
     assert elapsed < 0.5, f"cancel must not block on taskkill, took {elapsed:.2f}s"
+
+
+def test_failed_codex_output_never_crosses_error_boundary(tmp_path: Path) -> None:
+    engine = CodexCliEngine(runtime_root=tmp_path, run_process=lambda **kwargs: CodexCliProcessResult(exit_code=7, stdout="", stderr="sk-proj-" + "a" * 24))
+    with pytest.raises(RuntimeError) as caught:
+        engine.generate("hello")
+    assert str(caught.value) == "Codex CLI exited with status 7."
+
+
+@pytest.mark.parametrize("content", [
+    "plain answer", "", "<tool_call>{broken}</tool_call>",
+    '<tool_call>{"name":"read_file","arguments":{"path":"README.md"}}</tool_call>',
+])
+def test_tool_result_interpretation_matches_streaming(tmp_path: Path, content: str) -> None:
+    engine = CodexCliEngine(
+        runtime_root=tmp_path,
+        run_process=lambda **kwargs: CodexCliProcessResult(
+            exit_code=0, stdout=_jsonl({"type": "agent_message", "content": content}), stderr="",
+        ),
+    )
+    tools = [{"name": "read_file"}]
+    if not content:
+        with pytest.raises(RuntimeError, match="did not contain an assistant message"):
+            engine.generate_with_tools("hello", tools)
+        with pytest.raises(RuntimeError, match="did not contain an assistant message"):
+            _drain_generator(engine.stream_with_tools("hello", tools))
+        return
+    expected = engine.generate_with_tools("hello", tools)
+    chunks, actual = _drain_generator(engine.stream_with_tools("hello", tools))
+    assert actual.content == expected.content
+    assert actual.finish_reason == expected.finish_reason
+    assert actual.inband_tool_call_parse_failed == expected.inband_tool_call_parse_failed
+    assert [(call.tool_id, call.arguments) for call in actual.tool_calls] == [
+        (call.tool_id, call.arguments) for call in expected.tool_calls
+    ]
+    assert chunks == ([expected.content] if expected.content else [])

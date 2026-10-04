@@ -55,11 +55,11 @@
       toErrorMessage,
       appendClientLog: (...a) => appendClientLog(...a),
       showSessionActionError,
-      getCurrentRuntimePreferences,
+      getCurrentRuntimePreferences, getRuntimePreferencesFromSession,
       getRuntimePreferenceSnapshot: (...a) => getRuntimePreferenceSnapshot(...a),
       runRuntimePreferenceActivity: (...a) => runRuntimePreferenceActivity(...a),
       handleWorkspaceRootChoose: (...a) => handleWorkspaceRootChoose(...a),
-      clearWorkspaceRoot: (...a) => clearWorkspaceRoot(...a),
+      clearWorkspaceRoot: (...a) => clearWorkspaceRoot(...a), getProjectSwitcher: (...a) => ctx.getProjectSwitcher?.(...a),
       handleRunSetupAgain: (...a) => handleRunSetupAgain(...a),
       showSetupHelp: (...a) => showSetupHelpSafe(...a),
       showFactoryReset: (...a) => showFactoryResetSafe(...a),
@@ -68,8 +68,6 @@
       bindSkillsShellEvents: (...a) => bindSkillsShellEventsSafe(...a),
       updateSkillsSettings: (...a) => updateSkillsSettingsSafe(...a),
       openSkillsScopeFolder: (...a) => openSkillsScopeFolderSafe(...a),
-      refreshTipsState: (...a) => refreshTipsStateSafe(...a),
-      bindTipsShellEvents: (...a) => bindTipsShellEventsSafe(...a),
       refreshOfflineState: (...a) => refreshOfflineStateSafe(...a),
       bindOfflineShellEvents: (...a) => bindOfflineShellEventsSafe(...a),
       handleOfflineModeChange: (...a) => handleOfflineModeChangeSafe(...a),
@@ -120,7 +118,6 @@
       settingsRendererUtils,
       settingsEventUtils: window.rendererSettingsEventUtils || {},
       settingsNavUtils: window.rendererSettingsNavUtils || {},
-      createCometInstance: (window.cometModule || {}).createCometInstance || null,
     },
   }) || null;
   ({
@@ -128,9 +125,9 @@
     renderComposerPopover = noop,
     renderCommandPopover = noop,
     syncComposerInputHeight = noop,
-    syncComposerModelSelectWidth = noop,
   } = settingsShellController || {});
   window.rendererSettingsCommandSandboxUtils?.bindCommandSandboxSettings?.(window, registerRendererCleanup);
+  window.rendererSettingsCloudModels?.bindCloudModelsSettings?.(window, registerRendererCleanup);
   window.rendererSettingsPdfAddonUtils?.bindPdfAddonSettings?.(window, registerRendererCleanup);
   /* logRendererController */
   const logRenderUtils = window.rendererDiagnosticsRenderUtils || {};
@@ -139,12 +136,12 @@
     dom: { logList },
   }) || null;
   const {
-    stopRelativeTimeRefresh = noop,
+    dispose: disposeDiagnosticsView = noop,
     getLogEntryById = () => null,
     ensureLogRowMounted = () => false,
   } = logRendererController || {};
   const scrollLogsToBottom = logRenderUtils.scrollLogsToBottom || noop;
-  registerRendererCleanup(stopRelativeTimeRefresh);
+  registerRendererCleanup(disposeDiagnosticsView);
   /* healthPillController (Phase 6F-A) */
   const healthPillUtils = window.rendererHealthPillUtils || {};
   const healthPillController = healthPillUtils.createHealthPillController?.({
@@ -153,6 +150,7 @@
     slot: workbenchHealthPillSlot,
     deriveRuntimeHealthState: (window.rendererRuntimeHealthUtils || {}).deriveRuntimeHealthState,
     setActiveView: (...a) => setActiveView(...a), retryBackendStart: (...a) => retryBackendStart(...a),
+    setActiveDiagnosticsTab: (tab) => { state.ui.logs.activeTab = tab; renderLogs(); },
     setActiveSettingsSection: (sectionId) => openSettingsSection(sectionId),
     /* EH-W10: flag-gated intake route (error-center only). */
     reportError: (...a) => reportErrorWhenActive(...a),
@@ -185,14 +183,11 @@
   const headerUtils = globalThis.rendererHeaderUtils || {};
   const headerController = headerUtils.createHeaderController?.({
     state, staticModel,
-    dom: { metricList, sessionActionButton, newChatButton },
+    dom: { metricList, newChatButton },
     callbacks: {
       escapeHtml,
-      isSendBusy: (...a) => isSendBusy(...a),
       isAnySendBusy: (...a) => isAnySendBusy(...a),
       isSendPreflightPending: (...a) => isSendPreflightPending(...a),
-      updateTokenDisplay: (...a) => updateTokenDisplay(...a),
-      refreshSystemStats: () => window.jennyShell.system.refreshStats(),
     },
   }) || null;
   registerRendererCleanup(() => headerController?.dispose?.());
@@ -219,9 +214,9 @@
   // chrome callback can close over it before its creation site runs.
   let pinController = null;
   /* renderPipelineController */
-  const renderPipelineController = renderPipelineUtils.createRenderPipeline?.({
+  const buildRenderPipeline = (pane = {}) => renderPipelineUtils.createRenderPipeline?.({
     state, constants: { MESSAGE_STATUS, ACTIVITY_SCOPE, staticModel },
-    dom: { homeView, chatView, ideView, chatSurface, logsView, settingsView, homeNavButton, metricList, sessionActionButton, newChatButton, chatTimeline, chatThreadScroll, chatThreadColumn, chatSpriteLayer, chatAssistantSprite, heroAvatar, heroTitle, heroSubtitle, heroRuntimeHint, heroStack, logSearchInput, logLevelFilter, logSourceFilter, logResultsLabel, logList, chatInput, stopStreamButton, sendButton, composer, composerModelSelect, composerEffortSelect, composerSettingsButton, jumpToTopButton, jumpToBottomButton, jumpToLastPromptButton, composerModelSelectShell, composerEffortSelectShell, chatSurfaceEffects, chatSurfaceEffectLeft, chatThreadStage, composerWrap, chatOriginChip, chatOriginLabel },
+    dom: { homeView, chatView, ideView, chatSurface, logsView, settingsView, homeNavButton, metricList, sessionActionButton, newChatButton, chatTimeline, chatThreadScroll, chatThreadColumn, chatSpriteLayer, chatAssistantSprite, heroAvatar, heroTitle, heroSubtitle, heroRuntimeHint, heroStack, logSearchInput, logLevelFilter, logSourceFilter, logResultsLabel, logList, chatInput, stopStreamButton, sendButton, composer, composerModelSelect, composerEffortSelect, jumpToTopButton, jumpToBottomButton, jumpToLastPromptButton, composerModelSelectShell, composerEffortSelectShell, chatSurfaceEffects, chatSurfaceEffectLeft, chatThreadStage, composerWrap, chatOriginChip, chatOriginLabel, ...pane.dom },
     callbacks: {
       escapeHtml, getLatestAssistantMessageId, getLatestReplyAssistantMessageId, getLatestUserMessageId, resolveRegenerateRequest, buildAssistantMetaLabel, shouldShowThinkingToggle,
       buildLogViewModel, getActivitySnapshot, getMostRecentActivity, isActivityBusy, applyActivityAttributes,
@@ -231,7 +226,7 @@
       renderProactiveSuggestionBlock: (...a) => renderProactiveSuggestionBlock(...a), renderSlashCommandOutput: (...a) => renderSlashCommandOutput(...a), renderMessageAttachments: (...a) => renderMessageAttachments(...a),
       renderThinkingWidget: (...a) => renderThinkingWidget(...a), renderAgentStatusWidget: (...a) => renderAgentStatusWidget(...a), renderAssistantFailureNotice: (...a) => renderAssistantFailureNotice(...a), renderContextCompactedNotice: (...a) => renderContextCompactedNotice(...a), renderMessageHoverRow: (...a) => renderMessageHoverRow(...a),
       getCurrentSessionMessages: (...a) => getCurrentSessionMessages(...a), getCurrentVisibleMessages: (...a) => getCurrentVisibleMessages(...a),
-      getVisibleSessionMessages: (...a) => getVisibleSessionMessages(...a), isSendBusy: (...a) => isSendBusy(...a), isAnySendBusy: (...a) => isAnySendBusy(...a), isSessionStreaming: (...a) => isSessionStreaming(...a), hasPendingToolApprovalForSession: (...a) => hasPendingToolApprovalForSession(...a), getActiveStreamSessionId: (...a) => getActiveStreamSessionId(...a),
+      getVisibleSessionMessages: (...a) => getVisibleSessionMessages(...a), getSessionMessages: (...a) => getSessionMessages(...a), isSendBusy: (...a) => isSendBusy(...a), isAnySendBusy: (...a) => isAnySendBusy(...a), isSessionStreaming: (...a) => isSessionStreaming(...a), hasPendingToolApprovalForSession: (...a) => hasPendingToolApprovalForSession(...a), getActiveStreamSessionId: (...a) => getActiveStreamSessionId(...a),
       isInteractiveRoundRecapExpanded: (...a) => isInteractiveRoundRecapExpanded(...a),
       pruneInteractiveRoundRecapExpansionState: (...a) => pruneInteractiveRoundRecapExpansionState(...a),
       isSendPreflightPending: (...a) => isSendPreflightPending(...a), updateTokenDisplay: (...a) => updateTokenDisplay(...a),
@@ -253,7 +248,7 @@
       buildInteractiveBatchRowMarkup: (...a) => buildInteractiveBatchRowMarkup(...a),
       buildPlanProposalRowMarkup: (...a) => buildPlanProposalRowMarkup(...a),
       renderComposerInteractivePanel: (...a) => renderComposerInteractivePanel(...a), closeComposerPopover: (...a) => closeComposerPopover(...a),
-      syncComposerInputHeight: (...a) => syncComposerInputHeight(...a), setComposerHoloState: (...a) => setComposerHoloState(...a), setSpriteHoloState: (...a) => setSpriteHoloState(...a),
+      syncComposerInputHeight: (...a) => syncComposerInputHeight(...a), setComposerHoloState: (...a) => setComposerHoloState(...a),
       updateComposerSafeOffset: (...a) => updateComposerSafeOffset(...a), renderSessions: (...a) => renderSessions(...a),
       renderWorkspaceChrome: (...a) => renderWorkspaceChrome(...a),
       renderSettings: (...a) => renderSettings(...a), renderIde: (...a) => renderIdeSafe(...a), layoutIdeEditor: (...a) => layoutIdeEditorSafe(...a), reconcileChatDockHost: (...a) => reconcileChatDockHostSafe(...a),
@@ -267,7 +262,7 @@
       renderHomePanel: (...a) => renderHomePanelSafe(...a),
       renderAttachmentTray: (...a) => renderAttachmentTray(...a), renderComposerStatusNotice: (...a) => renderComposerStatusNotice(...a), setComposerStatusNotice: (...a) => setComposerStatusNotice(...a), clearComposerStatusNotice: (...a) => clearComposerStatusNotice(...a), syncBackendNotice: (...a) => syncBackendNotice(...a),
       renderToastViewport: (...a) => renderToastViewport(...a), renderComposerPopover: (...a) => renderComposerPopover(...a), renderCommandPopover: (...a) => renderCommandPopover(...a),
-      getCurrentRuntimePreferences: (...a) => getCurrentRuntimePreferences(...a), syncComposerModelSelectWidth: (...a) => syncComposerModelSelectWidth(...a), renderComposerEnhancements: (...a) => renderComposerEnhancements(...a),
+      getCurrentRuntimePreferences: (...a) => getCurrentRuntimePreferences(...a), getRuntimePreferencesFromSession, renderComposerEnhancements: (...a) => renderComposerEnhancements(...a),
       renderMarkdown: (...a) => (window.markdownUtils?.renderMarkdown ? window.markdownUtils.renderMarkdown(...a) : escapeHtml(String(a[0] || ''))),
       renderStreamingMarkdownUnits: (...a) => (
         window.markdownUtils?.renderStreamingMarkdownUnits
@@ -280,44 +275,20 @@
           }
       ),
       syncPersistedReasoningPhaseExpansionState: (...a) => syncPersistedReasoningPhaseExpansionState(...a),
-      publishLifecycleStatus: (...a) => publishLifecycleStatus(...a),
-      renderTurnStatusPill: (...a) => renderTurnStatusPill(...a),
       getChatSendLifecycle: (...a) => getChatSendLifecycle(...a),
       getChatTimelineRowModelEnabled: (...a) => getChatTimelineRowModelEnabled(...a),
       recordChatTimelineRolloutSignal: (...a) => recordChatTimelineRolloutSignal(...a),
       rollbackChatTimelineRowModel: (...a) => rollbackChatTimelineRowModel(...a),
       refreshActiveSurfaceEffect: (...a) => refreshActiveSurfaceEffect(...a), onSurfaceLifecycleSync: (...a) => (typeof onSurfaceLifecycleSync === 'function' ? onSurfaceLifecycleSync(...a) : undefined),
       appendClientLog: (...a) => appendClientLog(...a),
-      renderHeader: (...a) => _extRenderHeader(...a),
+      renderHeader: (...a) => _extRenderHeader(...a), syncPaneLayout: (kind) => ctx.getPaneComposition?.()?.syncPaneLayout?.(kind), ...pane.overrides,
     },
     controllers: { thinkingController, reducedMotionQuery, thinkingIndicator, logRenderer: logRendererController, scrollCoordinator: chatScrollCoordinator,
-      getSendOutboxActions: () => chatShellController?.sendOutboxActions,
+      getSendOutboxActions: () => chatShellController?.sendOutboxActions, ...pane.controllers,
     },
-    runtime: { uiRuntime, spriteRuntime },
+    runtime: { uiRuntime, spriteRuntime, ...pane.runtime },
   }) || null;
-  /* approvalBatchController (Phase 6F-B) */
-  const approvalBatchUtils = window.rendererApprovalBatchUtils || {};
-  const approvalBatchController = approvalBatchUtils.bindApprovalBatchUx?.({
-    scopeRoot: chatTimeline,
-    document,
-    callbacks: {
-      approveOne: (callId, options) => window.jennyShell.tools.approve(callId, options || {}),
-      denyOne: (callId) => window.jennyShell.tools.deny(callId),
-      onError: (action, callId, error) => {
-        const event = action === 'deny-all' ? 'tool.deny_failed' : 'tool.approve_failed';
-        appendClientLog('ERROR', event, {
-          callId,
-          batch_action: action,
-          message: error?.message || String(error),
-        });
-        // Surface batch failures with the same visible toast used by single-row approval actions.
-        showComposerActionError?.(error, action === 'deny-all' ? jt('app.controller.denyFailedTitle', 'Deny Failed') : jt('app.controller.approvalFailedTitle', 'Approval Failed'));
-      },
-    },
-  }) || null;
-  if (approvalBatchController) {
-    registerRendererCleanup(() => approvalBatchController.dispose?.());
-  }
+  const renderPipelineController = buildRenderPipeline();
   /* observabilityController (Phase 6F-D) */
   const observabilityUtils = window.rendererObservabilityUtils || {};
   let _pendingTraceFocus = '';
@@ -328,10 +299,11 @@
     state.ui.diagnosticsTargetStreamId = streamId;
     state.ui.diagnosticsTargetSessionId = String(target.sessionId || '').trim();
     state.ui.diagnosticsTargetTraceId = String(target.traceId || '').trim();
-    state.ui.logs.activeTab = 'activity';
-    state.ui.logs.query = streamId;
-    state.ui.logs.autoScroll = false;
+    // Traces come from the live runtime, so they focus the current run; the
+    // previously selected run is kept in returnState.
+    window.rendererDiagnosticsViewState.focusDiagnosticsTarget(state, { tab: 'activity', query: streamId, runId: '' });
     setActiveView('logs');
+    window.dispatchEvent(new window.CustomEvent('diagnostics:focus-log-entry', { detail: { entryId: '' } }));
   }
   const observabilityController = observabilityUtils.createObservabilityController?.({
     window,
@@ -381,7 +353,7 @@
     formatMessageTerminalTimestamp = noopStr, applyChatStateClasses = noop,
     syncChatState = noop,
     escapeSelectorValue = (v) => String(v || ''),
-    hideAssistantSprite = noop, applyAssistantSprite = noop,
+    hideAssistantSprite = noop,
     updateAssistantSpritePosition = noop,
     renderLayout = noop, renderHeader = noop,
     renderMessages = noop, renderHero = noop,
@@ -413,31 +385,20 @@
   const composerToggleModule = (window.rendererComposerV2Toggle || {}).createComposerV2ToggleController?.({
     state,
     getCurrentSessionId: () => state.currentSessionId,
-    persistSessionToolPreference: async (categoryKey, enabled, targetSessionId) => {
+    persistSessionToolPreference: async (overrides, targetSessionId) => {
       const sessionId = String(targetSessionId || '').trim();
       if (!sessionId || !window.jennyShell?.sessions?.setPreferences) {
         throw new Error('Open a saved chat before setting session tool overrides.');
       }
-      const active = Array.isArray(state.sessions)
-        ? state.sessions.find((entry) => String(entry?.id || '') === sessionId)
-        : null;
-      const overrides = {
-        ...(active?.tool_category_overrides && typeof active.tool_category_overrides === 'object'
-          ? active.tool_category_overrides
-          : {}),
-        [categoryKey]: enabled === true,
-      };
-      const persisted = await window.jennyShell.sessions.setPreferences(sessionId, {
-        tool_category_overrides: overrides,
-      });
-      const persistedOverrides = persisted?.tool_category_overrides;
+      const persisted = await window.jennyShell.sessions.setPreferences(sessionId, overrides);
       if (!window.rendererComposerV2Toggle?.sessionToolOverrideEchoMatches?.(
         persisted, sessionId, overrides
       )) {
         throw new Error('Session tool override persistence acknowledgement did not match the requested change.');
       }
       patchSessionSummary(sessionId, {
-        tool_category_overrides: persistedOverrides,
+        tool_category_overrides: persisted.tool_category_overrides,
+        tool_connection_overrides: persisted.tool_connection_overrides,
       });
       return persisted;
     },
@@ -446,7 +407,7 @@
         categoryId, message: error?.message || String(error),
       });
       if (details.isCurrent === false) return;
-      showToastMessage(jt('app.shell.toolOverrideSaveFailed', 'Could not save this chat\'s tool override. The previous value was restored.'), {
+      showToastMessage(jt('app.shell.toolOverrideSaveFailed', "Couldn't save this chat's tools. Try again."), {
         title: jt('app.shell.toolOverrideNotSavedTitle', 'Tool Override Not Saved'), tone: 'danger',
         source: TOAST_SOURCE.chatStream,
         dedupeKey: `${TOAST_SOURCE.chatStream}:tool-override-persist`,
@@ -516,7 +477,7 @@
       syncWorkspaceFromStore: (...a) => syncWorkspaceFromStore(...a),
       applyWorkspaceSnapshot: (...a) => applyWorkspaceSnapshot(...a),
       renderSessions: (...a) => renderSessions(...a),
-      activateWorkspaceSession: (...a) => activateWorkspaceSession(...a),
+      activateWorkspaceSession: (...a) => activateWorkspaceSession(...a), focusComposer: () => ctx.getPaneComposition?.()?.focusComposer?.() || chatInput?.focus?.(),
       openArtifactTarget: (...a) => openArtifactTarget(...a), openIdeFileAtLine: (...a) => openIdeFileAtLineSafe(...a), openFilePreviewTarget: (...a) => openFilePreviewTarget(...a),
     },
   }) || {};
@@ -562,8 +523,8 @@
     sendUtils,
     streamHandlerUtils,
     chatEventUtils: window.rendererChatEventUtils || {},
-    createSlashCommandRegistry: _fb.createSlashCommandRegistry,
-    createContextCommand: _fb.createContextCommand,
+    createSlashCommandRegistry: shellModules.createSlashCommandRegistry,
+    createContextCommand: shellModules.createContextCommand,
   });
   // Phase 3 capture-from-anywhere uses this instance only for /note captureToScratchpad.
   // without force-creating the (lazy, heavy) dashboard controller. Capture writes
@@ -626,8 +587,8 @@
       pinController.render();
     }
   }
-  chatShellController = (window.rendererChatShellControllerUtils || {}).createChatShellController?.({
-    state,
+  const buildChatShellController = (pane = {}) => (window.rendererChatShellControllerUtils || {}).createChatShellController?.({
+    state, sessionContext: pane.sessionContext || ctx.paneLayoutController?.createSessionContext?.(0),
     compactionCoordinator,
     windowRef: window,
     slashDependencies: {
@@ -644,7 +605,7 @@
       isInteractiveOtherTrigger,
       getInteractiveComposerStatusNotice,
     },
-    dom: surfaceDom.chat,
+    dom: pane.dom ? { ...surfaceDom.chat, ...pane.dom } : surfaceDom.chat,
     constants: {
       MESSAGE_STATUS,
       TOAST_SOURCE,
@@ -662,7 +623,7 @@
       thinkingIndicator,
       composerToggleModule,
       toastActionHandlers,
-      timelineVirtualizer, chatScrollCoordinator,
+      timelineVirtualizer, chatScrollCoordinator, ...pane.controllers,
     },
     callbacks: {
       renderAll: (...a) => renderAll(...a),
@@ -673,7 +634,8 @@
       /* EH-W9: flag-gated intake route (null when error_intake_routing is off). */
       reportError: (...a) => reportErrorWhenActive(...a),
       getCurrentSessionMessages: (...a) => getCurrentSessionMessages(...a),
-      getCurrentRuntimePreferences,
+      scheduleMessageViewportSync: (...a) => scheduleMessageViewportSync(...a),
+      getCurrentRuntimePreferences, getRuntimePreferencesFromSession,
       getRuntimePreferenceSnapshot: (...a) => getRuntimePreferenceSnapshot(...a),
       runRuntimePreferenceActivity: (...a) => runRuntimePreferenceActivity(...a),
       getActiveSession,
@@ -727,7 +689,6 @@
       attachPendingOriginToSession: (...a) => attachPendingOriginToSession(...a),
       rekeySessionOrigin: (...a) => rekeySessionOrigin(...a),
       onUserSendStarted: (...a) => {
-        submitCometUserAction('new-message', ...a);
         sessionAutotitleController?.maybeAutoTitleSession(a[0]?.sessionId, { messageText: a[0]?.prompt });
       },
       getToolPreferences: (...a) => getToolPreferences(...a),
@@ -744,11 +705,6 @@
       renderComposerInteractivePanel: (...a) => renderComposerInteractivePanel(...a),
       getActiveSendPreflight: (...a) => getActiveSendPreflight(...a),
       setComposerStatusNotice: (...a) => setComposerStatusNotice(...a),
-      setTurnStatusPill: (...a) => setTurnStatusPill(...a),
-      clearTurnStatusPill: (...a) => clearTurnStatusPill(...a),
-      clearTurnStatusPillSources: (...a) => clearTurnStatusPillSources(...a),
-      setFaceReaction: (...a) => setFaceReaction(...a),
-      handlePresenceStreamEvent: (...a) => handlePresenceStreamEvent(...a),
       handleWorkspaceActivityStreamEvent: (...a) => handleWorkspaceActivityStreamEvent(...a),
       buildInteractiveQuestionBatchVisibleText: (...a) => buildInteractiveQuestionBatchVisibleText(...a),
       refreshSnapshots: (...a) => refreshSnapshots(...a),
@@ -769,6 +725,7 @@
       syncBackendActivityFromStatus: (...a) => syncBackendActivityFromStatus(...a),
       getRendererElapsedMs: (...a) => getRendererElapsedMs(...a),
       refreshApprovedMemories: (...a) => refreshApprovedMemoriesSafe(...a),
+      refreshComposerToolToggles: (...a) => refreshComposerToolToggles(...a),
       resetArtifactsState: (...a) => resetArtifactsState(...a),
       resetMemorySuggestionState: (...a) => resetMemorySuggestionStateSafe(...a),
       closeComposerPopover: (...a) => closeComposerPopover(...a),
@@ -804,7 +761,6 @@
       toggleThreadBranch: (...a) => toggleThreadBranch(...a),
       handleFollowUpMessage: (...a) => handleFollowUpMessage(...a),
       setReasoningPhaseExpandedPreference: (...a) => setReasoningPhaseExpandedPreference(...a),
-      setReasoningPhaseExpandedPreferences: (...a) => setReasoningPhaseExpandedPreferences(...a),
       syncThinkingBlockNode: (...a) => syncThinkingBlockNode(...a),
       dismissToast,
       showShellErrorToast,
@@ -875,9 +831,11 @@
       },
       handleComposerToggleChange: (...a) => handleComposerToggleChange(...a),
       openArtifactTarget: (...a) => openArtifactTarget(...a),
+      renderSessionPane: (...a) => ctx.getPaneComposition?.()?.renderSessionPane?.(...a), resetPanes: () => ctx.paneLayoutController?.resetPanes?.(), ...pane.overrides,
     },
-    factories: composerFactories,
+    factories: pane.factories ? { ...composerFactories, ...pane.factories } : composerFactories,
   }) || null;
+  chatShellController = buildChatShellController();
   const {
     startPromptSend = noopAsync,
     handleStopActiveStream = noopAsync,
@@ -899,13 +857,12 @@
   rehydrateSessionFromPersistedTurnEvents = chatRehydrateSessionFromPersistedTurnEvents;
   registerRendererCleanup(() => compactionCoordinator?.dispose?.());
     result = {
-      settingsShellController, chatShellController,
+      settingsShellController, chatShellController, buildRenderPipeline, buildChatShellController,
       chatWayfinderController,
       contextUsageModule,
       renderSettings, renderComposerPopover,
       renderCommandPopover,
       syncComposerInputHeight,
-      syncComposerModelSelectWidth,
       getLogEntryById,
       ensureLogRowMounted,
       scrollLogsToBottom,
@@ -917,7 +874,6 @@
       syncChatState,
       escapeSelectorValue,
       hideAssistantSprite,
-      applyAssistantSprite,
       updateAssistantSpritePosition,
       renderLayout,
       renderHeader,

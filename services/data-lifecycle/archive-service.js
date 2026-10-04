@@ -5,7 +5,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { pipeline } = require('stream/promises');
-const { Transform, Writable } = require('stream');
+const { Writable } = require('stream');
 const { DATA_ERROR_CODES } = require('../backend/error-codes');
 
 const {
@@ -20,8 +20,6 @@ const {
   decryptManifest,
   deriveMasterKey,
   encodeBase64,
-  encryptBuffer,
-  encryptFile,
   encryptManifest,
   resolveArchiveChild,
   validateCategory,
@@ -29,6 +27,20 @@ const {
   validateManifest,
   validatePassphrase,
 } = require('./archive-format');
+const {
+  buildPartialPath,
+  isPathInside,
+  removeOrReportPartial,
+  sweepAbandonedPartials,
+} = require('./archive-partials');
+
+const {
+  copyFileWithDigest,
+  removeEntryStaging,
+  sourceSnapshot,
+  writeBufferEntry,
+  writeSourceEntry,
+} = require('./archive-entry-writers');
 
 const ARCHIVE_EXTENSION = '.jenny-archive';
 const COMPLETE_MARKER = 'COMPLETE';
@@ -48,28 +60,6 @@ function buildArchiveName(date = new Date()) {
   return `Jenny Archive ${sanitizeTimestamp(date)}${ARCHIVE_EXTENSION}`;
 }
 
-function isPathInside(rootPath, targetPath) {
-  const root = path.resolve(String(rootPath || ''));
-  const target = path.resolve(String(targetPath || ''));
-  const relative = path.relative(root, target);
-  return Boolean(relative) && !relative.startsWith('..') && !path.isAbsolute(relative);
-}
-
-async function removeOwnedPartial(rootPath, partialPath) {
-  if (!isPathInside(rootPath, partialPath) || !path.basename(partialPath).endsWith('.partial')) {
-    return false;
-  }
-  try {
-    const stat = await fs.promises.lstat(partialPath);
-    if (!stat.isDirectory() || stat.isSymbolicLink()) return false;
-  } catch (error) {
-    if (error?.code === 'ENOENT') return true;
-    throw error;
-  }
-  await fs.promises.rm(partialPath, { recursive: true, force: true });
-  return true;
-}
-
 function normalizeEntries(entries) {
   if (!Array.isArray(entries) || entries.length > MAX_ARCHIVE_ENTRIES) {
     throw archiveError(DATA_ERROR_CODES.INVALID_REQUEST, 'invalid_entries', 'Archive entry list is invalid or too large.');
@@ -85,7 +75,8 @@ function normalizeEntries(entries) {
     seen.add(folded);
     const hasSource = typeof entry?.sourcePath === 'string' && entry.sourcePath.trim();
     const hasData = entry && Object.prototype.hasOwnProperty.call(entry, 'data');
-    if (Boolean(hasSource) === Boolean(hasData)) {
+    const hasProducer = typeof entry?.produce === 'function';
+    if (Number(Boolean(hasSource)) + Number(Boolean(hasData)) + Number(hasProducer) !== 1) {
       throw archiveError(DATA_ERROR_CODES.INVALID_REQUEST, 'invalid_entry_source', 'Each archive entry needs one data source.');
     }
     const data = hasData
@@ -93,14 +84,17 @@ function normalizeEntries(entries) {
       : null;
     let sourceStat;
     try {
-      sourceStat = data ? null : fs.lstatSync(entry.sourcePath);
+      sourceStat = data || hasProducer ? null : fs.lstatSync(entry.sourcePath);
     } catch (error) {
       throw archiveError(DATA_ERROR_CODES.SOURCE_UNREADABLE, 'source_unreadable', 'Archive source is unreadable.', error);
     }
     if (sourceStat && (!sourceStat.isFile() || sourceStat.isSymbolicLink())) {
       throw archiveError(DATA_ERROR_CODES.SOURCE_UNREADABLE, 'source_unreadable', 'Archive source is not a regular file.');
     }
-    const size = data ? data.length : Number(sourceStat.size);
+    const size = data ? data.length : Number(hasProducer ? entry.size || 0 : sourceStat.size);
+    if (!Number.isSafeInteger(size) || size < 0) {
+      throw archiveError(DATA_ERROR_CODES.INVALID_REQUEST, 'archive_size_limit', 'Archive input exceeds the supported size limit.');
+    }
     totalBytes += size;
     if (!Number.isSafeInteger(totalBytes) || totalBytes > MAX_ARCHIVE_BYTES) {
       throw archiveError(DATA_ERROR_CODES.INVALID_REQUEST, 'archive_size_limit', 'Archive input exceeds the supported size limit.');
@@ -114,6 +108,7 @@ function normalizeEntries(entries) {
       ),
       sourcePath: hasSource ? path.resolve(entry.sourcePath) : '',
       data,
+      produce: hasProducer ? entry.produce : null,
       size,
       expectedSha256: /^[a-f0-9]{64}$/.test(String(entry.expectedSha256 || ''))
         ? String(entry.expectedSha256)
@@ -161,83 +156,36 @@ async function assertFreeSpace(destinationRoot, requiredBytes) {
   }
 }
 
-function sourceSnapshot(sourcePath) {
-  let stat;
-  try {
-    stat = fs.lstatSync(sourcePath);
-  } catch (error) {
-    throw archiveError(DATA_ERROR_CODES.SOURCE_UNREADABLE, 'source_unreadable', 'Archive source is unreadable.', error);
+const STAGING_PREFIX = '.inventory-';
+const STALE_STAGING_AGE_MS = 60 * 60 * 1000;
+
+// A staging directory only outlives its entry when the process died mid-archive.
+async function prepareEntryStagingRoot(stagingRoot, encrypted, hasProducedEntries) {
+  if (!String(stagingRoot || '').trim()) {
+    if (encrypted && hasProducedEntries) throw new TypeError('An encrypted archive with produced entries requires stagingRoot.');
+    return '';
   }
-  if (!stat.isFile() || stat.isSymbolicLink()) {
-    throw archiveError(DATA_ERROR_CODES.SOURCE_UNREADABLE, 'source_unreadable', 'Archive source is not a regular file.');
+  const root = path.resolve(String(stagingRoot));
+  await fs.promises.mkdir(root, { recursive: true });
+  // A junction or symlink here would carry plaintext out of the profile.
+  const rootStat = await fs.promises.lstat(root);
+  if (!rootStat.isDirectory() || rootStat.isSymbolicLink()
+    || fs.realpathSync.native(root) !== path.join(fs.realpathSync.native(path.dirname(root)), path.basename(root))) {
+    throw archiveError(DATA_ERROR_CODES.UNSAFE_PATH, 'unsafe_archive_path', 'Archive staging escapes the profile.');
   }
-  return { size: stat.size, mtimeMs: stat.mtimeMs, ctimeMs: stat.ctimeMs, dev: stat.dev, ino: stat.ino };
-}
-
-function snapshotsEqual(first, second) {
-  return first.size === second.size
-    && first.mtimeMs === second.mtimeMs
-    && first.ctimeMs === second.ctimeMs
-    && first.dev === second.dev
-    && first.ino === second.ino;
-}
-
-async function copyFileWithDigest(sourcePath, destinationPath) {
-  const hash = crypto.createHash('sha256');
-  const digesting = new Transform({
-    transform(chunk, _encoding, callback) {
-      hash.update(chunk);
-      callback(null, chunk);
-    },
-  });
-  await fs.promises.mkdir(path.dirname(destinationPath), { recursive: true });
-  await pipeline(
-    fs.createReadStream(sourcePath),
-    digesting,
-    fs.createWriteStream(destinationPath, { flags: 'wx' })
-  );
-  return hash.digest('hex');
-}
-
-async function writeSourceEntry({ entry, destinationPath, encrypt, masterKey, salt, entryId }) {
-  for (let attempt = 0; attempt < 2; attempt += 1) {
-    const before = sourceSnapshot(entry.sourcePath);
-    await fs.promises.rm(destinationPath, { force: true });
-    const result = encrypt
-      ? await encryptFile({ sourcePath: entry.sourcePath, destinationPath, masterKey, salt, entryId })
-      : { sha256: await copyFileWithDigest(entry.sourcePath, destinationPath) };
-    const after = sourceSnapshot(entry.sourcePath);
-    if (snapshotsEqual(before, after)) {
-      if (entry.expectedSha256 && result.sha256 !== entry.expectedSha256) {
-        throw archiveError(
-          DATA_ERROR_CODES.RESTORE_CONFLICT,
-          'workspace_review_stale',
-          'Workspace archive contents changed after review. Review the workspace scope again.'
-        );
+  const now = Date.now();
+  for (const dirent of await fs.promises.readdir(root, { withFileTypes: true })) {
+    if (!dirent.isDirectory() || !dirent.name.startsWith(STAGING_PREFIX)) continue;
+    const stalePath = path.join(root, dirent.name);
+    try {
+      if (now - (await fs.promises.lstat(stalePath)).mtimeMs >= STALE_STAGING_AGE_MS) {
+        await fs.promises.rm(stalePath, { recursive: true, force: true });
       }
-      return { ...result, size: after.size };
+    } catch {
+      // Retried by the next archive.
     }
   }
-  throw archiveError(
-    DATA_ERROR_CODES.SOURCE_UNREADABLE,
-    'source_changed',
-    'A source file changed while Jenny was archiving it. No data was removed.'
-  );
-}
-
-async function writeBufferEntry({ entry, destinationPath, encrypt, masterKey, salt, entryId }) {
-  if (encrypt) {
-    return {
-      ...(await encryptBuffer({ data: entry.data, destinationPath, masterKey, salt, entryId })),
-      size: entry.data.length,
-    };
-  }
-  await fs.promises.mkdir(path.dirname(destinationPath), { recursive: true });
-  await fs.promises.writeFile(destinationPath, entry.data, { flag: 'wx' });
-  return {
-    sha256: crypto.createHash('sha256').update(entry.data).digest('hex'),
-    size: entry.data.length,
-  };
+  return root;
 }
 
 function buildReadme(encrypted) {
@@ -248,6 +196,7 @@ function buildReadme(encrypted) {
       ? 'This archive is encrypted. Reinstall Jenny and choose Restore archive to open it.'
       : 'This archive is readable without a password. Keep it somewhere private.',
     'Do not rename or edit files inside this directory.',
+    'Knowledge folder registrations and the contents of those folders are not part of this archive and must be added again after a restore.',
     `Format version: ${ARCHIVE_FORMAT_VERSION}`,
     '',
   ].join(os.EOL);
@@ -263,7 +212,9 @@ async function createArchive({
   archiveName = '',
   onProgress = null,
   shouldCancel = null,
+  signal = undefined,
   onCommit = null,
+  stagingRoot = '',
 } = {}) {
   const normalizedRoot = path.resolve(String(destinationRoot || ''));
   if (!String(destinationRoot || '').trim()) {
@@ -271,7 +222,7 @@ async function createArchive({
   }
   if (encrypted) validatePassphrase(passphrase);
   const normalizedEntries = normalizeEntries(entries);
-  const estimatedBytes = normalizedEntries.reduce((sum, entry) => sum + entry.size, 0);
+  let estimatedBytes = normalizedEntries.reduce((sum, entry) => sum + entry.size, 0);
   await assertFreeSpace(normalizedRoot, estimatedBytes);
   await fs.promises.mkdir(normalizedRoot, { recursive: true });
 
@@ -280,13 +231,22 @@ async function createArchive({
     throw archiveError(DATA_ERROR_CODES.INVALID_REQUEST, 'invalid_archive_name', 'Archive name is invalid.');
   }
   const finalPath = path.join(normalizedRoot, finalName);
-  const partialPath = `${finalPath}.${crypto.randomBytes(6).toString('hex')}.partial`;
+  const partialPath = buildPartialPath(finalPath);
   if (!isPathInside(normalizedRoot, finalPath) || !isPathInside(normalizedRoot, partialPath)) {
     throw archiveError(DATA_ERROR_CODES.UNSAFE_PATH, 'unsafe_archive_path', 'Archive destination is unsafe.');
   }
   if (fs.existsSync(finalPath)) {
     throw archiveError(DATA_ERROR_CODES.INVALID_REQUEST, 'archive_exists', 'An archive already exists at the selected destination.');
   }
+
+  await sweepAbandonedPartials(normalizedRoot, { archiveExtension: ARCHIVE_EXTENSION });
+  // Produced entries are plaintext (session exports, database snapshots), so an
+  // encrypted archive stages them in the profile, never next to the archive.
+  const entryStagingRoot = await prepareEntryStagingRoot(
+    stagingRoot,
+    encrypted,
+    normalizedEntries.some((entry) => entry.produce)
+  );
 
   const salt = encrypted ? crypto.randomBytes(32) : null;
   const masterKey = encrypted ? await deriveMasterKey(passphrase, salt, KDF_PROFILE) : null;
@@ -303,12 +263,13 @@ async function createArchive({
     });
   };
 
+  let lastStagingDir = '';
   try {
     await fs.promises.mkdir(partialPath, { recursive: false });
     const payloadRoot = path.join(partialPath, encrypted ? 'payload' : 'data');
     await fs.promises.mkdir(payloadRoot, { recursive: true });
     for (const [index, entry] of normalizedEntries.entries()) {
-      if (typeof shouldCancel === 'function' && shouldCancel()) {
+      if (signal?.aborted || (typeof shouldCancel === 'function' && shouldCancel())) {
         throw archiveError(DATA_ERROR_CODES.INVALID_REQUEST, 'operation_cancelled', 'Archive creation was canceled.');
       }
       const entryId = crypto.randomUUID();
@@ -317,9 +278,38 @@ async function createArchive({
         : `data/${entry.logicalPath}`;
       const destinationPath = resolveArchiveChild(partialPath, storedPath);
       notify('archiving', `Archiving ${index + 1} of ${normalizedEntries.length}`);
-      const result = entry.data
-        ? await writeBufferEntry({ entry, destinationPath, encrypt: encrypted, masterKey, salt, entryId })
-        : await writeSourceEntry({ entry, destinationPath, encrypt: encrypted, masterKey, salt, entryId });
+      let stagingDir;
+      let result;
+      let entryFailed = false;
+      try {
+        if (entry.produce) {
+          await assertFreeSpace(entryStagingRoot || partialPath, entry.size);
+          stagingDir = await fs.promises.mkdtemp(path.join(entryStagingRoot || partialPath, STAGING_PREFIX));
+          lastStagingDir = stagingDir;
+          const produced = await entry.produce(stagingDir);
+          if (!produced) continue;
+          if (!isPathInside(stagingDir, produced.sourcePath)
+            || !isPathInside(fs.realpathSync.native(stagingDir), fs.realpathSync.native(produced.sourcePath))) {
+            throw archiveError(DATA_ERROR_CODES.UNSAFE_PATH, 'unsafe_archive_path', 'Archive entry escapes its root.');
+          }
+          const actualSize = sourceSnapshot(produced.sourcePath).size;
+          estimatedBytes += actualSize - entry.size;
+          if (!Number.isSafeInteger(estimatedBytes) || estimatedBytes > MAX_ARCHIVE_BYTES) {
+            throw archiveError(DATA_ERROR_CODES.INVALID_REQUEST, 'archive_size_limit', 'Archive input exceeds the supported size limit.');
+          }
+          await assertFreeSpace(normalizedRoot, Math.max(0, estimatedBytes - completedBytes));
+          entry.sourcePath = produced.sourcePath;
+          entry.size = actualSize;
+        }
+        result = entry.data
+          ? await writeBufferEntry({ entry, destinationPath, encrypt: encrypted, masterKey, salt, entryId })
+          : await writeSourceEntry({ entry, destinationPath, encrypt: encrypted, masterKey, salt, entryId, signal });
+      } catch (error) {
+        entryFailed = true;
+        throw error;
+      } finally {
+        if (stagingDir) await removeEntryStaging(stagingDir, entryFailed);
+      }
       manifestEntries.push({
         entry_id: entryId,
         logical_path: entry.logicalPath,
@@ -382,7 +372,7 @@ async function createArchive({
     }
     await fs.promises.writeFile(path.join(partialPath, 'archive.json'), JSON.stringify(envelope, null, 2), { encoding: 'utf8', flag: 'wx' });
     await fs.promises.writeFile(path.join(partialPath, 'README.txt'), buildReadme(encrypted), { encoding: 'utf8', flag: 'wx' });
-    if (typeof shouldCancel === 'function' && shouldCancel()) {
+    if (signal?.aborted || (typeof shouldCancel === 'function' && shouldCancel())) {
       throw archiveError(DATA_ERROR_CODES.INVALID_REQUEST, 'operation_cancelled', 'Archive creation was canceled.');
     }
     await fs.promises.writeFile(path.join(partialPath, COMPLETE_MARKER), `${manifest.created_at}${os.EOL}`, { encoding: 'utf8', flag: 'wx' });
@@ -399,8 +389,13 @@ async function createArchive({
       warnings: [],
     };
   } catch (error) {
-    await removeOwnedPartial(normalizedRoot, partialPath).catch(() => {});
-    throw error;
+    const failure = error.name === 'AbortError' && signal?.aborted
+      ? archiveError(DATA_ERROR_CODES.INVALID_REQUEST, 'operation_cancelled', 'Archive creation was canceled.', error)
+      : error;
+    // Profile staging is outside the partial; retry a removal the entry could not finish.
+    if (lastStagingDir) await fs.promises.rm(lastStagingDir, { recursive: true, force: true }).catch(() => {});
+    await removeOrReportPartial(normalizedRoot, partialPath, failure);
+    throw failure;
   }
 }
 

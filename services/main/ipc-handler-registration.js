@@ -3,13 +3,9 @@ const { prepareAttachmentEntries } = require('../attachment-service');
 const { ExclusiveGpuCoordinator } = require('../backend/exclusive-gpu-coordinator');
 const { registerLlamaServerIpcHandlers } = require('./llama-server-ipc-handlers');
 const { registerKnowledgeIpcHandlers } = require('./knowledge-ipc-handlers');
+const { resolveSkillsAuthority } = require('../skills-project-scope');
 const { getCachedOrGenerateSuggestions } = require('../backend/backend-suggestions');
 const { generateCommitMessage } = require('../backend/backend-commit');
-const {
-  generateInlineCompletion,
-  listLoadedInlineModels,
-  unloadInlineModel,
-} = require('../backend/backend-inline-complete');
 const { isChildPath } = require('../backend/path-utils');
 const { PERSONALITY_ERROR_CODES } = require('../backend/error-codes');
 const { registerAuxiliaryIpcHandlers } = require('../auxiliary-ipc-handlers');
@@ -21,7 +17,8 @@ const {
   registerFeatureIpcHandlers: registerFeatureIpcHandlersWithDeps,
 } = require('../feature-settings-service');
 const { registerPluginsRuntime } = require('./plugins-ipc-registration');
-const { registerRemoteIpc } = require('./remote-ipc-registration');
+const { registerCloudModels } = require('./cloud-models-registration');
+const { readRetiredChatgptPluginFacts } = require('./chatgpt-legacy-plugin-choice');
 const { registerChatGptPlanUsageIpc } = require('./chatgpt-plan-usage-ipc');
 const { registerClientLogIpcHandler } = require('./client-log-forwarding');
 const { createWindowExitGuard } = require('./window-exit-guard');
@@ -39,7 +36,6 @@ const { startVersionedWorkspaceTempRecovery } = require('../versioned-workspace-
 const { createWorkspaceIdeWatcher } = require('../workspace-ide-watcher');
 const { WorkspaceGitService } = require('../workspace-git-service');
 const { WorkspaceFileMapService } = require('../workspace-file-map-service');
-const { WorkspaceTerminalService } = require('../workspace-terminal-service');
 const { WorkspacePtyService } = require('../workspace-pty-service');
 const { WorkspaceRunTaskService } = require('../workspace-run-task-service');
 const { createWorkspaceTestRunnerWiring } = require('./workspace-test-runner-wiring');
@@ -214,15 +210,28 @@ function persistAgentName(shellConfigService, value, logEvent) {
   }
 }
 
+// skills.getState(): the open Workspace's catalog (Settings). skills.getState
+// ({ session_id?, project_id? }): one chat's catalog, its project scope read from
+// the chat's canonical binding (a draft's project_id only before it persists).
+function normalizeSkillsScopePayload(payload) {
+  const valid = payload && typeof payload === 'object' && !Array.isArray(payload)
+    && Object.keys(payload).every((key) => key === 'session_id' || key === 'project_id')
+    && Object.values(payload).every((value) => typeof value === 'string' && value.length <= 256);
+  if (!valid) throw new TypeError('Invalid skills scope.');
+  return { sessionId: payload.session_id || '', projectId: payload.project_id || '' };
+}
+
 function registerGuidanceIpcHandlers(
-  ipcMainLike, skillService, tipService, { authorization = {} } = {}
+  ipcMainLike, skillService, { authorization = {}, projectAuthority = null } = {}
 ) {
   registerIpcInvokeHandlers(ipcMainLike, {
-    'skills.getState': () => skillService.getState(),
+    'skills.getState': (_, payload) => (payload === undefined || payload === null
+      ? skillService.getState()
+      : skillService.getState({
+        authority: resolveSkillsAuthority(projectAuthority, normalizeSkillsScopePayload(payload)),
+      })),
     'skills.updateSettings': (_, patch) => skillService.updateSettings(patch),
     'skills.openScopeFolder': (_, scope) => skillService.openScopeFolder(scope),
-    'tips.getState': () => tipService.getState(),
-    'tips.updateSettings': (_, patch) => tipService.updateSettings(patch),
   }, authorization);
 }
 
@@ -259,7 +268,6 @@ function registerMainIpcHandlers({
   companionService,
   skillsService,
   knowledgeService,
-  tipsService,
   suggestionCache,
   offlineIntelligenceService,
   applyFeatureSettingsPatch,
@@ -268,6 +276,7 @@ function registerMainIpcHandlers({
   attachmentAssetStore,
   processRef = process,
   clipboard,
+  nativeImage,
   log,
   getMainLifecycle,
   getWindowState,
@@ -279,7 +288,6 @@ function registerMainIpcHandlers({
   ollamaInstallService,
   mcpDiscoveryService,
   schedulerService,
-  weatherService,
   linkStatusService,
   calendarService,
   chatStreamBridge,
@@ -291,13 +299,8 @@ function registerMainIpcHandlers({
   // by the runtime-shutdown controller; null until main wires it.
   getLlamaServerManager = () => null,
   getCurrentSystemStatsPayload,
+  getSystemStats = () => null,
   buildFeatureStatePayload,
-  getOverlayRef = () => null,
-  setOverlayRef = () => {},
-  isCometOverlayEnabled = () => false,
-  createCometOverlay = () => null,
-  handleCometOverlayToggle = () => null,
-  normalizeCometOverlayPresencePayload = (payload) => payload,
   getDiagnosticLogService = () => logStore,
   getProcessLogWriter = () => null,
   getLogRedactionPrefixes = () => [],
@@ -330,10 +333,11 @@ function registerMainIpcHandlers({
     unauthorizedResult: unauthorizedIpcResult,
   };
   require('./tools-settings-ipc-registration').registerToolsSettingsIpc(ipcMain, {
-    backendService, authorization: workspaceAuthorization,
+    backendService, authorization: workspaceAuthorization, dialog, getMainWindow, userDataPath: app.getPath('userData'),
   });
   if (backendService.projectApplicationService) require('./session-runtime-ipc-registration').registerSessionRuntimeIpcHandlers(ipcMain, {
     applicationService: backendService.projectApplicationService, runtimeApplicationService: backendService.runtimeApplicationService, authorization: workspaceAuthorization,
+    dialog, getMainWindow, shell: require('electron')?.shell || null, // projects.chooseRoot / revealFolder stay in main
   });
   registerWorkspaceIpcHandlers(ipcMain, shellConfigService, {
     authorization: workspaceAuthorization,
@@ -464,25 +468,11 @@ function registerMainIpcHandlers({
   if (toolExecutor && typeof toolExecutor.attachWorkspaceTestRunnerService === 'function') {
     toolExecutor.attachWorkspaceTestRunnerService(workspaceTestRunnerService);
   }
-  const workspaceTerminalService = new WorkspaceTerminalService({
-    configService: shellConfigService,
-    sendBridgeEvent,
-    logger: log,
-  });
-  registerIpcInvokeHandlers(ipcMain, {
-    'workspaceTerminal.start': () => workspaceTerminalService.start(),
-    'workspaceTerminal.write': (_, payload) => workspaceTerminalService.write(payload),
-    'workspaceTerminal.signal': (_, payload) => workspaceTerminalService.signal(payload),
-    'workspaceTerminal.kill': (_, payload) => workspaceTerminalService.kill(payload),
-  }, workspaceAuthorization);
-  // workspacePty.* namespace: real ConPTY terminal, gated by the default-ON
-  // workspace_pty_terminal flag read live off the backend service's resolved
-  // feature flags (env `JENNY_ENABLE_WORKSPACE_PTY_TERMINAL=0` rolls back to the
-  // legacy line terminal). Flag posture lives inside the service; registration
-  // here is unconditional, matching the house pattern.
+  // workspacePty.* namespace: the Workspace IDE terminal (real ConPTY). The
+  // piped line terminal and its workspace_pty_terminal flag were retired in
+  // the post-1.2.0 sweep (S8).
   const workspacePtyService = new WorkspacePtyService({
     configService: shellConfigService,
-    featureFlagProvider: () => backendService.featureFlags,
     sendBridgeEvent,
     logger: log,
   });
@@ -499,7 +489,6 @@ function registerMainIpcHandlers({
     getOwnerWindow: getMainWindow,
     backendService,
     watcher: workspaceIdeWatcher,
-    terminalService: workspaceTerminalService,
     ptyService: workspacePtyService,
     testRunnerService: workspaceTestRunnerService,
     runTaskService: workspaceRunTaskService,
@@ -574,22 +563,24 @@ function registerMainIpcHandlers({
     },
   });
   // Belt-and-braces orphan guard: graceful quit now runs through the main
-  // lifecycle's awaited shutdown task list, so the async piped-terminal tree
-  // kill can finish before app.exit(). The app.once fallback keeps standalone
-  // test/composition callers covered when no lifecycle is present. Both
-  // services are ALSO returned below so main.js can thread them into
+  // lifecycle's awaited shutdown task list, so the async PTY termination can
+  // finish before app.exit(). The app.once fallback keeps standalone
+  // test/composition callers covered when no lifecycle is present. The
+  // service is ALSO returned below so main.js can thread it into
   // stopRuntimeBeforeQuit → disposeWorkspaceProcesses (runtime-shutdown.js);
-  // the two paths coexist safely — both dispose() implementations are
-  // idempotent, so whichever runs second is a no-op.
+  // the two paths coexist safely — dispose() is idempotent, so whichever
+  // runs second is a no-op.
   registerWorkspaceTerminalShutdownTask({
     getMainLifecycle,
     app,
-    workspaceTerminalService,
     workspacePtyService,
     log,
   });
   registerGuidanceIpcHandlers(
-    ipcMain, skillsService, tipsService, { authorization: workspaceAuthorization }
+    ipcMain, skillsService, {
+      authorization: workspaceAuthorization,
+      projectAuthority: backendService?.projectAuthority || null,
+    }
   );
   registerKnowledgeIpcHandlers(ipcMain, knowledgeService, {
     enabled: backendService?.featureFlags?.knowledge_layer === true,
@@ -633,26 +624,44 @@ function registerMainIpcHandlers({
   } else if (typeof app?.once === 'function') {
     app.once('will-quit', disposeExclusiveGpu);
   }
-  const remoteLifecycle = getMainLifecycle?.();
-  const remoteIpc = registerRemoteIpc(ipcMain, { backendService,
-    secureStore: backendService?.secureStore || null, shellConfigService, env: processRef.env,
-    mainLifecycle: remoteLifecycle, getMainWindow, sendBridgeEvent, log });
+  // Remote Control was removed (owner, 2026-10-02): drop the pairing record it
+  // left in the secure store. A store that is unreadable now is tried again on
+  // the next start.
+  try {
+    const purged = backendService?.secureStore?.purgeRetiredSecrets?.() || [];
+    if (purged.length > 0) log('INFO', 'secure_store.retired_secrets_purged', { count: purged.length });
+  } catch (_error) { /* best effort */ }
+  // Core owner of the ChatGPT catalog and the cloudModels.* IPC; composed
+  // before the plugin runtime, which still hosts the legacy setup panel.
+  const cloudModels = registerCloudModels(ipcMain, {
+    backendService,
+    shellConfigService,
+    sendBridgeEvent,
+    processRef,
+    readLegacyPluginFacts: () => readRetiredChatgptPluginFacts({
+      userDataDir: app.getPath('userData'), log,
+    }),
+    authorization: workspaceAuthorization,
+    log,
+  });
+  const cloudModelsLifecycle = getMainLifecycle?.();
+  if (typeof cloudModelsLifecycle?.registerShutdownTask === 'function') {
+    cloudModelsLifecycle.registerShutdownTask(cloudModels.dispose);
+  } else if (typeof app?.once === 'function') {
+    app.once('will-quit', cloudModels.dispose);
+  }
   const pluginsRuntime = registerPluginsRuntime(ipcMain, {
     app,
     backendService,
     processRef,
     getMainWindow,
     getMainLifecycle,
-    sendBridgeEvent: remoteIpc.wrapBridgeEvents(sendBridgeEvent),
-    showItemInFolderImpl,
+    sendBridgeEvent,
+    setChatgptModelsEnabled: (value) => cloudModels.setChatgptEnabled(null, value),
     log,
   });
-  remoteIpc.attachPluginService(pluginsRuntime?.service || null);
-  if (typeof remoteLifecycle?.registerShutdownTask === 'function') {
-    remoteLifecycle.registerShutdownTask(remoteIpc.teardown);
-  } else if (typeof app?.once === 'function') app.once('will-quit', remoteIpc.teardown);
-  // Composed AFTER registerPluginsRuntime so backendService.chatgptAuthService
-  // (Stage 7 provider auth owner) already exists to attach the sign-out clear.
+  // Composed AFTER registerCloudModels so backendService.chatgptAuthService
+  // (the core ChatGPT auth owner) already exists to attach the sign-out clear.
   const teardownChatgptPlanUsageIpc = registerChatGptPlanUsageIpc(ipcMain, {
     app,
     backendService,
@@ -706,6 +715,17 @@ function registerMainIpcHandlers({
     env: processRef?.env || process.env,
     log,
   });
+  const personalityPreviewOptions = (payload, bodyFields = []) => {
+    const source = payload ?? {};
+    const fields = ['session_id', 'project_id', ...bodyFields];
+    if (typeof source !== 'object' || Array.isArray(source)
+      || Object.keys(source).some((key) => !fields.includes(key))) throw new TypeError('Invalid personality scope.');
+    const scope = Object.fromEntries(Object.entries(source).filter(([key]) => key === 'session_id' || key === 'project_id'));
+    return {
+      projectId: resolveSkillsAuthority(backendService?.projectAuthority, normalizeSkillsScopePayload(scope)).project_id,
+      uiLanguage: shellConfigService?.getUiLanguage?.() || 'en',
+    };
+  };
   registerIpcInvokeHandlers(ipcMain, {
     'backend.getStatus': () => backendService.getBackendStatus(),
     'backend.retryStart': async () => {
@@ -726,8 +746,6 @@ function registerMainIpcHandlers({
       backendService.setSessionPreferences(sessionId, preferences),
     'sessions.setMeta': (_, sessionId, meta) => backendService.setSessionMeta(sessionId, meta),
     'sessions.sweepEmpty': (_, options) => backendService.sweepEmptySessions(options),
-    'sessions.updateMessage': (_, sessionId, messageId, patch) =>
-      backendService.updateSessionMessage(sessionId, messageId, patch),
     'sessions.editAndTruncate': (_, sessionId, messageId, payload) =>
       backendService.editUserMessageAndTruncate(sessionId, messageId, payload),
     'sessions.exportSession': (_, sessionId) => {
@@ -736,15 +754,6 @@ function registerMainIpcHandlers({
         backendService.sessionStore,
         sessionId,
         backendService.attachmentAssetStore
-      );
-    },
-    'sessions.importSession': (_, jsonPayload) => {
-      const { importSession } = require('../backend/session-export-import');
-      return importSession(
-        backendService.sessionStore,
-        jsonPayload,
-        backendService.attachmentAssetStore,
-        { shadowStore: backendService.shadowStore }
       );
     },
     'sessions.forkSession': (_, sessionId, atMessageId, options) => {
@@ -785,15 +794,15 @@ function registerMainIpcHandlers({
       );
     },
     'models.list': () => backendService.listModels(),
-    // Raw installed Ollama tags for the FIM completion-model picker. Scoped to
-    // the ollama engine regardless of the chat engine (a FIM model is a separate
-    // Ollama pull), so it reuses the sidecar's raw Ollama catalog directly instead
-    // of the unified chat picker catalog and its provider entries.
+    // Raw installed Ollama tags for the Model Library. Scoped to the ollama
+    // engine regardless of the chat engine, so it reuses the sidecar's raw Ollama
+    // catalog directly instead of the unified chat picker catalog and its
+    // provider entries.
     'models.listOllamaTags': () => backendService.listModelsForEngine('ollama'),
     // No ownStreamId: a user-driven activation excludes no stream, so ANY live
     // response refuses the switch (see loadModel).
     'models.load': (_, model) => backendService.loadModel(model),
-    'models.unload': () => backendService.unloadModel(),
+    'models.unload': () => backendService.unloadModel({ stopManagedServer: true }),
     'models.delete': (_, payload) => {
       if (!setupService) {
         return {
@@ -832,6 +841,12 @@ function registerMainIpcHandlers({
       await refreshGpuMemorySample({ force: true, manual: true }).catch(() => null);
       return getCurrentSystemStatsPayload(null, { fresh: true });
     },
+    'system.setStatsWatch': (_event, payload) => {
+      const cadence = getSystemStats()?.watchCadence;
+      if (!cadence) return { watched: false };
+      const source = String(payload?.source || '').trim().slice(0, 32);
+      return { watched: cadence.setWatched(source, payload?.watched === true) };
+    },
     'logs.list': () => logStore.list(),
     'diagnostics.logs.getSnapshot': (_event, options) => logStore.getSnapshot(options),
     'diagnostics.reportRendererError': require('../main-error-hardening').createRendererDiagnosticsHandler(log),
@@ -854,17 +869,19 @@ function registerMainIpcHandlers({
     // Personality v3. The agent NAME lives in shell-config (assistantIdentity)
     // while the note/about-you bodies live in the personality workspace, so the
     // one-call contract is composed here rather than inside either service.
-    'personality.getState': () => personalityWorkspace.getState({
+    'personality.getState': (_, payload) => personalityWorkspace.getState({
+      ...personalityPreviewOptions(payload),
       agentName: readAgentName(shellConfigService),
     }),
     'personality.save': async (_, payload) => {
+      const options = personalityPreviewOptions(payload, ['agentName', 'personality', 'user', 'force']);
       const source = payload && typeof payload === 'object' && !Array.isArray(payload) ? payload : {};
       const name = Object.prototype.hasOwnProperty.call(source, 'agentName')
         ? persistAgentName(shellConfigService, source.agentName, log)
         : { agentName: readAgentName(shellConfigService), persisted: true };
       // Files are saved either way -- a rejected rename must not discard the
       // note the user just typed -- but the result has to say the name failed.
-      const result = await personalityWorkspace.save({ ...source, agentName: name.agentName });
+      const result = await personalityWorkspace.save({ ...source, ...options, agentName: name.agentName });
       if (name.persisted) return result;
       return {
         ...result,
@@ -874,7 +891,8 @@ function registerMainIpcHandlers({
         agentName: name.agentName,
       };
     },
-    'personality.clear': () => personalityWorkspace.clear({
+    'personality.clear': (_, payload) => personalityWorkspace.clear({
+      ...personalityPreviewOptions(payload, ['agentName']),
       agentName: readAgentName(shellConfigService),
     }),
     'personality.openWorkspaceFolder': () => personalityWorkspace.openWorkspaceFolder(),
@@ -926,9 +944,6 @@ function registerMainIpcHandlers({
     suggestionCache,
     getCachedOrGenerateSuggestions,
     generateCommitMessage,
-    generateInlineCompletion,
-    listLoadedInlineModels,
-    unloadInlineModel,
     offlineIntelligenceService,
     modelTuningService,
     engineTuningService,
@@ -942,6 +957,7 @@ function registerMainIpcHandlers({
     os,
     isChildPath,
     clipboard,
+    nativeImage,
     log,
     getMainLifecycle,
     getWindowState,
@@ -952,40 +968,15 @@ function registerMainIpcHandlers({
     ollamaInstallService,
     mcpDiscoveryService,
     schedulerService,
-    weatherService,
     linkStatusService,
     calendarService,
     homeAssistantService: backendService?.homeAssistantService || null,
     chatStreamBridge,
   });
 
-  ipcMain.on(getBridgeChannel('comet.sendOverlayState', 'send'), (_event, data) => {
-    const normalized = normalizeCometOverlayPresencePayload(data);
-    const overlayRef = getOverlayRef();
-    if (overlayRef && overlayRef.window && !overlayRef.window.isDestroyed()) {
-      overlayRef.window.webContents.send('comet:state-changed', normalized);
-    }
-  });
-  ipcMain.on(getBridgeChannel('comet.toggleOverlay', 'send'), (_event, data) => {
-    const nextOverlayRef = handleCometOverlayToggle({
-      data,
-      mainWindowRef: getMainWindow(),
-      currentOverlayRef: getOverlayRef(),
-      isOverlayEnabled: () => isCometOverlayEnabled(),
-      createOverlay: createCometOverlay,
-      onOverlayDisposed: (disposedOverlay) => {
-        if (getOverlayRef() === disposedOverlay) {
-          setOverlayRef(null);
-        }
-      },
-    });
-    setOverlayRef(nextOverlayRef);
-  });
-
   return {
     workspaceIdeService,
     workspaceFileMapService,
-    workspaceTerminalService,
     workspacePtyService,
     workspaceRunTaskService,
     workspaceTestRunnerService,

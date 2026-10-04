@@ -12,19 +12,6 @@ function createDefaultSkillsState() {
   };
 }
 
-function createDefaultTipsState() {
-  return {
-    featureEnabled: false,
-    settings: {
-      enabled: true,
-      sessionCount: 1,
-      historyByTipId: {},
-    },
-    relevantTips: [],
-    activeTip: null,
-  };
-}
-
 async function emitGuidanceState(listeners, bucket, state, key, payload) {
   const nextState = payload && typeof payload === 'object' && !Array.isArray(payload)
     ? { ...state[key], ...payload }
@@ -78,44 +65,8 @@ function createSkillsStub(options, state) {
   };
 }
 
-function createTipsStub(options, state, addListener) {
-  return {
-    async getState() {
-      if (typeof options.tips?.getState === 'function') {
-        const payload = await options.tips.getState({ state });
-        if (payload && typeof payload === 'object') {
-          state.tipsState = { ...state.tipsState, ...payload };
-        }
-      }
-      return state.tipsState;
-    },
-    async updateSettings(patch) {
-      if (typeof options.tips?.updateSettings === 'function') {
-        const payload = await options.tips.updateSettings(patch, { state });
-        if (payload && typeof payload === 'object') {
-          state.tipsState = { ...state.tipsState, ...payload };
-        }
-        return state.tipsState;
-      }
-      state.tipsState = {
-        ...state.tipsState,
-        settings: {
-          ...state.tipsState.settings,
-          ...(patch && typeof patch === 'object' ? patch : {}),
-        },
-      };
-      return state.tipsState;
-    },
-    onChanged(listener) {
-      return addListener('tips', listener);
-    },
-  };
-}
-
 module.exports = {
   createDefaultSkillsState,
-  createDefaultTipsState,
   createSkillsStub,
-  createTipsStub,
   emitGuidanceState,
 };

@@ -69,10 +69,6 @@ test('surface-effect styles keep splash layering stable and composer-accessible'
     path.join(rootDir, 'styles', 'chat-media-queries.css'),
     'utf8'
   );
-  const chatSpriteV2Css = fs.readFileSync(
-    path.join(rootDir, 'styles', 'chat-sprite-v2.css'),
-    'utf8'
-  );
   const chatThreadPresetsCss = fs.readFileSync(
     path.join(rootDir, 'styles', 'chat-thread-presets.css'),
     'utf8'
@@ -168,17 +164,17 @@ test('surface-effect styles keep splash layering stable and composer-accessible'
   assert.match(
     chatThreadCss,
     /\.chat-bubble\s*\{[\s\S]*?font-size:\s*var\(--tl-font-prose\);/,
-    'chat bubble body text should use the timeline prose token (zoom-scaled)'
+    'chat bubble body text should use the timeline prose token (Text size axis)'
   );
   assert.match(
     reasoningV2Css,
     /\.reasoning-row-panel-body\s*\{[\s\S]*?font-size:\s*var\(--tl-font-detail\);/,
-    'reasoning transcript text should use the timeline detail token (zoom-scaled)'
+    'reasoning transcript text should use the timeline detail token (Text size axis)'
   );
   assert.match(
     chatToolsCss,
-    /\.interactive-recap-label\s*\{[\s\S]*?font-size:\s*calc\(13px\s*\*\s*var\(--chat-zoom-factor,\s*1\)\);/,
-    'tool and recap transcript text should scale with chat zoom'
+    /\.interactive-recap-label\s*\{[\s\S]*?font-size:\s*var\(--tl-font-ui\);/,
+    'tool and recap labels ride the timeline ui token (footnote role on the Text size axis)'
   );
   assert.match(
     chatThreadCss,
@@ -252,12 +248,12 @@ test('surface-effect styles keep splash layering stable and composer-accessible'
   );
   assert.match(
     chatComposerCss,
-    /\.composer\s*\{[\s\S]*?--composer-secondary-control-size:\s*calc\(32px \* var\(--chat-zoom-factor,\s*1\)\);[\s\S]*?--composer-secondary-control-bg:/,
+    /\.composer\s*\{[\s\S]*?--composer-secondary-control-size:\s*32px;[\s\S]*?--composer-secondary-control-bg:/,
     'composer should expose shared secondary-control tokens for decluttered chrome'
   );
   assert.match(
     chatComposerCss,
-    /\.composer-icon-button,\s*[\s\S]*?\.composer-gear,\s*[\s\S]*?\.composer-jump-button\s*\{[\s\S]*?width:\s*var\(--composer-secondary-control-size\);[\s\S]*?height:\s*var\(--composer-secondary-control-size\);/,
+    /\.composer-icon-button,\s*[\s\S]*?\.composer-jump-button\s*\{[\s\S]*?width:\s*var\(--composer-secondary-control-size\);[\s\S]*?height:\s*var\(--composer-secondary-control-size\);/,
     'secondary composer controls should share one sizing and chrome contract'
   );
   assert.match(
@@ -267,7 +263,7 @@ test('surface-effect styles keep splash layering stable and composer-accessible'
   );
   assert.match(
     chatToolsCss,
-    /\.tool-approval-block\s*\{[\s\S]*?--tool-approval-button-min-height:\s*calc\(36px\s*\*\s*var\(--chat-zoom-factor,\s*1\)\);[\s\S]*?--tool-approval-button-transition:/,
+    /\.tool-approval-block\s*\{[\s\S]*?--tool-approval-button-min-height:\s*36px;[\s\S]*?--tool-approval-button-transition:/,
     'tool approval blocks should centralize shared approve/deny button sizing and motion'
   );
   assert.match(
@@ -415,14 +411,37 @@ test('surface-effect styles keep splash layering stable and composer-accessible'
   );
   assert.match(
     timelineOrientationCss,
-    /@media \(max-width:\s*719px\)\s*\{[\s\S]*?\.chat-timeline-utility-cluster #timelineCollapseExpandToggle\s*\{[\s\S]*?display:\s*none;/,
-    'narrow layouts should continue suppressing the lower-value collapse/expand control'
+    /@media \(max-width:\s*719px\)\s*\{[\s\S]*?\.chat-timeline-utility-cluster \.chat-timeline-view-toggle\s*\{[\s\S]*?display:\s*none;/,
+    'narrow layouts should suppress the transcript view control (the palette item covers it)'
   );
   assert.match(
     timelineOrientationCss,
-    /\.chat-view\.chat-empty #timelineCollapseExpandToggle,[\s\S]*?\.chat-view\.chat-empty \.chat-timeline-wayfinder-host\s*\{[\s\S]*?display:\s*none;/,
+    /\.chat-view\.chat-empty > \.chat-pane\[data-pane-id="0"\] \.chat-timeline-view-toggle,[\s\S]*?\.chat-view\.chat-empty \.chat-timeline-wayfinder-host\s*\{[\s\S]*?display:\s*none;/,
     'empty chats should hide transcript-only utilities without hiding the artifact viewer toggle'
   );
+  // #chatView's chat-empty follows pane 0 only: an unscoped view-level rule
+  // would also hide pane 1's cloned view control while pane 0 is empty.
+  assert.doesNotMatch(
+    timelineOrientationCss,
+    /\.chat-view\.chat-empty \.chat-timeline-view-toggle/,
+    "no view-level empty rule may reach every pane's view control"
+  );
+  {
+    const selectorList = /([^{}]*\.chat-timeline-view-toggle[^{}]*)\{\s*display:\s*none;\s*\}/.exec(
+      timelineOrientationCss.replace(/\/\*[\s\S]*?\*\//g, '')
+    )[1].trim();
+    const { document } = new JSDOM(`
+      <section class="chat-view chat-empty" id="chatView">
+        <div class="chat-pane" id="chatPane0" data-pane-id="0"><button class="chat-timeline-view-toggle" id="t0"></button></div>
+        <div class="chat-pane" data-pane-id="1"><button class="chat-timeline-view-toggle" id="t1"></button></div>
+      </section>`).window;
+    const hiddenIds = () => [...document.querySelectorAll(selectorList)]
+      .filter((node) => node.classList.contains('chat-timeline-view-toggle'))
+      .map((node) => node.id);
+    assert.deepEqual(hiddenIds(), ['t0'], "an empty pane 0 hides only its own view control, not pane 1's");
+    document.querySelector('[data-pane-id="1"]').classList.add('chat-empty');
+    assert.deepEqual(hiddenIds(), ['t0', 't1'], 'an empty pane 1 hides its own view control');
+  }
   assert.doesNotMatch(
     timelineOrientationCss,
     /\.chat-view\.chat-empty \.chat-timeline-utility-cluster\s*\{[\s\S]*?display:\s*none;/,
@@ -455,7 +474,7 @@ test('surface-effect styles keep splash layering stable and composer-accessible'
   );
   assert.match(
     chatThreadCss,
-    /\.chat-thread-toggle,\s*[\s\S]*?\.chat-thread-toggle-spacer\s*\{[\s\S]*?width:\s*var\(--thread-dot-hit-size\);[\s\S]*?height:\s*var\(--thread-dot-hit-size\);/,
+    /\.chat-thread-toggle\s*\{[\s\S]*?width:\s*var\(--thread-dot-hit-size\);[\s\S]*?height:\s*var\(--thread-dot-hit-size\);/,
     'thread dots should preserve a larger click target than the visible dot size'
   );
   assert.match(
@@ -521,40 +540,17 @@ test('surface-effect styles keep splash layering stable and composer-accessible'
     /@media \(max-width:\s*1180px\)[\s\S]*?\.chat-sprite-layer\s*\{[\s\S]*?display:\s*none;/,
     'settings responsiveness must not hide the timeline sprite on laptop widths'
   );
+  // The activity dot replaced the disc and the holo: the sprite paints nothing itself,
+  // and its states, tones and loops live in chat-sprite-dot.css (renderer-sprite-dot-css.test.js).
   assert.doesNotMatch(
     readCssRuleBlock(chatThreadCss, '.chat-assistant-sprite'),
-    /will-change:/,
-    'the passive sprite must not retain compositor promotion'
-  );
-  assert.match(
-    readCssRuleBlock(chatThreadCss, '.chat-assistant-sprite.is-streaming'),
-    /will-change:\s*transform;/,
-    'only the live sprite should promote its transform'
+    /will-change:|border:|background:|box-shadow:/,
+    'the sprite must not retain compositor promotion or any disc chrome'
   );
   assert.doesNotMatch(
-    readCssRuleBlock(chatThreadCss, '.chat-assistant-sprite.is-streaming'),
-    /transition:/,
-    'the live state should inherit the base transform transition instead of replacing it'
-  );
-  assert.match(
-    chatSpriteV2Css,
-    /\[data-sprite-state="complete"\][\s\S]*?\[data-sprite-state="error"\][\s\S]*?var\(--state-danger\)[\s\S]*?\[data-sprite-state="cancelled"\][\s\S]*?var\(--state-warning\)/,
-    'complete, error, and cancelled sprite states should have restrained token-based treatments'
-  );
-  assert.doesNotMatch(
-    chatThreadPresetsCss,
-    /data-sprite-holo="on"\]\s+\.chat-assistant-sprite::(?:before|after)/,
-    'the enabled holo preset must not suppress passive semantic sprite chrome'
-  );
-  assert.match(
-    chatThreadPresetsCss,
-    /data-sprite-holo="on"\]\s+\.chat-assistant-sprite\.is-streaming::before[\s\S]*?\.chat-assistant-sprite\.is-streaming::after[\s\S]*?display:\s*none;/,
-    'the canvas should replace CSS rings only while the sprite is live'
-  );
-  assert.match(
-    chatSpriteV2Css,
-    /data-sprite-holo="off"\][\s\S]*?\.chat-assistant-sprite\.is-streaming::after[\s\S]*?will-change:\s*auto;[\s\S]*?data-sprite-holo="off"\][\s\S]*?\.chat-assistant-sprite\.is-streaming::after[\s\S]*?animation:\s*none;/,
-    'holo-off live sprites should own neither invisible CSS animation nor compositor promotion'
+    `${chatThreadCss}\n${chatThreadPresetsCss}`,
+    /\.is-streaming|data-sprite-state|data-sprite-holo|chat-sprite-holo|chat-assistant-sprite::(?:before|after)/,
+    'no disc tint, streaming promotion or holo selector remains'
   );
   assert.match(
     chatMediaQueriesCss,
@@ -610,18 +606,13 @@ test('surface-effect styles keep splash layering stable and composer-accessible'
   );
   assert.match(
     chatThreadCss,
-    /--thread-dot-size:\s*calc\(5px \* var\(--chat-zoom-factor, 1\)\);/,
+    /--thread-dot-size:\s*5px;/,
     'default thread dots follow the quiet contract size'
   );
   assert.match(
     chatThreadCss,
-    /:root\[data-thread-style="subtle"\][\s\S]*?--thread-dot-hit-size:\s*max\(24px,\s*calc\(24px \* var\(--chat-zoom-factor, 1\)\)\);/,
+    /:root\[data-thread-style="subtle"\][\s\S]*?--thread-dot-hit-size:\s*24px;/,
     'subtle thread hit targets should never shrink below 24px'
-  );
-  assert.match(
-    chatThreadCss,
-    /:root\[data-thread-style="bold-graph"\][\s\S]*?--thread-dot-hit-size:\s*max\(28px,\s*calc\(28px \* var\(--chat-zoom-factor, 1\)\)\);[\s\S]*?--thread-rail-opacity:\s*0\.74;/,
-    'bold graph should preserve its larger accessible target and intended rail contrast'
   );
   assert.match(
     chatThreadCss,
@@ -693,7 +684,7 @@ test('chat width tokens expose a Default/Wide reading measure without breaking t
   assert.match(foundationCss, /--content-column-width:\s*min\(var\(--chat-measure-max\),\s*var\(--chat-measure-fit\)\);/);
   assert.match(foundationCss, /--composer-width:\s*min\(var\(--chat-measure-max\),\s*var\(--chat-measure-fit\)\);/);
 
-  const wideRule = readCssRuleBlock(foundationCss, ':root[data-chat-width="wide"]');
+  const wideRule = readCssRuleBlock(foundationCss, ':root[data-chat-width="standard"]');
   assert.match(wideRule, /--chat-measure-max:\s*1100px;/);
   assert.match(wideRule, /--chat-card-max-width:\s*1100px;/);
   // The transcript and the composer widen together (owner decision).
@@ -704,7 +695,7 @@ test('chat width tokens expose a Default/Wide reading measure without breaking t
 
   // The width tokens are re-declared inside the wide block ON PURPOSE: at
   // (0,2,0) that outranks the bare `:root` overrides in settings-responsive.css
-  // (<=1280px) and chat-media-queries.css (>=2000px), so Wide wins at every
+  // (<=1280px) and chat-media-queries.css (>=2000px), so Standard wins at every
   // viewport. Inheriting from --chat-measure-max alone would silently lose.
   assert.match(
     fs.readFileSync(path.join(rootDir, 'styles', 'settings-responsive.css'), 'utf8'),
@@ -717,7 +708,7 @@ test('chat width tokens expose a Default/Wide reading measure without breaking t
   // Comments are stripped first: the foundation.css block documents this very
   // anti-pattern in prose, and a raw scan would match its own warning.
   const foundationRules = foundationCss.replace(/\/\*[\s\S]*?\*\//g, '');
-  assert.doesNotMatch(foundationRules, /:root\[data-chat-width="wide"\]\s+\.chat-view/);
+  assert.doesNotMatch(foundationRules, /:root\[data-chat-width="standard"\]\s+\.chat-view/);
   assert.match(mediaCss, /@media \(max-width:\s*700px\)\s*\{\s*\.chat-view\s*\{[\s\S]*?--content-column-width:/);
   assert.match(mediaCss, /@media \(max-width:\s*480px\)\s*\{\s*\.chat-view\s*\{[\s\S]*?--content-column-width:\s*100%;/);
 });
@@ -772,4 +763,23 @@ test('reasoning panel measure comes from the content column, never its own max-w
   }
 
   assert.ok(matchedRules > 0, 'expected reasoning panel CSS rules to enforce the content-column width contract');
+});
+
+test('sprite layer pins to the logical inline start so the rail follows the thread gutter in RTL', () => {
+  const rootDir = path.resolve(__dirname, '..');
+  const chatThreadCss = fs.readFileSync(path.join(rootDir, 'styles', 'chat-thread.css'), 'utf8')
+    .replace(/\/\*[\s\S]*?\*\//g, '');
+  const spriteLayerRule = readCssRuleBlock(chatThreadCss, '.chat-sprite-layer');
+
+  assert.match(spriteLayerRule, /inset-inline-start:\s*0\s*;/);
+  assert.doesNotMatch(
+    spriteLayerRule,
+    /(?:^|;|\s)inset\s*:/,
+    'the 4-value physical inset pins the sprite rail to the left edge in RTL'
+  );
+  assert.doesNotMatch(
+    spriteLayerRule,
+    /(?:^|[;\s])(?:left|right)\s*:/,
+    'the sprite layer must use logical inline properties only'
+  );
 });

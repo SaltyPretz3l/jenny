@@ -5,10 +5,9 @@ const {
   createSessionWithImageAdmission,
   validateImageAttachmentsForManagedSend,
 } = require('./managed-sidecar-attachments');
-const {
-  buildAutomaticSessionTitleCandidate,
-  shouldApplyAutomaticSessionTitle,
-} = require('./interactive-session-utils');
+const { shouldApplyAutomaticSessionTitle } = require('./interactive-session-utils');
+// The renderer auto-title's rule, so a tab and the stored title agree.
+const { deriveSessionTitleFromMessage } = require('../../renderer/shared/string-utils');
 const { createSessionId, getLocalISODate, localIsoDateFromTimestamp } = require('./electron-session-store');
 
 function getSessionSummary(store, sessionId) {
@@ -35,9 +34,8 @@ function prepareManagedSession(service, {
     ? getSessionSummary(service.sessionStore, resolvedSessionId) : null;
   const sessionStartDate = String(existingSession?.session_start_date
     || localIsoDateFromTimestamp(existingSession?.created_at) || getLocalISODate()).trim();
-  const automaticTitleCandidate = buildAutomaticSessionTitleCandidate(
-    transcriptPrompt, normalizedInteractiveResponse
-  );
+  const automaticTitleCandidate = normalizedInteractiveResponse
+    ? '' : deriveSessionTitleFromMessage(transcriptPrompt);
   const exchangeTitle = requestedSessionId
     && shouldApplyAutomaticSessionTitle(existingSession, automaticTitleCandidate)
     ? automaticTitleCandidate : '';

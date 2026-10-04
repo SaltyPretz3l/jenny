@@ -66,3 +66,18 @@ test('replacing the workspace root invalidates pending snapshot identity', async
  await fs.rename(root, path.join(base, 'previous-workspace')); await fs.mkdir(root);
  await assert.rejects(verifyWorkspaceSnapshot(snapshot), /snapshot_changed/);
 });
+
+test('desktop snapshot still rejects backslash and colon names by default', { skip: process.platform === 'win32' }, async () => {
+  const fs = require('node:fs');
+  const os = require('node:os');
+  const path = require('node:path');
+  const { createWorkspaceSnapshot } = require('../services/execution/desktop-workspace-snapshot');
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-names-'));
+  try {
+    const root = path.join(base, 'root');
+    fs.mkdirSync(root);
+    fs.writeFileSync(path.join(root, 'log:2026.txt'), 'x');
+    await require('node:assert/strict').rejects(
+      createWorkspaceSnapshot({ root, stagingRoot: path.join(base, 'stage') }), /snapshot_limit/);
+  } finally { fs.rmSync(base, { recursive: true, force: true }); }
+});

@@ -96,8 +96,10 @@ test('tool detail code sections carry language hints only for code-shaped conten
   const stdoutCode = Array.from(jsonStdout.querySelectorAll('.tool-call-section')).find((section) => (
     section.querySelector('.tool-call-section-kicker')?.textContent === 'Stdout'
   )).querySelector('code');
-  assert.equal(stdoutCode.hasAttribute('data-language-id'), false);
-  assert.equal(stdoutCode.hasAttribute('data-code-highlight'), false);
+  // Area 3 (owner addition): command output stays plain unless it parses as JSON.
+  assert.equal(stdoutCode.dataset.languageId, 'json');
+  assert.equal(stdoutCode.dataset.codeHighlight, 'pending');
+  assert.equal(stdoutCode.textContent, '{\n  "ok": true\n}', 'pretty-printed with a two-space indent');
 
   const read = new JSDOM(`<body>${builder.buildDetailBodyMarkup({
     toolName: 'read_file', toolKind: 'Read', domToken: 'languages-read',
@@ -233,6 +235,27 @@ test('pretty JSON memoization invalidates when a live row reuses its copy id wit
   assert.match(updated, /&quot;value&quot;: 2/);
   assert.doesNotMatch(updated, /&quot;value&quot;: 1/);
   assert.match(isolatedDetailBody.getFullText('live-json-output'), /"value": 2/);
+});
+
+test('a JSON output is parsed once per build: the pretty print decides the json language, a cached build parses nothing', () => {
+  const isolatedDetailBody = loadDetailBody();
+  const builder = createBuilder(isolatedDetailBody);
+  const original = JSON.parse;
+  let parses = 0;
+  const build = () => {
+    JSON.parse = function countingParse(...args) { parses += 1; return original.apply(this, args); };
+    try {
+      return builder.buildDetailBodyMarkup({ toolName: 'custom_tool', outputText: '{"ok":true}', domToken: 'parse-once' });
+    } finally {
+      JSON.parse = original;
+    }
+  };
+  const first = build();
+  assert.equal(parses, 1, 'one parse pretty-prints and tags the section');
+  assert.match(first, /data-language-id="json"/);
+  const second = build();
+  assert.equal(parses, 1, 'the cached pretty text still knows it was JSON');
+  assert.match(second, /data-language-id="json"/);
 });
 
 test('rehydrated Bash JSON reconstructs the same sections as live metadata', () => {
@@ -407,7 +430,8 @@ test('capped scalar input remains a flat kv row and expands its complete value i
   const isolatedDetailBody = loadDetailBody();
   const content = 'z'.repeat(isolatedDetailBody.TOOL_DETAIL_PREVIEW_MAX_CHARS + 25);
   const html = createBuilder(isolatedDetailBody).buildDetailBodyMarkup({
-    toolName: 'write_file', toolKind: 'Write', input: { path: 'large.txt', content },
+    // A non-code field: code / command / content get their own block (area 3).
+    toolName: 'annotate_file', input: { path: 'large.txt', note: content },
     inputExpected: true, inputRecorded: true, domToken: 'large-input',
   });
   assert.match(html, /class="tool-kv-grid" data-detail-clamped="true" data-detail-capped="true"/);
@@ -417,7 +441,7 @@ test('capped scalar input remains a flat kv row and expands its complete value i
   const dom = new JSDOM(`<div>${html}</div>`);
   const control = dom.window.document.querySelector('[data-tool-detail-toggle]');
   isolatedDetailBody.toggleDetailClamp(control);
-  assert.equal(dom.window.document.querySelector('[data-detail-field-key="content"]').textContent, content);
+  assert.equal(dom.window.document.querySelector('[data-detail-field-key="note"]').textContent, content);
   dom.window.close();
 });
 
@@ -431,4 +455,71 @@ test('errors stay inside the shared detail body with outcome and recovery markup
   assert.match(html, /data-tool-result-outcome="failure"/);
   assert.match(html, /data-inv-error-action="retry"/);
   assert.doesNotMatch(html, /tool-io-panel/);
+});
+
+function sectionsByCaption(markup) {
+  const doc = new JSDOM(`<body>${markup}</body>`).window.document;
+  return Array.from(doc.querySelectorAll('.tool-call-section')).map((section) => ({
+    caption: section.querySelector('.tool-call-section-kicker')?.textContent,
+    code: section.querySelector('code'),
+  }));
+}
+
+test('a read_file result takes its language from the path: header when the input has no path', () => {
+  const sections = sectionsByCaption(createBuilder().buildDetailBodyMarkup({
+    toolName: 'read_file', toolKind: 'Read', domToken: 'read-header',
+    outputText: 'path: src/matcher.py\nrequested: offset=0, limit=2\nreturned: lines 1-2 of 40\n\nimport re\nMATCH = 1',
+  }));
+  const output = sections.find((section) => section.caption === 'Output').code;
+  assert.equal(output.dataset.languageId, 'python');
+  assert.equal(output.dataset.codeHighlight, 'pending');
+});
+
+test('a Python tool code input renders as a python block even when the output is not JSON', () => {
+  const sections = sectionsByCaption(createBuilder().buildDetailBodyMarkup({
+    toolName: 'python_execute', toolKind: 'python_execute', domToken: 'python-plain',
+    input: { code: 'import math\nprint(math.pi)', timeout: 10 }, outputText: '3.141592653589793',
+  }));
+  const code = sections.find((section) => section.code?.dataset.languageId === 'python');
+  assert.ok(code, 'the code field is its own python block');
+  assert.equal(code.code.textContent, 'import math\nprint(math.pi)');
+  const args = sections.find((section) => section.caption === 'Args');
+  assert.ok(args, 'the remaining fields stay an Args section');
+  assert.doesNotMatch(args.code ? args.code.textContent : '', /import math/);
+});
+
+test('Python stdout that parses as JSON is pretty-printed and tagged json, like bash stdout', () => {
+  const sections = sectionsByCaption(createBuilder().buildDetailBodyMarkup({
+    toolName: 'python_execute', toolKind: 'python_execute', domToken: 'python-json-stdout',
+    input: { code: 'print(json.dumps({"ok": True}))' },
+    outputText: JSON.stringify({ stdout: '{"ok": true}', stderr: '' }),
+  }));
+  const stdout = sections.find((section) => section.caption === 'Stdout');
+  assert.ok(stdout, 'the structured Stdout section renders');
+  assert.equal(stdout.code.dataset.languageId, 'json');
+  assert.equal(stdout.code.textContent, '{\n  "ok": true\n}');
+
+  const plain = sectionsByCaption(createBuilder().buildDetailBodyMarkup({
+    toolName: 'python_execute', toolKind: 'python_execute', domToken: 'python-plain-stdout',
+    input: { code: 'print(1)' }, outputText: JSON.stringify({ stdout: 'hello world' }),
+  })).find((section) => section.caption === 'Stdout');
+  assert.equal(plain.code.hasAttribute('data-language-id'), false, 'non-JSON stdout stays plain');
+  assert.equal(plain.code.textContent, 'hello world');
+});
+
+test('command and content input fields render as their own shell and file-language blocks', () => {
+  const command = sectionsByCaption(createBuilder().buildDetailBodyMarkup({
+    toolName: 'custom_runner', domToken: 'generic-command', input: { command: 'ls -la', cwd: '.' }, outputText: 'ok',
+  }));
+  assert.equal(command.find((section) => section.caption === 'Command').code.dataset.languageId, 'shell');
+
+  const write = sectionsByCaption(createBuilder().buildDetailBodyMarkup({
+    toolName: 'write_file', toolKind: 'Write', domToken: 'write-content',
+    input: { path: 'src/example.js', content: 'const a = 1;\nexport default a;' }, outputText: 'Wrote 30 bytes to src/example.js',
+  }));
+  const content = write.find((section) => section.code?.textContent === 'const a = 1;\nexport default a;');
+  assert.ok(content, 'the file content is its own block');
+  assert.equal(content.code.dataset.languageId, 'javascript');
+  const receipt = write.find((section) => section.caption === 'Output').code;
+  assert.equal(receipt.hasAttribute('data-language-id'), false, 'the receipt stays prose');
 });

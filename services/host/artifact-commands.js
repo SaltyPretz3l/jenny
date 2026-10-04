@@ -29,6 +29,20 @@ function trustedMimeType(value) {
   return MIME_TYPES.has(normalized) ? normalized : 'application/octet-stream';
 }
 
+const EXTENSION_MIME_TYPES = new Map([
+  ['.md', 'text/markdown'], ['.markdown', 'text/markdown'], ['.txt', 'text/plain'],
+  ['.json', 'application/json'], ['.html', 'text/html'], ['.htm', 'text/html'],
+  ['.svg', 'image/svg+xml'],
+]);
+
+function projectedMimeType(producerMime, fileName) {
+  const trusted = trustedMimeType(producerMime);
+  if (trusted !== 'application/octet-stream') return trusted;
+  const name = String(fileName || '').trim().toLowerCase();
+  const dot = name.lastIndexOf('.');
+  return (dot > 0 && EXTENSION_MIME_TYPES.get(name.slice(dot))) || 'application/octet-stream';
+}
+
 function statIdentity(stat) {
   return [
     stat.dev, stat.ino, stat.mode, stat.nlink, stat.size,
@@ -46,7 +60,8 @@ async function readRegularFile(filePath) {
     if (!before.isFile() || before.nlink !== 1) return failure('forbidden', 'artifact_file_rejected');
     if (before.size > MAX_ARTIFACT_BYTES) return failure('limit', 'artifact_size_limit');
 
-    const buffer = Buffer.allocUnsafe(MAX_ARTIFACT_BYTES + 1);
+    // Size to the stat'd length (+1 detects growth); slow alloc avoids the shared pool.
+    const buffer = Buffer.allocUnsafeSlow(before.size + 1);
     let offset = 0;
     while (offset < buffer.length) {
       const result = await handle.read(buffer, offset, buffer.length - offset, null);
@@ -73,7 +88,8 @@ function createArtifactCommands({ backend, configService } = {}) {
     const result = await backend.getSessionMessages(sessionId);
     return Array.isArray(result?.data) ? result.data : [];
   };
-  const resolver = new ArtifactWorkspaceService({ configService, sessionMessageReader });
+  const resolver = new ArtifactWorkspaceService({ configService, sessionMessageReader,
+    projectAuthorityProvider: () => backend?.projectAuthority });
 
   async function read(sessionId, artifactId) {
     const safeSessionId = boundedId(sessionId, MAX_SESSION_ID_LENGTH);
@@ -111,7 +127,7 @@ function createArtifactCommands({ backend, configService } = {}) {
         artifact_id: safeArtifactId,
         title: String(artifact.title || '').slice(0, 512),
         file_name: String(artifact.file_name || '').slice(0, 512),
-        mime_type: trustedMimeType(artifact.mime_type),
+        mime_type: projectedMimeType(artifact.mime_type, artifact.file_name),
         language: String(artifact.language || '').slice(0, 128),
         artifact_kind: String(artifact.artifact_kind || 'document').slice(0, 32),
       },

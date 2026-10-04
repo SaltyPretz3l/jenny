@@ -5,10 +5,7 @@ const os = require('os');
 const path = require('path');
 
 const { SessionShadowStore } = require('../services/backend/session-shadow-store');
-const {
-  buildAutomaticSessionTitleCandidate,
-  shouldApplyAutomaticSessionTitle,
-} = require('../services/backend/interactive-session-utils');
+const { shouldApplyAutomaticSessionTitle } = require('../services/backend/interactive-session-utils');
 const {
   clearActiveTurn,
   createManagedSessionLifecycleAdapter,
@@ -29,17 +26,7 @@ test.afterEach(async () => {
   await cleanupTrackedResources();
 });
 
-test('automatic title helpers require a visible prompt and an empty placeholder session', () => {
-  assert.equal(
-    buildAutomaticSessionTitleCandidate('  First visible prompt  ', null),
-    'First visible prompt'
-  );
-  assert.equal(
-    buildAutomaticSessionTitleCandidate('Interactive answer chip', { disposition: 'answered' }),
-    ''
-  );
-  assert.equal(buildAutomaticSessionTitleCandidate('   ', null), '');
-
+test('automatic titles apply only to an empty placeholder session', () => {
   assert.equal(
     shouldApplyAutomaticSessionTitle({ title: 'New Chat', message_count: 0 }, 'First visible prompt'),
     true

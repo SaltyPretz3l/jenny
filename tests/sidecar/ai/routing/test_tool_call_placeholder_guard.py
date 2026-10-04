@@ -293,7 +293,7 @@ def _loop_run() -> Any:
         request_id="req-1",
         runtime=SimpleNamespace(raise_if_interrupted=lambda: None),
         kernel=SimpleNamespace(
-            _config=SimpleNamespace(feature_flags={"auto_checkpoint": True}),
+            _config=SimpleNamespace(feature_flags={}),
         ),
     )
 

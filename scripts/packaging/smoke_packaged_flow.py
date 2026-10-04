@@ -54,7 +54,6 @@ PACKAGED_SMOKE_REQUEST_FILENAME = "packaged-smoke-request.json"
 MAX_PACKAGED_PROBE_CONTENT_LENGTH_BYTES = 10 * 1024 * 1024
 MAX_PACKAGED_PROBE_STDERR_TAIL_BYTES = 4096
 SHA256_HEX_RE = re.compile(r"^[a-f0-9]{64}$")
-RESTRICTED_HOST_MANIFEST = "jenny-plugin-host.manifest.json"
 
 
 def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
@@ -101,8 +100,8 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         choices=("dev", "release"),
         default="dev",
         help=(
-            "dev builds and validates the plugin hosts too; "
-            "release matches the release workflow (sidecar only)."
+            "Label recorded in the log; dev and release build and validate the "
+            "same sidecar-only package (no native plugin host ships)."
         ),
     )
     return parser.parse_args(list(argv) if argv is not None else None)
@@ -419,81 +418,6 @@ def _wait_for_packaged_artifact_validation(
             time.sleep(poll_seconds)
 
 
-def _validate_packaged_restricted_host(
-    resources_dir: Path,
-    *,
-    log_path: Path,
-    allow_stale_source: bool = False,
-) -> tuple[Path, Path]:
-    host_dir = resources_dir / "restricted-host"
-    manifest_path = host_dir / RESTRICTED_HOST_MANIFEST
-    if not manifest_path.is_file():
-        raise RuntimeError(f"packaged restricted-host manifest missing: {manifest_path}")
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    if not isinstance(manifest, dict) or manifest.get("api_version") != 1:
-        raise RuntimeError("packaged restricted-host manifest is incompatible")
-    binary_name = str(manifest.get("binary_filename") or "")
-    if Path(binary_name).name != binary_name or not binary_name:
-        raise RuntimeError("packaged restricted-host binary filename is invalid")
-    binary_path = host_dir / binary_name
-    if not binary_path.is_file() or _sha256(binary_path) != manifest.get("binary_sha256"):
-        raise RuntimeError("packaged restricted-host binary digest mismatch")
-    if manifest.get("abi_sha256") != _sha256(
-        ROOT / "config" / "plugins" / "capability-abi" / "v1" / "jenny-restricted-host.wit"
-    ):
-        raise RuntimeError("packaged restricted-host ABI digest mismatch")
-    if manifest.get("protocol_sha256") != _sha256(
-        ROOT / "config" / "plugins" / "contract-lock-v4.json"
-    ):
-        raise RuntimeError("packaged restricted-host protocol digest mismatch")
-    if not allow_stale_source and (commit := _current_git_commit()):
-        if manifest.get("commit") != commit:
-            raise RuntimeError("stale packaged restricted-host artifact")
-    sbom_path = host_dir / str(manifest.get("sbom_filename") or "")
-    if not sbom_path.is_file():
-        raise RuntimeError("packaged restricted-host SBOM missing")
-    _append_log(
-        log_path,
-        "\n[packaged-restricted-host]\n"
-        f"binary_path={binary_path}\nmanifest_path={manifest_path}\n"
-        f"sha256={manifest.get('binary_sha256', '')}\n",
-    )
-    return binary_path, manifest_path
-
-
-def _validate_packaged_full_host_supervisor(
-    resources_dir: Path, *, log_path: Path, allow_stale_source: bool,
-) -> tuple[Path, Path]:
-    native_dir = resources_dir / "native"
-    manifest_path = native_dir / "manifest.json"
-    if not manifest_path.is_file():
-        raise RuntimeError(f"packaged full-host supervisor manifest missing: {manifest_path}")
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    binary_name = str(manifest.get("binary_filename") or "")
-    binary_path = native_dir / binary_name
-    if not binary_name or not binary_path.is_file():
-        raise RuntimeError("packaged full-host supervisor binary missing")
-    if _sha256(binary_path) != manifest.get("binary_sha256"):
-        raise RuntimeError("packaged full-host supervisor digest mismatch")
-    if _sha256(ROOT / "config" / "plugins" / "contract-lock-v6.json") \
-            != manifest.get("contract_lock_v6_sha256"):
-        raise RuntimeError("packaged full-host supervisor contract digest mismatch")
-    if manifest.get("authenticated_private_pipe") is not True:
-        raise RuntimeError("packaged full-host supervisor transport provenance invalid")
-    source_tree_digest = manifest.get("source_tree_digest")
-    if manifest.get("source_state") not in {"clean", "dirty"} \
-            or not isinstance(source_tree_digest, str) \
-            or not SHA256_HEX_RE.fullmatch(source_tree_digest):
-        raise RuntimeError("packaged full-host supervisor source provenance invalid")
-    if not allow_stale_source and manifest.get("source_commit") != _current_git_commit():
-        raise RuntimeError("stale packaged full-host supervisor artifact")
-    if not allow_stale_source and (manifest.get("source_state") != "clean"
-                                   or manifest.get("release_eligible") is not True):
-        raise RuntimeError("release packaged full-host supervisor is not clean-source eligible")
-    _append_log(log_path, f"\n[packaged-full-host-supervisor]\npath={binary_path}\n")
-    return binary_path, manifest_path
-
-
 def _run_packaged_launch_probe(
     resources_dir: Path,
     artifact_path: Path,
@@ -750,20 +674,12 @@ def _build_packaged_directory(
     timeout_seconds: int,
     env: dict[str, str],
     deadline: float | None = None,
-    build_hosts: bool = True,
 ) -> None:
     workflow_deadline = deadline or (time.monotonic() + timeout_seconds)
     commands = [
         [NPM_COMMAND, "run", "build:preload"],
         [sys.executable, "scripts/packaging/build_sidecar_artifact.py"],
     ]
-    if build_hosts:
-        commands.extend(
-            (
-                [sys.executable, "scripts/packaging/build_restricted_host_artifact.py"],
-                [sys.executable, "scripts/packaging/build_full_host_supervisor_artifact.py"],
-            )
-        )
     commands.append(
         [
             NPM_COMMAND,
@@ -789,31 +705,6 @@ def _build_packaged_directory(
         )
 
 
-def _validate_packaged_hosts(
-    resources_dir: Path,
-    *,
-    log_path: Path,
-    allow_stale_source: bool,
-    validate_hosts: bool,
-) -> tuple[tuple[Path, Path], tuple[Path, Path]] | None:
-    if not validate_hosts:
-        return None
-    restricted_host_path, restricted_host_manifest = _validate_packaged_restricted_host(
-        resources_dir,
-        log_path=log_path,
-        allow_stale_source=allow_stale_source,
-    )
-    full_host_path, full_host_manifest = _validate_packaged_full_host_supervisor(
-        resources_dir,
-        log_path=log_path,
-        allow_stale_source=allow_stale_source,
-    )
-    return (
-        (restricted_host_path, restricted_host_manifest),
-        (full_host_path, full_host_manifest),
-    )
-
-
 def main(argv: Sequence[str] | None = None) -> int:
     args = _parse_args(argv)
     log_path = Path(args.log_path).resolve()
@@ -836,14 +727,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         smoke_env["SOURCE_DATE_EPOCH"] = args.source_date_epoch
 
     try:
-        validate_hosts = args.composition == "dev"
         if not args.existing_artifacts:
             _build_packaged_directory(
                 log_path=log_path,
                 timeout_seconds=args.step_timeout_seconds,
                 env=smoke_env,
                 deadline=workflow_deadline,
-                build_hosts=validate_hosts,
             )
         resources_dir = _resolve_resources_dir()
         artifact_path, manifest_path = _wait_for_packaged_artifact_validation(
@@ -865,12 +754,6 @@ def main(argv: Sequence[str] | None = None) -> int:
                 deadline=workflow_deadline,
                 step_cap=60,
             ),
-        )
-        host_paths = _validate_packaged_hosts(
-            resources_dir,
-            log_path=log_path,
-            allow_stale_source=args.allow_stale_source,
-            validate_hosts=validate_hosts,
         )
         version_output = f"{version_result.stdout}\n{version_result.stderr}"
         if API_VERSION not in version_output:
@@ -931,15 +814,6 @@ def main(argv: Sequence[str] | None = None) -> int:
     print(f"  - resources_dir: {_display_path(resources_dir)}")
     print(f"  - artifact: {_display_path(artifact_path)}")
     print(f"  - manifest: {_display_path(manifest_path)}")
-    if host_paths is not None:
-        (restricted_host_path, restricted_host_manifest), (
-            full_host_path,
-            full_host_manifest,
-        ) = host_paths
-        print(f"  - restricted host: {_display_path(restricted_host_path)}")
-        print(f"  - restricted host manifest: {_display_path(restricted_host_manifest)}")
-        print(f"  - full-host supervisor: {_display_path(full_host_path)}")
-        print(f"  - full-host supervisor manifest: {_display_path(full_host_manifest)}")
     print(f"  - app: {_display_path(packaged_app_path)}")
     print(f"  - log: {_display_path(log_path)}")
     return 0

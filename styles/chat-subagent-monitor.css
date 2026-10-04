@@ -1,7 +1,11 @@
 /* Subagent Monitor
- * Permanent transcript summaries and one adaptive inspector shared by Chat and
- * the Workspace chat dock. The surface is intentionally quiet: state is shown
- * with existing semantic tokens and motion is limited to focus/hover feedback.
+ * Permanent transcript summaries plus the monitor itself: in Chat the
+ * `subagents` mode of the artifact review panel (renderer-subagent-rail.js),
+ * in the Workspace chat dock the pane's in-stage aside. Both host the same
+ * three regions (a fixed header, ONE scrolling body, a fixed footer). The
+ * surface is intentionally quiet: state is a dot plus text, hierarchy comes
+ * from whitespace and type (no cards, no side bars), and motion is limited to
+ * focus/hover feedback.
  */
 
 .subagent-summary-trigger {
@@ -31,9 +35,9 @@
 
 .subagent-summary-trigger:focus-visible,
 .subagent-tree-item:focus-visible,
-.subagent-evidence-item[role="link"]:focus-visible,
-.subagent-usage-trigger:focus-visible,
-.subagent-technical-trigger:focus-visible {
+.subagent-monitor-back:focus-visible,
+.subagent-monitor-icon-button:focus-visible,
+.subagent-evidence-link:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
@@ -46,7 +50,7 @@
   grid-area: label;
   min-width: 0;
   overflow: hidden;
-  font-weight: 650;
+  font-weight: 500;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -54,18 +58,14 @@
 .subagent-summary-meta {
   grid-area: meta;
   color: var(--text-muted);
-  font-size: var(--font-size-xs);
+  font-size: var(--font-size-caption);
 }
 
 .subagent-summary-open-label {
   grid-area: open;
   color: var(--text-link);
-  font-size: var(--font-size-xs);
-  font-weight: 650;
-}
-
-.subagent-monitor-dot {
-  flex: 0 0 auto;
+  font-size: var(--font-size-caption);
+  font-weight: 500;
 }
 
 .subagent-monitor-dot--success { background: var(--state-success); }
@@ -74,153 +74,229 @@
 .subagent-monitor-dot--pending { background: var(--state-pending); }
 .subagent-monitor-dot--muted { background: var(--state-muted); }
 
-.chat-thread-stage.subagent-monitor-stage-open {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(360px, min(42vw, 560px));
-}
-
-@media (min-width: 1120px) {
-  .chat-thread-stage.subagent-monitor-stage-open:not(.subagent-monitor-stage-compact) > .chat-thread-shell {
-    position: relative;
-    inset: auto;
-    grid-column: 1;
-    grid-row: 1;
-  }
-}
-
-.chat-view.subagent-monitor-open,
-.chat-view.subagent-monitor-open.artifact-review-open {
-  grid-template-columns: minmax(0, 1fr);
-}
-
-.chat-view.subagent-monitor-open > .chat-context-panel,
-.chat-view.subagent-monitor-open > .artifact-review-panel,
-.chat-view.subagent-monitor-open > #artifactReviewResizer {
+/* ── Panel host ─────────────────────────────────────────────────────────
+   In `subagents` mode the monitor renders its own header, body and footer,
+   so the V3 header, controls and status are hidden (the task rail's
+   precedent, task-rail.css) and the scroll chain around the paint target is
+   made a plain flex column that hands the monitor the panel's full height.
+   The monitor's body is the only scroller. */
+#artifactReviewPanel[data-artifact-review-mode="subagents"] .artifact-panel-header,
+#artifactReviewPanel[data-artifact-review-mode="subagents"] .artifact-panel-controls,
+#artifactReviewPanel[data-artifact-review-mode="subagents"] .artifact-panel-status {
   display: none;
 }
 
-.subagent-monitor-inspector {
-  grid-column: 2;
-  grid-row: 1;
+#artifactReviewPanel[data-artifact-review-mode="subagents"] .artifact-review-scroll,
+#artifactReviewPanel[data-artifact-review-mode="subagents"] .artifact-panel-v2-scroll {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: 0;
+  overflow: hidden;
+}
+
+#artifactReviewPanel[data-artifact-review-mode="subagents"] .artifact-review-detail-panel,
+#artifactReviewPanel[data-artifact-review-mode="subagents"] .artifact-panel-v2-content-host,
+#artifactReviewPanel[data-artifact-review-mode="subagents"] .artifact-preview-shell,
+#artifactReviewPanel[data-artifact-review-mode="subagents"] .artifact-preview-content {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
   min-width: 0;
   min-height: 0;
+  padding: 0;
   overflow: hidden;
-  border-inline-start: 1px solid var(--border-default);
-  background: color-mix(in srgb, var(--bg-base) 82%, var(--bg-surface));
-  color: var(--text-primary);
-  contain: layout paint style;
+  gap: 0;
 }
 
-.subagent-monitor-inspector[hidden] {
-  display: none;
+/* ── Shell: fixed header, one scrolling body, fixed footer ─────────────── */
+.subagent-monitor-shell {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  color: var(--text-primary);
 }
 
 .subagent-monitor-header {
   display: flex;
+  flex: 0 0 auto;
   align-items: center;
-  justify-content: space-between;
-  gap: var(--space-7);
-  min-height: 52px;
-  padding: var(--space-7) var(--space-8);
+  gap: var(--space-4);
+  height: 40px;
+  padding-inline: var(--side-panel-gutter, 16px) calc(var(--side-panel-gutter, 16px) - var(--space-2));
   border-bottom: 1px solid var(--border-default);
-  background: color-mix(in srgb, var(--bg-surface) 68%, var(--bg-base));
-}
-
-.subagent-monitor-title,
-.subagent-monitor-parent-state {
-  display: block;
 }
 
 .subagent-monitor-title {
-  font-size: var(--font-size-sm);
-  font-weight: 700;
+  margin: 0;
+  flex: 0 0 auto;
+  font-size: var(--font-size-heading);
+  font-weight: 500;
+  line-height: 1.2;
 }
 
-.subagent-monitor-parent-state {
-  margin-top: var(--space-1);
+.subagent-monitor-meta {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
   color: var(--text-muted);
-  font-size: var(--font-size-xs);
+  font-size: var(--font-size-caption);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .subagent-monitor-header-actions {
-  display: flex;
+  display: inline-flex;
+  flex: 0 0 auto;
   align-items: center;
-  gap: var(--space-3);
+  gap: var(--space-2);
+  margin-inline-start: auto;
+}
+
+.subagent-monitor-icon-button,
+.subagent-monitor-back {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 28px;
+  padding: 0 var(--space-3);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: var(--font-size-footnote);
+  cursor: pointer;
+}
+
+.subagent-monitor-back {
+  margin-inline-start: calc(var(--space-3) * -1);
+  font-weight: 500;
+}
+
+.subagent-monitor-icon-button:hover,
+.subagent-monitor-back:hover {
+  background: color-mix(in srgb, var(--text-primary) 7%, transparent);
+  color: var(--text-primary);
+}
+
+/* One stroke icon: the close and back glyphs take the button's colour,
+   the tree glyph and the row chevron are muted. */
+.subagent-monitor-icon {
+  flex: 0 0 auto;
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentcolor;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.subagent-monitor-icon--muted {
+  color: var(--text-muted);
 }
 
 .subagent-monitor-body {
-  display: grid;
-  grid-template-columns: minmax(164px, 0.72fr) minmax(0, 1.28fr);
-  min-width: 0;
-  height: calc(100% - 52px);
-  min-height: 0;
-}
-
-.subagent-monitor-master,
-.subagent-monitor-detail {
+  flex: 1 1 auto;
   min-width: 0;
   min-height: 0;
-  overflow: auto;
-  scrollbar-gutter: stable;
+  padding: var(--space-6) var(--side-panel-gutter, 16px) var(--space-10);
+  overflow-x: hidden;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--widget-scrollbar-color) transparent;
 }
 
-.subagent-monitor-master {
-  border-inline-end: 1px solid var(--border-default);
-  background: color-mix(in srgb, var(--bg-sidebar) 68%, var(--bg-base));
-}
-
-.subagent-monitor-tree-pane,
-.subagent-monitor-detail-pane {
-  padding: var(--space-8);
-}
-
-.subagent-monitor-kicker {
-  margin-bottom: var(--space-5);
+.subagent-monitor-footer {
+  display: block;
+  flex: 0 0 auto;
+  max-height: 45%;
+  padding: var(--space-4) var(--side-panel-gutter, 16px);
+  border-top: 1px solid var(--border-default);
   color: var(--text-muted);
-  font-size: 10px;
-  font-weight: 750;
-  letter-spacing: 0.09em;
-  text-transform: uppercase;
+  font-size: var(--font-size-footnote);
+  line-height: 1.4;
+  overflow-y: auto;
 }
 
+.subagent-monitor-empty {
+  padding: var(--space-10) 0;
+  color: var(--text-muted);
+  font-size: var(--font-size-footnote);
+}
+
+/* ── Page 1: the tree ─────────────────────────────────────────────────── */
 .subagent-tree {
   display: grid;
-  gap: var(--space-3);
+  gap: var(--space-2);
 }
 
-.subagent-tree-parent,
+.subagent-tree-parent {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  min-width: 0;
+  padding: var(--space-3) var(--space-4);
+  color: var(--text-secondary);
+  font-size: var(--font-size-footnote);
+}
+
+.subagent-tree-parent-name {
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
+.subagent-tree-parent-meta {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* A neutral 0.5px guide from the parent to its children: never coloured and
+   never a selection mark. */
+.subagent-tree-children {
+  position: relative;
+  display: grid;
+  gap: var(--space-1);
+  margin-inline-start: var(--space-4);
+  padding-inline-start: var(--space-5);
+}
+
+.subagent-tree-children::before {
+  content: "";
+  position: absolute;
+  inset-block: 0;
+  inset-inline-start: 0;
+  width: 0.5px;
+  background: var(--border-default);
+}
+
 .subagent-tree-item {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   gap: var(--space-5);
   width: 100%;
   min-width: 0;
-  padding: var(--space-5) var(--space-6);
-  border: 1px solid transparent;
+  padding: var(--space-4);
+  border: 0;
   border-radius: var(--radius-sm);
   color: var(--text-secondary);
   background: transparent;
   font: inherit;
   text-align: start;
-}
-
-.subagent-tree-item {
   cursor: pointer;
 }
 
 .subagent-tree-item:hover,
-.subagent-tree-item.is-selected {
-  border-color: var(--border-default);
+.subagent-tree-item:focus-visible {
   color: var(--text-primary);
-  background: color-mix(in srgb, var(--text-primary) 5%, transparent);
-}
-
-.subagent-tree-children {
-  display: grid;
-  gap: var(--space-2);
-  margin-inline-start: var(--space-7);
-  padding-inline-start: var(--space-5);
-  border-inline-start: 1px solid var(--border-strong);
+  background: color-mix(in srgb, var(--text-primary) 6%, transparent);
 }
 
 .subagent-tree-copy,
@@ -230,173 +306,57 @@
   min-width: 0;
 }
 
+.subagent-tree-copy {
+  flex: 1 1 auto;
+}
+
 .subagent-tree-label {
   overflow: hidden;
-  font-size: var(--font-size-xs);
-  font-weight: 650;
+  color: var(--text-primary);
+  font-size: var(--font-size-body);
+  font-weight: 500;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .subagent-tree-meta {
   margin-top: var(--space-1);
+  overflow: hidden;
   color: var(--text-muted);
-  font-size: 10px;
+  font-size: var(--font-size-caption);
   line-height: 1.4;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.subagent-monitor-detail-pane h2 {
-  margin: 0;
-  color: var(--text-primary);
-  font-size: 18px;
-  line-height: 1.25;
-}
 
-.subagent-detail-status {
-  display: flex;
-  align-items: center;
-  gap: var(--space-4);
-  margin-top: var(--space-5);
-}
-
-.subagent-detail-section {
-  margin-top: var(--space-10);
-  padding-top: var(--space-8);
-  border-top: 1px solid var(--border-subtle);
-}
-
-.subagent-detail-section p {
-  margin: 0;
-  color: var(--text-secondary);
-  line-height: 1.62;
-  overflow-wrap: anywhere;
-}
-
-.subagent-evidence-list,
-.subagent-tool-list {
-  display: grid;
-  gap: var(--space-4);
-}
-
-.subagent-evidence-item,
-.subagent-tool-row {
-  display: grid;
-  gap: var(--space-2);
-  padding: var(--space-5) var(--space-6);
-  border: 1px solid var(--border-default);
-  border-radius: var(--radius-sm);
-  background: color-mix(in srgb, var(--surface-input-background) 88%, transparent);
-}
-
-.subagent-evidence-item[role="link"] {
-  cursor: pointer;
-}
-
-.subagent-evidence-item[role="link"]:hover {
-  border-color: color-mix(in srgb, var(--accent) 32%, var(--border-default));
-}
-
-.subagent-evidence-title,
-.subagent-tool-row {
-  color: var(--text-primary);
-  font-size: var(--font-size-xs);
-  font-weight: 650;
-}
-
-.subagent-evidence-copy {
-  color: var(--text-muted);
-  font-size: var(--font-size-xs);
-  line-height: 1.45;
-}
-
-.subagent-usage-trigger,
-.subagent-technical-trigger {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-6);
-  padding: var(--space-5) var(--space-6);
-  border: 1px solid var(--border-default);
-  border-radius: var(--radius-sm);
-  background: color-mix(in srgb, var(--surface-input-background) 88%, transparent);
-}
-
-.subagent-technical-trigger {
-  margin-top: var(--space-8);
-}
-
-.subagent-usage-summary {
-  color: var(--text-secondary);
-  font-size: var(--font-size-xs);
-}
-
-.subagent-disclosure-label,
-.subagent-usage-route {
-  color: var(--text-muted);
-  font-size: 10px;
-}
-
-.subagent-usage-detail,
-.subagent-technical-detail {
-  padding: var(--space-6);
-}
-
-.subagent-usage-grid {
-  display: grid;
-  gap: var(--space-3);
-}
-
-.subagent-usage-grid > span {
-  display: flex;
-  justify-content: space-between;
-  gap: var(--space-7);
-  color: var(--text-muted);
-  font-size: var(--font-size-xs);
-}
-
-.subagent-usage-grid strong {
-  color: var(--text-secondary);
-}
-
-.subagent-usage-route {
-  margin-top: var(--space-5);
-}
-
-.subagent-monitor-empty {
-  padding: var(--space-10);
-  color: var(--text-muted);
-}
-
-.chat-thread-stage.subagent-monitor-stage-compact {
-  display: block;
-}
-
-.chat-thread-stage.subagent-monitor-stage-compact > .chat-thread-shell {
-  visibility: hidden;
-  pointer-events: none;
-}
-
-.subagent-monitor-inspector.is-compact {
+/* ── Dock host ────────────────────────────────────────────────────────────
+   The Workspace chat dock has no artifact panel: the pane's aside covers the
+   thread stage with the same shell, and the stage's thread is inert beneath it.
+   It replaces the stage rather than sitting beside it as a rail, so it wears
+   the dock's surface and inset (not the rail's --side-panel-bg and 16px gutter). */
+.subagent-monitor-inspector {
+  --side-panel-gutter: var(--space-6);
   position: absolute;
   inset: 0;
   z-index: var(--z-overlay);
-  display: block;
-  width: 100%;
-  border-inline-start: 0;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--bg-base);
+  color: var(--text-primary);
+  contain: layout paint style;
 }
 
-.subagent-monitor-inspector.is-compact .subagent-monitor-body {
-  display: block;
-}
-
-.subagent-monitor-inspector.is-compact .subagent-monitor-master,
-.subagent-monitor-inspector.is-compact .subagent-monitor-detail {
-  height: 100%;
-  border: 0;
-}
-
-.subagent-monitor-inspector .is-hidden-compact {
+.subagent-monitor-inspector[hidden] {
   display: none;
+}
+
+.chat-thread-stage:has(> .subagent-monitor-inspector:not([hidden])) > .chat-thread-shell {
+  visibility: hidden;
+  pointer-events: none;
 }
 
 .ide-chat-dock-body .subagent-summary-trigger {
@@ -411,17 +371,10 @@
   display: none;
 }
 
-@media (max-width: 1119px) {
-  .chat-thread-stage.subagent-monitor-stage-open {
-    display: block;
-  }
-}
-
 @media (prefers-reduced-motion: reduce) {
   .subagent-summary-trigger,
   .subagent-tree-item,
-  .subagent-evidence-item,
-  .subagent-monitor-inspector * {
+  .subagent-monitor-shell * {
     scroll-behavior: auto;
     transition: none !important;
   }

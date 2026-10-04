@@ -52,12 +52,30 @@
 }
 .workspace-rail::-webkit-scrollbar { display: none; }
 
+/* Overflow cue: the clipped edge fades. renderRail() publishes the logical
+   edges that hide tabs; the angle flips under RTL. */
+.workspace-rail:dir(rtl) { --workspace-rail-fade-angle: 270deg; }
+.workspace-rail[data-overflow-start] {
+  mask-image: linear-gradient(var(--workspace-rail-fade-angle, 90deg), transparent, black var(--space-12));
+}
+.workspace-rail[data-overflow-end] {
+  mask-image: linear-gradient(var(--workspace-rail-fade-angle, 90deg), black calc(100% - var(--space-12)), transparent);
+}
+.workspace-rail[data-overflow-start][data-overflow-end] {
+  mask-image: linear-gradient(var(--workspace-rail-fade-angle, 90deg), transparent, black var(--space-12), black calc(100% - var(--space-12)), transparent);
+}
+
+/* Tab anatomy: [state dot][title][×]. The state word lives in the tooltip and
+   the accessible name, so the title keeps the width. The floor fits about 14
+   characters of title at the default text size (real-app gate C2); the active
+   tab's reserved × takes about three of them. No active-only width: a tab that
+   grew on activation would shove its neighbours. */
 .workspace-rail-tab {
   position: relative;
   display: flex;
   align-items: center;
-  gap: var(--space-2);
-  min-width: 80px;
+  gap: var(--space-1);
+  min-width: 134px;
   max-width: 220px;
   padding: 0 var(--space-2);
   border-bottom: 2px solid transparent;
@@ -71,16 +89,17 @@
 
 .workspace-rail-tab-button {
   transition: background-color var(--transition-fast), color var(--transition-fast);
+  flex: 1 1 auto;
   display: flex;
   align-items: center;
   gap: var(--space-3);
   min-width: 0;
-  padding: var(--space-3) var(--space-4);
+  padding: var(--space-3);
   border-radius: var(--radius-sm);
   background: transparent;
   color: var(--text-muted);
-  font-size: var(--font-size-sm);
-  font-weight: 600;
+  font-size: var(--font-size-body);
+  font-weight: 500;
   cursor: pointer;
   white-space: nowrap;
   overflow: hidden;
@@ -89,6 +108,7 @@
 .workspace-rail-tab.active .workspace-rail-tab-button {
   color: var(--text-primary);
 }
+.workspace-rail-tab:not(.active):hover .workspace-rail-tab-button,
 .workspace-rail-tab-button:is(:hover, :focus-visible) {
   background: var(--widget-action-bg);
 }
@@ -105,21 +125,35 @@
   min-width: 0;
 }
 
-.workspace-rail-indicator {
-  /* intentionally below scale for compact indicator */
-  font-size: 9px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: var(--accent-cyan);
+/* One state vocabulary with the sidebar row dot: same tokens, same pulse. */
+.workspace-rail-state-dot {
+  flex: none;
+  width: var(--session-row-dot-size);
+  height: var(--session-row-dot-size);
+  border-radius: var(--radius-pill);
+  background: var(--text-muted);
+  opacity: 0.5;
 }
-.workspace-rail-indicator:empty { display: none; }
-
-.workspace-rail-tab:is([data-session-dominant-state="approval"], [data-session-dominant-state="plan_review"], [data-session-dominant-state="input_needed"]) .workspace-rail-indicator {
-  color: var(--sidebar-state-approval-color);
+.workspace-rail-tab[data-session-dominant-state="streaming"] .workspace-rail-state-dot {
+  background: var(--sidebar-state-streaming-color);
+  opacity: 1;
+}
+.workspace-rail-tab:is([data-session-dominant-state="approval"], [data-session-dominant-state="plan_review"], [data-session-dominant-state="input_needed"]) .workspace-rail-state-dot {
+  background: var(--sidebar-state-approval-color);
+  opacity: 1;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .workspace-rail-tab[data-session-dominant-state="streaming"] .workspace-rail-state-dot {
+    animation: sidebar-state-pulse calc(var(--motion-duration-emphasis) * 5) var(--motion-ease-standard) infinite alternate;
+  }
 }
 
-.workspace-rail-link-button,
+.workspace-rail-tab .inv-inline-title-editor {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 28px;
+}
+
 .workspace-rail-close-button {
   flex-shrink: 0;
   display: grid;
@@ -130,35 +164,55 @@
   border-radius: var(--radius-sm);
   background: transparent;
   color: var(--text-muted);
-  font-size: var(--font-size-sm);
+  font-size: var(--font-size-footnote);
   cursor: pointer;
   -webkit-app-region: no-drag;
   transition:
     background-color var(--transition-fast),
     color var(--transition-fast);
 }
-.workspace-rail-link-button svg,
 .workspace-rail-close-button svg {
   width: 16px;
   height: 16px;
   display: block;
 }
-:is(.workspace-rail-link-button, .workspace-rail-close-button):is(:hover, :focus-visible) {
+.workspace-rail-close-button:is(:hover, :focus-visible) {
   background: var(--widget-action-bg);
   color: var(--text-primary);
 }
-:is(.workspace-rail-link-button, .workspace-rail-close-button):focus-visible {
+.workspace-rail-close-button:focus-visible {
   outline: 2px solid var(--focus-outline);
   outline-offset: -2px;
 }
-.workspace-rail-close-button:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
-}
 .workspace-rail-tab .workspace-rail-close-button { opacity: 0; transition: opacity var(--transition-fast); }
-.workspace-rail-tab:hover .workspace-rail-close-button,
-.workspace-rail-tab.active .workspace-rail-close-button,
+/* A busy tab renders no × at all. */
+.workspace-rail-tab:is(:hover, .active) .workspace-rail-close-button,
 .workspace-rail-close-button:focus-visible { opacity: 1; }
+/* An inactive tab's × floats over the end of the title while hovered instead
+   of reserving width on every tab. Its fill repeats the hovered button's
+   (the hover tint over the band), and a short fade clips the title under it. */
+.workspace-rail-tab:not(.active) .workspace-rail-close-button {
+  --workspace-rail-close-fill: linear-gradient(var(--widget-action-bg), var(--widget-action-bg)), var(--surface-titlebar-background);
+  position: absolute;
+  inset-inline-end: var(--space-3);
+  top: 50%;
+  transform: translateY(-50%);
+  background: var(--workspace-rail-close-fill);
+}
+.workspace-rail-tab:not(.active) .workspace-rail-close-button:is(:hover, :focus-visible) {
+  background: linear-gradient(var(--widget-action-bg), var(--widget-action-bg)), var(--workspace-rail-close-fill);
+}
+.workspace-rail-tab:not(.active) .workspace-rail-close-button::before {
+  content: "";
+  position: absolute;
+  inset-block: 0;
+  inset-inline-end: 100%;
+  width: var(--space-7);
+  background:
+    linear-gradient(var(--workspace-rail-fade-angle, 90deg), transparent, var(--widget-action-bg)),
+    linear-gradient(var(--workspace-rail-fade-angle, 90deg), transparent, var(--surface-titlebar-background));
+  pointer-events: none;
+}
 
 .workspace-rail-new-button {
   transition: background-color var(--transition-fast), color var(--transition-fast);
@@ -200,9 +254,118 @@
 }
 .workspace-rail-scroll-arrow[hidden] { display: none; }
 
-.workspace-linked-row {
+/* ── Link sessions popover: a flat checklist on the shared popover surface ── */
+.composer-popover.workspace-linked-popover {
   display: flex;
-  gap: var(--space-5);
+  flex-direction: column;
+  width: 320px;
+  min-width: 0;
+  max-width: calc(100vw - 32px);
+  /* A short window shrinks the list, never pushes the footer off-screen. */
+  max-height: calc(100vh - 32px);
+  padding: var(--space-3) var(--space-2) var(--space-2);
+  border-radius: var(--radius-md);
+}
+.composer-popover.workspace-linked-popover::before { content: none; }
+.workspace-linked-header { padding: 0 var(--space-2) var(--space-2); }
+.workspace-linked-header,
+.workspace-linked-search,
+.workspace-linked-footer { flex-shrink: 0; }
+.workspace-linked-title {
+  color: var(--text-primary);
+  font-size: var(--font-size-body);
+  font-weight: 500;
+}
+.workspace-linked-subtitle {
+  margin-top: 2px;
+  color: var(--text-secondary);
+  font-size: var(--font-size-caption);
+  line-height: 1.45;
+}
+.workspace-linked-search {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: 30px;
+  margin: 0 var(--space-1) var(--space-1);
+  padding: 0 var(--space-2);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  background: var(--surface-input-background);
+  color: var(--text-muted);
+  cursor: text;
+}
+.workspace-linked-search:focus-within {
+  border-color: var(--accent);
+  outline: 1px solid var(--accent);
+}
+.workspace-linked-search input {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  font-size: var(--font-size-footnote);
+  outline: none;
+}
+.workspace-linked-list {
+  flex: 0 1 auto;
+  min-height: 0;
+  max-height: 240px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+}
+.workspace-linked-row {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: 32px;
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  font-size: var(--font-size-footnote);
+  cursor: pointer;
+}
+.workspace-linked-row:hover { background: var(--surface-popover-row-hover); }
+.workspace-linked-row:has(input:focus-visible) {
+  background: var(--surface-popover-row-hover);
+  outline: 2px solid var(--focus-outline);
+  outline-offset: -2px;
+}
+.workspace-linked-row input {
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  accent-color: var(--accent);
+}
+.workspace-linked-row input:focus-visible { outline: none; }
+.workspace-linked-row-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* Recall reads only the newest three same-project links; say which. */
+.workspace-linked-row-hint {
+  color: var(--text-muted);
+  font-size: var(--font-size-caption);
+  white-space: nowrap;
+}
+.workspace-linked-row-hint[data-hint="recall"] { color: color-mix(in srgb, var(--accent) 80%, var(--text-secondary)); }
+.workspace-linked-empty {
+  padding: var(--space-3) var(--space-2);
+  color: var(--text-secondary);
+  font-size: var(--font-size-caption);
+}
+.workspace-linked-footer {
+  margin-top: var(--space-1);
+  padding: var(--space-2) var(--space-2) 0;
+  border-top: 1px solid var(--border-subtle);
+  color: var(--text-secondary);
+  font-size: var(--font-size-caption);
 }
 
 /* ── Tab context menu ── */
@@ -225,7 +388,7 @@
   background: transparent;
   border: none;
   color: var(--text-primary);
-  font-size: var(--font-size-sm);
+  font-size: var(--font-size-body);
   cursor: pointer;
   text-align: start;
 }
@@ -263,7 +426,7 @@
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  font-size: var(--font-size-sm);
+  font-size: var(--font-size-body);
   color: var(--text-primary);
   display: flex;
   align-items: center;

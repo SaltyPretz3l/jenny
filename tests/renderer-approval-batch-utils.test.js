@@ -4,6 +4,7 @@ const { JSDOM } = require('jsdom');
 
 const {
   bindApprovalBatchUx,
+  createApprovalClaimRegistry,
   createApprovalReconciliationController,
 } = require('../renderer/chat/renderer-approval-batch-utils');
 
@@ -28,6 +29,63 @@ function createApprovalDom() {
   dom.window.requestAnimationFrame = (callback) => dom.window.setTimeout(callback, 0);
   dom.window.cancelAnimationFrame = (id) => dom.window.clearTimeout(id);
   return dom;
+}
+
+test('approval batch makes one-off approval primary and names persistent approval explicitly', async (t) => {
+  const dom = createApprovalDom();
+  const { window } = dom;
+  const controller = bindApprovalBatchUx({
+    scopeRoot: window.document.getElementById('timeline'),
+    document: window.document,
+    callbacks: {
+      async approveOne() { return true; },
+      async denyOne() { return true; },
+    },
+  });
+  t.after(() => { controller.dispose(); window.close(); });
+
+  controller.sync();
+  await flush();
+  const buttons = window.document.querySelectorAll('[data-approval-batch-action]');
+  assert.deepEqual(Array.from(buttons, (button) => ({
+    action: button.getAttribute('data-approval-batch-action'),
+    text: button.textContent,
+    className: button.className,
+  })), [
+    { action: 'approve-all-once', text: 'Allow all once', className: 'approval-batch-action approval-batch-action--allow-once' },
+    { action: 'approve-all', text: 'Always allow all', className: 'approval-batch-action approval-batch-action--allow' },
+    { action: 'deny-all', text: 'Deny all', className: 'approval-batch-action approval-batch-action--deny' },
+  ]);
+});
+
+for (const [action, alwaysAllow] of [['approve-all-once', false], ['approve-all', true]]) {
+  test('approval batch ' + action + ' preserves the alwaysAllow payload for every pending row', async (t) => {
+    const dom = createApprovalDom();
+    const { window } = dom;
+    const approvals = [];
+    const controller = bindApprovalBatchUx({
+      scopeRoot: window.document.getElementById('timeline'),
+      document: window.document,
+      callbacks: {
+        async approveOne(callId, options) {
+          approvals.push({ callId, options });
+          return true;
+        },
+        async denyOne() { throw new Error('unexpected deny'); },
+      },
+    });
+    t.after(() => { controller.dispose(); window.close(); });
+
+    controller.sync();
+    await flush();
+    window.document.querySelector('[data-approval-batch-action="' + action + '"]').click();
+    await flush();
+
+    assert.deepEqual(approvals, [
+      { callId: 'approval-stream-a-call-1', options: { alwaysAllow } },
+      { callId: 'approval-stream-a-call-2', options: { alwaysAllow } },
+    ]);
+  });
 }
 
 test('approval batch leaves rows pending when approve IPC returns false', async () => {
@@ -156,6 +214,115 @@ test('replacement batch banners stay busy while slower rows are still in flight'
     'approval-stream-a-call-2',
     'approval-stream-a-call-3',
   ]);
+  controller.dispose();
+});
+
+test('the approval claim registry allows one holder per approval id until it is released', () => {
+  const claims = createApprovalClaimRegistry();
+  assert.equal(claims.has('a-1'), false);
+  assert.equal(claims.claim('a-1'), true);
+  assert.equal(claims.has('a-1'), true);
+  assert.equal(claims.claim('a-1'), false, 'a second claim on the same id is refused');
+  assert.equal(claims.claim('a-2'), true, 'other ids are independent');
+  claims.release('a-1');
+  assert.equal(claims.has('a-1'), false);
+  assert.equal(claims.claim('a-1'), true, 'a released id can be claimed again');
+});
+
+test('CTR-007: approval batch skips rows another surface already claimed, and releases a failed row for retry', async () => {
+  const dom = createApprovalDom();
+  const { window } = dom;
+  const claims = createApprovalClaimRegistry();
+  assert.equal(claims.claim('approval-stream-a-call-1'), true, 'a per-card request owns row 1');
+  const approvals = [];
+  const busy = [];
+  const errors = [];
+  const controller = bindApprovalBatchUx({
+    scopeRoot: window.document.getElementById('timeline'),
+    document: window.document,
+    claims,
+    callbacks: {
+      async approveOne(callId) {
+        approvals.push(callId);
+        throw new Error('approval rejected by backend');
+      },
+      async denyOne() { return true; },
+      setRowBusy(row, value) { busy.push([row.getAttribute('data-tool-call-id'), value]); },
+      onError(action, callId) { errors.push({ action, callId }); },
+    },
+  });
+
+  controller.sync();
+  await flush();
+  window.document.querySelector('[data-approval-batch-action="approve-all-once"]').click();
+  await flush();
+
+  assert.deepEqual(approvals, ['approval-stream-a-call-2'], 'the claimed row is skipped, not sent');
+  assert.deepEqual(busy, [['call-2', true], ['call-2', false]], 'the sent row is busy while in flight and re-enabled on failure');
+  assert.deepEqual(errors, [{ action: 'approve-all-once', callId: 'approval-stream-a-call-2' }], 'one error, for the sent row only');
+  assert.equal(claims.has('approval-stream-a-call-2'), false, 'the failed row is released for a retry');
+  assert.equal(claims.has('approval-stream-a-call-1'), true, 'the other surface keeps its claim');
+  controller.dispose();
+});
+
+test('CTR-007: a successful batch row stays busy and is released; a claim in flight outlives dispose', async () => {
+  const dom = createApprovalDom();
+  const { window } = dom;
+  const claims = createApprovalClaimRegistry();
+  const busy = [];
+  const controller = bindApprovalBatchUx({
+    scopeRoot: window.document.getElementById('timeline'),
+    document: window.document,
+    claims,
+    callbacks: {
+      approveOne(callId) { return callId.endsWith('call-1') ? Promise.resolve(true) : new Promise(() => {}); },
+      async denyOne() { return true; },
+      setRowBusy(row, value) { busy.push([row.getAttribute('data-tool-call-id'), value]); },
+    },
+  });
+
+  controller.sync();
+  await flush();
+  window.document.querySelector('[data-approval-batch-action="approve-all"]').click();
+  await flush();
+
+  assert.deepEqual(busy, [['call-1', true], ['call-2', true]], 'success leaves the row busy; the resolved flow removes it');
+  assert.equal(claims.has('approval-stream-a-call-1'), false, 'the resolved row is released');
+  assert.equal(claims.has('approval-stream-a-call-2'), true, 'the outstanding row is still claimed');
+  controller.dispose();
+  assert.equal(claims.has('approval-stream-a-call-2'), true, 'a request still in flight keeps its claim: no surface sends a second decision');
+});
+
+test('CTR-007: a row whose card decision is accepted and waiting to settle is not re-sent by the batch', async () => {
+  const dom = createApprovalDom();
+  const { window } = dom;
+  const timeline = window.document.getElementById('timeline');
+  timeline.querySelector('.chat-thread-children').insertAdjacentHTML('beforeend',
+    '<div class="approval-gap-row" data-approval-status="pending" data-tool-call-id="call-3" data-approval-id="approval-stream-a-call-3"></div>');
+  const approvals = [];
+  const controller = bindApprovalBatchUx({
+    scopeRoot: timeline,
+    document: window.document,
+    claims: createApprovalClaimRegistry(),
+    callbacks: {
+      async approveOne(callId) { approvals.push(callId); return true; },
+      async denyOne() { throw new Error('unexpected deny'); },
+    },
+  });
+  controller.sync();
+  await flush();
+  assert.equal(window.document.querySelector('.approval-batch-banner').getAttribute('data-pending-count'), '3');
+
+  // The card path marks the row once its request settles; its claim is already released.
+  timeline.querySelector('[data-tool-call-id="call-1"]').setAttribute('data-approval-reconciliation', 'waiting');
+  controller.sync(); // no global MutationObserver under node: sync by hand
+  await flush();
+  assert.equal(window.document.querySelector('.approval-batch-banner').getAttribute('data-pending-count'), '2',
+    'the banner stops counting the accepted row');
+
+  window.document.querySelector('[data-approval-batch-action="approve-all-once"]').click();
+  await flush();
+  assert.deepEqual(approvals, ['approval-stream-a-call-2', 'approval-stream-a-call-3']);
   controller.dispose();
 });
 
@@ -345,4 +512,23 @@ test('approval reconciliation clears bounded work on settlement, session switch,
   controller.start({ sessionId: 'session-1', reference: 'approval-3', row: rows[1], block: rows[1] });
   controller.dispose();
   assert.ok(cleared.includes(3), 'disposal clears its timer');
+});
+
+test('the banner offers the one-time answer first and names the standing permission', async () => {
+  const dom = createApprovalDom();
+  const { window } = dom;
+  const controller = bindApprovalBatchUx({
+    scopeRoot: window.document.getElementById('timeline'),
+    document: window.document,
+    callbacks: { async approveOne() { return true; }, async denyOne() { return true; } },
+  });
+  controller.sync();
+  await flush();
+  const buttons = Array.from(window.document.querySelectorAll('.approval-batch-action'));
+  assert.deepEqual(buttons.map((button) => [button.getAttribute('data-approval-batch-action'), button.textContent]), [
+    ['approve-all-once', 'Allow all once'],
+    ['approve-all', 'Always allow all'],
+    ['deny-all', 'Deny all'],
+  ]);
+  controller.dispose();
 });

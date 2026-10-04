@@ -4,7 +4,7 @@ const { describe, test } = require('node:test');
 const assert = require('node:assert/strict');
 const { EventEmitter } = require('node:events');
 
-const { runGit, runGitStreamed, buildPluginFetchProfile } = require('../services/git-runner');
+const { runGit, runGitStreamed } = require('../services/git-runner');
 const { createTrackedTempDir, cleanupTrackedResources } = require('./helpers/resource-cleanup');
 
 test.afterEach(async () => {
@@ -317,23 +317,6 @@ test('wide-037: a synchronous injected close installs no timer or abort tail', a
   assert.equal(result.success, true);
   assert.equal(timerCalls, 0, 'post-close timeout is never installed');
   assert.equal(killCalls, 0, 'post-close abort listener is never installed');
-});
-
-test('plugin fetch profile closes credentials, config, protocols, filters, hooks, and redirects', async () => {
-  const inherited = { GIT_DIR: process.env.GIT_DIR, HTTPS_PROXY: process.env.HTTPS_PROXY };
-  process.env.GIT_DIR = 'attacker.git'; process.env.HTTPS_PROXY = 'http://attacker.test:8080';
-  try {
-  const profile = buildPluginFetchProfile({ proxyUrl: 'http://127.0.0.1:4567', nullDevice: '/dev/null' });
-  const args = profile.argsPrefix.join(' ');
-  assert.match(args, /protocol\.allow=never/); assert.match(args, /protocol\.https\.allow=always/);
-  assert.match(args, /credential\.helper=/); assert.match(args, /http\.followRedirects=false/);
-  assert.match(args, /filter\.lfs\.process=/); assert.match(args, /core\.hooksPath=\/dev\/null/);
-  assert.equal(profile.env.GIT_TERMINAL_PROMPT, '0'); assert.equal(profile.env.GIT_CONFIG_NOSYSTEM, '1');
-  assert.equal(profile.env.GIT_DIR, undefined); assert.equal(profile.env.HTTPS_PROXY, undefined);
-  } finally {
-    if (inherited.GIT_DIR === undefined) delete process.env.GIT_DIR; else process.env.GIT_DIR = inherited.GIT_DIR;
-    if (inherited.HTTPS_PROXY === undefined) delete process.env.HTTPS_PROXY; else process.env.HTTPS_PROXY = inherited.HTTPS_PROXY;
-  }
 });
 
 describe('runGit — termination liveness and receipts', () => {

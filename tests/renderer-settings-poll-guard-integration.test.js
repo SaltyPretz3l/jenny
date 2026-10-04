@@ -55,7 +55,7 @@ async function openSettingsSection(window, sectionId) {
 // calls renderSettings() directly -- same function, same guarded subtrees.
 async function triggerUnrelatedSettingsRerender(window) {
   const doc = window.document;
-  const toggle = doc.querySelector('[data-inv-toggle="contextTokenBudgetToggle"]');
+  const toggle = doc.querySelector('[data-inv-toggle="contextCompactionToggle"]');
   assert.ok(toggle, 'precondition: a Context runtime toggle exists to drive an unrelated rerender');
   assert.equal(toggle.disabled, false, 'precondition: the toggle is enabled');
   toggle.click();
@@ -88,6 +88,7 @@ test('typing into a web-search API key password field survives an unrelated Sett
     shell: {
       features: {
         state: {
+          tools: { web: true },
           featureFlags: { web_search_providers: true },
           webSearch: { provider: 'brave' },
         },
@@ -116,6 +117,7 @@ test('an uncommitted web-search provider select pick survives an unrelated Setti
     shell: {
       features: {
         state: {
+          tools: { web: true },
           featureFlags: { web_search_providers: true },
           webSearch: { provider: 'duckduckgo' },
         },

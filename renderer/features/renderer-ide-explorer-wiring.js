@@ -42,6 +42,24 @@
     return `cd '${path.replace(/'/g, "'\\''")}'`;
   }
 
+  const GENERAL_PROJECT_ID = 'project_general';
+
+  // Split view W3-4 (decision 1, variant B): the Explorer stays on the one
+  // Workspace folder; this decides the one-line nudge under its header. Pure:
+  // { projectId, projectName } when the reference chat's project is a known
+  // project with a folder other than the Workspace project, else null (General,
+  // no folder, the same project, or a list that has not loaded yet).
+  function resolveExplorerNudge(input) {
+    const o = input || {};
+    const sessionProjectId = String(o.sessionProjectId || '').trim();
+    if (!sessionProjectId || sessionProjectId === GENERAL_PROJECT_ID) return null;
+    if (sessionProjectId === String(o.workspaceProjectId || '').trim()) return null;
+    const projects = Array.isArray(o.projects) ? o.projects : [];
+    const project = projects.find((entry) => entry && entry.id === sessionProjectId) || null;
+    if (!project || !String(project.rootPath || '').trim()) return null;
+    return { projectId: sessionProjectId, projectName: String(project.name || '').trim() || sessionProjectId };
+  }
+
   function createIdeExplorerWiring(ctx) {
     const {
       getDom, escapeHtml, getIde, getWorkspaceFsApi, openFile,
@@ -79,25 +97,59 @@
     // lazy; until it loads the title reads "Workspace" and the first render
     // after load repaints it). Without a switcher the header stays "Explorer".
     const hasProjectSwitcher = typeof getProjectSwitcher === 'function';
-    let switcherLoadKicked = false;
+    // A failed load is logged and a later header paint retries it, at most
+    // SWITCHER_LOAD_ATTEMPTS times in total so a permanently failing loader cannot loop.
+    const SWITCHER_LOAD_ATTEMPTS = 3;
+    let switcherLoadAttempts = 0;
+    let switcherLoadStarted = false;
     function kickProjectSwitcherLoad() {
-      if (switcherLoadKicked || !hasProjectSwitcher) return;
-      switcherLoadKicked = true;
+      if (switcherLoadStarted || switcherLoadAttempts >= SWITCHER_LOAD_ATTEMPTS || !hasProjectSwitcher) return;
+      switcherLoadStarted = true; // in flight, then done; a failure re-arms it below
+      switcherLoadAttempts += 1;
       Promise.resolve(getProjectSwitcher()).then((switcher) => {
         if (!switcher || disposed) return;
         return Promise.resolve(switcher.refresh()).then(() => { if (!disposed) tree?.repaintHeader?.(); });
-      }).catch(() => {});
+      }).catch((error) => {
+        switcherLoadStarted = false;
+        appendClientLog?.('WARN', 'ide.explorer.project_switcher_load_failed', { message: String(error?.message || error) });
+      });
+    }
+    // Reference chat: pane 0's session while the IDE chat dock shows it, else
+    // the focused chat. Reads the switcher's cached list only (no IPC here).
+    function getProjectNudge() {
+      const switcher = peekProjectSwitcher?.();
+      if (!switcher || typeof switcher.referenceChatProjectId !== 'function') return null;
+      const docked = getFeatureFlags?.()?.ide_chat_dock === true && getIde()?.chatDockOpen === true;
+      return resolveExplorerNudge({
+        sessionProjectId: switcher.referenceChatProjectId({ docked }),
+        workspaceProjectId: switcher.currentProject?.()?.id || '',
+        projects: switcher.getProjects?.() || [],
+      });
+    }
+    // The switcher's switch runs workspaceRootService.switchToProject (the
+    // folder transition with its unsaved-file preflight) plus its post-commit sync.
+    function openNudgeProject(projectId) {
+      const id = String(projectId || '').trim();
+      if (!id) return;
+      appendClientLog?.('INFO', 'ide.explorer.project_nudge_open', { projectId: id });
+      Promise.resolve(getProjectSwitcher?.()).then((switcher) => switcher?.switchToProject(id)).catch((error) => {
+        appendClientLog?.('WARN', 'ide.explorer.project_nudge_failed', { projectId: id, message: String(error?.message || error) });
+      });
     }
     const treeDeps = {
       getDom, escapeHtml, getIde: () => getIde(), getWorkspaceFsApi,
       onOpenFile: (path, options) => openFile(path, options),
-      onEntryDeleted: (path, kind) => getFileLifecycle()?.handleTreeEntryDeleted(path, kind),
+      onEntryDeleted: (path, kind, meta) => getFileLifecycle()?.handleTreeEntryDeleted(path, kind, meta),
       onEntryRenamed: (fromPath, toPath, kind, meta) => getFileLifecycle()?.handleTreeEntryRenamed(fromPath, toPath, kind, meta),
       onChooseWorkspaceRoot: () => getChooseWorkspaceRoot()?.(),
       getProjectTitle: hasProjectSwitcher
         ? () => { kickProjectSwitcherLoad(); return peekProjectSwitcher?.()?.title?.() || jt('projects.switcher.workspace', 'Workspace'); }
         : null,
-      onOpenProjectMenu: (anchor) => Promise.resolve(getProjectSwitcher?.()).then((switcher) => switcher?.openSwitcher(anchor)).catch(() => {}),
+      onOpenProjectMenu: (anchor) => Promise.resolve(getProjectSwitcher?.()).then((switcher) => switcher?.openSwitcher(anchor)).catch((error) => {
+        appendClientLog?.('WARN', 'ide.explorer.project_menu_failed', { message: String(error?.message || error) });
+      }),
+      getProjectNudge: hasProjectSwitcher ? getProjectNudge : null,
+      onOpenProjectNudge: (projectId) => openNudgeProject(projectId),
       buildFileContextMenuItems: (path) => buildFileContextMenuItems(path),
       buildDirectoryContextMenuItems: (path, options = {}) => [
         { label: jt('ide.explorer.findInFolder', 'Find in Folder'), action: () => getSearchPanel()?.beginScopedSearch?.(path) },
@@ -273,6 +325,11 @@
       if (hasProjectSwitcher && !projectsChangedWindow && typeof eventWindow.addEventListener === 'function') {
         projectsChangedWindow = eventWindow;
         projectsChangedWindow.addEventListener('jenny:projects-changed', handleProjectsChanged);
+        // W3-4: a Workspace root commit changes the project the nudge compares against.
+        projectsChangedWindow.addEventListener('ide:workspace-root-committed', handleProjectsChanged);
+        // The reference chat moved (focus, docked chat, its project): raised by
+        // the pane composition's header/full-render sync only on a change.
+        projectsChangedWindow.addEventListener('jenny:focused-chat-changed', handleProjectsChanged);
       }
       if (!isQolEnabled() || autoRevealBound) {
         return;
@@ -296,6 +353,8 @@
       }
       autoRevealWindow = null;
       projectsChangedWindow?.removeEventListener?.('jenny:projects-changed', handleProjectsChanged);
+      projectsChangedWindow?.removeEventListener?.('ide:workspace-root-committed', handleProjectsChanged);
+      projectsChangedWindow?.removeEventListener?.('jenny:focused-chat-changed', handleProjectsChanged);
       projectsChangedWindow = null;
       dnd?.dispose();
       treeImport?.dispose();
@@ -311,5 +370,5 @@
     };
   }
 
-  return { buildTerminalCdCommand, createIdeExplorerWiring };
+  return { buildTerminalCdCommand, createIdeExplorerWiring, resolveExplorerNudge };
 });

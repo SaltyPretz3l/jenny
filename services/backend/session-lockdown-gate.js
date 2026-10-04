@@ -42,6 +42,7 @@ const TOOL_NETWORK_CLASSIFICATION = Object.freeze({
   workspace_present: NETWORK_NONE,
   preview_test: NETWORK_NONE,
   verify: NETWORK_POSSIBLE,
+  image_generate: NETWORK_NONE,
   home: NETWORK_NONE,
   task_board: NETWORK_NONE,
   delegate: NETWORK_POSSIBLE,
@@ -156,9 +157,17 @@ function assertSessionLockdownAllowsEngine({
   }
 }
 
+// Per-send reads use the config service's narrow getters instead of cloning the
+// whole config; a duck-typed config service that only has getState still works.
+function readConfigValue(service, getter, ...keys) {
+  const config = service?.configService;
+  if (typeof config?.[getter] === 'function') return config[getter]();
+  const state = config?.getState?.() || {};
+  return keys.map((key) => state[key]).find((value) => value !== undefined);
+}
+
 function openAiCompatibleUrlFromService(service) {
-  const state = service?.configService?.getState?.() || {};
-  const engines = state.localEngines || state.local_engines || {};
+  const engines = readConfigValue(service, 'getLocalEngines', 'localEngines', 'local_engines') || {};
   const settings = engines.openaiCompatible || engines.openai_compatible || {};
   return String(settings.apiUrl || settings.api_url || '').trim();
 }
@@ -177,15 +186,12 @@ function resolveSessionLockdownRequest(service, session, { requestedEngine, requ
     : [
       String(service?.currentEngineType || '').trim().toLowerCase(),
       model ? String(service?._modelEngineHints?.get?.(model) || '').trim().toLowerCase() : '',
-      model ? resolveRequestedEngineType(service?.configService?.getState?.()?.preferredEngineType, model) : '',
+      model ? resolveRequestedEngineType(readConfigValue(service, 'getPreferredEngineType', 'preferredEngineType'), model) : '',
       model ? inferEngineTypeFromModel(model) : '',
     ]).filter(Boolean);
+  const openAiCompatibleApiUrl = openAiCompatibleUrlFromService(service);
   for (const engineType of candidates.length ? candidates : ['']) {
-    assertSessionLockdownAllowsEngine({
-      active,
-      engineType,
-      openAiCompatibleApiUrl: openAiCompatibleUrlFromService(service),
-    });
+    assertSessionLockdownAllowsEngine({ active, engineType, openAiCompatibleApiUrl });
   }
   return {
     active,

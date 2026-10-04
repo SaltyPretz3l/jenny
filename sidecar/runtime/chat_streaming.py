@@ -33,6 +33,12 @@ from sidecar.ai.context.token_budget import (
     resolve_request_output_reservation,
     resolve_tokenizer_backend,
 )
+from sidecar.ai.context.turn_context import (
+    place_turn_context_row,
+    split_context_blocks,
+    strip_turn_context_metadata,
+    trailing_turn_context_enabled,
+)
 from sidecar.ai.engines.base import EngineMessage
 from sidecar.ai.engines.vision_input import VisionImage
 from sidecar.ai.error_codes import (
@@ -46,13 +52,15 @@ from sidecar.ai.feature_flags import (
     FEATURE_PHASE_EVENTS,
     FEATURE_PROMPT_CACHE,
     FEATURE_TOKEN_BUDGET,
-    is_chatgpt_plan_meter_enabled,
     is_feature_flag_enabled,
 )
 from sidecar.ai.memory.contracts import MemoryPolicy
 from sidecar.ai.routing import thinking_checkpoint as checkpoint
 from sidecar.ai.routing.generation_diagnostics import (
+    PrefixReuseRecord,
     RequestFingerprintRecord,
+    observe_prefix,
+    record_prefix_reuse,
     record_request_fingerprint_for_store,
 )
 from sidecar.ai.routing.provider_stream_normalizer import (
@@ -61,6 +69,7 @@ from sidecar.ai.routing.provider_stream_normalizer import (
     FINISH_REASON_REASONING_ONLY,
     FINISH_REASON_THINKING_BUDGET,
 )
+from sidecar.ai.routing.system_messages import render_turn_context_row
 from sidecar.ai.routing.turn_event_contract import build_canonical_turn_event
 from sidecar.ai.routing.vision_turn import attach_vision_images, vision_token_surcharge
 from sidecar.ai.thinking_guard import (
@@ -146,19 +155,20 @@ def _build_live_stream_messages(
     # The request authority's root (None = explicitly unbound) governs every
     # workspace-derived prompt block, exactly as on the tool-loop path.
     prompt_kwargs = request_workspace_root_kwargs(stack.config, execution_context)
+    context_blocks, trailing_context_blocks = split_context_blocks(stack.config, context_blocks)
     system_prompt = stack.context_builder.build_system_prompt(
         stack.config.system_prompt,
         learned_lessons=learned_lessons,
         include_reasoning_status_markers=engine_supports_live_reasoning_stream(
             brain_container.stack.engine
         ),
-        reasoning_status_v2=is_feature_flag_enabled(feature_flags, "reasoning_status_v2"),
         include_skills=False,
         include_bootstrap=not uses_minimal_system_prompt(stack.config),
         workspace_manifest_enabled=getattr(stack.config, "tools_workspace_manifest_enabled", False),
         task_capsule_enabled=getattr(stack.config, "tools_task_capsule_enabled", False),
         latest_user_content=latest_user_content,
         current_date=str(current_date or "").strip() or resolve_current_date(),
+        defer_turn_context=trailing_turn_context_enabled(stack.config),
         **prompt_kwargs,
     )
     include_personality_block = not uses_minimal_system_prompt(stack.config)
@@ -172,6 +182,7 @@ def _build_live_stream_messages(
         tool_statuses=None,
         personality_rendered=personality_rendered,
         skill_invocation=skill_invocation,
+        execution_context=execution_context,
     )
     runtime_system_messages = [
         content
@@ -255,6 +266,11 @@ def _build_live_stream_messages(
         ),
         *semantic_history,
     ]
+    stream_messages = place_turn_context_row(stream_messages, render_turn_context_row(
+        stack.context_builder, stack.config, tool_statuses=None,
+        latest_user_content=latest_user_content,
+        trailing_context_blocks=trailing_context_blocks, root_kwargs=prompt_kwargs,
+    ))
     stream_messages_with_runtime = stack.context_builder.insert_runtime_system_messages(
         stream_messages,
         runtime_system_messages,
@@ -272,7 +288,7 @@ def _build_live_stream_messages(
                 stream_messages_with_runtime,
                 runtime_system_messages,
             )
-    return cast(list[EngineMessage], stream_messages_with_runtime)
+    return cast(list[EngineMessage], strip_turn_context_metadata(stream_messages_with_runtime))
 
 
 # #28: a visible streaming chunk free of every sanitizer trigger is a provable
@@ -345,6 +361,10 @@ def build_live_streaming_chat_response(
         image_token_surcharge=image_token_surcharge,
         execution_context=execution_context,
     )
+    prefix_observation = observe_prefix(
+        source_key=str(session_id or request_id or ""), system_prompt=None,
+        tool_schemas=None, prompt_messages=stream_messages,
+    )
     stream_messages = attach_vision_images(
         stream_messages,
         vision_images=vision_images,
@@ -375,7 +395,6 @@ def build_live_streaming_chat_response(
     response_parts: list[str] = []
     thinking_parts: list[str] = []
     thinking_id = f"think_{request_id}"
-    reasoning_status_v2_enabled = is_feature_flag_enabled(feature_flags, "reasoning_status_v2")
     phase_events_enabled = is_feature_flag_enabled(
         feature_flags,
         FEATURE_PHASE_EVENTS,
@@ -400,8 +419,8 @@ def build_live_streaming_chat_response(
     checkpoint_cycles = 0
     last_checkpoint_carry: str | None = None
     thinking_guard = ThinkingRepetitionGuard(max_chars=thinking_budget_chars)
-    status_extractor = ReasoningStatusExtractor(v2_enabled=reasoning_status_v2_enabled)
-    status_synthesizer = ReasoningStatusSynthesizer(v2_enabled=reasoning_status_v2_enabled)
+    status_extractor = ReasoningStatusExtractor()
+    status_synthesizer = ReasoningStatusSynthesizer()
     reasoning_chars_since_status = 0
     thinking_suppression_logged = False
     thinking_has_content = False
@@ -467,30 +486,29 @@ def build_live_streaming_chat_response(
                 ),
             },
         )
-        if reasoning_status_v2_enabled:
-            logger.info(
-                "Reasoning status emitted.",
-                extra={
-                    "event": "runtime.chat_streaming.reasoning_status_emitted",
-                    "request_id": request_id,
-                    "session_id": session_id,
-                    "provider": stack.config.engine_type,
-                    "model": stack.config.model,
-                    "thinking_id": thinking_id,
-                    "phase_index": (
-                        phase_index
-                        + int(
-                            current_phase is None
-                            or current_phase.get("phase_kind") != "reasoning"
-                        )
-                        if phase_events_enabled
-                        else checkpoint_cycles + 1
-                    ),
-                    "source": source,
-                    "status_word_count": len(status.split()),
-                    "reasoning_chars_since_previous_status": reasoning_chars_since_status,
-                },
-            )
+        logger.info(
+            "Reasoning status emitted.",
+            extra={
+                "event": "runtime.chat_streaming.reasoning_status_emitted",
+                "request_id": request_id,
+                "session_id": session_id,
+                "provider": stack.config.engine_type,
+                "model": stack.config.model,
+                "thinking_id": thinking_id,
+                "phase_index": (
+                    phase_index
+                    + int(
+                        current_phase is None
+                        or current_phase.get("phase_kind") != "reasoning"
+                    )
+                    if phase_events_enabled
+                    else checkpoint_cycles + 1
+                ),
+                "source": source,
+                "status_word_count": len(status.split()),
+                "reasoning_chars_since_previous_status": reasoning_chars_since_status,
+            },
+        )
         reasoning_chars_since_status = 0
 
     last_emitted_summary = ""
@@ -677,7 +695,7 @@ def build_live_streaming_chat_response(
                     # status marker must flush ahead of it, in order.
                     cleaned, status = status_extractor.feed(chunk_text)
                     reasoning_chars_since_status += len(cleaned)
-                    synthesis_text = cleaned if reasoning_status_v2_enabled else chunk_text
+                    synthesis_text = cleaned
                     if status:
                         status_synthesizer.mark_organic()
                         emit_reasoning_status(status, "organic", chunk_tokens_per_second)
@@ -755,7 +773,7 @@ def build_live_streaming_chat_response(
                     "sequence": len(response_parts),
                 },
             )
-    except Exception as error:  # noqa: BLE001
+    except Exception as error:
         stream_error = error
         logger.exception(
             "Streaming loop failed mid-stream",
@@ -810,16 +828,17 @@ def build_live_streaming_chat_response(
         model=stack.config.model,
     )
     usage_payload["context_tokens_estimate"] = context_tokens_estimate
+    if stream_error is None:
+        record_prefix_reuse(getattr(stack, "turn_diagnostics", None), PrefixReuseRecord(
+            request_id=request_id, observation=prefix_observation,
+            engine_type=stack.config.engine_type, model=stack.config.model,
+        ))
     attach_context_used_tokens(
         usage_payload, context_tokens_estimate=context_tokens_estimate
     )
     attach_context_window(usage_payload, engine)
     _flags = feature_flags
-    attach_plan_usage(
-        usage_payload,
-        engine,
-        enabled=is_chatgpt_plan_meter_enabled(_flags),
-    )
+    attach_plan_usage(usage_payload, engine)
     # Only forward the compaction trigger when compaction can actually fire
     # (both flags on) — see the matching gate in chat_decision_render.
     if is_feature_flag_enabled(_flags, FEATURE_TOKEN_BUDGET) and is_feature_flag_enabled(
@@ -904,11 +923,7 @@ def build_live_streaming_chat_response(
             "message": error_message,
             "retryable": True,
         }
-        attach_plan_usage(
-            error_payload,
-            engine,
-            enabled=is_chatgpt_plan_meter_enabled(_flags),
-        )
+        attach_plan_usage(error_payload, engine)
         emit(
             notification(
                 CHAT_ERROR_METHOD,

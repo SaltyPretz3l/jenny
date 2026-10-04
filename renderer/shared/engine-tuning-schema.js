@@ -75,7 +75,11 @@ var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18
 
   /* tier: 'A' = reader+emission already exist (only persistence was missing),
    *       'B' = sidecar parses it but Electron never emitted a user value,
-   *       'C' = already fully persisted, needed UI only. */
+   *       'C' = already fully persisted, needed UI only.
+   * retired: the field has no control any more and takes no new value (shell
+   *   config v58 cleared stored ones); the sidecar readers still know the key.
+   * retainOnReset: the field has no control on any page (the spend cap, until an
+   *   engine reports cost), so a page reset must not clear what is stored. */
   const RAW_FIELDS = [
     // --- Reasoning rounds -------------------------------------------------
     {
@@ -100,7 +104,7 @@ var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18
       key: 'maxTaskLoopIterations',
       rawKey: 'max_task_loop_iterations',
       label: jt('engineTuning.maxTaskLoopIterations.label', 'Reasoning rounds (task)'),
-      help: jt('app.engineTuning.maxTaskLoopIterationsHelp', 'The same limit for task mode, where longer multi-step work is expected.'),
+      help: jt('app.engineTuning.maxTaskLoopIterationsHelp', 'The same limit for task mode, where longer multi-step work is expected. Left at the default, a slow local model gets up to four times as many rounds.'),
       unit: 'rounds', type: 'integer', min: 1, max: 250, step: 1, default: 30,
       presets: [10, 20, 30],
       scope: SCOPE_LOCAL, tier: 'A', group: 'reasoning', order: 2,
@@ -112,7 +116,7 @@ var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18
       help: jt('app.engineTuning.maxLoopIterationsHelp', 'Only used when resource discipline is switched off. Also seeds the chat limit when that one is left unset.'),
       unit: 'rounds', type: 'integer', min: 1, max: 32, step: 1, default: 8,
       presets: [4, 8, 16],
-      scope: SCOPE_LOCAL, tier: 'A', group: 'reasoning', order: 3,
+      scope: SCOPE_LOCAL, tier: 'A', group: 'reasoning', order: 3, retired: true,
     },
     {
       key: 'cloudMaxChatLoopIterations',
@@ -177,8 +181,10 @@ var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18
       rawKey: 'max_tool_calls_per_session',
       label: jt('engineTuning.maxToolCallsPerSession.label', 'Tool calls per session'),
       help: jt('app.engineTuning.maxToolCallsPerSessionHelp', 'A safety cap on tool calls across a whole conversation, so a runaway loop cannot keep going forever.'),
-      unit: 'calls', type: 'integer', min: 1, max: 1000, step: 10, default: 200,
-      presets: [100, 200, 500],
+      // TR-008: matches the cloud budget and _MAX_SESSION_TOOL_CALL_CEILING, so
+      // max === default and this control can only be lowered.
+      unit: 'calls', type: 'integer', min: 1, max: 2000, step: 10, default: 2000,
+      presets: [500, 1000, 2000],
       scope: SCOPE_LOCAL, tier: 'A', group: 'limits', order: 0,
     },
     {
@@ -197,7 +203,7 @@ var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18
       help: jt('app.engineTuning.maxCodeIntelligenceToolCallsPerTurnHelp', 'How many code-analysis tool calls one reply may use.'),
       unit: 'calls', type: 'integer', min: 1, max: 100, step: 1, default: 16,
       presets: [8, 16, 32],
-      scope: SCOPE_LOCAL, tier: 'B', group: 'limits', order: 2,
+      scope: SCOPE_SHARED, tier: 'B', group: 'limits', order: 2,
     },
     {
       key: 'maxInlinePayloadBytes',
@@ -253,8 +259,8 @@ var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18
       rawKey: 'max_loop_wall_seconds',
       label: jt('engineTuning.maxLoopWallSeconds.label', 'Turn working-time limit'),
       help: jt('app.engineTuning.maxLoopWallSecondsHelp', 'How long a local turn may spend actively working. Time waiting for your approval or your answers does not count against this limit.'),
-      unit: 'seconds', type: 'number', min: 30, max: 3600, step: 30, default: 1800,
-      presets: [600, 1800, 3600],
+      unit: 'seconds', type: 'number', min: 30, max: 7200, step: 30, default: 3600,
+      presets: [1800, 3600, 7200],
       scope: SCOPE_LOCAL, tier: 'A', group: 'timeouts', order: 1,
     },
     {
@@ -314,7 +320,7 @@ var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18
       help: jt('app.engineTuning.tokenBudgetAutoCompactRatioHelp', 'When the conversation fills this share of the model\'s context window, older messages are summarized automatically. Lower values summarize sooner.'),
       unit: 'ratio', type: 'number', min: 0.1, max: 0.99, step: 0.01, default: null,
       presets: [{ value: 0.7, label: '70%' }, { value: 0.8, label: '80%' }, { value: 0.9, label: '90%' }],
-      scope: SCOPE_SHARED, tier: 'B', group: 'compaction', order: 0,
+      scope: SCOPE_SHARED, tier: 'B', group: 'compaction', order: 0, retired: true,
     },
     {
       key: 'tokenBudgetWarningRatio',
@@ -332,7 +338,7 @@ var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18
       help: jt('app.engineTuning.tokenBudgetReservedForSummaryHelp', 'Room kept free in the context window for the summary that compaction writes.'),
       unit: 'tokens', type: 'integer', min: 256, max: 200000, step: 256, default: null,
       presets: [2048, 4096, 8192],
-      scope: SCOPE_SHARED, tier: 'B', group: 'compaction', order: 2,
+      scope: SCOPE_SHARED, tier: 'B', group: 'compaction', order: 2, retired: true,
     },
     {
       key: 'tokenBudgetToolOverhead',
@@ -344,7 +350,7 @@ var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18
       help: jt('app.engineTuning.tokenBudgetToolOverheadHelp', 'Extra room assumed for each tool call when estimating how full the context window is.'),
       unit: 'tokens', type: 'integer', min: 1, max: 10000, step: 50, default: null,
       presets: [100, 250, 500],
-      scope: SCOPE_SHARED, tier: 'B', group: 'compaction', order: 3,
+      scope: SCOPE_SHARED, tier: 'B', group: 'compaction', order: 3, retired: true,
     },
 
     // --- Spend ------------------------------------------------------------
@@ -355,7 +361,7 @@ var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18
       help: jt('app.engineTuning.maxBudgetUsdHelp', 'Stop a reply once the provider cost for that turn passes this amount. Leave blank for no cap.'),
       unit: 'USD', type: 'number', min: 0.000001, max: 1000000, step: 0.5, default: null,
       presets: [{ value: 0.25, label: '$0.25' }, { value: 1, label: '$1' }, { value: 5, label: '$5' }],
-      scope: SCOPE_SHARED, tier: 'C', group: 'budget', order: 0,
+      scope: SCOPE_SHARED, tier: 'C', group: 'budget', order: 0, retainOnReset: true,
     },
   ];
 
@@ -405,6 +411,8 @@ var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18
       tier: String(definition.tier || 'A'),
       group: String(definition.group || 'limits'),
       storage: STORAGE_ENGINE_TUNING,
+      retired: definition.retired === true,
+      retainOnReset: definition.retainOnReset === true,
       order: Number.isFinite(Number(definition.order)) ? Number(definition.order) : index,
     });
   }

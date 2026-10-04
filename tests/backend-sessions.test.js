@@ -8,6 +8,12 @@ const {
   normalizeSession,
 } = require('../services/backend/electron-session-store');
 const { BackendService } = require('../services/backend/backend-service');
+const { buildSessionPreferencesPatch } = require('../services/backend/session-preferences-patch');
+const {
+  TOOL_CONNECTION_OVERRIDES_MAX,
+  normalizeToolCategoryOverrides,
+  normalizeToolConnectionOverrides,
+} = require('../services/backend/session-normalizers');
 
 const {
   createSession,
@@ -27,6 +33,141 @@ function generalProjectAuthority() {
     },
   };
 }
+
+test('managed connection preferences round-trip through save, reload, and session summaries', async (t) => {
+  const scratchRoot = path.join(process.cwd(), '.tmp', 's3-tool-overrides');
+  fs.mkdirSync(scratchRoot, { recursive: true });
+  const storeRoot = fs.mkdtempSync(path.join(scratchRoot, 'session-store-'));
+  t.after(() => fs.rmSync(storeRoot, { recursive: true, force: true }));
+  const storePath = path.join(storeRoot, 'sessions.json');
+  const store = new ElectronSessionStore(storePath, { logger() {} });
+  const created = store.createSession({ title: 'Connection preferences' });
+
+  await setSessionPreferences({ sessionStore: store }, created.id, {
+    tool_connection_overrides: { 'mcp:github': false },
+  });
+  store.dispose();
+  const reopened = new ElectronSessionStore(storePath, { logger() {} });
+  t.after(() => reopened.dispose());
+  assert.deepEqual(reopened.getSession(created.id).tool_connection_overrides, { 'mcp:github': false });
+  assert.deepEqual(reopened.listSessions()[0].tool_connection_overrides, { 'mcp:github': false });
+});
+
+test('tool override normalizers retain only valid booleans in fresh maps', () => {
+  const families = ['files', 'web', 'local_browser', 'python', 'terminal', 'git', 'code',
+    'checks', 'artifacts', 'images', 'knowledge', 'home', 'helpers'];
+  const categories = Object.fromEntries(families.map((key, index) => [key, index % 2 === 0]));
+  assert.deepEqual(Object.keys(normalizeToolCategoryOverrides(categories)), families);
+  assert.deepEqual(normalizeToolCategoryOverrides({ ...categories, unknown: true, python: 'false' }),
+    Object.fromEntries(Object.entries(categories).filter(([key]) => key !== 'python')));
+
+  // The longest real id: a 64-char publisher and a 64-char plugin (136 characters).
+  const maxLengthKey = `plugin:${'p'.repeat(64)}:${'x'.repeat(64)}`;
+  const connections = { ' mcp:github ': false, 'plugin:images': true, [maxLengthKey]: false,
+    github: true, 'mcp:': true, [`mcp:${'a'.repeat(133)}`]: true, 'mcp:a b': true,
+    'plugin:a\tb': true, 'MCP:github': true, 'plugin:code': 1, 'mcp:web': 'false', '': true };
+  assert.deepEqual(normalizeToolConnectionOverrides(connections), {
+    'mcp:github': false, 'plugin:images': true, [maxLengthKey]: false,
+  });
+  const plain = { 'mcp:github': false };
+  assert.notEqual(normalizeToolConnectionOverrides(plain), plain);
+  assert.deepEqual(normalizeToolConnectionOverrides(Object.assign(Object.create(null), plain)), plain);
+  for (const value of [undefined, null, false, 'mcp:github', [], new Date(), new Map(),
+    Object.create(plain)]) {
+    assert.deepEqual(normalizeToolConnectionOverrides(value), {});
+  }
+  assert.deepEqual(normalizeSession('missing-overrides', {}).tool_connection_overrides, {});
+});
+
+test('managed tool preferences persist new families and drop invalid connection entries', async (t) => {
+  const scratchRoot = path.join(process.cwd(), '.tmp', 's3-tool-overrides');
+  fs.mkdirSync(scratchRoot, { recursive: true });
+  const storeRoot = fs.mkdtempSync(path.join(scratchRoot, 'session-store-'));
+  t.after(() => fs.rmSync(storeRoot, { recursive: true, force: true }));
+  const storePath = path.join(storeRoot, 'sessions.json');
+  const store = new ElectronSessionStore(storePath, { logger() {} });
+  const created = store.createSession({ title: 'Tool families' });
+  const expected = { git: false, code: true, checks: false, artifacts: true,
+    images: false, knowledge: true, home: false, helpers: true };
+  const updated = await setSessionPreferences({ sessionStore: store }, created.id, {
+    tool_category_overrides: { ...expected, unknown: false, web: 'true', python: 0 },
+    tool_connection_overrides: { ' mcp:github ': false, 'plugin:images': true,
+      github: true, 'mcp:': false, [`mcp:${'a'.repeat(133)}`]: true, 'mcp:a b': true,
+      'plugin:bad-value': 'false' },
+  });
+  assert.deepEqual(updated.tool_category_overrides, expected);
+  store.dispose();
+  const reopened = new ElectronSessionStore(storePath, { logger() {} });
+  t.after(() => reopened.dispose());
+  assert.deepEqual(reopened.getSession(created.id).tool_category_overrides, expected);
+  assert.deepEqual(reopened.listSessions()[0].tool_category_overrides, expected);
+  assert.deepEqual(reopened.getSession(created.id).tool_connection_overrides,
+    { 'mcp:github': false, 'plugin:images': true });
+});
+
+test('connection preference patches enforce the normalized limit and own-property semantics', () => {
+  assert.equal(TOOL_CONNECTION_OVERRIDES_MAX, 64);
+  const valid = Object.fromEntries(Array.from({ length: 64 }, (_, index) => [`mcp:server-${index}`, false]));
+  assert.deepEqual(buildSessionPreferencesPatch({ tool_connection_overrides: {
+    ...valid, github: true, 'mcp:invalid': 'true', ' mcp:server-0 ': true,
+  } }), { tool_connection_overrides: { ...valid, 'mcp:server-0': true } });
+  assert.deepEqual(buildSessionPreferencesPatch(Object.create({ tool_connection_overrides: valid })), {});
+  assert.deepEqual(buildSessionPreferencesPatch({ preferred_model: 'local' }), { preferred_model: 'local' });
+  assert.deepEqual(buildSessionPreferencesPatch({ tool_connection_overrides: null }),
+    { tool_connection_overrides: {} });
+});
+
+test('managed connection preferences reject an oversized whole patch and replace or clear the map', async (t) => {
+  const scratchRoot = path.join(process.cwd(), '.tmp', 's3-tool-overrides');
+  fs.mkdirSync(scratchRoot, { recursive: true });
+  const storeRoot = fs.mkdtempSync(path.join(scratchRoot, 'session-store-'));
+  t.after(() => fs.rmSync(storeRoot, { recursive: true, force: true }));
+  const storePath = path.join(storeRoot, 'sessions.json');
+  const store = new ElectronSessionStore(storePath, { logger() {} });
+  const created = store.createSession({ title: 'Connection limit', preferences: {
+    tool_connection_overrides: { 'mcp:github': false, 'plugin:images': true },
+  } });
+  const service = { sessionStore: store };
+  const before = store.getSession(created.id);
+  const oversized = Object.fromEntries(Array.from({ length: 65 }, (_, index) => [`mcp:server-${index}`, true]));
+  await assert.rejects(setSessionPreferences(service, created.id, {
+    preferred_model: 'must-not-save', tool_connection_overrides: oversized,
+  }), { name: 'RangeError', message: 'tool_connection_overrides_limit' });
+  assert.deepEqual(store.getSession(created.id), before);
+  const unchanged = new ElectronSessionStore(storePath, { logger() {} });
+  assert.deepEqual(unchanged.getSession(created.id), before);
+  unchanged.dispose();
+
+  const replaced = await setSessionPreferences(service, created.id, {
+    tool_connection_overrides: { 'plugin:code': false },
+  });
+  assert.deepEqual(replaced.tool_connection_overrides, { 'plugin:code': false });
+  const cleared = await setSessionPreferences(service, created.id, { tool_connection_overrides: {} });
+  assert.deepEqual(cleared.tool_connection_overrides, {});
+  store.dispose();
+  const reopened = new ElectronSessionStore(storePath, { logger() {} });
+  t.after(() => reopened.dispose());
+  assert.deepEqual(reopened.getSession(created.id).tool_connection_overrides, {});
+  assert.deepEqual(reopened.listSessions()[0].tool_connection_overrides, {});
+});
+
+test('load-time normalization retains every valid connection override above the patch limit', (t) => {
+  const scratchRoot = path.join(process.cwd(), '.tmp', 's3-tool-overrides');
+  fs.mkdirSync(scratchRoot, { recursive: true });
+  const storeRoot = fs.mkdtempSync(path.join(scratchRoot, 'session-store-'));
+  t.after(() => fs.rmSync(storeRoot, { recursive: true, force: true }));
+  const storePath = path.join(storeRoot, 'sessions.json');
+  const store = new ElectronSessionStore(storePath, { logger() {} });
+  const created = store.createSession({ title: 'Retained connections' });
+  const connections = Object.fromEntries(Array.from({ length: 65 }, (_, index) => [`plugin:tool-${index}`, false]));
+  assert.deepEqual(normalizeToolConnectionOverrides(connections), connections);
+  store.updateSession(created.id, { tool_connection_overrides: connections });
+  store.dispose();
+  const reopened = new ElectronSessionStore(storePath, { logger() {} });
+  t.after(() => reopened.dispose());
+  assert.deepEqual(reopened.getSession(created.id).tool_connection_overrides, connections);
+  assert.deepEqual(reopened.listSessions()[0].tool_connection_overrides, connections);
+});
 
 test('managed createSession keeps no-prompt shape and persists one bounded draft without messages', async (t) => {
   const scratchRoot = path.join(process.cwd(), '.tmp', 'wo10c');
@@ -48,11 +189,11 @@ test('managed createSession keeps no-prompt shape and persists one bounded draft
     'last_message_preview', 'last_model_used', 'linked_session_ids', 'linked_task_id', 'lockdown', 'message_count',
     'pending_plan_proposal', 'pending_question_batch', 'pinned', 'plan_mode', 'plugin_session',
     'pre_plan_run_mode', 'preferred_model', 'project_id', 'reasoning_effort', 'run_mode', 'session_start_date',
-    'session_type', 'title', 'tool_category_overrides', 'updated_at',
+    'session_type', 'title', 'tool_category_overrides', 'tool_connection_overrides', 'updated_at',
   ]);
   const plainRecord = store.getSession(plain.id);
   assert.deepEqual(Object.keys(plainRecord).filter(key => key !== 'runtime_continuations').sort(), [
-    'active_turn', 'archived_at', 'branch_origin', 'compaction_snapshot', 'context_preferences', 'context_usage', 'conversation_mode', 'created_at', 'diagnostic_mode', 'diagnostic_model', 'diagnostic_provider', 'diagnostic_run_id', 'failure_retry_reasoning_snapshots', 'id', 'interactive_round_count', 'interactive_sequence_state', 'last_message_preview', 'last_model_used', 'linked_session_ids', 'linked_task_id', 'lockdown', 'message_count', 'message_seq_counter', 'messages', 'pending_plan_proposal', 'pending_question_batch', 'pinned', 'plan_mode', 'plugin_session', 'pre_plan_run_mode', 'preferred_model', 'project_id', 'reasoning_effort', 'run_mode', 'session_incarnation', 'session_start_date', 'session_type', 'title', 'tool_category_overrides', 'turn_event_log_version', 'turn_event_seq_counter', 'turn_events', 'turn_generation', 'updated_at',
+    'active_turn', 'archived_at', 'branch_origin', 'compaction_snapshot', 'context_preferences', 'context_usage', 'conversation_mode', 'created_at', 'diagnostic_mode', 'diagnostic_model', 'diagnostic_provider', 'diagnostic_run_id', 'failure_retry_reasoning_snapshots', 'id', 'interactive_round_count', 'interactive_sequence_state', 'last_message_preview', 'last_model_used', 'linked_session_ids', 'linked_task_id', 'lockdown', 'message_count', 'message_seq_counter', 'messages', 'pending_plan_proposal', 'pending_question_batch', 'pinned', 'plan_mode', 'plugin_session', 'pre_plan_run_mode', 'preferred_model', 'project_id', 'reasoning_effort', 'run_mode', 'session_incarnation', 'session_start_date', 'session_type', 'title', 'tool_category_overrides', 'tool_connection_overrides', 'turn_event_log_version', 'turn_event_seq_counter', 'turn_events', 'turn_generation', 'updated_at',
   ]);
   assert.deepEqual(plainRecord.messages, []);
   assert.deepEqual(plainRecord.runtime_continuations, { schema_version: 1, entries: [] });
@@ -316,33 +457,24 @@ test('managed createSession rejects when the session store refuses the write', a
   );
 });
 
-test('managed createSession resolves and persists a plugin provider binding', async () => {
-  let storeArgs = null;
-  const pluginSession = { schema_version: 1, publisher_id: 'jenny-official',
-    plugin_id: 'local-image-generation' };
+test('managed createSession refuses to create a plugin session (session providers are retired)', async () => {
+  let created = 0;
   const service = {
     projectAuthority: generalProjectAuthority(),
-    _pluginSessionProviderBroker: {
-      resolveCreationBinding: async () => ({ ok: true, pluginSession }),
-    },
-    sessionStore: {
-      createSession(args) {
-        storeArgs = args;
-        return { id: 's-plugin', session_type: 'plugin', plugin_session: pluginSession };
-      },
-    },
+    sessionStore: { createSession() { created += 1; return { id: 's-plugin' }; } },
   };
 
-  const result = await createSession(service, {
-    title: 'New Plugin Session',
-    preferences: {},
-    sessionType: 'plugin',
-    providerAuthority: { publisher_id: 'jenny-official',
-      plugin_id: 'local-image-generation', provider_contribution_id: 'local_image_generation' },
-  });
-  assert.equal(storeArgs.sessionType, 'plugin');
-  assert.deepEqual(storeArgs.pluginSession, pluginSession);
-  assert.equal(result.data.session_type, 'plugin');
+  for (const request of [
+    { sessionType: 'plugin' },
+    { sessionType: 'image' },
+    { providerAuthority: { publisher_id: 'jenny-official', plugin_id: 'local-image-generation' } },
+  ]) {
+    await assert.rejects(
+      createSession(service, { title: 'New Plugin Session', preferences: {}, ...request }),
+      { code: 'session_provider_unavailable' }
+    );
+  }
+  assert.equal(created, 0);
 });
 
 function makeImageAttachment(assetPath, id = 'image-1') {

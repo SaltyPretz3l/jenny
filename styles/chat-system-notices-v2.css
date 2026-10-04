@@ -209,7 +209,7 @@
 }
 
 .chat-error-card-title {
-  font-weight: 600;
+  font-weight: 500;
   color: var(--text-primary);
   min-width: 0;
 }
@@ -218,7 +218,7 @@
  * metadata (head children are ordered icon -> title -> code in the JS). */
 .chat-error-card-head .chat-error-card-code {
   margin-inline-start: auto;
-  font-weight: 600;
+  font-weight: 500;
 }
 
 /* The code chip becomes a deep link into the Logs > Activity tab when the

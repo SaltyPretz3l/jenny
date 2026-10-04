@@ -202,3 +202,55 @@ test('question reverse RPC projects only a branded pause to its original produce
       result: { runtime_decision_pause: { schema_version: 1, request_id: 'stream_1', decision: f.decision } } });
   }
 });
+
+// The ask_user half of gate A4: a runtime pause removes the question waiter
+// main-side, so the renderer and the remote projections are told the questions
+// can no longer be answered (live only; the transcript row stays pending).
+function bridgedQuestion(f, questions = [{ id: 'choice', prompt: 'Continue?' }]) {
+  const { executeElectronToolRequest } = require('../../services/backend/electron-tool-bridge');
+  const tool = require('../../services/tools/builtin/ask-user-tool');
+  f.service.toolExecutor = { executePreApproved: ({ callId, input }, context) => tool.execute(input, { ...context, callId }) };
+  return executeElectronToolRequest(f.service, { params: { tool_name: 'ask_user', tool_call_id: 'call_1',
+    arguments: { questions }, runtime_decision: f.decision }, sessionId: 'session_1', streamId: 'stream_1',
+  abortSignal: f.controller.signal, runtimeDecisionControl: f.control, logicalTurnId: 'turn_1' });
+}
+const questionWithdrawals = f => f.calls.events.filter(([, payload]) => payload?.type === 'user_questions_withdrawn');
+
+test('a question suspension emits exactly one live withdrawal for the exact question ref', async () => {
+  const f = questionFixture();
+  const waiting = bridgedQuestion(f);
+  const [reference] = f.service.pendingUserQuestions.keys();
+  const { questionId } = f.service.pendingUserQuestions.get(reference);
+  f.work.control_request = { kind: 'pause' };
+  assert.equal(f.control.requestPause(), true);
+  await assert.rejects(waiting, value => Boolean(projectDecisionPause(value)));
+  assert.deepEqual(questionWithdrawals(f), [['chat-stream', { type: 'user_questions_withdrawn', streamId: 'stream_1',
+    turnId: 'turn_1', sessionId: 'session_1', callId: 'call_1', questionId, questionRef: reference, toolName: 'ask_user',
+    reason: 'runtime_pause' }]], 'the renderer is told the questions can no longer be answered');
+  const types = f.calls.events.map(([, payload]) => payload?.type);
+  assert.ok(types.indexOf('user_questions_withdrawn') > types.indexOf('user_questions_requested'));
+  assert.equal(f.calls.messages.length + f.calls.updates.length, 0, 'nothing is journaled or stored');
+});
+
+test('an already-persisted pause withdraws the questions right after offering them', async () => {
+  const f = questionFixture();
+  f.work.control_request = { kind: 'pause' };
+  await assert.rejects(bridgedQuestion(f), value => Boolean(projectDecisionPause(value)));
+  const types = f.calls.events.map(([, payload]) => payload?.type);
+  assert.deepEqual(types, ['user_questions_requested', 'user_questions_withdrawn']);
+});
+
+test('answered, cancelled and unpaused questions emit no withdrawal', async () => {
+  const { answerUserQuestions } = require('../../services/backend/backend-chat-stream');
+  for (const cancel of [false, true]) {
+    const f = questionFixture();
+    const waiting = bridgedQuestion(f);
+    const [reference] = f.service.pendingUserQuestions.keys();
+    if (cancel) f.controller.abort();
+    else assert.equal(answerUserQuestions(f.service, reference, { answers: [{ id: 'choice', value: 'Yes' }] }), true);
+    await waiting;
+    f.work.control_request = { kind: 'pause' };
+    assert.equal(f.control.requestPause(), false);
+    assert.deepEqual(questionWithdrawals(f), []);
+  }
+});

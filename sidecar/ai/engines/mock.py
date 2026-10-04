@@ -1,4 +1,4 @@
-# ruff: noqa: C901, PLC0415, PLR0911, PLR0912, PLR0913, PLR2004
+# ruff: noqa: C901, PLR0911, PLR0912, PLR0913, PLR2004
 import json
 import logging
 import shlex

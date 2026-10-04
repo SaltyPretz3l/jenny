@@ -13,6 +13,7 @@ safe default so a diagnostic-side failure never fails a turn.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from dataclasses import replace as _replace
 from typing import Any, TypeAlias
@@ -33,6 +34,7 @@ from sidecar.ai.host_policy import (
     host_tool_requires_one_off_approval,
 )
 from sidecar.ai.routing import loop_runtime as _loop_runtime
+from sidecar.ai.routing import request_safety as _request_safety
 from sidecar.ai.routing import route_policy as _route_policy
 from sidecar.ai.tools import contracts as _tools_contracts
 from sidecar.ai.tools import inband_parser as _tools_inband_parser
@@ -44,6 +46,8 @@ from sidecar.runtime.provider_capability_profile import (
     derive_model_id,
     derive_profile_id,
 )
+
+logger = logging.getLogger(__name__)
 
 LoopRuntime: TypeAlias = _loop_runtime.LoopRuntime
 BLOCK_FAIL_CLOSED = _route_policy.BLOCK_FAIL_CLOSED
@@ -108,6 +112,17 @@ def build_approval_request(  # noqa: PLR0913 - router-owned value factory seam
     )
 
 
+# Per-request safety fields (owner decision D3) live in request_safety.py so this
+# module stays at the leaf import budget; tool_execution and the chat dispatcher
+# read them through here.
+RequestSafety = _request_safety.RequestSafety
+request_safety_from_params = _request_safety.request_safety_from_params
+with_request_safety = _request_safety.with_request_safety
+current_request_safety = _request_safety.current_request_safety
+resolve_safety_mode = _request_safety.resolve_safety_mode
+resolve_streak_cap = _request_safety.resolve_streak_cap
+
+
 def record_auto_approval(live_run_mode: Any | None) -> None:
     if live_run_mode is not None:
         live_run_mode.record_auto_approval()
@@ -123,7 +138,7 @@ def streak_cap_request(
     if live_run_mode is None:
         return None
     if cap > 0 and live_run_mode.auto_approvals >= cap:
-        from sidecar.ai.routing.router import ApprovalRequest  # noqa: PLC0415
+        from sidecar.ai.routing.router import ApprovalRequest
 
         return _replace(
             build_approval_request(
@@ -154,7 +169,7 @@ def paused_unattended_approval_request(
         or call_side_effecting is not True
     ):
         return None
-    from sidecar.ai.routing.router import ApprovalRequest  # noqa: PLC0415
+    from sidecar.ai.routing.router import ApprovalRequest
 
     return build_approval_request(
         ApprovalRequest,
@@ -290,7 +305,9 @@ def attempt_in_band_recovery(
             ),
             True,
         )
-    except Exception:  # noqa: BLE001
+    except Exception:  # noqa: BLE001 - diagnostic
+        # Best-effort, but a crash silently turns a tool call into plain text.
+        logger.warning("in-band tool-call recovery failed", exc_info=True)
         return result, False
 
 
@@ -320,7 +337,7 @@ def emit_synthetic_blocked_outcomes(  # noqa: PLR0913 - loop-state adapter seam.
     ``emit_tool_result``) are passed in to avoid an import cycle with
     :mod:`tool_loop`.
     """
-    from sidecar.ai.routing.router import ToolExecutionOutcome  # noqa: PLC0415
+    from sidecar.ai.routing.router import ToolExecutionOutcome
 
     for call in result.tool_calls:
         outcome_index += 1
@@ -515,9 +532,12 @@ def evaluate_schema_roundtrip(
                     result=result,
                 )
             except Exception:  # noqa: BLE001 — diagnostic-only.
-                pass
+                logger.debug("schema roundtrip result was not cached", exc_info=True)
         return bool(result.passed)
     except Exception:  # noqa: BLE001 — diagnostic-only.
+        # Our own check crashing says nothing about the provider: stay a pass
+        # (False would downgrade every native turn and count a false repair).
+        logger.warning("schema roundtrip check crashed; treating as pass", exc_info=True)
         return True
 
 
@@ -535,7 +555,7 @@ __all__ = [
 ]
 
 
-def hosted_approval_request(  # noqa: PLR0913, PLR0917 - explicit approval boundary.
+def hosted_approval_request(  # noqa: PLR0913 - explicit approval boundary.
     config: Any, pre_granted: bool, request_type: Any, call: Any, descriptor: Any, mode: str
 ) -> Any:
     """Hosted file mutations cannot inherit desktop auto-run/persisted grants."""

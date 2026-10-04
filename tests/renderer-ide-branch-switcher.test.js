@@ -266,6 +266,31 @@ test('switchToBranch (dirty + shelve): reassures when the checkout fails AFTER s
   assert.ok(ctx.errors.some((m) => /shelved/i.test(m)), 'tells the user their work is safely shelved');
 });
 
+test('switchToBranch (dirty + shelve): a no-op stash still switches but promises no recovery', async () => {
+  const noop = { ok: true, stashed: false, reason: 'nothing_to_stash' };
+  const success = makeSwitcher({ dirtyCount: 2, guardChoice: 'shelve', clientOverrides: { stash: noop } });
+  await success.sw.switchToBranch('feature');
+  assert.deepEqual(callsTo(success.gitClient, 'checkout'), [['checkout', { ref: 'feature' }]]);
+  assert.ok(success.toasts.some((m) => /Switched to/.test(m)));
+  assert.ok(![...success.toasts, ...success.errors].some((m) => /shelved/i.test(m)), 'nothing was shelved, so nothing is promised');
+
+  const failure = makeSwitcher({
+    dirtyCount: 2,
+    guardChoice: 'shelve',
+    clientOverrides: { stash: noop, checkout: { ok: false, available: true, message: 'would be overwritten by checkout' } },
+  });
+  await failure.sw.switchToBranch('feature');
+  assert.equal(callsTo(failure.gitClient, 'checkout').length, 1);
+  assert.equal(failure.errors.length, 1);
+  assert.ok(!/shelved/i.test(failure.errors[0]), 'no safely-shelved hint when nothing was stashed');
+});
+
+test('switchToBranch (dirty + shelve): a real stash keeps the shelved success toast', async () => {
+  const ctx = makeSwitcher({ dirtyCount: 2, guardChoice: 'shelve', clientOverrides: { stash: { ok: true, stashed: true } } });
+  await ctx.sw.switchToBranch('feature');
+  assert.ok(ctx.toasts.some((m) => /Your changes are shelved/.test(m)));
+});
+
 test('restoreShelved: nothing to restore gives a gentle info toast', async () => {
   const ctx = makeSwitcher({ confirm: true, clientOverrides: { stash: { ok: true, stashed: false } } });
   await ctx.sw.restoreShelved();
@@ -371,6 +396,38 @@ test('the picker shows a calm ahead/behind hint for the current branch', async (
     await tick();
     const html = stage.querySelector('[data-ide-branch-picker]').innerHTML;
     assert.match(html, /2 commits ahead of the remote/);
+    sw.dispose();
+  });
+});
+
+test('the branch picker exposes its keyboard selection to assistive technology', async () => {
+  await withStage(async (stage) => {
+    const sw = createIdeBranchSwitcher({
+      getDom: () => ({ ideEditorStage: stage }),
+      gitClient: makeGitClient({ getBranches: { ok: true, branches: ['dev', 'main'], current: 'main' } }),
+      callbacks: { getCurrentBranch: () => 'main', isRepo: () => true },
+    });
+    sw.open();
+    await tick();
+    const input = stage.querySelector('[data-ide-branch-picker] input');
+    const list = stage.querySelector('[data-ide-branch-picker] [role="listbox"]');
+    assert.equal(input.getAttribute('role'), 'combobox');
+    assert.equal(input.getAttribute('aria-controls'), list.id);
+    assert.equal(input.getAttribute('aria-expanded'), 'true');
+    const active = stage.ownerDocument.getElementById(input.getAttribute('aria-activedescendant'));
+    assert.ok(active, 'the active descendant id resolves to a live row');
+    assert.equal(active.getAttribute('aria-selected'), 'true');
+
+    input.dispatchEvent(new stage.ownerDocument.defaultView.KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true }));
+    const next = stage.ownerDocument.getElementById(input.getAttribute('aria-activedescendant'));
+    assert.ok(next && next !== active, 'ArrowDown moves the announced row');
+    assert.equal(next.getAttribute('aria-selected'), 'true');
+    const ids = [...list.querySelectorAll('[role="option"]')].map((row) => row.id);
+    assert.equal(new Set(ids).size, ids.length, 'row ids are unique');
+
+    sw.close();
+    assert.equal(input.getAttribute('aria-expanded'), 'false');
+    assert.equal(input.hasAttribute('aria-activedescendant'), false);
     sw.dispose();
   });
 });

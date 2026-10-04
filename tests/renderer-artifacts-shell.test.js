@@ -61,7 +61,6 @@ test('queued images are not artifacts until send, then persisted image artifacts
     await waitForUi(window, 90);
 
     assert.equal(doc.getElementById('artifactReviewPanel').classList.contains('hidden'), false);
-    assert.match(doc.getElementById('artifactReviewStatus').textContent, /1 artifact/i);
 
     const preview = doc.querySelector('#artifactReviewPreviewContent .artifact-preview-image');
     assert.ok(preview);
@@ -111,7 +110,6 @@ test('first panel open renders the selected artifact detail after chat creates a
     // auto-select the newly persisted artifact — detail chrome populated, not
     // the empty state.
     assert.equal(doc.getElementById('artifactReviewPanel').classList.contains('hidden'), false);
-    assert.match(doc.getElementById('artifactReviewStatus').textContent, /1 artifact/i);
     assert.equal(doc.getElementById('artifactReviewDetailEmpty').classList.contains('hidden'), true);
     assert.ok(doc.getElementById('artifactReviewDetailTitle').textContent.trim().length > 0);
     assert.ok(doc.getElementById('artifactReviewProvenanceTimeline').textContent.trim().length > 0);
@@ -124,6 +122,7 @@ test('artifacts tab renders redacted generated images through artifact read data
   const imageDataUrl = 'data:image/png;base64,iVBORw0KGgo=';
   const sessionId = 'session-redacted-generated-image';
   const app = await loadRendererApp({
+    appearance: { artifactAutoOpen: true },
     artifactReviewPreferences: { enabled: true, collapsed: false, width: 420 },
     shell: {
       chat: {
@@ -254,4 +253,33 @@ test('leaving chat for the IDE view hides split review chrome even when split re
   } finally {
     await app.dispose();
   }
+});
+
+test('a tool artifact leaves the panel hidden by default; the toolbar still opens it', async (t) => {
+  const app = await loadRendererApp();
+  t.after(() => app.dispose());
+  const { window, shell } = app;
+  const doc = window.document;
+  setWorkspaceWidths(window, doc);
+  const input = doc.getElementById('chatInput');
+  input.value = 'Create an artifact';
+  input.dispatchEvent(new window.Event('input', { bubbles: true }));
+  doc.getElementById('sendButton').click();
+  await waitForUi(window, 30);
+  const sessionId = window.__rendererState.currentSessionId;
+  assert.ok(sessionId);
+  await shell.__emitChat({
+    type: 'tool_result', sessionId, streamId: window.__rendererState.activeStreamId,
+    callId: 'default-off-artifact', toolName: 'create_artifact',
+    summary: 'Created document', content: 'Created document', isError: false,
+    generatedArtifacts: [{ artifact_id: 'default-off-document', artifact_kind: 'document',
+      title: 'Document', file_name: 'document.txt', editable: false, status: 'available' }],
+  });
+  await waitForUi(window, 120);
+  assert.equal(doc.getElementById('artifactReviewPanel').classList.contains('hidden'), true);
+  assert.deepEqual(Array.from(window.__rendererState.artifacts.autoOpenedSessionIds || []), []);
+  doc.getElementById('artifactSplitViewToggle').click();
+  await waitForUi(window, 60);
+  assert.equal(doc.getElementById('artifactReviewPanel').classList.contains('hidden'), false);
+  assert.match(doc.getElementById('artifactReviewDetailTitle').textContent, /Document/);
 });

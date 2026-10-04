@@ -18,8 +18,9 @@ from sidecar.ai.routing.thinking_checkpoint import (
     build_checkpoint_messages,
     build_reasoning_summary_messages,
     checkpoint_carry_similarity,
-    checkpoint_no_progress,
     checkpoint_phase_summary,
+    checkpoint_stalled,
+    dropped_tool_call_error,
     is_context_window_exhausted,
     is_thinking_budget_checkpoint,
     resolve_checkpoint_context_window,
@@ -234,18 +235,23 @@ class _FinalResponseMixin:
 
         request_id = self.request_id
         finish_reason = str(getattr(result, "finish_reason", "") or "").strip().lower()
-        if finish_reason in {"incomplete", "error", "thinking_budget"} or (
+        # A clean stop whose only tool call was dropped at a cap (sweep W3-B1).
+        dropped_error = dropped_tool_call_error(result)
+        cause = "tool_input_rejected" if dropped_error else finish_reason
+        if dropped_error or finish_reason in {"incomplete", "error", "thinking_budget"} or (
             finish_reason == "length"
             and (
                 not response_text.strip()
                 or getattr(result, "tool_call_truncated", False) is True
             )
         ):
-            error_message = {
+            error_message = dropped_error or {
+                # TR-016: no [DONE] and no finish_reason is a closed connection; a real
+                # output-token stop is classified "length" and has its own copy below.
                 "incomplete": (
-                    "The response was cut off before it finished — the model ran out of "
-                    "output tokens or the stream ended early. Partial output may appear "
-                    "above; retry to try again."
+                    "The connection to the model server closed before the response "
+                    "finished (no end-of-stream marker). Any tool call that was still "
+                    "being written did not run. Retry to continue."
                 ),
                 "error": (
                     "The model provider reported a stream error before the response "
@@ -261,11 +267,12 @@ class _FinalResponseMixin:
                 ),
             }[finish_reason]
             status_text = {
+                "tool_input_rejected": "The model's tool call was over a tool-call limit.",
                 "incomplete": "The model response ended before completion.",
                 "error": "The model provider reported a stream error.",
                 "thinking_budget": "The model exhausted its thinking budget.",
                 "length": "The model exhausted its output budget.",
-            }[finish_reason]
+            }[cause]
             reasoning_text = str(result.thinking_text or "").strip()
             _tl_hub.log_event(
                 logger,
@@ -284,7 +291,7 @@ class _FinalResponseMixin:
             self.runtime.audit(
                 _tl_hub.KIND_TURN_FAILED,
                 summary=(
-                    f"stream_{finish_reason} iteration={iteration} "
+                    f"stream_{cause} iteration={iteration} "
                     f"response_length={len(response_text)}"
                 ),
             )
@@ -312,7 +319,7 @@ class _FinalResponseMixin:
                     ),
                     terminal_error_retryable=True,
                 ),
-                reason=f"stream_{finish_reason}",
+                reason=f"stream_{cause}",
             )
         return None
 
@@ -494,11 +501,13 @@ class _FinalResponseMixin:
         # so it winds down with a cause instead of the canned empty-generation
         # sentence or a bare retryable terminal error.
         exhausted_reason: str | None = None
-        if self.thinking_budget_checkpoints < limit and _iteration < self.iteration_total:
+        # No iteration-headroom prerequisite: a continuation widens the budget
+        # itself (below), so a checkpoint on the last step continues too (TR-005).
+        if self.thinking_budget_checkpoints < limit:
             text = str(result.thinking_text or "")
             carry = text[-CHECKPOINT_CARRY_CHARS:]
             previous_carry = getattr(self, "last_checkpoint_carry", None)
-            if checkpoint_no_progress(previous_carry, carry):
+            if checkpoint_stalled(self, previous_carry, carry, result):
                 similarity = checkpoint_carry_similarity(previous_carry, carry)
                 exhausted_reason = "no_progress"
                 _tl_hub.log_event(
@@ -511,6 +520,7 @@ class _FinalResponseMixin:
                     data={
                         "cycle": self.thinking_budget_checkpoints + 1,
                         "similarity": similarity,
+                        "reason": "repeat" if carry.strip() else "empty_carry",
                     },
                     request_id=request_id,
                     session_id=session_id,
@@ -541,6 +551,12 @@ class _FinalResponseMixin:
                         tool_call_truncated=(
                             getattr(result, "tool_call_truncated", False) is True
                         ),
+                        tool_call_rejected_reason=str(
+                            getattr(result, "tool_call_rejected_reason", "") or ""
+                        ),
+                        # TR-015: "write your draft now" only in an approved-plan
+                        # build with write tools; never in Plan Mode or a review.
+                        allow_write_draft=_tl_hub.write_progress.nudge_applies(self),
                     )
                 )
                 terminal = _tl_hub.tool_loop_compaction.check_checkpoint_context(
@@ -552,6 +568,14 @@ class _FinalResponseMixin:
                 )
                 if terminal is not None:
                     return terminal
+                # A continuation resumes the SAME step's reasoning; it is not an
+                # agent step, so it must not spend the turn's iteration budget
+                # (TR-005: slow thinkers lost a step per checkpoint and hit the
+                # cap early). Widening both counters, like the verification
+                # gate's carve-out, keeps every capacity check consistent; the
+                # checkpoint ladder limit bounds the extension.
+                self.max_iterations += 1
+                self.iteration_total += 1
                 # The next provider call is the continuation, not a fresh
                 # answer: tag it so the turn diagnostics keep the calls apart.
                 set_next_provider_call_purpose(

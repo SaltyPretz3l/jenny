@@ -43,15 +43,11 @@
       getSettingsShellController = noopNull,
       ensureProactiveController = noop,
       ensureSkillsController = noop,
-      ensureTipsController = noop,
       applyProactivePayload = noopObj,
       applySkillsPayload = noopObj,
-      applyTipsPayload = noopObj,
       bindSkillsShellEventsIfNeeded = noop,
-      bindTipsShellEventsIfNeeded = noop,
       refreshProactiveStateSafe = noopAsync,
       refreshSkillsStateSafe = noopAsync,
-      refreshTipsStateSafe = noopAsync,
       refreshPersonalityWorkspaceSafe = noopAsync,
       refreshCompanionStateSafe = noopAsync,
     } = callbacks;
@@ -272,7 +268,6 @@
       return {
         proactive: settingsShellController?.isSectionInitialized?.('proactive') === true,
         skills: settingsShellController?.isSectionInitialized?.('skills') === true,
-        tips: settingsShellController?.isSectionInitialized?.('tips') === true,
         personality: settingsShellController?.isSectionInitialized?.('personality') === true,
         diagnostics: settingsShellController?.isSectionInitialized?.('diagnostics') === true,
       };
@@ -295,9 +290,6 @@
       }
       if (visibleSections.skills) {
         refreshTasks.push(refreshSkillsStateSafe());
-      }
-      if (visibleSections.tips) {
-        refreshTasks.push(refreshTipsStateSafe());
       }
       if (visibleSections.personality) {
         refreshTasks.push(refreshPersonalityWorkspaceSafe());
@@ -368,7 +360,6 @@
         'workspaceRoot',
         'proactive',
         'skills',
-        'tips',
         'offline',
         'harness',
         'companion',
@@ -378,12 +369,6 @@
       if (serviceId === 'proactive') {
         return competingLazyOverrides.length === 0 || (
           competingLazyOverrides.length === 1 && competingLazyOverrides[0] === 'harness'
-        );
-      }
-      if (serviceId === 'skills' || serviceId === 'tips') {
-        return competingLazyOverrides.length === 0 || (
-          competingLazyOverrides.length === 1
-          && (competingLazyOverrides[0] === 'skills' || competingLazyOverrides[0] === 'tips')
         );
       }
       return competingLazyOverrides.length === 0;
@@ -400,12 +385,6 @@
         ensureSkillsController();
         applySkillsPayload(cachedSkillsState);
         bindSkillsShellEventsIfNeeded(state.skills?.featureEnabled === true);
-      }
-      const cachedTipsState = getCachedBridgeState('tipsState');
-      if (cachedTipsState) {
-        ensureTipsController();
-        applyTipsPayload(cachedTipsState);
-        bindTipsShellEventsIfNeeded(state.tips?.featureEnabled === true);
       }
     }
 
@@ -438,17 +417,6 @@
             });
           });
       }
-      // Contextual tips are Home-owned now, not a lazy Settings surface. Read
-      // their bounded state at startup so the one Home preference takes effect
-      // without requiring the user to visit Settings first.
-      Promise.resolve()
-        .then(function refreshTipsBootstrap() { return refreshTipsStateSafe(); })
-        .then(function rerenderAfterTipsBootstrap() { renderAll(); })
-        .catch(function handleTipsBootstrapError(error) {
-          appendClientLog('WARN', 'tips.bootstrap_failed', {
-            message: error?.message || String(error),
-          });
-        });
     }
 
     async function runWorkspaceRootTransition(mode) {

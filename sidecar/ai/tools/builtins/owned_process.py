@@ -183,7 +183,7 @@ class _CapacityLease:
             if self._released:
                 return
             self._released = True
-        self._service._release_capacity()  # noqa: SLF001
+        self._service._release_capacity()
 
 
 @dataclass
@@ -398,7 +398,7 @@ class OwnedProcessService:
         if (
             process.stdout is None
             or process.stderr is None
-            or (owned._input_data is not None and process.stdin is None)  # noqa: SLF001
+            or (owned._input_data is not None and process.stdin is None)
         ):
             self.cancel(owned)
             raise OwnedProcessError("owned process pipes are unavailable")
@@ -418,19 +418,19 @@ class OwnedProcessService:
                     process.stdout, stdout_capture, "stdout", on_chunk=on_output_chunk
                 )
             )
-            owned._output_readers = tuple(readers)  # noqa: SLF001
+            owned._output_readers = tuple(readers)
             readers.append(
                 self._start_reader(
                     process.stderr, stderr_capture, "stderr", on_chunk=on_output_chunk
                 )
             )
-            owned._output_readers = tuple(readers)  # noqa: SLF001
-            if owned._input_data is not None:  # noqa: SLF001
+            owned._output_readers = tuple(readers)
+            if owned._input_data is not None:
                 if process.stdin is None:
                     raise RuntimeError("Owned process input pipe is unavailable")
-                owned._input_writer = self._start_input_writer(  # noqa: SLF001
+                owned._input_writer = self._start_input_writer(
                     process.stdin,
-                    owned._input_data,  # noqa: SLF001
+                    owned._input_data,
                 )
             deadline = started_at + max(0.0, float(timeout_seconds))
             while True:
@@ -609,7 +609,7 @@ class OwnedProcessService:
                 owned
                 for owned in self._active.values()
                 if (
-                    (latest := owned._cleanup_observation.latest) is not None  # noqa: SLF001
+                    (latest := owned._cleanup_observation.latest) is not None
                     and latest.cleanup == "uncertain"
                 )
             ]
@@ -668,9 +668,9 @@ class OwnedProcessService:
             self._condition.notify()
 
     def _finalize(self, owned: OwnedProcess) -> OwnedProcessCleanupVerdict:
-        with owned._finalize_lock:  # noqa: SLF001
-            if owned._finalized:  # noqa: SLF001
-                latest = owned._cleanup_observation.latest  # noqa: SLF001
+        with owned._finalize_lock:
+            if owned._finalized:
+                latest = owned._cleanup_observation.latest
                 return latest or OwnedProcessCleanupVerdict(
                     cleanup="confirmed",
                     process_tree_terminated=True,
@@ -693,12 +693,12 @@ class OwnedProcessService:
                 reason=";".join(reason_parts) or None,
             )
             if confirmed:
-                owned._finalized = True  # noqa: SLF001
+                owned._finalized = True
         if confirmed:
             with self._condition:
                 self._active.pop(id(owned), None)
-            owned._lease.release()  # noqa: SLF001
-        owned._cleanup_observation.publish(verdict)  # noqa: SLF001
+            owned._lease.release()
+        owned._cleanup_observation.publish(verdict)
         return verdict
 
     def _close_containment(self, owned: OwnedProcess) -> bool:
@@ -795,8 +795,8 @@ class OwnedProcessService:
 
     @staticmethod
     def _io_threads(owned: OwnedProcess) -> tuple[threading.Thread, ...]:
-        input_writer = owned._input_writer  # noqa: SLF001
-        return owned._output_readers + ((input_writer,) if input_writer else ())  # noqa: SLF001
+        input_writer = owned._input_writer
+        return owned._output_readers + ((input_writer,) if input_writer else ())
 
     @staticmethod
     def _start_input_writer(pipe: IO[bytes], input_data: bytes) -> threading.Thread:

@@ -193,105 +193,23 @@
         return envelope.origin === 'chat-stream' && envelope.backendUnusable === true;
       },
     }),
-    Object.freeze({
-      id: 2,
-      rule: 'chat_stream_turn_error',
-      /* The timeline card renders organically from message state via
-       * the projector — intake suppresses the toast and records
-       * history; it never renders the card itself. */
-      surface: 'timeline',
-      match: function matchChatStream(envelope) {
-        return envelope.origin === 'chat-stream';
-      },
-    }),
-    Object.freeze({
-      id: 4,
-      rule: 'backend_status',
-      surface: 'banner',
-      bannerTone: 'danger',
-      bannerSticky: true,
-      match: function matchBackendStatus(envelope) {
-        return envelope.origin === 'backend-status';
-      },
-    }),
-    Object.freeze({
-      id: 5,
-      rule: 'settings_refresh',
-      surface: 'toast',
-      toastTone: 'warning',
-      toastSticky: false,
-      toastDurationMs: 6000,
-      match: function matchSettingsRefresh(envelope) {
-        return envelope.origin === 'settings-refresh';
-      },
-    }),
-    Object.freeze({
-      id: 6,
-      rule: 'background_poll',
-      surface: 'none',
-      recordAlways: true,
-      match: function matchBackgroundPoll(envelope) {
-        return envelope.origin === 'offline-refresh' || envelope.origin === 'health-poll';
-      },
-    }),
-    Object.freeze({
-      id: 7,
-      rule: 'update_action',
-      surface: 'toast',
-      toastTone: 'danger',
-      toastSticky: true,
-      match: function matchUpdateAction(envelope) {
-        return envelope.origin === 'update-action';
-      },
-    }),
-    Object.freeze({
-      id: 8,
-      rule: 'shell_action',
-      surface: 'toast',
-      toastTone: 'danger',
-      toastSticky: true,
-      match: function matchShellAction(envelope) {
-        return envelope.origin === 'shell-action';
-      },
-    }),
-    Object.freeze({
-      id: 9,
-      rule: 'global_boundary',
-      surface: 'toast',
-      toastTone: 'warning',
-      toastSticky: false,
-      toastDurationMs: 6000,
-      match: function matchGlobalBoundary(envelope) {
-        return envelope.origin === 'global-boundary';
-      },
-    }),
-    Object.freeze({
-      id: 10,
-      rule: 'auth',
-      surface: 'auth-inline',
-      match: function matchAuth(envelope) {
-        return envelope.origin === 'auth';
-      },
-    }),
-    Object.freeze({
-      id: 11,
-      rule: 'startup_crash',
-      surface: 'startup-overlay',
-      match: function matchStartupCrash(envelope) {
-        return envelope.origin === 'startup-crash';
-      },
-    }),
-    Object.freeze({
-      id: 12,
-      rule: 'default',
-      surface: 'toast',
-      toastTone: 'danger',
-      toastSticky: true,
-      match: function matchDefault() {
-        return true;
-      },
-    }),
-  ]);
+  ].concat([
+    { id: 2, rule: 'chat_stream_turn_error', origins: ['chat-stream'], surface: 'timeline' },
+    { id: 4, rule: 'backend_status', origins: ['backend-status'], surface: 'banner', bannerTone: 'danger', bannerSticky: true },
+    { id: 5, rule: 'settings_refresh', origins: ['settings-refresh'], surface: 'toast', toastTone: 'warning', toastSticky: false, toastDurationMs: 6000 },
+    { id: 6, rule: 'background_poll', origins: ['offline-refresh', 'health-poll'], surface: 'none', recordAlways: true },
+    { id: 7, rule: 'update_action', origins: ['update-action'], surface: 'toast', toastTone: 'danger', toastSticky: true },
+    { id: 8, rule: 'shell_action', origins: ['shell-action'], surface: 'toast', toastTone: 'danger', toastSticky: true },
+    { id: 9, rule: 'global_boundary', origins: ['global-boundary'], surface: 'toast', toastTone: 'warning', toastSticky: false, toastDurationMs: 6000 },
+    { id: 10, rule: 'auth', origins: ['auth'], surface: 'auth-inline' },
+    { id: 11, rule: 'startup_crash', origins: ['startup-crash'], surface: 'startup-overlay' },
+    { id: 12, rule: 'default', origins: [], surface: 'toast', toastTone: 'danger', toastSticky: true },
+  ].map(function (row) {
+    var origins = Object.freeze(row.origins);
+    return Object.freeze(Object.assign({}, row, {
+      match: function (envelope) { return origins.length === 0 || origins.includes(envelope.origin); },
+    }));
+  })));
 
   function buildToastDirective(row, envelope) {
     if (row.surface !== 'toast') return null;

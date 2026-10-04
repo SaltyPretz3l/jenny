@@ -14,8 +14,10 @@
 !renderer/features/renderer-plan-document.js
 !renderer/inventory
 !renderer/inventory/**
-!renderer/features
-!renderer/features/renderer-plan-document.js
+!renderer/shell
+!renderer/shell/renderer-orchestration-controller.js
+!renderer/shell/renderer-runs-view.js
+!renderer/shell/renderer-runtime-limits-view.js
 !locales
 !locales/*.json
 !services

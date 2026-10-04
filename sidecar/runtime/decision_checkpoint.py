@@ -147,7 +147,7 @@ class DecisionSnapshot:
             if self.mutation is not None:
                 try:
                     self.mutation.transition("release", self.context, params["decision"])
-                except Exception:
+                except Exception:  # noqa: BLE001  # fail-soft
                     error.add_note("Mutation checkpoint release remains unconfirmed.")
             raise
         raise ToolLoopSuspended(reference)
@@ -272,7 +272,7 @@ def prepare_question_decision(  # noqa: PLR0913 - captures one immutable dispatc
         return None
     if runtime.tool_call_limit is None:
         return None
-    from sidecar.ai.routing.mutation_change_set_lifecycle import (  # noqa: PLC0415
+    from sidecar.ai.routing.mutation_change_set_lifecycle import (
         current_run_change_set_id,
     )
     inputs = _QuestionInputs(

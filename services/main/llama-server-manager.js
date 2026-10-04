@@ -107,6 +107,14 @@ function createLlamaServerManager({
   // a busy engine from a hung one.
   onEngineActivity = null,
   log = () => {},
+  // Returns a refusal reason ('' admits) consulted before every launch that
+  // is not an identity restore: the chat GPU handoff refuses launches while
+  // it holds the GPU lease or the app is closing (chat-gpu-handoff.js).
+  launchGate = () => '',
+  // Returns a refusal reason for a model file that is not a chat model
+  // ('' admits). Boot autostart and the chat reconnect resolve plans without
+  // the IPC handlers, so the refusal lives here rather than in discovery.
+  chatModelGate = () => '',
   lifecycle = llamaServerLifecycle,
   resolveLaunchAccelerationImpl = resolveLaunchAcceleration,
   resolveSettingsImpl = resolveLlamaServerSettings,
@@ -121,6 +129,10 @@ function createLlamaServerManager({
   // The normalized spec the current (or last) launch was steered by; restart()
   // and a crash recovery without a spec relaunch exactly this.
   let lastSpec = null;
+  // The resolved plan the tracked server was launched from, and the identity
+  // (api key + plan) a stop({ retainIdentity }) parked for an exact relaunch.
+  let currentPlan = null;
+  let retainedIdentity = null;
   // Builds the user picked this session (llama-server-runtime.js); the
   // engines.updateSettings write accepts a new runtime path only from here.
   const runtimePicks = createRuntimePickRegistry();
@@ -131,6 +143,10 @@ function createLlamaServerManager({
   // ':latest', but per-model settings are keyed by the full tag.
   let runningModelTag = '';
   let chain = Promise.resolve();
+  // Set when a launch or stop could not prove its child dead (the PID record
+  // is retained): a clean 'stopped' is not reported and no second server
+  // launches until reconcileCleanup() sees the record gone.
+  let cleanupPending = false;
   const status = {
     pid: 0,
     port: 0,
@@ -144,6 +160,8 @@ function createLlamaServerManager({
     mmproj: '',
     runtimeLabel: '',
     reused: false,
+    identityRetained: false,
+    identityReused: false,
     lastError: '',
     changedAt: 0,
   };
@@ -196,6 +214,26 @@ function createLlamaServerManager({
     return run;
   }
 
+  // True when no uncertainty is pending, or the retained record has been
+  // settled with proof (llama-server-pidfile.js reconcileRetainedPid). Fails
+  // closed; never signals a pid itself.
+  function reconcileCleanup() {
+    if (!cleanupPending) {
+      return true;
+    }
+    try {
+      const settled = lifecycle.reconcileRetainedPid({
+        userDataPath: resolveUserDataPath(),
+        logger: log,
+      });
+      if (settled && settled.confirmed === true) {
+        cleanupPending = false;
+        return true;
+      }
+    } catch (_error) { /* fail closed: still unconfirmed */ }
+    return false;
+  }
+
   function abortStartup() {
     if (startupAbortController) {
       startupAbortController.abort();
@@ -217,6 +255,14 @@ function createLlamaServerManager({
 
   function managedSettings() {
     return localEngineSettings()?.openaiCompatible?.managed || null;
+  }
+
+  function preferredEngineType() {
+    try {
+      return String(getShellConfigService()?.getState?.()?.preferredEngineType || '');
+    } catch (_error) {
+      return '';
+    }
   }
 
   function persistedEntryFor(managed, modelTag) {
@@ -276,6 +322,10 @@ function createLlamaServerManager({
     const inheritsPath = settings.modelPathSource !== 'config' || !spec?.modelTag
       || managedModelKey(spec.modelTag) === managedModelKey(settings.modelTagOverride);
     const modelPath = spec?.modelPath || (inheritsPath ? settings.modelPathOverride : '') || '';
+    const modelError = String(chatModelGate({ modelTag, modelPath }) || '');
+    if (modelError) {
+      return { settings, profileError: '', profileId, modelTag, modelError };
+    }
     const { runtime, runtimeBuild } = resolveRuntimeFor(settings, managed, modelTag);
     if (runtime.error) {
       // A saved build that is gone fails the launch: nothing is spawned or
@@ -422,8 +472,19 @@ function createLlamaServerManager({
     return `llama_server_runtime_missing:${runtimeFolderToken(launchOptions.binaryPath)}`;
   }
 
-  async function launch(plan) {
+  async function launch(plan, launchExtras = {}) {
     const { accel, profile, launchOptions } = plan;
+    if (!reconcileCleanup()) {
+      // The previous server may still hold the GPU: never start a second one.
+      setState('stopped', { lastError: 'stop_unconfirmed' });
+      log('WARN', 'llama.server.launch_refused', { reason: 'stop_unconfirmed' });
+      return getStatus();
+    }
+    const reuseIdentity = Boolean(launchExtras.retainedApiKey);
+    if (!reuseIdentity) {
+      // A fresh launch mints a fresh key: any parked identity is abandoned.
+      retainedIdentity = null;
+    }
     if (plan.runtimeShadowed) {
       log('WARN', 'llama.server.runtime_env_shadowed', { model: managedModelKey(plan.modelTag) });
     }
@@ -457,6 +518,7 @@ function createLlamaServerManager({
       try {
         nextHandle = await lifecycle.startLlamaServer({
           ...launchOptions,
+          ...launchExtras,
           extraArgs: [...profileExtraArgs, ...accel.extraArgs],
           abortSignal: abortController.signal,
           onExit,
@@ -466,6 +528,11 @@ function createLlamaServerManager({
         const vanished = vanishedRuntimeError(launchOptions);
         if (vanished) {
           throw new Error(vanished, { cause: error });
+        }
+        // The failed attempt's child may still be alive: no unaccelerated retry
+        // beside it.
+        if (error && error.cleanupUnconfirmed === true) {
+          throw error;
         }
         if (!shouldRetryWithoutAcceleration({
           error, accelExtraArgs: accel.extraArgs, aborted: abortController.signal.aborted,
@@ -483,6 +550,7 @@ function createLlamaServerManager({
         accelerationReason = 'spawn_failed';
         nextHandle = await lifecycle.startLlamaServer({
           ...launchOptions,
+          ...launchExtras,
           extraArgs: profileExtraArgs,
           abortSignal: abortController.signal,
           onExit,
@@ -503,6 +571,7 @@ function createLlamaServerManager({
         throw new Error(`llama_server_exited:${early.code != null ? early.code : early.signal || 'unknown'}`);
       }
       handle = nextHandle;
+      currentPlan = plan;
       runningBinaryPath = nextHandle.reused ? '' : String(launchOptions.binaryPath || '');
       runningModelTag = String(launchOptions.modelTag || '');
       if (nextHandle.reused) {
@@ -526,6 +595,8 @@ function createLlamaServerManager({
         contextSize: reportedContextSize,
         mmproj: nextHandle.reused ? 'unknown' : String(nextHandle.mmproj || ''),
         runtimeLabel: nextHandle.reused ? 'unknown' : String(launchOptions.runtimeLabel || ''),
+        identityRetained: false,
+        identityReused: reuseIdentity,
         lastError: '',
       });
       emitStartupAuditMark('llama-server-ready', {
@@ -551,10 +622,14 @@ function createLlamaServerManager({
         startupAbortController = null;
       }
       handle = null;
+      currentPlan = null;
+      if (error && error.cleanupUnconfirmed === true) {
+        cleanupPending = true;
+      }
       const message = vanishedRuntimeError(launchOptions) || String(error && error.message || error);
       setState('stopped', {
         pid: 0, reused: false, accelerationMode: 'off', accelerationReason: '',
-        accelerationDrafter: '', contextSize: 0, lastError: message,
+        accelerationDrafter: '', contextSize: 0, identityReused: false, lastError: message,
       });
       log('WARN', 'llama.server.start_failed', { message });
       emitStartupAuditMark('llama-server-failed', { source: 'main', message });
@@ -569,6 +644,11 @@ function createLlamaServerManager({
         error: plan.profileError,
       });
       setState('stopped', { lastError: `profile_invalid:${plan.profileError}` });
+      return Promise.resolve(getStatus());
+    }
+    if (plan.modelError) {
+      log('WARN', 'llama.server.model_refused', { reason: plan.modelError, model: managedModelKey(plan.modelTag) });
+      setState('stopped', { alias: stripLatestTag(plan.modelTag), lastError: plan.modelError });
       return Promise.resolve(getStatus());
     }
     if (plan.runtimeError) {
@@ -633,11 +713,16 @@ function createLlamaServerManager({
     return Boolean(spec.mtp) && !sameMtp(spec.mtp, lastSpec?.mtp || null);
   }
 
-  async function stopCurrent() {
+  async function stopCurrent({ retainIdentity = false } = {}) {
     const current = handle;
+    const plan = currentPlan;
     handle = null;
+    currentPlan = null;
+    retainedIdentity = null;
     if (!current) {
-      if (state !== 'stopped' || status.lastError) {
+      if (!reconcileCleanup()) {
+        setState('stopped', { pid: 0, lastError: 'stop_unconfirmed' });
+      } else if (state !== 'stopped' || status.lastError) {
         setState('stopped', { pid: 0, lastError: '' });
       }
       return getStatus();
@@ -656,8 +741,10 @@ function createLlamaServerManager({
       const result = await current.stop();
       if (result && result.confirmed === false) {
         stopError = 'stop_unconfirmed';
+        cleanupPending = true;
       }
     } catch (error) {
+      cleanupPending = true;
       // The child may still be alive; the error stays visible on the status
       // instead of being laundered into a clean 'stopped'.
       stopError = `stop_failed:${String(error && error.message || error)}`;
@@ -665,22 +752,70 @@ function createLlamaServerManager({
         message: String(error && error.message || error),
       });
     }
+    // Only a confirmed stop of our own child parks its identity: an unconfirmed
+    // one may still hold the port, and a reused server's key was never ours.
+    if (retainIdentity && !stopError && !current.reused && current.apiKey && plan) {
+      retainedIdentity = { apiKey: current.apiKey, plan, spec: lastSpec };
+    }
     setState('stopped', {
       pid: 0, reused: false, accelerationMode: 'off', accelerationReason: '',
-      accelerationDrafter: '', contextSize: 0, lastError: stopError,
+      accelerationDrafter: '', contextSize: 0, identityReused: false,
+      identityRetained: Boolean(retainedIdentity), lastError: stopError,
     });
     return getStatus();
+  }
+
+  function launchRefusal() {
+    try {
+      return String(launchGate() || '');
+    } catch (_error) {
+      return '';
+    }
+  }
+
+  // A refused launch never touches a ready server; a down one records why.
+  function refusedStatus(refusal) {
+    log('WARN', 'llama.server.launch_refused', { reason: refusal, state });
+    if (state !== 'ready') {
+      status.lastError = refusal;
+    }
+    return getStatus();
+  }
+
+  // Relaunches the parked identity exactly: same plan, same key, same port,
+  // never adopting a foreign server. Status.identityReused reports success.
+  function resumeRetainedIdentity() {
+    const identity = retainedIdentity;
+    retainedIdentity = null;
+    status.identityRetained = false;
+    if (state === 'ready') {
+      return Promise.resolve(getStatus());
+    }
+    if (!identity) {
+      log('WARN', 'llama.server.identity_restore_skipped', { state });
+      status.lastError = 'llama_server_identity_missing';
+      return Promise.resolve(getStatus());
+    }
+    lastSpec = identity.spec;
+    return launch(identity.plan, { retainedApiKey: identity.apiKey, adopt: false });
   }
 
   // Start / recover / switch in one call: ready and already matching `spec`
   // is a no-op, ready with a different model or MTP setting is replaced,
   // anything else (stopped, crashed) launches. Exposed as both `ensureRunning`
   // and `start`.
-  function ensureRunning(rawSpec) {
+  function ensureRunning(rawSpec, { reuseIdentity = false } = {}) {
     const spec = normalizeSpec(rawSpec);
     return serialize(async () => {
+      if (reuseIdentity) {
+        return resumeRetainedIdentity();
+      }
       if (!needsRelaunch(spec)) {
         return getStatus();
+      }
+      const refusal = launchRefusal();
+      if (refusal) {
+        return refusedStatus(refusal);
       }
       if (state === 'ready') {
         await stopCurrent();
@@ -717,8 +852,18 @@ function createLlamaServerManager({
   // Always replaces the server; without a spec it relaunches the last model.
   function restart(rawSpec) {
     const spec = normalizeSpec(rawSpec);
+    // A restart the gate refuses must not abort the identity restore that is
+    // in flight for a parked chat turn; the gate is re-read under the chain.
+    const early = launchRefusal();
+    if (early) {
+      return Promise.resolve(refusedStatus(early));
+    }
     abortStartup();
     return serialize(async () => {
+      const refusal = launchRefusal();
+      if (refusal) {
+        return refusedStatus(refusal);
+      }
       await stopCurrent();
       return launchFromSpec(spec || refreshedLastSpec());
     });
@@ -726,10 +871,16 @@ function createLlamaServerManager({
 
   // Boot path: honors the resolved autostart decision (env, then persisted
   // managed config). This is the pre-manager startLlamaServerBeforeBackend.
-  function startFromSettings() {
+  // `engineType` is the engine the backend boots with; without one the
+  // persisted preferred engine decides. Only openai-compatible autostarts.
+  function startFromSettings({ engineType } = {}) {
     return serialize(() => {
       if (state === 'ready') {
         return getStatus();
+      }
+      const refusal = launchRefusal();
+      if (refusal) {
+        return refusedStatus(refusal);
       }
       lastSpec = null;
       // A key file left by a main process that died mid-launch must not wait
@@ -744,7 +895,13 @@ function createLlamaServerManager({
         repoRoot: rootDir,
         managed: managedSettings(),
         startupModelLoad,
+        // Unknown (no backend, no preferred engine) keeps the ungated decision.
+        activeEngineType: String(engineType || preferredEngineType()) || null,
       });
+      if (!settings.autostart && settings.autostartSkipReason === 'engine_not_active') {
+        log('INFO', 'llama.server.autostart_skipped', { reason: 'engine_not_active' });
+        return getStatus();
+      }
       if (!settings.autostart) {
         const envAutostartOverride = /^(1|true|yes|on|0|false|no|off)$/i
           .test(String(processRef.env.JENNY_LLAMA_SERVER_AUTOSTART || '').trim());
@@ -761,9 +918,12 @@ function createLlamaServerManager({
 
   // Aborts an in-flight startup immediately, then stops whatever is running
   // once the chain reaches it. Idempotent.
-  function stop() {
+  // `retainIdentity` parks the api key and launch plan of a confirmed stop so
+  // ensureRunning(null, { reuseIdentity: true }) can bring the same server
+  // back for a chat turn that is still holding its key.
+  function stop({ retainIdentity = false } = {}) {
     abortStartup();
-    return serialize(stopCurrent);
+    return serialize(() => stopCurrent({ retainIdentity }));
   }
 
   // Resolves once every queued operation (including a launch's ready
@@ -781,6 +941,8 @@ function createLlamaServerManager({
     } catch (_error) { /* best effort only */ }
     const current = handle;
     handle = null;
+    currentPlan = null;
+    retainedIdentity = null;
     generation += 1;
     try {
       if (current && !current.reused && typeof current.stopSync === 'function') {
@@ -790,7 +952,7 @@ function createLlamaServerManager({
     if (state !== 'stopped') {
       setState('stopped', {
         pid: 0, reused: false, accelerationMode: 'off', accelerationReason: '',
-        accelerationDrafter: '', contextSize: 0,
+        accelerationDrafter: '', contextSize: 0, identityRetained: false, identityReused: false,
       });
     }
   }

@@ -9,7 +9,12 @@ import pytest
 
 from sidecar.ai.config import MCPServerConfig
 from sidecar.ai.mcp import client_support
-from sidecar.ai.mcp.client import MCP_FAILURE_HISTORY_LIMIT, MCPClient, _extract_tool_output
+from sidecar.ai.mcp.client import (
+    MCP_COOLDOWN_NAMESPACE,
+    MCP_FAILURE_HISTORY_LIMIT,
+    MCPClient,
+    _extract_tool_output,
+)
 from sidecar.ai.mcp.exceptions import CMP_MCP_PROTOCOL_FAILED, CMP_MCP_SERVER_FAILED, MCPError
 from sidecar.ai.mcp.transport_base import MCPTransport
 from sidecar.runtime.chat_models import TerminalChatStateError
@@ -305,7 +310,7 @@ def test_client_namespaces_external_tools_and_executes_raw_server_name() -> None
         [{"name": "lookup", "description": "Search docs", "input_schema": {"type": "object"}}],
     )
 
-    client._register_transport(transport)  # noqa: SLF001
+    client._register_transport(transport)
 
     descriptor = client.tool_descriptor("mcp__remote_docs__lookup")
     assert descriptor is not None
@@ -341,7 +346,7 @@ def test_client_compat_resolves_unique_bare_external_tool_name(
     monkeypatch.setattr("sidecar.ai.mcp.client.log_event", _capture_event)
     client = MCPClient()
     transport = _FakeTransport("remote_docs", [{"name": "lookup"}])
-    client._register_transport(transport)  # noqa: SLF001
+    client._register_transport(transport)
 
     result = client.execute_tool("lookup", {"query": "release"})
 
@@ -362,7 +367,7 @@ def test_client_compat_resolves_unique_bare_external_tool_name(
 def test_client_does_not_compat_resolve_external_builtin_name_collision() -> None:
     client = MCPClient()
     transport = _FakeTransport("remote_docs", [{"name": "read_file"}])
-    client._register_transport(transport)  # noqa: SLF001
+    client._register_transport(transport)
 
     assert client.tool_descriptor("read_file") is None
     assert client.tool_descriptor("mcp__remote_docs__read_file") is not None
@@ -379,7 +384,7 @@ def test_client_does_not_compat_resolve_reserved_synthetic_names(
 ) -> None:
     client = MCPClient()
     transport = _FakeTransport("remote_docs", [{"name": reserved_tool}])
-    client._register_transport(transport)  # noqa: SLF001
+    client._register_transport(transport)
 
     assert client.tool_descriptor(reserved_tool) is None
     assert client.tool_descriptor(f"mcp__remote_docs__{reserved_tool}") is not None
@@ -393,7 +398,7 @@ def test_client_does_not_compat_resolve_reserved_synthetic_names(
 def test_client_prevents_namespaced_external_tool_squatting() -> None:
     client = MCPClient()
     transport = _FakeTransport("remote_docs", [{"name": "mcp__notes__lookup"}])
-    client._register_transport(transport)  # noqa: SLF001
+    client._register_transport(transport)
 
     descriptor = client.tool_descriptor("mcp__remote_docs__mcp_notes_lookup")
     assert descriptor is not None
@@ -414,8 +419,8 @@ def test_client_does_not_compat_resolve_ambiguous_bare_external_name() -> None:
     first = _FakeTransport("docs", [{"name": "lookup"}])
     second = _FakeTransport("notes", [{"name": "lookup"}])
 
-    client._register_transport(first)  # noqa: SLF001
-    client._register_transport(second)  # noqa: SLF001
+    client._register_transport(first)
+    client._register_transport(second)
 
     assert client.tool_descriptor("lookup") is None
     assert client.tool_descriptor("mcp__docs__lookup") is not None
@@ -677,6 +682,8 @@ def test_client_preserves_descriptor_after_reconnect_failure_for_later_recovery(
 
     assert result.output == "lookup ok"
     assert second.calls == [("lookup", {"query": "retry later"})]
+    assert client.diagnostics().failures == ()
+    assert client.diagnostics().connected == ("docs",)
 
 
 def test_client_clears_mcp_cooldown_after_successful_reconnect(
@@ -792,7 +799,163 @@ def test_server_generation_id_public_accessor() -> None:
     client = MCPClient()
     transport = _FakeTransport("jenny_local_tools", [{"name": "lookup"}])
     transport.server_generation_id = "gen_live"  # type: ignore[attr-defined]
-    client._register_transport(transport)  # noqa: SLF001
+    client._register_transport(transport)
 
     assert client.server_generation_id("jenny_local_tools") == "gen_live"
     assert client.server_generation_id("absent_server") is None
+
+
+class _DeadTransport(_FakeTransport):
+    """A transport whose server was killed (cancel grace ran out) but which is
+    still registered: writing to it fails as a dead Windows pipe does."""
+
+    @property
+    def is_terminated(self) -> bool:
+        return True
+
+    def call_tool(self, tool_name: str, arguments: dict[str, Any], **_kwargs: Any) -> dict[str, Any]:
+        self.calls.append((tool_name, arguments))
+        raise MCPError(
+            code=CMP_MCP_SERVER_FAILED,
+            message="failed to write mcp request for 'docs': [Errno 22] Invalid argument",
+            retryable=True,
+        )
+
+
+def test_client_respawns_a_terminated_transport_before_a_side_effecting_call(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Gate F2: the first python_execute after a Stop was lost to EINVAL.
+    tools = [{"name": "write", "input_schema": {"type": "object"}, "side_effecting": True}]
+    dead = _DeadTransport("docs", tools)
+    fresh = _FakeTransport("docs", tools)
+    client = _configured_client(monkeypatch, [dead, fresh])
+
+    result = client.execute_tool("mcp__docs__write", {"path": "notes.md"})
+
+    assert result.output == "write ok"
+    assert dead.calls == []
+    assert dead.closed is True
+    assert fresh.calls == [("write", {"path": "notes.md"})]
+
+
+def test_client_reports_a_terminated_transport_unavailable_when_respawn_is_deferred(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    now = 100.0
+    cooldowns = CooldownRegistry(clock=lambda: now)
+    tools = [{"name": "write", "input_schema": {"type": "object"}, "side_effecting": True}]
+    dead = _DeadTransport("docs", tools)
+    client = _configured_client(
+        monkeypatch,
+        [dead],
+        client=MCPClient(cooldown_registry=cooldowns, mcp_reconnect_cooldown_seconds=30.0),
+    )
+    cooldowns.mark(MCP_COOLDOWN_NAMESPACE, "docs", duration_seconds=30.0, reason="test")
+
+    with pytest.raises(MCPError, match="unavailable"):
+        client.execute_tool("mcp__docs__write", {"path": "notes.md"})
+    assert dead.calls == []
+
+
+@pytest.mark.parametrize("change", [
+    {"side_effecting": False},
+    {"actions": {"read": {"side_effecting": False}}},
+])
+def test_client_requires_reapproval_for_policy_changes(monkeypatch: Any, change: dict) -> None:
+    from sidecar.ai.mcp.tool_surface import summarize_tools, tools_digest
+
+    original = {"name": "lookup", "inputSchema": {"type": "object"}}
+    summary, _ = summarize_tools([original])
+    transport = _FakeTransport("docs", [{**original, **change}])
+    client = MCPClient()
+    monkeypatch.setattr(client, "_build_transport", lambda *_args, **_kwargs: transport)
+    client.configure((MCPServerConfig(name="docs", transport="stdio", command="python",
+                                      approved_tools_digest=tools_digest(summary)),), sse_enabled=False)
+    assert client.available_tools == []
+    assert client.diagnostics().failures[0].code == "CMP-MCP-0009"
+    assert transport.closed is True
+
+
+def test_client_rejects_unreviewed_tools_beyond_surface_limit(monkeypatch: Any) -> None:
+    from sidecar.ai.mcp.tool_surface import MAX_TOOLS, summarize_tools, tools_digest
+
+    tools = [{"name": f"tool_{index}"} for index in range(MAX_TOOLS)]
+    summary, _ = summarize_tools(tools)
+    transport = _FakeTransport("docs", [*tools, {"name": "unreviewed"}])
+    client = MCPClient()
+    monkeypatch.setattr(client, "_build_transport", lambda *_args, **_kwargs: transport)
+    client.configure((MCPServerConfig(name="docs", transport="stdio", command="python",
+                                      approved_tools_digest=tools_digest(summary)),), sse_enabled=False)
+    assert client.available_tools == []
+    assert client.diagnostics().failures[0].code == "CMP-MCP-0009"
+    assert transport.closed is True
+
+
+def test_client_registers_undigested_builtin_catalog_beyond_review_caps(monkeypatch: Any) -> None:
+    from sidecar.ai.mcp.tool_surface import MAX_DESCRIPTION_CHARS
+
+    long_description = "x" * (MAX_DESCRIPTION_CHARS + 200)
+    transport = _FakeTransport("jenny_local_tools", [{"name": "git_status", "description": long_description}])
+    client = MCPClient()
+    monkeypatch.setattr(client, "_build_transport", lambda *_args, **_kwargs: transport)
+    client.configure((MCPServerConfig(name="jenny_local_tools", transport="stdio", command="python"),),
+                     sse_enabled=False)
+    assert [tool.server_tool_name for tool in client.available_tools] == ["git_status"]
+    assert client.available_tools[0].description == long_description
+
+
+def test_one_server_setup_defect_does_not_abort_the_servers_after_it(monkeypatch: Any) -> None:
+    good = _FakeTransport("docs", [{"name": "lookup"}])
+
+    def build(server: MCPServerConfig, **_kwargs: Any) -> Any:
+        if server.name == "broken":
+            raise RecursionError("deep config")
+        return good
+
+    client = MCPClient()
+    monkeypatch.setattr(client, "_build_transport", build)
+    client.configure((MCPServerConfig(name="broken", transport="stdio", command="python"),
+                      MCPServerConfig(name="docs", transport="stdio", command="python")), sse_enabled=False)
+    assert [tool.server_tool_name for tool in client.available_tools] == ["lookup"]
+    failures = client.diagnostics().failures
+    assert [(f.name, f.code) for f in failures] == [("broken", "CMP-MCP-0004")]
+
+
+def test_client_publishes_the_approved_surface_plus_resource_adapters(monkeypatch: Any) -> None:
+    from sidecar.ai.mcp.tool_surface import summarize_tools, tools_digest
+
+    tools = [{"name": "lookup", "description": " Search ", "side_effecting": False,
+              "actions": {"read": {"side_effecting": False}}, "input_schema": {"type": "object"}}]
+    summary, _ = summarize_tools(tools)
+    transport = _FakeTransport("docs", tools)
+    client = MCPClient()
+    monkeypatch.setattr(client, "_build_transport", lambda *_args, **_kwargs: transport)
+    client.configure((MCPServerConfig(name="docs", transport="stdio", command="python",
+                                      approved_tools_digest=tools_digest(summary)),),
+                     sse_enabled=False, resources_enabled=True)
+    names = sorted(tool.server_tool_name for tool in client.available_tools)
+    assert names == ["list_resource_templates", "list_resources", "lookup", "read_resource"]
+    descriptor = next(tool for tool in client.available_tools if tool.server_tool_name == "lookup")
+    assert descriptor.description == "Search"
+    assert descriptor.input_schema == {"type": "object"}
+    assert descriptor.side_effecting is False
+    assert descriptor.actions is not None and descriptor.actions["read"].side_effecting is False
+
+
+def test_client_requires_reapproval_for_legacy_digest(monkeypatch: Any) -> None:
+    import hashlib
+    import json
+
+    tools = [{"name": "lookup", "description": "Search", "inputSchema": {"type": "object"}}]
+    schema_digest = hashlib.sha256(b'{"type":"object"}').hexdigest()
+    legacy = [{"name": "lookup", "description": "Search", "schema_digest": schema_digest}]
+    digest = hashlib.sha256(json.dumps(legacy, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    transport = _FakeTransport("docs", tools)
+    client = MCPClient()
+    monkeypatch.setattr(client, "_build_transport", lambda *_args, **_kwargs: transport)
+    client.configure((MCPServerConfig(name="docs", transport="stdio", command="python",
+                                      approved_tools_digest=digest),), sse_enabled=False)
+    assert client.available_tools == []
+    assert client.diagnostics().failures[0].code == "CMP-MCP-0009"
+    assert transport.closed is True

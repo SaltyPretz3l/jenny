@@ -1,10 +1,10 @@
-/* —— Mid-turn response-loop phases (response_loop_display_v2) —— */
+/* —— Mid-turn assistant phases (commentary / intermediate / final answer) —— */
 
 /*
- * The [data-assistant-phase] attribute is emitted on assistant_text rows ONLY
- * when the shared display flag is on (see buildRowWrapperMarkup in
- * renderer-turn-row-list-utils.js), so every rule here is self-gating: flag-off
- * markup never carries the attribute and renders exactly as before.
+ * buildRowWrapperMarkup (renderer-turn-row-list-utils.js) stamps
+ * [data-assistant-phase] on assistant_text rows whose phase is commentary,
+ * intermediate or final_answer; this file styles those rows and the sr-only
+ * commentary kicker.
  *
  * De-emphasis is a TEXT-COLOR shift to var(--text-secondary), never a container
  * opacity — opacity washes out links, inline media, and code alike, and stacks

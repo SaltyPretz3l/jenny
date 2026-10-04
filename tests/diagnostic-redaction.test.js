@@ -205,3 +205,14 @@ describe('redactDiagnosticString — truncation', () => {
     assert.equal(result.includes('[truncated]'), false);
   });
 });
+
+
+test('shared hostile diagnostics fixture satisfies the canonical Electron redactor', () => {
+  const fixtures = require('./fixtures/diagnostics-hostile-input.json');
+  const { redactLogText, redactLogReportValue } = require('../renderer/shared/log-contract-utils');
+  for (const item of fixtures) {
+    const output = item.value ? JSON.stringify(redactLogReportValue(item.value)) : redactLogText(item.text);
+    for (const hidden of item.hidden) assert.equal(output.includes(hidden), false, `leaked ${hidden}`);
+    for (const visible of item.visible || []) assert.ok(output.includes(visible));
+  }
+});

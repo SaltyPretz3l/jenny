@@ -152,6 +152,9 @@ function calendarList(service, input, meta) {
         ? `\nOverlaps:\n${overlapLines.join('\n')}`
           + (omittedOverlaps > 0 ? `\n(${omittedOverlaps} more overlaps not shown)` : '')
         : '')
+      + (listing.rangeClamped ? '\n(Range shortened to 180 days.)' : '')
+      + (listing.uncoveredFeeds?.length
+        ? `\n(Not fetched yet, so not included: ${listing.uncoveredFeeds.join(', ')}.)` : '')
       + `\n${CALENDAR_HINT}`,
     summary: `Listed ${shown.length} calendar entr${shown.length === 1 ? 'y' : 'ies'}`,
     extra: {

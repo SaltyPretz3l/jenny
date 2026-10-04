@@ -298,7 +298,7 @@ test('cancelling an acquired producer quarantines rather than releasing capacity
   assert.equal(broker.confirmCleanup(lease), true);
 });
 
-test('backend-restart cleanup confirms every quarantined lease and drains waiters', async () => {
+test('owner-confirmed quarantine cleanup drains waiters', async () => {
   const broker = createBroker({ limits: { tool_operations: 1 } });
   const abandoned = await broker.acquire({ ownerId: 'abandoned',
     resources: [capacityResource('tool_operations')] });
@@ -310,7 +310,7 @@ test('backend-restart cleanup confirms every quarantined lease and drains waiter
   await nextTurn();
   assert.equal(nextSettled, false);
 
-  assert.equal(broker.confirmQuarantinedCleanup(), 1);
+  assert.equal(broker.confirmQuarantinedCleanup([abandoned]), 1);
   await nextTurn();
   assert.equal(nextSettled, true);
   assert.equal(broker.snapshot().quarantined_count, 0);
@@ -405,4 +405,19 @@ test('unknown command and test effects claim the workspace and trusted downstrea
     ['tool_operations', 'native_processes', 'tests']);
   assert.equal(knownTest.at(-1).identity.comparison_path, '/physical/a.test.js');
   assert.deepEqual(control, []);
+});
+
+test('quarantine release requires proof for each lease and preserves external owners', async () => {
+  const broker = createBroker({ limits: { tool_operations: 3 } });
+  const leases = [];
+  for (const ownerId of ['sidecar', 'electron', 'docker']) {
+    const lease = await broker.acquire({ ownerId, resources: [capacityResource('tool_operations')] });
+    broker.release(lease);
+    leases.push(lease);
+  }
+  assert.equal(broker.confirmQuarantinedCleanup(), 0);
+  assert.equal(broker.confirmQuarantinedCleanup([leases[0]]), 1);
+  assert.equal(broker.snapshot().quarantined_count, 2);
+  assert.equal(broker.confirmQuarantinedCleanup([{ ...leases[1] }]), 0);
+  for (const lease of leases.slice(1)) broker.confirmCleanup(lease);
 });

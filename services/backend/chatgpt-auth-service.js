@@ -787,6 +787,13 @@ function createChatGptAuthService({
       }
       throw authError('refresh_failed', 'ChatGPT credentials could not be refreshed.');
     }
+    const refreshedAccessToken = payload.access_token;
+    const refreshedExpiry = accessTokenExpiresAt(refreshedAccessToken);
+    if (typeof refreshedAccessToken !== 'string' || !refreshedAccessToken.trim()
+        || refreshedAccessToken.length > 131072
+        || (refreshedExpiry && refreshedExpiry <= Number(now()))) {
+      throw authError('refresh_failed', 'ChatGPT credentials could not be refreshed.');
+    }
     const replacement = (field, maxLength) => {
       const value = boundedString(payload[field], maxLength);
       return value || latest[field];
@@ -796,7 +803,7 @@ function createChatGptAuthService({
     const nextRecord = {
       refresh_token: replacement('refresh_token', 32768),
       id_token: nextIdToken,
-      access_token: replacement('access_token', 131072),
+      access_token: refreshedAccessToken.trim(),
       account_id: identity.account_id || latest.account_id,
       plan_type: identity.plan_type || latest.plan_type,
       email: identity.email || latest.email,

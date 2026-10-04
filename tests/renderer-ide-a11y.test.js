@@ -136,10 +136,10 @@ test('no workspace root: empty state and tree both offer Choose Folder', async (
 
   const treeAction = dom.ideRailPanel.querySelector('[data-ide-tree-choose-root]');
   assert.ok(treeAction, 'expected the tree Choose Folder button');
-  assert.match(dom.ideRailPanel.textContent, /Choose a workspace folder to browse and edit files\./);
+  assert.match(dom.ideRailPanel.textContent, /No folder open/);
 
-  // The first watcher start failed (no root); the chooser re-arms it below.
-  assert.equal(harness.bridge.calls.watchStart.length, 1);
+  // No root: the watcher never starts; the chooser arms it below.
+  assert.equal(harness.bridge.calls.watchStart.length, 0);
 
   treeAction.click();
   await settle();
@@ -158,7 +158,7 @@ test('no workspace root: empty state and tree both offer Choose Folder', async (
   assert.match(refreshedCopy.textContent, /Open a file from the explorer/);
   assert.equal(refreshedAction.classList.contains('hidden'), true);
   // Watcher re-armed against the configured root.
-  assert.equal(harness.bridge.calls.watchStart.length, 2);
+  assert.equal(harness.bridge.calls.watchStart.length, 1);
 });
 
 test('cancelled Choose Folder dialog leaves the no-root state untouched', async (t) => {

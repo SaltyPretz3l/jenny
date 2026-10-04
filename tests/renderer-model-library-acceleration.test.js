@@ -220,6 +220,48 @@ test('managed llama-server rows show serving and per-model MTP state', async (t)
   assert.match(offRow.textContent, /MTP ready/);
 });
 
+// Owner gate P2: while an image render holds the GPU the chat GPU handoff
+// parks llama-server (stopped, identity retained for the exact relaunch). The
+// card said "Serving on :8033" from its stale snapshot; the periodic sync now
+// rereads the status, reads that parked state as paused, and says Serving
+// again once the restore lands, without refetching the other sources.
+test('a serving card reads paused while an image render parks llama-server, then serving again', async (t) => {
+  const statuses = [
+    { ok: true, state: 'ready', alias: 'gemma4:12b', port: 8033, accelerationMode: 'off' },
+    { ok: true, state: 'stopped', alias: 'gemma4:12b', port: 8033, accelerationMode: 'off', identityRetained: true },
+    { ok: true, state: 'ready', alias: 'gemma4:12b', port: 8033, accelerationMode: 'off', identityRetained: false },
+  ];
+  let reads = 0;
+  const llamaServer = {
+    listLocalGgufs: async () => ({ ok: true, entries: [] }),
+    getStatus: async () => statuses[Math.min(reads++, statuses.length - 1)],
+  };
+  const h = harness(t, {
+    state: makeState({
+      accelerationFlag: true,
+      catalog: ACCELERATION_CATALOG,
+      managed: { enabled: true, perModel: { 'gemma4-12b': { engine: 'llama-server', mtp: { mode: 'off' } } } },
+    }),
+    llamaServer,
+  });
+  h.state.status.model = 'gemma4:12b';
+  await bindAndFlush(h);
+  const badges = () => Array.from(h.host.querySelector('[data-model-key="gemma4:12b"]').querySelectorAll('.inv-badge'))
+    .map((badge) => badge.textContent);
+  assert.deepEqual(badges().slice(0, 2), ['Active', 'Serving on :8033']);
+
+  h.controller.syncFromState();
+  await flush();
+  assert.ok(badges().includes('Paused for an image render'), badges().join(' | '));
+  assert.equal(badges().some((text) => /^Serving/.test(text)), false);
+
+  h.controller.syncFromState();
+  await flush();
+  assert.ok(badges().includes('Serving on :8033'), badges().join(' | '));
+  assert.equal(badges().includes('Paused for an image render'), false);
+  assert.equal(h.modelListCalls(), 1, 'only the llama-server status is reread');
+});
+
 test('syncEngineSettings re-renders engine pills without refetching bridge sources', async (t) => {
   const h = harness(t, {
     state: makeState({ accelerationFlag: true, catalog: ACCELERATION_CATALOG }),

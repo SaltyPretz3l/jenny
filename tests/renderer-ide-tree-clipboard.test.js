@@ -290,3 +290,135 @@ test('copy filters a selected descendant when its ancestor is also selected', as
     from: 'src', to: 'dst/src', onCollision: 'auto-rename', expectedGeneration: 1,
   }]);
 });
+
+// Standalone clipboard over an in-memory item table: undo identity checks drive
+// the real module through its injected seams (stat / copyEntry / moveEntry /
+// deleteEntry), capturing the undo callback the toast would carry.
+function createUndoHarness({ withStat = true } = {}) {
+  const items = new Map();
+  const log = { deletes: [], moves: [], toasts: [], errors: [], undo: null };
+  let nextIno = 1;
+  const addItem = (path, kind = 'file', extra = {}) => {
+    items.set(path, { kind, dev: '1', ino: String(nextIno += 1), size: 10, mtimeMs: 1000, ...extra });
+  };
+  const api = {
+    copyEntry: async ({ from, to }) => {
+      addItem(to, items.get(from)?.kind || 'file');
+      return { to, kind: items.get(from)?.kind || 'file' };
+    },
+    ...(withStat ? {
+      stat: async ({ path }) => (items.has(path)
+        ? { path, exists: true, ...items.get(path) }
+        : { path, exists: false, kind: 'missing', size: 0, mtimeMs: 0 }),
+    } : {}),
+  };
+  const clipboard = createIdeTreeClipboard({
+    selection: { resolveTargets: () => ['a.js'] },
+    getFocusedPath: () => 'dst',
+    getRootEpoch: () => 1,
+    getRenderedRows: () => [{ path: 'dst', kind: 'directory' }, { path: 'a.js', kind: 'file' }],
+    getApi: () => api,
+    getMutationContext: async () => ({ generation: 1 }),
+    moveEntry: async (from, to) => {
+      log.moves.push([from, to]);
+      items.set(to, items.get(from));
+      items.delete(from);
+      return true;
+    },
+    deleteEntry: async (path) => { log.deletes.push(path); items.delete(path); return true; },
+    refreshDirectory: async () => {},
+    showError: (message, meta) => log.errors.push({ message, meta }),
+    showUndoToast: (message, undo) => { log.toasts.push(message); if (undo) log.undo = undo; },
+    parentDirOf: treeMarkup.parentDirOf,
+    nameOf: treeMarkup.nameOf,
+    isQolEnabled: () => true,
+  });
+  return { items, addItem, log, clipboard };
+}
+
+test('undo copy leaves an edited copy in place and says why', async () => {
+  const h = createUndoHarness();
+  h.addItem('a.js');
+  h.clipboard.copy();
+  await h.clipboard.paste('dst');
+  assert.ok(h.items.has('dst/a.js'), 'the copy exists');
+  h.items.get('dst/a.js').mtimeMs += 5;
+  h.items.get('dst/a.js').size += 3;
+
+  await h.log.undo();
+
+  assert.deepEqual(h.log.deletes, [], 'an edited copy is not trashed');
+  assert.ok(h.items.has('dst/a.js'));
+  assert.equal(h.log.errors.length, 1);
+  assert.equal(h.log.errors[0].message, 'a.js changed after the paste, so it was left in place.');
+  assert.ok(h.log.errors[0].meta.dedupeKey);
+  assert.equal(h.log.toasts.at(-1), 'Restored 0 of 1');
+});
+
+test('undo copy trashes an unchanged copy as before', async () => {
+  const h = createUndoHarness();
+  h.addItem('a.js');
+  h.clipboard.copy();
+  await h.clipboard.paste('dst');
+
+  await h.log.undo();
+
+  assert.deepEqual(h.log.deletes, ['dst/a.js']);
+  assert.deepEqual(h.log.errors, []);
+  assert.equal(h.log.toasts.at(-1), 'Restored 1 item');
+});
+
+test('undo move leaves a replaced destination alone but moves back the same edited item', async () => {
+  const replaced = createUndoHarness();
+  replaced.addItem('a.js');
+  replaced.clipboard.cut();
+  await replaced.clipboard.paste('dst');
+  assert.deepEqual(replaced.log.moves, [['a.js', 'dst/a.js']]);
+  replaced.items.set('dst/a.js', { kind: 'file', dev: '1', ino: '999', size: 10, mtimeMs: 1000 });
+  await replaced.log.undo();
+  assert.equal(replaced.log.moves.length, 1, 'a replacement is not moved back');
+  assert.equal(replaced.log.errors.length, 1);
+  assert.match(replaced.log.errors[0].message, /^a\.js changed after the paste/);
+  assert.equal(replaced.log.toasts.at(-1), 'Restored 0 of 1');
+
+  const edited = createUndoHarness();
+  edited.addItem('a.js');
+  edited.clipboard.cut();
+  await edited.clipboard.paste('dst');
+  edited.items.get('dst/a.js').mtimeMs += 5;
+  edited.items.get('dst/a.js').size += 3;
+  await edited.log.undo();
+  assert.deepEqual(edited.log.moves.at(-1), ['dst/a.js', 'a.js'], 'the same item, edited, is moved back');
+  assert.deepEqual(edited.log.errors, []);
+});
+
+test('undo skips an item whose destination vanished once identity was captured', async () => {
+  const h = createUndoHarness();
+  h.addItem('a.js');
+  h.clipboard.copy();
+  await h.clipboard.paste('dst');
+  h.items.delete('dst/a.js');
+
+  await h.log.undo();
+
+  assert.deepEqual(h.log.deletes, []);
+  assert.equal(h.log.errors.length, 1);
+  assert.equal(h.log.toasts.at(-1), 'Restored 0 of 1');
+});
+
+test('an api without stat still undoes copy and move as before', async () => {
+  const copied = createUndoHarness({ withStat: false });
+  copied.addItem('a.js');
+  copied.clipboard.copy();
+  await copied.clipboard.paste('dst');
+  await copied.log.undo();
+  assert.deepEqual(copied.log.deletes, ['dst/a.js']);
+  assert.deepEqual(copied.log.errors, []);
+
+  const moved = createUndoHarness({ withStat: false });
+  moved.addItem('a.js');
+  moved.clipboard.cut();
+  await moved.clipboard.paste('dst');
+  await moved.log.undo();
+  assert.deepEqual(moved.log.moves.at(-1), ['dst/a.js', 'a.js']);
+});

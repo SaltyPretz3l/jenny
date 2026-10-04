@@ -1,5 +1,140 @@
 # Release Notes
 
+## 1.3.0 - 2026-10-04
+
+Everything landed since 1.2.0, through private `main` on 2026-10-04. The work
+drafted as 1.2.1 ships here; there was no 1.2.1 release.
+
+### Changelog
+
+**Features**
+
+- Two chats side by side: split view gives each pane its own timeline and composer.
+- Choose how much of a turn to show, per chat: Answers, Thinking or Everything.
+- ChatGPT sign-in is built in, with a Cloud models group in Settings > Models.
+- Bring your own image models; generated images appear inline with save, copy and open.
+- A live activity dot on the timeline shows what Jenny is doing.
+- The subagent monitor lives in the artifact panel, with a list and per-child details.
+- A reply waiting behind another chat says so; a failed command shows its exit code, and a timed-out one reads "Timed out".
+
+**Reworks**
+
+- Settings is reorganized: grouped rows, saved-value acknowledgement, save failures shown at the control.
+- Diagnostics gains run-scoped issue and trace navigation; Runs moved there from Settings.
+- Long tool-heavy turns stay responsive, and the Workspace IDE loads on first use, so Jenny holds less memory.
+- Chat width: Standard (1100px) is the default; Narrow replaces the old default.
+- Plugins are slimmed to skills, prompts, themes, settings and sandboxed views; unsigned packages are off by default.
+- Removed: Remote Control, inline code suggestions, Home weather, the comet overlay and the legacy line terminal.
+
+**Fixes**
+
+- A crash during a paused file change no longer locks undo for the project.
+- A chat no longer refuses messages after an engine restart.
+- Stopping the engine no longer waits 4.5 seconds when work is waiting for you.
+- A tool call over the size or count limit continues or stops with a retryable error, instead of ending the turn silently.
+- Compaction copes with small local models and measures what the next request will send.
+- Pausing while a question waits clears "Input needed".
+- Switching engines waits for a confirmed stop, and Unload frees a managed llama-server model.
+- A damaged data file is kept and never treated as a fresh install; uninstall keeps workspace notes.
+- Streamed answer text matches its settled rendering, and a new chat no longer scrolls to the previous chat's height.
+
+### Highlights
+
+- **Two chats side by side.** Split view provides a timeline and composer per
+  pane, with pane-scoped selection, attachments and a shared side panel that
+  identifies its owning chat.
+- **Choose how much of a turn to show.** Answers, Thinking and Everything are
+  saved per chat, with a global default. Answers groups consecutive tool runs;
+  Thinking remains the default. The subagent monitor now lives in the artifact
+  panel with a list and per-child details.
+- **ChatGPT sign-in is a core connection.** Settings > Models owns sign-in and
+  the Composer visibility switch. Jenny migrates the old plugin's enabled choice;
+  the bundled ChatGPT plugin and its setup panel are removed. Jenny uses its own
+  OAuth flow and encrypted desktop credential store.
+- **Bring your own image models.** Native image generation uses stable-diffusion.cpp
+  and the Image engine setup in Model Library. No model is bundled or downloaded
+  for you. Generated images can appear inline with save, copy and open actions.
+- **Settings and diagnostics are reorganized.** Shared setting rows acknowledge
+  saved values and report save failures at the control. Diagnostics adds run-scoped
+  issue and trace navigation, bounded records and clearer provider-call outcomes.
+- **Lower retained resource use.** Workspace IDE scripts load on first use;
+  resource-lifetime fixes bound retained history, document caches and plugin views,
+  and improve cancellation and disposal across providers and tools.
+- **Long tool-heavy turns stay responsive.** While a long turn streams, finished
+  rows are no longer re-parsed, re-measured and re-drawn on every event. On a
+  261-row turn the time the window was blocked fell by about half, with the same
+  rendered result.
+
+### Fixes
+
+- **A crash during a paused file change no longer locks undo.** If the engine
+  process died while a file change was paused and the engine then restarted
+  without quitting Jenny, that change could stay marked in progress forever:
+  it could not be undone, and undo for every other change in the project was
+  refused. A restart inside the running app now recovers it the same way a
+  fresh start of Jenny does.
+- **A chat no longer refuses messages after an engine restart.** After such a
+  restart the chat could answer every new message with "a turn is already
+  running" until Jenny was restarted.
+- **Stopping the engine is quicker when work is waiting for you.** A stop with
+  work parked in "needs attention" no longer waits 4.5 seconds before finishing.
+- **A tool call that goes over Jenny's size or count limit no longer ends the
+  turn silently.** When a local model finishes such a call cleanly, the turn now
+  continues from a checkpoint with a note naming the limit, or stops with a
+  retryable error instead of presenting the model's preamble as the answer.
+- **Compaction copes with small local models.** A summary that arrives without
+  a closed `<summary>` block, with plain markdown headings or inside a code fence
+  is accepted, and a reply with no summary at all is asked for once more before
+  falling back to microcompaction.
+- **Compact now measures what the next request will send.** It counts full tool
+  output the way the meter and the next turn do, explains a single-exchange chat
+  instead of saying "Nothing to compact.", and says how much of the context is
+  fixed instructions and tools that compaction cannot shrink.
+- **Pausing while a question waits clears "Input needed".** A question or approval
+  withdrawn by a pause now disappears from the hosted view too; the re-offered
+  one after Resume answers correctly.
+- **Removed:** the never-enabled comet companion overlay and the legacy line
+  terminal behind the ConPTY terminal. `JENNY_ENABLE_WORKSPACE_PTY_TERMINAL`,
+  `JENNY_ENABLE_COMET_*` and thirteen other retired feature-flag names are
+  still accepted and ignored.
+- **Removed: inline code suggestions in the Workspace IDE.** The ghost-text
+  completions, their status-bar toggle and completion-model menu, and the two
+  Settings › Editor rows are gone; the editor itself is unchanged. A saved
+  completion-model choice is dropped, and Ollama keeps one model loaded at a
+  time again unless `OLLAMA_MAX_LOADED_MODELS` is set.
+  `JENNY_ENABLE_WORKSPACE_INLINE_SUGGEST` is still accepted and ignored.
+- **Removed: Remote Control.** The phone pairing feature, its Settings page,
+  composer banner, relay and phone portal, and the bundled Remote Control plugin
+  are gone; it was never enabled by default and may return later as a new design.
+  On first start Jenny deletes any stored pairing record and uninstalls the
+  bundled plugin if your profile has it. Chats are not affected, and the browser
+  hosting mode is unchanged. `JENNY_ENABLE_REMOTE_CONTROL` is accepted and ignored.
+- **Changed: unsigned plugins are off by default.** Jenny no longer installs or
+  loads a plugin package that is not signed by a trusted publisher unless it is
+  started with `JENNY_ENABLE_PLUGIN_DEVELOPER_PROFILE=1`. Two things to know if
+  you used this: an unsigned plugin you already installed stays listed but stops
+  loading until you set the variable, and a custom theme package is installed
+  the same way, so it needs the variable too. Built-in themes are unaffected;
+  ChatGPT sign-in is now a core feature.
+
+- **Plugin packages retain declarative contributions and sandboxed views.** Skills, prompts, themes, settings schemas and
+  sandboxed panel/artifact views remain. Executable hosts, plugin MCP, engine adapters,
+  workflows, catalogs and managed-policy tiers are retired. Standalone MCP remains
+  available. Old image-plugin chats open as read-only transcripts.
+
+### Migration and qualification
+
+- Shell configuration is schema 59; canonical sessions remain schema 22 and the
+  shadow store remains schema 9. Sidecar memory is schema 8. The sidecar API is
+  still `2026-08-17`.
+- Windows remains unsigned. Linux packages remain experimental and macOS is
+  source-only.
+- The release gate (`python scripts/checks/run_ci.py`: policy, lint, type checks,
+  12,969 sidecar tests, 2,224 Node test files and the packaged Windows smoke)
+  passed on the release source. Not every change since 1.2.0 has had a manual
+  real-app, live-model or installed-upgrade pass; the per-program records list
+  what was and was not checked by hand.
+
 ## 1.2.0 - 2026-09-25
 
 ### Highlights
@@ -61,6 +196,24 @@ The 1.2.0 owner gate passed every row on 1.2.0 release candidates, including the
 packaged Windows smoke, the installed upgrade from 1.1.1 and the GUI smoke suite.
 Remote Control's row was waived because the relay is not deployed.
 
+### 1.2.0 download checksums
+
+Published 2026-09-25 from public `029e9f2` (private `da5410a2a`): Windows installer and
+experimental Linux AppImage and deb. No macOS installer.
+
+<!-- JENNY_RELEASE_SHA256_MANIFEST_START -->
+| File | SHA256 |
+| --- | --- |
+| dist/Jenny-Setup-x64.exe | 35cc3fe32940d5f8a65badea1663e579dcca6a9f1416a28e3eebcd89b2fdae99 |
+| dist/Jenny-Setup-x64.exe.blockmap | bde91be076f6b71b88db5e60202240b8a067a5e8b46a81666ee5be57a1e8f0b7 |
+| dist/Jenny-amd64.deb | 3bad963a9365b6d9850a0c26dd7382a6356cdc2b2f7d858c9a444c2676036ab6 |
+| dist/Jenny-x86_64.AppImage | 3dba3416e728ee079d6a53f472fef65c4e0a02babc5b4d454b5f372b2efc484c |
+| dist/SHA256SUMS-linux.txt | f74b8b937abdb131bfd5ae8717b67e5dbddc59bbdb0a76d2043882006d2bf8c0 |
+| dist/SHA256SUMS-windows.txt | f8edf267b7459dee1015e014c95339bf8daceea426388e0559cc61958c09662a |
+| dist/latest-linux.yml | e6dac8c7c1320fc6002731d247b72cdaff3de32cd74150f244e2866c9a8bf694 |
+| dist/latest.yml | 768220512484b76da9891b0d4d7cef155e9b37b5ccf3fa8f9a712ac7142a8dba |
+<!-- JENNY_RELEASE_SHA256_MANIFEST_END -->
+
 ## 1.1.1 - 2026-09-11
 
 Small bug fixes.
@@ -69,7 +222,6 @@ Windows remains unsigned; Linux packages are experimental. No macOS installer.
 Packaged Windows startup, tool probes, provenance and download hashes passed.
 Installed upgrade/recovery and manual visual checks remain unqualified.
 
-<!-- JENNY_RELEASE_SHA256_MANIFEST_START -->
 | File | SHA256 |
 | --- | --- |
 | dist/Jenny-Setup-x64.exe | a61ec1f4d703d1c1bcea42c6dc6b52a8c53157cd54337c14e5b765291e8264d7 |
@@ -80,7 +232,6 @@ Installed upgrade/recovery and manual visual checks remain unqualified.
 | dist/SHA256SUMS-windows.txt | 53b6cdd624607b880b3f612afde01dc2b648821a8ac300d840d532e049548309 |
 | dist/latest-linux.yml | bed5adce8502262add4dbcdd83a6ff656319e643d1334fb2b3421c71f1fa7217 |
 | dist/latest.yml | 4bc6753119dc53750e2e0f705752fde79d36816c4d93da84d7355bd864a52ed8 |
-<!-- JENNY_RELEASE_SHA256_MANIFEST_END -->
 
 ## 1.1.0 - 2026-09-09
 

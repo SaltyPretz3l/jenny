@@ -1,7 +1,4 @@
-"""Tests for OllamaEngine.list_resident_models (Wave 4 model-fit self-catalog)
-and a FIM-regression guard that list_loaded_models keeps its narrow
-name/expires_at shape (the completion menu depends on it).
-"""
+"""Tests for OllamaEngine.list_resident_models (Wave 4 model-fit self-catalog)."""
 
 from __future__ import annotations
 
@@ -131,27 +128,3 @@ def test_list_resident_models_caps_at_max_resident_models(monkeypatch: pytest.Mo
     assert [m["name"] for m in models] == [
         f"model-{i}:latest" for i in range(_MAX_RESIDENT_MODELS)
     ]
-
-
-def test_list_loaded_models_fim_regression_keeps_narrow_shape(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """list_loaded_models must keep returning ONLY name/expires_at — the FIM
-    completion menu's ●loaded indicator depends on this narrow shape and must
-    not be widened by the models.resident addition."""
-    payload = {
-        "models": [
-            {
-                "name": "qwen2.5-coder:7b",
-                "digest": "sha256:zzz",
-                "size": 123,
-                "size_vram": 123,
-                "expires_at": "2026-09-01T00:05:00Z",
-                "details": {"parameter_size": "7B", "quantization_level": "Q4_0"},
-            }
-        ]
-    }
-    engine = _engine_with_ps_payload(monkeypatch, payload)
-    models = engine.list_loaded_models()
-    assert models == [{"name": "qwen2.5-coder:7b", "expires_at": "2026-09-01T00:05:00Z"}]
-    assert list(models[0].keys()) == ["name", "expires_at"]

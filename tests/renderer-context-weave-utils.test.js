@@ -1,13 +1,14 @@
-// Context Weave restyle (Surface Effects review, 2026-08-21, Wave 2).
+// Context Weave (Surface Effects review 2026-08-21; background-effects rework
+// 2026-09-30).
 //
-// The effect is now a static warp/weft lattice painted at varying alpha: the
-// pointer moves light, never cloth (D5). These tests were written red-first
-// against the rewrite and the load-bearing oracles (pitch, rest detection,
-// static geometry, the alpha cap, and band survival through bucketing) were
-// each proven by deliberately breaking the production module and confirming
-// the assertion reds -- an absence-assertion or a rest-detection test that
-// passes against a loop which never stops is worthless, and both classes have
-// bitten this repo before.
+// The effect is a static warp/weft lattice painted at varying alpha: the
+// pointer moves light, never cloth (D5), as a radial sheen; a click plucks one
+// warp and one weft thread. The cloth never reacts to the model and it RESTS --
+// a parked pointer or a settled pluck paints zero frames. The load-bearing
+// oracles (pitch, rest detection, static geometry, the alpha cap) were each
+// proven by deliberately breaking the production module and confirming the
+// assertion reds -- an absence-assertion or a rest-detection test that passes
+// against a loop which never stops is worthless.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -16,110 +17,18 @@ const path = require('node:path');
 
 const contextWeave = require('../renderer/shell/renderer-context-weave-utils.js');
 const weaveCore = require('../renderer/shell/renderer-context-weave-core.js');
-const runtime = require('../renderer/shell/renderer-surface-effect-runtime.js');
-const appearanceUtils = require('../renderer/shared/appearance-utils.js');
 const { createRafHarness } = require('./helpers/surface-effect-router-harness.js');
+const { buildFixtureContext, withStubbedGlobals } = require('./helpers/surface-effect-conformance.js');
 const {
-  createEffectMediaQueryList,
-  makeStyledFixtureHost,
-  buildFixtureContext,
-  withStubbedGlobals,
-} = require('./helpers/surface-effect-conformance.js');
-
-const STYLE_TOKENS = {
-  '--widget-context-weave-line-color': 'rgba(150, 160, 186, 0.42)',
-  '--widget-context-weave-spacing': '96',
-  '--widget-context-weave-density': '1',
-  '--widget-context-weave-pointer-radius': '150',
-  '--widget-context-weave-interlace': '3',
-  '--widget-context-weave-weft-alpha': '0.7',
-  '--widget-context-weave-lit-gain': '3',
-};
-const TOKENS = Object.keys(STYLE_TOKENS);
-const RETIRED_TOKENS = [
-  '--widget-context-weave-pulse-color',
-  '--widget-context-weave-glow-color',
-  '--widget-context-weave-bloom',
-  '--widget-context-weave-tension',
-  '--widget-context-weave-damping',
-];
-
-// ── a recording 2D context ──────────────────────────────────────────────────
-// The shared conformance fake swallows every draw call; the alpha-cap,
-// no-shadow and bucketing oracles need to SEE what was painted, so these
-// tests bring their own recorder.
-function createRecordingContext(record) {
-  const ctx = {
-    globalAlpha: 1,
-    lineWidth: 1,
-    lineCap: 'butt',
-    strokeStyle: '',
-    save() {}, restore() {}, clearRect() {}, setTransform() {},
-    beginPath() { ctx.__pending = 0; },
-    moveTo() {}, lineTo() { ctx.__pending += 1; },
-    stroke() {
-      record.strokes.push({ alpha: ctx.globalAlpha, segments: ctx.__pending });
-      record.shadowBlurs.push(ctx.shadowBlur);
-      record.shadowColors.push(ctx.shadowColor);
-    },
-    __pending: 0,
-  };
-  return ctx;
-}
-
-function makeRecordingDocumentRef(record) {
-  const listeners = new Map();
-  return {
-    hidden: false,
-    createElement() {
-      const classSet = new Set();
-      return {
-        tagName: 'CANVAS', parentNode: null, width: 0, height: 0, style: {},
-        classList: { add: (c) => classSet.add(c), remove: (c) => classSet.delete(c), contains: (c) => classSet.has(c) },
-        setAttribute() {},
-        getContext() { return createRecordingContext(record); },
-      };
-    },
-    addEventListener(name, fn) {
-      if (!listeners.has(name)) listeners.set(name, new Set());
-      listeners.get(name).add(fn);
-    },
-    removeEventListener(name, fn) { if (listeners.has(name)) listeners.get(name).delete(fn); },
-    listenerCount(name) { return listeners.has(name) ? listeners.get(name).size : 0; },
-    fire(name, payload) { (listeners.get(name) || new Set()).forEach((fn) => fn(payload)); },
-  };
-}
-
-function newRecord() { return { strokes: [], shadowBlurs: [], shadowColors: [] }; }
-
-const HOST_RECT = { left: 0, top: 0, width: 900, height: 560 };
-
-// A single full-bleed chat host -- the production shape since F1 (2026-08-21).
-function mountController({ raf, record, reducedMotion = false, tokens = STYLE_TOKENS }) {
-  const documentRef = makeRecordingDocumentRef(record);
-  const reducedMotionQuery = createEffectMediaQueryList(reducedMotion);
-  const host = makeStyledFixtureHost(HOST_RECT, { ...tokens });
-  const controller = contextWeave.createContextWeaveController({
-    documentRef, reducedMotionQuery, rendererLaunchSeed: 17,
-  });
-  controller.bind(buildFixtureContext({
-    hosts: [{ element: host, role: 'chat-left' }],
-    sceneRect: HOST_RECT,
-    hostRects: [HOST_RECT],
-    spawnAvoidanceRects: [{ left: 300, top: 200, width: 240, height: 160 }],
-  }));
-  raf.flush(16);
-  return { controller, host, documentRef, reducedMotionQuery };
-}
-
-function input(type, x, y, overrides = {}) {
-  return Object.assign({
-    type, pointerId: 1, pointerType: 'mouse', isPrimary: true,
-    buttons: 0, pressure: 0, timeStamp: 32,
-    clientX: x, clientY: y, surfaceRole: 'chat-left',
-    localX: x, localY: y, sceneX: x, sceneY: y, generation: 1,
-  }, overrides);
-}
+  STYLE_TOKENS,
+  HOST_RECT,
+  newRecord,
+  mountController,
+  tick,
+  settle,
+  alphaSet,
+  input,
+} = require('./helpers/context-weave-fixtures.js');
 
 function latticeSnapshot(controller) {
   const lattice = controller._internals.getLattice();
@@ -208,10 +117,30 @@ function squareLattice(step, count) {
 function restingView(lattice, gap) {
   return {
     lattice,
-    pointer: { active: false, x: 0, y: 0 },
+    pointer: { active: false, x: 0, y: 0, fade: 0 },
     pluck: { active: false, col: 0, row: 0, amplitude: 0 },
-    age: 0, bandEnergy: 0, now: 0, radius: 150, gap,
+    age: 0, motionScale: 1, radius: 150, gap,
   };
+}
+
+// Bucket index of every segment a collect pass produced: [{ bucket, midX, midY }].
+function bucketedSegments(buckets) {
+  const out = [];
+  buckets.forEach((coords, bucket) => {
+    for (let c = 0; c < coords.length; c += 4) {
+      out.push({ bucket, midX: (coords[c] + coords[c + 2]) / 2, midY: (coords[c + 1] + coords[c + 3]) / 2 });
+    }
+  });
+  return out;
+}
+
+function maxBucket(view) {
+  const warp = weaveCore.createBucketPaths();
+  const weft = weaveCore.createBucketPaths();
+  weaveCore.collectWarp(view, warp);
+  weaveCore.collectWeft(view, weft);
+  return Math.max(...bucketedSegments(warp).map((entry) => entry.bucket),
+    ...bucketedSegments(weft).map((entry) => entry.bucket));
 }
 
 function segmentsOf(buckets) {
@@ -290,7 +219,27 @@ test('segments shorter than 2.2x the interlace gap are skipped rather than drawn
   assert.ok(buckets.flat().length > 0);
 });
 
-// ── 5: rest detection (the F2 fix) ──────────────────────────────────────────
+// ── 5: the controller surface (no model reactivity) ─────────────────────────
+
+test('the controller exposes no activity seam: no setActivity and no handleActivityImpulse', () => {
+  const raf = createRafHarness();
+  withStubbedGlobals({ raf }, () => {
+    const { controller } = mountController({ raf, record: newRecord() });
+    assert.equal(controller.setActivity, undefined);
+    assert.equal(controller.handleActivityImpulse, undefined);
+    assert.deepEqual(Object.keys(controller).sort(),
+      ['_internals', 'bind', 'dispose', 'getStatus', 'handleInput', 'refresh']);
+    const state = controller._internals.inspect();
+    ['scopeEpoch', 'phase', 'phaseRevision', 'currentEnergy', 'targetEnergy', 'attentionScale',
+      'bandEnergy', 'logicalNow'].forEach((key) => assert.equal(key in state, false, `${key} is retired`));
+    ['bandLevelAt', 'BAND_PERIOD_MS', 'BAND_HALF_WIDTH', 'nearestCrossing'].forEach((key) => {
+      assert.equal(weaveCore[key], undefined, `${key} is retired from the core`);
+    });
+    controller.dispose();
+  });
+});
+
+// ── 6: rest detection ───────────────────────────────────────────────────────
 
 test('the loop stops at rest and every input seam re-arms it, while getStatus stays ready', () => {
   const raf = createRafHarness();
@@ -320,12 +269,7 @@ test('the loop stops at rest and every input seam re-arms it, while getStatus st
     };
 
     rearm('handleInput(leave)', () => controller.handleInput(input('leave', 0, 0)));
-    rearm('setActivity(idle)', () => controller.setActivity({
-      scopeEpoch: 3, phase: 'idle', phaseRevision: 1, targetEnergy: 0.08, attentionScale: 1,
-    }));
-    rearm('handleActivityImpulse', () => {
-      controller.handleActivityImpulse({ scopeEpoch: 3, sequence: 1, kind: 'cancel', timeStamp: 90 });
-    });
+    rearm('handleInput(cancel)', () => controller.handleInput(input('cancel', 0, 0)));
     rearm('refresh', () => controller.refresh(buildFixtureContext({
       hosts: [{ element: host, role: 'chat-left' }],
       sceneRect: HOST_RECT, hostRects: [HOST_RECT],
@@ -335,28 +279,110 @@ test('the loop stops at rest and every input seam re-arms it, while getStatus st
   });
 });
 
-test('a live pointer keeps the loop running and releasing it lets the loop stop', () => {
+test('a parked pointer rests: once the hover fade settles no further frame is scheduled', () => {
   const raf = createRafHarness();
   withStubbedGlobals({ raf }, () => {
-    const { controller } = mountController({ raf, record: newRecord() });
+    const record = newRecord();
+    const { controller } = mountController({ raf, record });
     raf.flush(32); raf.flush(48);
     assert.equal(controller._internals.inspect().pendingFrameCount, 0);
 
     controller.handleInput(input('move', 120, 140));
-    for (let i = 0; i < 5; i += 1) {
-      assert.equal(controller._internals.inspect().pendingFrameCount, 1, 'a live pointer sustains the loop');
-      raf.flush(64 + i * 16);
-    }
-    controller.handleInput(input('leave', 120, 140, { timeStamp: 200 }));
-    raf.flush(240);
-    raf.flush(256);
-    assert.equal(controller._internals.inspect().pendingFrameCount, 0,
-      'the pointer leaving lets the loop settle after one repaint');
+    assert.equal(controller._internals.inspect().pendingFrameCount, 1, 'the move starts the fade');
+    const fadeTicks = settle(raf, controller);
+    assert.ok(fadeTicks > 10, `the fade takes real time to settle (${fadeTicks} ticks)`);
+    let state = controller._internals.inspect();
+    assert.equal(state.pointerActive, true, 'the pointer is still parked on the surface');
+    assert.equal(state.pointerFade, 1);
+    assert.equal(state.pendingFrameCount, 0);
+
+    const framesAtRest = record.frames;
+    tick(raf, 30);
+    raf.flush(60000);
+    assert.equal(record.frames, framesAtRest, 'a parked pointer paints zero further frames');
+    assert.equal(raf.size, 0, 'and requests none');
+
+    // Repaint once per pointer change: a move while parked costs one frame.
+    controller.handleInput(input('move', 200, 220));
+    tick(raf, 5);
+    assert.equal(record.frames, framesAtRest + 1, 'one pointer change is exactly one repaint');
+    assert.equal(controller._internals.inspect().pendingFrameCount, 0);
+
+    // Leaving drains the light over the fade-out, then the cloth rests again.
+    controller.handleInput(input('leave', 200, 220));
+    settle(raf, controller);
+    state = controller._internals.inspect();
+    assert.equal(state.pointerFade, 0);
+    assert.equal(state.pointerActive, false);
+    const framesAfterLeave = record.frames;
+    tick(raf, 20);
+    assert.equal(record.frames, framesAfterLeave, 'the faded cloth paints nothing more');
     controller.dispose();
   });
 });
 
-// ── 6: geometry is static (the D5 contract) ─────────────────────────────────
+test('the first frame after a long rest clears neither the pointer nor the pluck, and pluck age is never negative', () => {
+  const raf = createRafHarness();
+  withStubbedGlobals({ raf }, () => {
+    const { controller } = mountController({ raf, record: newRecord() });
+    controller.handleInput(input('move', 120, 140));
+    settle(raf, controller);
+    raf.flush(60000); // a minute of rest: no frame runs, the clock just moves on
+
+    // A click stamped slightly AHEAD of the next frame's clock.
+    controller.handleInput(input('click', 90, 80, { timeStamp: raf.now + 50 }));
+    raf.flush(16);
+    let state = controller._internals.inspect();
+    assert.equal(state.pointerActive, true, 'the parked pointer survives the first frame after rest');
+    assert.equal(state.pointerFade, 1);
+    assert.equal(state.pluckActive, true, 'a pluck from a future-stamped click is not expired or cleared');
+    assert.ok(state.pluckAge >= 0, `pluck age is never negative (got ${state.pluckAge})`);
+    for (let i = 0; i < 12; i += 1) {
+      raf.flush(16);
+      state = controller._internals.inspect();
+      assert.ok(state.pluckAge >= 0, `pluck age stays non-negative (got ${state.pluckAge})`);
+    }
+    assert.ok(state.pluckAge > 0, 'the pluck does age once the clock catches up');
+    assert.equal(state.pluckActive, true, 'and is still ringing ~200 ms in');
+
+    // The core agrees: a negative age reads as the start of the pluck, not as
+    // "expired" and not as an undefined offset.
+    assert.equal(weaveCore.pluckExpired(-50), false);
+    assert.equal(weaveCore.pluckOffset(5, 12, -50, 10), weaveCore.pluckOffset(5, 12, 0, 10));
+    controller.dispose();
+  });
+});
+
+// ── 7: the hover fade ───────────────────────────────────────────────────────
+
+test('the hover fade rises with a 160 ms time constant and drains with a 420 ms one', () => {
+  const raf = createRafHarness();
+  withStubbedGlobals({ raf }, () => {
+    const { controller } = mountController({ raf, record: newRecord() });
+    raf.flush(32); raf.flush(48);
+
+    controller.handleInput(input('move', 120, 140));
+    raf.flush(20); // first frame after rest: dt is 0, nothing advances
+    assert.equal(controller._internals.inspect().pointerFade, 0);
+    tick(raf, 8, 20); // exactly 160 ms
+    const risen = controller._internals.inspect().pointerFade;
+    assert.ok(Math.abs(risen - (1 - Math.exp(-1))) < 1e-9,
+      `160 ms in is 1 - 1/e = 0.632 (got ${risen})`);
+
+    settle(raf, controller);
+    assert.equal(controller._internals.inspect().pointerFade, 1);
+    controller.handleInput(input('leave', 120, 140));
+    raf.flush(21);
+    assert.equal(controller._internals.inspect().pointerFade, 1, 'leaving starts the drain from full');
+    tick(raf, 20, 21); // exactly 420 ms
+    const drained = controller._internals.inspect().pointerFade;
+    assert.ok(Math.abs(drained - Math.exp(-1)) < 1e-9,
+      `420 ms out is 1/e = 0.368 (got ${drained})`);
+    controller.dispose();
+  });
+});
+
+// ── 8: geometry is static (the D5 contract) ─────────────────────────────────
 
 test('a pointer move changes stroke alpha but leaves the lattice bit-identical', () => {
   const raf = createRafHarness();
@@ -365,13 +391,13 @@ test('a pointer move changes stroke alpha but leaves the lattice bit-identical',
     const { controller } = mountController({ raf, record });
     raf.flush(32); raf.flush(48);
     const before = latticeSnapshot(controller);
-    const idleAlphas = new Set(record.strokes.map((entry) => entry.alpha.toFixed(4)));
+    const idleAlphas = alphaSet(record);
 
     record.strokes.length = 0;
     controller.handleInput(input('move', 440, 260));
-    raf.flush(64);
+    settle(raf, controller);
     const after = latticeSnapshot(controller);
-    const hoverAlphas = new Set(record.strokes.map((entry) => entry.alpha.toFixed(4)));
+    const hoverAlphas = alphaSet(record);
 
     assert.deepEqual(after.x, before.x, 'nodeX must not move under the pointer');
     assert.deepEqual(after.y, before.y, 'nodeY must not move under the pointer');
@@ -381,7 +407,51 @@ test('a pointer move changes stroke alpha but leaves the lattice bit-identical',
   });
 });
 
-// ── 7-8: the alpha cap and the absent shadow ────────────────────────────────
+// ── 9: the radial sheen ─────────────────────────────────────────────────────
+
+test('the sheen is radial only: a thread far from the pointer on the same column or row stays at resting alpha', () => {
+  const STEP = 100;
+  const lattice = squareLattice(STEP, 10);
+  const view = restingView(lattice, 3);
+  view.pointer = { active: true, x: 450, y: 450, fade: 1 };
+  const warpBuckets = weaveCore.createBucketPaths();
+  const weftBuckets = weaveCore.createBucketPaths();
+  weaveCore.collectWarp(view, warpBuckets);
+  weaveCore.collectWeft(view, weftBuckets);
+  const warp = bucketedSegments(warpBuckets);
+  const weft = bucketedSegments(weftBuckets);
+
+  // Warp column x=400 passes within 50 px of the pointer and runs the full height.
+  const column = warp.filter((entry) => Math.abs(entry.midX - 400) < 1e-6);
+  assert.equal(column.length, lattice.rows - 1);
+  const nearWarp = column.find((entry) => Math.abs(entry.midY - 450) < 5);
+  const farWarp = column.filter((entry) => entry.midY > 700 || entry.midY < 200);
+  assert.ok(nearWarp.bucket > 0, 'the warp segment under the pointer is lit');
+  assert.ok(farWarp.length >= 4);
+  farWarp.forEach((entry) => assert.equal(entry.bucket, 0,
+    `warp at y=${entry.midY} on the pointer's own column is NOT lit (no full-length trace)`));
+
+  const row = weft.filter((entry) => Math.abs(entry.midY - 400) < 1e-6);
+  assert.equal(row.length, lattice.cols - 1);
+  const nearWeft = row.find((entry) => Math.abs(entry.midX - 450) < 5);
+  const farWeft = row.filter((entry) => entry.midX > 700 || entry.midX < 200);
+  assert.ok(nearWeft.bucket > 0, 'the weft segment under the pointer is lit');
+  assert.ok(farWeft.length >= 4);
+  farWeft.forEach((entry) => assert.equal(entry.bucket, 0,
+    `weft at x=${entry.midX} on the pointer's own row is NOT lit`));
+
+  // Everything lit lies inside the pointer radius, so the sheen is a disc.
+  [...warp, ...weft].filter((entry) => entry.bucket > 0).forEach((entry) => {
+    assert.ok(Math.hypot(entry.midX - 450, entry.midY - 450) < view.radius + 3,
+      `lit segment at (${entry.midX}, ${entry.midY}) sits inside the ${view.radius}px radius`);
+  });
+
+  // A faded-out pointer lights nothing, whatever its last position.
+  view.pointer.fade = 0;
+  assert.equal(maxBucket(view), 0);
+});
+
+// ── 10: alpha cap and the absent shadow ─────────────────────────────────────
 
 test('a lit thread peaks at exactly lit-gain x its resting alpha and never above the canvas ceiling', () => {
   // The ratio is the contract (D6). Canvas pins globalAlpha to [0, 1], so a
@@ -412,11 +482,8 @@ test('a lit thread peaks at exactly lit-gain x its resting alpha and never above
     raf.flush(32);
     record.strokes.length = 0;
 
-    controller.setActivity({ scopeEpoch: 1, phase: 'streaming', phaseRevision: 1, targetEnergy: 1, attentionScale: 1 });
     controller.handleInput(input('move', 0, 0));
-    raf.flush(64);
-    controller.handleInput(input('move', 0, 0, { timeStamp: 80 }));
-    raf.flush(80);
+    tick(raf, 90);
 
     const LIT_GAIN = 3;
     const WEFT_ALPHA = 0.7;
@@ -436,11 +503,10 @@ test('shadowBlur and shadowColor are never set on any stroke (F3)', () => {
   withStubbedGlobals({ raf }, () => {
     const record = newRecord();
     const { controller } = mountController({ raf, record });
-    controller.setActivity({ scopeEpoch: 1, phase: 'streaming', phaseRevision: 1, targetEnergy: 1, attentionScale: 1 });
     controller.handleInput(input('move', 200, 200));
-    raf.flush(32); raf.flush(48);
-    controller.handleInput(input('click', 120, 90, { timeStamp: 64 }));
-    raf.flush(64);
+    tick(raf, 4);
+    controller.handleInput(input('click', 120, 90, { timeStamp: raf.now }));
+    raf.flush(16);
 
     assert.ok(record.shadowBlurs.length > 0, 'strokes were recorded');
     record.shadowBlurs.forEach((value) => assert.equal(value, undefined, 'shadowBlur must never be assigned'));
@@ -459,57 +525,50 @@ test('shadowBlur and shadowColor are never set on any stroke (F3)', () => {
   });
 });
 
-// ── 9: the reactive-grid quantisation trap ──────────────────────────────────
+// ── 11: motion scale ────────────────────────────────────────────────────────
 
-test('alpha bucketing does not swallow the streaming band', () => {
-  const raf = createRafHarness();
-  withStubbedGlobals({ raf }, () => {
-    const record = newRecord();
-    const { controller } = mountController({ raf, record });
-    raf.flush(32);
+test('the motion-scale token scales pointer gain but never the resting alpha', () => {
+  // Core: one pointer, three gains. A scale of 0.6 lights less, 2 lights more
+  // than 1, and every case leaves far threads in bucket 0.
+  const lattice = squareLattice(100, 10);
+  const levelFor = (motionScale) => {
+    const view = restingView(lattice, 3);
+    view.pointer = { active: true, x: 400, y: 470, fade: 1 };
+    view.motionScale = motionScale;
+    return maxBucket(view);
+  };
+  assert.ok(levelFor(0.6) < levelFor(1), 'a calmer scale lights threads less');
+  assert.ok(levelFor(1) < levelFor(2), 'an expressive scale lights threads more');
+  const rest = restingView(lattice, 3);
+  rest.motionScale = 2;
+  assert.equal(maxBucket(rest), 0, 'with no pointer the scale changes nothing');
 
-    record.strokes.length = 0;
-    controller.setActivity({ scopeEpoch: 1, phase: 'idle', phaseRevision: 1, targetEnergy: 0.08, attentionScale: 1 });
-    raf.flush(48);
-    const idleAlphas = new Set(record.strokes.map((entry) => entry.alpha.toFixed(4)));
-
-    record.strokes.length = 0;
-    controller.setActivity({ scopeEpoch: 1, phase: 'streaming', phaseRevision: 2, targetEnergy: 0.9, attentionScale: 1 });
-    raf.flush(64); raf.flush(80); raf.flush(96);
-    const streamingAlphas = new Set(record.strokes.map((entry) => entry.alpha.toFixed(4)));
-
-    // reactive-grid's 2026-07-22 lesson: an alpha-only signal that never
-    // crosses a bucket boundary renders as literally nothing. If the band ever
-    // stops producing MORE distinct alphas than rest, it has shipped as a
-    // no-op and this reds.
-    assert.ok(
-      streamingAlphas.size > idleAlphas.size,
-      `the streaming band must survive quantisation (idle ${idleAlphas.size} -> streaming ${streamingAlphas.size})`
-    );
-    controller.dispose();
-  });
+  // Controller: the painted alpha range.
+  const alphaRange = (motionScale) => {
+    const raf = createRafHarness();
+    return withStubbedGlobals({ raf }, () => {
+      const record = newRecord();
+      const { controller } = mountController({
+        raf, record, tokens: { ...STYLE_TOKENS, '--widget-context-weave-motion-scale': String(motionScale) },
+      });
+      controller.handleInput(input('move', 450, 280));
+      settle(raf, controller);
+      record.strokes.length = 0;
+      controller.handleInput(input('move', 452, 281));
+      tick(raf, 3);
+      const alphas = record.strokes.map((entry) => entry.alpha);
+      controller.dispose();
+      return { min: Math.min(...alphas), max: Math.max(...alphas) };
+    });
+  };
+  const calm = alphaRange(0.5);
+  const expressive = alphaRange(2);
+  assert.ok(expressive.max > calm.max, 'pointer gain follows the token');
+  assert.ok(Math.abs(expressive.min - calm.min) < 1e-9, 'resting alpha does not');
+  assert.ok(Math.abs(calm.min - 0.7 / 3) < 1e-9, 'resting alpha is weft-alpha / lit-gain');
 });
 
-test('the streaming band decays through the phase envelope rather than waiting for a complete impulse', () => {
-  const raf = createRafHarness();
-  withStubbedGlobals({ raf }, () => {
-    const { controller } = mountController({ raf, record: newRecord() });
-    controller.setActivity({ scopeEpoch: 1, phase: 'streaming', phaseRevision: 1, targetEnergy: 0.9, attentionScale: 1 });
-    raf.flush(32); raf.flush(48);
-    assert.ok(controller._internals.inspect().bandEnergy > 0, 'streaming lights the band');
-
-    // settling's target energy never returns to idle, so an energy-driven band
-    // would never fade. The phase envelope is what terminates it.
-    controller.setActivity({ scopeEpoch: 1, phase: 'settling', phaseRevision: 2, targetEnergy: 0.18, attentionScale: 1 });
-    let now = 64;
-    for (let i = 0; i < 120; i += 1) { now += 40; raf.flush(now); }
-    assert.equal(controller._internals.inspect().bandEnergy, 0, 'the band settles to exactly zero');
-    assert.equal(controller._internals.inspect().pendingFrameCount, 0, 'and the loop stops with it');
-    controller.dispose();
-  });
-});
-
-// ── 10: the pluck ───────────────────────────────────────────────────────────
+// ── 12: the pluck ───────────────────────────────────────────────────────────
 
 test('pluckOffset pins both ends and returns to exactly zero after decay', () => {
   const count = 12;
@@ -525,6 +584,45 @@ test('pluckOffset pins both ends and returns to exactly zero after decay', () =>
   assert.equal(weaveCore.pluckExpired(0), false);
 });
 
+test('pluck amplitude is 14 x motion scale, independent of lit-gain, and the plucked warp and weft brighten', () => {
+  assert.equal(weaveCore.PLUCK_BASE_AMPLITUDE, 14);
+  const amplitudeFor = (tokens) => {
+    const raf = createRafHarness();
+    return withStubbedGlobals({ raf }, () => {
+      const { controller } = mountController({ raf, record: newRecord(), tokens: { ...STYLE_TOKENS, ...tokens } });
+      controller.handleInput(input('click', 60, 60, { timeStamp: raf.now }));
+      const amplitude = controller._internals.inspect().pluckAmplitude;
+      controller.dispose();
+      return amplitude;
+    });
+  };
+  assert.equal(amplitudeFor({}), 14, 'default scale 1 plucks 14 px');
+  assert.equal(amplitudeFor({ '--widget-context-weave-motion-scale': '0.5' }), 7);
+  assert.equal(amplitudeFor({ '--widget-context-weave-motion-scale': '2' }), 28);
+  [1, 3, 5].forEach((gain) => {
+    assert.equal(amplitudeFor({ '--widget-context-weave-lit-gain': String(gain) }), 14,
+      `lit-gain ${gain} does not change the pluck`);
+  });
+
+  // The plucked warp column and weft row light up with the wave's envelope.
+  const lattice = squareLattice(100, 10);
+  const view = restingView(lattice, 3);
+  view.pluck = { active: true, col: 4, row: 4, amplitude: 14 };
+  const top = weaveCore.ALPHA_BUCKETS - 1;
+  ['collectWarp', 'collectWeft'].forEach((collect) => {
+    const buckets = weaveCore.createBucketPaths();
+    view.age = 0;
+    weaveCore[collect](view, buckets);
+    assert.equal(buckets[top].length / 4, lattice.rows - 1, `${collect}: the plucked thread is fully lit at age 0`);
+    assert.equal(buckets[0].length / 4, (lattice.cols - 1) * (lattice.rows - 1),
+      `${collect}: every other thread stays at resting alpha`);
+    view.age = 420;
+    weaveCore[collect](view, buckets);
+    const lit = Math.round(Math.exp(-1) * top);
+    assert.equal(buckets[lit].length / 4, lattice.rows - 1, `${collect}: the glow decays with exp(-age/420)`);
+  });
+});
+
 test('a click plucks one warp and one weft thread, a second click replaces it, and the cloth returns to rest', () => {
   const raf = createRafHarness();
   withStubbedGlobals({ raf }, () => {
@@ -532,13 +630,13 @@ test('a click plucks one warp and one weft thread, a second click replaces it, a
     raf.flush(32); raf.flush(48);
     const resting = latticeSnapshot(controller);
 
-    controller.handleInput(input('click', 90, 80, { timeStamp: 64 }));
+    controller.handleInput(input('click', 90, 80, { timeStamp: raf.now }));
     let state = controller._internals.inspect();
     assert.equal(state.pluckActive, true);
     const firstCol = state.pluckCol;
     const firstRow = state.pluckRow;
 
-    controller.handleInput(input('click', 760, 470, { timeStamp: 72 }));
+    controller.handleInput(input('click', 760, 470, { timeStamp: raf.now + 8 }));
     state = controller._internals.inspect();
     assert.equal(state.pluckActive, true, 'still exactly one pluck');
     assert.ok(state.pluckCol !== firstCol || state.pluckRow !== firstRow,
@@ -546,8 +644,7 @@ test('a click plucks one warp and one weft thread, a second click replaces it, a
 
     // The pluck is closed-form, so it self-terminates -- and the lattice it
     // displaced was never written to in the first place.
-    let now = 100;
-    for (let i = 0; i < 80; i += 1) { now += 40; raf.flush(now); }
+    settle(raf, controller, 200, 40);
     assert.equal(controller._internals.inspect().pluckActive, false, 'the pluck decays away');
     assert.deepEqual(latticeSnapshot(controller), resting, 'geometry returns to exactly its resting values');
     assert.equal(controller._internals.inspect().pendingFrameCount, 0);
@@ -569,137 +666,57 @@ test('a click inside a spawn-avoidance rect plucks nothing', () => {
   });
 });
 
-test('activity impulses pluck an interior thread with amplitude by kind', () => {
-  const raf = createRafHarness();
-  withStubbedGlobals({ raf }, () => {
-    const { controller } = mountController({ raf, record: newRecord() });
-    controller.setActivity({ scopeEpoch: 4, phase: 'streaming', phaseRevision: 1, targetEnergy: 0.7, attentionScale: 1 });
-    raf.flush(32);
+// ── 13: cancel and multi-touch ──────────────────────────────────────────────
 
-    controller.handleActivityImpulse({ scopeEpoch: 4, sequence: 1, kind: 'tool-start', timeStamp: 48 });
-    const toolStart = controller._internals.inspect();
-    assert.equal(toolStart.pluckActive, true);
-    assert.ok(toolStart.pluckCol > 0 && toolStart.pluckCol < toolStart.cols - 1, 'an interior column, not the pinned selvedge');
-    assert.ok(toolStart.pluckRow > 0 && toolStart.pluckRow < toolStart.rows - 1, 'an interior row');
-
-    controller.handleActivityImpulse({ scopeEpoch: 4, sequence: 2, kind: 'complete', timeStamp: 56 });
-    const complete = controller._internals.inspect();
-    assert.ok(complete.pluckAmplitude > toolStart.pluckAmplitude, 'complete plucks harder than tool-start');
-
-    controller.handleActivityImpulse({ scopeEpoch: 4, sequence: 3, kind: 'cancel', timeStamp: 64 });
-    assert.equal(controller._internals.inspect().pluckActive, false, 'cancel clears the pluck');
-    controller.dispose();
-  });
-});
-
-// ── 11: impulse filtering ───────────────────────────────────────────────────
-
-test('impulses with a stale scopeEpoch or a non-increasing sequence are ignored', () => {
-  const raf = createRafHarness();
-  withStubbedGlobals({ raf }, () => {
-    const { controller } = mountController({ raf, record: newRecord() });
-    controller.setActivity({ scopeEpoch: 9, phase: 'streaming', phaseRevision: 1, targetEnergy: 0.7, attentionScale: 1 });
-    raf.flush(32);
-
-    controller.handleActivityImpulse({ scopeEpoch: 8, sequence: 1, kind: 'complete', timeStamp: 40 });
-    assert.equal(controller._internals.inspect().pluckActive, false, 'a stale scopeEpoch is dropped');
-
-    controller.handleActivityImpulse({ scopeEpoch: 9, sequence: 5, kind: 'complete', timeStamp: 48 });
-    const after = controller._internals.inspect();
-    assert.equal(after.pluckActive, true);
-
-    controller.handleActivityImpulse({ scopeEpoch: 9, sequence: 5, kind: 'cancel', timeStamp: 56 });
-    assert.equal(controller._internals.inspect().pluckActive, true, 'a repeated sequence is dropped');
-    controller.handleActivityImpulse({ scopeEpoch: 9, sequence: 3, kind: 'cancel', timeStamp: 64 });
-    assert.equal(controller._internals.inspect().pluckActive, true, 'a regressing sequence is dropped');
-    controller.handleActivityImpulse({ scopeEpoch: 9, sequence: 6, kind: 'cancel', timeStamp: 72 });
-    assert.equal(controller._internals.inspect().pluckActive, false, 'the next sequence is honored');
-    controller.dispose();
-  });
-});
-
-// ── 12: reduced motion ──────────────────────────────────────────────────────
-
-test('reduced motion draws the resting lattice once and requests no frames', () => {
+test('a non-primary cancel keeps the primary hover, and non-primary input is ignored outright', () => {
   const raf = createRafHarness();
   withStubbedGlobals({ raf }, () => {
     const record = newRecord();
-    const { controller } = mountController({ raf, record, reducedMotion: true });
-    assert.equal(controller._internals.inspect().reducedMotion, true);
-    assert.equal(controller._internals.inspect().pendingFrameCount, 0);
-    assert.ok(record.strokes.length > 0, 'the resting cloth is painted once');
+    const { controller } = mountController({ raf, record });
+    controller.handleInput(input('move', 120, 140));
+    settle(raf, controller);
+    const frames = record.frames;
 
-    const before = record.strokes.length;
-    controller.handleInput(input('move', 300, 300));
-    controller.handleInput(input('click', 80, 80, { timeStamp: 48 }));
-    assert.equal(controller._internals.inspect().pluckActive, false, 'reduced motion never plucks');
-    assert.equal(controller._internals.inspect().pendingFrameCount, 0, 'and never requests an animation frame');
-    assert.ok(record.strokes.length > before, 'it still repaints synchronously on input');
+    controller.handleInput(input('cancel', 0, 0, { isPrimary: false, pointerId: 2 }));
+    controller.handleInput(input('leave', 0, 0, { isPrimary: false, pointerId: 2 }));
+    controller.handleInput(input('click', 60, 60, { isPrimary: false, pointerId: 2, timeStamp: raf.now }));
+    let state = controller._internals.inspect();
+    assert.equal(state.pointerActive, true, 'a second contact cannot cancel the primary hover');
+    assert.equal(state.pointerFade, 1);
+    assert.equal(state.pluckActive, false, 'nor pluck');
+    assert.equal(state.pendingFrameCount, 0, 'and it does not even wake the loop');
+    tick(raf, 3);
+    assert.equal(record.frames, frames);
+
+    controller.handleInput(input('cancel', 0, 0));
+    state = controller._internals.inspect();
+    assert.equal(state.pointerActive, false, 'the primary cancel clears the hover');
     controller.dispose();
   });
 });
 
-// ── 13: disposal ────────────────────────────────────────────────────────────
-
-test('dispose removes canvases, cancels frames, unregisters listeners, and is safe twice', () => {
+test('cancel clears the pointer only: a live pluck keeps decaying on its own', () => {
   const raf = createRafHarness();
   withStubbedGlobals({ raf }, () => {
-    const record = newRecord();
-    const { controller, host, documentRef, reducedMotionQuery } = mountController({ raf, record });
-    controller.handleInput(input('move', 200, 200));
-    assert.equal(controller._internals.inspect().pendingFrameCount, 1);
+    const { controller } = mountController({ raf, record: newRecord() });
+    controller.handleInput(input('move', 120, 140));
+    controller.handleInput(input('click', 90, 80, { timeStamp: raf.now }));
+    tick(raf, 3);
+    assert.equal(controller._internals.inspect().pluckActive, true);
 
+    controller.handleInput(input('cancel', 0, 0));
+    let state = controller._internals.inspect();
+    assert.equal(state.pointerActive, false);
+    assert.equal(state.pluckActive, true, 'cancel does not kill the pluck');
+    const ageAtCancel = state.pluckAge;
+    tick(raf, 6);
+    state = controller._internals.inspect();
+    assert.equal(state.pluckActive, true);
+    assert.ok(state.pluckAge > ageAtCancel, 'the pluck keeps aging after the cancel');
+    settle(raf, controller);
+    state = controller._internals.inspect();
+    assert.equal(state.pluckActive, false, 'and decays away by itself');
+    assert.equal(state.pointerFade, 0);
     controller.dispose();
-    controller.dispose();
-    assert.equal(host.children.length, 0);
-    assert.equal(raf.size, 0);
-    assert.equal(documentRef.listenerCount('visibilitychange'), 0);
-    assert.equal(reducedMotionQuery.listenerCount(), 0);
-    assert.equal(controller.getStatus().state, 'dormant');
   });
-});
-
-// ── token surface ───────────────────────────────────────────────────────────
-
-test('the weave token surface has a schema, a foundation floor, and one override per palette', () => {
-  const root = path.resolve(__dirname, '..');
-  const foundation = fs.readFileSync(path.join(root, 'styles', 'foundation.css'), 'utf8');
-  const palettes = fs.readdirSync(path.join(root, 'styles'))
-    .filter((name) => /^palette-.*\.css$/.test(name));
-  const paletteCss = palettes.map((name) => [
-    name,
-    fs.readFileSync(path.join(root, 'styles', name), 'utf8'),
-  ]);
-  // Derived from the appearance registry rather than a hardcoded count: every
-  // preset except the `midnight` baseline (which lives in foundation.css) ships
-  // a styles/palette-<id>.css override, and there are no orphan palette files.
-  const expectedPaletteFiles = appearanceUtils.getPalettePresets()
-    .map((preset) => preset.id)
-    .filter((id) => id !== 'midnight')
-    .map((id) => `palette-${id}.css`)
-    .sort();
-  assert.deepEqual(palettes.slice().sort(), expectedPaletteFiles);
-
-  const registryTokens = appearanceUtils.getSurfaceEffectPresets()
-    .find((preset) => preset.id === 'context-weave').requiredTokens;
-  assert.deepEqual(Array.from(registryTokens).sort(), TOKENS.slice().sort(),
-    'the registry, the runtime schema and these tests must agree on the token set');
-
-  for (const token of TOKENS) {
-    assert.ok(runtime.SURFACE_EFFECT_TOKEN_SCHEMAS[token], `${token} has a schema`);
-    assert.match(foundation, new RegExp(`${token}:\\s*[^;]+;`), `${token} has a foundation floor`);
-    for (const [palette, css] of paletteCss) {
-      assert.match(css, new RegExp(`${token}:\\s*[^;]+;`), `${palette} overrides ${token}`);
-    }
-  }
-
-  // The spring constants, the glow knob and the second/third hue retired with
-  // the restyle; they must not survive anywhere as dead tuning.
-  for (const token of RETIRED_TOKENS) {
-    assert.equal(runtime.SURFACE_EFFECT_TOKEN_SCHEMAS[token], undefined, `${token} has no schema`);
-    assert.doesNotMatch(foundation, new RegExp(token), `${token} is gone from foundation.css`);
-    for (const [palette, css] of paletteCss) {
-      assert.doesNotMatch(css, new RegExp(token), `${token} is gone from ${palette}`);
-    }
-  }
 });

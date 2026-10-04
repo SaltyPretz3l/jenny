@@ -62,7 +62,6 @@ function createManagedService() {
     safeStorage: createFakeSafeStorage(),
     defaultModel: 'mock-v1',
   });
-  service.featureFlags = { ...service.featureFlags, compaction_manual: true };
   service.sidecarManager.process = { pid: 4242 };
   service.sidecarManager.getStatus = () => ({ phase: 'ready' });
   // These suites must never touch a real local Ollama runtime (same contract
@@ -405,30 +404,6 @@ test('a history edit during an in-flight compaction blocks snapshot persistence'
     null,
     'no snapshot may reach the session record'
   );
-
-  service.sidecarClient = null;
-  service.dispose();
-});
-
-test('a send with the compaction_manual flag rolled back ignores the snapshot', async () => {
-  const service = createManagedService();
-  const capturedRequests = [];
-  stubCompactingSidecar(service, capturedRequests);
-  seedSession(service, 'sess-flag-off');
-  await service.compactContextNow('sess-flag-off');
-
-  service.featureFlags = { ...service.featureFlags, compaction_manual: false };
-  const completed = waitForComplete(service);
-  await service.startChatStream({ sessionId: 'sess-flag-off', prompt: 'And phase four?' });
-  await completed;
-
-  const chatSend = capturedRequests.find((entry) => entry.method === 'chat.send');
-  const promptContents = chatSend.params.messages.map((message) => String(message.content || ''));
-  assert.ok(
-    promptContents.some((content) => content.includes('OLD-ASSISTANT-REPLY')),
-    'flag rollback must restore full-history sends'
-  );
-  assert.ok(!promptContents.some((content) => content.includes('COMPACTED-SUMMARY')));
 
   service.sidecarClient = null;
   service.dispose();
@@ -880,7 +855,7 @@ test('automatic snapshot consumption obeys its internal rollback flag', () => {
     boundaryMessageCount: 1,
   });
   const service = {
-    featureFlags: { context_compaction: false, compaction_manual: true },
+    featureFlags: { context_compaction: false },
     sessionStore: { peekSession: () => ({ compaction_snapshot: snapshot }) },
   };
   assert.equal(applyCompactionSnapshotForChatSend(service, 's1', history).applied, false);
@@ -918,7 +893,7 @@ test('applyCompactionSnapshotForChatSend never throws and falls back to full his
   const history = [{ id: 'u1', role: 'user', content: 'q1' }];
   const logs = [];
   const throwingService = {
-    featureFlags: { compaction_manual: true },
+    featureFlags: {},
     sessionStore: {
       peekSession() {
         throw new Error('secret prompt at C:\\private\\path');

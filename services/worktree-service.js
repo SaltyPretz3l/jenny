@@ -143,6 +143,9 @@ function parsePorcelainWorktreeList(output) {
       current.detached = true;
     } else if (key === 'bare') {
       current.bare = true;
+    } else if (key === 'prunable') {
+      // Git still lists a worktree whose directory is gone until it is pruned.
+      current.prunable = true;
     }
   }
   if (current) {
@@ -525,6 +528,26 @@ class WorktreeService {
       return this._failure(error?.message || 'Worktree path was rejected.', {
         reason: 'path_policy_rejected',
         errorCode: TOOL_ERROR_CODES.DISABLED,
+      });
+    }
+    const gitList = await this._runGit(repo.repository_root, ['worktree', 'list', '--porcelain'], {
+      signal: normalizeAbortSignal({ signal, abortSignal }),
+    });
+    if (!gitList.success) {
+      return this._failure('git worktree list failed.', {
+        reason: gitResultWasAborted(gitList) ? 'aborted' : 'git_list_failed',
+        details: gitList.message,
+      });
+    }
+    const selectedPath = await fs.realpath(entry.worktree_path);
+    const liveRows = parsePorcelainWorktreeList(gitList.stdout).filter((row) => row.prunable !== true);
+    const livePaths = await Promise.all(liveRows.map(
+      async (row) => fs.realpath(row.path).catch(() => null)
+    ));
+    if (!livePaths.some((livePath) => livePath
+      && normalizeComparablePath(livePath) === normalizeComparablePath(selectedPath))) {
+      return this._failure('Worktree is no longer registered with Git.', {
+        reason: 'worktree_stale', errorCode: TOOL_ERROR_CODES.DISABLED,
       });
     }
     return {

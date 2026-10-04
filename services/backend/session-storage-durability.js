@@ -162,6 +162,7 @@ class SessionStorageDurability {
 function evictLoadedSession(self, sessionId) {
   self._loadedSessions.delete(sessionId);
   self._durability.evict(sessionId);
+  if (!self._sessionStores.has(sessionId)) self._sessionLru.delete(sessionId);
 }
 
 function reconcileSessionDurability(self, sessionId) {

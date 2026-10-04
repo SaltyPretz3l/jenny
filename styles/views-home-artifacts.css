@@ -8,10 +8,8 @@
 
 .page-eyebrow {
   color: var(--text-secondary);
-  font-size: var(--font-size-sm);
-  font-weight: 700;
-  letter-spacing: var(--tracking-kicker-sm);
-  text-transform: uppercase;
+  font-size: var(--font-size-caption);
+  font-weight: 500;
 }
 
 .page-title {
@@ -25,7 +23,7 @@
   margin: 0;
   max-width: 720px;
   color: var(--text-secondary);
-  font-size: var(--font-size-lg);
+  font-size: var(--font-size-body);
   line-height: 1.6;
 }
 

@@ -171,7 +171,7 @@ def test_glob_files_ignores_case_variants_on_case_insensitive_filesystems(
     monkeypatch.setattr(glob_module.os, "name", "nt")
     monkeypatch.setattr(glob_module.os.path, "normcase", lambda value: value.lower())
 
-    assert glob_module._ignored_directory_name("NODE_MODULES") is True  # noqa: SLF001
+    assert glob_module._ignored_directory_name("NODE_MODULES") is True
 
 
 def test_glob_files_orders_results_by_newest_mtime_then_filename(tmp_path: Path) -> None:

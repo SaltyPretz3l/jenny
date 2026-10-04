@@ -304,7 +304,12 @@ test('stream handler flushes pending hidden current-session deltas for chat catc
     harness.state.ui.chatTimelineVisibilityTracker.hasHiddenCatchup('session-1'),
     true
   );
-  assert.equal(logs.some((entry) => entry.event === 'timeline.hidden_stream_dirty'), true);
+  // The delta and its commit are one hidden stretch: one line naming the view,
+  // no per-delta breadcrumb (dogfood HB-027).
+  const hiddenLogs = logs.filter((entry) => entry.event === 'timeline.hidden_stream_dirty');
+  assert.equal(hiddenLogs.length, 1);
+  assert.equal(hiddenLogs[0].data.activeView, 'settings');
+  assert.equal(logs.some((entry) => entry.event === 'stream.delta_current_not_visible'), false);
 });
 
 test('stream handler commits and renders visible deltas when animation frames are throttled', async (t) => {

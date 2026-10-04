@@ -287,3 +287,148 @@ test('linux archive install refuses cancellation once the archive is published',
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
+
+function parentDir(root) {
+  return path.dirname(installRoot(root));
+}
+
+function makeDirWithMarker(dir, content) {
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'marker.txt'), content);
+}
+
+test('reconcileArchiveInstall restores the newest previous install when the live directory is missing', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-linux-reconcile-restore-'));
+  try {
+    const parent = parentDir(root);
+    makeDirWithMarker(path.join(parent, 'ollama.previous-100'), 'older');
+    makeDirWithMarker(path.join(parent, 'ollama.previous-200'), 'newest');
+    const logs = [];
+    const { service } = createHarness(root, { logger: (level, event) => logs.push(event) });
+
+    service.reconcileArchiveInstall();
+
+    assert.equal(fs.readFileSync(path.join(installRoot(root), 'marker.txt'), 'utf8'), 'newest');
+    assert.deepEqual(siblingArtifacts(root), []);
+    assert.equal(logs.includes('ollama_install.previous_restored'), true);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('reconcileArchiveInstall removes stale previous and staging directories beside a live install', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-linux-reconcile-stale-'));
+  try {
+    const parent = parentDir(root);
+    makeDirWithMarker(installRoot(root), 'live');
+    makeDirWithMarker(path.join(parent, 'ollama.previous-100'), 'stale');
+    makeDirWithMarker(path.join(parent, '.ollama.staging-abc123'), 'abandoned');
+    // Names outside the exact patterns are never touched.
+    makeDirWithMarker(path.join(parent, 'ollama.previous-keep'), 'not digits');
+    makeDirWithMarker(path.join(parent, 'other.previous-100'), 'other install');
+    fs.writeFileSync(path.join(parent, 'ollama.previous-300'), 'a file, not a directory');
+    // A link that matches the pattern is left alone and its target is not followed.
+    const outside = path.join(root, 'outside');
+    makeDirWithMarker(outside, 'outside data');
+    fs.symlinkSync(outside, path.join(parent, '.ollama.staging-link'), 'junction');
+    const { service } = createHarness(root);
+
+    service.reconcileArchiveInstall();
+
+    assert.equal(fs.readFileSync(path.join(installRoot(root), 'marker.txt'), 'utf8'), 'live');
+    assert.deepEqual(fs.readdirSync(parent).sort(), [
+      '.ollama.staging-link',
+      'ollama',
+      'ollama.previous-300',
+      'ollama.previous-keep',
+      'other.previous-100',
+    ]);
+    assert.equal(fs.readFileSync(path.join(outside, 'marker.txt'), 'utf8'), 'outside data');
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('reconcileArchiveInstall leaves the staging directory of an install that is running', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-linux-reconcile-active-'));
+  try {
+    const parent = parentDir(root);
+    makeDirWithMarker(path.join(parent, '.ollama.staging-stale1'), 'abandoned');
+    let duringInstall = null;
+    const { service } = createHarness(root, {
+      extractImpl: async ({ destinationDir }) => {
+        fs.mkdirSync(path.join(destinationDir, 'bin'), { recursive: true });
+        fs.writeFileSync(path.join(destinationDir, 'bin', 'ollama'), 'fake binary');
+        service.reconcileArchiveInstall();
+        duringInstall = fs.readdirSync(parent).filter((name) => name.startsWith('.ollama.staging-'));
+      },
+    });
+
+    const result = await service.installOllama({ confirmed: true });
+
+    assert.equal(result.code, 'installed');
+    // The abandoned directory went at the start of the install; only the live staging remained mid-install.
+    assert.equal(duringInstall.length, 1);
+    assert.notEqual(duringInstall[0], '.ollama.staging-stale1');
+    assert.deepEqual(siblingArtifacts(root), []);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('linux archive install recovers an interrupted publish before staging a new install', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-linux-reconcile-install-'));
+  try {
+    const parent = parentDir(root);
+    makeDirWithMarker(path.join(parent, 'ollama.previous-100'), 'interrupted');
+    let liveAtExtract = null;
+    const { service } = createHarness(root, {
+      extractImpl: async ({ destinationDir }) => {
+        liveAtExtract = fs.existsSync(path.join(installRoot(root), 'marker.txt'));
+        fs.mkdirSync(path.join(destinationDir, 'bin'), { recursive: true });
+        fs.writeFileSync(path.join(destinationDir, 'bin', 'ollama'), 'fake binary');
+      },
+    });
+
+    const result = await service.installOllama({ confirmed: true });
+
+    assert.equal(result.code, 'installed');
+    assert.equal(liveAtExtract, true);
+    assert.deepEqual(siblingArtifacts(root), []);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('reconcileArchiveInstall is a no-op off the Linux archive plan and never throws', () => {
+  const idleRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-linux-reconcile-noop-'));
+  for (const platform of ['win32', 'darwin']) {
+    const touched = [];
+    const fsImpl = new Proxy(fs, {
+      get(target, property) {
+        touched.push(String(property));
+        return target[property];
+      },
+    });
+    const { service } = createHarness(idleRoot, { platform, fsImpl });
+    touched.length = 0;
+    assert.doesNotThrow(() => service.reconcileArchiveInstall());
+    assert.deepEqual(touched, [], `${platform} must not touch the filesystem`);
+  }
+  fs.rmSync(idleRoot, { recursive: true, force: true });
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-linux-reconcile-throws-'));
+  try {
+    const fsImpl = new Proxy(fs, {
+      get(target, property) {
+        if (property === 'readdirSync' || property === 'lstatSync') {
+          return () => { throw new Error('injected fs failure'); };
+        }
+        return target[property];
+      },
+    });
+    const { service } = createHarness(root, { fsImpl });
+    assert.doesNotThrow(() => service.reconcileArchiveInstall());
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});

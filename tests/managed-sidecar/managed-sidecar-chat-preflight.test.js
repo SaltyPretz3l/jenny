@@ -588,5 +588,7 @@ test('managed chat logs normalized renderer timing on send initiation', async ()
 
   const sendInitiated = service.serviceLogs.find((entry) => entry.event === 'chat.send_initiated');
   assert.equal(Number.isFinite(sendInitiated.details.ipc_latency_ms), true);
+  // A delta, not a timestamp (the P3-PERF-A baseline saw epoch milliseconds here).
+  assert.ok(sendInitiated.details.ipc_latency_ms >= 0 && sendInitiated.details.ipc_latency_ms < 60_000);
   assert.equal(sendInitiated.details.local_render_latency_ms, 12);
 });

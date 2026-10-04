@@ -80,6 +80,26 @@ test('tool_approval_withdrawn envelopes classify as tool/completed and round-tri
   assert.equal(legacy.callId, 'call-1');
 });
 
+test('user_questions_withdrawn envelopes classify as tool/completed and round-trip with their question ref', () => {
+  // The ask_user half of the pause withdrawal: delivered 1:1 on the tool
+  // channel (never a coalescing delta) with the exact question ref.
+  const params = {
+    type: 'user_questions_withdrawn', streamId: 'stream-paused', sessionId: 'session-1', callId: 'call-1',
+    questionId: 'question-1', questionRef: 'question-ref-1', toolName: 'ask_user', reason: 'runtime_pause',
+  };
+  const sources = buildEnvelopeSources(params, 'user_questions_withdrawn');
+  assert.equal(sources.length, 1);
+  assert.equal(sources[0].channel, 'tool');
+  assert.equal(sources[0].eventKind, 'completed');
+  const legacy = streamEnvelopeToLegacyPayload({
+    schemaVersion: 2, streamId: 'stream-paused', sessionId: 'session-1',
+    channel: 'tool', eventKind: 'completed', payload: sources[0].payload,
+  });
+  assert.equal(legacy?.type, 'user_questions_withdrawn');
+  assert.equal(legacy.questionRef, 'question-ref-1');
+  assert.equal(legacy.callId, 'call-1');
+});
+
 test('context_usage envelopes classify as control/progress and round-trip without coalescing', () => {
   // Same class as tool_output_chunk: a rapid stream of ephemeral readings on
   // one channel must NOT classify as "delta", or successive snapshots merge

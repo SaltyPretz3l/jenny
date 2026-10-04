@@ -123,7 +123,8 @@ class EngineTuningService {
       return { status: 'rejected', reason: 'update_in_progress', state: this.getState() };
     }
     const field = getFieldDefinition(key);
-    if (!field) return { status: 'rejected', reason: 'invalid_field', state: this.getState() };
+    // A retired key has no control and takes no new value; the schema keeps it for the sidecar readers.
+    if (!field || field.retired) return { status: 'rejected', reason: 'invalid_field', state: this.getState() };
     const isReset = value == null || value === '';
     if (!isReset && !isEngineTuningValueInRange(key, value)) {
       // Rejected rather than clamped: the sidecar would fall back to its default

@@ -257,18 +257,6 @@ test('stop() does not queue behind a stalled ready observer, and settled() waits
   assert.equal((await settled).state, 'ready');
 });
 
-test('a failing stop keeps the error on the stopped status and a clean stop clears it', async () => {
-  const h = makeHarness();
-  await h.manager.start();
-  h.lifecycle.stopError = new Error('taskkill_failed');
-  const failed = await h.manager.stop();
-  assert.equal(failed.state, 'stopped');
-  assert.equal(failed.lastError, 'stop_failed:taskkill_failed');
-  assert.ok(h.logs.some((entry) => entry.event === 'llama.server.stop_failed'));
-  await h.manager.start();
-  assert.equal((await h.manager.stop()).lastError, '');
-});
-
 test('startFromSettings launches with profile args, reaches ready, emits both audit marks', async () => {
   const h = makeHarness();
   const status = await h.manager.startFromSettings();

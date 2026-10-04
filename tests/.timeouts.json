@@ -9,11 +9,11 @@
   "tests/renderer-chat-layout-shell.test.js": 300000,
   "tests/renderer-guidance-shell.test.js": 300000,
   "tests/renderer-lifecycle-shell.test.js": 300000,
-  "tests/renderer-logs-v2-shell.test.js": 300000,
   "tests/renderer-send-handoff-shell.test.js": 300000,
   "tests/renderer-shell.test.js": 300000,
   "tests/renderer-shell-behavior-regressions.test.js": 300000,
   "tests/renderer-shell-settings.test.js": 300000,
   "tests/renderer-shell-settings-appearance.test.js": 300000,
-  "tests/renderer-top-nav-shell.test.js": 300000
+  "tests/renderer-top-nav-shell.test.js": 300000,
+  "tests/renderer-chat-live-reasoning-row-patch.test.js": 300000
 }

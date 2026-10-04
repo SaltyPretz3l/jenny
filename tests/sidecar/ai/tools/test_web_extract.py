@@ -126,3 +126,14 @@ class TestIsTextContentType:
 
     def test_text_csv(self) -> None:
         assert is_text_content_type("text/csv") is True
+
+
+@pytest.mark.parametrize("embed", ['<embed src="x">', '<embed src="x"/>', '<embed src="x"></embed>'])
+def test_void_embed_preserves_following_content(embed):
+    result, _ = sanitize_html_for_markdown(embed + "<p>Important content</p>")
+    assert result == "<p>Important content</p>"
+
+
+def test_embed_inside_dropped_container_does_not_suppress_following_page():
+    result, _ = sanitize_html_for_markdown('<object><embed src="x"></object><p>Safe</p>')
+    assert result == "<p>Safe</p>"

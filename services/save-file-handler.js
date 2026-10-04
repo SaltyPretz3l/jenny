@@ -3,12 +3,19 @@
  * Lets the renderer hand built content (Markdown/Plain/JSON) to Electron's
  * showSaveDialog + fs.writeFile pipeline. Distinct from sessions:export, which
  * remains the canonical attachments-inlined portable format.
+ *
+ * It is also the transcript export boundary (HB-012): a payload marked
+ * `anonymizePaths: true` (the chat transcript exports) has its absolute host
+ * paths anonymised on the way out, while the app itself keeps presenting real
+ * paths. Other saves (artifact downloads, usage CSV, audit logs) are written
+ * byte-exact.
  */
 const fs = require('fs');
 const path = require('path');
 
 const { registerIpcInvokeHandlers } = require('./ipc-contract');
 const { isChildPath } = require('./backend/path-utils');
+const { redactTranscriptExportContent } = require('./backend/transcript-export-redaction');
 
 const FORMAT_FILTER_MAP = {
   markdown: [{ name: 'Markdown', extensions: ['md'] }],
@@ -74,6 +81,7 @@ function buildSaveFileHandler({ dialog, getMainWindow, getProtectedRoots, log })
     const content = normalizeString(input.content);
     const format = normalizeString(input.format).trim().toLowerCase();
     const overrideFilters = Array.isArray(input.filters) ? input.filters : null;
+    const anonymizePaths = input.anonymizePaths === true;
 
     if (!SUPPORTED_FORMATS.has(format)) {
       const err = new Error(`Unsupported save-file format: "${format}"`);
@@ -115,8 +123,9 @@ function buildSaveFileHandler({ dialog, getMainWindow, getProtectedRoots, log })
     }
 
     try {
-      await fs.promises.writeFile(targetPath, content, 'utf8');
-      const bytesWritten = Buffer.byteLength(content, 'utf8');
+      const exportContent = anonymizePaths ? redactTranscriptExportContent(content, format) : content;
+      await fs.promises.writeFile(targetPath, exportContent, 'utf8');
+      const bytesWritten = Buffer.byteLength(exportContent, 'utf8');
       safelyLog(log, 'INFO', 'save_file.completed', {
         format,
         path: targetPath,

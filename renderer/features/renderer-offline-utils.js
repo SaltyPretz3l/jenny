@@ -163,22 +163,11 @@
       return state.offline;
     }
 
-    function getBadgeLabel(offlineState) {
-      if (offlineState.mode === 'local_only') {
-        return offlineState.localChatReady ? 'Forced' : 'Blocked';
-      }
-      if (offlineState.localChatReady) {
-        return 'Ready';
-      }
-      if (offlineState.localCatalog.available === false) {
-        return 'Unavailable';
-      }
-      return 'Optional';
-    }
-
+    // The Local inference model group's one line: which model, and where to
+    // change it (the Model Library button beside it).
     function getModelStatusText(offlineState) {
       if (offlineState.preferredLocalModel && offlineState.localChatReady) {
-        return jt('offline.status.selectedModelReady', 'Selected model {model} is ready for local inference.', { model: offlineState.preferredLocalModel });
+        return jt('offline.status.localModelInUse', 'Local inference uses {model}. Change it in Model Library.', { model: offlineState.preferredLocalModel });
       }
       if (offlineState.preferredLocalModel && offlineState.selectedLocalModelInstalled) {
         return jt('offline.status.selectedModelNotReady', 'Selected model {model} is installed, but local inference is not ready. {reason}', { model: offlineState.preferredLocalModel, reason: offlineState.unavailableReason || '' }).trim();
@@ -189,13 +178,15 @@
       return jt('offline.status.noModelSelected', 'No local inference model is selected.');
     }
 
-    /* Runtime posture is represented by the composer gear dot and tooltip. */
+    /* Runtime posture is represented by the Chat panel dot and text. */
     function renderComposerOfflineLabel(offlineState) {
-      const dotNode = documentRef?.getElementById('composerGearPostureDot') || null;
+      const dotNode = documentRef?.getElementById('composerChatPostureDot') || null;
       if (!dotNode) {
         return;
       }
       const localOnly = offlineState.mode === 'local_only';
+      const postureRow = documentRef?.getElementById('composerChatPosture');
+      if (postureRow) postureRow.hidden = !localOnly;
       const posture = !localOnly
         ? 'local'
         : offlineState.localChatReady
@@ -229,18 +220,12 @@
             ? jt('offline.status.usingModelWithVision', 'Force local inference: using {model} for chat and current-turn vision.', { model: offlineState.preferredLocalModel })
             : jt('offline.status.usingModelWithoutVision', 'Force local inference: using {model} for chat. Vision remains unavailable for this model.', { model: offlineState.preferredLocalModel }))
           : (offlineState.unavailableReason || offlineState.summary || jt('offline.status.forceLocalUnavailable', 'Force local inference is enabled but unavailable.'));
-      const gear = documentRef?.getElementById('composerSettingsButton') || null;
-      if (gear) {
-        /* data-tooltip (not title) so the inventory tooltip shows the
-         * combined string without a native double-tooltip. */
-        gear.setAttribute('data-tooltip', jt('offline.sessionSettings.tooltip', 'Session settings · {posture}', { posture: postureTooltip }));
-        gear.removeAttribute('title');
-      }
+      const textNode = documentRef?.getElementById('composerChatPostureText');
+      if (textNode) textNode.textContent = postureTooltip;
     }
 
     function renderOfflineManager() {
       const {
-        offlineBadge,
         offlineSummary,
         offlineStatus,
         offlineLocalOnlyList,
@@ -248,29 +233,6 @@
         offlineModelActions,
       } = getDomSnapshot();
       const offlineState = state.offline || normalizeOfflineState({});
-      const badgeLabel = getBadgeLabel(offlineState);
-      if (offlineBadge) {
-        // Tier C #12: additive settings-status-chip/data-state on top of the
-        // existing text-badge contract — offlineBadge.textContent stays the
-        // same computed label (existing tests assert exact text), it just
-        // also now flashes 'loading' before the first offline payload lands
-        // instead of the optimistic 'Optional' seed.
-        const chipUtils = getStatusChipUtils();
-        const badgeOk = badgeLabel !== 'Blocked' && badgeLabel !== 'Unavailable';
-        const badgeChipState = offlineState.resolved === false
-          ? 'loading'
-          : chipUtils
-            ? chipUtils.resolveAvailabilityChipState({ resolved: true, ok: badgeOk })
-            : (badgeOk ? 'live' : 'error');
-        if (chipUtils && typeof chipUtils.applyStatusChip === 'function') {
-          chipUtils.applyStatusChip(offlineBadge, {
-            state: badgeChipState,
-            label: offlineState.resolved === false ? jt('offline.status.checking', 'Checking...') : badgeLabel,
-          });
-        } else {
-          offlineBadge.textContent = offlineState.resolved === false ? jt('offline.status.checking', 'Checking...') : badgeLabel;
-        }
-      }
       // Prefer the sidecar-curated summary when one is provided — it carries
       // richer context than the UI fallbacks. Fall back to a UI message that
       // matches the current mode/readiness state.

@@ -6,7 +6,7 @@ import time
 
 import pytest
 
-import sidecar.runtime.background_worker as background_worker
+from sidecar.runtime import background_worker
 from sidecar.runtime.background_worker import (
     TASK_HANDLERS,
     _background_parent_pid,

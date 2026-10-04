@@ -278,6 +278,28 @@ class RuntimeStore {
       revision: this.index.revision });
   }
 
+  // The Runs view: every unfinished item plus terminal items updated since
+  // `finishedSince`, ordered by created_at (then work_id) so rows keep their
+  // place while work runs. No cursor: a revision-bound cursor goes stale on
+  // every transition, which is exactly when this view is read.
+  listRunSummaries({ limit = 100, projectId = null, finishedSince = null } = {}) {
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100
+      || (projectId !== null && !validId(projectId))
+      || (finishedSince !== null && (typeof finishedSince !== 'string' || !Number.isFinite(Date.parse(finishedSince))))) {
+      throw new RuntimeStoreError('invalid_page_request');
+    }
+    const since = finishedSince === null ? null : Date.parse(finishedSince);
+    const scoped = this.index.summaries.filter(entry => projectId === null || entry.project_id === projectId);
+    const order = (left, right) => left.created_at.localeCompare(right.created_at)
+      || left.work_id.localeCompare(right.work_id);
+    const open = scoped.filter(entry => !TERMINAL.has(entry.status)).sort(order);
+    const finished = since === null ? [] : scoped.filter(entry => TERMINAL.has(entry.status)
+      && Date.parse(entry.updated_at) >= since).sort(order);
+    const all = [...open, ...finished];
+    return Object.freeze({ items: Object.freeze(all.slice(0, limit).map(cloneJson)),
+      truncated: all.length > limit, revision: this.index.revision });
+  }
+
   compactTerminalDetail(options) { return compactTerminalDetail(this, options); }
 
   listReadyCandidates({ limit = 256 } = {}) {
@@ -524,13 +546,21 @@ class RuntimeStore {
   _pauseUnfinishedAfterRestart() {
     if (this.readOnly) return;
     for (const summary of [...this.index.summaries]) {
-      if (!UNFINISHED.has(summary.status)) continue;
+      if (!UNFINISHED.has(summary.status) && summary.status !== 'needs_attention') continue;
       const record = this._loadRecord(summary.work_id);
+      // Backend-restart proof (as reclaimAbandonedWork): the process tree whose
+      // unproven outcome parked this work is gone, so it can never confirm
+      // late; left as is it stayed live forever (dogfood HB-009). Work with a
+      // pause or cancel intent keeps its state: attachRecoveredCheckpoint may
+      // still recover the checkpoint it published before the restart.
+      const retire = record.status === 'needs_attention';
+      if (retire && record.control_request) continue;
       const at = isoNow(this.now);
-      const paused = { ...record, revision: record.revision + 1, status: 'paused', updated_at: at,
-        transition: { transition_id: this.createId('transition'), from: record.status, to: 'paused',
-          reason: 'Paused during durable runtime recovery.', at },
-        recovery: { kind: 'restart_paused', previous_status: record.status,
+      const to = retire ? 'failed' : 'paused';
+      const paused = { ...record, revision: record.revision + 1, status: to, updated_at: at,
+        transition: { transition_id: this.createId('transition'), from: record.status, to,
+          reason: retire ? 'restart_retired' : 'Paused during durable runtime recovery.', at },
+        recovery: retire ? null : { kind: 'restart_paused', previous_status: record.status,
           reason: 'Unfinished work requires an explicit resume after restart.', at } };
       const checked = validateWorkRecord(paused);
       if (!checked.ok) return this._setReadOnly(checked.reason);

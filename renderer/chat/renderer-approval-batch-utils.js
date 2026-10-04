@@ -10,12 +10,28 @@
   const jtn = (globalThis.jennyI18n && globalThis.jennyI18n.tn) || function (k, count, params, one, other) { return jt.call(null, k, count === 1 ? one : other, params); };
   const TURN_NODE_SELECTOR = '.chat-thread-node[data-thread-message-id]';
   // Plan-variant gap rows are deliberately actionless (the plan card owns the
-  // decision), so they never join the batch Allow All / Deny All count.
+  // decision), so they never join the batch Allow all once / Always allow all / Deny all count.
   const APPROVAL_ROW_SELECTOR = '.approval-gap-row[data-approval-status="pending"]:not([data-approval-variant="plan"])';
   const BATCH_BANNER_CLASS = 'approval-batch-banner';
   const BATCH_BANNER_DATA = 'data-approval-batch-banner';
 
   const escapeHtml = stringUtils.escapeHtml;
+
+  // One in-flight decision per approval: every pane's batch controller and every
+  // per-card Allow/Deny handler claims the approval id before sending a request.
+  function createApprovalClaimRegistry() {
+    const claimed = new Set();
+    return {
+      claim(id) {
+        if (!id || claimed.has(id)) return false;
+        claimed.add(id);
+        return true;
+      },
+      release(id) { claimed.delete(id); },
+      has(id) { return claimed.has(id); },
+    };
+  }
+  const approvalClaims = createApprovalClaimRegistry();
 
   function getTurnId(turnNode) {
     if (!turnNode || typeof turnNode.getAttribute !== 'function') return '';
@@ -27,7 +43,10 @@
     const rows = turnNode.querySelectorAll(APPROVAL_ROW_SELECTOR);
     return Array.from(rows).filter((row) => {
       if (!row || typeof row.getAttribute !== 'function') return false;
-      return row.getAttribute('data-approval-resolved') !== 'true';
+      // A card decision the backend accepted waits for its row to settle
+      // (reconciliation "waiting"): it is no longer the batch's to send.
+      return row.getAttribute('data-approval-resolved') !== 'true'
+        && row.getAttribute('data-approval-reconciliation') !== 'waiting';
     });
   }
 
@@ -44,15 +63,15 @@
       + '<span class="approval-batch-banner-title">' + escapeHtml(phrase) + '</span>'
       + '</div>'
       + '<div class="approval-batch-banner-actions">'
-      + '<button type="button" class="approval-batch-action approval-batch-action--allow"'
-      + ' data-approval-batch-action="approve-all"'
-      + ' data-turn-id="' + safeTurn + '">' + escapeHtml(jt('approval.batch.allowAll', 'Allow All')) + '</button>'
       + '<button type="button" class="approval-batch-action approval-batch-action--allow-once"'
       + ' data-approval-batch-action="approve-all-once"'
-      + ' data-turn-id="' + safeTurn + '">' + escapeHtml(jt('approval.batch.allowAllOnce', 'Allow All Once')) + '</button>'
+      + ' data-turn-id="' + safeTurn + '">' + escapeHtml(jt('approval.batch.allowAllOnce', 'Allow all once')) + '</button>'
+      + '<button type="button" class="approval-batch-action approval-batch-action--allow"'
+      + ' data-approval-batch-action="approve-all"'
+      + ' data-turn-id="' + safeTurn + '">' + escapeHtml(jt('approval.batch.alwaysAllowAll', 'Always allow all')) + '</button>'
       + '<button type="button" class="approval-batch-action approval-batch-action--deny"'
       + ' data-approval-batch-action="deny-all"'
-      + ' data-turn-id="' + safeTurn + '">' + escapeHtml(jt('approval.batch.denyAll', 'Deny All')) + '</button>'
+      + ' data-turn-id="' + safeTurn + '">' + escapeHtml(jt('approval.batch.denyAll', 'Deny all')) + '</button>'
       + '</div>'
       + '</div>';
   }
@@ -280,6 +299,8 @@
     const approveOne = typeof callbacks.approveOne === 'function' ? callbacks.approveOne : null;
     const denyOne = typeof callbacks.denyOne === 'function' ? callbacks.denyOne : null;
     const onError = typeof callbacks.onError === 'function' ? callbacks.onError : null;
+    const setRowBusy = typeof callbacks.setRowBusy === 'function' ? callbacks.setRowBusy : function noopSetRowBusy() {};
+    const claims = opts.claims || approvalClaims;
 
     if (!scopeRoot || !documentRef || !approveOne || !denyOne) {
       return { sync: function noop() {}, dispose: function noop() {} };
@@ -344,6 +365,9 @@
         || row.getAttribute('data-call-id')
         || '';
       if (!callId) return;
+      // A per-card request (or another pane's batch) already owns this approval: skip it.
+      if (!claims.claim(callId)) return;
+      setRowBusy(row, true);
       try {
         let result;
         if (action === 'approve-all') {
@@ -360,7 +384,11 @@
         }
         row.setAttribute('data-approval-resolved', 'true');
       } catch (error) {
+        setRowBusy(row, false);
         if (onError) onError(action, callId, error);
+      } finally {
+        // Held until the request settles, a dispose mid-request included: no second decision is sent meanwhile.
+        claims.release(callId);
       }
     }
 
@@ -413,7 +441,7 @@
 
     if (typeof MutationObserver === 'function') {
       observer = new MutationObserver(() => scheduleSync());
-      observer.observe(scopeRoot, { childList: true, subtree: true, attributes: true, attributeFilter: ['data-approval-resolved'] });
+      observer.observe(scopeRoot, { childList: true, subtree: true, attributes: true, attributeFilter: ['data-approval-resolved', 'data-approval-reconciliation'] });
     }
 
     scheduleSync();
@@ -439,7 +467,9 @@
   }
 
   return {
+    approvalClaims,
     bindApprovalBatchUx,
+    createApprovalClaimRegistry,
     createApprovalReconciliationController,
   };
 });

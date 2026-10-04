@@ -1,6 +1,6 @@
 /* renderer/features/renderer-ide-image-memory.js - UIUX-034: image-tab memory
  * budget for the Workspace IDE editor host. Up to MAX_OPEN_TABS (64) image
- * tabs at the workspace-fs 10MB-per-file cap (readFileBase64) could otherwise
+ * tabs at the workspace-fs 10MB-per-file cap (workspaceFs.readFile) could otherwise
  * retain roughly 850 MB of base64 indefinitely (64 * 10MB * 4/3 base64
  * inflation, held in `docs` for as long as every tab stays open). This module:
  *  - decodes each payload into a Blob + object URL once and never retains the

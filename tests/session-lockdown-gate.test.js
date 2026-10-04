@@ -25,7 +25,7 @@ test('lockdown classification covers every manifest tool exactly once', () => {
   const manifestNames = manifest.tools.map((tool) => tool.name).sort();
   const classifiedNames = Object.keys(TOOL_NETWORK_CLASSIFICATION).sort();
 
-  assert.equal(manifestNames.length, 54);
+  assert.equal(manifestNames.length, 55);
   assert.deepEqual(classifiedNames, manifestNames);
   assert.equal(TOOL_NETWORK_CLASSIFICATION.task_board, 'none');
   assert.equal(TOOL_NETWORK_CLASSIFICATION.session_spawn, 'possible');
@@ -200,9 +200,12 @@ test('request assembly isolates locked and unlocked tool offers in one process',
   assert.equal(captured[0].tool_preferences.disabled_tools.includes('web_search'), true);
   assert.equal(captured[0].tool_preferences.disabled_tools.includes('fetch_url'), true);
   assert.equal(captured[1].session_offline_lockdown, false);
-  assert.equal(captured[1].tool_preferences.enabled_tools.includes('read_file'), true);
-  assert.equal(captured[1].tool_preferences.enabled_tools.includes('web_search'), true);
-  assert.equal(captured[1].tool_preferences.enabled_tools.includes('fetch_url'), true);
+  // Deny-list contract (composer Chat panel, 2026-09-30): an unlocked request with
+  // nothing switched off carries no deny entries for these tools.
+  const unlockedDenied = captured[1].tool_preferences?.disabled_tools || [];
+  assert.equal(unlockedDenied.includes('read_file'), false);
+  assert.equal(unlockedDenied.includes('web_search'), false);
+  assert.equal(unlockedDenied.includes('fetch_url'), false);
 });
 
 test('managed remote refusal happens before sidecar dispatch and locked local send proceeds', async () => {
@@ -281,7 +284,20 @@ test('flag off keeps persisted lockdown inert at request assembly and engine dis
 
   assert.equal(captured.length, 1);
   assert.equal(captured[0].session_offline_lockdown, false);
-  assert.equal(captured[0].tool_preferences.enabled_tools.includes('web_search'), true);
-  assert.equal(captured[0].tool_preferences.enabled_tools.includes('fetch_url'), true);
-  assert.equal(captured[0].tool_preferences.enabled_tools.includes('run_command'), true);
+  const denied = captured[0].tool_preferences?.disabled_tools || [];
+  assert.equal(denied.includes('web_search'), false);
+  assert.equal(denied.includes('fetch_url'), false);
+  assert.equal(denied.includes('run_command'), false);
+});
+
+test('the getState fallback still reads the snake_case local_engines spelling under lockdown', () => {
+  const service = {
+    currentEngineType: 'openai-compatible',
+    featureFlags: { session_offline_lockdown: true },
+    configService: { getState: () => ({ local_engines: { openai_compatible: { api_url: 'https://api.openai.com/v1' } } }) },
+  };
+  assert.throws(
+    () => resolveSessionLockdownRequest(service, { lockdown: true }, { requestedEngine: '', requestedModel: 'qwen2.5-coder:14b' }, null),
+    (error) => error?.code === LOCKDOWN_REMOTE_ENGINE
+  );
 });

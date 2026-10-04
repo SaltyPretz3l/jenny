@@ -13,7 +13,6 @@ from sidecar.ai.engines.base import clamp_timeout_to_deadline
 from sidecar.ai.engines.ollama_stream_thinking import (
     _emit_thinking,
     _note_malformed_stream_line,
-    _thinking_delta,
     _thinking_stop_reason,  # noqa: F401 - compatibility re-export
     _thinking_suppressed,
 )
@@ -32,6 +31,7 @@ from sidecar.ai.engines.ollama_telemetry import (
     current_time_to_first_token_ms,
     log_ollama_stream_terminal_gap,
     ollama_stream_inband_error,
+    resolve_ollama_completion_finish_reason,
     resolve_ollama_stream_finish_reason,
 )
 from sidecar.ai.engines.ollama_telemetry import (
@@ -41,15 +41,16 @@ from sidecar.ai.engines.ollama_telemetry import (
     record_ollama_chat_request as _record_chat_request,
 )
 from sidecar.ai.engines.ollama_tool_call_announce import build_tool_call_announcement
+from sidecar.ai.engines.provider_call_finalize import ProviderCallFinalizer
 from sidecar.ai.routing.provider_stream_normalizer import (
     FINISH_REASON_PROVIDER_ERROR,
     FINISH_REASON_THINKING_BUDGET,
     ProviderStreamNormalizer,
     executable_native_tool_calls,
-    record_counters_to_diagnostics,
 )
 from sidecar.ai.thinking_guard import (
     budget_trip_check,
+    guard_log_data,
     resolve_thinking_budget_chars,
     thinking_budget_abort_enabled,
 )
@@ -80,6 +81,7 @@ _ABORT_EVENT = "ai.engines.ollama.thinking_budget_abort"
 
 def _resolve_stream_terminal(
     engine: Any,
+    guard: ThinkingRepetitionGuard | None,
     *,
     thinking_budget_aborted: bool,
     saw_terminal: bool,
@@ -91,7 +93,7 @@ def _resolve_stream_terminal(
         finish_reason = FINISH_REASON_THINKING_BUDGET
         logger.info(
             "Thinking budget aborted.",
-            extra={"event": _ABORT_EVENT, "model": engine.model_name, "reason": "char_limit"},
+            extra={"event": _ABORT_EVENT, "data": guard_log_data(guard, model=engine.model_name)},
         )
         return finish_reason
     finish_reason = resolve_ollama_stream_finish_reason(
@@ -350,6 +352,7 @@ def generate(
     )
     _record_chat_request(engine, data, msgs, max_tokens)
 
+    finalizer = ProviderCallFinalizer(engine)
     try:
         response = (
             engine._post("/api/chat", data)
@@ -363,24 +366,24 @@ def generate(
         message = _as_dict(response.get("message"))
         content, _ = _extract_content_and_thinking(engine, message)
         engine._record_first_chunk()
+        engine._record_provider_usage(response)
         if content:
             engine._record_visible_output(content)
-        engine._complete_provider_request()
+        finalizer.finish_reason = resolve_ollama_completion_finish_reason(response)
         return content
     except urllib.error.URLError as error:
-        engine._complete_provider_request(outcome="failed")
         _raise_reasoning_effort_rejection(error, data)
         if engine._is_timeout_url_error(error):
             raise GenerationError(engine._timeout_message("Generation")) from error
         raise EngineConnectionError(engine._describe_url_error(error, "generation")) from error
     except (EngineConnectionError, ModelNotLoadedError):
-        engine._complete_provider_request(outcome="failed")
         raise
-    except Exception as error:  # noqa: BLE001
-        engine._complete_provider_request(outcome="failed")
+    except Exception as error:
         if engine._is_timeout_error(error):
             raise GenerationError(engine._timeout_message("Generation")) from error
         raise GenerationError(f"Generation failed: {error}") from error
+    finally:
+        finalizer.finalize()
 
 
 def stream(
@@ -412,6 +415,7 @@ def stream(
     _record_chat_request(engine, data, msgs, max_tokens)
     think_value = data.get("think")
 
+    finalizer = ProviderCallFinalizer(engine)
     try:
         reasoning_parser = engine._create_request_reasoning_parser()
         thinking_guard = (
@@ -424,7 +428,6 @@ def stream(
         budget_tripped = budget_trip_check(thinking_guard)
         thinking_suppression_state = [False]
         native_thinking_seen = False
-        thinking_accumulated = ""
         malformed_line_count = 0
         first_chunk_logged = False
         done_usage = None
@@ -470,14 +473,12 @@ def stream(
                 thinking = engine._sanitize_thinking(str(message.get("thinking") or ""))
                 if thinking:
                     native_thinking_seen = True
-                    new_tail, thinking_accumulated = _thinking_delta(thinking_accumulated, thinking)
-                    if new_tail:
-                        yield from _emit_thinking(
-                            engine,
-                            thinking_guard,
-                            new_tail,
-                            suppression_state=thinking_suppression_state,
-                        )
+                    yield from _emit_thinking(
+                        engine,
+                        thinking_guard,
+                        thinking,
+                        suppression_state=thinking_suppression_state,
+                    )
                 content = str(message.get("content") or "")
                 if content:
                     visible_text = sanitize_output(content)
@@ -532,18 +533,18 @@ def stream(
                     saw_terminal = True
                     terminal_done_reason = str(chunk.get("done_reason") or "stop")
                     break
-        engine._complete_provider_request()
         finish_reason = _resolve_stream_terminal(
-            engine,
+            engine, thinking_guard,
             thinking_budget_aborted=thinking_budget_aborted,
             saw_terminal=saw_terminal,
             terminal_done_reason=terminal_done_reason,
             inband_error=inband_error,
             has_tool_calls=False,
         )
+        finalizer.finish_reason = finish_reason
+        finalizer.finalize(cancel_handle=cancel_handle)
         yield StreamingEvent(kind="done", finish_reason=finish_reason, usage=done_usage)
     except urllib.error.URLError as error:
-        engine._complete_provider_request(outcome="failed")
         _raise_reasoning_effort_rejection(error, data)
         if engine._is_timeout_url_error(error):
             raise GenerationError(engine._timeout_message("Streaming generation")) from error
@@ -552,16 +553,16 @@ def stream(
             retryable=not isinstance(error, urllib.error.HTTPError),
         ) from error
     except (EngineConnectionError, ModelNotLoadedError):
-        engine._complete_provider_request(outcome="failed")
         raise
-    except Exception as error:  # noqa: BLE001
-        engine._complete_provider_request(outcome="failed")
+    except Exception as error:
         raise_if_cancelled(cancel_handle)
         if engine._is_timeout_error(error):
             raise GenerationError(engine._timeout_message("Streaming generation")) from error
         if _is_retryable_transport_error(error):
             _raise_stream_transport_error(engine, error)
         raise GenerationError(f"Streaming generation failed: {error}") from error
+    finally:
+        finalizer.finalize(cancel_handle=cancel_handle)
 
 
 def _engine_request_id(engine: Any) -> str | None:
@@ -611,6 +612,9 @@ def stream_with_tools(
     _record_chat_request(engine, data, msgs, max_tokens, tools_payload)
     think_value = data.get("think")
 
+    finalizer = ProviderCallFinalizer(engine)
+    normalizer = ProviderStreamNormalizer(provider="ollama")
+    finalizer.normalizer = normalizer
     try:
         reasoning_parser = engine._create_request_reasoning_parser()
         thinking_guard = (
@@ -623,7 +627,6 @@ def stream_with_tools(
         budget_tripped = budget_trip_check(thinking_guard)
         thinking_suppression_state = [False]
         native_thinking_seen = False
-        thinking_accumulated = ""
         content_parts: list[str] = []
         thinking_parts: list[str] = []
         raw_tool_calls: list[dict[str, Any]] = []
@@ -642,7 +645,6 @@ def stream_with_tools(
         # the parser produces the engine's actual yields; the normalizer
         # tracks classification counters and detects reasoning-only
         # completions for the chat-streaming fail-closed path.
-        normalizer = ProviderStreamNormalizer(provider="ollama")
         url = f"{engine.host}/api/chat"
         req = urllib.request.Request(
             url,
@@ -673,10 +675,7 @@ def stream_with_tools(
                         engine, malformed_line_count, line
                     )
                     continue
-                try:
-                    normalizer.feed(chunk)
-                except Exception:  # noqa: BLE001 — diagnostic-only.
-                    pass
+                normalizer.feed(chunk)  # diagnostic-only; logs and never raises
                 inband_error = ollama_stream_inband_error(chunk)
                 if inband_error:
                     saw_terminal = True
@@ -687,15 +686,13 @@ def stream_with_tools(
                 thinking = engine._sanitize_thinking(str(message.get("thinking") or ""))
                 if thinking:
                     native_thinking_seen = True
-                    new_tail, thinking_accumulated = _thinking_delta(thinking_accumulated, thinking)
-                    if new_tail:
-                        yield from _emit_thinking(
-                            engine,
-                            thinking_guard,
-                            new_tail,
-                            suppression_state=thinking_suppression_state,
-                            thinking_parts=thinking_parts,
-                        )
+                    yield from _emit_thinking(
+                        engine,
+                        thinking_guard,
+                        thinking,
+                        suppression_state=thinking_suppression_state,
+                        thinking_parts=thinking_parts,
+                    )
                 content = str(message.get("content") or "")
                 if content:
                     # Detect bare "thought " prefix (model skipped <|channel>thought markers)
@@ -834,12 +831,6 @@ def stream_with_tools(
                     saw_terminal = True
                     terminal_done_reason = str(chunk.get("done_reason") or "stop")
                     break
-        engine._complete_provider_request()
-        try:
-            normalizer.finalize_for_counters()
-        except Exception:  # noqa: BLE001 — diagnostic-only.
-            pass
-        record_counters_to_diagnostics(engine, normalizer)
         # Build final result with tool calls
         final_content = "".join(content_parts).strip()
         final_thinking = "".join(thinking_parts).strip()
@@ -859,16 +850,14 @@ def stream_with_tools(
                 tool_calls = extraction.calls
                 final_content = extraction.remaining_text
         finish_reason = _resolve_stream_terminal(
-            engine,
+            engine, thinking_guard,
             thinking_budget_aborted=thinking_budget_aborted,
             saw_terminal=saw_terminal,
             terminal_done_reason=terminal_done_reason,
             inband_error=inband_error,
             has_tool_calls=bool(tool_calls),
         )
-        # Do not cache finish reason on the engine; cross-request state can
-        # contaminate later streams, and consumers must use the current result
-        # or terminal chunk.
+        finalizer.finish_reason = finish_reason
         return GenerationResult(
             content=final_content,
             tool_calls=tool_calls,
@@ -878,7 +867,6 @@ def stream_with_tools(
             inband_tool_call_parse_failed=inband_parse_failed,
         )
     except urllib.error.URLError as error:
-        engine._complete_provider_request(outcome="failed")
         _raise_reasoning_effort_rejection(error, data)
         if engine._is_timeout_url_error(error):
             raise GenerationError(engine._timeout_message("Streaming generation")) from error
@@ -887,16 +875,16 @@ def stream_with_tools(
             retryable=not isinstance(error, urllib.error.HTTPError),
         ) from error
     except (EngineConnectionError, ModelNotLoadedError):
-        engine._complete_provider_request(outcome="failed")
         raise
-    except Exception as error:  # noqa: BLE001
-        engine._complete_provider_request(outcome="failed")
+    except Exception as error:
         raise_if_cancelled(cancel_handle)
         if engine._is_timeout_error(error):
             raise GenerationError(engine._timeout_message("Streaming generation")) from error
         if _is_retryable_transport_error(error):
             _raise_stream_transport_error(engine, error)
         raise GenerationError(f"Streaming generation failed: {error}") from error
+    finally:
+        finalizer.finalize(cancel_handle=cancel_handle)
 
 
 def generate_with_tools_impl(
@@ -928,6 +916,7 @@ def generate_with_tools_impl(
     tools_payload = _as_list(data.get("tools"))
     _record_chat_request(engine, data, msgs, max_tokens, tools_payload)
 
+    finalizer = ProviderCallFinalizer(engine)
     try:
         response = engine._post("/api/chat", data)
         message = _as_dict(response.get("message"))
@@ -950,10 +939,13 @@ def generate_with_tools_impl(
                 content = extraction.remaining_text
         finish_reason = "tool_calls" if tool_calls else "stop"
         engine._record_first_chunk()
+        engine._record_provider_usage(response)
         if content:
             engine._record_visible_output(content)
         response["_jenny_ttft_ms"] = current_time_to_first_token_ms(engine)
-        engine._complete_provider_request()
+        finalizer.finish_reason = resolve_ollama_completion_finish_reason(
+            response, has_tool_calls=bool(tool_calls)
+        )
         # The non-streaming response body carries the same usage fields as the
         # streaming done-chunk (prompt_eval_count / eval_count).
         return GenerationResult(
@@ -965,19 +957,18 @@ def generate_with_tools_impl(
             inband_tool_call_parse_failed=inband_parse_failed,
         )
     except urllib.error.URLError as error:
-        engine._complete_provider_request(outcome="failed")
         _raise_reasoning_effort_rejection(error, data)
         if engine._is_timeout_url_error(error):
             raise GenerationError(engine._timeout_message("Generation")) from error
         raise EngineConnectionError(engine._describe_url_error(error, "generation")) from error
     except (EngineConnectionError, ModelNotLoadedError):
-        engine._complete_provider_request(outcome="failed")
         raise
-    except Exception as error:  # noqa: BLE001
-        engine._complete_provider_request(outcome="failed")
+    except Exception as error:
         if engine._is_timeout_error(error):
             raise GenerationError(engine._timeout_message("Generation")) from error
         raise GenerationError(f"Generation failed: {error}") from error
+    finally:
+        finalizer.finalize()
 
 
 def plain_generate_result(

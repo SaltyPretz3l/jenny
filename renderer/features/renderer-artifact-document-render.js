@@ -38,14 +38,8 @@
     return value == null ? '' : String(value);
   }
 
-  function escapeHtml(value) {
-    return str(value)
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;')
-      .replace(/'/g, '&#39;');
-  }
+  const escapeHtml = ((typeof globalThis !== 'undefined' && globalThis.stringUtils)
+    || (typeof require === 'function' ? require('../shared/string-utils') : null)).escapeHtml;
 
   function normalizeMode(value) {
     return String(value || '').trim().toLowerCase() === 'source' ? 'source' : 'read';

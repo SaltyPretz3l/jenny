@@ -3,10 +3,13 @@
   root.rendererDiagnosticsEventBindings = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
+  // Tab order; Runs joined on 2026-10-03 (moved from Settings).
+  var TABS = ['overview', 'activity', 'runs'];
 
   function createLogsEventBindings(options) {
     var state = options.state;
-    var renderLogs = options.callbacks.renderLogs;
+    var viewStateUtils = globalThis.rendererDiagnosticsViewState
+      || (typeof require === 'function' ? require('./renderer-diagnostics-view-state') : null);
     var asyncFenceUtils = globalThis.rendererAsyncFence
       || (typeof require === 'function' ? require('../shared/async-fence') : null);
     var disposalFence = asyncFenceUtils.createDisposalFence();
@@ -23,7 +26,16 @@
     }
 
     function view() {
-      return globalThis.rendererDiagnosticsViewState?.ensureDiagnosticsViewState?.(state) || state.ui.logs;
+      return viewStateUtils.ensureDiagnosticsViewState(state);
+    }
+
+    function renderLogs() {
+      var current = view();
+      [['logSearchInput', current.query], ['logLevelFilter', current.levelFilter], ['logSourceFilter', current.sourceFilter]].forEach(function (pair) {
+        var control = document.getElementById(pair[0]);
+        if (control) control.value = pair[1];
+      });
+      options.callbacks.renderLogs();
     }
 
     function cancelScheduledFocus() {
@@ -89,17 +101,19 @@
       listen(tabs, 'click', function (event) {
         var button = event.target.closest('[data-tab]');
         if (!button) return;
-        view().activeTab = button.dataset.tab === 'activity' ? 'activity' : 'overview';
+        view().activeTab = TABS.includes(button.dataset.tab) ? button.dataset.tab : 'overview';
         renderLogs();
       }, listenerOptions);
+      // Arrows move through the tabs and wrap at the ends; Home and End jump.
       listen(tabs, 'keydown', function (event) {
         if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
         event.preventDefault();
+        var index = Math.max(0, TABS.indexOf(view().activeTab));
         view().activeTab = event.key === 'Home'
-          ? 'overview'
+          ? TABS[0]
           : event.key === 'End'
-            ? 'activity'
-            : view().activeTab === 'overview' ? 'activity' : 'overview';
+            ? TABS[TABS.length - 1]
+            : TABS[(index + (event.key === 'ArrowRight' ? 1 : -1) + TABS.length) % TABS.length];
         renderLogs();
       }, listenerOptions);
 
@@ -108,6 +122,8 @@
         view().selectedRunId = String(run.value || '');
         view().selectedEntryId = '';
         view().issueScope = null;
+        // A remembered focus origin belongs to the old run; never switch back to it.
+        view().returnState = null;
         renderLogs();
       }, listenerOptions);
 
@@ -118,7 +134,10 @@
 
         var clearScope = event.target.closest('[data-action="clear-diagnostics-scope"]');
         if (clearScope) {
-          view().issueScope = null;
+          var current = view();
+          // Restore the filters the focus link replaced, but stay in Activity where Clear scope lives.
+          if (current.returnState) Object.assign(current, current.returnState, { returnState: null, activeTab: current.activeTab });
+          else current.issueScope = null;
           renderLogs();
           afterRender(function () { document.getElementById('logSearchInput')?.focus?.(); });
           return;
@@ -129,14 +148,11 @@
           var decoded;
           try { decoded = decodeURIComponent(inspect.dataset.issue || ''); } catch (_error) { return; }
           var parts = decoded.split('\u0000');
-          view().issueScope = {
+          viewStateUtils.focusDiagnosticsTarget(state, { tab: 'activity', issueScope: {
             component: parts[0] || '',
             event: parts[1] || '',
             error_code: parts[2] || '',
-          };
-          view().activeTab = 'activity';
-          view().selectedEntryId = '';
-          view().autoScroll = false;
+          } });
           renderLogs();
           afterRender(focusActivityStart);
           return;
@@ -207,19 +223,23 @@
         focusRow(next.dataset.entryId || '');
       }, listenerOptions);
 
+      /* A manual filter edit supersedes the state a focus link remembered. */
       var search = document.getElementById('logSearchInput');
       listen(search, 'input', function () {
         view().query = String(search.value || '');
+        view().returnState = null;
         renderLogs();
       }, listenerOptions);
       var level = document.getElementById('logLevelFilter');
       listen(level, 'change', function () {
         view().levelFilter = String(level.value || 'all');
+        view().returnState = null;
         renderLogs();
       }, listenerOptions);
       var source = document.getElementById('logSourceFilter');
       listen(source, 'change', function () {
         view().sourceFilter = String(source.value || 'all');
+        view().returnState = null;
         renderLogs();
       }, listenerOptions);
 
@@ -237,11 +257,6 @@
           current.selectedEntryId = entryId;
           current.autoScroll = false;
         }
-        /* Mirror the (possibly cleared) filter state onto the controls so the
-         * visible chrome matches the rows the deep link just revealed. */
-        if (search) search.value = String(current.query || '');
-        if (level) level.value = String(current.levelFilter || 'all');
-        if (source) source.value = String(current.sourceFilter || 'all');
         /* Repaint even without a target: the view may already have been on
          * Logs, in which case the tab flip alone paints nothing. */
         renderLogs();

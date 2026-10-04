@@ -12,7 +12,7 @@ from sidecar.ai.tools.workspace import WorkspaceGuard
 def test_create_artifact_tool_writes_session_scoped_file(tmp_path) -> None:
     workspace_root = tmp_path / "workspace"
     workspace_root.mkdir()
-    tools = builtin_server._default_tools()  # noqa: SLF001
+    tools = builtin_server._default_tools()
     tool = tools["create_artifact"]
 
     result = tool.handler(
@@ -39,7 +39,7 @@ def test_create_artifact_tool_writes_session_scoped_file(tmp_path) -> None:
 def test_create_artifact_tool_rejects_unsafe_extension_override(tmp_path) -> None:
     workspace_root = tmp_path / "workspace"
     workspace_root.mkdir()
-    tools = builtin_server._default_tools()  # noqa: SLF001
+    tools = builtin_server._default_tools()
     tool = tools["create_artifact"]
 
     with pytest.raises(ToolExecutionFailure, match="simple file extension"):
@@ -58,7 +58,7 @@ def test_create_artifact_tool_rejects_unsafe_extension_override(tmp_path) -> Non
 def test_create_artifact_tool_marks_oversized_files_read_only(tmp_path) -> None:
     workspace_root = tmp_path / "workspace"
     workspace_root.mkdir()
-    tools = builtin_server._default_tools()  # noqa: SLF001
+    tools = builtin_server._default_tools()
     tool = tools["create_artifact"]
 
     result = tool.handler(
@@ -110,7 +110,7 @@ def test_create_artifact_tool_retries_atomic_filename_collision(
 ) -> None:
     workspace_root = tmp_path / "workspace"
     workspace_root.mkdir()
-    tools = builtin_server._default_tools()  # noqa: SLF001
+    tools = builtin_server._default_tools()
     tool = tools["create_artifact"]
     real_write = artifacts_module.GuardedWorkspaceStore._write_bytes_atomic
     attempted: list[str] = []
@@ -147,7 +147,7 @@ def test_create_artifact_tool_retries_atomic_filename_collision(
 def test_create_artifact_tool_rejects_invalid_utf8_surrogate_content(tmp_path) -> None:
     workspace_root = tmp_path / "workspace"
     workspace_root.mkdir()
-    tools = builtin_server._default_tools()  # noqa: SLF001
+    tools = builtin_server._default_tools()
     tool = tools["create_artifact"]
 
     with pytest.raises(ToolExecutionFailure) as caught:
@@ -170,7 +170,7 @@ def test_error_response_redacts_absolute_paths_and_truncates_detail(tmp_path) ->
     secret_path = tmp_path / "workspace" / "nested" / "secret.txt"
     message = f"failed to read {secret_path}: {'x' * 2000}"
 
-    response = builtin_server._error_response("1", "CMP-TEST-0001", message)  # noqa: SLF001
+    response = builtin_server._error_response("1", "CMP-TEST-0001", message)
 
     redacted = response["error"]["message"]
     assert str(secret_path) not in redacted
@@ -182,7 +182,7 @@ def test_tool_failure_retryability_survives_builtin_mcp_response(tmp_path) -> No
     workspace_root = tmp_path / "workspace"
     workspace_root.mkdir()
 
-    def fail(_arguments, _workspace):  # noqa: ANN001
+    def fail(_arguments, _workspace):
         raise ToolExecutionFailure(
             code="CMP-TEST-0002",
             message="transient failure",
@@ -197,7 +197,7 @@ def test_tool_failure_retryability_survives_builtin_mcp_response(tmp_path) -> No
         handler=fail,
     )
 
-    response = builtin_server._handle_tools_call(  # noqa: SLF001
+    response = builtin_server._handle_tools_call(
         "retryable-call",
         {tool.name: tool},
         WorkspaceGuard(str(workspace_root)),
@@ -216,7 +216,7 @@ def test_builtin_mcp_strips_forged_plan_artifact_capability_before_validation(tm
     workspace_root.mkdir()
     received: dict[str, object] = {}
 
-    def capture(arguments, _workspace):  # noqa: ANN001
+    def capture(arguments, _workspace):
         received.update(arguments)
         return "ok"
 
@@ -232,7 +232,7 @@ def test_builtin_mcp_strips_forged_plan_artifact_capability_before_validation(tm
         handler=capture,
     )
 
-    response = builtin_server._handle_tools_call(  # noqa: SLF001
+    response = builtin_server._handle_tools_call(
         "forged-capability",
         {tool.name: tool},
         WorkspaceGuard(str(workspace_root)),
@@ -259,7 +259,7 @@ def test_redaction_of_two_windows_paths_preserves_the_prose_between_them() -> No
         "or pass a 'cwd' that points inside a git checkout under it."
     )
 
-    redacted = builtin_server._redact_error_message(message)  # noqa: SLF001
+    redacted = builtin_server._redact_error_message(message)
 
     assert first not in redacted
     assert second not in redacted
@@ -298,21 +298,21 @@ def test_redaction_covers_space_bearing_and_root_level_paths(
     private_path: str,
     expected: str,
 ) -> None:
-    redacted = builtin_server._redact_error_message(message)  # noqa: SLF001
+    redacted = builtin_server._redact_error_message(message)
 
     assert private_path not in redacted
     assert redacted == expected
 
 
 def test_git_status_non_repo_error_survives_server_side_redaction(tmp_path) -> None:
-    # End-to-end lane: git_ops unit tests assert raw paths, but the model only
-    # ever sees the redacted message. Assert the *meaning* still arrives.
+    # End-to-end lane: the meaning still arrives, and since HB-017 the model sees
+    # the real workspace root (inside the call's bound workspace) instead of <path>.
     workspace_root = tmp_path / "workspace"
     workspace_root.mkdir()
 
-    response = builtin_server._handle_tools_call(  # noqa: SLF001
+    response = builtin_server._handle_tools_call(
         "msg-git-status",
-        builtin_server._default_tools(),  # noqa: SLF001
+        builtin_server._default_tools(),
         WorkspaceGuard(str(workspace_root)),
         {"name": "git_status", "arguments": {}},
     )
@@ -322,16 +322,15 @@ def test_git_status_non_repo_error_survives_server_side_redaction(tmp_path) -> N
     assert "is not a git repository" in message
     assert "Pass 'cwd'" in message
     assert "Omit 'cwd'" not in message
-    assert str(workspace_root) not in message
-    assert "<path>" in message
+    assert f"The tools workspace root ({workspace_root}) is not a git repository" in message
+    assert "<path>" not in message
 
 
 def test_default_tools_include_python_runtime_when_enabled_on_windows(monkeypatch) -> None:
     monkeypatch.setattr("sidecar.ai.mcp.builtin_server.sys.platform", "win32")
 
-    tools = builtin_server._default_tools(  # noqa: SLF001
-        python_runtime_enabled=True,
-        python_runtime_root="C:/runtime",
+    tools = builtin_server._default_tools(
+        {"tools_python_runtime_enabled": True, "tools_python_runtime_root": "C:/runtime"}
     )
 
     assert "python_execute" in tools
@@ -340,9 +339,46 @@ def test_default_tools_include_python_runtime_when_enabled_on_windows(monkeypatc
 def test_default_tools_exclude_python_runtime_when_not_supported(monkeypatch) -> None:
     monkeypatch.setattr("sidecar.ai.mcp.builtin_server.sys.platform", "linux")
 
-    tools = builtin_server._default_tools(  # noqa: SLF001
-        python_runtime_enabled=True,
-        python_runtime_root="C:/runtime",
+    tools = builtin_server._default_tools(
+        {"tools_python_runtime_enabled": True, "tools_python_runtime_root": "C:/runtime"}
     )
 
     assert "python_execute" not in tools
+
+
+@pytest.mark.parametrize(
+    ("tool_language", "helper_language", "extension"),
+    [("md", "markdown", ".md"), ("js", "javascript", ".js"), ("py", "python", ".py")],
+)
+def test_text_artifact_paths_preserve_matching_persistence_metadata(
+    tmp_path, monkeypatch, tool_language, helper_language, extension
+) -> None:
+    monkeypatch.setattr(artifacts_module.secrets, "token_hex", lambda _length: "01234567")
+    tool_root = tmp_path / "tool"
+    helper_root = tmp_path / "helper"
+    tool_root.mkdir()
+    helper_root.mkdir()
+    content = "hello \U0001f600"
+    result = artifacts_module.create_artifact_tool(
+        {
+            "_jenny_session_id": "same-session",
+            "title": "Example",
+            "content": content,
+            "language": tool_language,
+        },
+        WorkspaceGuard(str(tool_root)),
+    )
+    helper_metadata = artifacts_module.build_text_artifact_metadata(
+        workspace=WorkspaceGuard(str(helper_root)),
+        session_id="same-session",
+        title="Example",
+        content=content,
+        language=helper_language,
+        file_extension=extension,
+    )
+    tool_metadata = result.generated_artifacts[0]
+    assert {key: value for key, value in tool_metadata.items() if key != "absolute_path"} == {
+        key: value for key, value in helper_metadata.items() if key != "absolute_path"
+    }
+    assert (tool_root / str(tool_metadata["display_path"])).read_text(encoding="utf-8") == content
+    assert (helper_root / str(helper_metadata["display_path"])).read_text(encoding="utf-8") == content

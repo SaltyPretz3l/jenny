@@ -54,13 +54,13 @@ class TestCharEstimationBackend:
 class TestTokenBudget:
     def test_effective_context_no_tools(self) -> None:
         budget = TokenBudget(context_window=200_000, max_output_tokens=16_384)
-        # 200_000 - 16_384 - 8_192 (reserved) - 0 (tools) = 175_424
-        assert budget.effective_context(0) == 175_424
+        # 200_000 - max(16_384 output, 8_192 summary) - 0 (tools) = 183_616
+        assert budget.effective_context(0) == 183_616
 
     def test_effective_context_with_tools(self) -> None:
         budget = TokenBudget(context_window=200_000, max_output_tokens=16_384)
-        # 200_000 - 16_384 - 8_192 - (5 * 500) = 172_924
-        assert budget.effective_context(5) == 172_924
+        # 200_000 - max(16_384, 8_192) - (5 * 500) = 181_116
+        assert budget.effective_context(5) == 181_116
 
     def test_effective_context_custom_reserved(self) -> None:
         budget = TokenBudget(
@@ -69,8 +69,8 @@ class TestTokenBudget:
             reserved_for_summary=2_000,
             tool_overhead_per_tool=100,
         )
-        # 100_000 - 4_096 - 2_000 - (3 * 100) = 93_604
-        assert budget.effective_context(3) == 93_604
+        # 100_000 - max(4_096, 2_000) - (3 * 100) = 95_604
+        assert budget.effective_context(3) == 95_604
 
     def test_effective_context_clamps_to_zero(self) -> None:
         budget = TokenBudget(context_window=1_000, max_output_tokens=900)
@@ -79,7 +79,7 @@ class TestTokenBudget:
 
     def test_warning_threshold(self) -> None:
         budget = TokenBudget(context_window=200_000, max_output_tokens=16_384)
-        effective = budget.effective_context(0)  # 175_424
+        effective = budget.effective_context(0)  # 183_616
         assert budget.warning_threshold(0) == int(effective * 0.80)
 
     def test_auto_compact_threshold(self) -> None:
@@ -95,9 +95,9 @@ class TestTokenBudget:
     @pytest.mark.parametrize(
         ("context_window", "num_tools", "effective_context", "hard_prompt_limit"),
         [
-            (8_192, 24, 3_072, 6_144),
-            (32_768, 24, 12_288, 24_576),
-            (200_000, 46, 152_424, 183_616),
+            (8_192, 24, 4_096, 6_144),
+            (32_768, 24, 16_384, 24_576),
+            (200_000, 46, 160_616, 183_616),
         ],
     )
     def test_reservations_scale_across_context_windows(
@@ -165,8 +165,9 @@ class TestEffectiveContextSmallWindows:
         )
 
         assert budget.output_reservation_tokens == 49_152
-        assert budget.effective_context(num_tools=15) == 33_460
-        assert budget.auto_compact_threshold(num_tools=15) == 30_114
+        # 65_536 - max(16_384 capped output, 8_192 summary) - 15 * 500
+        assert budget.effective_context(num_tools=15) == 41_652
+        assert budget.auto_compact_threshold(num_tools=15) == 37_486
 
 
 # -- estimate_messages_tokens ------------------------------------------------

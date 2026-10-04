@@ -10,6 +10,13 @@ const { normalizeChatMessages } = require('../renderer/chat/chat-message-utils')
 const { projectTurnTree } = require('../renderer/chat/renderer-turn-tree-projector');
 const { projectTurnRows } = require('../renderer/chat/renderer-turn-row-projector');
 const { createTurnRowListUtils } = require('../renderer/chat/renderer-turn-row-list-utils');
+const { createTurnRowRenderUtils } = require('../renderer/chat/renderer-turn-row-render-utils');
+const { createReasoningV2Renderer } = require('../renderer/chat/renderer-transcript-reasoning-v2');
+const {
+  ThinkingPanelController,
+  groupReasoningByPhase,
+  shouldShowThinkingToggle,
+} = require('../renderer/chat/chat-thinking-utils');
 const { morphChildren } = require('../renderer/chat/renderer-stream-dom-patch-utils');
 const {
   applyTurnStreamEvent,
@@ -135,12 +142,35 @@ function loadScenario(scenarioName) {
   };
 }
 
-function renderRows(rows, messages) {
+function renderRows(rows, messages, extraOptions) {
   return rowListUtils.buildTurnRowListMarkup(rows, messages, {
-    responseLoopDisplayV2: false,
     turnRows: rows,
+    ...(extraOptions || {}),
   });
 }
+
+// Transcript views (renderer-transcript-view-utils.js) change expansion
+// defaults and, for 'answers', a stylesheet rule; never the row set. Every
+// corpus shape must render the same data-row-id set under each view.
+const TRANSCRIPT_VIEWS = ['answers', 'thinking', 'everything'];
+
+// The stub body builder above cannot notice a view-dependent body (an empty
+// body drops the whole row). This renderer routes reasoning rows through the
+// real reasoning-v2 widget and tool rows through the real tool row builder
+// that createTurnRowRenderUtils owns; the row-id set is read from its output.
+const realRowRenderer = createTurnRowRenderUtils({
+  escapeHtml,
+  renderMarkdown: (text) => `<p>${escapeHtml(text)}</p>`,
+  renderThinkingWidget: createReasoningV2Renderer({
+    escapeHtml,
+    groupReasoningByPhase,
+    getReasoningEntries: (message) => (message?.reasoning?.entries || []),
+    renderMarkdown: (text) => `<p>${escapeHtml(text)}</p>`,
+    renderStreamingMarkdownUnits: (text) => ({ html: `<p>${escapeHtml(text)}</p>` }),
+    shouldShowThinkingToggle,
+    thinkingController: new ThinkingPanelController(),
+  }).renderThinkingWidget,
+});
 
 function createMarkupHost(markup) {
   const dom = new JSDOM('<!doctype html><body><div id="host"></div></body>');
@@ -244,6 +274,47 @@ function diffRenderedRow(scenarioName, pair, messages) {
   }
 }
 
+// Non-vacuity guard for P5's real-builder pass: across the corpus the real
+// reasoning and tool builders must actually render rows (an always-empty
+// builder would make the row-id comparison trivially equal).
+test('P5 real builders render reasoning and tool rows somewhere in the corpus', () => {
+  const rendered = new Set();
+  for (const scenarioName of SCENARIOS) {
+    const scenario = loadScenario(scenarioName);
+    for (const turn of scenario.projectedRows) {
+      const { dom, host } = createMarkupHost(realRowRenderer.buildTurnRowListMarkup(
+        turn.rows, scenario.messages, { turnRows: turn.rows, transcriptView: 'everything' },
+      ));
+      host.querySelectorAll('.chat-row').forEach((row) => rendered.add(row.getAttribute('data-row-kind') || ''));
+      dom.window.close();
+    }
+  }
+  assert.ok(rendered.has('reasoning'), `real builders rendered kinds: ${Array.from(rendered).join(', ')}`);
+  assert.ok(rendered.has('tool_call'), `real builders rendered kinds: ${Array.from(rendered).join(', ')}`);
+});
+
+// GIP-1: the settled tool row the real builders produce must carry the call's
+// generated artifact, beside the header and outside the inert body, both when
+// projected from messages and when hydrated from persisted turn events.
+test('P6 06-inline-artifacts: the real tool row renders its generated artifact outside the row body', () => {
+  const scenario = loadScenario('06-inline-artifacts');
+  for (const [label, turns] of [['projected', scenario.projectedRows], ['hydrated', scenario.hydratedRowsFromTurnEvents]]) {
+    for (const transcriptView of TRANSCRIPT_VIEWS) {
+      const cards = [];
+      for (const turn of turns) {
+        const { dom, host } = createMarkupHost(realRowRenderer.buildTurnRowListMarkup(
+          turn.rows, scenario.messages, { turnRows: turn.rows, transcriptView },
+        ));
+        host.querySelectorAll('.inv-artifact-card[data-artifact-id="artifact_plan_06"]').forEach((card) => {
+          cards.push({ inBody: Boolean(card.closest('.tool-call-row-body')), inRow: Boolean(card.closest('.tool-call-row')) });
+        });
+        dom.window.close();
+      }
+      assert.deepEqual(cards, [{ inBody: false, inRow: true }], `${label} / ${transcriptView}`);
+    }
+  }
+});
+
 for (const scenarioName of SCENARIOS) {
   test(`P1 ${scenarioName}: rendered row identity is unique and complete`, () => {
     const scenario = loadScenario(scenarioName);
@@ -255,6 +326,44 @@ for (const scenarioName of SCENARIOS) {
       assert.ok(rowIds.every(Boolean), `${turn.turn_id} should give every rendered row a data-row-id`);
       assert.equal(new Set(rowIds).size, rowIds.length, `${turn.turn_id} should not duplicate data-row-id`);
       dom.window.close();
+    }
+  });
+
+  // Answers adds one tool_run summary row before each run of two or more tool
+  // steps (NEXT_STEPS row 21); every other row is shared by all three views.
+  test(`P5 ${scenarioName}: every transcript view renders the same row-id set`, () => {
+    const scenario = loadScenario(scenarioName);
+    const rowIdsFor = (build, turn, transcriptView) => {
+      const { dom, host } = createMarkupHost(build(turn.rows, scenario.messages, { transcriptView }));
+      const ids = Array.from(host.querySelectorAll('.chat-row')).map((row) => row.getAttribute('data-row-id') || '');
+      dom.window.close();
+      return ids;
+    };
+    const stubBuild = renderRows;
+    const realBuild = (rows, messages, extraOptions) => realRowRenderer.buildTurnRowListMarkup(
+      rows, messages, { turnRows: rows, ...(extraOptions || {}) },
+    );
+    for (const [label, build] of [['stub body', stubBuild], ['real reasoning/tool builders', realBuild]]) {
+      for (const turn of scenario.projectedRows) {
+        const idsByView = TRANSCRIPT_VIEWS.map((transcriptView) => rowIdsFor(build, turn, transcriptView));
+        const isRunSummary = (id) => id.includes(':tool_run:');
+        idsByView.forEach((ids, index) => {
+          if (TRANSCRIPT_VIEWS[index] !== 'answers') {
+            assert.ok(!ids.some(isRunSummary), `${turn.turn_id} (${label}): ${TRANSCRIPT_VIEWS[index]} emits no tool runs`);
+          }
+          ids.forEach((id, position) => {
+            if (!isRunSummary(id)) return;
+            const firstMember = id.split(':tool_run:')[1];
+            assert.ok(String(ids[position + 1] || '').includes(firstMember),
+              `${turn.turn_id} (${label}): ${id} sits directly before its first step`);
+          });
+        });
+        const shared = idsByView.map((ids) => ids.filter((id) => !isRunSummary(id)));
+        for (let index = 1; index < shared.length; index += 1) {
+          assert.deepEqual(shared[index], shared[0],
+            `${turn.turn_id} (${label}): ${TRANSCRIPT_VIEWS[index]} must render the same rows as ${TRANSCRIPT_VIEWS[0]}`);
+        }
+      }
     }
   });
 

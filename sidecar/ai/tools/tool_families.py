@@ -2,6 +2,13 @@
 
 import re
 
+# Every family a tool status may carry. The manifest families, plus:
+# - "other": the catalog's fallback family for MCP, plugin and unknown tools.
+#   It must stay known, or a sub-agent's "disable every ungranted family"
+#   preference would leave those tools enabled.
+# - "browser", "rich_files": families of retired tools (see
+#   RETIRED_TOOL_FAMILY_NAMES). Kept so stored preferences and grant requests
+#   naming them still validate instead of failing as malformed.
 KNOWN_TOOL_FAMILIES: frozenset[str] = frozenset(
     {
         "artifact",
@@ -24,13 +31,23 @@ KNOWN_TOOL_FAMILIES: frozenset[str] = frozenset(
     }
 )
 
+# Canonical tool name -> family, exactly as services/tools/tool-manifest.json
+# declares it (pinned by tests/sidecar/ai/tools/test_tool_families_manifest.py).
 TOOL_FAMILY_NAMES: dict[str, tuple[str, ...]] = {
+    "artifact": ("create_artifact",),
+    "code_intelligence": ("lsp",),
+    "diagram": ("mermaid_generate",),
+    "discovery": ("tool_search",),
     "filesystem": (
         "read_file",
-        "list_dir",
+        "write_file",
+        "edit_file",
+        "delete_file",
+        "move_file",
         "glob_files",
-        "grep_search",
+        "list_dir",
         "workspace_manifest_read",
+        "grep_search",
     ),
     "git": (
         "git_status",
@@ -44,11 +61,39 @@ TOOL_FAMILY_NAMES: dict[str, tuple[str, ...]] = {
         "worktree_select",
         "worktree_delete",
     ),
-    "diagram": ("mermaid_generate",),
-    "home": ("home",),
+    "home": ("home", "task_board"),
+    "knowledge": ("knowledge_search", "knowledge_view", "knowledge_exec"),
     "python": ("python_execute",),
-    "todo": ("todo_read", "todo_write"),
+    "runtime": (
+        "session_spawn",
+        "session_wait",
+        "session_result",
+        "operation_status",
+        "automation_list",
+        "automation_read",
+        "delegate",
+        "connections_list",
+        "exit_plan_mode",
+        "ask_user",
+        "jenny_status",
+        "load_skill",
+    ),
+    "shell": (
+        "run_command",
+        "run_temp_script",
+        "monitor",
+        "check_background_job",
+        "stop_background_job",
+        "check_monitor",
+    ),
+    "todo": ("todo_write", "todo_read"),
     "web": ("web_search", "fetch_url"),
+    "workspace": ("workspace_present", "preview_test", "verify", "image_generate"),
+}
+
+# Retired tool names that can still appear in persisted transcripts. They only
+# classify old statuses by name; no manifest or runtime surface offers them.
+RETIRED_TOOL_FAMILY_NAMES: dict[str, tuple[str, ...]] = {
     "browser": (
         "browser_open",
         "browser_screenshot",
@@ -58,17 +103,10 @@ TOOL_FAMILY_NAMES: dict[str, tuple[str, ...]] = {
         "browser_eval",
     ),
     "code_intelligence": (
-        "lsp",
         "lsp_diagnostics",
         "lsp_symbols",
         "lsp_definition",
         "lsp_references",
-    ),
-    "runtime": (
-        "automation_list",
-        "automation_read",
-        "jenny_status",
-        "delegate",
     ),
     "rich_files": (
         "pdf_inspect",
@@ -77,11 +115,6 @@ TOOL_FAMILY_NAMES: dict[str, tuple[str, ...]] = {
         "document_inspect",
         "presentation_inspect",
         "notebook_inspect",
-    ),
-    "knowledge": (
-        "knowledge_search",
-        "knowledge_view",
-        "knowledge_exec",
     ),
 }
 
@@ -336,9 +369,10 @@ def tool_family_for_status(*, name: str, tool_family: str | None) -> str | None:
     if normalized_family in KNOWN_TOOL_FAMILIES:
         return normalized_family
     normalized_name = str(name or "").strip().lower()
-    for family, tool_names in TOOL_FAMILY_NAMES.items():
-        if normalized_name in tool_names:
-            return family
+    for table in (TOOL_FAMILY_NAMES, RETIRED_TOOL_FAMILY_NAMES):
+        for family, tool_names in table.items():
+            if normalized_name in tool_names:
+                return family
     return None
 
 

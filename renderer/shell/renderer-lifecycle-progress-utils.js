@@ -8,45 +8,32 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function lifecycleProgressUtilsFactory() {
   var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
 
-  var PILL_SOURCES = (typeof globalThis !== 'undefined'
-    && globalThis.rendererTurnStatusPill
-    && globalThis.rendererTurnStatusPill.SOURCES)
-    || {
-      LIFECYCLE_STARTUP: 'lifecycle.startup',
-      LIFECYCLE_SHUTDOWN: 'lifecycle.shutdown',
-      LIFECYCLE_MODEL_SWITCH: 'lifecycle.modelSwitch',
-    };
-
-  var MODEL_SWITCH_STEPS = [
-    { key: 'reinitialize',  label: jt('shell.progress.reinitializingEngine', 'Re-initializing engine...') },
-    { key: 'model_acquiring', label: jt('shell.progress.downloadingModel', 'Downloading model...') },
-    { key: 'model_loading', label: jt('shell.progress.loadingModel', 'Loading model...') },
-    { key: 'ready',         label: jt('shell.progress.modelLoaded', 'Model loaded') },
-  ];
-
   var SETTLE_DELAY_MS = 1200;
   var SHUTDOWN_SETTLE_DELAY_MS = 2400;
   var DEFAULT_STARTUP_OVERLAY_SLOW_MS = 8000;
   var DEFAULT_STARTUP_OVERLAY_MAX_VISIBLE_MS = 20000;
+  // The curtain's plain fade (animation off, reduced motion, backstop). The
+  // removal timer is the fallback for a transitionend that never arrives.
+  var STARTUP_OVERLAY_PLAIN_FADE_MS = 240;
+  var STARTUP_OVERLAY_REMOVAL_FALLBACK_MS = STARTUP_OVERLAY_PLAIN_FADE_MS + 60;
+  // A starfield collapse lands in COLLAPSE_MS; this backstops a window that
+  // stops delivering frames mid-collapse.
+  var STARTUP_OVERLAY_COLLAPSE_FALLBACK_SLACK_MS = 250;
+  var STARTUP_LINE_REFRESH_MS = 250;
+  var DEFAULT_STARFIELD_MIN_HOLD_MS = 900;
+  var DEFAULT_STARFIELD_COLLAPSE_MS = 750;
+  var ERROR_CODE_PATTERN = /CMP-[A-Z]+-\d{4}/;
+
+  var STARTUP_OVERLAY_CONTINUE_ACTION = 'startup-continue';
 
   function defaultLifecycleProgress() {
     return {
       active: false,
       scenario: '',
       phase: '',
-      detail: '',
-      stepIndex: 0,
-      stepCount: 0,
-      percent: 0,
       startedAt: 0,
       error: '',
     };
-  }
-
-  function normalizePercent(value) {
-    var percent = Number(value);
-    if (!Number.isFinite(percent)) { return 0; }
-    return Math.max(0, Math.min(100, Math.round(percent)));
   }
 
   function prefersReducedMotion() {
@@ -58,6 +45,12 @@
     }
   }
 
+  function defaultNow() {
+    return (typeof performance !== 'undefined' && performance && typeof performance.now === 'function')
+      ? performance.now()
+      : Date.now();
+  }
+
   function isTerminalPhase(scenario, phase) {
     if (scenario === 'startup') { return phase === 'ready' || phase === 'model_unavailable'; }
     if (scenario === 'shutdown') { return phase === 'done'; }
@@ -65,19 +58,26 @@
     return false;
   }
 
-  var STARTUP_OVERLAY_LABELS = {
-    ollama_start: jt('shell.progress.startingLocalInference', 'Starting local inference\u2026'),
-    ollama_ready: jt('shell.progress.inferenceEngineReady', 'Inference engine ready'),
-    sidecar_spawn: jt('shell.progress.launchingCompanionEngine', 'Launching companion engine\u2026'),
-    sidecar_ready: jt('shell.progress.engineProcessStarted', 'Engine process started'),
-    sidecar_spawned: jt('shell.progress.engineProcessStarted', 'Engine process started'),
-    sidecar_initialize: jt('shell.progress.initializingEngine', 'Initializing engine\u2026'),
-    model_load: jt('shell.progress.almostReady', 'Almost ready\u2026'),
-    model_acquiring: jt('shell.progress.downloadingConfiguredModel', 'Downloading the configured model\u2026'),
-    model_loading: jt('shell.progress.loadingModelCapabilities', 'Loading model capabilities\u2026'),
-    model_unavailable: jt('shell.progress.modelUnavailableLabel', 'Model unavailable'),
-    ready: jt('shell.progress.ready', 'Jenny is ready'),
+  // Restored-view display names for the curtain's "Opening {view}" line.
+  var VIEW_DISPLAY_NAMES = {
+    chat: jt('shell.topNav.chat', 'Chat'),
+    home: jt('shell.topNav.home', 'Home'),
+    ide: jt('shell.topNav.workspace', 'Workspace'),
+    logs: jt('shell.topNav.diagnostics', 'Diagnostics'),
+    settings: jt('shell.topNav.settings', 'Settings'),
   };
+
+  // The facts main or the backend status carry about a load: never sentences.
+  function readLoadFacts(payload) {
+    var source = payload && typeof payload === 'object' ? payload : {};
+    var lifecycle = source.model_lifecycle && typeof source.model_lifecycle === 'object' ? source.model_lifecycle : {};
+    var acquisition = source.model_acquisition && typeof source.model_acquisition === 'object'
+      ? source.model_acquisition
+      : (lifecycle.model_acquisition && typeof lifecycle.model_acquisition === 'object' ? lifecycle.model_acquisition : {});
+    return {
+      modelId: String(source.modelId || acquisition.requested_model || lifecycle.requested_model || '').trim(),
+    };
+  }
 
   // UIUX-021: fatal startup/backend-failure alertdialog + Retry, shared by
   // the lifecycle-progress controller below AND by app.js's top-level
@@ -87,6 +87,8 @@
   // element itself (no shared module state to leak across overlays/tests).
   var STARTUP_OVERLAY_RETRY_BUTTON_ID = 'startupOverlayRetryButton';
 
+  // Renders the action row. An action carrying onClick is bound here, so a
+  // caller-supplied extra action (e.g. Reload window) needs no other seam.
   function renderStartupOverlayActions(overlayEl, actions) {
     if (!overlayEl || typeof overlayEl.querySelector !== 'function') { return null; }
     var host = overlayEl.querySelector('#startupOverlayActions');
@@ -107,6 +109,13 @@
         className: 'startup-overlay-action',
       });
     }).join('');
+    actionList.forEach(function bindAction(action) {
+      if (typeof action.onClick !== 'function' || typeof host.querySelector !== 'function') { return; }
+      var button = host.querySelector('[data-action="' + action.id + '"]');
+      if (button && typeof button.addEventListener === 'function') {
+        button.addEventListener('click', action.onClick);
+      }
+    });
     return host;
   }
 
@@ -142,7 +151,7 @@
     if (typeof node.hasAttribute === 'function' && !node.hasAttribute('data-startup-fatal-inert')) {
       node.setAttribute('data-startup-fatal-inert', node.inert ? '1' : '0');
     }
-    try { node.inert = true; } catch (_e) { /* best-effort */ }
+    node.inert = true;
   }
 
   // A branch containing an exempt descendant cannot itself be inert. Recurse
@@ -164,17 +173,17 @@
     for (var i = 0; i < marked.length; i++) {
       var node = marked[i];
       var restoreInert = node.getAttribute('data-startup-fatal-inert') === '1';
-      try { node.inert = restoreInert; } catch (_e) { /* best-effort */ }
+      node.inert = restoreInert;
       node.removeAttribute('data-startup-fatal-inert');
     }
   }
 
-  function ensureStartupOverlayRetryButton(overlayEl) {
+  function ensureStartupOverlayRetryButton(overlayEl, extraActions) {
     var retryButton = getStartupOverlayRetryButton(overlayEl);
     if (retryButton) { return retryButton; }
     renderStartupOverlayActions(overlayEl, [
       { id: 'startup-retry', domId: STARTUP_OVERLAY_RETRY_BUTTON_ID, label: jt('common.retry', 'Retry'), variant: 'primary' },
-    ]);
+    ].concat(Array.isArray(extraActions) ? extraActions : []));
     return getStartupOverlayRetryButton(overlayEl);
   }
 
@@ -183,9 +192,11 @@
   // focus moved onto the dialog, and the rest of the app marked inert.
   // Idempotent -- safe to call again on a repeat failure (re-focuses the
   // Retry button and rebinds onRetry without stacking listeners or losing
-  // the original pre-error focus target).
+  // the original pre-error focus target). options.extraActions adds caller
+  // actions after Retry when this call has to render the row itself.
   function presentStartupOverlayFatalError(overlayEl, options) {
     if (!overlayEl) { return; }
+    if (overlayEl.__jennyStartupSky) { overlayEl.__jennyStartupSky.pause(); }
     var opts = options || {};
     if (!overlayEl.__jennyStartupFatalActive) {
       overlayEl.__jennyStartupFatalActive = true;
@@ -197,7 +208,7 @@
       overlayEl.setAttribute('aria-modal', 'true');
       overlayEl.setAttribute('aria-live', 'assertive');
     }
-    var retryButton = ensureStartupOverlayRetryButton(overlayEl);
+    var retryButton = ensureStartupOverlayRetryButton(overlayEl, opts.extraActions);
     if (retryButton) {
       if (retryButton.classList) { retryButton.classList.remove('hidden'); }
       retryButton.disabled = false;
@@ -211,8 +222,7 @@
         }
       }
       if (typeof retryButton.focus === 'function') {
-        try { retryButton.focus({ preventScroll: true }); }
-        catch (_e) { try { retryButton.focus(); } catch (_e2) { /* ignore */ } }
+        retryButton.focus({ preventScroll: true });
       }
     }
     setStartupOverlayBackgroundInert(overlayEl, true);
@@ -231,175 +241,43 @@
     if (typeof overlayEl.removeAttribute === 'function') {
       overlayEl.removeAttribute('aria-modal');
     }
-    setStartupOverlayBackgroundInert(overlayEl, false);
     var target = overlayEl.__jennyStartupFocusReturn;
     overlayEl.__jennyStartupFocusReturn = null;
     if (target && typeof target.focus === 'function') {
-      try { target.focus({ preventScroll: true }); }
-      catch (_e) { try { target.focus(); } catch (_e2) { /* ignore */ } }
+      target.focus({ preventScroll: true });
     }
   }
 
-  function setupStartupCircuitTrace(overlay) {
-    var core = typeof globalThis !== 'undefined' && globalThis.rendererCircuitTraceCore;
-    if (!core || !overlay || typeof overlay.getBoundingClientRect !== 'function') { return null; }
-    if (prefersReducedMotion()) { return null; }
+  // 'on' | 'off'. Off: the Settings toggle (documentElement data attribute set
+  // by appearance-utils), the startup_animation kill switch (stamped pre-paint
+  // by theme-bootstrap, or the fetched flag), or the __JENNY_STARTUP_ANIMATION
+  // automation/test override. Reduced motion is not off: it paints a still sky.
+  function resolveStartupAnimationMode(doc, state) {
+    var override = typeof globalThis !== 'undefined' ? String(globalThis.__JENNY_STARTUP_ANIMATION || '') : '';
+    if (override === 'off') { return 'off'; }
+    var rootElement = doc && doc.documentElement;
+    var rootData = (rootElement && rootElement.dataset) || {};
+    if (rootData.startupAnimation === 'off' || rootData.startupAnimationFlag === 'off') { return 'off'; }
+    var flags = state && state.features && state.features.featureFlags;
+    if (flags && flags.startup_animation === false) { return 'off'; }
+    return 'on';
+  }
 
-    var doc = overlay.ownerDocument || (typeof document !== 'undefined' ? document : null);
-    var win = (doc && doc.defaultView) || (typeof window !== 'undefined' ? window : null);
-    if (!doc || !win || (doc.documentElement && doc.documentElement.dataset.surfaceEffect === 'none')) { return null; }
-
-    var canvas = doc.createElement('canvas');
-    canvas.className = 'startup-circuit-canvas';
-    overlay.insertBefore(canvas, overlay.firstChild);
-
-    var ctx = canvas.getContext('2d');
-    if (!ctx) {
-      if (canvas.parentNode) { canvas.parentNode.removeChild(canvas); }
-      return null;
-    }
-
-    var style = win.getComputedStyle(overlay);
-    var gridColor = (style.getPropertyValue('--startup-circuit-grid') || '').trim() || 'rgba(106, 58, 255, 0.12)';
-    var lineColor = (style.getPropertyValue('--startup-circuit-line') || '').trim() || 'rgba(41, 192, 255, 0.80)';
-    var glowColor = lineColor;
-    var hexSize = 48;
-    var density = 0.6;
-    var speedMul = 0.6;
-
-    var dpr = Math.max((win.devicePixelRatio) || 1, 1);
-    var rect = overlay.getBoundingClientRect();
-    var w = Math.round(rect.width);
-    var h = Math.round(rect.height);
-    if (w === 0 || h === 0) {
-      if (canvas.parentNode) { canvas.parentNode.removeChild(canvas); }
-      return null;
-    }
-    canvas.width = Math.max(Math.round(w * dpr), 1);
-    canvas.height = Math.max(Math.round(h * dpr), 1);
-    canvas.style.width = w + 'px';
-    canvas.style.height = h + 'px';
-
-    // Startup-overlay decoration may use per-launch entropy.
-    var seed = (0xc1c2c3 ^ (Math.random() * 0xffffff | 0)) >>> 0;
-    var rng = core.makeRng(seed);
-    var graph = core.buildHexGraph(w, h, hexSize, rng);
-    var hexArea = (3 * core.SQRT3 / 2) * hexSize * hexSize;
-    var traceCount = Math.max(3, Math.min(20, Math.round((w * h / hexArea) * 0.08 * density)));
-    var traces = core.buildTraces(graph, traceCount, rng);
-
-    var rafHandle = 0;
-    var lastNow = 0;
-    var disposed = false;
-    var BUCKET_CENTERS = core.BUCKET_CENTERS;
-
-    function draw(now) {
-      if (disposed) { return; }
-      rafHandle = 0;
-      var dt = lastNow > 0 ? (now - lastNow) : 16;
-      lastNow = now;
-      if (dt > 80) { dt = 80; }
-
-      var frameRng = core.makeRng((seed + Math.floor(now)) >>> 0);
-      for (var i = 0; i < traces.length; i++) {
-        var tr = traces[i];
-        tr.t += tr.speed * speedMul * dt;
-        while (tr.t >= 1) {
-          tr.t -= 1;
-          tr.prevIdx = tr.fromIdx;
-          tr.fromIdx = tr.toIdx;
-          var nextIdx = core.pickNeighbor(graph.nodes[tr.fromIdx], tr.prevIdx, frameRng);
-          if (nextIdx < 0) { tr.t = 0; break; }
-          tr.toIdx = nextIdx;
-        }
-        var from = graph.nodes[tr.fromIdx];
-        var to = graph.nodes[tr.toIdx];
-        if (from && to) {
-          var te = core.easeInOutQuad(tr.t);
-          core.pushTrailPoint(tr, from.x + (to.x - from.x) * te, from.y + (to.y - from.y) * te);
-        }
-      }
-
-      ctx.save();
-      ctx.scale(dpr, dpr);
-      ctx.clearRect(0, 0, w, h);
-
-      ctx.strokeStyle = gridColor;
-      ctx.lineCap = 'round';
-      ctx.lineWidth = 1;
-      for (var b = 0; b < graph.bucketLists.length; b++) {
-        var list = graph.bucketLists[b];
-        if (!list || list.length === 0) { continue; }
-        ctx.globalAlpha = BUCKET_CENTERS[b];
-        ctx.beginPath();
-        for (var k = 0; k < list.length; k++) {
-          var e = graph.edges[list[k]];
-          ctx.moveTo(graph.nodes[e.a].x, graph.nodes[e.a].y);
-          ctx.lineTo(graph.nodes[e.b].x, graph.nodes[e.b].y);
-        }
-        ctx.stroke();
-      }
-
-      ctx.lineCap = 'round';
-      ctx.lineJoin = 'round';
-      for (var ti = 0; ti < traces.length; ti++) {
-        var t = traces[ti];
-        var fNode = graph.nodes[t.fromIdx];
-        var tNode = graph.nodes[t.toIdx];
-        if (!fNode || !tNode) { continue; }
-        var tt = core.easeInOutQuad(t.t);
-        var hx = fNode.x + (tNode.x - fNode.x) * tt;
-        var hy = fNode.y + (tNode.y - fNode.y) * tt;
-        var color = t.hue === 1 ? glowColor : lineColor;
-
-        if (t.trailSize > 1) {
-          ctx.save();
-          ctx.globalCompositeOperation = 'lighter';
-          ctx.strokeStyle = color;
-          ctx.lineWidth = 3.0;
-          ctx.globalAlpha = 0.13;
-          core.strokeTrailPath(ctx, t, 14);
-          ctx.stroke();
-          ctx.restore();
-
-          ctx.strokeStyle = color;
-          ctx.lineWidth = 1.2;
-          ctx.globalAlpha = 0.50;
-          core.strokeTrailPath(ctx, t, 14);
-          ctx.stroke();
-        }
-
-        ctx.save();
-        ctx.shadowColor = color;
-        ctx.shadowBlur = 6;
-        ctx.fillStyle = color;
-        ctx.globalAlpha = 0.80;
-        ctx.beginPath();
-        ctx.arc(hx, hy, 1.6, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.shadowBlur = 0;
-        ctx.restore();
-      }
-
-      ctx.restore();
-
-      if (!disposed) {
-        rafHandle = typeof requestAnimationFrame === 'function' ? requestAnimationFrame(draw) : 0;
-      }
-    }
-
-    (typeof requestAnimationFrame === 'function' ? requestAnimationFrame : setTimeout)(function () {
-      if (!disposed) { canvas.classList.add('startup-circuit-ready'); }
+  function mountStartupStarfield(overlay, doc, reducedMotion) {
+    var engine = typeof globalThis !== 'undefined' && globalThis.rendererStartupStarfield;
+    if (!engine || typeof engine.createStartupStarfield !== 'function' || !overlay
+      || typeof overlay.querySelector !== 'function') { return null; }
+    var canvas = overlay.querySelector('#startupOverlaySky');
+    if (!canvas) { return null; }
+    var sky = engine.createStartupStarfield({
+      canvas: canvas,
+      wordmark: overlay.querySelector('.startup-overlay-wordmark'),
+      curtain: overlay,
+      window: (doc && doc.defaultView) || null,
+      reducedMotion: reducedMotion,
     });
-    rafHandle = typeof requestAnimationFrame === 'function' ? requestAnimationFrame(draw) : 0;
-
-    return {
-      dispose: function () {
-        disposed = true;
-        if (rafHandle && typeof cancelAnimationFrame === 'function') { cancelAnimationFrame(rafHandle); rafHandle = 0; }
-        if (canvas.parentNode) { canvas.parentNode.removeChild(canvas); }
-      },
-    };
+    if (sky) { sky.start(); }
+    return sky;
   }
 
   function createLifecycleProgressController(deps) {
@@ -407,87 +285,103 @@
     var startupOverlay = deps.dom.startupOverlay || null;
     var startupOverlaySublabel = deps.dom.startupOverlaySublabel || null;
     var startupOverlaySecondary = deps.dom.startupOverlaySecondary || null;
+    var now = typeof deps.now === 'function' ? deps.now : defaultNow;
+    // Caller-supplied fatal actions appended after Retry / View logs.
+    var fatalExtraActions = Array.isArray(deps.fatalActions) ? deps.fatalActions.slice() : [];
     var onStartupReady = typeof deps.callbacks.onStartupReady === 'function' ? deps.callbacks.onStartupReady : null;
     var onStartupRemoved = typeof deps.callbacks.onStartupRemoved === 'function' ? deps.callbacks.onStartupRemoved : null;
     var retryBackendStart = typeof deps.callbacks.retryBackendStart === 'function' ? deps.callbacks.retryBackendStart : function noopRetryBackendStart() { return Promise.resolve(); };
     var openLogs = typeof deps.callbacks.openLogs === 'function' ? deps.callbacks.openLogs : function noopOpenLogs() {};
     var appendClientLog = typeof deps.callbacks.appendClientLog === 'function' ? deps.callbacks.appendClientLog : function noopAppendClientLog() {};
-    var setTurnStatusPill = typeof deps.callbacks.setTurnStatusPill === 'function' ? deps.callbacks.setTurnStatusPill : function noopSetPill() {};
-    var clearTurnStatusPill = typeof deps.callbacks.clearTurnStatusPill === 'function' ? deps.callbacks.clearTurnStatusPill : function noopClearPill() {};
-
-    function lifecyclePillSource(scenario) {
-      if (scenario === 'startup') { return PILL_SOURCES.LIFECYCLE_STARTUP; }
-      if (scenario === 'shutdown') { return PILL_SOURCES.LIFECYCLE_SHUTDOWN; }
-      if (scenario === 'modelSwitch') { return PILL_SOURCES.LIFECYCLE_MODEL_SWITCH; }
-      return '';
+    // A best-effort callback or teardown step threw: startup carries on, the log keeps the trace.
+    function logIgnoredError(site, error) {
+      appendClientLog('DEBUG', 'startup.ignored_error', { site: site, error: String((error && error.message) || error || '') });
     }
 
     var settleTimer = 0;
     var startupOverlayDismissed = false;
-    var startupOverlayRemovedNotified = false;
+    var startupOverlayRemoved = false;
     var startupOverlayRemovalTimer = 0;
     var lifecycleControllerDisposed = false;
-    // Every restored view gates dismissal on backend readiness plus usable render.
+    // Normal dismissal needs shared shell hydration and the restored view's
+    // first usable render. Backend readiness only tracks the model story.
     var startupBackendReady = false;
     var startupBootViewReady = false;
+    var startupShellHydrated = false;
     var startupOverlaySlowTimer = 0;
     var startupOverlayBackstopTimer = 0;
-    var startupOverlayPercent = 0;
+    var startupOverlayHoldTimer = 0;
+    var startupLineRefreshTimer = 0;
     var startupOverlaySlowElapsed = false;
-    var startupOverlayBlockedActive = false;
     var startupOverlayBackstopElapsed = false;
     var startupOverlayBackstopLogged = false;
+    var startupOverlayContinueButton = null;
+    var modelSwitchFacts = null;
     var startupOverlaySlowMs = Math.max(Number((typeof globalThis !== 'undefined' && globalThis.__JENNY_STARTUP_OVERLAY_SLOW_MS) || 0) || 0, 0) || DEFAULT_STARTUP_OVERLAY_SLOW_MS;
     var startupOverlayMaxVisibleMs = Math.max(Number((typeof globalThis !== 'undefined' && globalThis.__JENNY_STARTUP_OVERLAY_MAX_VISIBLE_MS) || 0) || 0, 0) || DEFAULT_STARTUP_OVERLAY_MAX_VISIBLE_MS;
+    var starfieldModule = typeof globalThis !== 'undefined' ? globalThis.rendererStartupStarfield : null;
+    var starfieldMinHoldMs = (starfieldModule && Number(starfieldModule.MIN_HOLD_MS)) || DEFAULT_STARFIELD_MIN_HOLD_MS;
+    var starfieldCollapseMs = (starfieldModule && Number(starfieldModule.COLLAPSE_MS)) || DEFAULT_STARFIELD_COLLAPSE_MS;
 
-    function getLifecycleScenarioLabel(scenario) {
-      if (scenario === 'startup') { return 'Startup'; }
-      if (scenario === 'shutdown') { return 'Shutdown'; }
-      if (scenario === 'modelSwitch') { return jt('shell.progress.modelSwitch', 'Model Switch'); }
-      return 'Lifecycle';
+    var overlayDocument = startupOverlay && (startupOverlay.ownerDocument || (typeof document !== 'undefined' ? document : null));
+    var startupSky = null;
+    var startupSkyMountedAt = 0;
+
+    function isSkyAnimating() {
+      return !!(startupSky && typeof startupSky.isAnimated === 'function' && startupSky.isAnimated());
     }
 
-    function buildLifecycleStatusModel(scenario, phase, detail, error, options) {
-      var terminal = isTerminalPhase(scenario, phase);
-      var unavailable = phase === 'model_unavailable';
-      var tone = error || unavailable
-        ? 'danger'
-        : terminal
-          ? 'success'
-          : scenario === 'shutdown'
-            ? 'warning'
-            : 'pending';
-      var badgeText = error || unavailable
-        ? (unavailable ? 'Unavailable' : 'Error')
-        : terminal
-          ? (scenario === 'shutdown' ? 'Done' : 'Ready')
-          : scenario === 'shutdown'
-            ? 'Closing'
-            : scenario === 'modelSwitch'
-              ? 'Switching'
-              : 'Starting';
-      return {
-        tone: tone,
-        label: getLifecycleScenarioLabel(scenario),
-        message: String(detail || error || '').trim(),
-        badgeText: badgeText,
-        spinner: !error && !terminal && !unavailable,
-        compact: true,
-        className: String(options && options.className ? options.className : '').trim(),
-        ariaLive: String(options && options.ariaLive ? options.ariaLive : '').trim(),
-      };
+    function disposeStartupSky() {
+      if (!startupSky) { return; }
+      try { startupSky.dispose(); } catch (error) { logIgnoredError('starfield_dispose', error); }
+      startupSky = null;
+      delete startupOverlay.__jennyStartupSky;
     }
 
-    function bindStartupOverlayAction(actionId, handler) {
-      if (!startupOverlay || typeof startupOverlay.querySelector !== 'function') { return; }
-      var button = startupOverlay.querySelector('[data-action="' + actionId + '"]');
-      if (button && typeof button.addEventListener === 'function') {
-        button.addEventListener('click', handler);
+    // The Settings toggle or the kill switch may land after mount (feature
+    // flags are fetched after the curtain is built).
+    function retireSkyWhenSwitchedOff() {
+      if (startupSky && resolveStartupAnimationMode(overlayDocument, state) === 'off') { disposeStartupSky(); }
+    }
+
+    // Nothing animates behind the fatal dialog; recovery brings the sky back.
+    function holdStartupSky(held) {
+      if (startupSky) { startupSky[held ? 'pause' : 'resume'](); }
+    }
+
+    // ---- The curtain -------------------------------------------------------
+
+    function resolveStartupLine() {
+      if (!state || state.sessionListLoaded !== true) {
+        return jt('setup.startup.restoringChats', 'Restoring your chats');
       }
+      var activeView = String((state.ui && state.ui.activeView) || 'chat');
+      var viewName = VIEW_DISPLAY_NAMES[activeView] || VIEW_DISPLAY_NAMES.chat;
+      return jt('setup.startup.openingView', 'Opening {view}', { view: viewName });
+    }
+
+    function refreshStartupLine() {
+      if (startupOverlayDismissed || !startupOverlay || isStartupOverlayFatalActive(startupOverlay)) { return; }
+      if (startupOverlay.getAttribute && startupOverlay.getAttribute('data-state') === 'error') { return; }
+      var line = resolveStartupLine();
+      if (startupOverlaySublabel && startupOverlaySublabel.textContent !== line) {
+        startupOverlaySublabel.textContent = line;
+      }
+    }
+
+    function scheduleStartupLineRefresh() {
+      if (startupLineRefreshTimer || lifecycleControllerDisposed || startupOverlayDismissed || !startupOverlay) { return; }
+      startupLineRefreshTimer = setTimeout(function handleStartupLineRefresh() {
+        startupLineRefreshTimer = 0;
+        retireSkyWhenSwitchedOff();
+        refreshStartupLine();
+        scheduleStartupLineRefresh();
+      }, STARTUP_LINE_REFRESH_MS);
     }
 
     function setStartupOverlayActions(actions) {
       renderStartupOverlayActions(startupOverlay, actions);
+      startupOverlayContinueButton = null;
     }
 
     function handleStartupOverlayRetryClick(event) {
@@ -497,116 +391,153 @@
 
     function handleStartupOverlayContinue(reason) {
       appendClientLog('INFO', 'startup.curtain_continued', { reason: reason });
-      dismissStartupOverlay();
+      dismissStartupOverlay({ skipHold: true });
     }
 
     function handleStartupOverlayViewLogs() {
       openLogs();
       clearStartupOverlayFatalError(startupOverlay);
-      dismissStartupOverlay();
+      dismissStartupOverlay({ skipHold: true });
+    }
+
+    // Continue anyway is created once and kept: progress ticks never rebuild
+    // it, so a click or focus on it survives a download update.
+    function ensureContinueButton() {
+      if (!startupOverlay || typeof startupOverlay.querySelector !== 'function') { return null; }
+      var host = startupOverlay.querySelector('#startupOverlayActions');
+      if (!host) { return null; }
+      if (startupOverlayContinueButton && startupOverlayContinueButton.parentNode === host) {
+        return startupOverlayContinueButton;
+      }
+      var label = jt('shell.progress.continueAnyway', 'Continue anyway');
+      renderStartupOverlayActions(startupOverlay, [
+        { id: STARTUP_OVERLAY_CONTINUE_ACTION, label: label, variant: 'secondary', onClick: function onContinue() { handleStartupOverlayContinue('slow'); } },
+      ]);
+      startupOverlayContinueButton = typeof host.querySelector === 'function'
+        ? host.querySelector('[data-action="' + STARTUP_OVERLAY_CONTINUE_ACTION + '"]')
+        : null;
+      return startupOverlayContinueButton;
     }
 
     function renderSlowState() {
-      if (startupOverlayDismissed || !startupOverlay || startupOverlayBlockedActive
-        || isStartupOverlayFatalActive(startupOverlay)) { return; }
+      if (startupOverlayDismissed || !startupOverlay || isStartupOverlayFatalActive(startupOverlay)) { return; }
       startupOverlay.setAttribute('data-state', 'slow');
-      if (startupOverlaySecondary) { startupOverlaySecondary.textContent = jt('shell.progress.startupSlow', 'Startup is taking longer than usual.'); }
-      setStartupOverlayActions([
-        { id: 'startup-continue', label: jt('shell.progress.continueAnyway', 'Continue anyway'), variant: 'secondary' },
-      ]);
-      bindStartupOverlayAction('startup-continue', function () { handleStartupOverlayContinue('slow'); });
+      var secondary = jt('setup.startup.slow', 'Taking longer than usual');
+      if (startupOverlaySecondary && startupOverlaySecondary.textContent !== secondary) {
+        startupOverlaySecondary.textContent = secondary;
+      }
+      var button = ensureContinueButton();
+      var label = jt('shell.progress.continueAnyway', 'Continue anyway');
+      if (button && button.textContent !== label) { button.textContent = label; }
     }
 
-    function updateStartupOverlay(phase, error, detail, percent) {
-      if (startupOverlayDismissed || !startupOverlay) { return; }
-      var rawPercent = Number(percent);
-      var progressPercent = normalizePercent(rawPercent);
-      if (Number.isFinite(rawPercent) && rawPercent > 0 && progressPercent < 6) { progressPercent = 6; }
-      startupOverlayPercent = Math.max(startupOverlayPercent, progressPercent);
-      var progressFill = startupOverlay.querySelector('#startupOverlayProgressFill');
-      if (progressFill) {
-        progressFill.style.width = startupOverlayPercent + '%';
-      }
-      var progressBar = startupOverlay.querySelector('#startupOverlayProgressBar');
-      if (progressBar && typeof progressBar.setAttribute === 'function') {
-        progressBar.setAttribute('aria-valuenow', String(startupOverlayPercent));
-      }
+    function resolveFailureCodeLine(error, detail) {
+      var match = String(detail || '').match(ERROR_CODE_PATTERN) || String(error || '').match(ERROR_CODE_PATTERN);
+      return match
+        ? jt('setup.startup.errorCode', 'Error code {code}', { code: match[0] })
+        : jt('setup.startup.failedHint', 'Retry restarts the engine. View logs shows what happened.');
+    }
 
-      if (error) {
-        startupOverlayBlockedActive = false;
-        startupOverlay.setAttribute('data-state', 'error');
-        if (startupOverlaySublabel) { startupOverlaySublabel.textContent = jt('shell.progress.startupFailed', 'Startup failed'); }
-        if (startupOverlaySecondary) { startupOverlaySecondary.textContent = String(detail || error || jt('shell.progress.backendFailedToStart', 'Backend failed to start.')); }
-        setStartupOverlayActions([
-          { id: 'startup-retry', domId: STARTUP_OVERLAY_RETRY_BUTTON_ID, label: jt('common.retry', 'Retry'), variant: 'primary' },
-          { id: 'startup-view-logs', label: jt('shell.progress.viewLogs', 'View logs'), variant: 'secondary' },
-        ]);
-        bindStartupOverlayAction('startup-retry', handleStartupOverlayRetryClick);
-        bindStartupOverlayAction('startup-view-logs', handleStartupOverlayViewLogs);
-        return;
-      }
-      if (isStartupOverlayFatalActive(startupOverlay)
-        && phase !== 'ready' && phase !== 'model_unavailable') { return; }
-      if (startupOverlayBlockedActive && phase !== 'ready') {
-        if (startupOverlayBackstopElapsed) { dismissStartupOverlayForBackstop(); }
-        return;
-      }
-      if (phase === 'ready') { startupOverlayBlockedActive = false; }
+    function renderFailureState(error, detail) {
+      startupOverlay.setAttribute('data-state', 'error');
+      holdStartupSky(true);
+      if (startupOverlaySublabel) { startupOverlaySublabel.textContent = jt('setup.startup.failed', 'Jenny could not start'); }
+      if (startupOverlaySecondary) { startupOverlaySecondary.textContent = resolveFailureCodeLine(error, detail); }
+      setStartupOverlayActions([
+        // Retry's click is bound once by presentStartupOverlayFatalError.
+        { id: 'startup-retry', domId: STARTUP_OVERLAY_RETRY_BUTTON_ID, label: jt('common.retry', 'Retry'), variant: 'primary' },
+        { id: 'startup-view-logs', label: jt('shell.progress.viewLogs', 'View logs'), variant: 'secondary', onClick: handleStartupOverlayViewLogs },
+      ].concat(fatalExtraActions));
+    }
+
+    // Recovery from the fatal dialog back to the resting line (+ slow line).
+    function renderRestingState() {
       clearStartupOverlayFatalError(startupOverlay);
-      startupOverlay.removeAttribute('data-state');
-      if (startupOverlaySecondary) { startupOverlaySecondary.textContent = ''; }
-      setStartupOverlayActions([]);
-      if (phase === 'model_unavailable') {
-        startupOverlayBlockedActive = true;
-        startupOverlay.setAttribute('data-state', 'blocked');
-        if (startupOverlaySecondary) {
-          startupOverlaySecondary.textContent = jt('shell.progress.modelUnavailable', 'The configured model is unavailable. You can continue and choose another model in Settings.');
-        }
-        setStartupOverlayActions([
-          { id: 'startup-continue', label: jt('shell.progress.continue', 'Continue'), variant: 'primary' },
-        ]);
-        bindStartupOverlayAction('startup-continue', function () { handleStartupOverlayContinue('model_unavailable'); });
-      } else if (startupOverlaySlowElapsed) {
-        renderSlowState();
+      holdStartupSky(false);
+      if (startupOverlay.getAttribute('data-state') === 'error') {
+        startupOverlay.removeAttribute('data-state');
+        if (startupOverlaySecondary) { startupOverlaySecondary.textContent = ''; }
+        setStartupOverlayActions([]);
       }
-      var message = String(detail || STARTUP_OVERLAY_LABELS[phase] || '').trim();
-      if (startupOverlaySublabel) { startupOverlaySublabel.textContent = message; }
+      if (startupOverlaySlowElapsed) { renderSlowState(); }
+      refreshStartupLine();
+      // A backstop that elapsed behind the fatal dialog applies once it clears,
+      // whichever event (startup, model switch, ready) confirmed the recovery.
       if (startupOverlayBackstopElapsed) { dismissStartupOverlayForBackstop(); }
     }
 
-    function dismissStartupOverlay() {
+    function updateStartupOverlay(error, detail) {
+      if (startupOverlayDismissed || !startupOverlay) { return; }
+      if (error) {
+        renderFailureState(error, detail);
+        return;
+      }
+      if (isStartupOverlayFatalActive(startupOverlay)) { return; }
+      refreshStartupLine();
+      if (startupOverlayBackstopElapsed) { dismissStartupOverlayForBackstop(); }
+    }
+
+    function removeStartupOverlayNode() {
+      if (startupOverlayRemoved) { return; }
+      startupOverlayRemoved = true;
+      if (startupOverlayRemovalTimer) {
+        clearTimeout(startupOverlayRemovalTimer);
+        startupOverlayRemovalTimer = 0;
+      }
+      disposeStartupSky();
+      if (startupOverlay.parentNode) {
+        startupOverlay.parentNode.removeChild(startupOverlay);
+      }
+      setStartupOverlayBackgroundInert(startupOverlay, false);
+      try { globalThis.__jennyStartupAudit?.mark?.('shell-interactive'); } catch (error) { logIgnoredError('startup_audit_mark', error); }
+      if (!lifecycleControllerDisposed) {
+        if (onStartupRemoved) { try { onStartupRemoved(); } catch (error) { logIgnoredError('startup_removed', error); } }
+      }
+    }
+
+    function clearStartupOverlayTimers() {
+      if (startupOverlaySlowTimer) { clearTimeout(startupOverlaySlowTimer); startupOverlaySlowTimer = 0; }
+      if (startupOverlayBackstopTimer) { clearTimeout(startupOverlayBackstopTimer); startupOverlayBackstopTimer = 0; }
+      if (startupOverlayHoldTimer) { clearTimeout(startupOverlayHoldTimer); startupOverlayHoldTimer = 0; }
+      if (startupLineRefreshTimer) { clearTimeout(startupLineRefreshTimer); startupLineRefreshTimer = 0; }
+    }
+
+    function dismissStartupOverlay(options) {
       if (startupOverlayDismissed || !startupOverlay) { return; }
       // UIUX-021: the backstop must never silently drop a fatal alertdialog.
       if (isStartupOverlayFatalActive(startupOverlay)) { return; }
-      startupOverlayDismissed = true;
-      if (startupOverlaySlowTimer) { clearTimeout(startupOverlaySlowTimer); startupOverlaySlowTimer = 0; }
-      if (startupOverlayBackstopTimer) { clearTimeout(startupOverlayBackstopTimer); startupOverlayBackstopTimer = 0; }
-      if (startupCircuitTrace) {
-        try { startupCircuitTrace.dispose(); } catch (_e) { /* best-effort */ }
-        startupCircuitTrace = null;
+      retireSkyWhenSwitchedOff();
+      var animating = isSkyAnimating();
+      // A warm start still gets a short sky: never collapse before the hold.
+      var holdLeft = animating && !(options && options.skipHold)
+        ? Math.ceil(starfieldMinHoldMs - (now() - startupSkyMountedAt))
+        : 0;
+      if (holdLeft > 0) {
+        if (!startupOverlayHoldTimer) {
+          startupOverlayHoldTimer = setTimeout(function handleStartupOverlayHold() {
+            startupOverlayHoldTimer = 0;
+            dismissStartupOverlay({ skipHold: true });
+          }, holdLeft);
+        }
+        return;
       }
-      if (onStartupReady) { try { onStartupReady(); } catch (_e) { /* visual init best-effort */ } }
+      startupOverlayDismissed = true;
+      clearStartupOverlayTimers();
+      if (onStartupReady) { try { onStartupReady(); } catch (error) { logIgnoredError('startup_ready', error); } }
+      if (animating && startupOverlay.style) {
+        // The stars drive the fade; the class marks dismissal while the
+        // mounted curtain continues intercepting input until removal.
+        startupOverlay.style.opacity = '1';
+      } else {
+        disposeStartupSky();
+      }
       startupOverlay.classList.add('hidden');
-      // F2: the curtain blocked the mouse (opaque, no pointer-events:none) but
-      // never made the background keyboard-inert during a normal boot -- only
-      // the fatal-error path did. Un-inert here so a normal dismissal always
-      // restores reachability (this is a no-op if nothing was marked, and
-      // harmless alongside clearStartupOverlayFatalError, which this function
-      // never reaches while a fatal dialog is active -- see the early return above).
-      setStartupOverlayBackgroundInert(startupOverlay, false);
-      try { globalThis.__jennyStartupAudit?.mark?.('shell-interactive'); } catch (_e) { /* best effort */ }
-      function removeStartupOverlayNode() {
-        if (startupOverlayRemovalTimer) {
-          clearTimeout(startupOverlayRemovalTimer);
-          startupOverlayRemovalTimer = 0;
+      if (animating) {
+        startupSky.collapse({ onDone: removeStartupOverlayNode });
+        if (startupOverlayDismissed && !startupOverlayRemoved && !startupOverlayRemovalTimer) {
+          startupOverlayRemovalTimer = setTimeout(removeStartupOverlayNode, starfieldCollapseMs + STARTUP_OVERLAY_COLLAPSE_FALLBACK_SLACK_MS);
         }
-        if (startupOverlay.parentNode) {
-          startupOverlay.parentNode.removeChild(startupOverlay);
-        }
-        if (!startupOverlayRemovedNotified && !lifecycleControllerDisposed) {
-          startupOverlayRemovedNotified = true;
-          if (onStartupRemoved) { try { onStartupRemoved(); } catch (_e) { /* banner refresh best-effort */ } }
-        }
+        return;
       }
       startupOverlay.addEventListener('transitionend', function onEnd(event) {
         if (event && event.target && event.target !== startupOverlay) { return; }
@@ -614,7 +545,7 @@
         startupOverlay.removeEventListener('transitionend', onEnd);
         removeStartupOverlayNode();
       });
-      startupOverlayRemovalTimer = setTimeout(removeStartupOverlayNode, prefersReducedMotion() ? 0 : 420);
+      startupOverlayRemovalTimer = setTimeout(removeStartupOverlayNode, STARTUP_OVERLAY_REMOVAL_FALLBACK_MS);
     }
 
     function dismissStartupOverlayForBackstop() {
@@ -625,31 +556,40 @@
           state: startupOverlay.getAttribute('data-state') || 'starting',
         });
       }
-      dismissStartupOverlay();
+      dismissStartupOverlay({ skipHold: true });
     }
 
     function maybeDismissStartupOverlay() {
-      if (!startupBackendReady || !startupBootViewReady) { return; }
+      if (lifecycleControllerDisposed || !startupBootViewReady || !startupShellHydrated) { return; }
+      // The backstop exists only for a shell that never reports fully ready.
+      if (startupOverlayBackstopTimer) { clearTimeout(startupOverlayBackstopTimer); startupOverlayBackstopTimer = 0; }
       dismissStartupOverlay();
     }
 
     // Success and failure both count once the restored view has a usable render.
     function notifyBootViewReady() {
-      if (lifecycleControllerDisposed) { return; }
+      if (lifecycleControllerDisposed || startupBootViewReady) { return; }
       startupBootViewReady = true;
+      refreshStartupLine();
+      maybeDismissStartupOverlay();
+    }
+
+    function notifyShellHydrated() {
+      if (lifecycleControllerDisposed || startupShellHydrated) { return; }
+      startupShellHydrated = true;
       maybeDismissStartupOverlay();
     }
 
     function scheduleStartupOverlayTimers() {
       if (lifecycleControllerDisposed || startupOverlayDismissed || !startupOverlay) { return; }
-      if (!startupOverlaySlowTimer && startupOverlaySlowMs > 0) {
+      if (!startupOverlaySlowTimer && !startupOverlaySlowElapsed && startupOverlaySlowMs > 0) {
         startupOverlaySlowTimer = setTimeout(function handleStartupOverlaySlow() {
           startupOverlaySlowTimer = 0;
           startupOverlaySlowElapsed = true;
           renderSlowState();
         }, startupOverlaySlowMs);
       }
-      if (!startupOverlayBackstopTimer && startupOverlayMaxVisibleMs > 0) {
+      if (!startupOverlayBackstopTimer && !(startupBootViewReady && startupShellHydrated) && !startupOverlayBackstopElapsed && startupOverlayMaxVisibleMs > 0) {
         startupOverlayBackstopTimer = setTimeout(function handleStartupOverlayBackstop() {
           startupOverlayBackstopTimer = 0;
           startupOverlayBackstopElapsed = true;
@@ -658,25 +598,32 @@
       }
     }
 
-    // F2: the curtain is opaque and blocks the mouse, but nothing made the
-    // background keyboard/AT-inert during a normal boot -- only the
-    // fatal-error path did (presentStartupOverlayFatalError below). Mark it
-    // inert as soon as the curtain is up so a nav click behind it can't
-    // activate and persist a view the user never saw.
-    if (startupOverlay) { setStartupOverlayBackgroundInert(startupOverlay, true); }
+    // The mounted curtain isolates the background through hydration and fade.
+    if (startupOverlay) {
+      setStartupOverlayBackgroundInert(startupOverlay, true);
+      if (resolveStartupAnimationMode(overlayDocument, state) === 'on') {
+        try {
+          startupSky = mountStartupStarfield(startupOverlay, overlayDocument, prefersReducedMotion());
+          if (startupSky) { startupOverlay.__jennyStartupSky = startupSky; }
+        } catch (error) {
+          logIgnoredError('starfield_mount', error);
+          startupSky = null;
+        }
+      }
+      startupSkyMountedAt = now();
+      refreshStartupLine();
+      scheduleStartupLineRefresh();
+    }
     scheduleStartupOverlayTimers();
 
-    var startupCircuitTrace = startupOverlay ? setupStartupCircuitTrace(startupOverlay) : null;
+    // ---- Lifecycle state (the curtain, the model-switch story) ---------------
 
     function scheduleHide(delayMs) {
       if (settleTimer) { clearTimeout(settleTimer); }
       settleTimer = setTimeout(function handleSettleHide() {
         settleTimer = 0;
         if (!state) { return; }
-        var prevScenario = state.lifecycleProgress && state.lifecycleProgress.scenario;
         state.lifecycleProgress = defaultLifecycleProgress();
-        var prevSource = lifecyclePillSource(prevScenario);
-        if (prevSource) { clearTurnStatusPill(prevSource); }
       }, delayMs);
     }
 
@@ -690,122 +637,104 @@
 
       var scenario = payload.scenario;
       var phase = payload.phase || '';
-      var detail = payload.detail || '';
-      var stepIndex = Number(payload.stepIndex || 0);
-      var stepCount = Number(payload.stepCount || 0);
-      var percent = Number(payload.percent || 0);
-      if (state.lifecycleProgress.active && state.lifecycleProgress.scenario === scenario) {
-        percent = Math.max(percent, Number(state.lifecycleProgress.percent || 0));
-      }
       var error = String(payload.error || '');
       var terminal = isTerminalPhase(scenario, phase);
+      var facts = readLoadFacts(payload.facts || payload);
+      var previous = state.lifecycleProgress || defaultLifecycleProgress();
 
       state.lifecycleProgress = {
         active: true,
         scenario: scenario,
         phase: phase,
-        detail: detail,
-        stepIndex: stepIndex,
-        stepCount: stepCount,
-        percent: terminal ? 100 : percent,
-        startedAt: state.lifecycleProgress.startedAt || Date.now(),
+        modelId: facts.modelId,
+        startedAt: (previous.active && previous.scenario === scenario && previous.startedAt) || Date.now(),
         error: error,
       };
 
       if (scenario === 'startup') {
         scheduleStartupOverlayTimers();
-        updateStartupOverlay(phase, error, detail, terminal ? 100 : percent);
-        if (error) {
-          presentStartupOverlayFatalError(startupOverlay, { onRetry: handleStartupOverlayRetryClick });
+        updateStartupOverlay(error, payload.detail || error);
+        // The curtain lifts on the shell, before the backend is done, so a
+        // startup error can land after it is gone. Only a curtain still up
+        // becomes the alertdialog; otherwise the health pill and its toasts
+        // carry the failure (marking the app inert behind a removed curtain would have
+        // left it unreachable, with Retry on a node nobody can see).
+        if (error && !startupOverlayDismissed && startupOverlay) {
+          presentStartupOverlayFatalError(startupOverlay, { onRetry: handleStartupOverlayRetryClick, extraActions: fatalExtraActions });
         }
       }
-
-      publishLifecycleStatus();
 
       if (terminal) {
         var delay = scenario === 'shutdown' ? SHUTDOWN_SETTLE_DELAY_MS : SETTLE_DELAY_MS;
         if (error) { delay = 3000; }
         scheduleHide(delay);
-        if (scenario === 'startup' && !error && phase !== 'model_unavailable') {
-          clearStartupOverlayFatalError(startupOverlay);
+        if ((scenario === 'startup' || scenario === 'modelSwitch') && !error && phase !== 'model_unavailable') {
           startupBackendReady = true;
+          modelSwitchFacts = null;
+          if (startupOverlay && isStartupOverlayFatalActive(startupOverlay)) { renderRestingState(); }
           maybeDismissStartupOverlay();
         }
       }
+    }
+
+    // A load after boot (including the auto-load right after startup's
+    // ready, while its state still settles): a model switch, never startup.
+    function isLoadAfterBoot() {
+      var progress = state.lifecycleProgress;
+      var startupInFlight = progress.active && progress.scenario === 'startup' && !isTerminalPhase('startup', progress.phase);
+      return startupBackendReady && !startupInFlight;
     }
 
     function handleBackendStatus(payload) {
       if (lifecycleControllerDisposed || !payload) { return; }
       scheduleStartupOverlayTimers();
       var phase = String(payload.phase || '').trim().toLowerCase();
-      var startupActive = state.lifecycleProgress.active
-        && state.lifecycleProgress.scenario === 'startup';
-      var lifecycle = payload.model_lifecycle || {};
-      var acquisition = payload.model_acquisition || lifecycle.model_acquisition || {};
+      var facts = readLoadFacts(payload);
+      var switchActive = state.lifecycleProgress.active && state.lifecycleProgress.scenario === 'modelSwitch';
       if (phase === 'sidecar_spawned' || phase === 'model_acquiring' || phase === 'model_loading') {
-        clearStartupOverlayFatalError(startupOverlay);
-        var activeScenario = state.lifecycleProgress.active
-          && state.lifecycleProgress.scenario === 'modelSwitch'
-          ? 'modelSwitch'
-          : 'startup';
-        var stagePercent = phase === 'sidecar_spawned'
-          ? 30
-          : phase === 'model_loading'
-            ? 90
-            : 40 + (Math.max(0, Math.min(100, Number(acquisition.percent) || 0)) * 0.4);
-        handleLifecycleProgress({
-          scenario: activeScenario,
-          phase: phase,
-          detail: String(acquisition.status || payload.detail || STARTUP_OVERLAY_LABELS[phase] || ''),
-          stepIndex: activeScenario === 'modelSwitch'
-            ? (phase === 'model_loading' ? 2 : 1)
-            : phase === 'sidecar_spawned' ? 2 : phase === 'model_acquiring' ? 4 : 5,
-          stepCount: activeScenario === 'modelSwitch' ? MODEL_SWITCH_STEPS.length : 7,
-          percent: stagePercent,
-          error: '',
-        });
+        if (startupOverlay && isStartupOverlayFatalActive(startupOverlay)) { renderRestingState(); }
+        if (phase !== 'sidecar_spawned' && (switchActive || isLoadAfterBoot())) {
+          if (!switchActive) { beginModelSwitch(facts.modelId); }
+          updateModelSwitch(phase, facts);
+          maybeDismissStartupOverlay();
+          return;
+        }
+        handleLifecycleProgress({ scenario: 'startup', phase: phase, facts: facts, error: '' });
+        maybeDismissStartupOverlay();
       } else if (phase === 'model_unavailable') {
-        clearStartupOverlayFatalError(startupOverlay);
-        var unavailableScenario = state.lifecycleProgress.active
-          && state.lifecycleProgress.scenario === 'modelSwitch'
-          ? 'modelSwitch'
-          : 'startup';
+        if (startupOverlay && isStartupOverlayFatalActive(startupOverlay)) { renderRestingState(); }
         handleLifecycleProgress({
-          scenario: unavailableScenario,
+          scenario: switchActive ? 'modelSwitch' : 'startup',
           phase: 'model_unavailable',
-          detail: jt('shell.progress.modelLoadFailed', 'Model failed to load. Send a message to retry, or pick another model in Settings.'),
-          stepIndex: unavailableScenario === 'modelSwitch' ? MODEL_SWITCH_STEPS.length - 1 : 6,
-          stepCount: unavailableScenario === 'modelSwitch' ? MODEL_SWITCH_STEPS.length : 7,
-          percent: 100,
+          facts: facts,
           error: '',
         });
+        maybeDismissStartupOverlay();
       } else if (phase === 'failed') {
         // UIUX-021: surface failures right away — don't gate behind the boot
         // view — as a modal alertdialog with a Retry affordance. Guarded on
         // the overlay still being up: a backend-status 'failed' arriving
         // after a successful boot (overlay long gone) is the running app's
-        // banner/toast surface's job, not this one's.
+        // toast surface's job, not this one's.
         if (!startupOverlayDismissed && startupOverlay) {
           var failureDetail = String(payload.detail || '').trim();
-          updateStartupOverlay(phase, failureDetail || jt('shell.progress.backendFailedToStart', 'Backend failed to start.'), failureDetail, 100);
-          presentStartupOverlayFatalError(startupOverlay, { onRetry: handleStartupOverlayRetryClick });
+          updateStartupOverlay(failureDetail || jt('shell.progress.backendFailedToStart', 'Backend failed to start.'), failureDetail);
+          presentStartupOverlayFatalError(startupOverlay, { onRetry: handleStartupOverlayRetryClick, extraActions: fatalExtraActions });
         }
-      } else if (phase === 'ready' && startupActive) {
-        // Delegate to the terminal startup progress event, whose terminal branch
-        // already marks the backend ready and attempts a gated dismiss.
-        handleLifecycleProgress({
-          scenario: 'startup',
-          phase: 'ready',
-          detail: jt('shell.progress.ready', 'Jenny is ready'),
-          stepIndex: 6,
-          stepCount: 7,
-          percent: 100,
-          error: '',
-        });
       } else if (phase === 'ready') {
-        // No active startup progress to delegate to — mark ready directly.
-        clearStartupOverlayFatalError(startupOverlay);
+        if (state.lifecycleProgress.active
+          && (state.lifecycleProgress.scenario === 'startup' || state.lifecycleProgress.scenario === 'modelSwitch')) {
+          // Delegate to the terminal progress event, which settles the state.
+          handleLifecycleProgress({
+            scenario: state.lifecycleProgress.scenario,
+            phase: 'ready',
+            facts: facts,
+            error: '',
+          });
+          return;
+        }
         startupBackendReady = true;
+        if (startupOverlay && isStartupOverlayFatalActive(startupOverlay)) { renderRestingState(); }
         if (startupOverlayBackstopElapsed) {
           dismissStartupOverlayForBackstop();
         } else {
@@ -814,86 +743,40 @@
       }
     }
 
-    function beginModelSwitch(detail) {
-      var steps = MODEL_SWITCH_STEPS;
+    // Model switch: tracked as its own scenario, never as startup, so the
+    // curtain never re-raises for a load after boot.
+    function beginModelSwitch(modelOrFacts) {
+      var facts = modelOrFacts && typeof modelOrFacts === 'object'
+        ? readLoadFacts(modelOrFacts)
+        : { modelId: String(modelOrFacts || '').trim() };
+      modelSwitchFacts = facts;
       handleLifecycleProgress({
         scenario: 'modelSwitch',
         phase: 'reinitialize',
-        detail: detail || steps[0].label,
-        stepIndex: 0,
-        stepCount: steps.length,
-        percent: 0,
+        facts: facts,
         error: '',
       });
     }
 
-    function updateModelSwitch(phase, detail) {
-      var steps = MODEL_SWITCH_STEPS;
-      var idx = 0;
-      for (var i = 0; i < steps.length; i++) {
-        if (steps[i].key === phase) { idx = i; break; }
-      }
+    function updateModelSwitch(phase, factsOrModel) {
+      var facts = factsOrModel && typeof factsOrModel === 'object'
+        ? factsOrModel
+        : { modelId: String(factsOrModel || '') };
+      if (!facts.modelId && modelSwitchFacts) { facts = Object.assign({}, facts, { modelId: modelSwitchFacts.modelId }); }
       handleLifecycleProgress({
         scenario: 'modelSwitch',
         phase: phase,
-        detail: detail || steps[idx].label,
-        stepIndex: idx,
-        stepCount: steps.length,
-        percent: Math.round((idx / Math.max(steps.length, 1)) * 100),
+        facts: facts,
         error: '',
       });
     }
 
     function failModelSwitch(detail) {
-      var steps = MODEL_SWITCH_STEPS;
       handleLifecycleProgress({
         scenario: 'modelSwitch',
         phase: 'model_unavailable',
-        detail: detail || jt('shell.progress.modelSwitchFailed', 'Model switch failed'),
-        stepIndex: steps.length - 1,
-        stepCount: steps.length,
-        percent: 100,
-        error: detail || jt('shell.progress.modelSwitchFailed', 'Model switch failed'),
-      });
-    }
-
-    /* Publishes the active lifecycle scenario to the titlebar turn-status pill. */
-    function publishLifecycleStatus() {
-      var progress = state.lifecycleProgress;
-
-      if (!progress.active) {
-        return;
-      }
-
-      var pillSource = lifecyclePillSource(progress.scenario);
-      if (!pillSource) { return; }
-
-      var statusModel = buildLifecycleStatusModel(
-        progress.scenario,
-        progress.phase,
-        progress.detail,
-        progress.error,
-        {}
-      );
-
-      var terminal = isTerminalPhase(progress.scenario, progress.phase);
-      var indeterminate = !terminal && (progress.percent < 1
-        || progress.phase === 'model_loading' || progress.phase === 'model_load');
-
-      setTurnStatusPill(pillSource, {
-        message: statusModel.message
-          || (progress.scenario === 'shutdown' ? jt('shell.progress.shuttingDown', 'Shutting down…') : ''),
-        tone: progress.error
-          ? 'danger'
-          : terminal
-            ? 'success'
-            : progress.scenario === 'shutdown'
-              ? 'warning'
-              : 'pending',
-        spinner: !terminal && !progress.error,
-        badgeText: statusModel.badgeText || '',
-        indeterminate: indeterminate,
-        progressPercent: indeterminate ? null : (terminal ? 100 : Math.max(progress.percent, 2)),
+        facts: modelSwitchFacts || { modelId: '' },
+        error: String(detail || 'model_switch_failed'),
       });
     }
 
@@ -902,42 +785,30 @@
       // A controller torn down while its overlay is still in fatal mode must
       // not leave the rest of the app permanently inert / focus stranded.
       if (isStartupOverlayFatalActive(startupOverlay)) {
-        try { clearStartupOverlayFatalError(startupOverlay); } catch (_e) { /* best-effort */ }
+        try { clearStartupOverlayFatalError(startupOverlay); } catch (error) { logIgnoredError('clear_fatal', error); }
+        setStartupOverlayBackgroundInert(startupOverlay, false);
       }
       if (settleTimer) {
-        try { clearTimeout(settleTimer); } catch (_e) { /* best-effort */ }
+        clearTimeout(settleTimer);
         settleTimer = 0;
       }
-      if (startupOverlaySlowTimer) {
-        try { clearTimeout(startupOverlaySlowTimer); } catch (_e) { /* best-effort */ }
-        startupOverlaySlowTimer = 0;
+      clearStartupOverlayTimers();
+      // A handoff in flight completes now (removal also clears its timer).
+      if (startupOverlayDismissed && !startupOverlayRemoved) {
+        removeStartupOverlayNode();
       }
-      if (startupOverlayBackstopTimer) {
-        try { clearTimeout(startupOverlayBackstopTimer); } catch (_e) { /* best-effort */ }
-        startupOverlayBackstopTimer = 0;
-      }
-      if (startupOverlayRemovalTimer) {
-        try { clearTimeout(startupOverlayRemovalTimer); } catch (_e) { /* best-effort */ }
-        startupOverlayRemovalTimer = 0;
-      }
-      // Teardown while visible must stop the circuit rAF loop too.
-      if (startupCircuitTrace) {
-        try { startupCircuitTrace.dispose(); } catch (_e) { /* best-effort */ }
-        startupCircuitTrace = null;
-      }
-      try { clearTurnStatusPill(PILL_SOURCES.LIFECYCLE_STARTUP); } catch (_e) { /* best-effort */ }
-      try { clearTurnStatusPill(PILL_SOURCES.LIFECYCLE_SHUTDOWN); } catch (_e) { /* best-effort */ }
-      try { clearTurnStatusPill(PILL_SOURCES.LIFECYCLE_MODEL_SWITCH); } catch (_e) { /* best-effort */ }
+      // Teardown while visible must stop the starfield rAF loop too.
+      disposeStartupSky();
     }
 
     return {
       handleLifecycleProgress: handleLifecycleProgress,
       handleBackendStatus: handleBackendStatus,
       notifyBootViewReady: notifyBootViewReady,
+      notifyShellHydrated: notifyShellHydrated,
       beginModelSwitch: beginModelSwitch,
       updateModelSwitch: updateModelSwitch,
       failModelSwitch: failModelSwitch,
-      publishLifecycleStatus: publishLifecycleStatus,
       dispose: dispose,
     };
   }
@@ -945,7 +816,7 @@
   return {
     createLifecycleProgressController: createLifecycleProgressController,
     defaultLifecycleProgress: defaultLifecycleProgress,
-    MODEL_SWITCH_STEPS: MODEL_SWITCH_STEPS,
+    STARTUP_OVERLAY_REMOVAL_FALLBACK_MS: STARTUP_OVERLAY_REMOVAL_FALLBACK_MS,
     // Shared with app.js's pre-controller composition-failure guard (UIUX-021).
     presentStartupOverlayFatalError: presentStartupOverlayFatalError,
     clearStartupOverlayFatalError: clearStartupOverlayFatalError,

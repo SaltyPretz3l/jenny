@@ -415,8 +415,8 @@ class WorkspaceIdeService {
 
   // Resolves a directory payload path against the operation's pinned root.
   async _resolveDirectoryForList(value, operation) {
-    const raw = String(value ?? '').trim().replace(/\\/g, '/');
-    if (!raw || raw === '.') {
+    const raw = String(value ?? '').replace(/\\/g, '/');
+    if (!raw.trim() || raw === '.') {
       await this._rootOperations.revalidateRoot(operation.root, operation);
       return { relPath: '', realPath: operation.root.realPath, token: null };
     }
@@ -902,7 +902,7 @@ class WorkspaceIdeService {
         let scopeInvalid = false;
         if (typeof payload.scope === 'string' && payload.scope.trim()) {
           try {
-            scope = this._normalizeRelPath(payload.scope);
+            scope = this._normalizeRelPath(payload.scope.trim());
           } catch (_error) {
             scopeInvalid = true;
           }

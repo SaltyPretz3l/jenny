@@ -91,16 +91,16 @@ def test_approval_resume_continues_the_request_owned_canonical_seq(tmp_path) -> 
     )
     assert decision.approval_plan is not None
     resume_config = dataclasses.replace(
-        router._config,  # noqa: SLF001 - harness config injection
+        router._config,  # harness config injection
         feature_flags={
-            **(router._config.feature_flags or {}),  # noqa: SLF001
+            **(router._config.feature_flags or {}),
             FEATURE_CANONICAL_TURN_EVENTS: True,
         },
     )
     brain_container = SimpleNamespace(
         stack=SimpleNamespace(
             config=resume_config,
-            engine=router._engine,  # noqa: SLF001
+            engine=router._engine,
             router=router,
             tool_observations=None,
         ),

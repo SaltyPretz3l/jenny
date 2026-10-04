@@ -271,6 +271,39 @@ def _write_unique_artifact_bytes(
     )
 
 
+def _persist_text_artifact(  # noqa: PLR0913 - normalized text artifact inputs.
+    workspace: WorkspaceGuard,
+    session_id: str,
+    *,
+    title: str,
+    file_stem: str,
+    file_extension: str,
+    encoded_content: bytes,
+    language: str,
+    artifact_kind: str,
+) -> dict[str, object]:
+    store, artifact_parent = _artifact_parent(workspace, session_id)
+    target = _write_unique_artifact_bytes(
+        store,
+        artifact_parent,
+        file_stem,
+        file_extension,
+        encoded_content,
+    )
+    relative_path = target.display_path
+    return {
+        "artifact_id": f"artifact_file_{session_id}_{_slugify(target.name, 'file')}_{secrets.token_hex(4)}",
+        "artifact_kind": artifact_kind,
+        "title": str(title or "").strip() or Path(target.name).stem,
+        "file_name": target.name,
+        "display_path": relative_path,
+        "absolute_path": target.absolute_path,
+        "language": language,
+        "editable": len(encoded_content) <= MAX_EDITABLE_BYTES,
+        "status": "available",
+    }
+
+
 def build_text_artifact_metadata(  # noqa: PLR0913 - stable shared artifact facade.
     *,
     workspace: WorkspaceGuard,
@@ -300,29 +333,16 @@ def build_text_artifact_metadata(  # noqa: PLR0913 - stable shared artifact faca
     )
     encoded_content = encode_utf8_text(content)
     normalized_extension = _normalize_extension(file_extension)
-    store, artifact_parent = _artifact_parent(workspace, normalized_session_id)
-    target = _write_unique_artifact_bytes(
-        store,
-        artifact_parent,
-        _slugify(title, stem_fallback),
-        normalized_extension,
-        encoded_content,
+    return _persist_text_artifact(
+        workspace,
+        normalized_session_id,
+        title=title,
+        file_stem=_slugify(title, stem_fallback),
+        file_extension=normalized_extension,
+        encoded_content=encoded_content,
+        language=str(language or "").strip().lower(),
+        artifact_kind=normalized_kind,
     )
-    relative_path = target.display_path
-    return {
-        "artifact_id": (
-            "artifact_file_"
-            f"{normalized_session_id}_{_slugify(target.name, 'file')}_{secrets.token_hex(4)}"
-        ),
-        "artifact_kind": normalized_kind,
-        "title": str(title or "").strip() or Path(target.name).stem,
-        "file_name": target.name,
-        "display_path": relative_path,
-        "absolute_path": target.absolute_path,
-        "language": str(language or "").strip().lower(),
-        "editable": len(encoded_content) <= MAX_EDITABLE_BYTES,
-        "status": "available",
-    }
 
 
 def create_artifact_tool(
@@ -354,30 +374,17 @@ def create_artifact_tool(
         "scratch-doc" if artifact_kind == "document" else "scratch-script",
     )
     file_extension = _extension_for(artifact_kind, language, requested_file_name, extension)
-    store, artifact_parent = _artifact_parent(workspace, session_id)
-
-    target = _write_unique_artifact_bytes(
-        store,
-        artifact_parent,
-        file_stem,
-        file_extension,
-        encoded_content,
+    metadata = _persist_text_artifact(
+        workspace,
+        session_id,
+        title=title,
+        file_stem=file_stem,
+        file_extension=file_extension,
+        encoded_content=encoded_content,
+        language=_infer_language(f"artifact{file_extension}", language),
+        artifact_kind=artifact_kind,
     )
-
-    relative_path = target.display_path
-    file_language = _infer_language(target.name, language)
-    is_editable = len(encoded_content) <= MAX_EDITABLE_BYTES
-    metadata = {
-        "artifact_id": f"artifact_file_{session_id}_{_slugify(target.name, 'file')}_{secrets.token_hex(4)}",
-        "artifact_kind": artifact_kind,
-        "title": title,
-        "file_name": target.name,
-        "display_path": relative_path,
-        "absolute_path": target.absolute_path,
-        "language": file_language,
-        "editable": is_editable,
-        "status": "available",
-    }
+    relative_path = metadata["display_path"]
     return ToolHandlerResult(
         output=f'Created {artifact_kind} "{title}" at {relative_path}',
         success=True,

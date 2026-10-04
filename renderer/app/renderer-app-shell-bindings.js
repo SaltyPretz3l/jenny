@@ -4,6 +4,65 @@
   const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   const noop = () => {};
 
+  // The failed-send notice of ONE pane: pane 0's #composerV2FailedSendNotice at
+  // boot and, split view W3-1, pane 1's template node at mount (through the
+  // pane composition). It scans the session `getSessionId` names and retries
+  // or dismisses through that pane's shell controller. null when the composer
+  // v2 render module or a node is missing.
+  function mountFailedSendNotice({
+    noticeNode, chatThread, getSessionId, getShellController,
+    getSessionMessages, setSessionMessages, renderAll, appendClientLog = noop,
+  } = {}) {
+    const composerV2RenderModule = root.rendererComposerV2Render;
+    if (
+      !noticeNode
+      || !chatThread
+      || !composerV2RenderModule
+      || typeof composerV2RenderModule.createComposerFailedSendNoticeRenderer !== 'function'
+    ) {
+      return null;
+    }
+    try {
+      const renderer = composerV2RenderModule.createComposerFailedSendNoticeRenderer({
+        noticeNode,
+        chatThread,
+        getCurrentSessionId: getSessionId,
+        getMessagesForSession: (sessionId) => getSessionMessages(sessionId),
+        getRetryAvailability: ({ failure }) =>
+          getShellController()?.getFailedPayloadRetryAvailability?.(failure?.payload_id)
+            || { available: false, reason: jt('app.shellBindings.failedPayloadUnavailable', 'The original failed payload is unavailable.') },
+        onRetry: ({ failure }) => {
+          Promise.resolve(getShellController()?.retryFailedPayload?.(failure?.payload_id))
+            .catch(() => { /* startPromptSend surfaces its own send errors */ });
+        },
+        onDismiss: ({ sessionId, messageId, failure }) => {
+          getShellController()?.dismissFailedPayload?.(failure?.payload_id);
+          if (!sessionId || !messageId) return;
+          const current = getSessionMessages(sessionId);
+          if (!Array.isArray(current) || !current.length) return;
+          let changed = false;
+          const next = current.map((msg) => {
+            if (!msg || String(msg.id || '').trim() !== messageId) return msg;
+            if (!msg.send_failure || msg.send_failure.dismissed === true) return msg;
+            changed = true;
+            return { ...msg, send_failure: { ...msg.send_failure, dismissed: true } };
+          });
+          if (changed) {
+            setSessionMessages(sessionId, next, `session_${sessionId}`);
+            try { renderAll?.(); } catch (_err) { /* noop */ }
+          }
+        },
+      });
+      noticeNode.setAttribute('data-composer-v2', 'on');
+      return renderer;
+    } catch (error) {
+      appendClientLog('WARN', 'composer.failed_send_notice_mount_failed', {
+        message: String(error?.message || error || ''),
+      });
+      return null;
+    }
+  }
+
   function bindComposerV2Decorations(ctx) {
     const {
       state,
@@ -103,6 +162,29 @@
       }
     }
 
+    /* Split view W3-3: pane 0's toolbar fit and settings summary pill (pane 1's
+     * rail mounts the same pair). After the model pill, whose label it shows. */
+    const composerSettingsGroup = composerModelPillSlot?.closest?.('.composer-settings-group') || null;
+    if (composerSettingsGroup && typeof root.rendererPaneComposerRail?.createComposerSettingsFit === 'function') {
+      try {
+        const composerSettingsFit = root.rendererPaneComposerRail.createComposerSettingsFit({
+          groupEl: composerSettingsGroup,
+          paneRoot: documentRef.getElementById('chatPane0'),
+          documentRef,
+        });
+        if (composerSettingsFit) {
+          const recheckComposerSettingsFit = () => composerSettingsFit.recheck();
+          root.addEventListener('chat-surface:rehost', recheckComposerSettingsFit);
+          registerCleanup(() => {
+            root.removeEventListener('chat-surface:rehost', recheckComposerSettingsFit);
+            composerSettingsFit.dispose();
+          });
+        }
+      } catch (error) {
+        appendClientLog('WARN', 'composer.settings_fit_mount_failed', { message: String(error?.message || error || '') });
+      }
+    }
+
     const composerAttachmentTray = documentRef.querySelector('#attachmentTray');
     const composerAttachmentPreviewPill = documentRef.querySelector('#composerAttachmentPreviewPill');
     if (
@@ -127,51 +209,19 @@
     }
 
     const composerV2FailedSendNotice = documentRef.querySelector('#composerV2FailedSendNotice');
-    if (
-      composerV2FailedSendNotice
-      && dom.chatTimeline
-      && composerV2RenderModule
-      && typeof composerV2RenderModule.createComposerFailedSendNoticeRenderer === 'function'
-    ) {
-      try {
-        const composerV2FailedSendNoticeRenderer = composerV2RenderModule.createComposerFailedSendNoticeRenderer({
-          noticeNode: composerV2FailedSendNotice,
-          chatThread: dom.chatTimeline,
-          getCurrentSessionId: () => state.currentSessionId,
-          getMessagesForSession: (sessionId) => getSessionMessages(sessionId),
-          getRetryAvailability: ({ failure }) =>
-            chatShellController.getFailedPayloadRetryAvailability?.(failure?.payload_id)
-              || { available: false, reason: jt('app.shellBindings.failedPayloadUnavailable', 'The original failed payload is unavailable.') },
-          onRetry: ({ failure }) => {
-            Promise.resolve(chatShellController.retryFailedPayload?.(failure?.payload_id))
-              .catch(() => { /* startPromptSend surfaces its own send errors */ });
-          },
-          onDismiss: ({ sessionId, messageId, failure }) => {
-            chatShellController.dismissFailedPayload?.(failure?.payload_id);
-            if (!sessionId || !messageId) return;
-            const current = getSessionMessages(sessionId);
-            if (!Array.isArray(current) || !current.length) return;
-            let changed = false;
-            const next = current.map((msg) => {
-              if (!msg || String(msg.id || '').trim() !== messageId) return msg;
-              if (!msg.send_failure || msg.send_failure.dismissed === true) return msg;
-              changed = true;
-              return { ...msg, send_failure: { ...msg.send_failure, dismissed: true } };
-            });
-            if (changed) {
-              setSessionMessages(sessionId, next, `session_${sessionId}`);
-              try { renderAll?.(); } catch (_err) { /* noop */ }
-            }
-          },
-        });
-        composerV2FailedSendNotice.setAttribute('data-composer-v2', 'on');
-        registerCleanup(() => composerV2FailedSendNoticeRenderer?.destroy?.());
-      } catch (error) {
-        appendClientLog('WARN', 'composer.failed_send_notice_mount_failed', {
-          message: String(error?.message || error || ''),
-        });
-      }
-    }
+    // Split view W3-1: pane 0's notice reads the session pane 0 shows (one pane:
+    // currentSessionId); pane 1 mounts its own through mountFailedSendNotice.
+    const composerV2FailedSendNoticeRenderer = mountFailedSendNotice({
+      noticeNode: composerV2FailedSendNotice,
+      chatThread: dom.chatTimeline,
+      getSessionId: () => root.rendererPaneVisibilityUtils?.resolvePaneSessionId?.(state, 0) ?? state.currentSessionId,
+      getShellController: () => chatShellController,
+      getSessionMessages,
+      setSessionMessages,
+      renderAll,
+      appendClientLog,
+    });
+    if (composerV2FailedSendNoticeRenderer) registerCleanup(() => composerV2FailedSendNoticeRenderer?.destroy?.());
 
     if (
       dom.sendButton
@@ -183,6 +233,9 @@
           sendButton: dom.sendButton,
           getReason: () => {
             const reasons = composerV2RenderModule.BLOCKED_SEND_REASONS || {};
+            // A model load is the reason Send is off, session or not (F6).
+            const modelLoading = composerV2RenderModule.describeModelLoading?.(state.backend);
+            if (modelLoading) return modelLoading;
             const sessionId = String(state.currentSessionId || '').trim();
             if (!sessionId) return reasons.NO_SESSION;
             if (!state.auth?.authenticated) return reasons.NOT_AUTHENTICATED;
@@ -226,9 +279,7 @@
       shellStatusController,
     } = controllers;
     const {
-      disposeCometPersonality,
       disposeComposerHolo,
-      disposeSpriteHolo,
       disposeViewportController,
       refreshSnapshots,
       registerCleanup,
@@ -263,6 +314,23 @@
       turnPauseInteraction?.dispose?.();
       pauseTurnButton?.remove?.();
     });
+    /* Desktop (OS) notifications: candidates from turn terminals (the stream
+     * handler reads it off state) and new "Needs you" rows; main gates and
+     * shows them, and a toast click comes back here to open its chat. */
+    const desktopNotificationsController = root.rendererDesktopNotifications?.createDesktopNotificationsController?.({
+      windowRef,
+      documentRef,
+      state,
+      callbacks: {
+        activateWorkspaceSession: (...a) => callbacks.activateWorkspaceSession?.(...a),
+        appendClientLog: (...a) => callbacks.appendClientLog?.(...a),
+      },
+    }) || null;
+    state.desktopNotificationsController = desktopNotificationsController;
+    registerCleanup(() => {
+      desktopNotificationsController?.dispose?.();
+      if (state.desktopNotificationsController === desktopNotificationsController) state.desktopNotificationsController = null;
+    });
     /* The "Needs you" inbox: one pinned section at the top of the Chats panel
      * listing every wait across every session, opened or not, plus its count
      * badge beside the titlebar health pill (a sibling of that slot, because
@@ -277,6 +345,7 @@
       badgeAnchor: documentRef?.getElementById?.('workbenchHealthPillSlot'),
       actionButton: windowRef.inventoryActionButton,
       facts: windowRef.toolCallUtils,
+      onInboxRows: (rows) => desktopNotificationsController?.onInboxRows?.(rows),
       callbacks: {
         openSession: (...a) => callbacks.activateWorkspaceSession?.(...a),
         setActiveView: (...a) => callbacks.setActiveView?.(...a),
@@ -336,9 +405,7 @@
       }
       thinkingIndicator?.dispose?.();
     });
-    registerCleanup(() => disposeCometPersonality());
     registerCleanup(() => disposeComposerHolo?.());
-    registerCleanup(() => disposeSpriteHolo?.());
     // includeModels:false is load-bearing, not a micro-optimisation. This poller
     // is created unconditionally with autoStart and is NOT view-gated, so on the
     // chat view it still ticks every 15s. Passing no options left
@@ -544,7 +611,6 @@
   async function bootstrapAppShell(ctx) {
     const { state, constants, controllers, callbacks, windowRef } = ctx;
     const {
-      activateCometIfEnabled,
       activateSurfaceEffect,
       appendClientLog,
       applySurfaceEffect,
@@ -552,6 +618,7 @@
       ensureComposerFeatureStateLoaded,
       hydrateCachedLazyShellState,
       initSetupController,
+      isDisposed,
       logSurfaceEffectFailure,
       queueDeferredStartupTask,
       queueStartupLazyHydration,
@@ -564,9 +631,14 @@
       syncWorkspaceFromStore,
     } = callbacks;
     try {
+      // A disposed owner stops at every await: re-binding would leak listeners.
       await bootstrap({ signalRendererReadyOnce });
+      if (isDisposed()) return;
       const hydrationResults = await Promise.allSettled([syncWorkspaceFromStore(), refreshWorkspaceRootState(), ensureComposerFeatureStateLoaded()]);
-      ['workspace', 'workspace_root'].forEach((operation, index) => { if (hydrationResults[index].status !== 'rejected') { return; } // 'features' dropped: ensureComposerFeatureStateLoaded() already reports its own bootstrap_failed internally and can never reject (F3)
+      if (isDisposed()) return;
+      // Composer feature hydration reports its own failures internally.
+      ['workspace', 'workspace_root'].forEach((operation, index) => {
+        if (hydrationResults[index].status !== 'rejected') { return; }
         appendClientLog('WARN', `${operation}.bootstrap_failed`, {
           message: String(hydrationResults[index].reason?.message || hydrationResults[index].reason || '').slice(0, 500),
         });
@@ -593,9 +665,15 @@
       // the subscription mode explicitly now that the real flags are in state.
       controllers.chatShellController?.resyncStreamSubscriptionMode?.();
       hydrateCachedLazyShellState();
-      activateCometIfEnabled();
-      await reconcileBackendStatusAfterBindings(ctx); if (['chat', 'logs', 'settings'].includes(state.ui.activeView)) { controllers.shellStatusController?.notifyBootViewReady?.(); } // F1: gate curtain dismissal on real hydration, not just first paint -- Home/IDE gate on their own hydration already
+      await reconcileBackendStatusAfterBindings(ctx);
+      if (isDisposed()) return;
+      controllers.shellStatusController?.notifyShellHydrated?.();
+      // Home and Workspace report their own view readiness; every view also requires shared hydration.
+      if (['chat', 'logs', 'settings'].includes(state.ui.activeView)) {
+        controllers.shellStatusController?.notifyBootViewReady?.();
+      }
       try { await initSetupController(); } catch (_setupInitErr) { /* logged inside controller */ }
+      if (isDisposed()) return;
       renderAll();
       try {
         applySurfaceEffect();
@@ -605,6 +683,7 @@
       }
       signalRendererReadyOnce();
       await runStartupAuditAutoSend();
+      if (isDisposed()) return;
       queueStartupLazyHydration();
 
       queueDeferredStartupTask(
@@ -641,7 +720,10 @@
       } catch (_toastError) {
         // Best-effort only.
       }
-      signalRendererReadyOnce(); controllers.shellStatusController?.notifyBootViewReady?.(); // F1: never strand the curtain behind an unexpected bootstrap failure
+      // Unexpected bootstrap failure releases both readiness gates so the shell remains recoverable.
+      signalRendererReadyOnce();
+      controllers.shellStatusController?.notifyShellHydrated?.();
+      controllers.shellStatusController?.notifyBootViewReady?.();
     }
   }
 
@@ -659,9 +741,17 @@
     };
     normalized.callbacks = {
       appendClientLog: noop,
+      isDisposed: () => false,
       registerCleanup: noop,
       ...normalized.callbacks,
     };
+    // The window cluster binds itself at script load; this hands it the client
+    // logger (idempotent: never a second set of listeners).
+    root.rendererWindowControlsUtils?.bindShellWindowControls?.({
+      documentRef: normalized.documentRef,
+      windowRef: normalized.windowRef,
+      appendClientLog: normalized.callbacks.appendClientLog,
+    });
     bindComposerV2Decorations(normalized);
     (root.rendererAppShellBindingsOverlayManager || {}).bindOverlayManager?.(normalized);
     bindShellEventControllers(normalized);
@@ -673,5 +763,6 @@
 
   root.rendererAppShellBindings = {
     bindAppShell,
+    mountFailedSendNotice,
   };
 })(window);

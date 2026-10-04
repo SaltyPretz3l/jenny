@@ -7,70 +7,7 @@ const {
   ModelCatalogService,
 } = require('../services/model-catalog-service');
 
-const BUNDLED = JSON.stringify({
-  catalogVersion: 1,
-  updatedAt: '2026-06-13',
-  source: 'bundled-default',
-  models: [
-    {
-      tier: 'daily', modelId: 'gemma4:12b', displayName: 'Gemma 4 12B', params: '12B',
-      quant: 'Q5_K_XL', vramRequiredMb: 13000, ramRequiredMb: 16000, contextLength: 32768,
-      downloadSizeMb: 9800, pullTag: 'gemma4:12b',
-    },
-  ],
-});
-
-function catalog(version, extra = {}) {
-  return JSON.stringify({
-    catalogVersion: version,
-    updatedAt: `v${version}`,
-    source: 'remote',
-    models: [
-      {
-      tier: 'daily', modelId: `m:${version}`, displayName: `Model ${version}`, params: '12B',
-      quant: 'Q5', vramRequiredMb: 13000, ramRequiredMb: 16000, contextLength: 32768,
-      downloadSizeMb: 9800, pullTag: `m:${version}`,
-      },
-    ],
-    ...extra,
-  });
-}
-
-function makeFs(files = {}) {
-  const store = { ...files };
-  return {
-    store,
-    readFileSync(p) {
-      if (Object.prototype.hasOwnProperty.call(store, p)) {
-        return store[p];
-      }
-      const err = new Error('ENOENT');
-      err.code = 'ENOENT';
-      throw err;
-    },
-    writeFileSync(p, content) {
-      store[p] = content;
-    },
-  };
-}
-
-function jsonResponse(body, { ok = true, status = 200 } = {}) {
-  return { ok, status, text: async () => body };
-}
-
-function makeService(opts = {}) {
-  return new ModelCatalogService({
-    bundledPath: '/bundled.json',
-    cachePath: '/cache.json',
-    remoteUrl: 'https://example.test/catalog.json',
-    fsImpl: makeFs({ '/bundled.json': BUNDLED, ...(opts.files || {}) }),
-    fetchImpl: opts.fetchImpl,
-    nowProvider: opts.nowProvider || (() => 0),
-    throttleMs: opts.throttleMs == null ? 1000 : opts.throttleMs,
-    logger: () => {},
-    ...(opts.fsImpl ? { fsImpl: opts.fsImpl } : {}),
-  });
-}
+const { BUNDLED, catalog, jsonResponse, makeFs, makeService } = require('./helpers/model-catalog-fixtures');
 
 test('getCatalog falls back to bundled when no cache exists', () => {
   const svc = makeService();
@@ -86,6 +23,45 @@ test('getCatalog prefers a valid userData cache over the bundled default', () =>
   const result = svc.getCatalog();
   assert.equal(result.catalogVersion, 5);
   assert.equal(result.models[0].pullTag, 'm:5');
+});
+
+test('newer bundled catalog wins offline and drops the older cache ETag', async () => {
+  let headers;
+  const svc = makeService({
+    files: {
+      '/bundled.json': catalog(8),
+      '/cache.json': catalog(7),
+      '/cache.json.meta.json': JSON.stringify({ last_fetched_at: 0, etag: '"v7"' }),
+    },
+    fetchImpl: async (_url, options) => { headers = options.headers; throw new Error('offline'); },
+  });
+  assert.equal(svc.getCatalog().catalogVersion, 8);
+  assert.equal((await svc.refresh()).catalogVersion, 8);
+  await svc.refresh({ force: true });
+  assert.equal(headers?.['If-None-Match'], undefined);
+});
+
+test('validate excludes recommendations with unknown memory requirements', () => {
+  const svc = makeService();
+  const valid = JSON.parse(catalog(3)).models[0];
+  const result = svc.validate({ catalogVersion: 3, models: [
+    { pullTag: 'unknown:latest' },
+    { ...valid, pullTag: 'no-ram:latest', ramRequiredMb: 0 },
+    { ...valid, pullTag: 'no-vram:latest', vramRequiredMb: null },
+    valid,
+  ] });
+  assert.deepEqual(result.models.map((entry) => entry.pullTag), ['m:3']);
+  assert.equal(svc.validate({ catalogVersion: 3, models: [{ pullTag: 'unknown:latest' }] }), null);
+});
+
+test('validate keeps CPU-only entries and every entry of the bundled catalog', () => {
+  const svc = makeService();
+  const valid = JSON.parse(catalog(3)).models[0];
+  const cpuOnly = svc.validate({ catalogVersion: 3, models: [{ ...valid, pullTag: 'cpu:latest', vramRequiredMb: 0 }] });
+  assert.deepEqual(cpuOnly.models.map((entry) => entry.pullTag), ['cpu:latest']);
+  const bundled = JSON.parse(require('node:fs').readFileSync(
+    require('node:path').join(__dirname, '..', 'config', 'model-recommendation-catalog.json'), 'utf8'));
+  assert.equal(svc.validate(bundled).models.length, bundled.models.length);
 });
 
 test('validate rejects malformed catalogs', () => {
@@ -274,7 +250,7 @@ test('F3: an oversized response etag is bounded before being persisted', async (
       ok: true,
       status: 200,
       headers: { get: (name) => (name === 'etag' ? hugeEtag : null) },
-      text: async () => catalog(2),
+      body: new Response(catalog(2)).body,
     }),
     nowProvider: () => 0,
     throttleMs: 1000,
@@ -315,7 +291,7 @@ test('F3: a poisoned response etag does not brick future refreshes', async () =>
         ok: true,
         status: 200,
         headers: { get: (name) => (name === 'etag' ? poisonedEtag : null) },
-        text: async () => catalog(2),
+        body: new Response(catalog(2)).body,
       };
     },
     nowProvider: () => 0,
@@ -343,7 +319,7 @@ test('F6: _writeCache distinguishes "no cachePath configured" from a real write 
         ok: true,
         status: 200,
         headers: { get: (name) => (name === 'etag' ? '"v2-etag"' : null) },
-        text: async () => catalog(2),
+        body: new Response(catalog(2)).body,
       };
     },
     nowProvider: () => now,
@@ -524,6 +500,8 @@ test('validate bounds remote catalog fields and rejects unsafe pull tags', () =>
     modelId: `model:${index}`,
     pullTag: index === 0 ? 'unsafe tag' : `model:${index}`,
     displayName: 'x'.repeat(400),
+    vramRequiredMb: 13000,
+    ramRequiredMb: 16000,
     downloadSizeMb: index === 1 ? Number.POSITIVE_INFINITY : 10 ** 20,
   }));
   const result = svc.validate({ catalogVersion: 7, models: rawModels });

@@ -340,3 +340,61 @@ test('MCP controller does not use native window confirmation', () => {
   assert.doesNotMatch(source, /windowRef\.confirm|window\.confirm/);
   assert.match(source, /confirmDanger/);
 });
+
+test('authenticated editor preserves the opaque credential reference', async (t) => {
+  const h = harness(t, { initialState: discovery({ servers: [pendingServer({
+    transport: 'sse', url: 'https://example.test/sse',
+    auth: { kind: 'bearer', secretRef: 'mcp:weather' },
+  })] }) });
+  h.controller.bind();
+  await flush();
+  h.pluginsCard.querySelector('[data-mcp-servers-action="details"]').click();
+  h.dom.window.document.querySelector('#mcpServerDetailsDrawer [data-mcp-servers-action="edit"]').click();
+  h.dom.window.document.querySelector('#mcpServerDetailsDrawer [data-mcp-servers-action="save-editor"]').click();
+  await flush();
+  assert.equal(h.calls[0][1].server.auth.secret_ref, 'mcp:weather');
+});
+
+test('builtin row is labeled and has no management actions', async (t) => {
+  const h = harness(t, { initialState: discovery({ servers: [pendingServer({
+    name: 'jenny_local_tools', builtin: true, enabled: true, status: 'running',
+  })] }) });
+  h.controller.bind();
+  await flush();
+  const row = h.pluginsCard.querySelector('[data-mcp-server-row="jenny_local_tools"]');
+  assert.match(row.textContent, /Built-in/);
+  assert.equal(row.querySelectorAll('button, [role="switch"]').length, 0);
+  assert.match(h.pluginsCard.textContent, /No standalone MCP connections/);
+});
+
+test('editor selecting no authentication explicitly clears the auth block', async (t) => {
+  const h = harness(t, { initialState: discovery({ servers: [pendingServer({
+    transport: 'sse', url: 'https://example.test/sse',
+    auth: { kind: 'bearer', secretRef: 'mcp:weather' },
+  })] }) });
+  h.controller.bind();
+  await flush();
+  h.pluginsCard.querySelector('[data-mcp-servers-action="details"]').click();
+  h.dom.window.document.querySelector('#mcpServerDetailsDrawer [data-mcp-servers-action="edit"]').click();
+  h.dom.window.document.getElementById('mcpServerAuthKind').value = 'none';
+  h.dom.window.document.querySelector('#mcpServerDetailsDrawer [data-mcp-servers-action="save-editor"]').click();
+  await flush();
+  assert.equal(h.calls[0][1].server.auth, null);
+});
+
+test('pending runtime application tells the user the prior configuration may be active', async (t) => {
+  const h = harness(t, { initialState: discovery({ servers: [pendingServer()] }), bridge: {
+    updateServer: async () => ({ ok: false, saved: true, runtimeApplied: false,
+      error: { code: 'CMP-MCP-0004', message: 'server detail must not be exposed' } }),
+  } });
+  h.controller.bind();
+  await flush();
+  h.pluginsCard.querySelector('[data-mcp-servers-action="details"]').click();
+  h.dom.window.document.querySelector('#mcpServerDetailsDrawer [data-mcp-servers-action="edit"]').click();
+  h.dom.window.document.querySelector('#mcpServerDetailsDrawer [data-mcp-servers-action="save-editor"]').click();
+  await flush();
+  assert.match(h.toasts[0].message, /previous setup may still be running/);
+  assert.equal(h.toasts[0].message.includes('server detail'), false);
+  const editor = h.dom.window.document.querySelector('#mcpServerDetailsDrawer [data-mcp-servers-action="save-editor"]');
+  assert.equal(editor, null, 'a saved edit leaves the editor even while application is pending');
+});

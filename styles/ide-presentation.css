@@ -22,7 +22,7 @@
   border: 1px solid var(--line);
   border-radius: var(--radius-base);
   background: var(--bg-surface);
-  font-size: 12px;
+  font-size: var(--font-size-caption);
   color: var(--text-secondary);
 }
 
@@ -40,8 +40,8 @@
   border-radius: 999px;
   background: transparent;
   color: var(--accent);
-  font-size: 12px;
-  font-weight: 600;
+  font-size: var(--font-size-caption);
+  font-weight: 500;
   cursor: pointer;
 }
 
@@ -56,7 +56,7 @@
   border: 0;
   background: transparent;
   color: var(--text-muted);
-  font-size: 11px;
+  font-size: var(--font-size-caption);
   cursor: pointer;
 }
 

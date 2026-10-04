@@ -328,7 +328,6 @@ def test_bonsai2_profile_reuses_the_qwen38_recipe_on_the_managed_llama_server_on
     assert variant.aliases == ("27b", "bonsai-2-27b")
     assert variant.overrides is None
     assert variant.native_context_length == 262_144
-    assert variant.family_supports_vision is True
     behavior = variant.behavior
     assert behavior is not None
     assert behavior.engine_types == ("openai-compatible",)

@@ -1,4 +1,4 @@
-const { normalizeString } = require('../../renderer/shared/string-utils');
+const { normalizeString } = require('../shared/normalize');
 const {
   createConversationStorePort,
   messageIntentMatches,
@@ -836,6 +836,7 @@ class SessionShadowStore {
 
   deleteSession(sessionId, { scrubLinks = true } = {}) {
     const deleted = this._backend.deleteSession(sessionId) === true;
+    if (deleted) this._stalePlanAuditSessionIds.delete(sessionId);
     if (deleted && scrubLinks) this.scrubLinkedSessionReferences(sessionId);
     return deleted;
   }

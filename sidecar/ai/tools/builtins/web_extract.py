@@ -76,6 +76,8 @@ class _SanitizingHtmlParser(HTMLParser):
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         normalized = tag.lower()
+        if normalized == "embed":
+            return
         if normalized in _DROP_CONTENT_TAGS:
             self._drop_depth += 1
             return
@@ -96,6 +98,8 @@ class _SanitizingHtmlParser(HTMLParser):
 
     def handle_endtag(self, tag: str) -> None:
         normalized = tag.lower()
+        if normalized == "embed":
+            return
         if normalized in _DROP_CONTENT_TAGS:
             if self._drop_depth > 0:
                 self._drop_depth -= 1

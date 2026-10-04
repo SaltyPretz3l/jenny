@@ -61,7 +61,8 @@ test('renderEditorSection builds six controls reflecting the slice values', () =
     assert.equal(fontSel.value, '16');
     assert.equal(tabSel.value, '4');
     assert.equal(wsSel.value, 'all');
-    assert.equal(fontSel.getAttribute('data-editor-pref'), 'fontSize');
+    // Each select is a descriptor row (settingsField + meta line), routed by its control id.
+    assert.ok(container.querySelector('[data-settings-field="editorFontSizeSelect"] #editorFontSizeSelect'));
     // Toggles reflect state via aria-checked.
     const wrap = container.querySelector('[data-inv-toggle="editorWordWrapToggle"]');
     const minimap = container.querySelector('[data-inv-toggle="editorMinimapToggle"]');
@@ -75,31 +76,20 @@ test('renderEditorSection builds six controls reflecting the slice values', () =
   });
 });
 
-test('renderEditorSection omits the inline-suggest controls unless the flag is on', () => {
+test('renderEditorSection has no inline-suggestion rows, even for a profile that still stores them', () => {
   withGlobals(() => {
-    const { container } = makeContainer();
-    editorSection.renderEditorSection({ container, ide: {} });
-    assert.equal(container.querySelector('[data-inv-toggle="editorInlineSuggestToggle"]'), null);
-    assert.equal(container.querySelector('#editorInlineSuggestModelSelect'), null);
-  });
-});
-
-test('renderEditorSection adds role-filtered inline controls without a compute toggle', () => {
-  withGlobals(() => {
-    const { container } = makeContainer();
+    const { dom, container } = makeContainer();
+    const status = dom.window.document.createElement('p');
     editorSection.renderEditorSection({
       container,
-      status: { textContent: '' },
-      inlineSuggestVisible: true,
+      status,
       ide: { inlineSuggestEnabled: true, inlineSuggestModel: 'qwen2.5-coder:1.5b-base' },
     });
-    assert.ok(container.querySelector('[data-inv-toggle="editorInlineSuggestToggle"]'), 'enable toggle present');
-    assert.equal(container.querySelector('[data-inv-toggle="editorInlineSuggestGpuToggle"]'), null);
-    const modelSel = container.querySelector('#editorInlineSuggestModelSelect');
-    assert.ok(modelSel, 'model picker present');
-    // An unavailable/non-capable saved tag is not offered as a selectable model.
-    assert.equal(modelSel.value, '');
-    assert.equal(modelSel.getAttribute('data-editor-pref'), 'inlineSuggestModel');
+    assert.equal(container.querySelector('[data-inv-toggle="editorInlineSuggestToggle"]'), null);
+    assert.equal(container.querySelector('#editorInlineSuggestModelSelect'), null);
+    assert.equal(container.querySelector('[data-action="openEditorModelLibrary"]'), null);
+    assert.equal(status.textContent, '');
+    assert.equal(status.hidden, true);
   });
 });
 
@@ -189,236 +179,11 @@ async function withGlobalsAsync(run) {
 
 const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
 
-test('the catalog auto-refresh lists only insert-capable Ollama tags and routes lifecycle to Model Library', async () => {
-  await withGlobalsAsync(async () => {
-    const { dom, container } = makeContainer();
-    globalThis.window = dom.window;
-    let listOllamaCalls = 0;
-    let listCalls = 0;
-    dom.window.jennyShell = {
-      workspaceIde: { async getState() { return {}; }, async updateSettings(patch) { return { updated: true, ...patch }; } },
-      models: {
-        async list() { listCalls += 1; return { data: [{ id: 'chat-engine-only-model' }] }; },
-        async listOllamaTags() {
-          listOllamaCalls += 1;
-          return {
-            data: [
-              { id: 'qwen2.5-coder:1.5b-base', capabilities: { insert: true } },
-              { id: 'gemma4-vision:12b', capabilities: { vision: true } },
-            ],
-          };
-        },
-      },
-    };
-    const state = {
-      ui: { ide: ideState.createIdeUiState() },
-      features: { featureFlags: { workspace_inline_suggest: true } },
-    };
-    const render = () => editorSection.renderEditorSection({ container, inlineSuggestVisible: true, ide: state.ui.ide });
-    render();
-    editorSection.bindEditorSection({
-      container,
-      state,
-      renderSettings: render,
-      registerListener: (t, e, h, o) => { t.addEventListener(e, h, o); return true; },
-    });
-    await flush();
-    render();
-    editorSection.invalidateInlineModelCatalog();
-    await flush();
-    render();
-
-    const modelSel = container.querySelector('#editorInlineSuggestModelSelect');
-    const options = Array.from(modelSel.options).map((o) => o.value);
-    assert.ok(options.includes('qwen2.5-coder:1.5b-base'), 'freshly-pulled FIM tag is selectable');
-    assert.ok(!options.includes('gemma4-vision:12b'), 'chat-only model is never selectable');
-    assert.ok(!options.includes('chat-engine-only-model'), 'does NOT source the chat-engine models.list');
-    assert.ok(listOllamaCalls >= 1, 'fetched models.listOllamaTags');
-    assert.equal(listCalls, 0, 'never called the chat-engine-scoped models.list');
-
-    assert.equal(container.querySelector('[data-inv-toggle="editorInlineSuggestShowAllToggle"]'), null);
-    assert.ok(container.querySelector('[data-action="openEditorModelLibrary"]'));
-  });
-});
-
-test('the picker does not fetch models when the inline-suggest flag is off', async () => {
-  await withGlobalsAsync(async () => {
-    const { dom, container } = makeContainer();
-    globalThis.window = dom.window;
-    let fetched = false;
-    dom.window.jennyShell = {
-      workspaceIde: { async getState() { return {}; }, async updateSettings(patch) { return { updated: true, ...patch }; } },
-      models: { async listOllamaTags() { fetched = true; return { data: [] }; } },
-    };
-    const state = {
-      ui: { ide: ideState.createIdeUiState() },
-      features: { featureFlags: { workspace_inline_suggest: false } },
-    };
-    editorSection.renderEditorSection({ container, inlineSuggestVisible: false, ide: state.ui.ide });
-    editorSection.bindEditorSection({
-      container,
-      state,
-      renderSettings: () => {},
-      registerListener: (t, e, h, o) => { t.addEventListener(e, h, o); return true; },
-    });
-    await flush();
-    assert.equal(fetched, false, 'no model IPC when the feature flag is off');
-  });
-});
-
-// Drive a completion-model selection: append the option, set it, fire 'change'.
-function selectCompletionModel(dom, container, tag) {
-  const sel = container.querySelector('#editorInlineSuggestModelSelect');
-  const opt = dom.window.document.createElement('option');
-  opt.value = tag;
-  sel.appendChild(opt);
-  sel.value = tag;
-  sel.dispatchEvent(new dom.window.Event('change', { bubbles: true }));
-}
-
-test('selecting a completion model warms it via inline.complete and confirms when ready', async () => {
-  await withGlobalsAsync(async () => {
-    const { dom, container } = makeContainer();
-    globalThis.window = dom.window;
-    const calls = [];
-    dom.window.jennyShell = {
-      workspaceIde: { async getState() { return {}; }, async updateSettings(patch) { return { updated: true, ...patch }; } },
-      inline: {
-        async complete(payload) { calls.push(payload); return { ok: true, completion: 'x' }; },
-      },
-    };
-    const state = {
-      ui: { ide: ideState.createIdeUiState() },
-      features: { featureFlags: { workspace_inline_suggest: true } },
-    };
-    const status = { textContent: '' };
-    const render = () => editorSection.renderEditorSection({
-      container, status, inlineSuggestVisible: true, ide: state.ui.ide,
-    });
-    render();
-    editorSection.bindEditorSection({
-      container,
-      state,
-      renderSettings: render,
-      registerListener: (t, e, h, o) => { t.addEventListener(e, h, o); return true; },
-    });
-    selectCompletionModel(dom, container, 'qwen2.5-coder:1.5b-base');
-    await flush();
-    await flush();
-    assert.equal(state.ui.ide.inlineSuggestModel, 'qwen2.5-coder:1.5b-base', 'slice updated after ack');
-    assert.equal(calls.length >= 1, true, 'warmed via inline.complete');
-    assert.equal(calls[0].model, 'qwen2.5-coder:1.5b-base');
-    assert.equal(calls[0].maxTokens, 1, 'used a 1-token warm probe');
-    assert.match(status.textContent, /loaded and ready/);
-  });
-});
-
-test('a completion model that does not become ready reports progress, not silence', async () => {
-  await withGlobalsAsync(async () => {
-    const { dom, container } = makeContainer();
-    globalThis.window = dom.window;
-    let probes = 0;
-    dom.window.jennyShell = {
-      workspaceIde: { async getState() { return {}; }, async updateSettings(patch) { return { updated: true, ...patch }; } },
-      inline: {
-        async complete() { probes += 1; return { ok: false, reason: 'generate_failed' }; },
-      },
-    };
-    const state = {
-      ui: { ide: ideState.createIdeUiState() },
-      features: { featureFlags: { workspace_inline_suggest: true } },
-    };
-    const status = { textContent: '' };
-    const render = () => editorSection.renderEditorSection({
-      container, status, inlineSuggestVisible: true, ide: state.ui.ide,
-    });
-    render();
-    editorSection.bindEditorSection({
-      container,
-      state,
-      renderSettings: render,
-      registerListener: (t, e, h, o) => { t.addEventListener(e, h, o); return true; },
-    });
-    selectCompletionModel(dom, container, 'qwen2.5-coder:1.5b-base');
-    await flush();
-    await flush();
-    await flush();
-    assert.equal(probes, 2, 'retried once after the first probe kicked the load');
-    assert.match(status.textContent, /first completion may take a few seconds/);
-  });
-});
-
-test('selecting "Off" clears the load status back to the default hint', async () => {
-  await withGlobalsAsync(async () => {
-    const { dom, container } = makeContainer();
-    globalThis.window = dom.window;
-    dom.window.jennyShell = {
-      workspaceIde: { async getState() { return {}; }, async updateSettings(patch) { return { updated: true, ...patch }; } },
-      inline: { async complete() { return { ok: true, completion: 'x' }; } },
-    };
-    const state = {
-      ui: { ide: ideState.createIdeUiState() },
-      features: { featureFlags: { workspace_inline_suggest: true } },
-    };
-    const status = { textContent: '' };
-    const render = () => editorSection.renderEditorSection({
-      container, status, inlineSuggestVisible: true, ide: state.ui.ide,
-    });
-    render();
-    editorSection.bindEditorSection({
-      container,
-      state,
-      renderSettings: render,
-      registerListener: (t, e, h, o) => { t.addEventListener(e, h, o); return true; },
-    });
-    selectCompletionModel(dom, container, 'qwen2.5-coder:1.5b-base');
-    await flush();
-    await flush();
-    assert.match(status.textContent, /loaded and ready/);
-    // Now pick "Off" (empty value) — the load status clears.
-    const sel = container.querySelector('#editorInlineSuggestModelSelect');
-    sel.value = '';
-    sel.dispatchEvent(new dom.window.Event('change', { bubbles: true }));
-    await flush();
-    assert.match(status.textContent, /Recommended:/);
-    assert.doesNotMatch(status.textContent, /loaded and ready/);
-  });
-});
-
-test('selecting a model with no inline bridge still confirms the selection', async () => {
-  await withGlobalsAsync(async () => {
-    const { dom, container } = makeContainer();
-    globalThis.window = dom.window;
-    dom.window.jennyShell = {
-      workspaceIde: { async getState() { return {}; }, async updateSettings(patch) { return { updated: true, ...patch }; } },
-      // no `inline` bridge (older build / non-managed mode)
-    };
-    const state = {
-      ui: { ide: ideState.createIdeUiState() },
-      features: { featureFlags: { workspace_inline_suggest: true } },
-    };
-    const status = { textContent: '' };
-    const render = () => editorSection.renderEditorSection({
-      container, status, inlineSuggestVisible: true, ide: state.ui.ide,
-    });
-    render();
-    editorSection.bindEditorSection({
-      container,
-      state,
-      renderSettings: render,
-      registerListener: (t, e, h, o) => { t.addEventListener(e, h, o); return true; },
-    });
-    selectCompletionModel(dom, container, 'qwen2.5-coder:1.5b-base');
-    await flush();
-    assert.match(status.textContent, /Open the Workspace IDE/);
-  });
-});
-
 test('renderEditorSection shows defaults when the slice is null (IDE never opened)', () => {
   withGlobals(() => {
     const { container } = makeContainer();
     editorSection.renderEditorSection({ container, ide: null });
-    assert.equal(container.querySelector('#editorFontSizeSelect').value, '13');
+    assert.equal(container.querySelector('#editorFontSizeSelect').value, '0', 'defaults to Match text size');
     assert.equal(container.querySelector('#editorTabSizeSelect').value, '2');
     assert.equal(container.querySelector('#editorRenderWhitespaceSelect').value, 'selection');
     assert.equal(container.querySelector('[data-inv-toggle="editorMinimapToggle"]').getAttribute('aria-checked'), 'true');
@@ -542,6 +307,7 @@ test('hydration does not clobber a change made while getState is in flight', asy
     await statePromise;
     await Promise.resolve();
     assert.equal(state.ui.ide.fontSize, 18, 'user change survives stale hydration');
+    assert.equal(state.ui.ide.tabSize, 8, 'untouched siblings still hydrate from the persisted state');
   } finally {
     globalThis.window = prev.window;
     globalThis.inventory = prev.inventory;
@@ -591,7 +357,7 @@ test('column-rulers select round-trips a bounded ordered array after acknowledge
   });
 });
 
-test('a refused editor preference write preserves the prior value and surfaces an error', async () => {
+test('a refused editor switch keeps the prior value and says why under the switch, without a toast', async () => {
   await withGlobalsAsync(async () => {
     const { dom, container } = makeContainer();
     globalThis.window = dom.window;
@@ -619,19 +385,22 @@ test('a refused editor preference write preserves the prior value and surfaces a
     }));
     await flush();
     assert.equal(state.ui.ide.minimap, true, 'previous runtime value remains active');
-    assert.equal(errors.length, 1);
-    assert.equal(errors[0].meta.title, 'Editor Setting Not Saved');
+    const line = container.querySelector('[data-inv-toggle="editorMinimapToggle"]').closest('.settings-field').querySelector('.settings-field-error');
+    assert.match(line.textContent, /could not be saved/);
+    assert.equal(errors.length, 0);
   });
 });
 
 test('clampFontSize truncates + bounds, and renderEditorSection clamps an out-of-range slice value', () => {
   withGlobals(() => {
-    // Bounds reused from renderer-ide-state (8..40); invalid -> default 13.
+    // Bounds reused from renderer-ide-state (8..40); invalid and the legacy 13
+    // default -> 0 (Match text size).
     assert.equal(editorSection.clampFontSize(999), 40);
     assert.equal(editorSection.clampFontSize(4), 8);
-    assert.equal(editorSection.clampFontSize(13.7), 13);
-    assert.equal(editorSection.clampFontSize('nope'), 13);
-    assert.equal(editorSection.clampFontSize(0), 13);
+    assert.equal(editorSection.clampFontSize(14.7), 14);
+    assert.equal(editorSection.clampFontSize(13.7), 0);
+    assert.equal(editorSection.clampFontSize('nope'), 0);
+    assert.equal(editorSection.clampFontSize(0), 0);
     const { container } = makeContainer();
     editorSection.renderEditorSection({ container, ide: { fontSize: 999 } });
     assert.equal(container.querySelector('#editorFontSizeSelect').value, '40');
@@ -645,4 +414,182 @@ test('the section reuses renderer-ide-state enums (single canonical source)', ()
   assert.deepEqual(ideState.RENDER_WHITESPACE, ['none', 'boundary', 'selection', 'trailing', 'all']);
   assert.equal(ideState.FONT_SIZE_MIN, 8);
   assert.equal(ideState.FONT_SIZE_MAX, 40);
+});
+
+const listen = (target, event, handler, options) => { target.addEventListener(event, handler, options); return true; };
+
+test('editor rows carry the descriptor meta line and Revert writes the default through the adapter', async () => {
+  await withGlobalsAsync(async () => {
+    const { dom, container } = makeContainer();
+    globalThis.window = dom.window;
+    const patches = [];
+    dom.window.jennyShell = {
+      workspaceIde: { async getState() { return {}; }, async updateSettings(patch) { patches.push(patch); return { updated: true, ...patch }; } },
+    };
+    const state = { ui: { ide: ideState.createIdeUiState() } };
+    state.ui.ide.fontSize = 18;
+    const render = () => editorSection.renderEditorSection({ container, ide: state.ui.ide });
+    render();
+    const row = (id) => container.querySelector(`[data-settings-field="${id}"]`);
+    assert.equal(row('editorFontSizeSelect').querySelector('[data-setting-revert]').getAttribute('data-setting-revert-default'), 'Match text size');
+    assert.equal(row('editorFontSizeSelect').querySelector('.settings-field-meta-modified').textContent, 'Modified');
+    assert.equal(row('editorTabSizeSelect').querySelector('[data-setting-revert]'), null);
+    assert.equal(row('editorTabSizeSelect').querySelector('.settings-field-meta-modified').hidden, true, 'an unmodified row hides its Modified tag');
+    editorSection.bindEditorSection({ container, state, renderSettings: render, registerListener: listen });
+    container.querySelector('[data-setting-revert="editorFontSizeSelect"]').click();
+    await flush();
+    assert.deepEqual(patches, [{ fontSize: 0 }]);
+    assert.equal(state.ui.ide.fontSize, 0);
+    assert.equal(row('editorFontSizeSelect').querySelector('.settings-field-meta-modified').hidden, true);
+  });
+});
+
+test('a refused editor select write rolls the control back and reports it on its row', async () => {
+  await withGlobalsAsync(async () => {
+    const { dom, container } = makeContainer();
+    globalThis.window = dom.window;
+    dom.window.jennyShell = {
+      workspaceIde: { async getState() { return {}; }, async updateSettings() { return { updated: false, code: 'config_write_blocked' }; } },
+    };
+    const errors = [];
+    const state = { ui: { ide: ideState.createIdeUiState() } };
+    state.ui.ide.tabSize = 2;
+    const render = () => editorSection.renderEditorSection({ container, ide: state.ui.ide });
+    render();
+    editorSection.bindEditorSection({ container, state, renderSettings: render, registerListener: listen,
+      showShellErrorToast: (message, meta) => errors.push({ message, meta }) });
+    const sel = container.querySelector('#editorTabSizeSelect');
+    sel.value = '4';
+    sel.dispatchEvent(new dom.window.Event('change', { bubbles: true }));
+    await flush();
+    assert.equal(state.ui.ide.tabSize, 2, 'the slice keeps the acknowledged value');
+    assert.equal(container.querySelector('#editorTabSizeSelect').value, '2', 'the control is rolled back');
+    assert.equal(errors.length, 0, 'the reason is on the row, so there is no toast');
+    assert.match(container.querySelector('[data-settings-field="editorTabSizeSelect"] .settings-field-error').textContent, /could not be saved/);
+  });
+});
+
+test('a refused write inside the collapsed Advanced disclosure is still reported: the reason there is out of sight', async () => {
+  await withGlobalsAsync(async () => {
+    const { dom, container } = makeContainer();
+    globalThis.window = dom.window;
+    dom.window.jennyShell = {
+      workspaceIde: { async getState() { return {}; }, async updateSettings() { return { updated: false, code: 'config_write_blocked' }; } },
+    };
+    const errors = [];
+    const state = { ui: { ide: ideState.createIdeUiState() } };
+    const render = () => editorSection.renderEditorSection({ container, ide: state.ui.ide });
+    render();
+    editorSection.bindEditorSection({ container, state, renderSettings: render, registerListener: listen,
+      showShellErrorToast: (message, meta) => errors.push({ message, meta }) });
+    container.querySelector('details.settings-editor-advanced').open = true;
+    const sel = container.querySelector('#editorRenderWhitespaceSelect');
+    const before = sel.value;
+    sel.value = [...sel.options].map((option) => option.value).find((value) => value !== before);
+    sel.dispatchEvent(new dom.window.Event('change', { bubbles: true }));
+    await flush();
+    assert.equal(container.querySelector('#editorRenderWhitespaceSelect').value, before, 'the control is rolled back');
+    assert.equal(container.querySelector('details.settings-editor-advanced').open, false, 'the repaint closed the disclosure over the row reason');
+    assert.equal(errors.length, 1, 'so the failure is toasted');
+    assert.equal(errors[0].meta.title, 'Editor Setting Not Saved');
+  });
+});
+
+test('column-rulers Revert writes the stored empty array, never the comma string', async () => {
+  await withGlobalsAsync(async () => {
+    const { dom, container } = makeContainer();
+    globalThis.window = dom.window;
+    const patches = [];
+    dom.window.jennyShell = {
+      workspaceIde: { async getState() { return {}; }, async updateSettings(patch) { patches.push(patch); return { updated: true, ...patch }; } },
+    };
+    const state = { ui: { ide: ideState.createIdeUiState() } };
+    state.ui.ide.rulers = [80, 120];
+    const render = () => editorSection.renderEditorSection({ container, ide: state.ui.ide });
+    render();
+    assert.equal(container.querySelector('[data-settings-field="editorRulersSelect"] [data-setting-revert]').getAttribute('data-setting-revert-default'), 'Off');
+    editorSection.bindEditorSection({ container, state, renderSettings: render, registerListener: listen });
+    container.querySelector('[data-setting-revert="editorRulersSelect"]').click();
+    await flush();
+    assert.deepEqual(patches, [{ rulers: [] }]);
+    assert.deepEqual(state.ui.ide.rulers, []);
+    assert.equal(container.querySelector('#editorRulersSelect').value, '');
+  });
+});
+
+test('an acknowledgement that omits or changes the written key is a refusal, never assumed', async () => {
+  await withGlobalsAsync(async () => {
+    const { dom, container } = makeContainer();
+    globalThis.window = dom.window;
+    let echo = () => ({ updated: true });
+    dom.window.jennyShell = {
+      workspaceIde: { async getState() { return {}; }, async updateSettings(patch) { return echo(patch); } },
+    };
+    const state = { ui: { ide: ideState.createIdeUiState() } };
+    editorSection.renderEditorSection({ container, autoSaveVisible: true, ide: state.ui.ide });
+    editorSection.bindEditorSection({
+      container,
+      state,
+      renderSettings: () => {},
+      registerListener: (target, event, handler, options) => { target.addEventListener(event, handler, options); return true; },
+    });
+    const flip = (checked) => container.dispatchEvent(new dom.window.CustomEvent('inv-toggle-change', {
+      bubbles: true, detail: { id: 'editorAutoSaveToggle', checked },
+    }));
+    flip(true);
+    await flush();
+    assert.equal(state.ui.ide.autoSaveEnabled, false, 'updated:true without the key confirms nothing');
+    echo = (patch) => ({ updated: true, ...patch, autoSaveEnabled: false });
+    flip(true);
+    await flush();
+    assert.equal(state.ui.ide.autoSaveEnabled, false, 'an echo carrying a different value is a refusal');
+    echo = (patch) => ({ updated: true, ...patch });
+    flip(true);
+    await flush();
+    assert.equal(state.ui.ide.autoSaveEnabled, true, 'the matching echo is adopted');
+  });
+});
+
+test('an editor write in flight when Settings reopens settles on the coordinator the new binding uses', async () => {
+  await withGlobalsAsync(async () => {
+    const first = makeContainer();
+    const second = makeContainer();
+    globalThis.window = first.dom.window;
+    const acks = [];
+    const bridge = {
+      workspaceIde: {
+        async getState() { return {}; },
+        updateSettings(patch) { return new Promise((resolve) => acks.push({ patch, resolve: () => resolve({ updated: true, ...patch }) })); },
+      },
+    };
+    first.dom.window.jennyShell = bridge;
+    second.dom.window.jennyShell = bridge;
+    const state = { ui: { ide: ideState.createIdeUiState() } };
+    const listen = (target, event, handler, options) => { target.addEventListener(event, handler, options); return true; };
+    const flip = (dom, container, checked) => container.dispatchEvent(new dom.window.CustomEvent('inv-toggle-change', {
+      bubbles: true, detail: { id: 'editorAutoSaveToggle', checked },
+    }));
+    editorSection.renderEditorSection({ container: first.container, autoSaveVisible: true, ide: state.ui.ide });
+    editorSection.bindEditorSection({ container: first.container, state, renderSettings: () => {}, registerListener: listen });
+    flip(first.dom, first.container, true);
+    await flush();
+    assert.equal(acks.length, 1);
+    globalThis.window = second.dom.window;
+    editorSection.renderEditorSection({ container: second.container, autoSaveVisible: true, ide: state.ui.ide });
+    editorSection.bindEditorSection({ container: second.container, state, renderSettings: () => {}, registerListener: listen });
+    const wordWrap = second.container.querySelector('[data-inv-toggle="editorWordWrapToggle"]');
+    assert.ok(wordWrap, 'the second binding renders the word-wrap switch');
+    second.container.dispatchEvent(new second.dom.window.CustomEvent('inv-toggle-change', { bubbles: true, detail: { id: 'editorWordWrapToggle', checked: true } }));
+    await flush();
+    assert.equal(acks.length, 1, 'queued behind the first binding\'s write');
+    acks[0].resolve();
+    await flush();
+    await flush();
+    assert.equal(state.ui.ide.autoSaveEnabled, true, 'the first binding\'s write still projects');
+    assert.equal(acks.length, 2);
+    acks[1].resolve();
+    await flush();
+    await flush();
+    assert.equal(state.ui.ide.wordWrap, 'on');
+  });
 });

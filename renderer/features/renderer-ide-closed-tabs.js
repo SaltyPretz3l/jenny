@@ -21,9 +21,11 @@
     const limit = Math.max(1, Number(options && options.limit) || DEFAULT_LIMIT);
     const stack = [];
 
+    // A path is an exact identity: leading/trailing whitespace is legal in file
+    // names, so trim is used only to test for an empty value.
     function dropPath(path) {
-      const target = String(path || '').trim();
-      if (!target) {
+      const target = String(path || '');
+      if (!target.trim()) {
         return;
       }
       for (let i = stack.length - 1; i >= 0; i -= 1) {
@@ -34,8 +36,8 @@
     }
 
     function push(entry) {
-      const path = String(entry && entry.path || '').trim();
-      if (!path) {
+      const path = String(entry && entry.path || '');
+      if (!path.trim()) {
         return;
       }
       // De-dupe: re-closing a path moves it back to the top with its newest
@@ -51,10 +53,15 @@
       return stack.pop() || null;
     }
 
+    // Top entry without removing it (a reopen that can still fail peeks first).
+    function peek() {
+      return stack.length ? stack[stack.length - 1] : null;
+    }
+
     // Drops a path and everything beneath it (directory delete/rename).
     function dropUnder(path) {
-      const base = String(path || '').trim();
-      if (!base) {
+      const base = String(path || '');
+      if (!base.trim()) {
         return;
       }
       const prefix = `${base}/`;
@@ -69,7 +76,7 @@
       stack.length = 0;
     }
 
-    return { push, pop, dropPath, dropUnder, clear };
+    return { push, pop, peek, dropPath, dropUnder, clear };
   }
 
   return { createIdeClosedTabsStack };

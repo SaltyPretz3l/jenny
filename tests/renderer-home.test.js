@@ -350,8 +350,10 @@ test('renderer home prefers the canonical board payload and renders metadata bad
 
     const activeItem = window.document.querySelector('#homeOpenLoopList .home-summary-item');
     const activeBadges = [...activeItem.querySelectorAll('.home-loop-badge')].map((node) => node.textContent.trim());
-    assert.deepEqual(activeBadges, ['Open session', 'Assistant reply']);
-    assert.match(activeItem.textContent, /Artifacts planning/);
+    // Meta line reads source, then session; the session title rides the tooltip.
+    assert.deepEqual(activeBadges, ['Assistant reply', 'Open session']);
+    assert.equal(activeItem.querySelector('.home-loop-meta').title, 'Artifacts planning');
+    assert.doesNotMatch(activeItem.textContent, /open loop \//, 'the redundant kicker line is gone');
     assert.match(activeItem.textContent, /Due now/);
 
     const deferredItem = window.document.querySelector('#homeDeferredLoopList .home-summary-item');
@@ -360,8 +362,8 @@ test('renderer home prefers the canonical board payload and renders metadata bad
 
     const resolvedItem = window.document.querySelector('#homeRecentResolvedList .home-summary-item');
     const resolvedBadges = [...resolvedItem.querySelectorAll('.home-loop-badge')].map((node) => node.textContent.trim());
-    assert.deepEqual(resolvedBadges, ['Saved from session', 'Proactive suggestion']);
-    assert.match(resolvedItem.textContent, /Closed planning session/);
+    assert.deepEqual(resolvedBadges, ['Proactive suggestion', 'Saved from session']);
+    assert.equal(resolvedItem.querySelector('.home-loop-meta').title, 'Closed planning session');
   } finally {
     await app.dispose();
   }
@@ -388,15 +390,11 @@ test('renderer home promotes session-linked loops to a primary resume action', a
                 contextLine: 'Release thread',
                 actions: [
                   {
-                    id: 'edit_follow_up:session-loop',
-                    type: 'edit_follow_up',
-                    label: 'Edit',
-                    followUpId: 'session-loop',
-                  },
-                  {
                     id: 'continue_follow_up:session-loop',
                     type: 'continue_session',
-                    label: 'Resume this thread',
+                    label: 'Resume thread',
+                    labelKey: 'companion.actions.resumeThread',
+                    slot: 'primary',
                     sessionId: 'session-7',
                     followUpId: 'session-loop',
                   },
@@ -404,12 +402,21 @@ test('renderer home promotes session-linked loops to a primary resume action', a
                     id: 'resolve_follow_up:session-loop',
                     type: 'resolve_follow_up',
                     label: 'Done',
+                    slot: 'inline',
                     followUpId: 'session-loop',
                   },
                   {
                     id: 'defer_follow_up:session-loop',
                     type: 'defer_follow_up',
                     label: 'Later',
+                    slot: 'inline',
+                    followUpId: 'session-loop',
+                  },
+                  {
+                    id: 'edit_follow_up:session-loop',
+                    type: 'edit_follow_up',
+                    label: 'Edit',
+                    slot: 'overflow',
                     followUpId: 'session-loop',
                   },
                 ],
@@ -429,15 +436,19 @@ test('renderer home promotes session-linked loops to a primary resume action', a
   await waitForUi(window, 30);
 
   const activeItem = window.document.querySelector('#homeOpenLoopList .home-summary-item');
-  const buttons = [...activeItem.querySelectorAll('.btn')];
+  const buttons = [...activeItem.querySelectorAll('[data-companion-action-id]')];
+  // The primary always leads the row; overflow actions stay behind the menu.
   assert.deepEqual(buttons.map((button) => button.textContent.trim()), [
-    'Edit',
-    'Resume this thread',
+    'Resume thread',
     'Done',
     'Later',
   ]);
-  assert.equal(buttons[1].classList.contains('btn--primary'), true);
-  assert.equal(buttons[2].classList.contains('btn--primary'), false);
+  assert.equal(buttons[0].classList.contains('btn--primary'), true);
+  assert.equal(buttons.slice(1).some((button) => button.classList.contains('btn--primary')), false);
+  const menuButton = activeItem.querySelector('[data-loop-overflow="session-loop"]');
+  assert.ok(menuButton, 'Edit lives behind the overflow menu');
+  assert.equal(menuButton.getAttribute('aria-haspopup'), 'menu');
+  assert.equal(activeItem.querySelector('[data-companion-action-id="edit_follow_up:session-loop"]'), null);
 });
 
 test('renderer home renders agent task source badges through the existing open loops surface', async (t) => {
@@ -498,11 +509,11 @@ test('renderer home renders agent task source badges through the existing open l
 
   const activeItem = window.document.querySelector('#homeOpenLoopList .home-summary-item');
   const activeBadges = [...activeItem.querySelectorAll('.home-loop-badge')].map((node) => node.textContent.trim());
-  const actionButtons = [...activeItem.querySelectorAll('.btn')].map((node) => node.textContent.trim());
+  const actionButtons = [...activeItem.querySelectorAll('[data-companion-action-id]')].map((node) => node.textContent.trim());
 
-  assert.deepEqual(activeBadges, ['Open session', 'Agent task']);
+  assert.deepEqual(activeBadges, ['Agent task', 'Open session']);
   assert.match(activeItem.textContent, /Agent task follow-up/);
-  assert.match(activeItem.textContent, /Delegation session/);
+  assert.equal(activeItem.querySelector('.home-loop-meta').title, 'Delegation session');
   assert.deepEqual(actionButtons, ['Done', 'Continue Session']);
 });
 

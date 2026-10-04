@@ -3,7 +3,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const { buildManagedSidecarConfig } = require('../services/backend/managed-sidecar-config');
-const { normalizeState, serializeState } = require('../services/shell-config-state');
+const { CONFIG_VERSION, normalizeState, serializeState } = require('../services/shell-config-state');
 const { engineTuningMethods } = require('../services/shell-config-engine-tuning');
 const { ENGINE_TUNING_FIELDS } = require('../renderer/shared/engine-tuning-schema');
 
@@ -51,9 +51,10 @@ function buildRawConfigFor(seed) {
   return { rawConfig: buildManagedSidecarConfig(service), state };
 }
 
-/* Every field persists in the one owned block. */
+/* Every field persists in the one owned block. Seeded at the current version so the
+ * one-time v58 retirement of four stored keys does not apply. */
 function seedFor(field, value) {
-  return { engineTuning: { [field.key]: value } };
+  return { version: CONFIG_VERSION, engineTuning: { [field.key]: value } };
 }
 
 function getFieldByKey(key) {

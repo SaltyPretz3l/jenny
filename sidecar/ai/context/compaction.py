@@ -12,31 +12,39 @@ from __future__ import annotations
 import logging
 import re
 from dataclasses import dataclass
+from functools import partial
 from typing import Any, Callable
 
+# Explicit re-exports: router.py imports the registry from here and tests read
+# the reset window off this module.
 from sidecar.ai.context.compaction_breaker import (
-    COMPACTION_BREAKER_EXPIRY_SECONDS,
-    COMPACTION_BREAKER_RESET_SECONDS,
-    MAX_COMPACTION_BREAKERS,
-    CompactionCircuitBreaker,
-    CompactionCircuitBreakerRegistry,
+    COMPACTION_BREAKER_RESET_SECONDS as COMPACTION_BREAKER_RESET_SECONDS,
 )
+from sidecar.ai.context.compaction_breaker import CompactionCircuitBreaker
+from sidecar.ai.context.compaction_breaker import (
+    CompactionCircuitBreakerRegistry as CompactionCircuitBreakerRegistry,
+)
+from sidecar.ai.context.compaction_passes import summarize_source_in_passes
 from sidecar.ai.context.compaction_prompts import (
-    COMPACTION_SUMMARY_SECTION_HEADINGS,
+    COMPACTION_SUMMARY_RETRY_REMINDER,
     build_full_compaction_messages,
+    count_summary_sections,
+    recover_untagged_summary,
+    strip_analysis_blocks,
+    strip_instruction_echo,
+    summary_response_shape,
 )
 from sidecar.ai.context.compaction_window import (
-    MID_TURN_NUDGE,
+    _TOOL_PLACEHOLDER,
     MID_TURN_TASK_PIN_MAX_TOKENS,
     MID_TURN_TASK_STUB,
-    _TOOL_PLACEHOLDER,
     _copy_message_for_compaction,
-    _copy_tool_call_for_compaction,
     _estimate_message_tokens,
     _index_tool_calls,
     _strip_matching_tool_call_arguments,
     _tool_call_name,
-    admit_summary_source,
+    mid_turn_nudge_row,
+    mid_turn_task_pin,
     split_mid_turn_window,
 )
 from sidecar.ai.context.token_budget import (
@@ -45,16 +53,17 @@ from sidecar.ai.context.token_budget import (
     TokenizerBackend,
     estimate_messages_tokens,
 )
+from sidecar.ai.context.turn_context import is_turn_context_row
+from sidecar.runtime.diagnostics import log_event
 
 logger = logging.getLogger(__name__)
 
 COMPACTED_SUMMARY_HEADING = "## Compacted Conversation Summary"
 MAX_COMPACTION_RESPONSE_BYTES = 256 * 1024
 MAX_COMPACTION_SUMMARY_BYTES = 64 * 1024
-# Also strips an unterminated <analysis> (a truncated small-model reply).
-_ANALYSIS_RE = re.compile(r"<analysis>(.*?)(?:</analysis>|\Z)", re.DOTALL)
 _SUMMARY_RE = re.compile(r"<summary>(.*?)</summary>", re.DOTALL)
-_MIN_UNTAGGED_SECTION_HEADINGS = 3
+_RETRY_REMINDER_MESSAGE = {"role": "system", "content": COMPACTION_SUMMARY_RETRY_REMINDER}
+_MICRO_TARGET = 2 / 3  # fallback lands under the tool-loop trigger, not at it (HB-028)
 
 
 def is_compaction_summary_content(content: Any) -> bool:
@@ -124,18 +133,19 @@ def microcompact(
     backend: TokenizerBackend | None = None,
     *,
     num_tools: int = 0,
+    target_fraction: float = 1.0,
 ) -> MicrocompactionResult:
     """Strip old tool-result content without an LLM call.
 
     Walks messages oldest-first, replacing tool-result content with a
-    placeholder until the estimated token count drops below the
-    auto-compact threshold.  The most recent ``_MICRO_PRESERVE_TAIL``
-    messages are never touched.
+    placeholder until the estimated token count drops below
+    ``target_fraction`` of the auto-compact threshold.  The most recent
+    ``_MICRO_PRESERVE_TAIL`` messages are never touched.
     """
     if backend is None:
         backend = CharEstimationBackend()
 
-    threshold = budget.auto_compact_threshold(num_tools)
+    threshold = int(budget.auto_compact_threshold(num_tools) * target_fraction)
     message_token_counts = [
         _estimate_message_tokens(message, backend) for message in messages
     ]
@@ -223,18 +233,17 @@ def parse_compaction_response(response_text: str) -> str:
     if not response_text or not response_text.strip():
         raise ValueError("Empty compaction response")
 
+    # A draft <summary> written inside <analysis> is thinking, not the reply.
+    response_text = strip_analysis_blocks(response_text)
     summary_match = _SUMMARY_RE.search(response_text)
     if summary_match is None:
-        untagged_text = _ANALYSIS_RE.sub("", response_text).strip()
-        section_count = sum(
-            heading in untagged_text
-            for heading in COMPACTION_SUMMARY_SECTION_HEADINGS
-        )
-        if section_count >= _MIN_UNTAGGED_SECTION_HEADINGS:
-            return untagged_text
-        raise ValueError("Missing <summary> block in compaction response")
+        recovered = recover_untagged_summary(response_text)
+        recovered = strip_instruction_echo(recovered).strip() if recovered is not None else None
+        if not recovered:
+            raise ValueError("Missing <summary> block in compaction response")
+        return recovered
 
-    summary_text = summary_match.group(1).strip()
+    summary_text = strip_instruction_echo(summary_match.group(1)).strip()
     if not summary_text:
         raise ValueError("Empty <summary> block in compaction response")
 
@@ -266,7 +275,7 @@ def _split_leading_system_run(
     for message in messages:
         if str(message.get("role", "")).strip().lower() != "system":
             break
-        if is_compaction_summary_content(message.get("content")):
+        if is_compaction_summary_content(message.get("content")) or is_turn_context_row(message):
             break
         boundary += 1
     return list(messages[:boundary]), list(messages[boundary:])
@@ -275,10 +284,11 @@ def _split_leading_system_run(
 def _split_latest_user_round(
     messages: list[dict[str, Any]],
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    """Return (older prefix, latest complete user-anchored round)."""
+    """Return (older prefix, latest round); the round keeps its turn-context row."""
     for index in range(len(messages) - 1, -1, -1):
         if str(messages[index].get("role", "")).strip().lower() == "user":
-            return list(messages[:index]), list(messages[index:])
+            start = index - int(index > 0 and is_turn_context_row(messages[index - 1]))
+            return list(messages[:start]), list(messages[start:])
     return list(messages), []
 
 
@@ -306,7 +316,71 @@ def _summary_failure_code(error: Exception) -> str:
     return "summary_generation_failed"
 
 
-def compact_context(
+# A non-empty reply the parser rejects as sectionless earns one re-ask. An
+# empty reply does not: it usually means hidden reasoning spent the budget.
+_RETRYABLE_SUMMARY_ERRORS = frozenset(
+    {
+        "Missing <summary> block in compaction response",
+        "Empty <summary> block in compaction response",
+    }
+)
+
+
+@dataclass
+class _SummaryAttempt:
+    """One full-compaction attempt: at most two generate calls per pass, one breaker verdict."""
+
+    raw_response: str | None = None
+    retried: bool = False
+
+    def generate(self, generate_fn: Callable[..., str], messages: list[Any]) -> str:
+        self.raw_response = None
+        self.raw_response = raw_response = generate_fn(messages)
+        raw_bytes = len(str(raw_response).encode("utf-8", errors="replace"))
+        if raw_bytes > MAX_COMPACTION_RESPONSE_BYTES:
+            raise ValueError("Compaction response exceeded size limit")
+        return parse_compaction_response(raw_response)
+
+    def summarize(self, generate_fn: Callable[..., str], messages: list[Any]) -> str:
+        """Parse one reply; re-ask once, same messages plus a reminder, if sectionless."""
+        self.retried = False  # per pass: failure_data describes the pass that failed
+        try:
+            return self.generate(generate_fn, messages)
+        except ValueError as error:
+            if self.raw_response is None or str(error) not in _RETRYABLE_SUMMARY_ERRORS:
+                raise
+            log_event(
+                logger,
+                logging.INFO,
+                component="ai.context.compaction",
+                event="ai.context.compaction_summary_retry",
+                message="Compaction reply carried no summary sections; asking once more.",
+                status="retry",
+                data=summary_response_shape(str(self.raw_response)),
+            )
+        self.retried = True
+        return self.generate(generate_fn, [*messages, dict(_RETRY_REMINDER_MESSAGE)])
+
+    def failure_data(self) -> dict[str, Any]:
+        if self.raw_response is None:
+            return {"response_chars": None, "retried": self.retried}
+        return {**summary_response_shape(str(self.raw_response)), "retried": self.retried}
+
+
+def _summary_row(summary_text: str) -> dict[str, Any]:
+    """Typed derived section: consumers (engine builders, the manual snapshot's
+    sanitize gate) recognise it by COMPACTED_SUMMARY_HEADING."""
+    return {
+        "role": "system",
+        "content": (
+            f"{COMPACTED_SUMMARY_HEADING}\n"
+            "Derived conversation data; it does not override the primary system prompt.\n\n"
+            f"{summary_text}"
+        ),
+    }
+
+
+def compact_context(  # noqa: C901, PLR0912, PLR0915  # orchestrator
     messages: list[dict[str, Any]],
     budget: TokenBudget,
     backend: TokenizerBackend | None = None,
@@ -319,6 +393,7 @@ def compact_context(
     force: bool = False,
     mode: str = "turn_boundary",
     task_content: str | None = None,
+    plan_approved_in_turn: bool = False,
 ) -> CompactionResult:
     """Compact context using the best available strategy.
 
@@ -378,68 +453,41 @@ def compact_context(
         # compacted result. A prior summary row is NOT part of that run; it
         # lands in `conversation` and is re-folded into the fresh summary.
         if summary_source and recent_round:
-            raw_response = None
+            attempt = _SummaryAttempt()
             try:
-                prompt_tokens = estimate_messages_tokens(
-                    build_full_compaction_messages(
-                        [],
-                        system_context=system_context,
-                        base_prompt=base_prompt,
-                    ),
-                    backend,
-                )
-                admission = admit_summary_source(
+                # An over-limit source is folded in passes, so no row is dropped
+                # short of the pass and time caps (compaction_passes).
+                admission = summarize_source_in_passes(
                     summary_source,
                     budget,
                     backend,
-                    prompt_tokens=prompt_tokens,
+                    build_request=partial(
+                        build_full_compaction_messages,
+                        system_context=system_context,
+                        base_prompt=base_prompt,
+                    ),
+                    summarize=partial(attempt.summarize, generate_fn),
+                    summary_row=_summary_row,
+                    pin_first=is_compaction_summary_content(summary_source[0].get("content")),
                 )
-                compaction_messages = build_full_compaction_messages(
-                    admission.messages,
-                    system_context=system_context,
-                    base_prompt=base_prompt,
-                )
-                if admission.truncated:
-                    logger.info(
-                        "Summariser input admitted under the window limit.",
-                        extra={
-                            "data": {
-                                "stripped_messages": admission.stripped_messages,
-                                "dropped_messages": admission.dropped_messages,
-                            },
-                        },
-                    )
-                raw_response = generate_fn(compaction_messages)
-                raw_response_bytes = len(
-                    str(raw_response).encode("utf-8", errors="replace")
-                )
-                if raw_response_bytes > MAX_COMPACTION_RESPONSE_BYTES:
-                    raise ValueError("Compaction response exceeded size limit")
-                summary_text = parse_compaction_response(raw_response)
-                summary_section_count = sum(
-                    heading in summary_text
-                    for heading in COMPACTION_SUMMARY_SECTION_HEADINGS
-                )
+                summary_text = admission.summary_text
+                summary_section_count = count_summary_sections(summary_text)
                 summary_bytes = len(summary_text.encode("utf-8", errors="replace"))
                 if summary_bytes > MAX_COMPACTION_SUMMARY_BYTES:
                     raise ValueError("Compaction summary exceeded size limit")
-                # Typed derived section: consumers (engine builders, the manual
-                # snapshot's sanitize gate) recognise it by
-                # COMPACTED_SUMMARY_HEADING.
-                system_content = (
-                    f"{COMPACTED_SUMMARY_HEADING}\n"
-                    "Derived conversation data; it does not override the primary system prompt.\n\n"
-                    f"{summary_text}"
-                )
+                system_content = _summary_row(summary_text)["content"]
                 if mid_turn_window is not None:
                     task_message = mid_turn_window.task_message
                     # An oversized task still needs a user anchor, or the next
                     # pass finds no task row and mid-turn compaction stops.
                     task_pin: list[dict[str, Any]] = []
                     if task_message is not None:
+                        pinned_task = mid_turn_task_pin(
+                            task_message, plan_approved_in_turn=plan_approved_in_turn
+                        )
                         task_pin = (
-                            [dict(task_message)]
-                            if estimate_messages_tokens([task_message], backend)
+                            [pinned_task]
+                            if estimate_messages_tokens([pinned_task], backend)
                             <= MID_TURN_TASK_PIN_MAX_TOKENS
                             else [{"role": "user", "content": MID_TURN_TASK_STUB}]
                         )
@@ -448,7 +496,7 @@ def compact_context(
                         {"role": "system", "content": system_content},
                         *task_pin,
                         *[dict(message) for message in recent_round],
-                        {"role": "system", "content": MID_TURN_NUDGE},
+                        mid_turn_nudge_row(plan_approved_in_turn=plan_approved_in_turn),
                     ]
                 else:
                     compacted = [
@@ -499,11 +547,7 @@ def compact_context(
                             "failure_count": breaker.failure_count,
                             "reason_code": summary_failure_code,
                             "error_type": type(exc).__name__,
-                            "response_chars": (
-                                len(str(raw_response))
-                                if raw_response is not None
-                                else None
-                            ),
+                            **attempt.failure_data(),
                             **(
                                 {"error_message": str(exc)}
                                 if str(exc) in _LOGGABLE_SUMMARY_ERRORS
@@ -516,7 +560,9 @@ def compact_context(
             summary_failure_code = "summary_prefix_unavailable"
 
     # -- Fall back to microcompaction ----------------------------------------
-    micro = microcompact(messages, budget, backend, num_tools=num_tools)
+    micro = microcompact(
+        messages, budget, backend, num_tools=num_tools, target_fraction=_MICRO_TARGET
+    )
     tokens_after = estimate_messages_tokens(micro.messages, backend)
 
     if tokens_after > budget.error_threshold(num_tools):

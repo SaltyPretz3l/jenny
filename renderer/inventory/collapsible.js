@@ -20,6 +20,13 @@
   /* Write the transition start px, then force a style recalc: rAF runs
      BEFORE recalc, so without the read the target write lands first and the
      max-height transition has no start value (it snaps). */
+  function readLiveMaxHeightPx(el) {
+    if (typeof motionHeightUtils.readCurrentMaxHeightPx === 'function') {
+      return motionHeightUtils.readCurrentMaxHeightPx(el, window);
+    }
+    return Math.max(el.offsetHeight || 0, 0);
+  }
+
   function pinHeight(el, px) {
     if (typeof motionHeightUtils.pinHeightForTransition === 'function') {
       motionHeightUtils.pinHeightForTransition(el, px);
@@ -29,14 +36,8 @@
     void el.offsetHeight;
   }
 
-  function escapeHtml(value) {
-    return String(value || '')
-      .replaceAll('&', '&amp;')
-      .replaceAll('<', '&lt;')
-      .replaceAll('>', '&gt;')
-      .replaceAll('"', '&quot;')
-      .replaceAll("'", '&#39;');
-  }
+  const escapeHtml = ((typeof globalThis !== 'undefined' && globalThis.stringUtils)
+    || (typeof require === 'function' ? require('../shared/string-utils') : null)).escapeHtml;
 
   function sanitizeClassName(value) {
     return String(value || '')
@@ -233,6 +234,9 @@
     var contentEl = contentId ? document.getElementById(contentId) : null;
     if (!contentEl) return;
 
+    // A toggle during an in-flight transition reverses from the live computed
+    // height instead of jumping to the pinned target.
+    var transitioning = contentTimers.has(contentEl);
     clearContentTimer(contentEl);
 
     var transitionMs = readTransitionMs();
@@ -249,8 +253,9 @@
         contentEl.style.maxHeight = 'none';
         return;
       }
-      pinHeight(contentEl, 0);
+      pinHeight(contentEl, transitioning ? readLiveMaxHeightPx(contentEl) : 0);
       requestAnimationFrame(function () {
+        if (triggerEl.getAttribute('aria-expanded') !== 'true') return;
         contentEl.style.maxHeight = Math.max(contentEl.scrollHeight || measured || 0, 0) + 'px';
       });
       var openTimerId = window.setTimeout(function () {
@@ -265,19 +270,21 @@
 
     /* Collapse */
     contentEl.setAttribute('data-state', 'closed');
-    var inlinePx = /^\d+(\.\d+)?px$/.test(contentEl.style.maxHeight)
-      ? Number.parseFloat(contentEl.style.maxHeight)
-      : Math.max(measured, contentEl.scrollHeight || 0, 0);
-    pinHeight(contentEl, inlinePx);
-    requestAnimationFrame(function () {
-      contentEl.classList.remove('expanded');
-      contentEl.style.maxHeight = '0px';
-    });
     if (transitionMs === 0) {
+      contentEl.classList.remove('expanded');
       contentEl.hidden = true;
       contentEl.style.maxHeight = '';
       return;
     }
+    var inlinePx = /^\d+(\.\d+)?px$/.test(contentEl.style.maxHeight)
+      ? Number.parseFloat(contentEl.style.maxHeight)
+      : Math.max(measured, contentEl.scrollHeight || 0, 0);
+    pinHeight(contentEl, transitioning ? readLiveMaxHeightPx(contentEl) : inlinePx);
+    requestAnimationFrame(function () {
+      if (triggerEl.getAttribute('aria-expanded') !== 'false') return;
+      contentEl.classList.remove('expanded');
+      contentEl.style.maxHeight = '0px';
+    });
     var closeTimerId = window.setTimeout(function () {
       if (triggerEl.getAttribute('aria-expanded') !== 'true') {
         contentEl.hidden = true;

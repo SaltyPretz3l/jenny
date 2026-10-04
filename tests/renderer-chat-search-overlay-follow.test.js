@@ -42,6 +42,7 @@ function createFollowReveal() {
         followLatest: options ? options.followLatest : undefined,
         reason: options ? options.reason : undefined,
         behavior: options ? options.behavior : undefined,
+        range: options ? options.range : undefined,
       });
       if (options && options.followLatest === false) {
         uiState.ui.followLatest = false;
@@ -178,4 +179,20 @@ test('canonical search navigation releases follow-latest (messageId path)', asyn
   );
   assert.ok(follow.revealCalls.length >= 1, 'the canonical jump must route through the reveal helper');
   assert.equal(follow.revealCalls[0].followLatest, false);
+});
+
+// F4: the reveal centres the match range, not just its message.
+test('a search reveal carries the current match range', async (t) => {
+  const follow = createFollowReveal();
+  const { dom, overlay } = buildEnv(FIXTURE, { viewportReveal: follow.viewportReveal });
+  t.after(() => overlay.dispose());
+  overlay.attach();
+  overlay.open();
+  const input = dom.window.document.querySelector('.chat-search-bar-input');
+  input.value = 'hello';
+  input.dispatchEvent(new dom.window.Event('input', { bubbles: true }));
+  await waitForUiState(dom.window, () => follow.revealCalls.length >= 1);
+  const range = follow.revealCalls[0].range;
+  assert.ok(range instanceof dom.window.Range, 'the reveal gets the match range');
+  assert.equal(String(range).toLowerCase(), 'hello');
 });

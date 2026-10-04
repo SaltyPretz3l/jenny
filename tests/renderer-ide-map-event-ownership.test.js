@@ -190,7 +190,7 @@ test('createPointerIdGate: matches only the captured id; release clears it', () 
 
 test('production script graph loads event-ownership before every File Map consumer', (t) => {
   const root = path.resolve(__dirname, '..');
-  const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+  const scripts = require('../renderer/shell/renderer-ide-script-manifest').map(([src]) => path.basename(src));
   const consumers = [
     'renderer-ide-map-transform.js',
     'renderer-ide-map-atlas-layout.js',
@@ -198,11 +198,11 @@ test('production script graph loads event-ownership before every File Map consum
     'renderer-ide-map-a11y.js',
     'renderer-ide-map-controller.js',
   ];
-  const ownershipOffset = html.indexOf('renderer-ide-map-event-ownership.js');
-  assert.ok(ownershipOffset >= 0, 'event-ownership module is declared in production index.html');
+  const ownershipOffset = scripts.indexOf('renderer-ide-map-event-ownership.js');
+  assert.ok(ownershipOffset >= 0, 'event-ownership module is declared in production IDE manifest');
   for (const name of consumers) {
-    const offset = html.indexOf(name);
-    assert.ok(offset >= 0, `${name} is declared in production index.html`);
+    const offset = scripts.indexOf(name);
+    assert.ok(offset >= 0, `${name} is declared in production IDE manifest`);
     assert.ok(ownershipOffset < offset, `event-ownership loads before ${name}`);
   }
 

@@ -24,6 +24,7 @@ const {
   freezeRecoveredIndex,
 } = require('./session-storage-guards');
 const { deleteSessionFromBackend } = require('./session-storage-deletion');
+const { purgeSessionRecoveryCopies } = require('./session-recovery-copies');
 const { flushBackend, flushBackendAsync } = require('./session-storage-flush');
 const {
   SessionStorageDurability,
@@ -179,6 +180,7 @@ class SessionStorageBackend {
     fs.mkdirSync(this._rootDir, { recursive: true });
     this._indexStore = new FileJsonStore(this._indexPath, {
       writeDebounceMs: this._writeDebounceMs,
+      compact: true,
       onWriteSettled: () => this._notifyCacheAvailability(),
       logger: this._logger,
     });
@@ -188,6 +190,7 @@ class SessionStorageBackend {
   _loadFromSplitLayout() {
     this._indexStore = new FileJsonStore(this._indexPath, {
       writeDebounceMs: this._writeDebounceMs,
+      compact: true,
       onWriteSettled: () => this._notifyCacheAvailability(),
       logger: this._logger,
     });
@@ -455,6 +458,10 @@ class SessionStorageBackend {
     return result;
   }
 
+  purgeSessionRecoveryCopies(sessionId) {
+    return purgeSessionRecoveryCopies(this, sessionId);
+  }
+
   flush() {
     if (this._disposed && !this.hasPendingWrites()) return false;
     const result = flushBackend(this);
@@ -587,13 +594,15 @@ class SessionStorageBackend {
       }
       if (this._sessionStores.size > maxCached) {
         const store = this._sessionStores.get(sessionId);
-        if (store && !this.hasPendingWriteForSession(sessionId) && !store.hasPendingWrite()) {
+        if (store && !this.hasPendingWriteForSession(sessionId) && !store.hasPendingWrite()
+          && !this._loadedSessions.get(sessionId)?.active_turn) {
           try {
             store.dispose();
           } catch (_e) {
             void _e;
           }
           this._sessionStores.delete(sessionId);
+          if (!this._loadedSessions.has(sessionId)) this._sessionLru.delete(sessionId);
         }
       }
       if ((!loadedPruningAllowed || this._loadedSessions.size <= maxCached)
@@ -636,6 +645,7 @@ class SessionStorageBackend {
       this._sessionFilePath(sessionId),
       {
         writeDebounceMs: this._writeDebounceMs,
+        compact: true,
       onWriteSettled: () => this._notifyCacheAvailability(),
         logger: this._logger,
       }
@@ -738,6 +748,7 @@ class SessionStorageBackend {
     if (!store) {
       store = new FileJsonStore(this._sessionFilePath(sessionId), {
         writeDebounceMs: this._writeDebounceMs,
+        compact: true,
       onWriteSettled: () => this._notifyCacheAvailability(),
         logger: this._logger,
       });
@@ -775,10 +786,22 @@ class SessionStorageBackend {
       const filePath = path.join(this._rootDir, entry.name);
       const store = new FileJsonStore(filePath, {
         writeDebounceMs: this._writeDebounceMs,
+        compact: true,
       onWriteSettled: () => this._notifyCacheAvailability(),
         logger: this._logger,
       });
-      const raw = store.read(null);
+      const readStatus = store.readWithStatus(null);
+      if (readStatus.corrupted) {
+        // An unreadable chat stays listed but is not loaded: its first read goes
+        // through _quarantineAndRecoverCorruptSession, which keeps the bytes. A
+        // hashed file name does not map back to this file, so it is not listed.
+        const damagedId = path.basename(entry.name, '.json');
+        if (sanitizeSessionId(damagedId) !== damagedId) continue;
+        indexSessions[damagedId] = this._summarizeSession(this._normalizeSession(damagedId, {}));
+        recoveredCount += 1;
+        continue;
+      }
+      const raw = readStatus.value;
       if (readsNewerSchema(this, raw)) {
         // Future-schema file: freeze; the post-loop guard aborts the rebuild.
         enterNewerSchemaFreeze(this, raw.schema_version, filePath);
@@ -815,6 +838,7 @@ class SessionStorageBackend {
     }
     this._indexStore = new FileJsonStore(this._indexPath, {
       writeDebounceMs: this._writeDebounceMs,
+      compact: true,
       onWriteSettled: () => this._notifyCacheAvailability(),
       logger: this._logger,
     });

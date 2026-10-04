@@ -16,7 +16,7 @@ const flush = () => new Promise((resolve) => setImmediate(resolve));
 // ---- pin actions -------------------------------------------------------------
 
 // writeScratchpad() adopts an echo only if scratchpadEchoMatches() sees a
-// COMPLETE home config (links/weather/widgets/calendar/focusMode/
+// COMPLETE home config (links/widgets/calendar/focusMode/
 // showContextualTips) whose scratchpad carries notes + activeNoteId + settings
 // + pins. A stub echoing only the patch is rejected, and every write silently
 // degrades to { error: 'Could not update pins.' } — so the stub has to model
@@ -40,7 +40,6 @@ function shellStub(getScratchpad) {
           };
           return {
             links: [],
-            weather: {},
             widgets: {},
             calendar: {},
             focusMode: false,

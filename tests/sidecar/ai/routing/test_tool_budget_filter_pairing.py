@@ -8,18 +8,18 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from test_tool_budget_filter_probe_parity import (  # noqa: E402 - shared budget harness.
+from test_tool_budget_filter_probe_parity import (  # shared budget harness.
     _filter_input,
     _force_budget_pressure,
     _incident_tool_contract,
     _IncidentFilterKernel,
 )
 
-from sidecar.ai.routing.tool_budget_filter import (  # noqa: E402
+from sidecar.ai.routing.tool_budget_filter import (
     _budget_relevant_family_names,
     apply_budget_aware_tool_filter,
 )
-from sidecar.ai.tools.assembly import AssembledToolContract  # noqa: E402
+from sidecar.ai.tools.assembly import AssembledToolContract
 
 
 class _PairingKernel(_IncidentFilterKernel):

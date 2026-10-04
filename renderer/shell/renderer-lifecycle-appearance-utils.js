@@ -19,7 +19,6 @@
   function createLifecycleAppearanceUtils(deps) {
     const settings = deps || {};
     const state = settings.state;
-    const dom = settings.dom || {};
     const constants = settings.constants || {};
     const callbacks = settings.callbacks || {};
     const fwd = settings.fwd || {};
@@ -39,7 +38,6 @@
       applyAppearanceToDocument,
       saveStoredAppearancePreferences,
       getDefaultChatZoomPercent,
-      normalizeChatZoomPercent,
       applyChatZoomToDocument,
     } = callbacks;
 
@@ -78,18 +76,14 @@
         typeof fwd.syncComposerVisualState === 'function'
         || typeof fwd.updateAssistantSpritePosition === 'function'
       ) {
-        const refreshHoloSurfaces = () => {
+        const refreshAppearanceSurfaces = () => {
           fwd.syncComposerVisualState?.();
-          fwd.updateAssistantSpritePosition?.(
-            undefined,
-            undefined,
-            { refreshHolo: true }
-          );
+          fwd.updateAssistantSpritePosition?.();
         };
         if (windowObject && typeof windowObject.requestAnimationFrame === 'function') {
-          windowObject.requestAnimationFrame(refreshHoloSurfaces);
+          windowObject.requestAnimationFrame(refreshAppearanceSurfaces);
         } else {
-          refreshHoloSurfaces();
+          refreshAppearanceSurfaces();
         }
       }
       return state.ui.appearance;
@@ -118,50 +112,81 @@
       }
     }
 
-    async function applyChatZoomPercent(percent, { persist = true } = {}) {
-      const previousZoomPercent = normalizeChatZoomPercent(
-        state.ui?.chatZoomPercent ?? getDefaultChatZoomPercent()
-      );
-      const normalized = normalizeChatZoomPercent(percent);
-      state.ui.chatZoomPercent = applyChatZoomToDocument(documentObject, normalized);
-      refreshChatZoomLayout();
-      if (!persist) {
-        return state.ui.chatZoomPercent;
+    // Retired axis: keeps the document clear and state at 100 without writing
+    // the persisted chatUi.zoomPercent (user state is preserved, just unused).
+    async function applyChatZoomPercent(_percent) {
+      state.ui.chatZoomPercent = applyChatZoomToDocument(documentObject, getDefaultChatZoomPercent());
+      return state.ui.chatZoomPercent;
+    }
+
+    // App zoom steps for the Ctrl+wheel / Ctrl +/-/0 shortcuts. These drive
+    // the same persisted windowUi.appZoomPercent the Settings select writes
+    // (Electron webContents.setZoomFactor); the retired chat zoom no longer
+    // has its own axis.
+    const APP_ZOOM_DEFAULT = 110; // Mirrors services/shell-config-zoom-state.js.
+    const APP_ZOOM_STEPS = [80, 90, 100, 110, 125, 150];
+
+    function nextAppZoomPercent(current, direction) {
+      const value = Number(current) || APP_ZOOM_DEFAULT;
+      if (direction > 0) {
+        return APP_ZOOM_STEPS.find((step) => step > value) ?? APP_ZOOM_STEPS[APP_ZOOM_STEPS.length - 1];
       }
+      for (let index = APP_ZOOM_STEPS.length - 1; index >= 0; index -= 1) {
+        if (APP_ZOOM_STEPS[index] < value) return APP_ZOOM_STEPS[index];
+      }
+      return APP_ZOOM_STEPS[0];
+    }
+
+    // Shortcut writes are optimistic and can overlap (a held Ctrl+=). Only the
+    // newest write may settle the visible value; a failure rolls back to the
+    // last persisted value, never to another write's optimistic one.
+    let appZoomWriteSeq = 0;
+    let appZoomWritesInFlight = 0;
+    let committedAppZoomPercent = APP_ZOOM_DEFAULT;
+
+    async function applyAppZoomPercent(percent) {
+      const previousPercent = Number(state.ui?.appZoomPercent) || APP_ZOOM_DEFAULT;
+      const requested = Number(percent) || APP_ZOOM_DEFAULT;
+      if (requested === previousPercent) return previousPercent;
+      if (appZoomWritesInFlight === 0) committedAppZoomPercent = previousPercent;
+      const seq = ++appZoomWriteSeq;
+      appZoomWritesInFlight += 1;
+      state.ui.appZoomPercent = requested;
       try {
-        const persistedState = await windowObject?.jennyShell?.chatUi?.updateSettings?.({
-          zoomPercent: normalized,
+        const nextWindowUi = await windowObject?.jennyShell?.windowUi?.updateSettings?.({
+          appZoomPercent: requested,
         });
-        const persistedZoomPercent = normalizeChatZoomPercent(
-          persistedState?.zoomPercent ?? normalized
-        );
-        state.ui.chatZoomPercent = applyChatZoomToDocument(documentObject, persistedZoomPercent);
-        refreshChatZoomLayout();
-        return state.ui.chatZoomPercent;
+        const applied = Number(nextWindowUi?.appZoomPercent);
+        committedAppZoomPercent = Number.isFinite(applied) && applied > 0 ? applied : requested;
+        if (seq === appZoomWriteSeq) state.ui.appZoomPercent = committedAppZoomPercent;
       } catch (error) {
-        state.ui.chatZoomPercent = applyChatZoomToDocument(documentObject, previousZoomPercent);
-        refreshChatZoomLayout();
-        appendClientLog('WARN', 'chat.zoom_update_failed', {
-          message: error?.message || String(error || 'Could not persist chat zoom.'),
-          zoomPercent: normalized,
+        if (seq === appZoomWriteSeq) state.ui.appZoomPercent = committedAppZoomPercent;
+        appendClientLog('WARN', 'app.zoom_update_failed', {
+          message: error?.message || String(error || 'Could not update app zoom.'),
+          zoomPercent: requested,
         });
         throw error;
+      } finally {
+        appZoomWritesInFlight -= 1;
       }
+      const select = documentObject?.getElementById?.('appearanceAppZoomSelect');
+      if (select && select.value !== String(state.ui.appZoomPercent)) {
+        select.value = String(state.ui.appZoomPercent);
+      }
+      refreshChatZoomLayout();
+      return state.ui.appZoomPercent;
     }
 
-    async function adjustChatZoomPercent(direction, options = {}) {
+    async function adjustAppZoomPercent(direction) {
       const stepDirection = Number(direction);
       if (!Number.isFinite(stepDirection) || stepDirection === 0) {
-        return state.ui.chatZoomPercent;
+        return Number(state.ui?.appZoomPercent) || APP_ZOOM_DEFAULT;
       }
-      return applyChatZoomPercent(
-        state.ui.chatZoomPercent + (stepDirection > 0 ? 5 : -5),
-        options
-      );
+      return applyAppZoomPercent(nextAppZoomPercent(state.ui?.appZoomPercent, stepDirection));
     }
 
-    async function resetChatZoomPercent(options = {}) {
-      return applyChatZoomPercent(getDefaultChatZoomPercent(), options);
+    async function resetAppZoomPercent() {
+      return applyAppZoomPercent(APP_ZOOM_DEFAULT);
     }
 
     function isDefaultAppearancePreferences(preferences) {
@@ -188,13 +213,18 @@
     }
 
     return {
-      adjustChatZoomPercent,
+      // The chat shortcuts keep their historical callback names but now drive
+      // app zoom.
+      adjustChatZoomPercent: adjustAppZoomPercent,
+      adjustAppZoomPercent,
       applyAppearancePreferences,
+      applyAppZoomPercent,
       applyChatZoomPercent,
       buildSelectOptionMarkup,
       isDefaultAppearancePreferences,
       refreshChatZoomLayout,
-      resetChatZoomPercent,
+      resetAppZoomPercent,
+      resetChatZoomPercent: resetAppZoomPercent,
       saveAppearancePreferences,
     };
   }

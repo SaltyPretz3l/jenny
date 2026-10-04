@@ -101,6 +101,21 @@ test('a paused reply the composer never queued offers Discard and Resume with re
   dom.window.close();
 });
 
+// FG-007: a restored paused reply names its prompt in the row's existing
+// preview line (no new element or class), with the full preview as its title.
+test('a paused reply with a runtime prompt preview shows it in the existing preview line', () => {
+  const dom = mount();
+  const node = host(dom);
+  const detached = row({ key: 'work:work_7', workId: 'work_7', prompt: 'Reconcile the March statement', status: 'paused',
+    position: null, admitted: true, detached: true });
+  renderRuntimeQueue({ state: state(), host: node, rows: [detached], actions: { withdraw() {}, resume() {} } });
+  const preview = node.querySelector('.runtime-queue__row--paused .runtime-queue__content .runtime-queue__preview');
+  assert.equal(preview.textContent, 'Reconcile the March statement');
+  assert.equal(preview.getAttribute('title'), 'Reconcile the March statement');
+  assert.equal(node.querySelector('.runtime-queue__status').textContent, 'Paused');
+  dom.window.close();
+});
+
 test('a paused row offers Resume and never claims a position number', () => {
   const dom = mount();
   const node = host(dom);

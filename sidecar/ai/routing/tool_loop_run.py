@@ -136,6 +136,8 @@ class _ToolLoopRun(_ToolCallPhasesMixin, _FinalResponseMixin):
         # state or the approval-plan snapshot that resume replays.
         self.working_messages = working_messages
         self.working_messages[:] = _tl_hub.normalize_history_for_loop(self.working_messages)
+        # Mid-turn compaction may summarise the trailing turn-context row away.
+        self.turn_context_row = _tl_hub.turn_context.take_turn_context_row(working_messages)[1]
         self.tool_contract = tool_contract
         self.tool_payload = tool_payload
         self.tool_resolution_context = tool_resolution_context
@@ -176,7 +178,7 @@ class _ToolLoopRun(_ToolCallPhasesMixin, _FinalResponseMixin):
         if runtime.observation_store is not None:
             try:
                 runtime.observation_store.ensure_turn(request_id=request_id)
-            except Exception:
+            except Exception:  # noqa: BLE001  # telemetry
                 pass
 
         runtime.provider_cost_expected = (
@@ -221,6 +223,16 @@ class _ToolLoopRun(_ToolCallPhasesMixin, _FinalResponseMixin):
         # reuses a pre-approval iteration number within the same turn.
         self.iteration_base = max(int(getattr(runtime, "iteration_base", 0) or 0), 0)
         self.iteration_total = self.iteration_base + self.max_iterations
+        from sidecar.ai.routing.iteration_limits import LoopCapScaler
+
+        # A slow local model at the default task cap earns more steps when it
+        # reaches the cap (see iteration_limits.LoopCapScaler); None of the gates below change.
+        self.loop_cap = LoopCapScaler.for_run(
+            kernel._config,
+            request_context=request_context,
+            iteration_base=self.iteration_base,
+            max_iterations=self.max_iterations,
+        )
         # Verification-gate carve-out. The gate never spends the model's working
         # budget: when it needs the model to act on a failing verdict it claims an
         # EXTRA iteration here, at most GATE_MAX_RETRIES times per run. The model
@@ -244,6 +256,27 @@ class _ToolLoopRun(_ToolCallPhasesMixin, _FinalResponseMixin):
         import sidecar.ai.routing.tool_loop as _tl_hub
 
         return _tl_hub.loop_event_emit.build_interrupted_tool_outcome(record, output)
+
+    def _hold_turn_context_row(self) -> dict[str, Any] | None:
+        """The turn-context row in the window, kept to be restored after compaction."""
+        import sidecar.ai.routing.tool_loop as _tl_hub
+
+        row = next(
+            (m for m in self.working_messages if _tl_hub.turn_context.is_turn_context_row(m)),
+            None,
+        )
+        if row is not None:
+            self.turn_context_row = dict(row)
+        return row
+
+    def _after_context_compaction(self) -> None:
+        """Called by tool_loop_compaction once the rebuilt window is in place (TR-015)."""
+        import sidecar.ai.routing.tool_loop as _tl_hub
+
+        _tl_hub.turn_context.restore_turn_context_row(
+            self.working_messages, getattr(self, "turn_context_row", None)
+        )
+        _tl_hub.write_progress.repin_after_compaction(self)
 
     def _settle_unfinished_tool_results(self, reason: str) -> int:
         import sidecar.ai.routing.tool_loop as _tl_hub
@@ -334,6 +367,40 @@ class _ToolLoopRun(_ToolCallPhasesMixin, _FinalResponseMixin):
         self.iteration_total += 1
         return True
 
+    def _extend_loop_cap(self) -> bool:
+        """At the step cap, grant a slow local model its speed-scaled extension.
+
+        Widens both counters like the other grants, so every capacity check
+        stays consistent; the working-time deadline is untouched and still ends
+        the turn. Returns False (the loop ends as before) when nothing is added.
+        """
+        import sidecar.ai.routing.tool_loop as _tl_hub
+
+        delta = self.loop_cap.claim_extension()
+        if delta <= 0:
+            return False
+        self.max_iterations += delta
+        self.iteration_total += delta
+        mean = self.loop_cap.mean_seconds() or 0.0
+        _tl_hub.log_event(
+            logger,
+            logging.INFO,
+            component="ai.router",
+            event="ai.router.loop_cap_extended",
+            message="Extended the local task step limit for a slow model.",
+            status="active",
+            data={
+                "base": self.loop_cap.base,
+                "mean_s": round(mean, 1),
+                "new_cap": self.loop_cap.allowed_total,
+                "added": delta,
+                "max_iterations": self.iteration_total,
+            },
+            request_id=self.request_id,
+            session_id=self.session_id,
+        )
+        return True
+
     # -- Main loop --------------------------------------------------------
 
     def execute(self) -> Any:  # noqa: C901, PLR0911, PLR0912, PLR0915
@@ -366,7 +433,7 @@ class _ToolLoopRun(_ToolCallPhasesMixin, _FinalResponseMixin):
                     self, num_tools=self.budget_tracker.num_tools,
                 )
             _local_iteration = 0
-            while _local_iteration < self.max_iterations:
+            while _local_iteration < self.max_iterations or self._extend_loop_cap():
                 _local_iteration += 1
                 _iteration = self.iteration_base + _local_iteration
                 runtime.current_iteration = _iteration
@@ -376,7 +443,9 @@ class _ToolLoopRun(_ToolCallPhasesMixin, _FinalResponseMixin):
                 runtime.raise_if_cancelled()
                 if wind_down_enabled(kernel._config) and should_emit_wind_down(
                     iteration=_iteration,
-                    max_iterations=self.iteration_total,
+                    # A slow model that will earn more steps is not told to
+                    # wrap up at 75% of the base cap.
+                    max_iterations=self.iteration_total + self.loop_cap.pending_extension(),
                     already_emitted=self.wind_down_injected,
                 ):
                     append_wind_down_system_message(self.working_messages)
@@ -392,6 +461,10 @@ class _ToolLoopRun(_ToolCallPhasesMixin, _FinalResponseMixin):
                         request_id=self.request_id,
                         session_id=self.session_id,
                     )
+                # Plan Mode near its working-time or step limit: submit the plan now.
+                plan_deadline_row = _tl_hub.plan_presentation.deadline_nudge_row(self, _iteration)
+                if plan_deadline_row is not None:
+                    self.working_messages.append(plan_deadline_row)
                 # -- Emit iteration-start *before* model call -----------------
                 runtime.emit(
                     _tl_hub.IterationStartEvent(
@@ -469,7 +542,12 @@ class _ToolLoopRun(_ToolCallPhasesMixin, _FinalResponseMixin):
                     max_iterations=self.iteration_total,
                     request_context=self.request_context,
                 ) or self.sub_agent_report_finalization_requested
-                generation_tool_payload = self._cycle_recovery_generation_payload()
+                generation_tool_payload = _tl_hub.plan_presentation.gated_generation_payload(
+                    self,
+                    _tl_hub.write_progress.gated_generation_payload(
+                        self, self._cycle_recovery_generation_payload()
+                    ),
+                )
                 generation_response_format = self.pending_retry_response_format
                 # Accepted-not-built plan: the one remaining generation gets no tools.
                 accepted_plan_reply = bool(
@@ -498,6 +576,8 @@ class _ToolLoopRun(_ToolCallPhasesMixin, _FinalResponseMixin):
                         session_id=self.session_id,
                     )
 
+                generation_clock = getattr(runtime, "clock", time.monotonic)
+                generation_started = generation_clock()
                 try:
                     result, streamed_generation_types = kernel._generate_step(
                         latest_user_content=self.latest_user_content,
@@ -533,6 +613,7 @@ class _ToolLoopRun(_ToolCallPhasesMixin, _FinalResponseMixin):
                     return self._finish_invalid_sub_agent_report(
                         SimpleNamespace(content="")
                     )
+                self.loop_cap.record_generation(generation_clock() - generation_started)
                 self.pending_retry_response_format = None
                 self.streamed_event_types.update(streamed_generation_types)
                 try:
@@ -667,6 +748,11 @@ class _ToolLoopRun(_ToolCallPhasesMixin, _FinalResponseMixin):
                     # instead of settling as a canned success.
                     and finish_reason not in ("incomplete", "error", "thinking_budget", "length")
                 ):
+                    if str(getattr(result, "thinking_text", "") or "").strip():
+                        # Stopped inside its reasoning: answer from it, not canned text.
+                        return _tl_hub.thinking_checkpoint.reasoning_only_stop_wind_down(
+                            self, result
+                        )
                     return self._finish(
                         _tl_hub.ToolLoopResult(
                             thinking_text=self.thinking_text,
@@ -691,6 +777,9 @@ class _ToolLoopRun(_ToolCallPhasesMixin, _FinalResponseMixin):
                         return outcome
                     continue
 
+                # Plan Mode prose plan: ask once for an exit_plan_mode call instead.
+                if _tl_hub.plan_presentation.final_prose_nudge(self, result, _iteration):
+                    continue
                 outcome = self._handle_final_response(result, _iteration)
                 if outcome is not None:
                     return outcome

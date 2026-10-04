@@ -239,7 +239,18 @@ class SidecarManager extends EventEmitter {
 
   async _startManagedDev() {
     ensureSandboxLayout(this.sandboxLayout);
-    await this.cleanupStaleState();
+    if (await this.cleanupStaleState()) {
+      const failureDetail = 'Sidecar exit was not confirmed; emergency cleanup retained.';
+      this._setStatus({
+        phase: 'failed',
+        detail: `Backend failed to start (${failureDetail}).`,
+        pid: 0,
+        startupStage: 'spawn_error',
+        startupMs: this._getStartupElapsedMs(),
+        progressLogCount: this.progressLogCount,
+      });
+      throw new Error(failureDetail);
+    }
 
     if (!fs.existsSync(this.repoRoot)) {
       throw new Error(`Managed backend repo was not found at ${this.repoRoot}.`);
@@ -469,11 +480,14 @@ class SidecarManager extends EventEmitter {
       this.stateStore.delete();
       return false;
     }
+    // A record this run retained after an unconfirmed stop is ours: anything short
+    // of proof that the process is gone or replaced keeps ownership unresolved.
+    const retained = pid === this._retainedSidecarPid;
     try {
       process.kill(pid, 0);
     } catch (error) {
       // ESRCH = process gone, EPERM = process exists but not ours — skip kill in both cases.
-      void error;
+      if (retained && error?.code !== 'ESRCH') return true;
       this.stateStore.delete();
       return false;
     }
@@ -481,6 +495,7 @@ class SidecarManager extends EventEmitter {
     // it to an unrelated process. Only force-kill when the live process's
     // command line still matches the sidecar command we recorded at spawn.
     const verified = await this._verifyStoredSidecarIdentity(pid, state);
+    if (verified === null && retained) return true;
     if (!verified) {
       this._appendDecodedLog(
         `Skipped stale-state kill for pid ${pid}: live process does not match the stored sidecar command.`
@@ -488,9 +503,32 @@ class SidecarManager extends EventEmitter {
       this.stateStore.delete();
       return false;
     }
-    await this.killProcessTreeImpl(pid, { force: true }).catch(() => null);
+    const terminated = await this._killProcessTreeForStop(pid, {
+      force: true,
+      confirmExit: true,
+      timeoutMs: this.forcedStopTimeoutMs,
+    });
+    if (!terminated && !(await this._isStoredSidecarGone(pid, state))) {
+      // True means ownership remains unresolved; callers must not retire it.
+      return true;
+    }
     this.stateStore.delete();
     return false;
+  }
+
+  async _isStoredSidecarGone(pid, state) {
+    try {
+      process.kill(pid, 0);
+    } catch (error) {
+      return error.code === 'ESRCH';
+    }
+    try {
+      const commandLine = String((await this.getProcessCommandLineImpl(pid)) || '').trim();
+      // An empty lookup can mean a query failure, not proof of process exit.
+      return Boolean(commandLine) && !processCommandMatchesStored(commandLine, state.command);
+    } catch (_error) {
+      return false;
+    }
   }
 
   async _verifyStoredSidecarIdentity(pid, state) {
@@ -503,8 +541,10 @@ class SidecarManager extends EventEmitter {
     try {
       commandLine = String((await this.getProcessCommandLineImpl(pid)) || '');
     } catch (_error) {
-      return false;
+      return null;
     }
+    // Null = identity unknown (the lookup failed or came back empty).
+    if (!commandLine.trim()) return null;
     // Quote and whitespace shapes differ between our stored join and the
     // OS-reported command line. The genuine sidecar's command line contains
     // the exact command we launched it with.
@@ -561,11 +601,12 @@ class SidecarManager extends EventEmitter {
           });
         }
       } else {
-        await this.cleanupStaleState();
+        exitConfirmed = !(await this.cleanupStaleState());
       }
     } finally {
       this.process = null;
       this.lastExitInfo = null;
+      this._retainedSidecarPid = exitConfirmed ? 0 : (currentPid || this._retainedSidecarPid || 0);
       if (exitConfirmed) {
         this.stateStore.delete();
       }

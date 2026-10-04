@@ -1,6 +1,8 @@
-/* Home Settings owns only app-wide Home behavior. Scratchpad presentation now
- * lives beside the widget and session-opening behavior lives in Quick Settings.
- * Writes are adopted only after an acknowledged home.updateConfig response. */
+/* Home Settings owns only app-wide Home behavior: the Scratchpad quick-capture
+ * rows. Scratchpad presentation now lives beside the widget and session-opening
+ * behavior lives in Quick Settings. Rows render from their descriptors; writes
+ * go through the shared settings coordinator and are adopted only after an
+ * acknowledged home.updateConfig response. */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) { module.exports = factory(); return; }
   root.rendererSettingsHomeSection = factory();
@@ -9,75 +11,44 @@
   const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   const asyncFence = globalThis.rendererAsyncFence
     || (typeof require === 'function' ? require('../shared/async-fence') : null);
+  const { isCompleteHomeConfig, jsonValuesEqual } = globalThis.rendererDashboardScratchpadActions
+    || (typeof require === 'function' ? require('../features/renderer-dashboard-scratchpad-actions') : null);
   const CAPTURE_MODES = ['append', 'overwrite'];
-  const TOGGLE_PREFS = {
-    homeScratchpadGlobalCaptureToggle: 'globalCapture',
-    homeContextualTipsToggle: 'showContextualTips',
-  };
+  const FIELD_IDS = ['homeScratchpadCaptureSelect', 'homeScratchpadGlobalCaptureToggle'];
   function homeApi() { return (typeof window !== 'undefined' && window.jennyShell?.home) || null; }
-  function isRecord(value) { return Boolean(value) && typeof value === 'object' && !Array.isArray(value); }
-  function jsonValuesEqual(left, right) {
-    if (left === right) return true;
-    if (Array.isArray(left) || Array.isArray(right)) {
-      return Array.isArray(left) && Array.isArray(right) && left.length === right.length
-        && left.every((value, index) => jsonValuesEqual(value, right[index]));
-    }
-    if (!isRecord(left) || !isRecord(right)) return false;
-    const leftKeys = Object.keys(left);
-    const rightKeys = Object.keys(right);
-    return leftKeys.length === rightKeys.length
-      && leftKeys.every((key) => Object.prototype.hasOwnProperty.call(right, key)
-        && jsonValuesEqual(left[key], right[key]));
+  function fieldModules() {
+    const load = (path) => (typeof require === 'function' ? require(path) : null);
+    return {
+      descriptors: globalThis.rendererSettingsFieldDescriptors || load('./renderer-settings-field-descriptors'),
+      binding: globalThis.rendererSettingsFieldBinding || load('./renderer-settings-field-binding'),
+    };
   }
+  function isRecord(value) { return Boolean(value) && typeof value === 'object' && !Array.isArray(value); }
   function expectedHomeConfig(current, patch) {
     const expected = { ...current, ...patch };
-    for (const key of ['weather', 'widgets', 'scratchpad', 'calendar']) {
+    for (const key of ['widgets', 'scratchpad', 'calendar']) {
       if (isRecord(patch[key])) expected[key] = { ...current[key], ...patch[key] };
     }
     return expected;
   }
-  function isCompleteHomeConfig(config) {
-    return isRecord(config)
-      && Array.isArray(config.links)
-      && isRecord(config.weather)
-      && isRecord(config.widgets)
-      && isRecord(config.scratchpad)
-      && Array.isArray(config.scratchpad.notes)
-      && typeof config.scratchpad.activeNoteId === 'string'
-      && isRecord(config.scratchpad.settings)
-      && Array.isArray(config.scratchpad.pins)
-      && isRecord(config.calendar)
-      && typeof config.focusMode === 'boolean'
-      && typeof config.showContextualTips === 'boolean';
-  }
-  function readSettings(state) {
-    const home = state?.homeConfig && typeof state.homeConfig === 'object' ? state.homeConfig : {};
-    const settings = home.scratchpad?.settings && typeof home.scratchpad.settings === 'object'
-      ? home.scratchpad.settings : {};
+  function readSettings(homeConfig) {
+    const settings = isRecord(homeConfig?.scratchpad?.settings) ? homeConfig.scratchpad.settings : {};
     return {
       captureMode: CAPTURE_MODES.includes(settings.captureMode) ? settings.captureMode : 'append',
       globalCapture: settings.globalCapture !== false,
-      showContextualTips: home.showContextualTips !== false,
     };
   }
-  function renderHomeSection({ container, badge, status, state } = {}) {
-    if (!container) return;
-    const selectField = globalThis.inventory?.selectField || globalThis.inventorySelectField;
-    const toggleSwitch = globalThis.inventory?.toggleSwitch || globalThis.inventoryToggleSwitch?.toggleSwitch;
-    if (typeof selectField !== 'function' || typeof toggleSwitch !== 'function') return;
-    const settings = readSettings(state);
-    container.innerHTML = [
-      selectField({ id: 'homeScratchpadCaptureSelect', label: jt('settings.home.quickCaptureMode', 'Quick-capture mode'), value: settings.captureMode,
-        options: [{ value: 'append', label: jt('settings.home.appendTimestampedLine', 'Append a timestamped line') }, { value: 'overwrite', label: jt('settings.home.replaceNote', 'Replace the note') }],
-        ariaLabel: jt('settings.home.quickCaptureMode', 'Quick-capture mode'), dataset: { 'home-pref': 'captureMode' } }),
-      toggleSwitch({ id: 'homeScratchpadGlobalCaptureToggle',
-        label: jt('settings.home.quickCaptureShortcut', 'Ctrl+Shift+Space quick capture (while Jenny is focused)'), checked: settings.globalCapture }),
-      toggleSwitch({ id: 'homeContextualTipsToggle', label: jt('settings.home.showContextualTips', 'Show contextual tips'),
-        checked: settings.showContextualTips }),
-    ].join('');
-    if (badge) badge.textContent = jt('settings.home.title', 'Home');
+  function renderHomeSection({ container, status, state } = {}) {
+    const { binding, descriptors } = fieldModules();
+    if (!container || !binding || !descriptors) return;
+    const settings = readSettings(state?.homeConfig);
+    container.innerHTML = FIELD_IDS.map((id) => {
+      const descriptor = descriptors.getSettingDescriptor(id);
+      return binding.renderSettingRow(descriptor, settings[descriptor.key]);
+    }).join('');
     if (status && status.dataset.state !== 'error') {
-      status.textContent = jt('settings.home.preferencesSaved', 'Home preferences are saved across restarts.');
+      status.textContent = '';
+      status.hidden = true;
       status.dataset.state = '';
     }
   }
@@ -85,7 +56,8 @@
     return isCompleteHomeConfig(config) && jsonValuesEqual(config, expected);
   }
   function bindHomeSection({ container, status, state, renderSettings, registerListener, listenerOptions } = {}) {
-    if (!container || !state || typeof registerListener !== 'function') return;
+    const { binding } = fieldModules();
+    if (!container || !state || typeof registerListener !== 'function' || !binding) return;
     const rerender = typeof renderSettings === 'function' ? renderSettings : function noop() {};
     const bindingFence = asyncFence.createDisposalFence();
     const bindingSignal = listenerOptions?.signal;
@@ -97,62 +69,60 @@
       bindingFence.onDispose(() => bindingSignal.removeEventListener('abort', disposeBinding));
     }
     let userTouched = false;
-    let writeQueue = Promise.resolve();
     const showStatus = (message, error) => {
       if (!status) return;
       status.textContent = message;
+      status.hidden = !message;
       status.dataset.state = error ? 'error' : '';
     };
+    const saveFailed = () => jt('settings.home.preferencesSaveFailed', 'Could not save Home preferences. Your previous setting was restored.');
     async function hydrate() {
       if (state.homeConfig || typeof homeApi()?.getConfig !== 'function') return;
       const config = await homeApi().getConfig();
       if (isCompleteHomeConfig(config)) state.homeConfig = config;
     }
-    async function persistPref(pref, value, api) {
-      if (typeof api?.updateConfig !== 'function') {
-        showStatus(jt('settings.home.preferencesUnavailable', 'Home preferences are unavailable.'), true); rerender(); return;
-      }
-      try {
-        await hydrate();
-        const scratchpad = state.homeConfig?.scratchpad || {};
-        let patch = null;
-        if (pref === 'captureMode' && CAPTURE_MODES.includes(value)) {
-          patch = { scratchpad: { settings: { ...(scratchpad.settings || {}), captureMode: value } } };
-        } else if (pref === 'globalCapture') {
-          patch = { scratchpad: { settings: { ...(scratchpad.settings || {}), globalCapture: value === true } } };
-        } else if (pref === 'showContextualTips') {
-          patch = { showContextualTips: value === true };
+    /* After-ack patch adapter: a batch patches scratchpad.settings on top of
+     * the hydrated siblings; `ack` keeps the whole acknowledged config for
+     * `apply` to adopt, so a refused batch leaves state.homeConfig untouched. */
+    let expected = null;
+    let acknowledged = null;
+    // One coordinator per app state across bind generations; the per-binding
+    // status line, re-render and hydration guard are reached through `live`.
+    const shared = binding.sharedRegistryFor(state, 'home');
+    const live = Object.assign(shared.live, { rerender, showStatus, markTouched: () => { userTouched = true; } });
+    const registry = shared.registry;
+    if (!registry.has('home')) registry.register({
+      id: 'home',
+      mode: 'patch',
+      optimistic: false,
+      read: () => readSettings(state.homeConfig),
+      normalize: (settings) => readSettings({ scratchpad: { settings } }),
+      write: async (payload) => {
+        live.markTouched();
+        const api = homeApi();
+        if (typeof api?.updateConfig !== 'function') {
+          throw Object.assign(new Error(jt('settings.home.preferencesUnavailable', 'Home preferences are unavailable.')), { code: 'home_unavailable' });
         }
-        if (!patch) { rerender(); return; }
-        showStatus(jt('settings.home.preferencesSaving', 'Saving Home preferences…'), false);
-        const expected = expectedHomeConfig(state.homeConfig, patch);
-        const config = await api.updateConfig(patch);
-        if (!acknowledgedPreference(config, expected)) throw new Error('Mismatched acknowledgement');
-        state.homeConfig = config;
-        showStatus(jt('settings.home.preferencesSavedStatus', 'Home preferences saved.'), false);
-        rerender();
-      } catch (_error) {
-        showStatus(jt('settings.home.preferencesSaveFailed', 'Could not save Home preferences. Your previous setting was restored.'), true);
-        rerender();
-      }
-    }
-    function applyPref(pref, value) {
-      userTouched = true;
-      const api = homeApi();
-      writeQueue = writeQueue.then(
-        () => persistPref(pref, value, api),
-        () => persistPref(pref, value, api),
-      );
-      return writeQueue;
-    }
-    registerListener(container, 'change', (event) => {
-      const select = event.target?.closest?.('[data-home-pref]');
-      if (select) void applyPref(select.getAttribute('data-home-pref'), select.value);
-    }, listenerOptions);
-    registerListener(container, 'inv-toggle-change', (event) => {
-      const pref = TOGGLE_PREFS[event.detail?.id];
-      if (pref) void applyPref(pref, event.detail?.checked === true);
-    }, listenerOptions);
+        await hydrate();
+        const patch = { scratchpad: { settings: { ...(state.homeConfig?.scratchpad?.settings || {}), ...payload } } };
+        expected = expectedHomeConfig(state.homeConfig, patch);
+        live.showStatus(jt('settings.home.preferencesSaving', 'Saving Home preferences…'), false);
+        return api.updateConfig(patch);
+      },
+      ack: (config) => {
+        if (!acknowledgedPreference(config, expected)) throw new Error(saveFailed());
+        acknowledged = config;
+        return readSettings(config);
+      },
+      apply: () => {
+        if (acknowledged) state.homeConfig = acknowledged;
+        acknowledged = null;
+        live.rerender();
+      },
+      onError: (error) => live.showStatus(error?.code === 'home_unavailable' ? error.message : saveFailed(), true),
+      onSettled: (ok) => { if (ok) live.showStatus('', false); },
+    });
+    binding.bindSettingFields({ container, ids: FIELD_IDS, registry, registerListener, listenerOptions });
     if (!state.homeConfig && typeof homeApi()?.getConfig === 'function') {
       Promise.resolve(homeApi().getConfig()).then((config) => {
         if (bindingFence.isDisposed()) return;
@@ -162,5 +132,5 @@
       });
     }
   }
-  return { bindHomeSection, renderHomeSection, readSettings, TOGGLE_PREFS };
+  return { bindHomeSection, renderHomeSection };
 });

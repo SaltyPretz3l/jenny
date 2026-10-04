@@ -16,6 +16,62 @@ test.afterEach(() => {
   delete require.cache[SCRATCHPAD_WIDGET_PATH];
 });
 
+test('HOM-04 widget keeps the outgoing draft until a note switch is acknowledged', async (t) => {
+  const dom = new JSDOM('<section id="body"></section>');
+  const body = dom.window.document.getElementById('body');
+  let acknowledge;
+  const widget = createScratchpadWidget({ textField, actionButton,
+    actions: { setActiveNote: () => new Promise((resolve) => { acknowledge = resolve; }) } });
+  t.after(() => { widget.dispose(); dom.window.close(); });
+  widget.render(body, flagOnCtx(twoNotesActive('note-1')));
+  const textarea = body.querySelector('#homeScratchpadInput');
+  textarea.value = 'Unsaved outgoing draft';
+  body.querySelector('[data-scratchpad-tab="note-2"]').click();
+  assert.equal(body.querySelector('#homeScratchpadInput'), textarea);
+  assert.equal(textarea.value, 'Unsaved outgoing draft');
+  acknowledge({ error: 'Could not save the note.' });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(body.querySelector('#homeScratchpadInput').value, 'Unsaved outgoing draft');
+  assert.match(body.textContent, /Could not save the note/);
+  body.querySelector('[data-scratchpad-tab="note-2"]').click();
+  acknowledge({ ok: true });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(body.querySelector('#homeScratchpadInput').value, 'B');
+});
+
+test('HOM-04 widget and actions retry the visible draft before persisting a note switch', async (t) => {
+  const { createScratchpadActions } = require(SCRATCHPAD_ACTIONS_PATH);
+  const { createTimerStub, createShellStub } = require('./helpers/scratchpad-fixtures');
+  let current = twoNotesActive('note-1');
+  const { shell } = createShellStub(() => current);
+  const update = shell.home.updateConfig;
+  let failing = true;
+  shell.home.updateConfig = async (patch) => {
+    if (failing) throw new Error('disk full');
+    return update(patch);
+  };
+  const dom = new JSDOM('<section id="body"></section>');
+  const body = dom.window.document.getElementById('body');
+  const actions = createScratchpadActions({ shell, getScratchpad: () => current, ...createTimerStub(),
+    onHomeConfig: (config) => { current = config.scratchpad; widget.render(body, flagOnCtx(current)); } });
+  const widget = createScratchpadWidget({ textField, actionButton, actions });
+  t.after(() => { widget.dispose(); actions.dispose(); dom.window.close(); });
+  widget.render(body, flagOnCtx(current));
+  const textarea = body.querySelector('#homeScratchpadInput');
+  textarea.value = 'Retained draft';
+  textarea.dispatchEvent(new dom.window.Event('input', { bubbles: true }));
+  body.querySelector('[data-scratchpad-tab="note-2"]').click();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(body.querySelector('#homeScratchpadInput').value, 'Retained draft');
+  assert.equal(current.activeNoteId, 'note-1');
+  failing = false;
+  body.querySelector('[data-scratchpad-tab="note-2"]').click();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(current.notes[0].text, 'Retained draft');
+  assert.equal(current.activeNoteId, 'note-2');
+  assert.equal(body.querySelector('#homeScratchpadInput').value, 'B');
+});
+
 test('generated titles persist canonical English and translate only in the tab presentation', async () => {
   const i18n = require('../renderer/shared/i18n-utils').createI18n();
   i18n.load({ tag: 'qps-ploc', strings: {
@@ -34,7 +90,7 @@ test('generated titles persist canonical English and translate only in the tab p
   const updates = [];
   const shell = { home: { updateConfig: async (patch) => {
     updates.push(patch);
-    return { links: [], weather: {}, widgets: {}, calendar: {}, focusMode: false,
+    return { links: [], widgets: {}, calendar: {}, focusMode: false,
       showContextualTips: true, scratchpad: { ...state, ...patch.scratchpad } };
   } } };
   const actions = createScratchpadActions({ shell, getScratchpad: () => state,

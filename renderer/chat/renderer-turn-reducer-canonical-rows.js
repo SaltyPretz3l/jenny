@@ -162,6 +162,19 @@
         const body = event.payload && typeof event.payload === 'object' && !Array.isArray(event.payload)
           ? event.payload
           : {};
+        // One compaction hairline per assistant segment, as the projector folds a
+        // message's compactions into one notice: a later one refreshes the row.
+        const primaryId = normalizeId(event.primary_message_id);
+        const compactedRow = event.kind === 'system_notice' && normalizeId(body.subkind) === 'context_compacted' && primaryId
+          ? turn.rows.find((candidate) => candidate && candidate.kind === 'system_notice'
+            && candidate.primary_message_id === primaryId
+            && normalizeId(candidate.payload && candidate.payload.subkind) === 'context_compacted')
+          : null;
+        if (compactedRow) {
+          compactedRow.payload = { ...compactedRow.payload, ...deepCloneJsonValue(body) };
+          ensureRowEvent(compactedRow, event);
+          return true;
+        }
         const row = buildBaseRow('system_notice', turn.turn_id, event);
         row.payload = {
           subkind: normalizeId(

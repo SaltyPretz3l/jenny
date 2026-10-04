@@ -273,7 +273,7 @@ def test_posix_group_termination_escalates_after_grace(
     )
     monkeypatch.setattr(protocol_module.time, "sleep", lambda _seconds: None)
 
-    protocol_module._terminate_lsp_posix_group(  # noqa: SLF001
+    protocol_module._terminate_lsp_posix_group(
         _Process(),  # type: ignore[arg-type]
         123,
         timeout_seconds=0.01,
@@ -362,10 +362,10 @@ def test_windows_containment_degradation_identifies_failure_stage(  # noqa: C901
         if failure_stage == "verify":
             # The assign took; only the probe was refused. The handle stays
             # open until stop, when a kill is the intent.
-            assert session._job_object is jobs[0]  # noqa: SLF001
+            assert session._job_object is jobs[0]
             assert jobs[0].closed is False
         else:
-            assert session._job_object is None  # noqa: SLF001
+            assert session._job_object is None
             if jobs:
                 assert jobs[0].closed is True
     finally:
@@ -399,12 +399,12 @@ def test_windows_lsp_teardown_tree_kills_before_closing_job(
     monkeypatch.setattr(protocol_module.os, "name", "nt")
     monkeypatch.setattr(protocol_module.subprocess, "run", run)
     session = LSPProcessSession(command=("language-server",), workspace_root=tmp_path)
-    session._process = _Process()  # type: ignore[assignment]  # noqa: SLF001
-    session._job_object = _JobObject()  # type: ignore[assignment]  # noqa: SLF001
+    session._process = _Process()  # type: ignore[assignment]
+    session._job_object = _JobObject()  # type: ignore[assignment]
     try:
-        session._stop_process()  # noqa: SLF001
+        session._stop_process()
     finally:
-        session._reader.shutdown(wait=False, cancel_futures=True)  # noqa: SLF001
+        session._reader.shutdown(wait=False, cancel_futures=True)
 
     assert events[0] == (
         "taskkill",
@@ -436,9 +436,72 @@ def test_server_crash_reports_bounded_stderr_tail(tmp_path: Path) -> None:
 
 
 def test_zero_stderr_tail_limit_discards_decoded_chunks() -> None:
-    tail = protocol_module._StderrTail(io.BytesIO(b"x" * 10_000), max_chars=0)  # noqa: SLF001
+    tail = protocol_module._StderrTail(io.BytesIO(b"x" * 10_000), max_chars=0)
 
-    tail._read_loop()  # noqa: SLF001
+    tail._read_loop()
 
-    assert tail._text == ""  # noqa: SLF001
+    assert tail._text == ""
     assert tail.tail() == ""
+
+
+@pytest.mark.parametrize("operation", ["request", "notify"])
+def test_transmission_is_included_in_operation_deadline(tmp_path, monkeypatch, operation):
+    import threading
+
+    released = threading.Event()
+    class BlockedPipe:
+        def write(self, _data):
+            assert released.wait(2)
+        def flush(self):
+            pass
+    class Process:
+        stdin = BlockedPipe()
+        stdout = io.BytesIO()
+        def poll(self):
+            return None
+    session = LSPProcessSession(command=("fake",), workspace_root=tmp_path,
+                                limits=LSPProcessSessionLimits(request_timeout_seconds=0.02))
+    monkeypatch.setattr(session, "start", lambda: None)
+    monkeypatch.setattr(session, "_require_process", Process)
+    monkeypatch.setattr(session, "_stop_process", released.set)
+    monkeypatch.setattr(session, "_read_message", lambda _p: {"id": 1, "result": {}})
+    try:
+        with pytest.raises(LSPRequestTimeout):
+            getattr(session, operation)("test", {})
+    finally:
+        released.set()
+        session._reader.shutdown(wait=True)
+
+
+
+def test_close_can_terminate_without_waiting_for_operation_lock(tmp_path, monkeypatch):
+    import threading
+    import time
+    from types import SimpleNamespace
+
+    release = threading.Event()
+    acquired = threading.Event()
+    session = LSPProcessSession(command=("fake",), workspace_root=tmp_path,
+                                limits=LSPProcessSessionLimits(close_timeout_seconds=0.01))
+    process = SimpleNamespace(poll=lambda: None, stdin=io.BytesIO(), stdout=io.BytesIO())
+    session._process = process
+    monkeypatch.setattr(session, "start", lambda: None)
+    monkeypatch.setattr(session, "_require_process", lambda: process)
+    monkeypatch.setattr(session, "_stop_process", release.set)
+    monkeypatch.setattr(session, "_read_message", lambda _p: {"id": 1, "result": None})
+    def hold_lock():
+        with session._lock:
+            acquired.set()
+            release.wait(0.3)
+    holder = threading.Thread(target=hold_lock)
+    holder.start()
+    assert acquired.wait(1)
+    try:
+        started = time.monotonic()
+        session.close()
+        assert time.monotonic() - started < 0.2
+        assert release.is_set()
+    finally:
+        release.set()
+        holder.join(1)
+        session._reader.shutdown(wait=True)

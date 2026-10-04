@@ -50,7 +50,7 @@ function buildBackendService(overrides = {}) {
   const emitter = createFakeBackendServiceEmitter();
   let statusCallback = null;
   return {
-    featureFlags: { chatgpt_plan_meter: true },
+    featureFlags: {},
     currentEngineType: 'chatgpt',
     chatgptAuthService: {
       getAccountId: () => 'acct-1',
@@ -165,20 +165,6 @@ test('currentEngineType is compared case-insensitively like the rest of the engi
   registerChatGptPlanUsageIpc(ipc, deps);
   const payload = await ipc.invoke.get('chatgpt-plan-usage:get-snapshot')();
   assert.equal(payload.engine_active, true);
-});
-
-test('flag off registers zero channels and returns a no-op teardown, without throwing', () => {
-  const ipc = createFakeIpcMain();
-  const { deps } = baseDeps({
-    backendService: buildBackendService({ featureFlags: { chatgpt_plan_meter: false } }),
-  });
-  let teardown;
-  assert.doesNotThrow(() => {
-    teardown = registerChatGptPlanUsageIpc(ipc, deps);
-  });
-  assert.equal(ipc.invoke.size, 0);
-  assert.equal(typeof teardown, 'function');
-  assert.doesNotThrow(() => teardown());
 });
 
 test('a missing backendService registers zero channels and does not throw', () => {

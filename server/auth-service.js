@@ -13,7 +13,7 @@ const {
   hashOpaque,
 } = require('./auth-store');
 
-const PASSWORD_MIN_BYTES = 8;
+const PASSWORD_MIN_BYTES = 12;
 const PASSWORD_MAX_BYTES = 1024;
 const TOKEN_BYTES = 32;
 const SESSION_ID_BYTES = 16;
@@ -26,9 +26,11 @@ function invalid(code, message) {
   return { ok: false, code, message };
 }
 
-function validPassword(password) {
+// Login accepts any password within the maximum so owners who set a shorter one under the
+// earlier 8-byte minimum can still sign in; the 12-byte minimum applies when one is set.
+function validPassword(password, minBytes = PASSWORD_MIN_BYTES) {
   return typeof password === 'string'
-    && Buffer.byteLength(password, 'utf8') >= PASSWORD_MIN_BYTES
+    && Buffer.byteLength(password, 'utf8') >= minBytes
     && Buffer.byteLength(password, 'utf8') <= PASSWORD_MAX_BYTES;
 }
 
@@ -168,7 +170,7 @@ class AuthService {
   }
 
   async initializePassword(password) {
-    if (!validPassword(password)) return invalid('AUTH_PASSWORD_INVALID', 'Password does not meet the password bounds.');
+    if (!validPassword(password)) return invalid('AUTH_PASSWORD_INVALID', 'Use an owner password of at least 12 bytes and no more than 1024 bytes.');
     try {
       if (this.store.isConfigured()) return invalid('AUTH_ALREADY_INITIALIZED', 'Authentication is already initialized.');
       const record = await this._hashPassword(password);
@@ -231,7 +233,7 @@ class AuthService {
       return invalid(error?.code || 'AUTH_STORE_UNAVAILABLE', 'Authentication is unavailable.');
     }
     if (state.password === null) return invalid('AUTH_NOT_INITIALIZED', 'Authentication has not been initialized.');
-    if (!validPassword(password)) {
+    if (!validPassword(password, 1)) {
       this._log('WARN', 'auth.login_failed', { code: 'AUTH_INVALID_CREDENTIALS' });
       return invalid('AUTH_INVALID_CREDENTIALS', 'Invalid credentials.');
     }

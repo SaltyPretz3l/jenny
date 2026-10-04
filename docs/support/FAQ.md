@@ -1,6 +1,6 @@
 ---
 kind: docs-index
-last_reviewed: 2026-09-09
+last_reviewed: 2026-10-03
 status: active
 ---
 
@@ -9,7 +9,9 @@ status: active
 Answers to the questions that come up most often. For symptom-to-fix
 mappings see [TROUBLESHOOTING.md](TROUBLESHOOTING.md); the developer-facing
 error code registry lives at
-[docs/operations/error-codes.md](../operations/error-codes.md).
+[docs/operations/error-codes.md](../operations/error-codes.md). These answers
+track current source after 1.2.0; check the [release notes](../../RELEASE_NOTES.md)
+for features and qualification in the package you installed.
 
 ## Installing and updating
 
@@ -24,8 +26,8 @@ HTTPS before you explicitly install them.
 
 ### How do updates work?
 
-Jenny never checks for updates on its own. Open **Settings → About &
-Updates → Check for Updates**. This contacts GitHub and requires internet access;
+Jenny never checks for updates on its own. Open **Settings → Profile, data & updates → About & Updates →
+Check for Updates**. This contacts GitHub and requires internet access;
 it checks published stable releases, not source commits or bare tags. Local
 model inference can keep working offline. Force local inference does not block
 update traffic. Checks send no chat history, credentials, or per-install staging
@@ -45,11 +47,11 @@ disconnected machine, transfer an installer obtained on another machine.
 
 ### Can I run Jenny on macOS or Linux?
 
-Windows is the supported desktop platform. Jenny 1.1.0 provides a Windows
+Windows is the supported desktop platform. Jenny 1.2.0 provides a Windows
 installer and experimental Linux x64 AppImage/deb packages. macOS remains
 source-only pending Apple Silicon installation/launch qualification; no Mac
 installer is published. See the
-[release assets](https://github.com/SaltyPretz3l/jenny/releases/tag/v1.1.0).
+[release assets](https://github.com/SaltyPretz3l/jenny/releases/tag/v1.2.0).
 
 Linux targets glibc 2.35 or newer (Ubuntu 22.04+, with compatible distributions
 as candidates). Installed-format, upgrade and bare-metal checks remain separate
@@ -58,7 +60,7 @@ Windows/Linux implementations; managed Python is unavailable on macOS.
 Mac signing and hardware qualification remain outstanding; use source setup
 until a release supplies a qualified artifact.
 
-### What is new in the 1.1 interface?
+### What is in the current interface?
 
 Settings > Appearance selects one of 19 interface languages and an optional
 24-hour clock. Restart for language/direction changes; the 24-hour preference
@@ -68,7 +70,11 @@ to English. Report wording problems with the language and screen name.
 
 The chat sidebar supports multiselect, bulk archive/restore, and confirmed
 deletion with Undo. Waiting indicators distinguish approvals, plan review and
-questions that need your input. See the [release changelog](../../RELEASE_NOTES.md).
+questions that need your input. The 1.2.0 release adds PDF/DOCX Workspace
+editing, projects and queued pause/resume work. Current source groups profile,
+data removal and updates under **Settings → Profile, data & updates** and
+work inspection under **Diagnostics → Runs**. See the
+[release changelog](../../RELEASE_NOTES.md).
 
 ### Does Auto run mean Jenny can work unsupervised?
 
@@ -76,11 +82,12 @@ No. Auto displays an Auto indicator and remembers acknowledgement of its warning
 in the current app profile, including across restarts and resumed conversations.
 Clearing local app storage or changing the warning version asks again. This
 acknowledgement does not grant tool permissions or change the selected run mode.
-The unattended guard defaults to 10 minutes of system inactivity before the next
-side-effecting call needs approval; user-pre-granted calls remain an exception.
-An unanswered approval ends the turn after the existing 10-minute timeout.
-Settings > Tools controls the guard (0 disables it) and safety mode. Review
-results and supervise tool use.
+The inactivity guard defaults **Off** (0); Settings > Tools can enable a
+1–120 minute threshold. Existing saved thresholds are preserved on upgrade.
+An ordinary unanswered approval ends after ten minutes; an inactivity-guard
+approval can wait up to four hours. The automatic approval streak cap defaults
+to 50 consecutive approvals in one turn (0 disables it). These settings do not
+grant a pending approval. Review results and supervise tool use.
 
 ### Which Docker workflow should I choose?
 
@@ -91,16 +98,18 @@ Electron and isolate foreground commands. Docker is optional for ordinary
 desktop chat. In either sandbox, command-written files are discarded; typed
 file tools make durable edits. Capabilities and qualification differ by mode.
 
-### Can I use Remote Control from this public checkout?
+### What happened to Remote Control?
 
-The core is integrated, but the current export excludes its signed plugin and
-relay/portal distribution. Do not run private signing instructions or assume
-that the Settings entry means it is installed. See
-[Remote Control availability](../operations/REMOTE_CONTROL.md).
+Remote Control was removed on 2026-10-02. It may return later as a new design.
+When you update, Jenny deletes any stored phone pairing record and uninstalls
+the bundled Remote Control plugin if your profile still has it; your chats are
+not touched. To use Jenny from a browser, see the
+[browser quick start](../operations/HOSTED_QUICKSTART.md).
 
 ### How do I uninstall Jenny without losing my chats?
 
-Open **Settings → Data & Privacy** and choose **Uninstall Jenny**, then
+Open **Settings → Profile, data & updates → Data & removal** and choose
+**Uninstall Jenny**, then
 **Remove app only**. Jenny drains the running app and keeps the profile for
 automatic reuse after reinstall. The silent Windows uninstall and dragging
 the macOS app to Trash also preserve data. On Linux, run
@@ -141,8 +150,9 @@ with no user data attached).
 Yes, once a model is pulled. The local engines run without a network. Tools
 that need the network (web search, web browsing, remote MCP) fail when it is
 unavailable, and the core chat loop is unaffected. **Settings → Offline**
-can force local inference so a cloud engine, if you ever configure one, is
-never used.
+can force local inference so the optional ChatGPT and Codex CLI routes are
+not used. This setting confines inference; it does not disable all network tools,
+model downloads or explicit update checks.
 
 ### Where does Jenny store my data?
 
@@ -156,16 +166,19 @@ Inside it: the session store (your conversations), the memory database, the
 personality workspace under `personality/default-workspace/`, MCP
 configuration in `mcp-servers.json`, process logs under `logs/`, and
 diagnostic dumps under `diagnostics/`. Back the whole folder up if you care
-about transcript history, or use **Settings → Data & Privacy** to create a
-verified archive.
+about transcript history, or use **Settings → Profile, data & updates → Data & removal** to create a
+verified archive. Conversation files are local JSON; safeStorage encrypts
+credentials, not the transcript store. Use operating-system disk protection
+and the encrypted archive option when you need at-rest protection.
 
 ### What is the difference between memory and long-term notes?
 
-**Long-term notes** (Settings → Memory) is a single text you write: durable
-facts and preferences sent with every message. **Approved memories** are
-records Jenny proposes after a turn; nothing becomes durable until you
-choose Remember or Approve, and you can edit or delete each one in the same
-section.
+**Long-term notes** (Settings → Memory) is the legacy `MEMORY.md` text.
+Current source sends it only to General-project chats; Voice and About you
+are shared preferences. **Approved memories** are project-scoped records
+Jenny proposes after a turn. Nothing becomes an approved memory until you
+choose Remember or Approve. Use the project filter in Memory to review, edit
+or delete records.
 
 ## Models and engines
 
@@ -174,8 +187,11 @@ section.
 Jenny is local-first. The engines that ship are [Ollama](https://ollama.com/),
 a managed `llama-server`, and any OpenAI-compatible local server you point
 her at (vLLM, LM Studio, a hand-run llama.cpp). None needs a hosted key.
-Cloud engines are not configured out of the box; the ChatGPT subscription
-connector requires a separately supplied signed plugin; availability must be confirmed in the release notes.
+Cloud inference is optional. Current source provides **Settings → Models →
+Cloud models → Sign in with ChatGPT**, using Jenny's own OAuth flow rather
+than a plugin. The Codex CLI row uses the installed `codex` command and its
+own login; Jenny never reads or copies that credential file. Confirm source
+changes and package availability in the release notes.
 
 ### Which model should I use?
 
@@ -186,7 +202,7 @@ that fits your GPU and RAM, with download and disk estimates. The default is
 With more VRAM the library offers the Q8_0 build or the Gemma 4 tiers;
 Gemma 4 E4B is the pick when you need image input. Switch any time from the
 model picker next to the composer, or with **Use** on a row of **Settings →
-Model library**. Jenny's voice is model-bound: if the persona suddenly feels different, check which
+Models**. Jenny's voice is model-bound: if the persona suddenly feels different, check which
 model is active before editing personality files.
 
 ### Can I use a GGUF file I already have?
@@ -216,22 +232,24 @@ remove the image or switch to a vision model such as Gemma 4 E4B.
 
 The model is loaded into memory on the first turn after the engine starts.
 Later turns reuse the loaded weights and start much faster. If every turn
-is slow, see [TROUBLESHOOTING.md ` First visible token is slow](TROUBLESHOOTING.md#first-visible-token-is-slow).
+is slow, see [Troubleshooting: First visible token is slow](TROUBLESHOOTING.md#first-visible-token-is-slow).
 
 ## Using Jenny
 
 ### What do Ask, Auto, and Plan mean?
 
-The **Run mode** control next to the composer. **Ask**: Jenny asks before
-every side-effecting tool call. **Auto**: tools run without asking, except
-destructive shell commands, which always stop for approval. **Plan**:
-read-only planning; Jenny proposes a plan you approve before anything is
-written. Plan mode works best with larger models.
+Use the **Run mode** control next to the composer. **Ask** applies each tool's
+approval policy; read-only inspection does not necessarily ask. **Auto** permits
+policy-approved automatic calls, subject to saved rules, safety mode, the streak
+cap and inactivity guard; destructive commands still ask. **Plan** permits
+inspection and proposals, with a narrow plan-document capability. Ordinary
+project writes and commands require an approved transition to execution.
 
 ### What does "Always allow" cover?
 
-It saves a rule for that tool **and** the path or target the call named,
-not for the tool in general. Every saved rule is listed under **Settings →
+For a path-bearing call it saves a rule for the tool and the named path or
+target. A pathless tool decision can apply to the whole tool; review the scope
+shown on the approval card. Every saved rule is listed under **Settings →
 Tools → Approval rules** with a Remove action.
 
 ### Why is a tool blocked?
@@ -264,11 +282,15 @@ Extensions → Skills**. Authoring is covered in [docs/SKILLS.md](../SKILLS.md).
 
 ### Are there plugins?
 
-The plugin host ships in 1.0, but no plugins are bundled. Install a
-`.jenny-plugin` package from **Settings → Plugins & Extensions → Install
-plugin** (or drop the file there). Unsigned plugins are labelled and run in
-the developer profile; privileged plugin kinds are refused without a
-signature. First-party plugins are released separately.
+The retained package lifecycle supports skills, prompts, color themes, settings
+schemas and sandboxed panel/artifact views under **Settings → Plugins &
+Extensions → Install plugin**. Current source bundles no plugin packages; ChatGPT sign-in
+is now a core Models setting. Use skill folders and standalone MCP servers
+for new extensions. Executable plugin tiers, plugin MCP, workflows, hooks,
+engine adapters and catalogs are retired; new packages declaring a retired
+kind are refused, and installed leftovers keep those parts inert. Unsigned
+packages need `JENNY_ENABLE_PLUGIN_DEVELOPER_PROFILE=1` for intake and loading.
+See the [retained authoring guide](../plugins/README.md).
 
 ### Where is the IDE?
 
@@ -278,7 +300,7 @@ root you chose.
 
 ### How do I run setup again?
 
-**Settings → Local Profile & Setup → Run setup again**. It reopens the
+**Settings → Profile, data & updates → Run setup again**. It reopens the
 first-run checklist without deleting conversations or private data.
 
 ## Reporting problems

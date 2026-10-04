@@ -7,11 +7,12 @@ const { findTrustedPublisher } = require('../package/trusted-publisher-roots');
 const { DEVELOPER_UNSIGNED_KEY_ID } = require('../package/distribution-package-intake');
 const { readCommittedState } = require('../lifecycle/commit-sequence');
 const { reverifyInstalledPackage } = require('../runtime/declarative-compiler');
+const { declaresRetiredKind } = require('../runtime/declarative-compiler-constants');
 const { sourceTrustMatches } = require('./source-intake');
 const { putDataSnapshot } = require('../store/data-snapshot-store');
 const { putEvidence } = require('../store/distribution-evidence-store');
-const { readNetworkConsent } = require('../store/network-consent-store');
 const { recordDigest } = require('./distribution-recovery');
+const { unmanagedPolicyGrantRef } = require('../policy-grant-ref');
 
 const ZERO_DIGEST = '0'.repeat(64);
 const EMPTY_ADVISORY_SNAPSHOT = Object.freeze({
@@ -25,15 +26,17 @@ function digest(value) {
   return crypto.createHash('sha256').update(stableStringify(value), 'utf8').digest('hex');
 }
 
-function distributionConsent(document) {
-  const grant = document?.purpose_grants?.find((item) => (
-    item.purpose === 'plugin_payloads'
-  ));
-  return {
-    granted: document?.system_authorized === true && grant?.enabled === true,
-    allowed_scopes: Array.isArray(grant?.scopes) ? [...grant.scopes] : [],
-  };
-}
+// The network broker and its consent store are retired. Generations still
+// carry a well-formed policy_grant_ref.network_consent_digest: the digest of
+// the empty consent document, which is what a profile with no consent file
+// always computed.
+const EMPTY_NETWORK_CONSENT_DIGEST = digest({
+  network_consent_schema_version: 1,
+  revision: 1,
+  system_authorized: false,
+  purpose_grants: [],
+  plugin_consents: [],
+});
 
 function sourceTrustIsValid(identity, trust, key, archiveDigest) {
   if (key !== DEVELOPER_UNSIGNED_KEY_ID) {
@@ -68,8 +71,6 @@ function sourceTrustRecord({ acquired, verified, trustRoots, now }) {
   }
   let source = acquired.sourceIdentity;
   if (source.kind === 'local_package') source = { ...source, sbom_exempt: true };
-  if (source.kind === 'signed_catalog') source = { ...source, sbom_attested: false };
-  if (source.kind === 'offline_mirror') source = { ...source, sbom_attested: false };
   return {
     source_trust_schema_version: 1,
     publisher_id: verified.publisher_id,
@@ -92,44 +93,15 @@ function createProductionDistributionContextFactory({
   verifyPackage,
   participantPrepare = null,
   confirmWarning = null,
-  acquireCatalogTarget = null,
-  refreshCatalog = null,
   now = () => new Date().toISOString(),
-  managedPolicy = null,
   developerProfileEnabled = false,
 } = {}) {
   return async function createDistributionContext(request, internal = {}) {
-    const managed = managedPolicy?.status?.() || null;
-    const managedToken = managedPolicy?.capture?.() || null;
-    const operation = request?.operation || {};
-    const mutating = ['install', 'update', 'downgrade'].includes(operation.kind);
-    if (managed?.status === 'blocked' && mutating) {
-      return { ok: false, reason: managed.reason || 'managed_policy_unavailable' };
-    }
-    if (managed?.status === 'active' && mutating) {
-      if (managed.installation === 'deny') {
-        return { ok: false, reason: 'managed_policy_installation_denied' };
-      }
-      if (managed.update_ring === 'frozen' && operation.kind !== 'install') {
-        return { ok: false, reason: 'managed_policy_update_ring_frozen' };
-      }
-      const sourceKind = operation.source_kind;
-      if (sourceKind && !managed.allowed_source_kinds.includes(sourceKind)) {
-        return { ok: false, reason: 'managed_policy_source_denied' };
-      }
-      const publisherId = operation.target?.publisher_id;
-      if (publisherId && managed.allowed_publishers.length
-        && !managed.allowed_publishers.includes(publisherId)) {
-        return { ok: false, reason: 'managed_policy_publisher_denied' };
-      }
-    }
     if (typeof trustRootsProvider !== 'function') {
       return { ok: false, reason: 'publisher_trust_unavailable' };
     }
     const trustRoots = await trustRootsProvider();
     if (!trustRoots?.ok) return trustRoots || { ok: false, reason: 'publisher_trust_unavailable' };
-    const consent = await readNetworkConsent(facade, baseDir);
-    if (!consent.ok) return consent;
     const committed = await readCommittedState(facade, baseDir);
     const candidates = [];
     const eligiblePlugins = [];
@@ -170,86 +142,37 @@ function createProductionDistributionContextFactory({
         provides: [],
       });
     }
-    const installedTarget = (committed.generation?.plugins || []).find((plugin) => (
-      plugin.publisher_id === operation.target?.publisher_id
-      && plugin.plugin_id === operation.target?.plugin_id
-    ));
-    if (['update', 'downgrade'].includes(operation.kind)
-      && ['signed_catalog', 'offline_mirror'].includes(operation.source_kind)
-      && installedTarget?.publisher_key_id === DEVELOPER_UNSIGNED_KEY_ID) {
-      return { ok: false, code: PLUGIN_ERROR_CODES.POLICY_BLOCKED,
-        reason: 'developer_install_not_updatable' };
-    }
     const advisorySnapshot = EMPTY_ADVISORY_SNAPSHOT;
-    const networkConsent = distributionConsent(consent.document);
-    const managedReference = (reference) => managedPolicy?.policyGrantRef?.(reference) || reference;
-    const currentManagedState = () => managedPolicy?.status?.() || managed;
-    const assertManagedPolicyCurrent = () => {
-      const current = currentManagedState();
-      if (managedToken && managedPolicy?.isCurrent?.(managedToken) !== true) {
-        return { ok: false, reason: 'managed_policy_authority_stale' };
-      }
-      if (current?.status === 'blocked') {
-        return { ok: false, reason: current.reason || 'managed_policy_unavailable' };
-      }
-      if (current?.status === 'active' && current.installation === 'deny') {
-        return { ok: false, reason: 'managed_policy_installation_denied' };
-      }
-      return { ok: true };
-    };
-    const validateManagedCandidate = ({ sourceIdentity, verified }) => {
-      const policy = assertManagedPolicyCurrent();
-      if (!policy.ok) return policy;
-      const current = currentManagedState();
-      if (current?.status !== 'active') return { ok: true };
-      if (!current.allowed_source_kinds.includes(sourceIdentity?.kind)) {
-        return { ok: false, reason: 'managed_policy_source_denied' };
-      }
-      if (current.allowed_publishers.length
-        && !current.allowed_publishers.includes(verified?.publisher_id)) {
-        return { ok: false, reason: 'managed_policy_publisher_denied' };
-      }
-      if (current.managed_source_fingerprints.length
-        && !current.managed_source_fingerprints.includes(digest(sourceIdentity))) {
-        return { ok: false, reason: 'managed_policy_source_fingerprint_denied' };
-      }
-      if (current.require_sbom && verified?.package_metadata?.sbom_present !== true) {
-        return { ok: false, reason: 'managed_policy_sbom_required' };
-      }
-      if (current.require_build_provenance
-        && verified?.package_metadata?.build_provenance_present !== true) {
-        return { ok: false, reason: 'managed_policy_build_provenance_required' };
-      }
-      return { ok: true };
-    };
+    // Managed (enterprise) policy is retired: every install is unmanaged.
+    const managedReference = unmanagedPolicyGrantRef;
+    // Only the NEW package is refused for retired kinds. Reverification of the
+    // installed set must keep accepting leftover packages.
+    const validateNewCandidate = (candidate) => (declaresRetiredKind(candidate.verified?.manifest)
+      ? { ok: false, reason: 'contribution_kind_retired' } : { ok: true });
     const context = {
       trustRoots,
       developerProfile: developerProfileEnabled === true && internal.developerProfile === true,
       readLocalPackage: async () => internal.localPackage || readLocalPackage(),
-      networkConsent,
       publisherTrustDigest: digest(trustRoots.value),
-      tufRootDigest: ZERO_DIGEST,
+      tufRootDigest: ZERO_DIGEST, // no TUF root: catalogs are retired
       advisoryDigest: digest(advisorySnapshot),
       sourcePolicyDigest: digest({
         https_required: true,
         credential_helpers: false,
         scripts: false,
-        managed_policy_revision: managed?.revision || 0,
-        update_ring: managed?.update_ring || 'stable',
-        allowed_source_kinds: managed?.allowed_source_kinds || [],
-        allowed_publishers: managed?.allowed_publishers || [],
-        require_sbom: managed?.require_sbom === true,
-        require_build_provenance: managed?.require_build_provenance === true,
+        managed_policy_revision: 0,
+        update_ring: 'stable',
+        allowed_source_kinds: [],
+        allowed_publishers: [],
+        require_sbom: false,
+        require_build_provenance: false,
       }),
       contractLockDigest,
       procurementPolicy: Object.freeze({
-        require_sbom: managed?.require_sbom === true,
-        require_build_provenance: managed?.require_build_provenance === true,
+        require_sbom: false,
+        require_build_provenance: false,
       }),
-      validateManagedCandidate,
-      assertManagedPolicyCurrent,
-      commitAuthority: (operation) => managedPolicy?.withCurrentPolicy?.(managedToken, operation)
-        || operation(),
+      validateManagedCandidate: validateNewCandidate,
       currentPolicyReference: (_generationSchemaVersion, fallback) => managedReference(fallback),
       advisorySnapshot,
       sourceTrust: null,
@@ -260,13 +183,13 @@ function createProductionDistributionContextFactory({
         policy_snapshot_digest: ZERO_DIGEST,
         policy_revision: 0,
         grant_set_digest: ZERO_DIGEST,
-        network_consent_digest: consent.digest,
+        network_consent_digest: EMPTY_NETWORK_CONSENT_DIGEST,
       }),
       policyGrantRefV4: managedReference({
         policy_snapshot_digest: ZERO_DIGEST,
         policy_revision: 0,
         grant_set_digest: ZERO_DIGEST,
-        network_consent_digest: consent.digest,
+        network_consent_digest: EMPTY_NETWORK_CONSENT_DIGEST,
         restricted_runtime_policy_digest: digest({
           stage: 6,
           ambient_authority: false,
@@ -278,7 +201,7 @@ function createProductionDistributionContextFactory({
         policy_snapshot_digest: ZERO_DIGEST,
         policy_revision: 0,
         grant_set_digest: ZERO_DIGEST,
-        network_consent_digest: consent.digest,
+        network_consent_digest: EMPTY_NETWORK_CONSENT_DIGEST,
         restricted_runtime_policy_digest: digest({
           stage: 7, ambient_authority: false, network: 'brokered', secrets: 'handle_only',
         }),
@@ -293,7 +216,7 @@ function createProductionDistributionContextFactory({
         policy_snapshot_digest: ZERO_DIGEST,
         policy_revision: 0,
         grant_set_digest: ZERO_DIGEST,
-        network_consent_digest: consent.digest,
+        network_consent_digest: EMPTY_NETWORK_CONSENT_DIGEST,
         restricted_runtime_policy_digest: digest({ stage: 8, ambient_authority: false,
           network: 'brokered', secrets: 'handle_only' }),
         view_policy_digest: digest({ stage: 8, sandbox: true, persistent_partition: false,
@@ -320,18 +243,8 @@ function createProductionDistributionContextFactory({
         }
         return true;
       },
-      validatePolicy: async (generation) => {
-        if (!assertManagedPolicyCurrent().ok) return false;
-        for (const plugin of generation?.plugins || []) {
-          const checked = await reverifyForContext(plugin);
-          if (checked.excludedDeveloper) continue;
-          if (!checked.ok || !validateManagedCandidate({
-            sourceIdentity: checked.package_record.source_identity,
-            verified: checked.verdict,
-          }).ok) return false;
-        }
-        return true;
-      },
+      // No managed policy: trust reverification (validateTrust) is the whole check.
+      validatePolicy: async () => true,
       validateAdvisories: async () => true,
       validateRollbackData: async () => true,
       detached: true,
@@ -422,13 +335,12 @@ function createProductionDistributionContextFactory({
       },
       confirmWarning,
       ...(typeof participantPrepare === 'function' ? { participantPrepare } : {}),
-      ...(typeof acquireCatalogTarget === 'function' ? { acquireCatalogTarget } : {}),
-      ...(typeof refreshCatalog === 'function' ? { refreshCatalog } : {}),
     };
+    // Catalog, offline-mirror, git and https_url sources are retired: only a
+    // local package can be acquired, so fail closed before any context.
     const sourceKind = request?.operation?.source_kind;
-    if (sourceKind && !['local_package', 'offline_mirror'].includes(sourceKind)
-      && !networkConsent.granted) {
-      return { ok: false, reason: 'system_network_authorization_required' };
+    if (sourceKind && sourceKind !== 'local_package') {
+      return { ok: false, reason: 'distribution_source_retired' };
     }
     return { ok: true, value: context };
   };
@@ -437,7 +349,6 @@ function createProductionDistributionContextFactory({
 module.exports = {
   ZERO_DIGEST,
   digest,
-  distributionConsent,
   sourceTrustIsValid,
   createProductionDistributionContextFactory,
 };

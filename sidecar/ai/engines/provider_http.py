@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 import logging
 import re
+import ssl
+import threading
 from contextlib import AbstractContextManager
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -13,6 +15,7 @@ from typing import Any
 
 import httpx
 
+from sidecar.ai.config import read_environment_value
 from sidecar.ai.engines.http_utils import (
     raise_if_cancelled as _raise_if_cancelled_shared,
 )
@@ -77,6 +80,25 @@ _SSL_ERROR_CODES = frozenset(
 )
 
 
+# httpx.Client() builds a fresh certifi SSL context per client, ~160 ms on
+# Windows even for a plain-http loopback engine (P3-PERF-A: the per-turn Ollama
+# catalog probe built two). One verified context, keyed by the CA overrides
+# httpx itself honors, serves every provider client; SSLContext is safe to
+# share across threads.
+_SHARED_SSL_CONTEXTS: dict[tuple[str, str], ssl.SSLContext] = {}
+_SHARED_SSL_CONTEXTS_LOCK = threading.Lock()
+
+
+def _shared_ssl_context() -> ssl.SSLContext:
+    key = (read_environment_value("SSL_CERT_FILE"), read_environment_value("SSL_CERT_DIR"))
+    with _SHARED_SSL_CONTEXTS_LOCK:
+        context = _SHARED_SSL_CONTEXTS.get(key)
+        if context is None:
+            context = httpx.create_ssl_context()
+            _SHARED_SSL_CONTEXTS[key] = context
+        return context
+
+
 @dataclass(frozen=True)
 class TransportErrorDetails:
     code: str
@@ -125,6 +147,7 @@ class ProviderHttpService:
             base_url=base_url.rstrip("/"),
             timeout=timeout_seconds,
             headers=headers,
+            verify=_shared_ssl_context(),
         )
 
     @property

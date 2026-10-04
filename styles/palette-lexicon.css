@@ -37,30 +37,26 @@
   --widget-atomic-burst-flare-color: rgba(255, 248, 232, 0.94);
   --widget-atomic-burst-link-color: rgba(213, 155, 123, 0.58);
   --widget-atomic-burst-wave-color: rgba(200, 143, 82, 0.86);
-  --widget-atomic-burst-size: 28;
-  --widget-atomic-burst-density: 8.0;
 
   /* ── Circuit trace — copper grid, dust-blue hover line for contrast, warm-dusk trace heads, gold accent ── */
-  --widget-circuit-trace-grid-color: rgba(200, 143, 82, 0.16);
+  --widget-circuit-trace-grid-color: rgba(200, 143, 82, 0.32);
   --widget-circuit-trace-line-color: rgba(166, 184, 207, 0.92);
   --widget-circuit-trace-glow-color: rgba(213, 155, 123, 0.92);
-  --widget-circuit-trace-accent-color: rgba(224, 176, 114, 0.92);
-  --widget-circuit-trace-hex-size: 38;
+  --widget-circuit-trace-accent-color: rgba(224, 176, 114, 0.70);
+  --widget-circuit-trace-inner-color: rgba(170, 130, 90, 0.10);
+  --widget-circuit-trace-shadow-color: rgba(0, 0, 0, 0.28);
   --widget-circuit-trace-density: 0.9;
 
   /* ── Reactive grid: copper idle, gold active ── */
   --widget-reactive-grid-dot-idle: rgba(200, 143, 82, 0.22);
   --widget-reactive-grid-dot-active: rgba(224, 176, 114, 0.96);
-  --widget-reactive-grid-dot-glow: rgba(200, 143, 82, 0.42);
 
   /* ── Playlist scroll — copper line, dust-blue ghosts, gold pad accents ── */
   --playlist-scroll-line-color: rgba(216, 156, 92, 0.50);
   --playlist-scroll-lane-alpha: 0.10;
   --playlist-scroll-bar-alpha: 0.18;
   --playlist-scroll-sub-alpha: 0.07;
-  --playlist-scroll-band-alpha: 0.04;
   --playlist-scroll-ghost-color: rgba(166, 184, 207, 0.20);
-  --playlist-scroll-pad-color: rgba(224, 176, 114, 0.06);
   --playlist-scroll-accent-color: rgba(216, 156, 92, 0.62);
 
   --shadow-soft: 0 20px 44px rgba(0, 0, 0, 0.34);

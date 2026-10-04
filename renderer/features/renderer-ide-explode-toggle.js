@@ -1,9 +1,9 @@
 /* renderer/features/renderer-ide-explode-toggle.js — the Code | Exploded
- * segmented control shown in #ideViewModeBar for TS/JS file tabs when the
- * workspace_exploded_view flag is on. Reflects the active tab's viewMode and
- * calls onSelect(mode) on click. Built with createElement (no HTML-string
- * primitives). The controller decides visibility (flag + file-tab + TS/JS) and
- * passes it in; this module only paints + reports clicks. UMD. */
+ * segmented control shown in #ideViewModeBar for TS/JS file tabs. Reflects the
+ * active tab's viewMode and calls onSelect(mode) on click. Built with
+ * createElement (no HTML-string primitives). The controller decides visibility
+ * (file-tab + TS/JS) and passes it in; this module only paints + reports
+ * clicks. UMD. */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) {
     module.exports = factory();

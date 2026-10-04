@@ -14,7 +14,6 @@ from urllib.parse import urlparse
 from sidecar.ai.config import RuntimeConfig, codex_cli_unavailable_reason
 from sidecar.ai.engines.base import BaseEngine
 from sidecar.ai.engines.mock import MockEngine
-from sidecar.ai.engines.plugin_host import PluginHostEngine
 from sidecar.runtime.diagnostics import emit_startup_audit_mark, log_event
 
 logger = logging.getLogger(__name__)
@@ -44,7 +43,7 @@ _PROVIDER_ENGINE_EXPORTS = frozenset(
 def __getattr__(name: str) -> Any:
     if name not in _PROVIDER_ENGINE_EXPORTS:
         raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-    from sidecar.ai.engines import provider_registry  # noqa: PLC0415
+    from sidecar.ai.engines import provider_registry
 
     return getattr(provider_registry, name)
 
@@ -215,7 +214,7 @@ def _create_openai_compatible_selection(
     # imported class: monkeypatch.setattr writes into factory.__dict__, and the
     # engine-stub tests rely on that patch winning. Same idiom in every sibling
     # _create_*_selection below -- do not "simplify" it away.
-    from sidecar.ai.engines.provider_registry import (  # noqa: PLC0415
+    from sidecar.ai.engines.provider_registry import (
         OpenAICompatibleEngine,
     )
 
@@ -251,6 +250,10 @@ def _create_openai_compatible_selection(
         def initialize() -> None:
             if resolved_model:
                 engine.load_model(resolved_model)
+            else:
+                # No model to bind: still prove the port answers, or a dead
+                # endpoint reads as a ready runtime.
+                engine.probe_reachable()
 
         return engine, resolved_model, initialize
 
@@ -267,7 +270,7 @@ def _create_replay_selection(
     *,
     capability_profile_store: Any | None = None,
 ) -> EngineSelection:
-    from sidecar.ai.engines.provider_registry import ReplayEngine  # noqa: PLC0415
+    from sidecar.ai.engines.provider_registry import ReplayEngine
 
     engine_class = globals().get("ReplayEngine", ReplayEngine)
     resolved_model = str(config.model or "replay-default").strip() or "replay-default"
@@ -292,7 +295,7 @@ def _create_codex_cli_selection(
     *,
     capability_profile_store: Any | None = None,
 ) -> EngineSelection:
-    from sidecar.ai.engines.provider_registry import CodexCliEngine  # noqa: PLC0415
+    from sidecar.ai.engines.provider_registry import CodexCliEngine
 
     engine_class = globals().get("CodexCliEngine", CodexCliEngine)
     unavailable_reason = codex_cli_unavailable_reason(config)
@@ -327,7 +330,7 @@ def _create_chatgpt_selection(
     provider_authority_check: Callable[[], bool] | None = None,
     capability_profile_store: Any | None = None,
 ) -> EngineSelection:
-    from sidecar.ai.engines.provider_registry import (  # noqa: PLC0415
+    from sidecar.ai.engines.provider_registry import (
         ResponsesDescriptorEngine,
     )
 
@@ -339,13 +342,22 @@ def _create_chatgpt_selection(
             fallback_reason="chatgpt engine unavailable: not signed in",
             capability_profile_store=capability_profile_store,
         )
+    if provider_descriptor is None:
+        # Core since the plugin platform retirement (stage 2): the descriptor no
+        # longer waits for a plugin runtime generation. The engine still
+        # validates it on every build, so a bad constant fails closed.
+        from sidecar.ai.engines.provider_registry import (
+            CORE_CHATGPT_PROVIDER_DESCRIPTOR,
+        )
+
+        provider_descriptor = CORE_CHATGPT_PROVIDER_DESCRIPTOR
     resolved_model = str(config.model or _DEFAULT_CHATGPT_MODEL).strip() or _DEFAULT_CHATGPT_MODEL
     # Reasoning items are replayed once per admitted function_call, so the cache must
     # cover a whole turn's tool budget or long turns lose their oldest replay items.
     # Read as plain RuntimeConfig attributes rather than via iteration_limits: this
     # module is at the sidecar.ai.* import fan-out cap (check_import_fanout.py).
     # Taking the max of both profiles is correct under either without coupling the
-    # factory to is_cloud_loop_profile_enabled; chatgpt is always a cloud engine.
+    # factory to the loop-profile resolver; chatgpt is always a cloud engine.
     max_reasoning_items = max(
         int(getattr(config, "cloud_max_tools_per_turn", 0) or 0),
         int(getattr(config, "max_tools_per_turn", 0) or 0),
@@ -353,7 +365,8 @@ def _create_chatgpt_selection(
 
     def build() -> tuple[BaseEngine, str, Callable[[], None]]:
         engine = engine_class(
-            descriptor=provider_descriptor or {},
+            descriptor=provider_descriptor,
+            model_catalog=config.chatgpt_model_catalog,
             model=resolved_model,
             access_token=access_token,
             account_id=config.chatgpt_account_id,
@@ -379,7 +392,7 @@ def _create_ollama_selection(
     *,
     capability_profile_store: Any | None = None,
 ) -> EngineSelection:
-    from sidecar.ai.engines.provider_registry import OllamaEngine  # noqa: PLC0415
+    from sidecar.ai.engines.provider_registry import OllamaEngine
 
     engine_class = globals().get("OllamaEngine", OllamaEngine)
     resolved_model = str(config.model or "").strip()
@@ -431,7 +444,7 @@ def _create_vllm_selection(
     *,
     capability_profile_store: Any | None = None,
 ) -> EngineSelection:
-    from sidecar.ai.engines.provider_registry import VLLMEngine  # noqa: PLC0415
+    from sidecar.ai.engines.provider_registry import VLLMEngine
 
     engine_class = globals().get("VLLMEngine", VLLMEngine)
     resolved_model = str(config.model or _DEFAULT_VLLM_MODEL).strip() or _DEFAULT_VLLM_MODEL
@@ -448,16 +461,13 @@ def _create_vllm_selection(
     )
 
 
-def create_engine(  # noqa: PLR0913 - central engine wiring owns bounded injected seams.
+def create_engine(
     config: RuntimeConfig,
     *,
     progress_callback: Callable[[dict[str, Any]], None] | None = None,
     capability_profile_store: Any | None = None,
     provider_descriptor: dict[str, Any] | None = None,
     provider_authority_check: Callable[[], bool] | None = None,
-    plugin_host_binding: dict[str, Any] | None = None,
-    plugin_host_invoke: Callable[[dict[str, Any]], Any] | None = None,
-    plugin_host_authority_check: Callable[[], bool] | None = None,
 ) -> EngineSelection:
     """Create and load the active engine for a runtime configuration.
 
@@ -471,15 +481,6 @@ def create_engine(  # noqa: PLR0913 - central engine wiring owns bounded injecte
             config.model,
             capability_profile_store=capability_profile_store,
         )
-
-    if requested_type == "plugin_host":
-        engine = PluginHostEngine(
-            plugin_host_binding,
-            plugin_host_invoke,
-            plugin_host_authority_check,
-        )
-        engine.load_model(config.model)
-        return EngineSelection(engine=engine, engine_type="plugin_host", model=engine.model_name)
 
     if requested_type == "replay":
         return _create_replay_selection(

@@ -120,14 +120,8 @@
       },
     }) || null;
 
-    function escapeHtml(value) {
-      var actionButton = inventory.actionButton || windowRef.inventoryActionButton;
-      return typeof actionButton?.escapeHtml === 'function'
-        ? actionButton.escapeHtml(String(value == null ? '' : value))
-        : String(value == null ? '' : value)
-          .replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;')
-          .replaceAll('"', '&quot;').replaceAll("'", '&#39;');
-    }
+    const escapeHtml = ((typeof globalThis !== 'undefined' && globalThis.stringUtils)
+      || (typeof require === 'function' ? require('../shared/string-utils') : null)).escapeHtml;
 
     function resolveEngineType() {
       var models = Array.isArray(shellState?.modelList?.data) ? shellState.modelList.data : [];
@@ -541,7 +535,30 @@
       return profile;
     }
 
-    async function applyPatch(patch) {
+    // Every render rebuilds the fields from the saved state. An Apply refused
+    // because the runtime is busy (an image render holds the GPU, or a reply is
+    // streaming) puts the user's pending values back: its copy says to Apply
+    // again, so the change must still be there (other failures re-render from
+    // the stored profile, as before).
+    var DRAFT_KEEPING_REFUSALS = { gpu_lease_held: true, active_stream: true };
+    function readTuningDraft(host) {
+      var draft = {};
+      host?.querySelectorAll?.('[data-model-tuning-field]').forEach(function (control) {
+        draft[control.dataset.modelTuningField] = control.value;
+      });
+      return draft;
+    }
+
+    function restoreTuningDraft(draft) {
+      var host = documentRef?.getElementById?.('modelTuningDrawer');
+      Object.keys(draft || {}).forEach(function (key) {
+        var control = host?.querySelector?.('[data-model-tuning-field="' + key + '"]');
+        if (control) control.value = draft[key];
+      });
+      updateDirtyState(host);
+    }
+
+    async function applyPatch(patch, draft) {
       if (pending || disposed) return false;
       if (!supportsTuning()) {
         statusMessage = jt('models.tuning.engineOwnsControls', 'This engine owns its generation controls.');
@@ -550,6 +567,8 @@
       }
       var operationGeneration = generation;
       var operationModelId = activeModelId;
+      var pendingDraft = draft || readTuningDraft(documentRef?.getElementById?.('modelTuningDrawer'));
+      var keepDraft = false;
       pending = true;
       statusMessage = jt('models.tuning.applyingCheckingRuntime', 'Applying and checking the runtime…');
       render();
@@ -560,6 +579,7 @@
         statusMessage = engineUtils.applyStatusMessage(result);
         // update() resolves with an object for every outcome, rejections included;
         // only 'applied' means the setting was written.
+        keepDraft = result?.status === 'rejected' && DRAFT_KEEPING_REFUSALS[result?.reason] === true;
         return result?.status === 'applied';
       } catch (_error) {
         if (!disposed && visible && generation === operationGeneration && activeModelId === operationModelId) {
@@ -570,6 +590,9 @@
         if (!disposed) {
           pending = false;
           if (visible) render();
+          if (keepDraft && visible && generation === operationGeneration && activeModelId === operationModelId) {
+            restoreTuningDraft(pendingDraft);
+          }
         }
       }
     }
@@ -769,6 +792,7 @@
       };
       var host = documentRef?.getElementById?.('modelTuningDrawer');
       var dirty = dirtyFields(host);
+      var draft = readTuningDraft(host);
       var tuningDirty = dirty.filter(function (field) { return !['engine', 'mtp', 'modelPath', 'runtimePath'].includes(field); });
       var ratioRaw = String(host?.querySelector?.('#modelTuningRatio')?.value || '').trim();
       var ratio = ratioRaw ? Number(ratioRaw) : null;
@@ -786,7 +810,7 @@
       }
       var contextChanged = Object.hasOwn(patch, 'contextLength');
       if (tuningDirty.length === dirty.length) {
-        var applied = await applyPatch(patch);
+        var applied = await applyPatch(patch, draft);
         // An engine restart this model still owes runs once now (it covers the context too).
         // Pending while it is checked: a second Apply would cancel the restart below.
         var owedRestart = null;
@@ -847,7 +871,7 @@
         }
       }
       if (followUp) {
-        var followUpApplied = await applyPatch(followUp);
+        var followUpApplied = await applyPatch(followUp, draft);
         if (restartOptions) {
           if (stale()) {
             if (!disposed) await settleDetachedRestart(operationModelId, requestKey, restartOptions); // closed mid follow-up

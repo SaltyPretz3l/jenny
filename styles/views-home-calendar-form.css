@@ -54,13 +54,13 @@
   border-radius: var(--radius-base);
   background: var(--surface-input-background);
   color: var(--text-primary);
-  font-size: var(--font-size-base);
+  font-size: var(--font-size-body);
 }
 
 .cal-quickadd__error,
 .cal-form__error {
   color: var(--status-fg-danger);
-  font-size: var(--font-size-sm);
+  font-size: var(--font-size-footnote);
 }
 
 .cal-quickadd__suggest {
@@ -78,7 +78,7 @@
 
 .cal-quickadd__preview-title {
   color: var(--text-primary);
-  font-weight: 700;
+  font-weight: 500;
 }
 
 .cal-quickadd__preview-when {
@@ -88,7 +88,7 @@
 
 .cal-quickadd__conflict {
   color: var(--status-fg-warning);
-  font-size: var(--font-size-sm);
+  font-size: var(--font-size-footnote);
 }
 
 .cal-quickadd__suggest-actions,
@@ -112,13 +112,13 @@
   flex-wrap: wrap;
   gap: var(--space-5);
   color: var(--text-primary);
-  font-size: var(--font-size-lg);
-  font-weight: 700;
+  font-size: var(--font-size-heading);
+  font-weight: 500;
 }
 
 .cal-form__series-note {
   color: var(--text-secondary);
-  font-size: var(--font-size-sm);
+  font-size: var(--font-size-footnote);
   font-weight: 400;
 }
 
@@ -164,7 +164,7 @@
   border-radius: var(--radius-base);
   background: var(--surface-input-background);
   color: var(--text-primary);
-  font-size: var(--font-size-base);
+  font-size: var(--font-size-body);
 }
 
 .cal-feeds__row {
@@ -177,7 +177,7 @@
 
 .cal-feeds__name {
   color: var(--text-primary);
-  font-weight: 700;
+  font-weight: 500;
 }
 
 .cal-feeds__url {
@@ -192,7 +192,7 @@
 .cal-feeds__status,
 .cal-feeds__empty {
   color: var(--text-secondary);
-  font-size: var(--font-size-sm);
+  font-size: var(--font-size-footnote);
 }
 
 .cal-feeds__row[data-state="error"] .cal-feeds__status {

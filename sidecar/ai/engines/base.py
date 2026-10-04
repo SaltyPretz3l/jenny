@@ -1,4 +1,4 @@
-# ruff: noqa: B027, PLC0415, PLR0913
+# ruff: noqa: B027, PLR0913
 """
 Abstract base class for AI inference engines.
 
@@ -361,7 +361,7 @@ class BaseEngine(ABC):
 
     def get_request_output_reservation(
         self,
-        reasoning_effort: Optional[str] = None,  # noqa: ARG002
+        reasoning_effort: Optional[str] = None,
     ) -> Optional[int]:
         """Return total request output headroom, including hidden reasoning."""
 

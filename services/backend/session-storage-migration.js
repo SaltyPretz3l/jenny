@@ -2,9 +2,11 @@ const fs = require('fs');
 const path = require('path');
 
 const { FileJsonStore } = require('./file-json-store');
+const { preserveCorruptFile, readWithRetry } = require('./corrupt-file-preserve');
 const {
   logNewerSchemaDetected,
   logWriteFailed,
+  safeEmitLog,
 } = require('./session-store-logging');
 const {
   readJsonFileAsync,
@@ -28,12 +30,46 @@ const SPLIT_MIGRATION_BATCH_SIZE = 25;
 //   - deferred split-layout schema migration (older split index, run async)
 //   - split-index recovery is kept on the backend (it reuses cache primitives)
 
+// A legacy file that could not be read at all may be healthy. It stays where it
+// is and no split index is written, so the next start retries the migration.
+function leaveUnreadableLegacyFile(self, readStatus) {
+  safeEmitLog(self._logger, 'ERROR', `${self._storeName}.legacy_file_unreadable`, {
+    fileName: path.basename(self._legacyMonolithicPath),
+    errorCode: readStatus.errorCode,
+  });
+  initializeFromMonolithicReadOnlyCache(self, { sessions: {} });
+}
+
+// A legacy file that exists but does not parse is moved aside, not left to be
+// hidden behind the empty split store that replaces it.
+function preserveDamagedLegacyFile(self, readStatus) {
+  const preserved = preserveCorruptFile(self._legacyMonolithicPath, { logger: self._logger });
+  safeEmitLog(self._logger, 'ERROR', `${self._storeName}.legacy_file_corrupt`, {
+    fileName: path.basename(self._legacyMonolithicPath),
+    ...(preserved.preserved
+      ? { preservedName: path.basename(preserved.preservedPath) }
+      : { preserveFailedReason: preserved.reason }),
+    errorCode: readStatus.errorCode,
+  });
+}
+
 function migrateFromMonolithic(self) {
   const monolithicStore = new FileJsonStore(self._legacyMonolithicPath, {
     writeDebounceMs: 0,
+    compact: true,
     logger: self._logger,
   });
-  const raw = monolithicStore.read(null);
+  const readStatus = readWithRetry(monolithicStore, null);
+  if (readStatus.corrupted && readStatus.errorCode) {
+    leaveUnreadableLegacyFile(self, readStatus);
+    return;
+  }
+  if (readStatus.corrupted) {
+    preserveDamagedLegacyFile(self, readStatus);
+    self._initializeEmpty();
+    return;
+  }
+  const raw = readStatus.value;
   if (!raw) {
     self._initializeEmpty();
     return;
@@ -89,6 +125,7 @@ function migrateFromMonolithic(self) {
   try {
     const indexStore = new FileJsonStore(self._indexPath, {
       writeDebounceMs: 0,
+      compact: true,
       logger: self._logger,
     });
     indexStore.writeImmediate(indexPayload);
@@ -106,6 +143,7 @@ function migrateFromMonolithic(self) {
 
   self._indexStore = new FileJsonStore(self._indexPath, {
     writeDebounceMs: self._writeDebounceMs,
+    compact: true,
     onWriteSettled: () => self._notifyCacheAvailability(),
     logger: self._logger,
   });

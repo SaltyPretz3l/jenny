@@ -56,10 +56,9 @@ function createComposerRenderHarness(t, {
     <select id="composerEffortSelect" data-reasoning-supported="${reasoningEffortSupported}">
       <option value="default">Default</option>
     </select>
-    <button id="composerSettingsButton"></button>
+    <button id="composerAttachShortcut"></button>
     <span id="composerModelDisabledReason"></span>
     <span id="composerEffortDisabledReason"></span>
-    <span id="composerSettingsDisabledReason"></span>
   </body>`);
   const previousWindow = global.window;
   const previousVisionGate = global.rendererComposerVisionGate;
@@ -89,7 +88,10 @@ function createComposerRenderHarness(t, {
     composerReasoningEffort: 'composerReasoningEffort',
     composerRunMode: 'composerRunMode',
   };
-  const busyScopes = new Set(busyActivityScopes);
+  // Split view W3-1: a model/effort save is keyed by the session it saves
+  // (activity-utils sessionScope); the harness saves on session-1.
+  const SESSION_KEYED_SCOPES = new Set(['composerPreferredModel', 'composerReasoningEffort']);
+  const busyScopes = new Set(busyActivityScopes.map((scope) => (SESSION_KEYED_SCOPES.has(scope) ? `${scope}:session-1` : scope)));
   const state = {
     currentSessionId: 'session-1',
     sessions: [{
@@ -118,7 +120,6 @@ function createComposerRenderHarness(t, {
       stopStreamButton: byId('stopStreamButton'),
       composerModelSelect: byId('composerModelSelect'),
       composerEffortSelect: byId('composerEffortSelect'),
-      composerSettingsButton: byId('composerSettingsButton'),
     },
     callbacks: {
       getCurrentRuntimePreferences: () => ({
@@ -153,7 +154,7 @@ test('mid-turn render keeps the model and effort selectors usable', (t) => {
 
   assert.equal(document.getElementById('composerModelSelect').disabled, false);
   assert.equal(document.getElementById('composerEffortSelect').disabled, false);
-  assert.equal(document.getElementById('composerSettingsButton').disabled, false);
+  assert.equal(document.getElementById('composerAttachShortcut').disabled, false);
 });
 
 test('preflight keeps the send control and the input locked', (t) => {
@@ -394,4 +395,27 @@ test('the runtime queue strip receives queued and recovery rows only; a direct S
     runtimeSendController: { ...pauseController(), listPending: () => rows } });
   h.pipeline.renderComposerState();
   assert.deepEqual(captured.at(-1).map((row) => row.key), ['waiting', 'paused']);
+});
+
+test('composer renders without a gear node and leaves the paperclip enabled', (t) => {
+  const { document, pipeline } = createComposerRenderHarness(t);
+  assert.equal(document.getElementById('composerSettingsButton'), null);
+  assert.doesNotThrow(() => pipeline.renderComposerState());
+  assert.equal(document.getElementById('composerAttachShortcut').disabled, false);
+});
+
+// HB-034 F5: a reply waiting behind another chat is not running, so there is
+// nothing to pause; Stop is the way out and stays.
+test('Pause hides while the reply waits on its own, and Stop stays', (t) => {
+  const { document, pipeline, state } = createComposerRenderHarness(t, { ...streaming, sessionRuntime: true,
+    runtimeSendController: pauseController() });
+  let waiting = true;
+  state.streamWaits = { isWaitingStream: (streamId) => waiting && streamId === 'stream-1' };
+  pipeline.renderComposerState();
+  assert.equal(document.getElementById('pauseTurnButton').classList.contains('hidden'), true);
+  assert.equal(document.getElementById('stopStreamButton').classList.contains('hidden'), false);
+
+  waiting = false;
+  pipeline.renderComposerState();
+  assert.equal(document.getElementById('pauseTurnButton').classList.contains('hidden'), false);
 });

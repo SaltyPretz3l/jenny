@@ -6,7 +6,8 @@
 # Usage (from a shell):  powershell -NoProfile -File launch-jenny-dev.ps1
 # Usage (from Desktop):  double-click the "Jenny (Dev)" shortcut, which
 #                        invokes launch-jenny-dev.bat -> this script.
-# -RefreshDeps  force `npm install` even when the dependency stamp matches.
+# -RefreshDeps  force `npm install` and the Python `pip install -e .` even when
+#               their dependency stamps match.
 
 [CmdletBinding()]
 param(
@@ -16,6 +17,7 @@ param(
 $ErrorActionPreference = 'Continue'
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $repoRoot = (Resolve-Path (Join-Path $scriptDir '..\..')).Path
+. (Join-Path $scriptDir 'jenny-dev-deps.ps1')
 
 # Cold-start attribution: export the launcher's own start time and path label
 # so main.js can measure launcher-to-main time (the preflight/npm/esbuild work
@@ -40,6 +42,58 @@ if (-not (Test-Path -LiteralPath $devPython -PathType Leaf)) {
 }
 $env:JENNY_BACKEND_PYTHON = $devPython
 Write-Host ('  Python: {0}' -f $devPython) -ForegroundColor DarkGray
+
+# Python dependency stamp: hash pyproject.toml plus the interpreter version, and
+# skip the editable install when the stamp from the last SUCCESSFUL install
+# matches. The stamp lives inside .venv so recreating the venv invalidates it,
+# and it is written only after a green install. Anything uncertain (missing
+# manifest, unreadable stamp or version) falls back to running the install.
+# A failed install stops the launch only when an earlier stamp shows the
+# dependencies really changed; with no stamp it warns and launches.
+$pyStampPath = Join-Path $repoRoot '.venv\.jenny-dev-pydeps-stamp.json'
+$pyVersion = ''
+try {
+    $pyVersion = ('{0}' -f (& $devPython --version)).Trim()
+} catch {
+    $pyVersion = ''
+}
+$pyFingerprint = Get-JennyPythonDepsFingerprint -RepoRoot $repoRoot -PythonVersion $pyVersion
+if (-not $RefreshDeps -and (Test-JennyDepsStampCurrent -StampPath $pyStampPath -Fingerprint $pyFingerprint)) {
+    Write-Host 'Python deps unchanged since the last successful install -- skipping pip install (-RefreshDeps forces one).' -ForegroundColor DarkGray
+} else {
+    Write-Host 'Refreshing Python deps (pip install -e .)...' -ForegroundColor Cyan
+    # A stamp that exists but no longer matches proves the manifest or the
+    # interpreter changed since the last good install. No stamp at all (the
+    # first launch with this check, or a fresh .venv from setup) proves nothing.
+    $pyStampExists = Test-Path -LiteralPath $pyStampPath -PathType Leaf
+    $pipExit = 1
+    Push-Location $repoRoot
+    try {
+        & $devPython -m pip install --disable-pip-version-check -e .
+        $pipExit = $LASTEXITCODE
+    } catch {
+        Write-Host ('pip install threw: {0}' -f $_.Exception.Message) -ForegroundColor Red
+        $pipExit = 1
+    }
+    Pop-Location
+    if ($pipExit -ne 0) {
+        if ($pyStampExists) {
+            Write-Host ('pip install failed (exit {0}). Python dependencies are out of date. Run npm run setup, then launch again.' -f $pipExit) -ForegroundColor Red
+            exit 1
+        }
+        # For example offline: pip cannot fetch its build tools. Launch with the
+        # environment as it is; no stamp is written, so the next launch retries.
+        Write-Host ('pip install failed (exit {0}) and no earlier refresh is recorded. Launching with the Python dependencies as they are; if Jenny misbehaves, run npm run setup.' -f $pipExit) -ForegroundColor Yellow
+    } elseif ($pyFingerprint) {
+        try {
+            @{ fingerprint = $pyFingerprint; written_at = (Get-Date).ToUniversalTime().ToString('o') } |
+                ConvertTo-Json | Out-File -FilePath $pyStampPath -Encoding utf8
+        } catch {
+            # Best effort: a missing stamp just means the next launch installs again.
+        }
+    }
+}
+
 Write-Host 'Close the other Jenny app first. Dev shares your existing chats/settings and never terminates it.' -ForegroundColor Yellow
 Write-Host ''
 

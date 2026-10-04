@@ -71,25 +71,3 @@ test('publisher ids present in any trust root are reserved from developer intake
     reason: 'developer_publisher_id_reserved',
   });
 });
-
-test('developer intake refuses every privileged V6 contribution kind', async () => {
-  const { createStage8UnsignedFixture, finalizeStage8Package } = await import(
-    '../../../scripts/plugins/jenny-plugin-v6-packager.mjs'
-  );
-  const fixture = createStage8UnsignedFixture({
-    binaryBytes: Buffer.from('developer-executable'), platform: 'win32',
-  });
-  const { publicKey, privateKey } = crypto.generateKeyPairSync('ed25519');
-  const keyId = crypto.createHash('sha256')
-    .update(publicKey.export({ format: 'der', type: 'spki' })).digest('hex');
-  const packaged = finalizeStage8Package({ fixture, keyId, publicKey,
-    signature: crypto.sign(null, fixture.canonicalBytes, privateKey) });
-  const result = await verifyDistributionPackage({ bytes: packaged.bytes,
-    sourceIdentity: { kind: 'local_package', package_path_digest: 'e'.repeat(64) },
-    trustRoots: EMPTY_ROOTS,
-    verificationCacheKey: 'd'.repeat(64), now: NOW, developerProfile: true });
-  assert.deepEqual({ ok: result.ok, code: result.code, reason: result.reason }, {
-    ok: false, code: PLUGIN_ERROR_CODES.POLICY_BLOCKED,
-    reason: 'developer_privileged_contribution_unsupported',
-  });
-});

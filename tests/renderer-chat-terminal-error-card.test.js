@@ -22,6 +22,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { loadRendererApp, waitForUi } = require('./helpers/renderer-shell-harness');
 const { buildFeatureFlags } = require('../services/feature-flags');
+const { waitForUiState } = require('./helpers/wait-for-ui-state');
 
 const PRE_TOOL_TEXT = 'Terminal error regression pre-tool text marker.';
 
@@ -111,7 +112,11 @@ async function bootStreamedTurn(t, sessionId) {
   const emit = (payload) => booted.shell.__emitChat({ sessionId, streamId, ...payload });
   await emit({ type: 'started' });
   await emit({ type: 'delta', content: `${PRE_TOOL_TEXT}\n`, aggregate: `${PRE_TOOL_TEXT}\n` });
-  await waitForUi(booted.window, 300);
+  await waitForUiState(
+    booted.window,
+    () => booted.doc.getElementById('chatTimeline').innerHTML.includes(PRE_TOOL_TEXT),
+    { timeoutMs: 5000, message: 'Streamed pre-tool text never rendered in the timeline.' }
+  );
   return { ...booted, streamId, emit };
 }
 
@@ -145,7 +150,10 @@ function snapshotTimeline(doc) {
 test('text-only turn keeps its error card after a terminal error', async (t) => {
   const { window, doc, emit } = await bootStreamedTurn(t, 'sess-tec-text');
   await emit(TERMINAL_ERROR);
-  await waitForUi(window, 700);
+  await waitForUiState(window, () => {
+    const snap = snapshotTimeline(doc);
+    return snap.errorCard && snap.retryAffordance && snap.metaText === 'Failed';
+  }, { timeoutMs: 5000, message: 'Terminal error card, retry affordance and Failed footer never rendered.' });
 
   const snap = snapshotTimeline(doc);
   assert.equal(snap.textShown, true, 'streamed text must survive the terminal error');
@@ -168,7 +176,9 @@ test('production `status: cancelled` payload renders the calm card treatment', a
     status: 'cancelled',
     terminal_subcode: 'user_stop',
   });
-  await waitForUi(window, 700);
+  await waitForUiState(window, () => snapshotTimeline(doc).calmCard, {
+    timeoutMs: 5000, message: 'Calm error card never rendered for the cancelled payload.',
+  });
   const snap = snapshotTimeline(doc);
   assert.equal(snap.errorCard, true, 'the error card must render');
   assert.equal(
@@ -176,6 +186,41 @@ test('production `status: cancelled` payload renders the calm card treatment', a
     true,
     'a cancelled classification carried as payload.status must reach the message and render calm'
   );
+});
+
+// Owner gate F3 polish (2026-10-02): a user Stop rendered three stacked cancel
+// notes ("Turn cancelled", "Stream cancelled.", "This turn was cancelled before
+// it completed."). The payload below is the production user-Stop shape after
+// enrichTerminalErrorPayloadForEmit (sidecar-client abort -> user_cancel).
+test('user Stop renders one turn-level cancel note, not three', async (t) => {
+  const { window, doc, emit } = await bootStreamedTurn(t, 'sess-tec-user-stop');
+  await emit({
+    type: 'error',
+    message: 'Stream cancelled.',
+    error_code: 'CMP-SIDECAR-0002',
+    retryable: true,
+    category: 'cancelled',
+    status: 'cancelled',
+    terminal_subcode: 'user_cancel',
+    cancel_reason: 'user_cancel',
+    recovery_class: 'cancelled',
+    recovery_title: 'Turn cancelled',
+    recovery_hint: 'This turn was cancelled before it completed.',
+  });
+  await waitForUiState(window, () => doc.getElementById('chatTimeline').querySelector('.chat-error-card'), {
+    timeoutMs: 5000, message: 'Cancel error card never rendered after user Stop.',
+  });
+  const cards = doc.getElementById('chatTimeline').querySelectorAll('.chat-error-card');
+  assert.equal(cards.length, 1, 'one cancel card for the turn');
+  const card = cards[0];
+  assert.ok(card.classList.contains('chat-error-card--calm'), 'user Stop stays calm');
+  const text = card.textContent;
+  const notes = ['Turn cancelled', 'Response stopped', 'Stream cancelled.', 'This turn was cancelled before it completed.']
+    .filter((note) => text.includes(note));
+  assert.deepEqual(notes, ['Turn cancelled'], 'exactly one cancel note is visible');
+  assert.equal(card.querySelector('.chat-error-card-message'), null, 'no transport message line');
+  assert.equal(card.querySelector('.chat-error-card-hint'), null, 'no separate hint line');
+  assert.equal(card.getAttribute('data-error-code'), 'CMP-SIDECAR-0002', 'the code stays on the card');
 });
 
 test('camelCase terminalStatus payload spelling is still honored', async (t) => {
@@ -188,7 +233,9 @@ test('camelCase terminalStatus payload spelling is still honored', async (t) => 
     terminalStatus: 'cancelled',
     terminalSubcode: 'user_stop',
   });
-  await waitForUi(window, 700);
+  await waitForUiState(window, () => snapshotTimeline(doc).calmCard, {
+    timeoutMs: 5000, message: 'Calm error card never rendered for the camelCase terminalStatus payload.',
+  });
   assert.equal(snapshotTimeline(doc).calmCard, true, 'the camelCase spelling must classify the card calm');
 });
 
@@ -209,12 +256,16 @@ test('approved-tool turn keeps its error card after a terminal error (owner repr
     toolName: 'write_file',
     input: { path: 'notes/demo.md' },
   });
-  await waitForUi(window, 500);
+  await waitForUiState(window, () => doc.getElementById('chatTimeline').querySelector('.tool-approve-btn'), {
+    timeoutMs: 5000, message: 'Timeline approval block never offered an Allow button.',
+  });
 
   const allowBtn = doc.getElementById('chatTimeline').querySelector('.tool-approve-btn');
   assert.ok(allowBtn, 'timeline approval block must offer an Allow button');
   allowBtn.dispatchEvent(new window.MouseEvent('click', { bubbles: true, cancelable: true }));
-  await waitForUi(window, 300);
+  await waitForUiState(window, () => rig.approvals.length === 1, {
+    timeoutMs: 5000, message: 'Allow click never reached tools.approve.',
+  });
   assert.equal(rig.approvals.length, 1, 'Allow must call tools.approve');
 
   await emit({
@@ -227,7 +278,10 @@ test('approved-tool turn keeps its error card after a terminal error (owner repr
   });
   await waitForUi(window, 300);
   await emit(TERMINAL_ERROR);
-  await waitForUi(window, 700);
+  await waitForUiState(window, () => {
+    const snap = snapshotTimeline(doc);
+    return snap.errorCard && snap.retryAffordance && snap.toolRow;
+  }, { timeoutMs: 5000, message: 'Error card, retry affordance and tool row never rendered after the approved tool errored out.' });
 
   const snap = snapshotTimeline(doc);
   assert.equal(snap.textShown, true, 'streamed text must survive the terminal error');

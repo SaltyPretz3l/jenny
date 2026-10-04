@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 import logging
 from typing import Any
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -26,7 +26,6 @@ from sidecar.runtime.vllm_engine_support import (
     _tool_call_name,
     extract_reasoning_delta,
 )
-
 
 # ---------------------------------------------------------------------------
 # _as_non_empty_string

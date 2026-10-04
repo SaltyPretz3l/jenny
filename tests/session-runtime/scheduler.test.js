@@ -97,9 +97,40 @@ test('canonical admission races never start a producer or consume the turn lane'
   } });
   const work = h.submit('a');
   assert.equal(h.scheduler.tryDispatch(work.work_id).reason, 'session_busy');
+  assert.deepEqual(h.scheduler.admissionWait(work.work_id), {
+    reason: 'session_busy', since: h.scheduler.admissionWait(work.work_id).since,
+    blocking_session_id: null,
+  });
   assert.equal(h.store.get(work.work_id).status, 'pending');
   assert.equal(h.lanes.snapshot().active_leases, 0);
   assert.equal(h.producerCalls.length, 0);
+});
+
+test('admission waits distinguish live session work from quarantined cleanup and clear on grant', async t => {
+  const h = harness(t);
+  const active = h.submit('shared');
+  const pending = h.submit('shared');
+  const started = h.scheduler.tryDispatch(active.work_id);
+  assert.equal(h.scheduler.tryDispatch(pending.work_id).reason, 'session_busy');
+  assert.equal(h.scheduler.admissionWait(pending.work_id).reason, 'session_busy');
+  assert.equal(h.scheduler.admissionWait(pending.work_id).blocking_session_id, 'shared');
+
+  await Promise.resolve();
+  h.producerCalls[0].waiting.reject(new Error('sidecar exited'));
+  assert.equal((await started.completion).status, 'needs_attention');
+  // The quarantine itself re-pumps: a send that was already waiting learns
+  // the new reason without anything dispatching it again (Astra HB-009 P1).
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(h.scheduler.admissionWait(pending.work_id).reason, 'cleanup_unconfirmed');
+  assert.equal(h.scheduler.admissionWait(pending.work_id).blocking_session_id, 'shared');
+
+  h.scheduler.reclaimAbandoned({ reason: 'backend_restart' });
+  const resumed = h.scheduler.tryDispatch(pending.work_id);
+  assert.equal(resumed.status, 'started');
+  assert.equal(h.scheduler.admissionWait(pending.work_id), null);
+  await Promise.resolve();
+  h.producerCalls[1].waiting.resolve({ status: 'completed', producerSettled: true, canonicalSettled: true });
+  await resumed.completion;
 });
 
 test('retryable proven no-claim failure releases the lane for the next attempt', async t => {
@@ -227,7 +258,7 @@ test('backend-restart reclaim retires an abandoned unproven producer and frees i
 
   const report = h.scheduler.reclaimAbandoned({ reason: 'backend_restart' });
   assert.deepEqual(report, { reclaimed: [{ work_id: work.work_id, session_id: 'a', status: 'failed' }],
-    retained: [] });
+    retained: [], leases_confirmed: 0 });
   assert.equal(h.store.get(work.work_id).status, 'failed');
   assert.equal(h.store.get(work.work_id).transition.reason, 'backend_restart');
   assert.equal(h.scheduler.active.size, 0);
@@ -250,7 +281,7 @@ test('backend-restart reclaim leaves a producer that has not returned alone', as
 
   const report = h.scheduler.reclaimAbandoned({ reason: 'backend_restart' });
   assert.deepEqual(report, { reclaimed: [],
-    retained: [{ work_id: work.work_id, reason: 'runtime_producer_pending' }] });
+    retained: [{ work_id: work.work_id, reason: 'runtime_producer_pending' }], leases_confirmed: 0 });
   assert.equal(h.scheduler.active.size, 1);
   assert.equal(h.store.get(work.work_id).status, 'running');
   h.producerCalls[0].waiting.resolve({ status: 'completed', producerSettled: true, canonicalSettled: true });
@@ -470,6 +501,20 @@ test('explicit resume under retryable admission pressure waits instead of refusi
   h.scheduler.setEnabled(false);
   h.producerCalls[0].waiting.resolve({ status: 'completed', producerSettled: true, canonicalSettled: true });
   await Promise.resolve();
+});
+
+// F20: a send held behind another chat's model had no admission wait, so
+// nothing in the waiting chat said why its message had not started.
+test('a model switch held by another chat is a visible model wait naming that chat', t => {
+  const h = harness(t, { validateWork: () => {
+    throw Object.assign(new Error('runtime_model_switch_busy'), {
+      code: 'runtime_model_switch_busy', retryable: true, blocking_session_id: 'session_holder' });
+  } });
+  const a = h.submit('a');
+  assert.equal(h.scheduler.tryDispatch(a.work_id).reason, 'runtime_model_switch_busy');
+  assert.deepEqual({ ...h.scheduler.admissionWait(a.work_id), since: 0 },
+    { reason: 'model_busy', since: 0, blocking_session_id: 'session_holder' });
+  assert.equal(h.store.get(a.work_id).status, 'pending');
 });
 
 test('explicit resume still refuses work whose admission failure is not retryable', t => {

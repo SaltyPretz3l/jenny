@@ -26,6 +26,7 @@ async function stopRuntimeWithDependencies({
       unattendedGuard.stop();
     }
     systemStats?.reminderNotifier?.stop();
+    systemStats?.desktopNotifier?.stop();
     if (systemStats) {
       systemStats.stop();
     }

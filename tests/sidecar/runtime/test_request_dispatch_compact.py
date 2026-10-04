@@ -5,13 +5,13 @@ through its guard and error branches with a duck-typed brain_container. The
 compaction itself is monkeypatched at the module-under-test seam so no LLM,
 disk, or engine is involved. Asserts the four wire response shapes from the
 handoff contract: ok / circuit_breaker_open / no_active_turn (nothing to
-compact) / compaction_failed — plus the flag-off fail-closed branch (R5:
-the sidecar dispatch gates ``compaction_manual`` in addition to the renderer).
+compact) / compaction_failed.
 """
 
 from __future__ import annotations
 
 import logging
+from dataclasses import replace
 from types import SimpleNamespace
 from typing import Any
 
@@ -62,13 +62,13 @@ class _ReplyRouter:
         return lambda _messages: self.reply
 
 
-def make_brain(*, manual_enabled: bool = True) -> SimpleNamespace:
+def make_brain() -> SimpleNamespace:
     config = SimpleNamespace(
         engine_type="ollama",
         model="qwen3:8b",
         context_length=50_000,
         max_tokens=4_000,
-        feature_flags={"compaction_manual": manual_enabled},
+        feature_flags={},
         compaction_custom_prompt=None,
         token_budget_auto_compact_ratio=None,
         token_budget_auto_compact_ratio_by_model=None,
@@ -84,7 +84,7 @@ def make_real_compaction_brain(reply: str) -> SimpleNamespace:
         model="ornith",
         context_length=32_768,
         max_tokens=8_192,
-        feature_flags={"compaction_manual": True},
+        feature_flags={},
         compaction_custom_prompt=None,
         token_budget_auto_compact_ratio=None,
         token_budget_auto_compact_ratio_by_model=None,
@@ -146,7 +146,7 @@ TOOL_ROUND_HISTORY = [
 ]
 
 
-def run_real_compaction(reply: str):  # noqa: ANN201 -- test helper returns ProcessOutcome
+def run_real_compaction(reply: str):  # test helper returns ProcessOutcome
     return run(
         CHAT_COMPACT_METHOD,
         7,
@@ -217,24 +217,6 @@ def test_notification_style_call_without_id_is_ignored() -> None:
     outcome = run(CHAT_COMPACT_METHOD, None, compact_params())
     assert outcome is not None
     assert outcome.response is None
-    assert outcome.notifications == []
-
-
-# -- flag gate (R5: sidecar-side gate in addition to the renderer) -------------
-
-
-def test_flag_off_returns_feature_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
-    called: list[Any] = []
-    monkeypatch.setattr(rdc, "compact_context", lambda *a, **k: called.append(1))
-    outcome = run(CHAT_COMPACT_METHOD, 7, compact_params(), brain=make_brain(manual_enabled=False))
-    assert outcome is not None
-    result = outcome.response["result"]
-    assert result == {
-        "api_version": API_VERSION,
-        "status": "error",
-        "reason": "feature_disabled",
-    }
-    assert called == []
     assert outcome.notifications == []
 
 
@@ -447,6 +429,28 @@ def test_success_returns_ok_and_emits_existing_notification(
     assert len(captured_kwargs["messages"]) == 2
 
 
+def test_manual_compaction_reports_summary_source_omissions(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dropped = {"count": 6}
+
+    def _fake_compact(*_args: Any, **_kwargs: Any) -> CompactionResult:
+        return replace(_compaction_result(), summary_input_dropped_messages=dropped["count"])
+
+    monkeypatch.setattr(rdc, "compact_context", _fake_compact)
+
+    outcome = run(CHAT_COMPACT_METHOD, 7, compact_params())
+
+    assert outcome.response["result"]["summary_source_dropped_messages"] == 6
+    assert outcome.notifications[0]["params"]["summary_source_dropped_messages"] == 6
+
+    dropped["count"] = 0
+    clean = run(CHAT_COMPACT_METHOD, 8, compact_params())
+
+    assert clean.response["result"]["summary_source_dropped_messages"] == 0
+    assert clean.notifications[0]["params"]["summary_source_dropped_messages"] == 0
+
+
 def test_forced_compaction_success_returns_ok_compacted(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -562,7 +566,7 @@ def test_manual_compaction_threads_session_bound_admission_to_router(
 ) -> None:
     sent: list[dict[str, Any]] = []
 
-    def response_reader_factory(rpc_id: int, **_kwargs: Any):  # noqa: ANN202
+    def response_reader_factory(rpc_id: int, **_kwargs: Any):
         def read(_timeout: float) -> dict[str, Any]:
             return {
                 "id": rpc_id,
@@ -582,7 +586,7 @@ def test_manual_compaction_threads_session_bound_admission_to_router(
 
     brain = make_brain()
 
-    def build_generate(**kwargs: Any):  # noqa: ANN202
+    def build_generate(**kwargs: Any):
         runtime = kwargs["runtime"]
 
         def generate(_messages: Any) -> str:

@@ -133,3 +133,30 @@ test('SystemStatsMonitor getStats({ fresh: true }) reads live values without com
     os.freemem = originalFreemem;
   }
 });
+
+test('SystemStatsMonitor setIntervalMs re-arms a running timer and only records it when stopped', () => {
+  const originalSetInterval = global.setInterval;
+  const originalClearInterval = global.clearInterval;
+  const scheduled = [];
+  let cleared = 0;
+  global.setInterval = (callback, ms) => { scheduled.push(ms); return { unref() {} }; };
+  global.clearInterval = () => { cleared += 1; };
+  try {
+    const monitor = new SystemStatsMonitor({ intervalMs: 2000 });
+    monitor.setIntervalMs(15000);
+    assert.equal(monitor.intervalMs, 15000);
+    assert.deepEqual(scheduled, [], 'stopped: nothing scheduled');
+    monitor.start();
+    assert.deepEqual(scheduled, [15000]);
+    monitor.setIntervalMs(2000);
+    assert.equal(cleared, 1, 'the old timer is cleared');
+    assert.deepEqual(scheduled, [15000, 2000], 'and re-armed at the new rate');
+    monitor.setIntervalMs(2000);
+    assert.equal(cleared, 1, 'an unchanged interval is a no-op');
+    monitor.setIntervalMs(10);
+    assert.equal(monitor.intervalMs, 1000, 'floored at 1 s like the constructor');
+  } finally {
+    global.setInterval = originalSetInterval;
+    global.clearInterval = originalClearInterval;
+  }
+});

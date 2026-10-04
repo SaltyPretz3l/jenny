@@ -3,8 +3,7 @@
 // Coverage for the workspacePty.* IPC surface: the six ipc-contract descriptors
 // (four invoke + two subscribe/event) and the registerWorkspacePtyIpcHandlers
 // wiring helper in services/main/ipc-handler-registration.js, mirroring the
-// registerWorkspaceGitIpcHandlers test model (tests/ipc-handler-registration.test.js)
-// and the workspaceTerminal descriptor block in services/ipc-contract.js.
+// registerWorkspaceGitIpcHandlers test model (tests/ipc-handler-registration.test.js).
 
 const { describe, test } = require('node:test');
 const assert = require('node:assert/strict');
@@ -12,6 +11,7 @@ const assert = require('node:assert/strict');
 const { getBridgeChannel } = require('../services/ipc-contract');
 const {
   registerWorkspacePtyIpcHandlers,
+  registerWorkspaceTerminalShutdownTask,
 } = require('../services/main/ipc-handler-registration');
 
 function createFakeIpcMain() {
@@ -125,11 +125,11 @@ describe('registerWorkspacePtyIpcHandlers', () => {
 
 describe('workspacePty dispose contract (awaited shutdown-path teardown)', () => {
   // The old app.once('will-quit', …) hook that disposed the terminal services was
-  // removed: WorkspaceTerminalService.dispose() is async and will-quit cannot
-  // delay quit for async work, so the dropped kill promise could orphan the piped
-  // shell tree. Disposal now runs inside the awaited stopRuntimeBeforeQuit
-  // sequence (services/main/runtime-shutdown.js → disposeWorkspaceTerminals), and
-  // registerMainIpcHandlers RETURNS the services so main.js can thread them in.
+  // removed: terminal dispose() is async and will-quit cannot delay quit for
+  // async work, so the dropped kill promise could orphan the shell tree.
+  // Disposal now runs inside the awaited stopRuntimeBeforeQuit sequence
+  // (services/main/runtime-shutdown.js → disposeWorkspaceProcesses), and
+  // registerMainIpcHandlers RETURNS the service so main.js can thread it in.
   //   - awaited ordering + failure isolation: tests/runtime-shutdown-drain.test.js
   //   - the return-value wiring contract: tests/ipc-handler-registration-dark-paths.test.js
   // Here we pin the pty service's own dispose contract that the shutdown path
@@ -140,7 +140,6 @@ describe('workspacePty dispose contract (awaited shutdown-path teardown)', () =>
   function createService() {
     return new WorkspacePtyService({
       configService: { getToolsWorkspaceRoot: () => '', getState: () => ({}) },
-      featureFlagProvider: () => ({}),
       sendBridgeEvent: () => {},
       // Pinned invariant: native pty module must never load on a dispose path.
       ptyModuleLoader: () => { throw new Error('native pty module must not load in this test'); },
@@ -161,5 +160,21 @@ describe('workspacePty dispose contract (awaited shutdown-path teardown)', () =>
     const secondResult = await service.dispose();
     assert.deepEqual(secondResult, { disposed: true, terminationConfirmed: true });
     assert.equal(service.hasSession(), false, 'the service must hold no session after repeated dispose');
+  });
+
+  test('a PTY dispose failure is logged, never thrown into the quit sequence', async () => {
+    const logs = [];
+    let task = null;
+    registerWorkspaceTerminalShutdownTask({
+      getMainLifecycle: () => ({ registerShutdownTask(fn) { task = fn; } }),
+      workspacePtyService: { async dispose() { throw new Error('conpty-exploded'); } },
+      log: (level, event, fields) => logs.push({ level, event, fields }),
+    });
+    await assert.doesNotReject(task());
+    assert.deepEqual(logs, [{
+      level: 'WARN',
+      event: 'workspace_pty.shutdown_dispose_failed',
+      fields: { message: 'conpty-exploded' },
+    }]);
   });
 });

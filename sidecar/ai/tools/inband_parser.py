@@ -58,6 +58,34 @@ _TOOL_CALL_XML_CANDIDATE_RE = re.compile(
     re.DOTALL,
 )
 _MARKDOWN_CODE_RE = re.compile(r"```.*?```|`[^`\n]*`", re.DOTALL)
+_EXAMPLE_MARKER_RE = re.compile(r"\b(?:example|e\.g\.)", re.IGNORECASE)
+
+
+def _shown_not_issued(text: str, start: int, *, fenced: bool = False) -> bool:
+    """Whether the call at ``start`` is shown as an example rather than issued (BLT-02).
+
+    Line-local on purpose: prose before a call on its own line ("I'll check the
+    README first.") never vetoes it. A fence is judged by the line before it.
+    """
+    line_start = text.rfind("\n", 0, start) + 1
+    line = text[line_start:start]
+    if fenced and not line.strip():
+        previous = text[:line_start].rstrip().rsplit("\n", 1)[-1]
+        return previous.rstrip().endswith(":") and _EXAMPLE_MARKER_RE.search(previous) is not None
+    stripped = line.strip()
+    return (stripped.startswith(">") or stripped[-1:] in {"'", '"'}
+            or _EXAMPLE_MARKER_RE.search(line) is not None)
+
+
+def _code_spans(text: str) -> List[Tuple[int, int]]:
+    """Inline code and fenced block spans; a call starting inside one is an example."""
+    return [span.span() for span in _MARKDOWN_CODE_RE.finditer(text)]
+
+
+def _starts_in_code(spans: List[Tuple[int, int]], position: int) -> bool:
+    # Only the call's start is judged: backticks inside its JSON arguments
+    # (code, Markdown) are file content and are parsed from the original text.
+    return any(start <= position < end for start, end in spans)
 
 
 @dataclass(frozen=True)
@@ -137,7 +165,14 @@ def _extract_wrapped_calls(
 ) -> Tuple[List[ToolCallRequest], str]:
     """Shared pass for the XML/fence wrapper formats (payload in group 1)."""
     calls: List[ToolCallRequest] = []
+    code_spans = _code_spans(text)
     for match in pattern.finditer(text):
+        if pattern is _TOOL_CALL_XML_RE:
+            # The instructed envelope always runs, unless it sits inside code.
+            if _starts_in_code(code_spans, match.start()):
+                continue
+        elif _shown_not_issued(text, match.start(), fenced=True):
+            continue
         call, heal_tags = _parse_tool_json_with_tags(match.group(1), known_tool_names)
         if call is not None:
             record_repair(heal_tags)
@@ -167,9 +202,11 @@ def _extract_func_calls(
 ) -> Tuple[List[ToolCallRequest], str]:
     """Format 3: function-call syntax ``tool_name({...})``."""
     calls: List[ToolCallRequest] = []
+    code_spans = _code_spans(text)
     for match in _TOOL_CALL_FUNC_RE.finditer(text):
         func_name = match.group(1)
-        if func_name not in known_tool_names:
+        if (func_name not in known_tool_names or _starts_in_code(code_spans, match.start())
+                or _shown_not_issued(text, match.start())):
             continue
         arguments, heal_tags = _parse_func_arguments(match.group(2))
         if arguments is None:
@@ -203,7 +240,11 @@ def _extract_balanced_calls(
     with empty arguments.
     """
     calls: List[ToolCallRequest] = []
+    code_spans = _code_spans(text)
     for candidate in extract_balanced_json_objects(text):
+        position = text.find(candidate)
+        if _starts_in_code(code_spans, position) or _shown_not_issued(text, position):
+            continue
         obj, heal_tags = _parse_dict_with_tags(candidate)
         if obj is None or not isinstance(obj.get("arguments"), dict):
             continue

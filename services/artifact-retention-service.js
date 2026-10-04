@@ -32,6 +32,7 @@
 const fsDefault = require('fs/promises');
 const pathDefault = require('path');
 const crypto = require('crypto');
+const { readSessionMessagesForReferenceScan } = require('./backend/session-reference-scan');
 
 const REDACTED_PATH_TOKEN = '[redacted:path]';
 const ARTIFACTS_SUBPATH = ['.jenny', 'artifacts'];
@@ -69,19 +70,9 @@ function isRetentionQuarantineEntry(name) {
   return RETENTION_QUARANTINE_NAME_PATTERN.test(String(name || ''));
 }
 
-function readSessionMessages(sessionStore, sessionId) {
-  if (typeof sessionStore.peekSession === 'function') {
-    const record = sessionStore.peekSession(sessionId);
-    return Array.isArray(record?.messages) ? record.messages : [];
-  }
-  const messages = typeof sessionStore.getSessionMessages === 'function'
-    ? sessionStore.getSessionMessages(sessionId)
-    : [];
-  return Array.isArray(messages) ? messages : [];
-}
-
 function createArtifactRetentionService({
   getWorkspaceRoot,
+  getWorkspaceScopes,
   getSessionStore,
   fsImpl = fsDefault,
   pathImpl = pathDefault,
@@ -102,22 +93,24 @@ function createArtifactRetentionService({
   // Reconcile the referenced-set from every persisted session. Fail closed:
   // an unreadable session makes the reconciliation incomplete, and an
   // incomplete reconciliation must never authorize deletion.
-  async function collectReferences(sessionStore, workspaceRoot, artifactsRoot) {
-    const referencedDirs = new Set();
-    const brokenReferences = [];
-    let brokenReferenceCount = 0;
-    let complete = true;
-    const seenPaths = new Set();
+  // One pass over every persisted session body, shared by every workspace root
+  // in a sweep. It yields between sessions so a large profile never holds the
+  // main thread for the whole walk.
+  async function scanSessionArtifacts(sessionStore) {
+    const references = [];
     let sessions;
     try {
-      sessions = sessionStore.listSessions() || [];
+      sessions = sessionStore.listSessions();
+      if (!Array.isArray(sessions)) throw new Error('Session index is unreadable.');
     } catch (_error) {
-      return { referencedDirs, brokenReferences, brokenReferenceCount, complete: false };
+      return { references, complete: false };
     }
-    for (const session of sessions) {
+    let complete = true;
+    for (const [index, session] of sessions.entries()) {
+      if (index > 0 && index % 8 === 0) await new Promise((resolve) => setImmediate(resolve));
       let messages;
       try {
-        messages = readSessionMessages(sessionStore, session.id);
+        messages = readSessionMessagesForReferenceScan(sessionStore, session);
       } catch (_error) {
         complete = false;
         continue;
@@ -126,33 +119,43 @@ function createArtifactRetentionService({
         const artifacts = Array.isArray(message?.tool_result?.generated_artifacts)
           ? message.tool_result.generated_artifacts
           : [];
-        for (const entry of artifacts) {
-          const stored = String(entry?.absolute_path || '').trim();
-          const displayPath = String(entry?.display_path || '').trim();
-          const usable = stored && stored !== REDACTED_PATH_TOKEN
-            ? stored
-            : (displayPath ? pathImpl.join(workspaceRoot, displayPath) : '');
-          if (!usable) continue;
-          const resolved = pathImpl.resolve(usable);
-          const dirName = ownedDirName(artifactsRoot, resolved);
-          if (!dirName) continue;
-          referencedDirs.add(dirName);
-          if (seenPaths.has(resolved)) continue;
-          seenPaths.add(resolved);
-          const stats = await fsImpl.stat(resolved).catch(() => null);
-          if (!stats?.isFile()) {
-            brokenReferenceCount += 1;
-            if (brokenReferences.length < MAX_BROKEN_REFERENCES_LISTED) {
-              brokenReferences.push({
-                session_id: String(session.id || ''),
-                artifact_id: String(entry?.artifact_id || ''),
-              });
-            }
-          }
+        for (const entry of artifacts) references.push({ sessionId: String(session.id || ''), entry });
+      }
+    }
+    return { references, complete };
+  }
+
+  async function collectReferences(scan, workspaceRoot, artifactsRoot, checkBroken = true) {
+    const referencedDirs = new Set();
+    const brokenReferences = [];
+    let brokenReferenceCount = 0;
+    const seenPaths = new Set();
+    for (const { sessionId, entry } of scan.references) {
+      const stored = String(entry?.absolute_path || '').trim();
+      const displayPath = String(entry?.display_path || '').trim();
+      const usable = stored && stored !== REDACTED_PATH_TOKEN
+        ? stored
+        : (displayPath ? pathImpl.join(workspaceRoot, displayPath) : '');
+      if (!usable) continue;
+      const resolved = pathImpl.resolve(usable);
+      const dirName = ownedDirName(artifactsRoot, resolved);
+      if (!dirName) continue;
+      referencedDirs.add(dirName);
+      if (!checkBroken) continue;
+      if (seenPaths.has(resolved)) continue;
+      seenPaths.add(resolved);
+      const stats = await fsImpl.stat(resolved).catch(() => null);
+      if (!stats?.isFile()) {
+        brokenReferenceCount += 1;
+        if (brokenReferences.length < MAX_BROKEN_REFERENCES_LISTED) {
+          brokenReferences.push({
+            session_id: sessionId,
+            artifact_id: String(entry?.artifact_id || ''),
+          });
         }
       }
     }
-    return { referencedDirs, brokenReferences, brokenReferenceCount, complete };
+    return { referencedDirs, brokenReferences, brokenReferenceCount, complete: scan.complete };
   }
 
   // Real last use + aggregate bytes for one artifact-session directory:
@@ -189,7 +192,7 @@ function createArtifactRetentionService({
     return { lastUseMs, bytes, truncated: false };
   }
 
-  async function purgeExpiredQuarantine(quarantineRoot, nowMs, result) {
+  async function purgeExpiredQuarantine(quarantineRoot, nowMs, result, validateMutation) {
     let entries;
     try {
       entries = await fsImpl.readdir(quarantineRoot, { withFileTypes: true });
@@ -202,9 +205,11 @@ function createArtifactRetentionService({
       // entries are left alone.
       if (!entry.isDirectory() || !isRetentionQuarantineEntry(entry.name)) continue;
       const entryPath = pathImpl.join(quarantineRoot, entry.name);
-      const stats = await fsImpl.stat(entryPath).catch(() => null);
-      if (!stats || nowMs - Number(stats.mtimeMs || 0) < limits.quarantineMaxAgeMs) continue;
+      const stamp = entry.name.match(/-retention-(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})-[0-9a-f]{16}$/);
+      const quarantinedAt = Date.parse(`${stamp[1]}-${stamp[2]}-${stamp[3]}T${stamp[4]}:${stamp[5]}:${stamp[6]}Z`);
+      if (!Number.isFinite(quarantinedAt) || nowMs - quarantinedAt < limits.quarantineMaxAgeMs) continue;
       try {
+        await validateMutation(entryPath);
         await fsImpl.rm(entryPath, { recursive: true, force: true });
         result.purgedQuarantine += 1;
       } catch (_error) {
@@ -213,7 +218,7 @@ function createArtifactRetentionService({
     }
   }
 
-  async function sweep({ activeSessionIds = [] } = {}) {
+  async function sweepRoot(scope, { activeSessionIds = [], orphanOnly = false } = {}, scanOnce = null) {
     const nowMs = nowFn();
     const result = {
       ok: true,
@@ -223,6 +228,7 @@ function createArtifactRetentionService({
       quarantined: 0,
       quarantinedBytes: 0,
       quarantinedNames: [],
+      restored: 0,
       purgedQuarantine: 0,
       skippedRecent: 0,
       skippedActive: 0,
@@ -231,7 +237,7 @@ function createArtifactRetentionService({
       referencesComplete: true,
       errors: 0,
     };
-    const workspaceRoot = String(readRoot() || '').trim();
+    const workspaceRoot = String(scope.rootPath || '').trim();
     const sessionStore = readStore();
     if (!workspaceRoot || !sessionStore) {
       return { ...result, ok: false, skippedReason: !workspaceRoot ? 'no_root' : 'no_session_store' };
@@ -239,20 +245,61 @@ function createArtifactRetentionService({
     const rootResolved = pathImpl.resolve(workspaceRoot);
     const artifactsRoot = pathImpl.join(rootResolved, ...ARTIFACTS_SUBPATH);
     const quarantineRoot = pathImpl.join(rootResolved, ...QUARANTINE_SUBPATH);
-    await purgeExpiredQuarantine(quarantineRoot, nowMs, result);
+    let rootReal;
+    let rootIdentity;
+    try {
+      await scope.assertCurrent?.();
+      rootReal = await fsImpl.realpath(rootResolved);
+      rootIdentity = await fsImpl.stat(rootReal);
+      if (!rootIdentity.isDirectory()) throw new Error('Workspace is unavailable.');
+    } catch (_) {
+      return { ...result, ok: false, skippedReason: 'invalid_root' };
+    }
+    const validateMutation = async (...targets) => {
+      await scope.assertCurrent?.();
+      const currentRoot = await fsImpl.realpath(rootResolved);
+      const identity = await fsImpl.stat(currentRoot);
+      if (pathImpl.relative(rootReal, currentRoot) || identity.dev !== rootIdentity.dev
+        || identity.ino !== rootIdentity.ino) throw new Error('Workspace changed.');
+      for (const target of targets) {
+        let current = target;
+        while (pathImpl.relative(rootResolved, current)) {
+          const relative = pathImpl.relative(rootResolved, current);
+          if (relative.startsWith('..') || pathImpl.isAbsolute(relative)) throw new Error('Path escapes workspace.');
+          const stat = await fsImpl.lstat(current);
+          const real = await fsImpl.realpath(current);
+          const realRelative = pathImpl.relative(rootReal, real);
+          if (stat.isSymbolicLink() || realRelative.startsWith('..') || pathImpl.isAbsolute(realRelative)) {
+            throw new Error('Path escapes workspace.');
+          }
+          current = pathImpl.dirname(current);
+        }
+      }
+      await scope.assertCurrent?.();
+    };
+    if (!orphanOnly) await purgeExpiredQuarantine(quarantineRoot, nowMs, result, validateMutation);
     const rootStats = await fsImpl.stat(artifactsRoot).catch(() => null);
     if (!rootStats?.isDirectory()) {
       return result;
     }
 
-    const references = await collectReferences(sessionStore, rootResolved, artifactsRoot);
+    scanOnce = scanOnce || (() => scanSessionArtifacts(sessionStore));
+    const references = await collectReferences(await scanOnce(), rootResolved, artifactsRoot);
     result.brokenReferences = references.brokenReferences;
     result.brokenReferenceCount = references.brokenReferenceCount;
     result.referencesComplete = references.complete;
 
-    const activeSet = new Set(
-      (Array.isArray(activeSessionIds) ? activeSessionIds : []).map((value) => String(value || ''))
-    );
+    const resolveActiveSet = () => {
+      const ids = typeof activeSessionIds === 'function' ? activeSessionIds() : activeSessionIds;
+      if (!Array.isArray(ids)) throw new Error('Active session index is unreadable.');
+      const persisted = orphanOnly ? sessionStore.listSessions() : [];
+      if (!Array.isArray(persisted)) throw new Error('Session index is unreadable.');
+      return new Set([...ids, ...persisted.map(session => session.id)].map(value => String(value || '')));
+    };
+    let activeSet;
+    try { activeSet = resolveActiveSet(); } catch (_) {
+      return { ...result, ok: false, skippedReason: 'sessions_unreadable' };
+    }
     let entries;
     try {
       entries = await fsImpl.readdir(artifactsRoot, { withFileTypes: true });
@@ -308,27 +355,86 @@ function createArtifactRetentionService({
     }
 
     if (doomed.length) {
-      await fsImpl.mkdir(quarantineRoot, { recursive: true }).catch(() => {});
+      try {
+        await validateMutation(artifactsRoot);
+        await fsImpl.mkdir(quarantineRoot, { recursive: true });
+      } catch (_) {
+        return { ...result, ok: false, skippedReason: 'invalid_root' };
+      }
     }
-    for (const candidate of doomed) {
+    // ONE fresh reference scan, then each rename behind its own containment
+    // check: a reference written while this pass measured still protects its
+    // directory, without re-reading every session per candidate.
+    let fresh = { referencedDirs: new Set(), complete: true };
+    if (doomed.length) {
+      fresh = await collectReferences(await scanSessionArtifacts(sessionStore), rootResolved, artifactsRoot, false);
+      if (!fresh.complete) result.referencesComplete = false;
+    }
+    const moved = [];
+    for (const candidate of fresh.complete ? doomed : []) {
       const destination = pathImpl.join(quarantineRoot, quarantineEntryName(candidate.dirName, nowMs));
       try {
+        if (fresh.referencedDirs.has(candidate.dirName) || resolveActiveSet().has(candidate.dirName)) continue;
+        await validateMutation(candidate.dirPath, quarantineRoot);
         await fsImpl.rename(candidate.dirPath, destination);
-        result.quarantined += 1;
-        result.quarantinedBytes += candidate.bytes;
-        result.quarantinedNames.push(candidate.dirName);
+        moved.push({ candidate, destination });
       } catch (_error) {
         // Per-directory failures are isolated: report and continue.
         result.errors += 1;
       }
+    }
+    // Nothing fences a session restore or branch against this pass, so a
+    // reference published during the renames is reconciled here: its directory
+    // moves straight back (all of them when this scan cannot complete).
+    const after = moved.length
+      ? await collectReferences(await scanSessionArtifacts(sessionStore), rootResolved, artifactsRoot, false)
+      : fresh;
+    for (const { candidate, destination } of moved) {
+      if (!after.complete || after.referencedDirs.has(candidate.dirName) || resolveActiveSet().has(candidate.dirName)) {
+        try {
+          await fsImpl.rename(destination, candidate.dirPath);
+          result.restored += 1;
+        } catch (_error) {
+          result.errors += 1;
+        }
+        continue;
+      }
+      result.quarantined += 1;
+      result.quarantinedBytes += candidate.bytes;
+      result.quarantinedNames.push(candidate.dirName);
     }
 
     logSweep(result);
     return result;
   }
 
+  async function sweep(options = {}) {
+    const scopes = typeof getWorkspaceScopes === 'function'
+      ? await getWorkspaceScopes() : [{ rootPath: readRoot() }];
+    if (!Array.isArray(scopes)) throw new Error('Artifact workspace index is unreadable.');
+    if (!scopes.length) return sweepRoot({ rootPath: '' }, options);
+    let result;
+    let scan = null;
+    const scanOnce = () => {
+      const sessionStore = readStore();
+      scan = scan || (sessionStore ? scanSessionArtifacts(sessionStore) : Promise.resolve({ references: [], complete: false }));
+      return scan;
+    };
+    for (const scope of scopes) {
+      const current = await sweepRoot(scope, options, scanOnce);
+      if (!result) { result = current; continue; }
+      for (const key of Object.keys(current)) {
+        if (typeof current[key] === 'number') result[key] += current[key];
+        else if (Array.isArray(current[key])) result[key].push(...current[key]);
+      }
+      result.ok = result.ok && current.ok;
+      result.referencesComplete = result.referencesComplete && current.referencesComplete;
+    }
+    return result;
+  }
+
   function logSweep(result) {
-    if (!result.quarantined && !result.purgedQuarantine
+    if (!result.quarantined && !result.restored && !result.purgedQuarantine
       && !result.brokenReferenceCount && !result.errors && result.referencesComplete) {
       return;
     }
@@ -340,6 +446,7 @@ function createArtifactRetentionService({
       quarantined: result.quarantined,
       quarantinedBytes: result.quarantinedBytes,
       quarantinedNames: result.quarantinedNames.slice(0, 20),
+      restored: result.restored,
       purgedQuarantine: result.purgedQuarantine,
       skippedRecent: result.skippedRecent,
       skippedActive: result.skippedActive,

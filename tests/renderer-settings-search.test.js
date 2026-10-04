@@ -20,16 +20,40 @@ const searchStatusDomId = 'settingsSearchStatus';
 
 // ── Pure index / matching logic ───────────────────────────────────────────
 
-test('buildSettingsSearchIndex includes every registry section and every field-copy entry', () => {
+test('buildSettingsSearchIndex includes every registry section and every search projection entry', () => {
   const index = buildSettingsSearchIndex();
   const sectionIds = registry.getSettingsSections().map((section) => section.id);
   const sectionEntries = index.filter((entry) => entry.kind === 'section');
   assert.equal(sectionEntries.length, sectionIds.length);
 
   const fieldEntries = index.filter((entry) => entry.kind === 'field');
-  const copyEntries = fieldCopy.listSettingsFieldCopyEntries();
-  assert.equal(fieldEntries.length, copyEntries.length);
-  assert.ok(fieldEntries.length > 0);
+  const projection = fieldCopy.listSettingsSearchEntries();
+  assert.equal(fieldEntries.length, projection.length);
+  assert.ok(fieldEntries.length > fieldCopy.listSettingsFieldCopyEntries().length, 'descriptor-only entries (Advanced, Runtime limits) join the index');
+  for (const sectionId of ['advanced', 'notifications']) {
+    assert.ok(fieldEntries.some((entry) => entry.sectionId === sectionId), `${sectionId}: at least one searchable field`);
+  }
+  assert.ok(searchSettingsIndex(index, 'tool calls per turn').some((hit) => hit.id === 'advancedTuningField-maxToolsPerTurn'));
+  assert.ok(searchSettingsIndex(index, 'programs').some((hit) => hit.id === 'runtime_limit_resources_native_processes'));
+});
+
+test('a search hit opens the rare fold and flashes the enclosing stacked row', () => {
+  const app = buildNavDom();
+  const { window } = app.dom;
+  const documentRef = window.document;
+  window.requestAnimationFrame = cb => { cb(); return 0; };
+  documentRef.querySelector('.settings-nav-header').insertAdjacentHTML('beforeend', buildSettingsSearchBoxMarkup());
+  documentRef.body.insertAdjacentHTML('beforeend', '<section class="settings-card" data-settings-section="advanced"><details><summary>Rarely needed</summary><div class="settings-field" data-settings-field="limitsRow-inlinePayload"><span data-limits-line="advancedTuningField-maxInlinePayloadBytes"><input id="advancedTuningField-maxInlinePayloadBytes"></span></div></details></section>');
+  const activated = [];
+  const controller = createSettingsSearchController({ documentRef, settingsNav: documentRef.querySelector('.settings-nav'), navigateToSection: id => activated.push(id) });
+  controller.bind();
+  controller.runQuery('inline payload cap');
+  documentRef.getElementById(searchInputDomId).dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+  assert.deepEqual(activated, ['advanced']);
+  assert.equal(documentRef.querySelector('details').open, true);
+  assert.equal(documentRef.querySelector('[data-settings-field="limitsRow-inlinePayload"]').getAttribute('data-search-hit'), 'true');
+  assert.equal(documentRef.getElementById('advancedTuningField-maxInlinePayloadBytes').hasAttribute('data-search-hit'), false);
+  controller.dispose(); app.dispose();
 });
 
 test('merged Skills section routes search hits to its Plugins & Extensions host', () => {
@@ -104,7 +128,8 @@ test('searchSettingsIndex orders field hits before section hits and returns [] f
 
 test('searchSettingsSectionIds returns distinct, host-resolved section ids', () => {
   const index = buildSettingsSearchIndex();
-  const ids = searchSettingsSectionIds(index, 'contextual tips');
+  // 'quick capture' is the retained Home entry; the contextual-tips control is gone (checkpoint 1, D2).
+  const ids = searchSettingsSectionIds(index, 'quick capture');
   assert.ok(ids.includes('home'));
   assert.ok(!ids.includes('tips'), 'retired Settings section must not appear');
   assert.ok(!ids.includes('proactive'), 'retired Settings section must not appear');
@@ -528,4 +553,33 @@ test('createSettingsNavController wires the search input only when settings_sear
     'History scope'
   );
   controllerOn.dispose();
+});
+
+test('a section hit on a page folded into another lands on its group, not on its hidden anchor card', (t) => {
+  const app = buildNavDom();
+  t.after(() => app.dispose());
+  const { window } = app.dom;
+  const documentRef = window.document;
+  window.requestAnimationFrame = (cb) => { cb(); return 0; };
+  documentRef.querySelector('.settings-nav-header').insertAdjacentHTML('beforeend', buildSettingsSearchBoxMarkup());
+  documentRef.querySelector('.settings-card[data-settings-section="account"]').insertAdjacentHTML('beforeend',
+    '<div class="settings-group" data-settings-merged-section="dataPrivacy"></div>');
+  documentRef.querySelector('.settings-content-scroll').insertAdjacentHTML('beforeend',
+    '<section class="settings-card" data-settings-section="dataPrivacy" hidden></section>');
+  const activated = [];
+  const controller = createSettingsSearchController({
+    documentRef,
+    settingsNav: documentRef.querySelector('.settings-nav'),
+    navigateToSection: (sectionId) => activated.push(sectionId),
+  });
+  controller.bind();
+
+  controller.runQuery('data & privacy');
+  assert.equal(controller.getActiveHits()[0].rawSectionId, 'dataPrivacy');
+  documentRef.getElementById(searchInputDomId).dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+
+  assert.deepEqual(activated, ['account']);
+  assert.equal(documentRef.querySelector('[data-settings-merged-section="dataPrivacy"]').getAttribute('data-search-hit'), 'true');
+  assert.equal(documentRef.querySelector('.settings-card[data-settings-section="dataPrivacy"]').hasAttribute('data-search-hit'), false);
+  controller.dispose();
 });

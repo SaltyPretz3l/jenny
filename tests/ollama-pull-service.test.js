@@ -98,3 +98,59 @@ test('pull progress parses lines fragmented across stream chunks', async () => {
   assert.equal(result.status, 'completed');
   assert.equal(result.percent, 100);
 });
+
+test('delete settles as deleted when ollama rm exits before the deadline', async () => {
+  const child = fakeChild();
+  let kills = 0;
+  const service = new OllamaPullService({
+    spawnImpl: () => child,
+    deleteTimeoutMs: 60_000,
+    killProcessTreeImpl: async () => { kills += 1; return { terminated: true }; },
+  });
+  const pending = service.delete({ model: 'gemma3:latest' });
+  child.emit('exit', 0);
+
+  assert.deepEqual(await pending, { status: 'deleted', model: 'gemma3:latest' });
+  assert.equal(kills, 0);
+});
+
+test('delete times out a stalled ollama rm, kills the process tree and ignores a later exit', async () => {
+  const child = fakeChild(8282);
+  const kills = [];
+  const service = new OllamaPullService({
+    spawnImpl: () => child,
+    deleteTimeoutMs: 5,
+    killProcessTreeImpl: async (pid, options) => {
+      kills.push({ pid, options });
+      // The child reporting success while the kill is in flight must not turn the timeout into a deletion.
+      child.emit('exit', 0);
+      return { terminated: true };
+    },
+  });
+
+  const result = await service.delete({ model: 'gemma3:latest' });
+  child.emit('exit', 0);
+
+  assert.equal(result.status, 'failed');
+  assert.equal(result.code, 'delete_timeout');
+  assert.equal(result.terminationConfirmed, true);
+  assert.match(result.message, /timed out/i);
+  assert.equal(kills.length, 1);
+  assert.equal(kills[0].pid, 8282);
+  assert.equal(kills[0].options.force, true);
+  assert.equal(kills[0].options.confirmExit, true);
+});
+
+test('delete timeout reports unconfirmed termination when the kill fails', async () => {
+  const child = fakeChild();
+  const service = new OllamaPullService({
+    spawnImpl: () => child,
+    deleteTimeoutMs: 5,
+    killProcessTreeImpl: async () => { throw new Error('kill failed'); },
+  });
+
+  const result = await service.delete({ model: 'gemma3:latest' });
+
+  assert.equal(result.code, 'delete_timeout');
+  assert.equal(result.terminationConfirmed, false);
+});

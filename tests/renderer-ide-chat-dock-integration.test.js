@@ -48,7 +48,6 @@ function makeDom() {
     <button id="stopStreamButton" class="hidden"></button>
     <select id="composerModelSelect"></select>
     <select id="composerEffortSelect"></select>
-    <button id="composerSettingsButton"></button>
   </body>`);
 }
 
@@ -86,7 +85,6 @@ function makeChrome(dom, state, extraCallbacks = {}) {
       stopStreamButton: byId('stopStreamButton'),
       composerModelSelect: byId('composerModelSelect'),
       composerEffortSelect: byId('composerEffortSelect'),
-      composerSettingsButton: byId('composerSettingsButton'),
     },
     callbacks: {
       isSessionStreaming: () => true,
@@ -306,12 +304,13 @@ test('H1 ordering probe: a chat -> ide chrome flip never leaves an inert compose
   const fixture = await loadDockedRendererApp(t);
   const { window, state, doc, composerWrap, dockBody } = fixture;
   const ideView = doc.getElementById('ideView');
-  const chatView = doc.getElementById('chatView');
+  // Split view W1-4c: the restore host is the pane root the nodes left.
+  const chatPane0 = doc.getElementById('chatPane0');
 
   doc.getElementById('chatTopRailTab').click();
   await waitForUiState(
     window,
-    () => state.ui.activeView === 'chat' && composerWrap.parentElement === chatView,
+    () => state.ui.activeView === 'chat' && composerWrap.parentElement === chatPane0,
     {
       timeoutMs: CONTENTION_WAIT_TIMEOUT_MS,
       message: 'Timed out waiting for the H1 ordering probe to render activeView=chat.',
@@ -342,8 +341,8 @@ test('H1 ordering probe: a chat -> ide chrome flip never leaves an inert compose
     'H1 ordering: ideView aria-hidden latched to a non-false value after activeView returned to ide'
   );
   assert.ok(
-    composerWrap.parentElement === dockBody || composerWrap.parentElement === chatView,
-    'H1 ordering: composerWrap.parentElement ended outside both #ideChatDockBody and #chatView'
+    composerWrap.parentElement === dockBody || composerWrap.parentElement === chatPane0,
+    'H1 ordering: composerWrap.parentElement ended outside both #ideChatDockBody and pane 0'
   );
   assert.equal(
     ideView.inert && composerWrap.parentElement === dockBody,
@@ -500,4 +499,50 @@ test('origin chip releases labels for sessions removed before an assistant reply
   state.currentSessionId = 'session-deleted';
   chrome.renderOriginChip();
   assert.equal(doc.getElementById('chatOriginChip').classList.contains('hidden'), true);
+});
+
+test('split view W1-4c: dock -> restore with two panes puts the transcript and composer back in pane 0, in pane order', async (t) => {
+  const summary = (id, title) => ({ id, title, session_type: 'chat', conversation_mode: 'chat', preferred_model: 'gpt-test', reasoning_effort: 'default', linked_session_ids: [], updated_at: new Date().toISOString() });
+  const app = await loadRendererApp({
+    persistedActiveView: 'chat',
+    shell: {
+      sessions: [summary('session-a', 'Alpha'), summary('session-b', 'Beta')],
+      workspaceState: { activeSessionId: 'session-a', openSessionIds: ['session-a', 'session-b'] },
+      features: { state: { featureFlags: { ide_chat_dock: true } } },
+      workspaceIde: { async getState() { return { chatDockOpen: true, chatDockSide: 'right', chatDockWidth: 380 }; } },
+    },
+  });
+  t.after(async () => { await app.dispose(); });
+  const { window } = app;
+  const doc = window.document;
+  const state = window.__rendererState;
+  await waitForUi(window, 150);
+  const chatPane0 = doc.getElementById('chatPane0');
+  const composerWrap = doc.getElementById('composerWrap');
+  const chatThreadStage = doc.getElementById('chatThreadStage');
+  const dockBody = doc.getElementById('ideChatDockBody');
+  const composition = window.rendererAppPaneComposition.getPaneComposition();
+  assert.equal(composition.toggleSplit(), true, 'precondition: a second pane opens');
+  await waitForUi(window, 100);
+  const pane1 = composition.getPane(1);
+  pane1.dom.chatInput.dispatchEvent(new window.MouseEvent('pointerdown', { bubbles: true }));
+  await waitForUi(window, 50);
+  assert.equal(state.panes.focusedPaneId, 1, 'precondition: pane 1 is focused');
+
+  doc.getElementById('ideTopRailTab').click();
+  await waitForUiState(window, () => state.ui.activeView === 'ide' && composerWrap.parentElement === dockBody, {
+    timeoutMs: CONTENTION_WAIT_TIMEOUT_MS,
+    message: 'Timed out waiting for the dock to host pane 0 nodes.',
+  });
+  doc.getElementById('chatTopRailTab').click();
+  await waitForUiState(window, () => state.ui.activeView === 'chat' && composerWrap.parentElement !== dockBody, {
+    timeoutMs: CONTENTION_WAIT_TIMEOUT_MS,
+    message: 'Timed out waiting for the restore.',
+  });
+  assert.equal(composerWrap.parentElement, chatPane0, 'the composer returns to pane 0, not the focused pane 1');
+  assert.equal(chatThreadStage.parentElement, chatPane0);
+  assert.equal(pane1.root.querySelectorAll('.composer-wrap').length, 1, 'pane 1 keeps only its own composer');
+  const order = [...chatPane0.children].map((child) => child.getAttribute('data-chat-node') || child.id);
+  assert.ok(order.indexOf('chatThreadStage') < order.indexOf('chatTimelineUtilityCluster'), 'thread stage before the utility cluster');
+  assert.equal(chatPane0.lastElementChild, composerWrap, 'composer last');
 });

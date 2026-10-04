@@ -40,7 +40,12 @@
     if (!ide || !editorHost || typeof editorHost.setEditorOptions !== 'function') {
       return;
     }
-    const fontSize = Number(ide.fontSize) > 0 ? Number(ide.fontSize) : 13;
+    // 0 = "Match text size": the shared resolver follows --font-scale, and the
+    // preference also retunes the diff sides, artifact editors, and terminal.
+    const monacoUtils = (typeof globalThis !== 'undefined' && globalThis.rendererMonacoEditorUtils) || null;
+    const fontSize = typeof monacoUtils?.setCodeFontSizePreference === 'function'
+      ? monacoUtils.setCodeFontSizePreference(ide.fontSize)
+      : (Number(ide.fontSize) > 0 ? Number(ide.fontSize) : 13);
     editorHost.setEditorOptions({
       fontSize,
       wordWrap: ide.wordWrap === 'on' ? 'on' : 'off',

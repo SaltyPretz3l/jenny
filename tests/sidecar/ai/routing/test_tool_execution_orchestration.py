@@ -951,16 +951,9 @@ def test_run_command_requested_timeout_extends_outer_transport_deadline() -> Non
 def test_tool_timeout_for_runtime_follows_the_cloud_loop_profile() -> None:
     local_kernel = SimpleNamespace(_config=RuntimeConfig(engine_type="ollama"))
     cloud_kernel = SimpleNamespace(_config=RuntimeConfig(engine_type="chatgpt"))
-    rolled_back = SimpleNamespace(
-        _config=RuntimeConfig(
-            engine_type="chatgpt",
-            feature_flags={"cloud_loop_profile": False},
-        ),
-    )
 
     assert _tool_timeout_for_runtime(local_kernel, None) == 120.0
     assert _tool_timeout_for_runtime(cloud_kernel, None) == 1_800.0
-    assert _tool_timeout_for_runtime(rolled_back, None) == 120.0
 
 
 def test_tool_timeout_for_runtime_clamps_to_remaining_budget() -> None:

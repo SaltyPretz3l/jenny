@@ -3,6 +3,7 @@
 const { EventEmitter } = require('events');
 const { normalizeString } = require('./backend/path-utils');
 const { HomeAiJournalStore } = require('./home-ai-journal-store');
+const { normalizeReminder } = require('./shell-config-followups-schema');
 
 // Facade the assistant (the `home` tool) writes Home through — never the raw
 // calendar/config services. Three things happen on every mutation, atomically
@@ -56,9 +57,12 @@ class HomeAssistantService extends EventEmitter {
   // ---- reads ------------------------------------------------------------
 
   listCalendar(range = {}) {
-    const state = this.calendarService.getState();
-    const start = normalizeString(range?.start) || state.windowStart;
-    const end = normalizeString(range?.end) || state.windowEnd;
+    const state = this.calendarService.getState({
+      start: normalizeString(range?.start), end: normalizeString(range?.end),
+    });
+    // The service normalizes the requested range into its window.
+    const start = state.windowStart;
+    const end = state.windowEnd;
     const instances = (Array.isArray(state.instances) ? state.instances : [])
       .filter((instance) => instance.end > start && instance.start < end);
     return {
@@ -67,6 +71,8 @@ class HomeAssistantService extends EventEmitter {
       rangeStart: start,
       rangeEnd: end,
       instances,
+      ...(state.rangeClamped ? { rangeClamped: true } : {}),
+      ...(state.uncoveredFeeds?.length ? { uncoveredFeeds: state.uncoveredFeeds } : {}),
     };
   }
 
@@ -175,11 +181,18 @@ class HomeAssistantService extends EventEmitter {
       return { ok: false, reason: 'not_found', entityId: requestedId };
     }
     const before = new Set(this._allReminders().map((reminder) => reminder.id));
-    this.configService.upsertReminder({
+    const reminder = normalizeReminder({
       ...(prior || {}),
       ...input,
       ...this._attribution(meta, prior),
     });
+    // HOM-10: only a re-timed one-shot re-arms. Daily and interval reminders
+    // keep lastFiredAt so a moved time cannot fire twice in one period.
+    if (prior && reminder.scheduleType === 'once_at'
+      && (reminder.scheduleType !== prior.scheduleType || reminder.onceAt !== prior.onceAt)) {
+      reminder.lastFiredAt = '';
+    }
+    this.configService.upsertReminder(reminder);
     // `requestedId` is necessarily empty on this branch — the refusal above
     // means an id that reaches here always resolved to a prior record.
     const entityId = prior
@@ -231,10 +244,12 @@ class HomeAssistantService extends EventEmitter {
     const current = entry.entity === CALENDAR_EVENT
       ? this._readEvent(entry.entityId)
       : this._readReminder(entry.entityId);
-    if (JSON.stringify(current) !== entry.postHash) {
+    const alreadyRestored = entry.inverse.kind === 'restore'
+      && JSON.stringify(current) === JSON.stringify(entry.inverse.payload);
+    if (!alreadyRestored && JSON.stringify(current) !== entry.postHash) {
       return { ok: false, reason: 'changed_since' };
     }
-    this._applyInverse(entry);
+    if (!alreadyRestored) this._applyInverse(entry);
     this.journal.markUndone(entry.id, this.nowProvider());
     const payload = this._changedPayload();
     this.emit('changed', payload);
@@ -247,10 +262,8 @@ class HomeAssistantService extends EventEmitter {
     };
   }
 
-  // A restored calendar event is re-created rather than resurrected in place:
-  // CalendarService owns id minting, so the record comes back with all its
-  // fields but a fresh id. The journal entry is stamped undone either way, so
-  // the identity change is terminal, never chained.
+  // Restore the original identity so an interrupted journal write can be
+  // completed after restart without creating another event.
   _applyInverse(entry) {
     const { kind, payload } = entry.inverse;
     const isEvent = entry.entity === CALENDAR_EVENT;
@@ -267,8 +280,7 @@ class HomeAssistantService extends EventEmitter {
     }
     if (kind === 'restore') {
       if (isEvent) {
-        const { id: _droppedId, ...fields } = payload;
-        this.calendarService.createEvent(fields);
+        this.calendarService.createEvent(payload, { restore: true });
       } else {
         this.configService.upsertReminder(payload);
       }

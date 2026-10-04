@@ -56,7 +56,7 @@ const MUTATION_CATALOG = [
 ];
 
 const PRODUCTION_PREFIXES = ['services/', 'renderer/'];
-const PRODUCTION_TOPLEVEL = new Set(['main.js', 'preload.js', 'preload-overlay.js', 'overlay-window.js']);
+const PRODUCTION_TOPLEVEL = new Set(['main.js', 'preload.js']);
 const NON_SOURCE_PREFIXES = ['tests/', 'scripts/', 'node_modules/', 'vendor/', 'dist/', 'build/', 'out/'];
 
 function toPosix(p) {
@@ -392,13 +392,19 @@ function installRestoreGuards() {
 // same code path the exit/signal guards use, so a restore failure is surfaced
 // loudly in one place rather than swallowed).
 function runWithMutation(file, originalBuffer, mutatedText, fn) {
+  // Retry recovery before replacing the sole buffer with another file's bytes.
+  restorePending();
+  if (pendingRestore) throw new Error(`restore failed: ${pendingRestore.file}`);
   pendingRestore = { file, buffer: originalBuffer };
+  let result;
   try {
     fs.writeFileSync(file, mutatedText, 'utf8');
-    return fn();
+    result = fn();
   } finally {
     restorePending();
   }
+  if (pendingRestore) throw new Error(`restore failed: ${pendingRestore.file}`);
+  return result;
 }
 
 // --- orchestration -----------------------------------------------------------
@@ -416,6 +422,8 @@ function runMutationSmoke(options) {
   } = options;
 
   installRestoreGuards();
+  restorePending();
+  if (pendingRestore) throw new Error(`restore failed: ${pendingRestore.file}`);
   const files = [];
   const skipped = [];
 
@@ -456,11 +464,6 @@ function runMutationSmoke(options) {
     for (const mutant of mutants) {
       const mutatedText = applyMutant(originalText, mutant);
       const result = runWithMutation(abs, originalBuffer, mutatedText, () => runTests(tests, { root, timeoutMs }));
-      if (pendingRestore) {
-        // restorePending failed (CRITICAL already printed); stop before mutating further.
-        log(`ABORT ${relSource}: restore failed; stopping to avoid leaving more files mutated`);
-        break;
-      }
       if (result.passed) {
         survivors.push({ lineNo: mutant.lineNo, op: mutant.op, before: mutant.before, after: mutant.after });
       } else {

@@ -17,18 +17,16 @@
   background: color-mix(in srgb, var(--surface-elevated, var(--widget-badge-bg)) 88%, transparent);
   color: var(--text-secondary);
   font-family: var(--font-family-body);
-  font-size: 0.68rem;
-  font-weight: 700;
+  font-size: var(--font-size-caption);
+  font-weight: 500;
   line-height: 1;
   min-height: 1.1rem;
   padding: 0.12rem 0.42rem;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
   white-space: nowrap;
 }
 
 .inv-badge--sm {
-  font-size: 0.58rem;
+  font-size: var(--font-size-caption);
   min-height: 0.92rem;
   padding: 0.1rem 0.32rem;
 }
@@ -71,13 +69,12 @@
   gap: var(--space-1);
   color: var(--text-secondary);
   font-family: var(--font-family-body);
-  font-size: var(--font-size-xs);
+  font-size: var(--font-size-body);
 }
 
 .inv-number-input-label {
   color: var(--text-muted);
-  font-weight: 700;
-  text-transform: uppercase;
+  font-weight: 500;
 }
 
 .inv-number-input-control {
@@ -104,7 +101,8 @@
 
 .inv-number-input-suffix {
   color: var(--text-muted);
-  font-weight: 700;
+  font-size: var(--font-size-caption);
+  font-weight: 500;
 }
 
 /* ── Spinner ── */
@@ -175,7 +173,7 @@
 
 .inv-codeblock-language {
   font-family: var(--font-family-mono);
-  font-size: var(--font-size-xs);
+  font-size: var(--font-size-caption);
   color: var(--text-muted);
   text-transform: lowercase;
 }
@@ -187,7 +185,7 @@
   background: var(--bg-surface-2);
   color: var(--text-secondary);
   font-family: var(--font-family-body);
-  font-size: var(--font-size-xs);
+  font-size: var(--font-size-caption);
   padding: var(--space-1) var(--space-3);
   cursor: pointer;
   transition: background var(--motion-duration-fast) var(--motion-ease-standard);
@@ -221,7 +219,7 @@
   background: var(--widget-tool-code-bg);
   color: var(--widget-tool-code-color);
   font-family: var(--font-family-mono);
-  font-size: var(--font-size-sm);
+  font-size: var(--font-size-code);
   line-height: 1.55;
   overflow-x: auto;
   white-space: pre-wrap;
@@ -252,7 +250,7 @@
 .tool-shell-file-item {
   padding: var(--space-1) var(--space-4);
   font-family: var(--font-family-mono);
-  font-size: var(--font-size-sm);
+  font-size: var(--font-size-code);
   color: var(--widget-tool-code-color);
   border-left: 2px solid var(--border-default);
   word-break: break-all;
@@ -260,7 +258,7 @@
 
 .tool-call-empty {
   padding: var(--space-3) 0;
-  font-size: var(--font-size-sm);
+  font-size: var(--font-size-footnote);
   color: var(--text-muted);
   font-style: italic;
 }
@@ -290,7 +288,7 @@
   border-radius: var(--radius-pill);
   background: var(--widget-action-bg);
   color: var(--text-secondary);
-  font-size: var(--font-size-xs);
+  font-size: var(--font-size-caption);
   font-family: var(--font-family-body);
   text-decoration: none;
   white-space: nowrap;
@@ -311,15 +309,16 @@
 
 .inv-favicon-initial {
   display: inline-flex;
-  width: 14px;
-  height: 14px;
+  width: 1.2em;
+  height: 1.2em;
   align-items: center;
   justify-content: center;
   border-radius: 2px;
   background: color-mix(in srgb, var(--accent) 20%, transparent);
   color: var(--accent);
-  font-size: 9px;
-  font-weight: 700;
+  font-size: var(--font-size-caption);
+  font-weight: 500;
+  line-height: 1;
   flex-shrink: 0;
 }
 
@@ -344,7 +343,7 @@
   border-radius: var(--radius-pill);
   background: transparent;
   color: var(--text-muted);
-  font-size: var(--font-size-xs);
+  font-size: var(--font-size-caption);
   font-family: var(--font-family-body);
   padding: 0.15rem 0.5rem;
   cursor: pointer;
@@ -360,12 +359,10 @@
 .inv-source-section { margin-top: var(--space-4); }
 
 .inv-source-section-label {
-  font-size: var(--font-size-xs);
-  font-weight: 600;
+  font-size: var(--font-size-caption);
+  font-weight: 500;
   color: var(--text-muted);
   margin-bottom: var(--space-2);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
 }
 
 .inv-error-action {
@@ -378,7 +375,7 @@
   background: var(--bg-surface-2);
   color: var(--text-secondary);
   font-family: var(--font-family-body);
-  font-size: var(--font-size-xs);
+  font-size: var(--font-size-body);
   cursor: pointer;
   transition: background var(--motion-duration-fast) var(--motion-ease-standard);
 }
@@ -448,26 +445,6 @@
   border-color: color-mix(in srgb, var(--tool-call-accent, var(--accent)) 32%, var(--widget-tool-border, var(--border-default)));
 }
 
-.inv-artifact-preview { flex-shrink: 0; }
-
-.inv-artifact-thumb {
-  width: 40px;
-  height: 40px;
-  border-radius: var(--radius-xs);
-  object-fit: cover;
-}
-
-.inv-artifact-thumb-placeholder {
-  width: 40px;
-  height: 40px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: var(--radius-xs);
-  background: color-mix(in srgb, var(--tool-call-accent, var(--accent)) 10%, transparent);
-  color: color-mix(in srgb, var(--tool-call-accent, var(--accent)) 72%, var(--widget-tool-color, var(--text-muted)));
-}
-
 .inv-artifact-icon {
   flex-shrink: 0;
   color: color-mix(in srgb, var(--tool-call-accent, var(--accent)) 64%, var(--widget-tool-color, var(--text-muted)));
@@ -482,8 +459,8 @@
 }
 
 .inv-artifact-title {
-  font-size: var(--font-size-sm);
-  font-weight: 600;
+  font-size: var(--font-size-body);
+  font-weight: 500;
   color: var(--widget-tool-color, var(--text-primary));
   overflow: hidden;
   text-overflow: ellipsis;
@@ -491,7 +468,7 @@
 }
 
 .inv-artifact-meta {
-  font-size: var(--font-size-xs);
+  font-size: var(--font-size-caption);
   color: color-mix(in srgb, var(--widget-tool-color, var(--text-muted)) 56%, transparent);
 }
 
@@ -535,9 +512,8 @@
 .inv-artifact-action.inv-artifact-primary {
   width: auto;
   padding: 0 var(--space-4);
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.04em;
+  font-size: var(--font-size-body);
+  font-weight: 500;
   color: color-mix(in srgb, var(--tool-call-accent, var(--accent)) 88%, white 8%);
   border-color: color-mix(in srgb, var(--tool-call-accent, var(--accent)) 30%, transparent);
   background: color-mix(in srgb, var(--tool-call-accent, var(--accent)) 8%, transparent);
@@ -587,7 +563,7 @@
 
 .inv-progress-text {
   display: block;
-  font-size: 0.68rem;
+  font-size: var(--font-size-caption);
   color: var(--inv-progress-text-color);
   line-height: 1;
 }
@@ -646,9 +622,8 @@
 
 .inv-step-modal-eyebrow {
   color: var(--text-muted);
-  font-size: 11px;
-  font-weight: 700;
-  text-transform: uppercase;
+  font-size: var(--font-size-caption);
+  font-weight: 500;
 }
 
 .inv-step-modal-title-row {
@@ -664,7 +639,7 @@
   min-width: 0;
   color: var(--text-primary);
   font-family: var(--font-family-display);
-  font-size: 21px;
+  font-size: var(--font-size-heading);
   line-height: 1.18;
 }
 
@@ -675,8 +650,8 @@
   border: 1px solid color-mix(in srgb, var(--accent) 22%, var(--border-default));
   border-radius: var(--radius-xs);
   color: color-mix(in srgb, var(--accent) 78%, var(--text-primary));
-  font-size: 11px;
-  font-weight: 700;
+  font-size: var(--font-size-caption);
+  font-weight: 500;
   overflow-wrap: anywhere;
 }
 
@@ -684,7 +659,7 @@
 .update-dialog-summary {
   margin: 0;
   color: var(--text-secondary);
-  font-size: 13px;
+  font-size: var(--font-size-body);
   line-height: 1.55;
 }
 
@@ -720,8 +695,8 @@
   background: var(--surface-input-background);
   color: var(--text-primary);
   font-family: inherit;
-  font-size: 13px;
-  font-weight: 700;
+  font-size: var(--font-size-body);
+  font-weight: 500;
   cursor: pointer;
   transition:
     background-color var(--motion-duration-fast) var(--motion-ease-standard),
@@ -791,7 +766,7 @@
 }
 
 .inv-toggle-label {
-  font-size: var(--font-size-xs);
+  font-size: var(--font-size-body);
   color: var(--text-secondary);
   user-select: none;
 }
@@ -806,7 +781,16 @@
 
 .inv-toggle-description {
   color: var(--text-muted);
-  font-size: var(--font-size-xs);
+  font-size: var(--font-size-footnote);
+  line-height: 1.45;
+  max-width: 52ch;
+}
+
+/* The reason a switch could not be saved (toggleSwitch.setError): one line of
+ * text under the help, no box. */
+.inv-toggle-error {
+  color: var(--state-danger);
+  font-size: var(--font-size-footnote);
   line-height: 1.45;
   max-width: 52ch;
 }
@@ -832,7 +816,7 @@
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.28);
   color: var(--text-primary);
   font-family: var(--font-family-body);
-  font-size: var(--font-size-xs);
+  font-size: var(--font-size-caption);
   line-height: 1.4;
   /* pre-line: multi-line tooltips (context-ring breakdown) keep their \n
    * structure; single-line tooltips are unaffected. */
@@ -873,7 +857,7 @@
   border: none;
   color: var(--text-primary);
   font-family: var(--font-family-body);
-  font-size: var(--font-size-sm);
+  font-size: var(--font-size-body);
   cursor: pointer;
   text-align: left;
 }
@@ -897,7 +881,40 @@
 }
 .inv-context-menu-shortcut {
   margin-left: var(--space-8);
-  font-size: var(--font-size-xs);
+  font-size: var(--font-size-caption);
+  color: var(--text-muted);
+}
+/* Radio rows (item.checked is a boolean): a leading check column so the
+   labels align whether or not a row is the current one. */
+.inv-context-menu-item[role="menuitemradio"]::before {
+  content: "";
+  flex: none;
+  width: 1em;
+  margin-inline-end: var(--space-3);
+  color: var(--accent);
+  font-size: var(--font-size-caption);
+  line-height: 1;
+}
+/* Same specificity as the radio rule above and later, so the checked row
+   shows its mark (the bare class lost to the [role] selector). */
+.inv-context-menu-item--checked[role="menuitemradio"]::before {
+  content: "\2713";
+}
+/* The label (or description wrapper) fills the row, so a radio row without a
+   description starts its label at the check column like one with. */
+.inv-context-menu-item[role="menuitemradio"] > span:first-child {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.inv-context-menu-text {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+.inv-context-menu-description {
+  font-size: var(--font-size-caption);
   color: var(--text-muted);
 }
 .inv-context-menu-separator {
@@ -917,7 +934,7 @@
   background: var(--surface-popover-background);
   color: var(--text-primary);
   font-family: var(--font-family-body);
-  font-size: var(--font-size-md);
+  font-size: var(--font-size-body);
 }
 
 .inv-inline-title-editor:focus {

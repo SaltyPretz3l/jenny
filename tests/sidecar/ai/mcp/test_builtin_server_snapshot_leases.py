@@ -162,7 +162,7 @@ def test_lru_and_ttl_evict_old_leases() -> None:
     assert "expected_read_snapshot" not in store.inject(
         tool_name="write_file", session_id="s", arguments={"path": "a.txt"}
     )
-    store._expire(started + 4)  # noqa: SLF001 - deterministic expiry contract.
+    store._expire(started + 4)  # deterministic expiry contract.
     assert "expected_read_snapshot" not in store.inject(
         tool_name="write_file", session_id="s", arguments={"path": "b.txt"}
     )

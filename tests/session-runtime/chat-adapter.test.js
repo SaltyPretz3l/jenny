@@ -23,6 +23,50 @@ const {
   waitFor,
 } = require('../helpers/session-runtime-chat-adapter-harness');
 
+test('S1 regression: managed stream retains disabled tools after second normalization', async t => {
+  const { normalizeManagedToolPreferences } = require('../../services/backend/backend-service-utils');
+  const { adapter, service, sessionId } = createAdapterHarness(t);
+  service.currentStatus = { tools_status: {
+    plugin_read: { tool_family: 'filesystem', source_kind: 'plugin' },
+    mcp__github__search: { source_kind: 'mcp', server_name: 'github', available: true },
+  } };
+  let capturedPreferences;
+  const captureSession = service.sessionExecutionAuthority.captureSession.bind(service.sessionExecutionAuthority);
+  service.sessionExecutionAuthority.captureSession = (id, options) => {
+    capturedPreferences = options?.toolPreferences;
+    return captureSession(id, options);
+  };
+  const prepared = await adapter.prepareImmediate(request(sessionId, {
+    toolPreferences: { file_tools: false },
+  }), {}, { workId: 'work-preferences', turnId: 'turn-preferences' });
+  adapter.register(prepared.workId, prepared);
+  const work = { work_id: prepared.workId, turn_id: prepared.turnId, session_id: sessionId,
+    project_id: AUTHORITY.project_id, input: prepared.input };
+  const claim = adapter.claimCanonical(work, prepared.route);
+  let wirePreferences;
+  service._startManagedSidecarChatStream = async options => {
+    wirePreferences = normalizeManagedToolPreferences(options.toolPreferences, { catalog: service.currentStatus.tools_status });
+    assert.deepEqual(wirePreferences, options.toolPreferences);
+    const controller = new AbortController();
+    service.sessionTurnActors.attachController(options.turnLease, controller);
+    service.sessionTurnActors.release(options.turnLease, { status: 'completed' });
+    controller._runtimeCompletion = Promise.resolve({
+      status: 'completed', producerSettled: true, canonicalSettled: true,
+    });
+    service.activeStreams.set(claim.streamId, controller);
+    return { sessionId, streamId: claim.streamId };
+  };
+  const outcome = await adapter.startProducer({ work, route: prepared.route, assertCurrent: () => true });
+  service.activeStreams.delete(claim.streamId);
+  assert.equal(outcome.status, 'completed');
+  assert.ok(wirePreferences?.disabled_tools.includes('read_file'));
+  assert.ok(wirePreferences.disabled_tools.includes('plugin_read'));
+  assert.equal(wirePreferences.disabled_tools.includes('mcp__github__search'), false);
+  assert.equal(wirePreferences.enabled_tools, undefined);
+  // The sidecar is offered exactly the deny-list the execution authority enforces.
+  assert.deepEqual(wirePreferences, capturedPreferences);
+});
+
 test('a GPT submission after mock fallback captures ChatGPT or rejects missing credentials', async t => {
   const { adapter, service, sessionId } = createAdapterHarness(t);
   const submission = { sessionId, prompt: 'resume', preferredModel: 'gpt-6-astra' };
@@ -489,4 +533,24 @@ test('disabled runtime refuses explicit resume before checkpoint hydration', () 
   assert.deepEqual(runtime.resume('work-paused', 4),
     { status: 'rejected', reason: 'runtime_disabled' });
   assert.equal(prepared, false);
+});
+
+test('the safety policy is captured with the turn and a checkpoint resume keeps it', async t => {
+  const { adapter, service, sessionId } = createAdapterHarness(t);
+  service.configService.getChatUiState = () => ({ safetyMode: 'paranoid', autoApproveStreakCap: 3 });
+  const prepared = await adapter.prepareImmediate(request(sessionId), {}, { workId: 'work-sp', turnId: 'turn-sp' });
+  const policy = { safety_mode: 'paranoid', auto_approve_streak_cap: 3 };
+  assert.deepEqual(prepared.request.safetyPolicy, policy);
+  assert.deepEqual(prepared.input.request.safetyPolicy, policy, 'rides the durable request');
+  adapter.discard(prepared);
+
+  // Settings changed while the turn was paused: the resume keeps the turn's policy.
+  service.configService.getChatUiState = () => ({ safetyMode: 'normal', autoApproveStreakCap: 0 });
+  const paused = {
+    work_id: 'work-sp', turn_id: 'turn-sp', session_id: sessionId, project_id: AUTHORITY.project_id,
+    status: 'paused', attempt: null, authority: prepared.authority, input: prepared.input,
+  };
+  const resumed = adapter.prepareResume(paused, { getCurrentWork: () => paused });
+  assert.deepEqual(resumed.request.safetyPolicy, policy);
+  adapter.discard(resumed);
 });

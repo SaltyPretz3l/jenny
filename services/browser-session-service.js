@@ -289,9 +289,17 @@ class BrowserSessionService {
       if (typeof capturePage !== 'function') {
         throw new Error('Browser screenshot capture is unavailable.');
       }
-      const captureResult = await capturePage.call(session.webContents || session.window, undefined, {
-        stayHidden: true,
-      });
+      const timeoutMs = boundedPositiveInt(
+        options.timeout_ms, DEFAULT_BROWSER_ACTION_TIMEOUT_MS, MAX_BROWSER_ACTION_TIMEOUT_MS
+      );
+      const capture = Promise.resolve(capturePage.call(
+        session.webContents || session.window, undefined, { stayHidden: true }
+      ));
+      const captureResult = await this._withTimeout(
+        _waitForAbortable(capture, signal),
+        timeoutMs,
+        'Browser screenshot timed out.'
+      );
       _throwIfAborted(signal);
       const buffer = _toPngBuffer(captureResult);
       const dimensions = parsePngDimensions(buffer);
@@ -490,7 +498,9 @@ class BrowserSessionService {
       this._clearTimeout(session.idleTimer);
     }
     session.closing = true;
-    await Promise.resolve(session.operationTail).catch(() => null);
+    await this._withTimeout(
+      Promise.resolve(session.operationTail).catch(() => null), 250, 'Browser cleanup timed out.'
+    ).catch(() => null);
     try {
       if (session.window && typeof session.window.isDestroyed === 'function') {
         if (!session.window.isDestroyed()) {

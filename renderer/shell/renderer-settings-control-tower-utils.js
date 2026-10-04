@@ -9,11 +9,11 @@
  */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) {
-    module.exports = factory();
+    module.exports = factory(require('../inventory/badge'));
     return;
   }
-  root.rendererSettingsControlTowerUtils = factory();
-})(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  root.rendererSettingsControlTowerUtils = factory(root.inventoryBadge);
+})(typeof globalThis !== 'undefined' ? globalThis : this, function (inventoryBadge) {
   const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   const jtn = (globalThis.jennyI18n && globalThis.jennyI18n.tn) || function (k, count, params, one, other) { return jt.call(null, k, count === 1 ? one : other, params); };
   const DEFAULT_ESCAPE = function defaultEscapeHtml(value) {
@@ -25,7 +25,7 @@
       .replaceAll("'", '&#39;');
   };
   const READINESS_SECTION_ID = 'readiness';
-  const READY_ITEM_ID = 'settings-ready';
+  const READY_ITEM_ID = 'model-ready';
 
   function normalizeRecord(value) {
     return value && typeof value === 'object' ? value : {};
@@ -69,6 +69,7 @@
       tone: item.tone || 'warning',
       sectionId: item.sectionId || 'models',
       actionLabel: item.actionLabel || 'Open',
+      action: item.action || '',
       priority: Number.isFinite(Number(item.priority)) ? Number(item.priority) : 100,
     });
   }
@@ -128,24 +129,35 @@
     ]);
   }
 
-  function getBlockedToolCount(state) {
+  // Tools-page labels for the toggles a folder can block; other keys show as-is.
+  const TOOL_LABELS = {
+    fileTools: () => jt('settings.tools.fileTools.label', 'File tools'),
+    richFiles: () => jt('settings.tools.richFiles.label', 'Rich file reading'),
+    subagents: () => jt('settings.tools.subagents.label', 'Delegated research'),
+    bash: () => jt('settings.tools.bash.label', 'Terminal commands'),
+    lsp: () => jt('settings.tools.lsp.label', 'Code intelligence'),
+    worktree: () => jt('settings.tools.worktree.label', 'Worktree tools'),
+  };
+
+  function getBlockedToolNames(state) {
     const featureState = normalizeRecord(state.featureState || state.features);
     const tools = normalizeRecord(featureState.tools || state.tools);
     const availabilityRoot = normalizeRecord(featureState.availability || featureState.toolAvailability || state.toolAvailability);
     const availability = normalizeRecord(availabilityRoot.tools || availabilityRoot);
-    return Object.keys(tools).reduce((count, key) => {
-      if (tools[key] !== true) {
-        return count;
-      }
+    return Object.keys(tools).filter((key) => {
       const toolState = normalizeRecord(availability[key]);
-      return toolState.enabled === false ? count + 1 : count;
-    }, 0);
+      return tools[key] === true && toolState.enabled === false;
+    }).map((key) => ({ name: key, needsFolder: normalizeRecord(availability[key]).workspaceRootRequired === true }));
+  }
+
+  function isLocalOnly(state) {
+    const offline = normalizeRecord(state.offline || state.offlineState);
+    return offline.localOnly === true || offline.mode === 'local' || offline.mode === 'local_only';
   }
 
   function isLocalOnlyNotReady(state) {
     const offline = normalizeRecord(state.offline || state.offlineState);
-    const localOnly = offline.localOnly === true || offline.mode === 'local' || offline.mode === 'local_only';
-    if (!localOnly) {
+    if (!isLocalOnly(state)) {
       return false;
     }
     return offline.localChatReady === false
@@ -183,8 +195,9 @@
   function buildSettingsControlTowerModel(input) {
     const state = normalizeRecord(input?.state);
     const items = [];
+    const chatReady = Boolean(String(getModelName(state) || '').trim());
 
-    if (!String(getModelName(state) || '').trim()) {
+    if (!chatReady) {
       addItem(items, {
         id: 'model-unavailable',
         label: jt('settings.controlTower.noActiveModel', 'No active model'),
@@ -204,8 +217,7 @@
       || workspaceStatusValue !== undefined
       || Object.prototype.hasOwnProperty.call(state, 'workspaceRoot')
       || Object.prototype.hasOwnProperty.call(state, 'workspace');
-    if (
-      hasWorkspaceSignal
+    const workspaceMissing = hasWorkspaceSignal
       && (
         !workspaceRoot
         || workspaceStatus === 'missing'
@@ -213,20 +225,32 @@
         || workspaceStatus === 'invalid'
         || workspaceStatus === 'unavailable'
         || workspaceStatus === 'error'
-      )
-    ) {
+      );
+    // Only tools blocked for want of a folder fold into the workspace row; the
+    // rest (platform, sidecar) keep their own row.
+    const blockedTools = getBlockedToolNames(state);
+    const folderBlockedNames = workspaceMissing ? blockedTools.filter((tool) => tool.needsFolder).map((tool) => (TOOL_LABELS[tool.name] ? TOOL_LABELS[tool.name]() : tool.name)) : [];
+    const blockedToolCount = blockedTools.length - folderBlockedNames.length;
+    if (workspaceMissing) {
+      let message = jt('settings.controlTower.fileToolsFolderMessage', 'File tools need a folder to work in.');
+      const folderBlockedCount = folderBlockedNames.length;
+      if (folderBlockedCount > 0) {
+        const blocked = jtn('settings.controlTower.workspaceBlocksTools', folderBlockedCount, { count: folderBlockedCount }, 'Also blocks: {count} enabled tool', 'Also blocks: {count} enabled tools');
+        const names = folderBlockedNames.slice(0, 3).join(', ') + (folderBlockedCount > 3 ? ', …' : '');
+        message += ' ' + jt('settings.controlTower.workspaceBlockedToolNames', '{blocked} ({names}).', { blocked, names });
+      }
       addItem(items, {
         id: 'workspace-missing',
-        label: jt('settings.controlTower.workspaceMissing', 'Workspace root is missing'),
-        message: jt('settings.controlTower.setWorkspaceRoot', 'Set a workspace root so tools work inside a clear boundary.'),
+        label: jt('settings.controlTower.noWorkspaceFolder', 'No workspace folder'),
+        message,
         tone: 'warning',
         sectionId: 'tools',
-        actionLabel: jt('settings.controlTower.setWorkspaceRootAction', 'Set a workspace root'),
+        actionLabel: jt('settings.controlTower.chooseFolderAction', 'Choose folder'),
+        action: 'choose-workspace',
         priority: 30,
       });
     }
 
-    const blockedToolCount = getBlockedToolCount(state);
     if (blockedToolCount > 0) {
       addItem(items, {
         id: 'tools-blocked',
@@ -242,11 +266,12 @@
     if (hasLoadedSetup(state) && !isSetupComplete(state)) {
       addItem(items, {
         id: 'setup-incomplete',
-        label: jt('settings.controlTower.setupIncomplete', 'Setup is incomplete'),
+        label: jt('settings.controlTower.setupNotFinished', 'Setup not finished'),
         message: jt('settings.controlTower.finishSetup', 'Finish the first-run setup so Jenny is ready across sessions.'),
         tone: 'warning',
         sectionId: 'account',
-        actionLabel: jt('settings.controlTower.finishSetupAction', 'Finish setup'),
+        actionLabel: jt('settings.controlTower.resumeSetupAction', 'Resume setup'),
+        action: 'resume-setup',
         priority: 50,
       });
     }
@@ -315,38 +340,69 @@
     items.sort((left, right) => left.priority - right.priority);
 
     const attentionCount = items.length;
-    // The ready state is a real, visible row: the page is never empty and never
-    // collapses, so its height is the same whether or not anything needs a hand.
+    // The ready state lists each area the checks above cover as a success row, so
+    // the page is never empty and shows what was checked. An area appears only
+    // when its state is known (Force local: only while it is on).
     if (!attentionCount) {
-      addItem(items, {
-        id: READY_ITEM_ID,
-        label: jt('settings.controlTower.everythingReady', "Everything's ready"),
-        message: jt('settings.controlTower.allReady', 'Model, workspace, tools, setup, and companion surfaces all look ready.'),
-        tone: 'success',
-        sectionId: 'models',
-        actionLabel: jt('settings.controlTower.reviewModels', 'Review models'),
-        priority: 1000,
+      const ready = (id, label, message, sectionId, actionLabel) => addItem(items, {
+        id, label, message, tone: 'success', sectionId, actionLabel,
       });
+      ready(READY_ITEM_ID, jt('settings.controlTower.ready.model', 'Model'), jt('settings.controlTower.ready.modelMessage', '{model} is the active model.', { model: String(getModelName(state)).trim() }), 'models', jt('settings.controlTower.reviewModels', 'Review models'));
+      if (hasWorkspaceSignal) {
+        ready('workspace-ready', jt('settings.controlTower.ready.workspace', 'Workspace'), workspaceRoot, 'tools', jt('settings.controlTower.openTools', 'Open tools'));
+      }
+      ready('tools-ready', jt('settings.controlTower.ready.tools', 'Tools'), jt('settings.controlTower.ready.toolsMessage', 'No enabled tool is blocked.'), 'tools', jt('settings.controlTower.reviewTools', 'Review tools'));
+      if (hasLoadedSetup(state)) {
+        ready('setup-ready', jt('settings.controlTower.ready.setup', 'Setup'), jt('settings.controlTower.ready.setupMessage', 'First-run setup is complete.'), 'account', jt('settings.controlTower.openProfile', 'Open profile'));
+      }
+      const known = (record) => Object.keys(normalizeRecord(record)).length > 0;
+      if (isLocalOnly(state)) {
+        ready('local-only-ready', jt('settings.controlTower.ready.forceLocal', 'Force local'), jt('settings.controlTower.ready.forceLocalMessage', 'Force local inference is on and the local model is ready.'), 'offline', jt('settings.controlTower.checkLocalModel', 'Check local model'));
+      }
+      if (known(state.memories || state.memory || state.memoryManager)) {
+        ready('memory-ready', jt('settings.controlTower.ready.memory', 'Memory'), jt('settings.controlTower.ready.memoryMessage', 'The memory manager is ready.'), '__memory', jt('settings.controlTower.openMemories', 'Open memories'));
+      }
+      if (known(state.proactive || state.proactiveState)) {
+        ready('proactive-ready', jt('settings.controlTower.ready.proactive', 'Proactive features'), jt('settings.controlTower.ready.proactiveMessage', 'Briefings, reminders and resource alerts are available.'), 'proactive', jt('settings.controlTower.checkProactive', 'Check proactive'));
+      }
+      if (known(state.skills || state.skillsState)) {
+        ready('skills-ready', jt('settings.controlTower.ready.skills', 'Skills'), jt('settings.controlTower.ready.skillsMessage', 'Skill discovery and activation are available.'), 'skills', jt('settings.controlTower.openSkills', 'Open skills'));
+      }
     }
 
     const hasWarning = items.some((item) => item.tone === 'warning' || item.tone === 'danger');
+    const capabilities = [{
+      tone: chatReady ? 'success' : 'warning',
+      text: chatReady ? jt('settings.controlTower.chatReady', 'Chat ready') : jt('settings.controlTower.chatNeedsModel', 'Chat needs a model'),
+    }];
+    if (hasWorkspaceSignal || blockedToolCount > 0) {
+      capabilities.push({
+        tone: workspaceMissing || blockedToolCount > 0 ? 'warning' : 'success',
+        text: workspaceMissing
+          ? jt('settings.controlTower.fileToolsNeedFolder', 'File tools need a folder')
+          : blockedToolCount > 0
+            ? jt('settings.controlTower.someToolsBlocked', 'Some tools are blocked')
+            : jt('settings.controlTower.fileToolsReady', 'File tools ready'),
+      });
+    }
     return {
       tone: attentionCount > 0 ? 'attention' : 'ready',
       summaryLabel: attentionCount > 0 ? jt('settings.controlTower.reviewCount', '{count} to review', { count: attentionCount }) : 'Ready',
       summaryMessage: attentionCount > 0
-        ? jtn('settings.controlTower.attentionSummary', attentionCount, { count: attentionCount }, '{count} item needs a look before everything is ready.', '{count} items need a look before everything is ready.')
+        ? ''
         : jt('settings.controlTower.readySummary', 'Settings are ready for the current local-first workflow.'),
       attentionCount,
       readyCount: items.length - attentionCount,
       // Nav-rail badge source. Empty text at zero keeps the slot rendered-but-empty.
       badgeText: attentionCount > 0 ? String(attentionCount) : '',
       badgeTone: attentionCount > 0 ? (hasWarning ? 'warning' : 'pending') : '',
+      capabilities,
       items,
     };
   }
 
   function fallbackStatusRow(escapeHtml, row) {
-    return '<div class="inv-status-row inv-status-row--' + escapeHtml(row.tone) + '" data-status-tone="' + escapeHtml(row.tone) + '">'
+    return '<div class="inv-status-row settings-control-tower-status inv-status-row--' + escapeHtml(row.tone) + '" data-status-tone="' + escapeHtml(row.tone) + '">'
       + '<span class="inv-status-row-leading" aria-hidden="true"><span class="inv-status-row-dot"></span></span>'
       + '<div class="inv-status-row-main"><div class="inv-status-row-message">'
       + '<span class="inv-status-row-label">' + escapeHtml(row.label) + '</span>' + escapeHtml(row.message)
@@ -362,11 +418,16 @@
     const statusRow = options?.statusRow
       || ((typeof globalThis !== 'undefined' && globalThis.inventoryStatusRow) || null);
     const safeModel = normalizeRecord(model);
+    const badge = options?.badge || inventoryBadge;
+    const capabilities = Array.isArray(safeModel.capabilities) ? safeModel.capabilities : [];
+    const chips = capabilities.map((capability) => badge({ tone: capability.tone, text: capability.text, size: 'sm' })).join('');
     const items = Array.isArray(safeModel.items) ? safeModel.items : [];
     const rows = items.map((item) => {
       const sectionId = String(item.sectionId || 'models').trim() || 'models';
       const actionLabel = String(item.actionLabel || 'Open');
       const tone = String(item.tone || 'warning');
+      const dataset = { 'settings-control-section': sectionId };
+      if (item.action) dataset['settings-control-action'] = item.action;
       const actionMarkup = typeof actionButton === 'function'
         ? actionButton({
           id: 'settings-control-tower-open',
@@ -374,9 +435,10 @@
           variant: 'secondary',
           size: 'sm',
           className: 'settings-control-tower-action',
-          dataset: { 'settings-control-section': sectionId },
+          dataset,
         })
-        : '<span class="settings-control-tower-action" role="button" tabindex="0" data-settings-control-section="' + escapeHtml(sectionId) + '">' + escapeHtml(actionLabel) + '</span>';
+        : '<span class="settings-control-tower-action" role="button" tabindex="0" data-settings-control-section="' + escapeHtml(sectionId) + '"'
+          + (item.action ? ' data-settings-control-action="' + escapeHtml(item.action) + '"' : '') + '>' + escapeHtml(actionLabel) + '</span>';
       const statusMarkup = typeof statusRow === 'function'
         ? statusRow({ tone, label: String(item.label || ''), message: String(item.message || ''), className: 'settings-control-tower-status' })
         : fallbackStatusRow(escapeHtml, { tone, label: String(item.label || ''), message: String(item.message || '') });
@@ -387,7 +449,8 @@
     }).join('');
 
     return '<section class="settings-control-tower" id="settingsControlTower" data-tone="' + escapeHtml(safeModel.tone || 'ready') + '" aria-label="' + escapeHtml(jt('settings.controlTower.readinessChecksAria', 'Readiness checks')) + '">'
-      + '<p class="settings-copy settings-control-tower-summary">' + escapeHtml(safeModel.summaryMessage || '') + '</p>'
+      + '<div class="settings-control-tower-capabilities">' + chips + '</div>'
+      + (safeModel.attentionCount > 0 ? '' : '<p class="settings-copy settings-control-tower-summary">' + escapeHtml(safeModel.summaryMessage || '') + '</p>')
       + '<ul class="settings-control-tower-list">' + rows + '</ul>'
       + '</section>';
   }

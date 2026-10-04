@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib
+import io
 import zipfile
 from datetime import date, datetime, time
 from typing import Any
@@ -13,6 +14,7 @@ from sidecar.ai.tools.builtins.rich_files.base import (
     RichInspectResult,
     build_dependency_missing_result,
     build_unsupported_result,
+    read_bounded_file_bytes,
     rich_inspect_result_to_tool_result,
     string_argument,
     validate_rich_file_source,
@@ -24,7 +26,7 @@ from sidecar.ai.tools.builtins.rich_files.ooxml import (
     local_attribute,
     local_name_of,
     ooxml_boolean,
-    preflight_ooxml_zip,
+    preflight_ooxml_archive,
 )
 from sidecar.ai.tools.contracts import ToolHandlerResult
 from sidecar.ai.tools.sanitization import sanitize_tool_output
@@ -39,6 +41,9 @@ MAX_SHEETS = 50
 MAX_ROWS_PER_SHEET = 100
 MAX_COLUMNS_PER_SHEET = 50
 MAX_CELL_STRING_CHARS = 256
+MAX_SAMPLE_ROW_INDEX = 10_000
+MAX_SAMPLE_COLUMN_INDEX = 16_384
+MAX_SAMPLE_RANGES = 64
 
 
 def spreadsheet_inspect_tool(
@@ -88,10 +93,17 @@ def spreadsheet_inspect_tool(
         )
 
     caps = _inspect_caps(arguments)
+    raw_workbook = read_bounded_file_bytes(
+        source.absolute_path,
+        max_bytes=filesystem_content.MAX_MEDIA_FILE_BYTES,
+        authorized_root=workspace.require_root(),
+        message="spreadsheet source changed beyond rich-file size limit",
+    )
     try:
-        preflight_ooxml_zip(source.absolute_path)
+        with zipfile.ZipFile(io.BytesIO(raw_workbook)) as archive:
+            preflight_ooxml_archive(archive)
         workbook = openpyxl.load_workbook(
-            filename=source.absolute_path,
+            filename=io.BytesIO(raw_workbook),
             read_only=True,
             data_only=False,
             keep_links=False,
@@ -139,7 +151,7 @@ def _inspect_workbook(
             hidden_worksheets.append(worksheet)
     selected = (visible_worksheets + hidden_worksheets)[:max_sheets]
     element_tree = importlib.import_module("defusedxml.ElementTree")
-    with zipfile.ZipFile(source.absolute_path) as archive:
+    with workbook._archive as archive:
         sheets_payload = [
             _inspect_sheet(
                 archive=archive,
@@ -212,11 +224,13 @@ def _inspect_sheet(
         archive,
         worksheet=worksheet,
         element_tree=element_tree,
-        max_rows=max_row,
-        max_columns=max_column,
+        max_rows=min(max_row, MAX_SAMPLE_ROW_INDEX),
+        max_columns=min(max_column, MAX_SAMPLE_COLUMN_INDEX),
     )
-    visible_rows = _visible_indices(max_row, hidden_rows, max_rows)
-    visible_columns = _visible_indices(max_column, hidden_columns, max_columns)
+    visible_rows = _visible_indices(min(max_row, MAX_SAMPLE_ROW_INDEX), hidden_rows, max_rows)
+    visible_columns = _visible_indices(
+        min(max_column, MAX_SAMPLE_COLUMN_INDEX), hidden_columns, max_columns
+    )
     visible_row_count = max(0, max_row - len(hidden_rows))
     visible_column_count = max(0, max_column - len(hidden_columns))
     sampled_rows, has_formulas, formula_count = _sample_visible_cells(
@@ -230,6 +244,7 @@ def _inspect_sheet(
     sample_truncated = (
         visible_row_count > len(visible_rows)
         or visible_column_count > len(visible_columns)
+        or len(sampled_rows) < len(visible_rows)
     )
     payload["formula_scan_truncated"] = sample_truncated
     payload["sample_truncated"] = sample_truncated
@@ -246,25 +261,39 @@ def _sample_visible_cells(
     count = 0
     if not visible_rows or not visible_columns:
         return sampled, False, 0
-    visible_row_set = set(visible_rows)
-    for row_index, row in enumerate(
-        worksheet.iter_rows(
-            min_row=1,
-            max_row=visible_rows[-1],
-            max_col=visible_columns[-1],
-            values_only=True,
-        ),
-        start=1,
-    ):
-        if row_index not in visible_row_set:
-            continue
-        sampled_row: list[object] = []
-        for column_index in visible_columns:
-            value = row[column_index - 1] if column_index <= len(row) else None
-            if isinstance(value, str) and value.startswith("="):
-                count += 1
-            sampled_row.append(_serialize_cell_value(value))
-        sampled.append(sampled_row)
+    # Contiguous visible ranges avoid allocating hidden prefixes or gaps.
+    ranges: list[list[list[int]]] = []
+    for indices in (visible_rows, visible_columns):
+        spans: list[list[int]] = []
+        for index in indices:
+            if spans and index == spans[-1][1] + 1:
+                spans[-1][1] = index
+            else:
+                spans.append([index, index])
+        ranges.append(spans)
+    if len(ranges[0]) * len(ranges[1]) > MAX_SAMPLE_RANGES:
+        return sampled, False, 0
+    sampled = [[""] * len(visible_columns) for _ in visible_rows]
+    row_positions = {value: index for index, value in enumerate(visible_rows)}
+    column_positions = {value: index for index, value in enumerate(visible_columns)}
+    for row_start, row_end in ranges[0]:
+        for column_start, column_end in ranges[1]:
+            for row_index, row in enumerate(
+                worksheet.iter_rows(
+                    min_row=row_start,
+                    max_row=row_end,
+                    min_col=column_start,
+                    max_col=column_end,
+                    values_only=True,
+                ),
+                start=row_start,
+            ):
+                for column_index, value in enumerate(row, start=column_start):
+                    if isinstance(value, str) and value.startswith("="):
+                        count += 1
+                    sampled[row_positions[row_index]][column_positions[column_index]] = (
+                        _serialize_cell_value(value)
+                    )
     return sampled, count > 0, count
 
 

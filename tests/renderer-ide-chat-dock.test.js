@@ -174,6 +174,22 @@ test('leaving Workspace restores the nodes into #chatView before #artifactReview
   assert.equal(dock.reconcile(), false, 'restore is idempotent too');
 });
 
+test('each real host move asks the subagent monitor to re-pick its host; no-op reconciles do not', () => {
+  const { dom, state, dock } = setupDock();
+  let rehosts = 0;
+  const surfaces = [];
+  dom.window.addEventListener('chat-surface:rehost', (event) => { surfaces.push(event.detail.surface); });
+  dom.window.addEventListener('subagent-monitor:rehost', () => { rehosts += 1; });
+  dock.reconcile();
+  assert.equal(rehosts, 1, 'dock move');
+  dock.reconcile();
+  assert.equal(rehosts, 1, 'idempotent reconcile stays quiet');
+  state.ui.activeView = 'chat';
+  dock.reconcile();
+  assert.equal(rehosts, 2, 'restore move');
+  assert.deepEqual(surfaces, ['workspace', 'chat'], 'each move announces its surface exactly once');
+});
+
 test('first dock visit preserves the current logical reader anchor through reflow', async () => {
   const { byId, dock } = setupDock();
   const scroll = byId('chatThreadScroll');
@@ -438,6 +454,21 @@ test('viewport maximum clamps display without overwriting a wider persisted pref
   assert.equal(resizer.getAttribute('aria-valuenow'), '760');
 });
 
+test('a resize step past the viewport ceiling keeps the saved width; a shrink inside it saves', () => {
+  const { byId, ide, dock, dom } = setupDock({ width: 1800, maxWidth: 760 });
+  dock.reconcile();
+  dock.bindEvents();
+  const resizer = byId('ideChatDockResizer');
+  const press = (key) => resizer.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key, bubbles: true }));
+  // Right dock: ArrowLeft grows. The ceiling pins it, so the saved 1800 stays.
+  press('ArrowLeft');
+  assert.equal(ide.chatDockWidth, 1800, 'a clamp-only step never overwrites the saved preference');
+  assert.equal(byId('ideShell').style.getPropertyValue('--ide-chat-dock-width'), '760px');
+  // ArrowRight shrinks from the SHOWN 760 (no dead zone at the clamp).
+  press('ArrowRight');
+  assert.equal(ide.chatDockWidth, 736);
+});
+
 test('a persisted width below the minimum clamps up when read for display', () => {
   const { byId, ide, dock } = setupDock({ width: 300 });
   dock.reconcile();
@@ -613,10 +644,17 @@ test('styles.css imports the bounded chat-dock styles after the chat media queri
   assert.ok(fs.existsSync(path.join(ROOT, 'styles', 'ide-chat-session-picker.css')), 'styles/ide-chat-session-picker.css exists');
 });
 
-test('wide subagent monitor puts the chat shell in the first grid column', () => {
+test('in the dock the subagent monitor aside covers the thread stage and the thread goes inert', () => {
   const css = fs.readFileSync(path.join(ROOT, 'styles', 'chat-subagent-monitor.css'), 'utf8');
-  assert.match(css, /subagent-monitor-stage-open:not\(\.subagent-monitor-stage-compact\) > \.chat-thread-shell[\s\S]*position:\s*relative;[\s\S]*grid-column:\s*1;/);
-  assert.match(css, /\.subagent-monitor-inspector\s*\{[\s\S]*grid-column:\s*2;[\s\S]*grid-row:\s*1;/);
+  assert.match(css, /\.subagent-monitor-inspector\s*\{[\s\S]*position:\s*absolute;[\s\S]*inset:\s*0;/);
+  assert.match(css, /\.chat-thread-stage:has\(> \.subagent-monitor-inspector:not\(\[hidden\]\)\) > \.chat-thread-shell\s*\{[\s\S]*visibility:\s*hidden;/);
+  assert.equal(/subagent-monitor-stage-(open|compact)/.test(css), false, 'the retired stage-grid layout is gone');
+  // It replaces the stage, not a rail beside it: the dock's surface and inset, never the rail fill.
+  const inspectorRule = css.match(/\n\.subagent-monitor-inspector\s*\{([^}]*)\}/);
+  assert.ok(inspectorRule, 'the inspector rule exists');
+  assert.match(inspectorRule[1], /background:\s*var\(--bg-base\);/);
+  assert.match(inspectorRule[1], /--side-panel-gutter:\s*var\(--space-6\);/);
+  assert.doesNotMatch(inspectorRule[1], /--side-panel-bg/);
 });
 
 // ── Step 7: dock CSS contract pins (styles/ide-chat-dock.css) ──────────────
@@ -638,75 +676,20 @@ function findDockRuleBody(selector) {
   return bodies.join('\n');
 }
 
-test('dock composer toolbar is two deterministic rows with a single shrinking model slot', () => {
-  assert.match(findDockRuleBody('.ide-chat-dock-body .composer-toolbar'), /display:\s*flex;/);
-  assert.match(findDockRuleBody('.ide-chat-dock-body .composer-toolbar'), /flex-wrap:\s*wrap;/);
-  assert.match(findDockRuleBody('.ide-chat-dock-body .composer-toolbar'), /gap:\s*var\(--space-2\) var\(--space-2\);/);
-  assert.match(findDockRuleBody('.ide-chat-dock-body .composer-toolbar-left'), /display:\s*contents;/);
-  assert.match(findDockRuleBody('.ide-chat-dock-body .composer-toolbar-right'), /display:\s*contents;/);
-
-  const breakBody = findDockRuleBody('.ide-chat-dock-body .composer-toolbar::after');
-  assert.match(breakBody, /content:\s*'';/);
-  assert.match(breakBody, /flex-basis:\s*100%;/);
-  assert.match(breakBody, /height:\s*0;/);
-  assert.match(breakBody, /order:\s*10;/);
-
-  const expectedOrders = new Map([
-    ['composerAttachShortcut', 1],
-    ['composerTerminalShortcut', 2],
-    ['composerRunModeSlot', 4],
-    ['composerModelPillSlot', 5],
-    ['composerToolToggleSlot', 6],
-    ['composerContextUsageSlot', 11],
-    ['composerPlanUsageSlot', 12],
-    ['composerSettingsButton', 13],
-    ['stopStreamButton', 14],
-    ['sendButton', 15],
-    ['composerSendDisabledReason', 16],
-  ]);
-  for (const [id, order] of expectedOrders) {
-    assert.match(
-      findDockRuleBody(`.ide-chat-dock-body #${id}`),
-      new RegExp(`order:\\s*${order};`),
-      `#${id} has order ${order}`
-    );
+test('the dock composer uses the one-line fit toolbar and keeps its control sizes', () => {
+  assert.equal(findDockRuleBody('.ide-chat-dock-body .composer-toolbar'), '');
+  assert.equal(findDockRuleBody('.ide-chat-dock-body .composer-toolbar-left'), '');
+  assert.equal(findDockRuleBody('.ide-chat-dock-body .composer-toolbar-right'), '');
+  assert.equal(findDockRuleBody('.ide-chat-dock-body .composer-toolbar::after'), '');
+  assert.doesNotMatch(DOCK_CSS, /#composer[^{}]*\{[^}]*order:|flex: 1 1 0;/);
+  assert.equal(findDockRuleBody('.ide-chat-dock-body #composerProjectPillSlot'), '');
+  // The primary controls follow --composer-primary-control-size; the dock only sets the token.
+  for (const control of ['send', 'stop-button', 'pause-button']) {
+    assert.equal(findDockRuleBody(`.ide-chat-dock-body .composer-${control}`), '');
   }
-
-  const modelSlot = findDockRuleBody('.ide-chat-dock-body #composerModelPillSlot');
-  assert.match(modelSlot, /flex:\s*1 1 0;/, 'zero basis so line collection ignores the model name width');
-  assert.match(modelSlot, /min-width:\s*0;/);
-  assert.match(findDockRuleBody('.ide-chat-dock-body .composer-model-pill'), /max-width:\s*100%;/);
-  assert.match(findDockRuleBody('.ide-chat-dock-body .composer-model-pill .inv-chip-label'), /max-width:\s*none;/);
-  assert.match(
-    findDockRuleBody('.ide-chat-dock-body #composerProjectPillSlot'),
-    /display:\s*none;/,
-    'project pill does not fit row 1 at the 320px floor'
-  );
-  assert.match(
-    findDockRuleBody('.ide-chat-dock-body #composerRunModeSlot .composer-run-mode-chip'),
-    /min-width:\s*0;/
-  );
-
-  const sendBody = findDockRuleBody('.ide-chat-dock-body .composer-send');
-  assert.match(sendBody, /width:\s*calc\(36px \* var\(--chat-zoom-factor, 1\)\);/);
-  assert.match(sendBody, /height:\s*calc\(36px \* var\(--chat-zoom-factor, 1\)\);/);
-  const stopBody = findDockRuleBody('.ide-chat-dock-body .composer-stop-button');
-  assert.match(stopBody, /width:\s*calc\(36px \* var\(--chat-zoom-factor, 1\)\);/);
-  assert.match(stopBody, /height:\s*calc\(36px \* var\(--chat-zoom-factor, 1\)\);/);
-  const gearBody = findDockRuleBody('.ide-chat-dock-body .composer-gear');
-  assert.match(gearBody, /width:\s*calc\(28px \* var\(--chat-zoom-factor, 1\)\);/);
-  assert.match(gearBody, /height:\s*calc\(28px \* var\(--chat-zoom-factor, 1\)\);/);
-});
-
-test('dock composer second row stays right-aligned when either usage slot is empty', () => {
-  const selectors = [
-    '.ide-chat-dock-body #composerContextUsageSlot:not(:empty)',
-    '.ide-chat-dock-body #composerContextUsageSlot:empty + #composerPlanUsageSlot:not(:empty)',
-    '.ide-chat-dock-body #composerContextUsageSlot:empty + #composerPlanUsageSlot:empty + #composerSettingsButton',
-  ];
-  for (const selector of selectors) {
-    assert.match(findDockRuleBody(selector), /margin-inline-start:\s*auto;/, selector);
-  }
+  assert.match(findDockRuleBody('.ide-chat-dock-body .composer'), /--composer-primary-control-size:\s*32px;/);
+  assert.match(findDockRuleBody('.ide-chat-dock-body #composerTerminalShortcut'), /display:\s*none;/);
+  assert.match(findDockRuleBody('.ide-chat-dock-body .composer-input'), /max-height:\s*120px;/);
 });
 
 test('grid matrix: all 8 open variants present, dock outermost, gated on data-chatdock-open', () => {
@@ -783,10 +766,10 @@ test('compact dock nodes keep primary semantic fills with a protected edge gutte
   assert.ok(compactEnd > compactStart, 'compact overrides end before stacked layout rules');
   const compactCss = DOCK_CSS.slice(compactStart, compactEnd);
   assert.match(compactCss, /\.chat-thread-column\s*\{[\s\S]*?padding-inline-start:\s*var\(--space-3\);/);
-  assert.match(compactCss, /--thread-dot-size:\s*calc\(7px \* var\(--chat-zoom-factor, 1\)\);/);
+  assert.match(compactCss, /--thread-dot-size:\s*7px;/);
   assert.match(
     compactCss,
-    /\.chat-thread-toggle::before,[\s\S]*?\.chat-thread-toggle-spacer::before,[\s\S]*?\.chat-row-node-dot\s*\{[\s\S]*?border-width:\s*1px;/
+    /\.chat-thread-toggle::before,\s*\.ide-chat-dock-body \.chat-row-node-dot\s*\{[\s\S]*?border-width:\s*1px;/
   );
   assert.equal(
     DOCK_CSS.slice(0, compactStart).includes('--thread-dot-size'),

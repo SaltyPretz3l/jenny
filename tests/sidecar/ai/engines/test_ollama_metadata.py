@@ -118,7 +118,7 @@ def test_build_tools_payload_cache_publishes_key_and_payload_as_one_state() -> N
 
     payload_b = ollama_metadata.build_tools_payload_cached(engine, tools_b)
     assert payload_b[0]["function"]["name"] == "tool_b"
-    state = engine._cached_tools_state  # noqa: SLF001
+    state = engine._cached_tools_state
     assert state[1][0]["function"]["name"] in state[0][0]
 
 

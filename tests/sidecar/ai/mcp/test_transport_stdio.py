@@ -6,9 +6,9 @@ import queue
 import sys
 import threading
 import time
-from itertools import count
 from pathlib import Path
 from typing import Any
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -23,19 +23,19 @@ from sidecar.runtime.multiplexer import TurnCancellationHandle
 
 
 def _stub_transport() -> StdioMCPTransport:
-    transport = object.__new__(StdioMCPTransport)
-    transport._config = MCPServerConfig(  # type: ignore[attr-defined]
-        name="stub_server",
-        transport="stdio",
-        command="python",
-        args=(),
-        url=None,
-    )
-    transport._ids = count(1)  # type: ignore[attr-defined]
-    transport._request_lock = threading.Lock()  # type: ignore[attr-defined]
-    transport._initialize_lock = threading.Lock()  # type: ignore[attr-defined]
-    transport._initialized = True  # type: ignore[attr-defined]
-    transport._request_timeout_seconds = 1.0  # type: ignore[attr-defined]
+    process = _SpawnedProcess()
+    with (
+        patch.object(transport_stdio, "_validate_stdio_command"),
+        patch.object(transport_stdio, "MCPProcessContainment", return_value=MagicMock()),
+        patch.object(transport_stdio.subprocess, "Popen", return_value=process),
+        patch.object(threading.Thread, "start"),
+        patch.object(transport_stdio, "_register_active_transport"),
+        patch.object(transport_stdio, "_register_active_process"),
+    ):
+        transport = StdioMCPTransport(MCPServerConfig(
+            name="stub_server", transport="stdio", command="python", args=(), url=None,
+        ), request_timeout_seconds=1.0)
+    transport._initialized = True
     return transport
 
 
@@ -48,7 +48,7 @@ def test_send_request_ignores_unmatched_response_ids() -> None:
         ]
     )
     written: list[dict[str, object]] = []
-    transport._write_line = lambda payload: written.append(payload)  # type: ignore[method-assign]
+    transport._write_line = lambda payload, **_kwargs: written.append(payload)  # type: ignore[method-assign]
     transport._read_response_line = lambda *, deadline: next(responses)  # type: ignore[method-assign]
     transport._raise_for_error = lambda response: None  # type: ignore[method-assign]
 
@@ -72,7 +72,7 @@ def test_stdio_transport_initializes_once_before_first_tools_request() -> None:
         ]
     )
     written: list[dict[str, object]] = []
-    transport._write_line = lambda payload: written.append(payload)  # type: ignore[method-assign]
+    transport._write_line = lambda payload, **_kwargs: written.append(payload)  # type: ignore[method-assign]
     transport._read_response_line = lambda **_kwargs: next(responses)  # type: ignore[method-assign]
     transport._raise_for_error = lambda response: None  # type: ignore[method-assign]
 
@@ -104,7 +104,7 @@ def test_send_request_forwards_matching_output_chunk_notifications() -> None:
             {"jsonrpc": "2.0", "id": 1, "result": {"ok": True}},
         ]
     )
-    transport._write_line = lambda payload: None  # type: ignore[method-assign]
+    transport._write_line = lambda payload, **_kwargs: None  # type: ignore[method-assign]
     transport._read_response_line = (  # type: ignore[method-assign]
         lambda **_kwargs: next(responses)
     )
@@ -129,7 +129,7 @@ def test_send_request_skips_output_chunks_for_other_requests() -> None:
             {"jsonrpc": "2.0", "id": 1, "result": {"ok": True}},
         ]
     )
-    transport._write_line = lambda payload: None  # type: ignore[method-assign]
+    transport._write_line = lambda payload, **_kwargs: None  # type: ignore[method-assign]
     transport._read_response_line = (  # type: ignore[method-assign]
         lambda **_kwargs: next(responses)
     )
@@ -154,7 +154,7 @@ def test_send_request_survives_a_raising_output_chunk_handler() -> None:
             {"jsonrpc": "2.0", "id": 1, "result": {"ok": True}},
         ]
     )
-    transport._write_line = lambda payload: None  # type: ignore[method-assign]
+    transport._write_line = lambda payload, **_kwargs: None  # type: ignore[method-assign]
     transport._read_response_line = (  # type: ignore[method-assign]
         lambda **_kwargs: next(responses)
     )
@@ -180,7 +180,7 @@ def test_send_request_without_handler_keeps_warn_skip_for_output_chunks() -> Non
             {"jsonrpc": "2.0", "id": 1, "result": {"ok": True}},
         ]
     )
-    transport._write_line = lambda payload: None  # type: ignore[method-assign]
+    transport._write_line = lambda payload, **_kwargs: None  # type: ignore[method-assign]
     transport._read_response_line = (  # type: ignore[method-assign]
         lambda **_kwargs: next(responses)
     )
@@ -196,7 +196,7 @@ def test_send_request_accepts_per_call_timeout_override(monkeypatch: pytest.Monk
     captured_deadlines: list[float] = []
     written: list[dict[str, object]] = []
     monkeypatch.setattr("sidecar.ai.mcp.transport_stdio.time.monotonic", lambda: 100.0)
-    transport._write_line = lambda payload: written.append(payload)  # type: ignore[method-assign]
+    transport._write_line = lambda payload, **_kwargs: written.append(payload)  # type: ignore[method-assign]
 
     def _read_response_line(*, deadline: float) -> dict[str, object]:
         captured_deadlines.append(deadline)
@@ -224,7 +224,7 @@ def test_concurrent_requests_settle_by_id_when_responses_arrive_in_reverse_order
         ]
     )
 
-    def _write(payload: dict[str, object]) -> None:
+    def _write(payload: dict[str, object], **_kwargs: Any) -> None:
         written.append(payload)
         if len(written) == 2:
             both_written.set()
@@ -260,7 +260,6 @@ def test_concurrent_request_timeout_does_not_terminate_other_pending_call(
     transport = _stub_transport()
     transport._process = object()  # type: ignore[attr-defined]
     transport._containment = None  # type: ignore[attr-defined]
-    transport._ensure_request_routing_state()  # noqa: SLF001
     terminated: list[str] = []
     monkeypatch.setattr(
         transport,
@@ -272,7 +271,7 @@ def test_concurrent_request_timeout_does_not_terminate_other_pending_call(
         "_terminate_after_reader_failure",
         terminated.append,
     )
-    first = transport_stdio._PendingRequest(  # noqa: SLF001
+    first = transport_stdio._PendingRequest(
         request_id=1,
         method="first",
         response_queue=queue.Queue(),
@@ -284,12 +283,12 @@ def test_concurrent_request_timeout_does_not_terminate_other_pending_call(
     transport._pending_responses = {1: first.response_queue, 2: second_queue}  # type: ignore[attr-defined]
 
     with pytest.raises(MCPError, match="response timed out") as excinfo:
-        transport._take_next_response(first, observe_cancel=True)  # noqa: SLF001
+        transport._take_next_response(first, observe_cancel=True)
 
     assert terminated == []
     assert excinfo.value.transport_terminated is False
     second_queue.put({"jsonrpc": "2.0", "id": 2, "result": {"ok": True}})
-    second = transport_stdio._PendingRequest(  # noqa: SLF001
+    second = transport_stdio._PendingRequest(
         request_id=2,
         method="second",
         response_queue=second_queue,
@@ -297,7 +296,7 @@ def test_concurrent_request_timeout_does_not_terminate_other_pending_call(
         cancel_handle=None,
         on_output_chunk=None,
     )
-    assert transport._take_next_response(second, observe_cancel=True)["result"] == {  # noqa: SLF001
+    assert transport._take_next_response(second, observe_cancel=True)["result"] == {
         "ok": True
     }
 
@@ -308,7 +307,6 @@ def test_only_pending_request_timeout_still_terminates_transport(
     transport = _stub_transport()
     transport._process = object()  # type: ignore[attr-defined]
     transport._containment = None  # type: ignore[attr-defined]
-    transport._ensure_request_routing_state()  # noqa: SLF001
     terminated: list[str] = []
     monkeypatch.setattr(
         transport,
@@ -320,7 +318,7 @@ def test_only_pending_request_timeout_still_terminates_transport(
         "_terminate_after_reader_failure",
         terminated.append,
     )
-    pending = transport_stdio._PendingRequest(  # noqa: SLF001
+    pending = transport_stdio._PendingRequest(
         request_id=1,
         method="only",
         response_queue=queue.Queue(),
@@ -331,7 +329,7 @@ def test_only_pending_request_timeout_still_terminates_transport(
     transport._pending_responses = {1: pending.response_queue}  # type: ignore[attr-defined]
 
     with pytest.raises(MCPError, match="response timed out"):
-        transport._take_next_response(pending, observe_cancel=True)  # noqa: SLF001
+        transport._take_next_response(pending, observe_cancel=True)
 
     assert terminated == ["timeout"]
 
@@ -347,14 +345,13 @@ def test_only_pending_request_timeout_reports_a_confirmed_termination(
     transport = _stub_transport()
     transport._process = _ExitedProcess()  # type: ignore[attr-defined]
     transport._containment = None  # type: ignore[attr-defined]
-    transport._ensure_request_routing_state()  # noqa: SLF001
     monkeypatch.setattr(
         transport,
         "_read_response_line",
         lambda **_kwargs: (_ for _ in ()).throw(transport_stdio._ResponseTimeout()),
     )
     monkeypatch.setattr(transport, "_terminate_after_reader_failure", lambda _reason: None)
-    pending = transport_stdio._PendingRequest(  # noqa: SLF001
+    pending = transport_stdio._PendingRequest(
         request_id=1,
         method="only",
         response_queue=queue.Queue(),
@@ -365,7 +362,7 @@ def test_only_pending_request_timeout_reports_a_confirmed_termination(
     transport._pending_responses = {1: pending.response_queue}  # type: ignore[attr-defined]
 
     with pytest.raises(MCPError, match="response timed out") as excinfo:
-        transport._take_next_response(pending, observe_cancel=True)  # noqa: SLF001
+        transport._take_next_response(pending, observe_cancel=True)
 
     assert excinfo.value.transport_terminated is True
 
@@ -374,11 +371,10 @@ def test_a_dispatched_call_timing_out_behind_another_reader_stays_unknown() -> N
     # The server is still running the call (another caller holds the read
     # lock), so its outcome is unknown, never "not started" or "lost".
     transport = _stub_transport()
-    transport._ensure_request_routing_state()  # noqa: SLF001
-    lifecycle = transport._request_lifecycle()  # noqa: SLF001
+    lifecycle = transport._tool_lifecycle
     lifecycle.started_supported = True
     started_event, operation_id = lifecycle.begin(7)
-    pending = transport_stdio._PendingRequest(  # noqa: SLF001
+    pending = transport_stdio._PendingRequest(
         request_id=7,
         method="tools/call",
         response_queue=queue.Queue(),
@@ -391,7 +387,7 @@ def test_a_dispatched_call_timing_out_behind_another_reader_stays_unknown() -> N
     transport._response_read_lock.acquire()  # type: ignore[attr-defined]
     try:
         with pytest.raises(MCPError, match="waiting to read a response") as excinfo:
-            transport._await_request_result(pending)  # noqa: SLF001
+            transport._await_request_result(pending)
     finally:
         transport._response_read_lock.release()  # type: ignore[attr-defined]
 
@@ -526,17 +522,33 @@ def test_transport_uses_configured_request_timeout() -> None:
         request_timeout_seconds=999,
     )
 
-    assert transport_stdio._request_timeout_from_config(config) == 600.0  # noqa: SLF001
+    assert transport_stdio._request_timeout_from_config(config) == 600.0
 
 
 def test_stdio_line_reader_rejects_never_newline_record_at_limit() -> None:
     stream = io.StringIO("x" * (transport_stdio.MCP_MAX_STDOUT_LINE_CHARS + 1))
 
     with pytest.raises(RuntimeError, match="configured limit"):
-        transport_stdio._read_bounded_text_line(  # noqa: SLF001
+        transport_stdio._read_bounded_text_line(
             stream,
             max_chars=transport_stdio.MCP_MAX_STDOUT_LINE_CHARS,
         )
+
+
+def test_stop_after_a_finished_write_does_not_kill_the_server() -> None:
+    transport = _stub_transport()
+    cancel_handle = TurnCancellationHandle(request_id="req-write-then-stop")
+    pipe = transport._process.stdin
+    original_write = pipe.write
+
+    def write_then_stop(text: str) -> int:
+        cancel_handle.cancel(reason="user_stop")
+        return original_write(text)
+
+    pipe.write = write_then_stop
+    transport._write_line({"jsonrpc": "2.0", "id": 1, "method": "ping"}, cancel_handle=cancel_handle)
+    assert transport._process.terminated is False
+    assert pipe.written, "the request line was written"
 
 
 def test_stdio_wait_propagates_terminal_cancellation_without_queue_block() -> None:
@@ -545,7 +557,7 @@ def test_stdio_wait_propagates_terminal_cancellation_without_queue_block() -> No
     cancel_handle.cancel(reason="test_cancel")
 
     with pytest.raises(TerminalChatStateError):
-        transport._read_response_line(  # noqa: SLF001
+        transport._read_response_line(
             deadline=transport_stdio.time.monotonic() + 10,
             cancel_handle=cancel_handle,
         )
@@ -759,11 +771,11 @@ def test_process_containment_minimal_env_pins_one_blas_thread_only_under_a_memor
 ) -> None:
     monkeypatch.setattr(process_containment, "read_environment_value", lambda key, default="": default)
 
-    capped = process_containment._minimal_env(  # noqa: SLF001
+    capped = process_containment._minimal_env(
         MCPServerConfig(name="docs", transport="stdio", command="docs-mcp", memory_limit_mb=512),
         command_path=None,
     )
-    uncapped = process_containment._minimal_env(  # noqa: SLF001
+    uncapped = process_containment._minimal_env(
         MCPServerConfig(name="docs", transport="stdio", command="docs-mcp", memory_limit_mb=None),
         command_path=None,
     )
@@ -786,7 +798,7 @@ def test_process_containment_minimal_env_forwards_ocr_and_media_site_keys(
         lambda key, default="": env_values.get(key, default),
     )
 
-    env = process_containment._minimal_env(  # noqa: SLF001
+    env = process_containment._minimal_env(
         MCPServerConfig(name="docs", transport="stdio", command="docs-mcp"),
         command_path=None,
     )
@@ -808,7 +820,7 @@ def test_process_containment_minimal_env_passes_posix_user_context(
         lambda key, default="": env_values.get(key, default),
     )
 
-    env = process_containment._minimal_env(  # noqa: SLF001
+    env = process_containment._minimal_env(
         MCPServerConfig(name="docs", transport="stdio", command="docs-mcp"),
         command_path=None,
     )
@@ -1024,7 +1036,7 @@ def test_process_containment_parses_posix_cpu_stat_with_spaces_in_process_name(
 
     monkeypatch.setattr(process_containment.Path, "read_text", _read_text)
 
-    assert process_containment._read_posix_process_cpu_seconds(42) == 2.0  # noqa: SLF001
+    assert process_containment._read_posix_process_cpu_seconds(42) == 2.0
 
 
 def test_stdio_transport_rejects_untrusted_absolute_command(
@@ -1060,7 +1072,7 @@ def test_stdio_transport_allows_current_frozen_executable(
     monkeypatch.setattr(transport_command_policy.sys, "frozen", True, raising=False)
     monkeypatch.setattr(transport_command_policy.sys, "executable", str(command))
 
-    transport_stdio._validate_stdio_command(  # noqa: SLF001
+    transport_stdio._validate_stdio_command(
         MCPServerConfig(
             name="jenny_local_tools",
             transport="stdio",
@@ -1083,7 +1095,7 @@ def test_stdio_transport_rejects_other_executable_next_to_frozen_executable(
     monkeypatch.setattr(transport_command_policy.sys, "executable", str(command))
 
     with pytest.raises(MCPError, match="outside trusted roots"):
-        transport_stdio._validate_stdio_command(  # noqa: SLF001
+        transport_stdio._validate_stdio_command(
             MCPServerConfig(
                 name="other_server",
                 transport="stdio",
@@ -1124,7 +1136,7 @@ def _fake_cooperative_read(script: list[object]) -> Any:
         if callable(step):
             step = step()
         if should_stop is not None and should_stop():
-            raise transport_stdio._CancelObserved()  # noqa: SLF001
+            raise transport_stdio._CancelObserved()
         if isinstance(step, BaseException):
             raise step
         return step  # type: ignore[return-value]
@@ -1136,7 +1148,7 @@ def test_cooperative_cancel_notifies_and_raises_cancelled_on_response() -> None:
     transport = _cooperative_stub_transport()
     handle = TurnCancellationHandle(request_id="turn-1")
     written: list[dict[str, object]] = []
-    transport._write_line = lambda payload: written.append(payload)  # type: ignore[method-assign]
+    transport._write_line = lambda payload, **_kwargs: written.append(payload)  # type: ignore[method-assign]
     transport._raise_for_error = lambda response: None  # type: ignore[method-assign]
 
     def _cancel_then_none() -> object:
@@ -1164,7 +1176,7 @@ def test_cooperative_cancel_converts_grace_timeout_to_cancelled() -> None:
     transport = _cooperative_stub_transport()
     handle = TurnCancellationHandle(request_id="turn-2")
     written: list[dict[str, object]] = []
-    transport._write_line = lambda payload: written.append(payload)  # type: ignore[method-assign]
+    transport._write_line = lambda payload, **_kwargs: written.append(payload)  # type: ignore[method-assign]
     transport._raise_for_error = lambda response: None  # type: ignore[method-assign]
 
     def _cancel_then_none() -> object:
@@ -1193,7 +1205,7 @@ def test_cooperative_cancel_shrinks_deadline_to_grace(
     monkeypatch.setattr(transport_stdio.time, "monotonic", lambda: 100.0)
     written: list[dict[str, object]] = []
     deadlines: list[float] = []
-    transport._write_line = lambda payload: written.append(payload)  # type: ignore[method-assign]
+    transport._write_line = lambda payload, **_kwargs: written.append(payload)  # type: ignore[method-assign]
     transport._raise_for_error = lambda response: None  # type: ignore[method-assign]
 
     calls = {"count": 0}
@@ -1209,7 +1221,7 @@ def test_cooperative_cancel_shrinks_deadline_to_grace(
         if calls["count"] == 1:
             handle.cancel()
             assert should_stop is not None and should_stop()
-            raise transport_stdio._CancelObserved()  # noqa: SLF001
+            raise transport_stdio._CancelObserved()
         assert should_stop is None
         return {"jsonrpc": "2.0", "id": 1, "result": {"ok": True}}
 
@@ -1241,7 +1253,7 @@ def test_non_builtin_server_preserves_result_that_wins_cancel_race(
         lambda server_name, process, containment=None: terminated.append(server_name),
     )
     written: list[dict[str, object]] = []
-    transport._write_line = lambda payload: written.append(payload)  # type: ignore[method-assign]
+    transport._write_line = lambda payload, **_kwargs: written.append(payload)  # type: ignore[method-assign]
     transport._raise_for_error = lambda response: None  # type: ignore[method-assign]
 
     calls = {"count": 0}
@@ -1256,7 +1268,7 @@ def test_non_builtin_server_preserves_result_that_wins_cancel_race(
         if calls["count"] == 1:
             handle.cancel()
             assert should_stop is not None and should_stop()
-            raise transport_stdio._CancelObserved()  # noqa: SLF001
+            raise transport_stdio._CancelObserved()
         return {"jsonrpc": "2.0", "id": 1, "result": {"ok": True}}
 
     transport._read_response_line = _read  # type: ignore[method-assign]
@@ -1271,8 +1283,7 @@ def test_non_builtin_server_preserves_result_that_wins_cancel_race(
     ]
 def test_started_notification_records_first_party_operation_identity() -> None:
     transport = _stub_transport()
-    transport._ensure_request_routing_state()  # noqa: SLF001
-    lifecycle = transport._request_lifecycle()  # noqa: SLF001
+    lifecycle = transport._tool_lifecycle
     event, _operation_id = lifecycle.begin(7)
 
     handled = lifecycle.handle_notification(
@@ -1295,8 +1306,7 @@ def test_started_notification_records_first_party_operation_identity() -> None:
 
 def test_request_scoped_stderr_excludes_historical_tail() -> None:
     transport = _stub_transport()
-    transport._ensure_request_routing_state()  # noqa: SLF001
-    evidence = transport._request_stderr_evidence()  # noqa: SLF001
+    evidence = transport._stderr_evidence
     evidence.append("historical\n")
     cursor = evidence.cursor()
     evidence.append("current\n")
@@ -1306,17 +1316,17 @@ def test_request_scoped_stderr_excludes_historical_tail() -> None:
 
 def test_first_party_write_failure_is_certainly_not_started() -> None:
     transport = _stub_transport()
-    lifecycle = transport._request_lifecycle()  # noqa: SLF001
+    lifecycle = transport._tool_lifecycle
     lifecycle.started_supported = True
     lifecycle.generation_id = "gen_a"
 
-    def fail_write(_payload):
+    def fail_write(_payload, **_kwargs):
         raise MCPError(code="CMP-MCP-0004", message="pipe closed", retryable=True)
 
     transport._write_line = fail_write  # type: ignore[method-assign]
 
     with pytest.raises(MCPError) as raised:
-        transport._send_request("tools/call", {"name": "write_file"})  # noqa: SLF001
+        transport._send_request("tools/call", {"name": "write_file"})
 
     assert raised.value.completion_status == "not_started"
     assert raised.value.operation_id.startswith("op_")
@@ -1326,13 +1336,13 @@ def test_first_party_write_failure_is_certainly_not_started() -> None:
 def test_generic_write_failure_completion_remains_unknown() -> None:
     transport = _stub_transport()
 
-    def fail_write(_payload):
+    def fail_write(_payload, **_kwargs):
         raise MCPError(code="CMP-MCP-0004", message="pipe closed", retryable=True)
 
     transport._write_line = fail_write  # type: ignore[method-assign]
 
     with pytest.raises(MCPError) as raised:
-        transport._send_request("tools/call", {"name": "write_file"})  # noqa: SLF001
+        transport._send_request("tools/call", {"name": "write_file"})
 
     assert raised.value.completion_status == "unknown"
     assert raised.value.operation_id.startswith("op_")
@@ -1340,12 +1350,11 @@ def test_generic_write_failure_completion_remains_unknown() -> None:
 
 def test_first_party_pipe_loss_after_started_is_classified() -> None:
     transport = _stub_transport()
-    transport._ensure_request_routing_state()  # noqa: SLF001
-    lifecycle = transport._request_lifecycle()  # noqa: SLF001
+    lifecycle = transport._tool_lifecycle
     lifecycle.started_supported = True
     lifecycle.generation_id = "gen_a"
     started_event, _operation_id = lifecycle.begin(9)
-    pending = transport_stdio._PendingRequest(  # noqa: SLF001
+    pending = transport_stdio._PendingRequest(
         request_id=9,
         method="tools/call",
         response_queue=queue.Queue(),
@@ -1381,7 +1390,7 @@ def test_first_party_pipe_loss_after_started_is_classified() -> None:
     transport._take_next_response = take  # type: ignore[method-assign]
 
     with pytest.raises(MCPError) as raised:
-        transport._await_request_result(pending)  # noqa: SLF001
+        transport._await_request_result(pending)
 
     assert raised.value.completion_status == "started_response_lost"
     assert raised.value.operation_id == "op_server"
@@ -1434,7 +1443,7 @@ def test_corrupt_response_stream_terminates_server_and_classifies_call(
         ),
         request_timeout_seconds=2.0,
     )
-    process = transport._process  # noqa: SLF001
+    process = transport._process
 
     try:
         with pytest.raises(MCPError) as raised:
@@ -1555,3 +1564,116 @@ def test_timeout_on_a_server_left_running_classifies_unknown_not_lost() -> None:
     assert unknown.transport_terminated is False
     assert lost.completion_status == "started_response_lost"
     assert lost.transport_terminated is True
+
+
+class _RunningProcess:
+    def poll(self) -> None:
+        return None
+
+
+@pytest.mark.parametrize(
+    ("process", "closed", "terminated"),
+    [
+        (_RunningProcess(), False, False),
+        (_ExitedProcess(), False, True),  # killed after a timeout, still registered (F2)
+        (_RunningProcess(), True, True),
+    ],
+)
+def test_is_terminated_reports_a_dead_server_or_a_closed_transport(
+    process: Any, closed: bool, terminated: bool
+) -> None:
+    transport = _stub_transport()
+    transport._process = process  # type: ignore[attr-defined]
+    transport._closed = threading.Event()  # type: ignore[attr-defined]
+    if closed:
+        transport._closed.set()  # type: ignore[attr-defined]
+
+    assert transport.is_terminated is terminated
+
+
+
+def test_tools_list_follows_pages() -> None:
+    transport = _stub_transport()
+    seen = []
+    def request(method: str, params: dict[str, Any], **kwargs: Any) -> dict[str, Any]:
+        seen.append(params.get("cursor"))
+        return {"result": {"tools": [{"name": "second"}]}} if params else {"result": {"tools": [{"name": "first"}], "nextCursor": "two"}}
+    transport._send_request = request
+    assert [tool["name"] for tool in transport.list_tools()] == ["first", "second"]
+    assert seen == [None, "two"]
+
+
+def test_lifecycle_ignores_unknown_and_oversize_identifiers() -> None:
+    tracker = ToolLifecycleTracker()
+    tracker.handle_notification({"method": "tool/started", "params": {"request_id": 999, "operation_id": "unknown", "generation_id": "unknown"}})
+    assert tracker._operation_ids == {}
+    assert tracker.generation_id is None
+    event, original = tracker.begin(1)
+    tracker.handle_notification({"method": "tool/started", "params": {"request_id": 1, "operation_id": "x" * 10000, "generation_id": "y" * 10000}})
+    assert tracker.operation_id(1, "fallback") == original
+    assert tracker.generation_id is None
+    assert event.is_set()
+
+
+def test_deep_json_is_structured_and_terminates_transport(monkeypatch: pytest.MonkeyPatch) -> None:
+    transport = _stub_transport()
+    transport._reader_queue = queue.Queue()
+    transport._reader_queue.put('[' * 2000 + '0' + ']' * 2000)
+    terminated = []
+    monkeypatch.setattr(transport, "_terminate_after_reader_failure", terminated.append)
+    with pytest.raises(MCPError, match="invalid json"):
+        transport._read_response_line(deadline=time.monotonic() + 1)
+    assert terminated == ["protocol"]
+
+
+def test_stalled_write_obeys_deadline_and_close_finishes() -> None:
+    # A real child initializes normally, then never reads another stdin byte.
+    program = "import sys,json,time; p=json.loads(sys.stdin.readline()); print(json.dumps({'jsonrpc':'2.0','id':p['id'],'result':{'protocolVersion':'2025-03-26'}}),flush=True); time.sleep(30)"
+    transport = StdioMCPTransport(MCPServerConfig(name="stalled", transport="stdio", command=sys.executable, args=("-u", "-c", program)))
+    transport._ensure_initialized()
+    failures = []
+    started = time.monotonic()
+    def request() -> None:
+        try:
+            transport.call_tool("large", {"text": "x" * (2 * 1024 * 1024)}, timeout_seconds=0.15)
+        except MCPError as error:
+            failures.append(error)
+    caller = threading.Thread(target=request, daemon=True)
+    caller.start()
+    caller.join(timeout=1.5)
+    finished = not caller.is_alive()
+    # Release an unfixed blocking writer without hanging the red run.
+    if not finished:
+        transport._containment.terminate(transport._process)
+        caller.join(timeout=2)
+    transport.close()
+    assert finished, "stdio write escaped the request deadline"
+    assert failures
+    assert time.monotonic() - started < 2.5
+
+
+
+def test_close_interrupts_an_inflight_stalled_write() -> None:
+    program = "import time; time.sleep(30)"
+    transport = StdioMCPTransport(MCPServerConfig(name="stalled-close", transport="stdio", command=sys.executable, args=("-u", "-c", program)))
+    transport._initialized = True
+    errors = []
+    def request() -> None:
+        try:
+            transport.call_tool("large", {"text": "x" * (2 * 1024 * 1024)}, timeout_seconds=5)
+        except MCPError as error:
+            errors.append(error)
+    caller = threading.Thread(target=request, daemon=True)
+    caller.start()
+    time.sleep(0.1)
+    closer = threading.Thread(target=transport.close, daemon=True)
+    closer.start()
+    closer.join(timeout=1)
+    finished = not closer.is_alive()
+    if not finished:
+        transport._containment.terminate(transport._process)
+    closer.join(timeout=2)
+    caller.join(timeout=2)
+    assert finished, "close blocked behind the stdin writer"
+    assert not caller.is_alive()
+    assert errors

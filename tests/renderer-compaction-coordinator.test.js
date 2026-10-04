@@ -66,6 +66,33 @@ test('result descriptions fail closed for malformed persistence and redact downs
   assert.doesNotMatch(JSON.stringify(failed), /secret-value|C:\\private/);
   assert.equal(describeCompactionResult({ status: 'error', reason: 'token=secret-value' }).reason, 'unknown_reason');
   assert.equal(describeCompactionResult(null).reason, 'malformed_result');
+
+  const omitted = 'Some older messages were omitted from the summarizer input.';
+  const compacted = { status: 'ok', compacted: true, tokens_before: 5000, tokens_after: 1800, summary_source_dropped_messages: 4 };
+  assert.ok(describeCompactionResult({ ...compacted, snapshot_persisted: true }).message.includes(`tokens. ${omitted} Future turns`));
+  assert.ok(describeCompactionResult({ ...compacted, snapshot_persisted: false }).message.includes(`tokens. ${omitted} Could not save`));
+  assert.ok(describeCompactionResult(compacted).message.includes(`tokens. ${omitted} Could not confirm`));
+  assert.equal(describeCompactionResult({ ...compacted, summary_source_dropped_messages: 0, snapshot_persisted: true }).message.includes('omitted'), false);
+  assert.equal(describeCompactionResult({ status: 'ok', compacted: false, summary_source_dropped_messages: 4 }).message.includes('omitted'), false);
+});
+
+// Owner gate P1: /compact on a short chat is refused by the sidecar with
+// detail `no_reduction` (the summary would not be smaller). That is not a
+// failure: it reads as a neutral notice and settles as success, so the slash
+// command clears its input.
+test('a short chat the summary cannot shrink reads as a neutral notice, not a failure', async () => {
+  const shortChat = { status: 'error', reason: 'compaction_failed', detail: 'no_reduction' };
+  assert.deepEqual(describeCompactionResult(shortChat), {
+    state: 'success', message: 'Nothing to compact yet — this chat is already short.', tone: 'default', reason: 'not_needed',
+  });
+  // Every other compaction_failed detail keeps the failure copy.
+  assert.equal(describeCompactionResult({ ...shortChat, detail: 'summary_not_created' }).message, 'Compaction failed.');
+  const state = {};
+  const coordinator = createCompactionCoordinator({ state, getChatApi: () => ({ compactNow: async () => shortChat }) });
+  const settled = await coordinator.invoke('s1', { source: 'slash' });
+  assert.equal(settled.activity.state, 'success');
+  assert.equal(settled.activity.emphasis, 'subtle');
+  assert.equal(settled.activity.message, 'Nothing to compact yet — this chat is already short.');
 });
 
 test('missing bridge, thrown failures, malformed state, and disposal settle safely', async () => {

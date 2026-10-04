@@ -6,7 +6,7 @@
   'use strict';
   const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
 
-  /* Feather icons (archive, trash-2, rotate-ccw), https://feathericons.com, MIT.
+  /* Feather icons (archive, trash-2, rotate-ccw, folder), https://feathericons.com, MIT.
    * Copyright (c) 2013-2023 Cole Bemis
    * Permission is hereby granted, free of charge, to any person obtaining a copy
    * of this software and associated documentation files (the "Software"), to deal
@@ -29,7 +29,10 @@
     archive: icon('<polyline points="21 8 21 21 3 21 3 8"/><rect x="1" y="3" width="22" height="5"/><line x1="10" y1="12" x2="14" y2="12"/>'),
     delete: icon('<polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/>'),
     restore: icon('<polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/>'),
+    move: icon('<path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>'),
   };
+  // Selection actions that need at least one selected chat.
+  const SELECTION_ACTIONS = ['move', 'archive', 'delete'];
 
   function createSidebarBulkActions(deps) {
     const { state, windowRef, callbacks, scheduler } = deps;
@@ -61,7 +64,7 @@
     const actions = doc.createElement('div');
     actions.className = 'sidebar-bulk-buttons';
     const controls = {};
-    const labels = { select: jt("sidebarBulkActions.select", "Select"), all: jt("sidebarBulkActions.selectAllShown", "Select all shown"), clear: jt('common.clear', 'Clear'), archive: jt("sidebarBulkActions.archiveSelected", "Archive selected"), delete: jt("sidebarBulkActions.deleteSelected", "Delete selected"), confirm: jt("sidebarBulkActions.confirmDelete", "Confirm delete"), cancel: jt("sidebarBulkActions.cancelDelete", "Cancel delete"), done: jt('common.done', 'Done') };
+    const labels = { select: jt("sidebarBulkActions.select", "Select"), all: jt("sidebarBulkActions.selectAllShown", "Select all shown"), clear: jt('common.clear', 'Clear'), archive: jt("sidebarBulkActions.archiveSelected", "Archive selected"), delete: jt("sidebarBulkActions.deleteSelected", "Delete selected"), move: jt('sidebar.sessionActions.moveSelectedToProject', 'Move to project'), confirm: jt("sidebarBulkActions.confirmDelete", "Confirm delete"), cancel: jt("sidebarBulkActions.cancelDelete", "Cancel delete"), done: jt('common.done', 'Done') };
     function addControl(host, id, options = {}) {
       host.insertAdjacentHTML('beforeend', button({ id: 'sidebar-bulk-' + id, label: labels[id],
         ariaLabel: labels[id], title: labels[id], size: 'sm', variant: 'ghost',
@@ -73,6 +76,9 @@
     addControl(summaryGroup, 'all', { trustedHtml: '<span class="session-row__selection" aria-hidden="true"></span>' });
     controls.all.setAttribute('role', 'checkbox');
     summaryGroup.append(status);
+    // Move rides the shared project switcher's "Move {n} chats to" menu.
+    const canMove = typeof callbacks.getProjectSwitcher === 'function';
+    if (canMove) addControl(actions, 'move', { trustedHtml: icons.move, ariaHaspopup: 'menu' });
     addControl(actions, 'archive', { trustedHtml: icons.archive });
     addControl(actions, 'delete', { trustedHtml: icons.delete, ariaHaspopup: 'dialog' });
     addControl(actions, 'done');
@@ -121,7 +127,7 @@
       setLabel(controls.all, allShown ? labels.clear : labels.all);
       for (const [id, control] of Object.entries(controls)) {
         control.disabled = busy || (Boolean(confirmation) && !['confirm', 'cancel', 'delete'].includes(id))
-          || (['archive', 'delete'].includes(id) && !selected.size) || (id === 'all' && !visible.size);
+          || (SELECTION_ACTIONS.includes(id) && !selected.size) || (id === 'all' && !visible.size);
       }
       const archiveKind = state.ui.sidebarArchivedView ? 'restore' : 'archive';
       setLabel(controls.archive, archiveKind === 'restore' ? jt("sidebarBulkActions.restoreSelected", "Restore selected") : labels.archive);
@@ -207,6 +213,21 @@
         if (!disposed) report(archivedAt ? 'archived' : 'restored', counts);
       }
     }
+    // The switcher skips busy chats and names them in its toast (with Undo);
+    // moved chats leave the selection, like archived ones.
+    async function openMove(ids) {
+      let switcher;
+      try { switcher = await callbacks.getProjectSwitcher(); } catch (_) { switcher = null; }
+      if (disposed || !switcher || typeof switcher.openMoveMenu !== 'function') return;
+      await switcher.openMoveMenu(controls.move, ids, {
+        source: 'bulk',
+        onMoved: (result) => {
+          const moved = Array.isArray(result?.moved) ? result.moved : ids;
+          moved.forEach((id) => selected.delete(id));
+          paint();
+        },
+      });
+    }
     function scheduleDelete(ids) {
       const candidates = ids.filter((id) => !isBusy(id));
       const stamps = new Map(candidates.map((id) => [id, stamp(summary(id))]));
@@ -249,7 +270,7 @@
     function act(id) {
       if (busy || disposed) return;
       if (confirmation && !['confirm', 'cancel'].includes(id)) return;
-      if (['archive', 'delete'].includes(id) && !selected.size) return;
+      if (SELECTION_ACTIONS.includes(id) && !selected.size) return;
       if (id === 'select') selecting = true;
       if (id === 'all') {
         const mountedRows = rows();
@@ -269,6 +290,7 @@
         }
       }
       if (id === 'archive') void archive([...selected]);
+      if (id === 'move') void openMove([...selected]).catch((error) => callbacks.showSessionActionError?.(error, jt('sidebar.sessionActions.actionFailed', 'Session Action Failed')));
       paint();
       if (id === 'select') focusSelection();
       if (id === 'done') controls.select.focus({ preventScroll: true });

@@ -1,9 +1,10 @@
 'use strict';
 
 const fs = require('fs');
+const path = require('path');
 
 const { normalizeWorkspaceRoot } = require('./shell-config-state');
-const { isJennyStateDirRoot } = require('./workspace-root-identity');
+const { containsJennyStateDirSegment, isJennyStateDirRoot } = require('./workspace-root-identity');
 const { safeEmitLog } = require('./backend/session-store-logging');
 
 const ROOT_STATUS_TTL_MS = 5000;
@@ -191,16 +192,51 @@ function createWorkspaceRootStatusController({
   return { get, refresh, invalidate };
 }
 
+function envFlagOn(value) {
+  return /^(1|true|yes|on)$/i.test(String(value == null ? '' : value).trim());
+}
+
+// start.js sets JENNY_TOOLS_WORKSPACE_ROOT_EXPLICIT only for an explicit
+// `--workspace-root` in agent mode. The cwd default and an inherited env var
+// stay a one-shot seed: they never replace a root the profile already saved.
+function isExplicitAgentWorkspaceRoot(env) {
+  return envFlagOn(env?.JENNY_TOOLS_WORKSPACE_ROOT_EXPLICIT) && envFlagOn(env?.JENNY_AGENT_DEV);
+}
+
+function isSameWorkspaceRoot(left, right) {
+  const a = path.resolve(String(left));
+  const b = path.resolve(String(right));
+  return process.platform === 'win32' ? a.toLowerCase() === b.toLowerCase() : a === b;
+}
+
 const workspaceRootMethods = {
+  // Seeds a rootless profile from the launch environment. A saved root wins,
+  // except over an explicit agent-mode `--workspace-root` (dogfood HB-032: the
+  // flag was silently ignored and a turn ran in the previously saved folder).
   _seedWorkspaceRootFromEnvOnce() {
-    if (this.state.toolsWorkspaceRoot) return;
+    const savedRoot = this.state.toolsWorkspaceRoot;
     const envWorkspaceRoot = normalizeWorkspaceRoot(this.env.JENNY_TOOLS_WORKSPACE_ROOT);
     if (!envWorkspaceRoot) return;
-    if (isJennyStateDirRoot(envWorkspaceRoot)) {
+    if (savedRoot) {
+      if (isSameWorkspaceRoot(savedRoot, envWorkspaceRoot)) return;
+      if (!isExplicitAgentWorkspaceRoot(this.env)) {
+        safeEmitLog(this._logger, 'INFO', 'shell_config.workspace_root_env_seed_ignored', {
+          reason: 'saved_root_wins',
+        });
+        return;
+      }
+    }
+    // The state dir and anything under it (`.jenny/artifacts`) is never a root.
+    if (containsJennyStateDirSegment(envWorkspaceRoot)) {
       safeEmitLog(this._logger, 'WARN', 'shell_config.workspace_root_env_seed_rejected', {
         reason: 'state_dir_root',
       });
       return;
+    }
+    if (savedRoot) {
+      safeEmitLog(this._logger, 'WARN', 'shell_config.workspace_root_replaced_by_launch_flag', {
+        reason: 'explicit_agent_workspace_root',
+      });
     }
     this._writeState(
       { ...this.state, toolsWorkspaceRoot: envWorkspaceRoot },

@@ -7,6 +7,8 @@ import json
 import math
 from typing import Any
 
+from sidecar.ai.tools.tool_actions import coerce_scalar_side_effecting, parse_tool_actions
+
 MAX_TOOLS = 256
 MAX_NAME_CHARS = 128
 MAX_DESCRIPTION_CHARS = 512
@@ -57,48 +59,51 @@ def schema_digest(value: Any) -> str:
     return hashlib.sha256(_stable_json(schema).encode("utf-8")).hexdigest()
 
 
-def summarize_tools(raw_tools: Any) -> tuple[list[dict[str, str]], int]:
-    rows: list[dict[str, str]] = []
-    malformed = 0
-    candidates = raw_tools if isinstance(raw_tools, list) else []
-    if not isinstance(raw_tools, list):
-        malformed += 1
-    for candidate in candidates[:MAX_TOOLS]:
+def summarize_tools(raw_tools: Any) -> tuple[list[dict[str, Any]], int]:
+    if not isinstance(raw_tools, list) or len(raw_tools) > MAX_TOOLS:
+        raise ValueError("tool_surface_exceeded")
+    rows: list[dict[str, Any]] = []
+    names: set[str] = set()
+    for candidate in raw_tools:
         if not isinstance(candidate, dict):
-            malformed += 1
-            continue
+            raise ValueError("tool_invalid")
         raw_name = candidate.get("name")
         raw_description = candidate.get("description")
         if not isinstance(raw_name, str) or (
             raw_description is not None and not isinstance(raw_description, str)
         ):
-            malformed += 1
-            continue
-        name = raw_name.strip()[:MAX_NAME_CHARS]
-        if not name:
-            malformed += 1
-            continue
-        description = (raw_description or "").strip()[:MAX_DESCRIPTION_CHARS]
+            raise ValueError("tool_invalid")
+        name = raw_name.strip()
+        description = (raw_description or "").strip()
+        if not name or len(name) > MAX_NAME_CHARS or len(description) > MAX_DESCRIPTION_CHARS:
+            raise ValueError("tool_text_exceeded")
+        if name in names:
+            raise ValueError("tool_name_duplicate")
+        names.add(name)
         input_schema = candidate.get("inputSchema")
         if not isinstance(input_schema, dict):
             input_schema = candidate.get("input_schema")
-        try:
-            digest = schema_digest(input_schema)
-        except ValueError:
-            malformed += 1
-            continue
-        rows.append(
-            {
-                "name": name,
-                "description": description,
-                "schema_digest": digest,
-            }
-        )
-    if len(candidates) > MAX_TOOLS:
-        malformed += len(candidates) - MAX_TOOLS
+        if input_schema is None:
+            input_schema = {"type": "object", "properties": {}}
+        if not isinstance(input_schema, dict):
+            raise ValueError("tool_schema_invalid")
+        schema = _bounded_schema(input_schema)
+        actions = parse_tool_actions(_bounded_schema(candidate.get("actions")))
+        rows.append({
+            "name": name,
+            "description": description,
+            "inputSchema": schema,
+            "schema_digest": hashlib.sha256(_stable_json(schema).encode("utf-8")).hexdigest(),
+            "side_effecting": coerce_scalar_side_effecting(
+                candidate.get("side_effecting") is not False, actions,
+            ),
+            "actions": {key: {"side_effecting": spec.side_effecting}
+                        for key, spec in actions.items()} if actions else None,
+        })
     rows.sort(key=lambda row: (row["name"], row["schema_digest"]))
-    return rows, malformed
+    return rows, 0
 
 
-def tools_digest(rows: list[dict[str, str]]) -> str:
-    return hashlib.sha256(_stable_json(rows).encode("utf-8")).hexdigest()
+def tools_digest(rows: list[dict[str, Any]]) -> str:
+    surface = {"version": 2, "tools": rows}
+    return hashlib.sha256(_stable_json(surface).encode("utf-8")).hexdigest()

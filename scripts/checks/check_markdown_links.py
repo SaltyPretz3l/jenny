@@ -1,4 +1,11 @@
-"""Validate local Markdown links without checking external URLs."""
+"""Validate local Markdown links without checking external URLs.
+
+The checked set is the union of the Markdown files that the two export
+manifests ship: ``github_stage_manifest.json`` (the source-repo stage) and
+``dist_manifest.json`` (the real public export, ``create_github_stage.py
+--dist`` as run by ``sync_public_repo.py``). Without either manifest (a fixture
+root) every non-excluded ``*.md`` file is checked.
+"""
 from __future__ import annotations
 
 import json
@@ -9,6 +16,8 @@ from urllib.parse import unquote, urlparse
 
 ROOT = Path(__file__).resolve().parents[2]
 STAGE_MANIFEST_PATH = ROOT / "scripts" / "packaging" / "github_stage_manifest.json"
+DIST_MANIFEST_PATH = ROOT / "scripts" / "packaging" / "dist_manifest.json"
+EXPORT_MANIFEST_PATHS = (STAGE_MANIFEST_PATH, DIST_MANIFEST_PATH)
 REPO_ABSOLUTE_PREFIX = f"{ROOT.as_posix().rstrip('/')}/"
 LINK_RE = re.compile(r"!?\[[^\]]*]\(([^)\n]+)\)")
 EXCLUDE_GLOBS = (
@@ -60,8 +69,8 @@ def _is_stage_markdown(candidate: Path, relative_path: str, exclude_globs: tuple
     )
 
 
-def _stage_markdown_files(root: Path) -> list[Path] | None:
-    manifest_path = root / STAGE_MANIFEST_PATH.relative_to(ROOT)
+def _manifest_markdown_files(root: Path, manifest_relative: Path) -> set[Path] | None:
+    manifest_path = root / manifest_relative
     if not manifest_path.is_file():
         return None
     payload = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -80,7 +89,20 @@ def _stage_markdown_files(root: Path) -> list[Path] | None:
             if not _is_stage_markdown(candidate, relative_path, exclude_globs):
                 continue
             markdown_files.add(candidate)
-    return sorted(markdown_files)
+    return markdown_files
+
+
+def _stage_markdown_files(root: Path) -> list[Path] | None:
+    """Union of the stage and dist export sets; None when neither manifest exists."""
+    found = False
+    markdown_files: set[Path] = set()
+    for manifest in EXPORT_MANIFEST_PATHS:
+        files = _manifest_markdown_files(root, manifest.relative_to(ROOT))
+        if files is None:
+            continue
+        found = True
+        markdown_files.update(files)
+    return sorted(markdown_files) if found else None
 
 
 def _iter_markdown_files(root: Path) -> list[Path]:

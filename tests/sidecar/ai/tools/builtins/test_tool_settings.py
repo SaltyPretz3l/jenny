@@ -9,6 +9,7 @@ from types import SimpleNamespace
 import pytest
 
 from sidecar.ai.tools.builtins import git_ops as git_ops_module
+from sidecar.ai.tools.builtins import shell as shell_module
 from sidecar.ai.tools.builtins.filesystem import write_file_tool
 from sidecar.ai.tools.builtins.filesystem_settings import configure_filesystem_tools
 from sidecar.ai.tools.builtins.git_ops import git_status_tool
@@ -101,3 +102,14 @@ def test_lsp_handler_reads_settings_container_after_configure(tmp_path: Path) ->
         assert payload["reason"] == "No language server is available for this language"
     finally:
         configure_lsp_tools({"tools_lsp_enabled": False}, detected_servers={})
+
+
+def test_shell_settings_refresh_replaces_rather_than_merges_flags() -> None:
+    configure_shell_security({"shell_security": True, "git_tracking": True})
+    try:
+        # A later refresh that no longer carries the flags must drop them.
+        configure_shell_security({})
+        assert shell_module._shell_security_enabled() is False
+        assert shell_module._git_tracking_enabled() is False
+    finally:
+        configure_shell_security({"shell_security": False, "git_tracking": False})

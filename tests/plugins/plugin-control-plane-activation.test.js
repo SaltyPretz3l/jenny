@@ -105,7 +105,7 @@ function createRuntimeCoordinator() {
   };
 }
 
-test('managed privileged denial still permits ordinary V2 declarative activation', async () => {
+test('ordinary V2 declarative activation installs, enables and reports effective', async () => {
   const fixture = createOfficialSkillFixture('stage4b-service', 2);
   let operationIndex = 0;
   const service = createPluginControlPlaneService({
@@ -121,20 +121,6 @@ test('managed privileged denial still permits ordinary V2 declarative activation
       sourcePathDigest: fixture.verdict.package_record.source_identity.package_path_digest,
     }),
     runtimeCoordinator: createRuntimeCoordinator(),
-    managedPolicy: {
-      initialize: async () => ({ ok: true }),
-      status: () => ({ status: 'active', reason: 'managed_policy_privileged_denied',
-        privileged_execution: 'deny', installation: 'allow_inactive',
-        allowed_source_kinds: ['local_package'], allowed_publishers: [],
-        managed_source_fingerprints: [], require_sbom: false,
-        require_build_provenance: false }),
-      capture: () => ({ revision: 1, policy_digest: 'd'.repeat(64) }),
-      isCurrent: (token) => token?.revision === 1,
-      guard: () => ({ ok: false, reason: 'managed_policy_privileged_denied' }),
-      policyGrantRef: (reference) => ({ ...reference, policy_revision: 1,
-        policy_snapshot_digest: 'd'.repeat(64) }),
-      withCurrentPolicy: (_token, operation) => operation(),
-    },
     newOperationId: () => `op-v2-${++operationIndex}`,
   });
 
@@ -152,7 +138,6 @@ test('managed privileged denial still permits ordinary V2 declarative activation
 test('eligible first-party skill package enables, disables, and actively uninstalls', async () => {
   const fixture = createOfficialSkillFixture();
   const events = [];
-  const hookEvents = [];
   let runtimeStatus = { runtime_status: 'inactive', runtime_reason_code: 'not_initialized' };
   const runtimeCoordinator = {
     fence: (reason) => {
@@ -191,12 +176,6 @@ test('eligible first-party skill package enables, disables, and actively uninsta
       sourcePathDigest: fixture.verdict.package_record.source_identity.package_path_digest,
     }),
     runtimeCoordinator,
-    privilegedRuntime: {
-      enqueueHook: async (event) => {
-        hookEvents.push(event);
-        return { ok: true };
-      },
-    },
     newOperationId: () => `op-${++operationIndex}`,
   });
 
@@ -237,11 +216,6 @@ test('eligible first-party skill package enables, disables, and actively uninsta
     'fence:enable', 'unfence', 'fence:disable', 'unfence',
     'fence:enable', 'unfence', 'fence:uninstall', 'unfence',
   ]);
-  assert.deepEqual(hookEvents.map((event) => event.event), [
-    'plugin.updated', 'plugin.enabled', 'plugin.disabled',
-    'plugin.enabled', 'plugin.uninstalled',
-  ]);
-  assert.equal(hookEvents.every((event) => /^[a-f0-9]{64}$/.test(event.event_id)), true);
 });
 
 test('concurrent activations serialize before authority capture and preserve both updates', async () => {
@@ -311,5 +285,60 @@ test('concurrent activations serialize before authority capture and preserve bot
     ['beta', 'active'],
   ]);
   assert.deepEqual(preparedContributionCounts, [1, 2]);
+  service.dispose();
+});
+
+test('uninstalling a disabled plugin republishes the runtime for the plugins that stay active', async () => {
+  const fixtures = [createOfficialSkillFixture('alpha'), createOfficialSkillFixture('beta')];
+  const byDigest = new Map(fixtures.map((fixture) => [fixture.verdict.archive_digest, fixture.verdict]));
+  const sources = fixtures.slice();
+  const prepared = [];
+  const runtimeCoordinator = {
+    ...createRuntimeCoordinator(),
+    prepare: async ({ compiled }) => {
+      prepared.push({
+        generation: compiled.snapshot.active_generation_id,
+        skills: compiled.snapshot.declarative_content.skill_scopes.length,
+      });
+      return {
+        ok: true,
+        rollback: async () => ({ ok: true }),
+        reconcile: async () => ({ ok: true }),
+        commit: async () => ({ ok: true }),
+      };
+    },
+  };
+  let operationIndex = 0;
+  const service = createPluginControlPlaneService({
+    facade: createMemoryFsFacade(),
+    baseDir: '',
+    now: () => NOW,
+    featureEnabled: true,
+    safeMode: SAFE_MODE_OFF,
+    verifyPackage: async ({ bytes }) => byDigest.get(crypto.createHash('sha256').update(bytes).digest('hex')),
+    readPackageBytes: async () => {
+      const fixture = sources.shift();
+      return {
+        ok: true,
+        bytes: fixture.bytes,
+        sourcePathDigest: fixture.verdict.package_record.source_identity.package_path_digest,
+      };
+    },
+    runtimeCoordinator,
+    newOperationId: () => `op-survivor-${++operationIndex}`,
+  });
+
+  assert.equal((await service.installLocalPackage({})).ok, true);
+  assert.equal((await service.installLocalPackage({})).ok, true);
+  assert.equal((await service.enable({ publisher_id: OFFICIAL_PUBLISHER_ID, plugin_id: 'alpha' })).ok, true);
+  assert.equal(prepared.length, 1);
+
+  assert.equal((await service.uninstall({ publisher_id: OFFICIAL_PUBLISHER_ID, plugin_id: 'beta' })).ok, true);
+
+  const state = await service.getState();
+  assert.deepEqual(state.plugins.map((entry) => [entry.plugin_id, entry.effective_state]), [['alpha', 'active']]);
+  assert.equal(prepared.length, 2, 'the runtime is offered the generation without beta');
+  assert.equal(prepared[1].skills, 1, 'alpha stays published');
+  assert.notEqual(prepared[1].generation, prepared[0].generation);
   service.dispose();
 });

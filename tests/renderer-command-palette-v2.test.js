@@ -291,6 +291,43 @@ test('C7: Ctrl+K blocked by another overlay does not swallow the keystroke', () 
   });
 });
 
+test('STA-007: startup curtain blocks Ctrl+K until removed without swallowing the key', (t) => {
+  const { dom, doc, dialogDom } = buildPaletteDom();
+  t.after(() => dom.window.close());
+  const curtain = doc.createElement('div');
+  curtain.id = 'startupOverlay';
+  doc.body.append(curtain);
+
+  withGlobalDocument(doc, () => {
+    const controller = createCommandPaletteController({
+      state: buildState(),
+      dom: dialogDom,
+    });
+    controller.bind();
+    let propagated = 0;
+    doc.body.addEventListener('keydown', () => { propagated += 1; });
+
+    const blocked = keydown(doc, doc.body, 'k', { ctrlKey: true });
+    assert.equal(dialogDom.commandPaletteOverlay.classList.contains('hidden'), true,
+      'the palette stays hidden while the startup curtain is present');
+    assert.equal(blocked.defaultPrevented, false, 'startup does not swallow Ctrl+K');
+    assert.equal(propagated, 1, 'blocked Ctrl+K still reaches the body');
+
+    curtain.classList.add('hidden');
+    curtain.inert = true;
+    controller.open();
+    assert.equal(controller.isActive(), false, 'direct open waits for curtain removal');
+    assert.equal(dialogDom.commandPaletteOverlay.classList.contains('hidden'), true);
+
+    curtain.remove();
+    const opened = keydown(doc, doc.body, 'k', { ctrlKey: true });
+    assert.equal(dialogDom.commandPaletteOverlay.classList.contains('hidden'), false,
+      'Ctrl+K opens the palette after the curtain is removed');
+    assert.equal(opened.defaultPrevented, true);
+    assert.equal(controller.isActive(), true);
+  });
+});
+
 /* ── B6: the scope machine ── */
 
 test('B6: Tab cycles the scope and Shift+Tab walks it back', () => {

@@ -57,6 +57,9 @@
     let retryTimer = null;
     let retryAttempt = 0;
     let degraded = false;
+    // IDE-019: per-path reconcile slots. A path with an entry has a reconcile in
+    // flight; the value is the newest change that arrived meanwhile (or null).
+    const reconcileSlots = new Map();
 
     async function reconcileExternalChange(change) {
       const requestedPath = ideStateUtils.normalizeIdeRelativePath?.(change?.relPath) || '';
@@ -147,6 +150,39 @@
       }
     }
 
+    // Serialize and coalesce reconciliation per document path: a newer change for
+    // a path already in flight is remembered (latest wins) and re-run afterwards so
+    // it captures a fresh baseline and re-reads the disk. Different paths stay
+    // concurrent; stop() clears the slots and cancels any pending rerun.
+    async function runReconcile(key, change, token) {
+      let current = change;
+      while (current) {
+        try {
+          await reconcileExternalChange(current);
+        } catch (error) {
+          appendClientLog('WARN', 'ide.external_reload_failed', {
+            message: String(error?.message || error || ''),
+          });
+        }
+        if (!watchGate.isCurrent(token)) return;
+        current = reconcileSlots.get(key) || null;
+        if (current) reconcileSlots.set(key, null);
+        else reconcileSlots.delete(key);
+      }
+    }
+
+    function scheduleReconcile(change) {
+      const requestedPath = ideStateUtils.normalizeIdeRelativePath?.(change?.relPath) || '';
+      const key = fileOperations?.resolvePath(requestedPath) || requestedPath;
+      if (!key) return;
+      if (reconcileSlots.has(key)) {
+        reconcileSlots.set(key, change);
+        return;
+      }
+      reconcileSlots.set(key, null);
+      runReconcile(key, change, watchGate.capture());
+    }
+
     // UIUX-012: the main-process watcher caps a batch at WATCH_MAX_BATCH and
     // marks the rest `truncated: true` — every change past the cap is dropped
     // BEFORE it ever reaches `changes`. An open tab whose change fell outside
@@ -156,7 +192,7 @@
       const tabs = Array.isArray(getIde().openTabs) ? getIde().openTabs : [];
       for (const tab of tabs) {
         const path = tab && tab.kind === 'file' ? tab.path : null;
-        if (path && !skipPaths.has(path)) reconcileExternalChange({ relPath: path, kind: 'changed' });
+        if (path && !skipPaths.has(path)) scheduleReconcile({ relPath: path, kind: 'changed' });
       }
     }
 
@@ -172,7 +208,7 @@
       for (const change of changes) {
         fileOperations?.noteExternalChange?.(change?.relPath);
         onExternalPreviewChange(change);
-        reconcileExternalChange(change);
+        scheduleReconcile(change);
         reconciledPaths.add(ideStateUtils.normalizeIdeRelativePath?.(change?.relPath) || change?.relPath);
       }
       if (truncated) revalidateOpenDocuments(reconciledPaths);
@@ -193,7 +229,17 @@
     // (deduped) tells the user external changes will not appear, and the log
     // carries the reason. A later manual start() (IDE re-activation, root
     // switch) resets the budget and tries again.
-    function scheduleRetry(reason, token) {
+    async function scheduleRetry(reason, token) {
+      const api = getWorkspaceFsApi();
+      if (typeof api?.getRootState === 'function') {
+        try {
+          const rootState = await api.getRootState();
+          if (!watchGate.isCurrent(token)) return;
+          if (!rootState?.workspaceRoot) return;
+        } catch (_error) {
+          // Unknown root state: keep the bounded retry rather than drop it.
+        }
+      }
       if (!watchGate.isCurrent(token) || retryTimer || degraded) {
         return;
       }
@@ -258,26 +304,32 @@
       }
     }
 
-    function startWatch({ fromRetry = false, token = watchGate.capture() } = {}) {
+    async function startWatch({ fromRetry = false, token = watchGate.capture() } = {}) {
       const api = getWorkspaceFsApi();
-      if (!watchGate.isCurrent(token) || watcherActive || typeof api?.watchStart !== 'function') {
+      if (!watchGate.isCurrent(token) || typeof api?.watchStart !== 'function') {
         return;
       }
-      watcherActive = true;
-      ensureSubscriptions(api, token);
-      Promise.resolve(api.watchStart()).catch((error) => {
+      try {
+        if (typeof api.getRootState === 'function') {
+          const rootState = await api.getRootState();
+          if (!watchGate.isCurrent(token)) return;
+          if (!rootState?.workspaceRoot) return;
+        }
+        if (!watchGate.isCurrent(token) || watcherActive) return;
+        watcherActive = true;
+        ensureSubscriptions(api, token);
+        await api.watchStart();
+      } catch (error) {
         if (!watchGate.isCurrent(token)) return;
         watcherActive = false;
         appendClientLog('WARN', 'ide.watch_start_failed', {
           message: String(error?.message || error || ''),
         });
-        // Root not configured yet is the normal initial case; the next
-        // activation retries after the user picks one in Settings. Only a
-        // RETRY-path failure keeps consuming the bounded backoff budget.
+        // Only a retry-path failure consumes the bounded backoff budget.
         if (fromRetry) {
           scheduleRetry('watch_start_failed', token);
         }
-      });
+      }
     }
 
     function start() {
@@ -290,6 +342,7 @@
 
     function stop() {
       watchGate.bump();
+      reconcileSlots.clear();
       clearRetryTimer();
       retryAttempt = 0;
       degraded = false;

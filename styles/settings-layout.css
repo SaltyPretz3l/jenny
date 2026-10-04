@@ -1,14 +1,18 @@
-/* ── Settings layout: companion atelier nav rail + workspace panel ── */
+/* ── Settings layout: the section rail beside the page ── */
+/* The page is start-aligned and as wide as three columns of groups; beyond
+   that the extra width stays empty at the end (settings-rows.css flows the
+   groups). */
 .settings-view {
-  --settings-shell-content-max: 1180px;
+  --settings-shell-content-max: 1760px;
+  --settings-rail-width: 232px;
 }
 
 .settings-layout {
   display: grid;
-  grid-template-columns: minmax(240px, 280px) minmax(0, 1fr);
-  gap: var(--space-8);
+  grid-template-columns: var(--settings-rail-width) minmax(0, 1fr);
+  gap: var(--space-10);
   height: 100%;
   overflow: hidden;
-  padding: var(--space-10);
+  padding: var(--space-8) var(--space-10) 0;
   contain: layout;
 }

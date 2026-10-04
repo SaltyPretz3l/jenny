@@ -48,6 +48,7 @@
   var CARD_SELECTOR = '.settings-card[data-settings-section="models"]';
   var TOOLBAR_HOST_ID = 'modelLibrarySectionToolbarHost';
   var HOST_ID = 'modelLibrarySectionHost';
+  var EXTRAS_HOST_ID = 'modelLibrarySectionExtrasHost'; // folders + image engine under the grid (else in the toolbar)
   var MODAL_ID = 'model-library-section-confirm-delete';
   var ACTIONS = ['use', 'unload', 'tune', 'pull', 'cancel', 'menu'];
 
@@ -79,6 +80,11 @@
       || (typeof require === 'function' ? require('./renderer-model-library-folders') : null);
   }
 
+  function resolveImageEngineModule() {
+    return (root && root.modelLibraryImageEngine)
+      || (typeof require === 'function' ? require('./model-library/model-library-image-engine') : null);
+  }
+
   function createModelLibrarySectionController(deps) {
     var d = deps || {};
     var state = d.state || {};
@@ -108,8 +114,11 @@
     });
     var pullController = null;
     var foldersController = null;
+    var imageEngineController = null;
     var sourceData = null;
     var merged = null;
+    var loadSettled = false; // until then the hardware line reads "Checking hardware…"
+    var catchUpAttempts = 0; // re-reads spent on a read taken before the backend was ready
     var disposed = false;
     var boundCard = null;
     var unsubscribeFeatures = null;
@@ -123,15 +132,12 @@
         ? documentRef.querySelector(CARD_SELECTOR) : null;
     }
 
-    function host() {
-      return documentRef && documentRef.getElementById
-        ? documentRef.getElementById(HOST_ID) : null;
+    function byId(id) {
+      return documentRef && documentRef.getElementById ? documentRef.getElementById(id) : null;
     }
-
-    function toolbarHost() {
-      return documentRef && documentRef.getElementById
-        ? documentRef.getElementById(TOOLBAR_HOST_ID) : null;
-    }
+    function host() { return byId(HOST_ID); }
+    function toolbarHost() { return byId(TOOLBAR_HOST_ID); }
+    function extrasHost() { return byId(EXTRAS_HOST_ID); }
 
     function enabled() {
       var flags = state && state.features && state.features.featureFlags;
@@ -148,6 +154,11 @@
 
     function accelerationFlagEnabled() {
       return state.features?.featureFlags?.llama_server_acceleration === true;
+    }
+
+    // The Image engine section follows the image_generate tool's kill switch.
+    function imageEngineFlagEnabled() {
+      return state.features?.featureFlags?.tools_image_generate_enabled === true;
     }
 
     function mergeSignature() {
@@ -214,6 +225,10 @@
       });
     }
 
+    function hardwarePending() {
+      return !loadSettled || Boolean(sourceData && sourceData.hardwarePending === true);
+    }
+
     function toolbarHtml() {
       var modelView = merged || { hardware: {}, cards: [] };
       var cards = Array.isArray(modelView.cards) ? modelView.cards : [];
@@ -245,8 +260,39 @@
           dataset: { 'model-library-section-action': 'refresh' },
         })
         + '</div></div>'
-        + viewModule.buildHardwareSummaryLine(modelView.hardware)
-        + (accelerationFlagEnabled() ? '<div id="modelLibraryFoldersHost"></div>' : '');
+        + viewModule.buildHardwareSummaryLine(modelView.hardware, { pending: hardwarePending() });
+    }
+
+    function extrasHtml() {
+      return (accelerationFlagEnabled() ? '<div id="modelLibraryFoldersHost"></div>' : '')
+        + (imageEngineFlagEnabled() ? '<div id="modelLibraryImageEngineHost"></div>' : '');
+    }
+
+    function imageEngine() {
+      if (disposed || !imageEngineFlagEnabled()) return null;
+      if (!imageEngineController) {
+        var imageEngineModule = resolveImageEngineModule();
+        if (!imageEngineModule || typeof imageEngineModule.createModelLibraryImageEngineController !== 'function') return null;
+        imageEngineController = imageEngineModule.createModelLibraryImageEngineController({
+          windowRef: windowRef,
+          documentRef: documentRef,
+          isEnabled: imageEngineFlagEnabled,
+          hostId: 'modelLibraryImageEngineHost',
+        });
+      }
+      return imageEngineController;
+    }
+
+    function renderImageEngine() {
+      var controller = imageEngine();
+      if (!controller) {
+        // The flag went off: drop the controller and its bridge subscription.
+        if (imageEngineController) imageEngineController.dispose();
+        imageEngineController = null;
+        return;
+      }
+      controller.bind();
+      controller.render();
     }
 
     function folders() {
@@ -346,14 +392,17 @@
       if (disposed) return;
       var target = toolbarHost();
       if (!target) return;
+      var extras = extrasHost();
       if (!enabled()) {
         target.innerHTML = '';
+        if (extras) extras.innerHTML = '';
         return;
       }
       var activeElement = documentRef.activeElement;
       // The GGUF folders row is rebuilt with the toolbar: its focused control
       // gets the focus back, like the pull input.
-      var folderAction = activeElement && target.contains(activeElement)
+      var folderScope = extras || target;
+      var folderAction = activeElement && folderScope.contains(activeElement)
         ? activeElement.getAttribute?.('data-model-library-folder-action') || '' : '';
       var preservePullFocus = activeElement
         && activeElement.getAttribute?.('data-model-library-section-input') === 'pull-tag';
@@ -364,8 +413,10 @@
         selectionDirection: activeElement.selectionDirection,
       } : null;
       if (pullFocus) view.pullTag = pullFocus.value;
-      target.innerHTML = toolbarHtml();
+      target.innerHTML = toolbarHtml() + (extras ? '' : extrasHtml());
+      if (extras) extras.innerHTML = extrasHtml();
       renderFolders();
+      renderImageEngine();
       if (pullFocus) {
         var nextInput = target.querySelector('[data-model-library-section-input="pull-tag"]');
         if (nextInput) {
@@ -383,7 +434,7 @@
           }
         }
       } else if (folderAction) {
-        var nextControl = Array.from(target.querySelectorAll('[data-model-library-folder-action]')).find(function (control) {
+        var nextControl = Array.from(folderScope.querySelectorAll('[data-model-library-folder-action]')).find(function (control) {
           return control.getAttribute('data-model-library-folder-action') === folderAction;
         });
         if (nextControl) focusQuietly(nextControl);
@@ -458,15 +509,22 @@
       }).then(function (result) {
         if (disposed || result.generation !== source.latestGeneration()) return null;
         sourceData = result;
+        loadSettled = true;
+        if (result.backendPending !== true) catchUpAttempts = 0;
         merged = buildMerged();
-        var unavailable = Object.keys(result.unavailable || {}).map(function (key) {
-          return result.unavailable[key];
-        }).filter(Boolean);
-        setStatusMessage(unavailable.length ? unavailable.join(' ') : '');
+        // One cause behind several reads ("Managed sidecar is not ready yet."
+        // from both model lists before the sidecar attaches) reads once.
+        var unavailable = [];
+        Object.keys(result.unavailable || {}).forEach(function (key) {
+          var reason = result.unavailable[key];
+          if (reason && unavailable.indexOf(reason) < 0) unavailable.push(reason);
+        });
+        setStatusMessage(unavailable.join(' '));
         render();
         return result;
       }).catch(function (error) {
         if (!disposed) {
+          loadSettled = true;
           setStatusMessage(boundedErrorMessage(error, jt('settings.modelLibrary.refreshFailed', 'Could not refresh the model library.')));
           appendClientLog('WARN', 'model_library.section_refresh_failed', {
             message: view.statusMessage,
@@ -826,13 +884,13 @@
         return Promise.resolve(null);
       }
       if (!flagsChanged && sourceData) {
-        syncFromState();
+        rebuildFromState();
         return Promise.resolve(null);
       }
       return refresh();
     }
 
-    function syncFromState() {
+    function rebuildFromState() {
       if (!enabled() || !sourceData) return;
       var nextSignature = mergeSignature();
       if (nextSignature === contextSignature) return;
@@ -840,9 +898,63 @@
       render();
     }
 
+    // The loaded llama-server status is a snapshot, and nothing pushes its
+    // changes. The periodic sync rereads it alone, so a server the chat GPU
+    // handoff parked for an image render reads paused, then serving again once
+    // it is restored (rechecked sooner while parked).
+    var statusReadPending = false;
+    var parkedRecheckTimer = null;
+    var PARKED_RECHECK_MS = 3000;
+    function scheduleParkedRecheck(status) {
+      if (disposed || parkedRecheckTimer || !status || status.state !== 'stopped' || status.identityRetained !== true) return;
+      parkedRecheckTimer = windowRef.setTimeout(function () {
+        parkedRecheckTimer = null;
+        syncLlamaServerStatus();
+      }, PARKED_RECHECK_MS);
+    }
+
+    function syncLlamaServerStatus() {
+      var bridge = windowRef.jennyShell && windowRef.jennyShell.llamaServer;
+      if (disposed || statusReadPending || !enabled() || !accelerationFlagEnabled() || !sourceData
+        || !bridge || typeof bridge.getStatus !== 'function'
+        || typeof sourcesModule.normalizeLlamaServer !== 'function') return;
+      var generation = source.latestGeneration();
+      statusReadPending = true;
+      Promise.resolve().then(function () { return bridge.getStatus(); }).then(function (payload) {
+        statusReadPending = false;
+        if (disposed || !sourceData || generation !== source.latestGeneration()
+          || !payload || typeof payload !== 'object' || payload.ok === false) return;
+        var next = sourcesModule.normalizeLlamaServer(payload);
+        scheduleParkedRecheck(next);
+        if (JSON.stringify(next) === JSON.stringify(sourceData.llamaServer || null)) return;
+        sourceData = Object.assign({}, sourceData, { llamaServer: next });
+        merged = buildMerged();
+        render();
+      }, function () { statusReadPending = false; });
+    }
+
+    // A load taken before the managed sidecar attached (the section binds at
+    // boot) left the status line on "not ready" and the hardware unprobed, and
+    // the tick only re-merged it. Once the app reads the backend ready and its
+    // model list available, the tick re-reads the sources (five times at most).
+    function catchUpPendingLoad() {
+      var list = state.modelList;
+      if (disposed || !enabled() || !sourceData || sourceData.backendPending !== true || catchUpAttempts >= 5
+        || state.backend?.phase !== 'ready' || !list || typeof list !== 'object' || list.available === false) return false;
+      catchUpAttempts += 1;
+      void refresh();
+      return true;
+    }
+
+    function syncFromState() {
+      if (catchUpPendingLoad()) return;
+      rebuildFromState();
+      syncLlamaServerStatus();
+    }
+
     function syncEngineSettings(localEngines) {
       if (localEngines) state.localEngines = localEngines;
-      syncFromState();
+      rebuildFromState();
     }
 
     function bind() {
@@ -863,6 +975,8 @@
     function dispose() {
       if (disposed) return;
       disposed = true;
+      if (parkedRecheckTimer) windowRef.clearTimeout(parkedRecheckTimer);
+      parkedRecheckTimer = null;
       runtimeActions.dispose();
       if (boundCard) {
         boundCard.removeEventListener('click', handleClick);
@@ -878,6 +992,8 @@
       pullController = null;
       if (foldersController) foldersController.dispose();
       foldersController = null;
+      if (imageEngineController) imageEngineController.dispose();
+      imageEngineController = null;
       hideOwnContextMenu();
       removeConfirmModal();
     }

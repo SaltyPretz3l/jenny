@@ -42,7 +42,7 @@
 
 /* Reserved for workspace widget docking (follow-on). */
 .view-shell.panel-dock-right {
-  grid-template-columns: minmax(0, 1fr) var(--sidebar-resizer-width) var(--view-panel-current-width);
+  grid-template-columns: minmax(0, 1fr) 0 var(--view-panel-current-width);
 }
 
 /* Panel host frame; establishes the current viewpanel container identity. */

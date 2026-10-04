@@ -21,7 +21,9 @@ def test_failed_ollama_load_does_not_report_named_model_as_loaded() -> None:
         ),
     )
 
-    assert payload["model"] == {"id": "ornith:9b", "loaded": False}
+    assert payload["model"] == {
+        "id": "ornith:9b", "loaded": False, "configured": True, "residency": "local",
+    }
     assert payload["readiness"] == {
         "status": "idle",
         "ready": False,

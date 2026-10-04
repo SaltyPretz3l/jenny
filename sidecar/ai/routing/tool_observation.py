@@ -336,7 +336,7 @@ def recent_observations_payload(
         return []
     try:
         events = store.recent_events(request_id=normalized, limit=limit)
-    except Exception:
+    except Exception:  # noqa: BLE001  # telemetry
         return []
     return [event.to_payload() for event in events]
 

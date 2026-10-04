@@ -29,6 +29,7 @@ describe('auxiliary IPC tool normalization', () => {
       displayName: 'Read File',
       sourceKind: 'builtin',
       toolFamily: 'filesystem',
+      serverName: '', connectionId: '',
     });
   });
 });
@@ -784,7 +785,7 @@ test('auxiliary IPC registers Codex CLI engine handlers', async () => {
   });
 
   assert.equal(handlers.has('codex-cli:get-state'), true);
-  assert.equal(handlers.has('codex-cli:open-login-terminal'), true);
+  assert.equal(handlers.has('codex-cli:open-login-terminal'), false);
   assert.equal(handlers.has('codex-cli:refresh'), true);
   assert.equal(handlers.has('diagnostics-frontier:get-state'), false);
 
@@ -792,11 +793,6 @@ test('auxiliary IPC registers Codex CLI engine handlers', async () => {
     enabled: true,
     status: 'ready',
     provider: 'codex-cli',
-  });
-  assert.deepEqual(await handlers.get('codex-cli:open-login-terminal')({}), {
-    ok: true,
-    code: 'login_terminal_opened',
-    command: 'codex login',
   });
   assert.deepEqual(await handlers.get('codex-cli:refresh')({}), {
     enabled: true,

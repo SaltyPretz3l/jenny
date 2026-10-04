@@ -127,134 +127,23 @@ test('plugin recovery waits for the initial backend handshake instead of restart
   assert.equal(restartCalls, 0);
 });
 
-test('provider apply settlement re-arms default-model loading after config refresh', async () => {
-  let releaseRefresh;
-  let resolveRefreshStarted;
-  let resolveAutoLoad;
+// Plugin platform retirement, stage 2: the ChatGPT engine has a core
+// descriptor, so the plugin runtime's startup no longer waits on, refreshes or
+// re-arms the engine (services/main/cloud-models-registration.js owns ChatGPT).
+test('plugin startup leaves the engine and the default-model load alone', async () => {
   let refreshCalls = 0;
   let autoLoadCalls = 0;
-  const refreshStarted = new Promise((resolve) => { resolveRefreshStarted = resolve; });
-  const autoLoaded = new Promise((resolve) => { resolveAutoLoad = resolve; });
-  const { handle, backendService } = registerStartupRuntime({
-    configService: { getState: () => ({ preferredEngineType: 'ollama' }) },
-    refreshManagedConfig: () => {
-      refreshCalls += 1;
-      if (refreshCalls > 1) return undefined;
-      resolveRefreshStarted();
-      return new Promise((resolve) => { releaseRefresh = resolve; });
-    },
-    _autoLoadDefaultModel() {
-      autoLoadCalls += 1;
-      if (autoLoadCalls === 1) resolveAutoLoad();
-    },
-  });
-
-  assert.equal(backendService._providerRuntimeApplyPending('chatgpt'), true);
-  await refreshStarted;
-  assert.equal(autoLoadCalls, 0);
-  releaseRefresh();
-  await autoLoaded;
-  assert.equal(backendService._providerRuntimeApplyPending('chatgpt'), false);
-  assert.equal(autoLoadCalls, 1);
-  await handle.startupReady;
-  assert.equal(autoLoadCalls, 1);
-  await handle.dispose();
-  assert.equal(backendService._providerRuntimeApplyPending, null);
-});
-
-test('a rejected post-apply refresh still settles the apply predicate', async () => {
-  let refreshCalls = 0;
-  let autoLoadCalls = 0;
-  let resolveAutoLoad;
-  const autoLoaded = new Promise((resolve) => { resolveAutoLoad = resolve; });
   const { handle, backendService } = registerStartupRuntime({
     configService: { getState: () => ({ preferredEngineType: 'chatgpt' }) },
-    refreshManagedConfig: async () => {
-      refreshCalls += 1;
-      throw new Error('sidecar reconfigure failed');
-    },
-    _autoLoadDefaultModel() {
-      autoLoadCalls += 1;
-      resolveAutoLoad();
-    },
-  });
-
-  assert.equal(backendService._providerRuntimeApplyPending('chatgpt'), true);
-  await autoLoaded;
-  // Without the finally around refreshManagedConfigAfterProviderChange the
-  // predicate would stay pending forever and the honest WARN could never fire.
-  assert.equal(backendService._providerRuntimeApplyPending('chatgpt'), false);
-  assert.equal(refreshCalls, 1);
-  assert.equal(autoLoadCalls, 1);
-  await handle.startupReady;
-  assert.equal(autoLoadCalls, 1);
-  await handle.dispose();
-});
-
-test('startup provider rehydration retries the persisted ChatGPT selection after mock fallback', async () => {
-  const refreshCalls = [];
-  let engineAtAutoLoad;
-  const { handle, backendService } = registerStartupRuntime({
-    configService: { getState: () => ({ preferredEngineType: 'chatgpt' }) },
-    currentEngineType: 'mock',
-    _lastEngineFallback: { requested_engine: 'chatgpt', reason: 'ResponsesDescriptorError' },
-    async refreshManagedConfig(reason, options) {
-      refreshCalls.push({ reason, options });
-      this.currentEngineType = options.requestedEngineType || this.currentEngineType;
-    },
-    _autoLoadDefaultModel() { engineAtAutoLoad = this.currentEngineType; },
-  });
-  try {
-    await handle.startupReady;
-    assert.equal(refreshCalls[0].options.requestedEngineType, 'chatgpt');
-    assert.equal(engineAtAutoLoad, 'chatgpt');
-    assert.equal(backendService._providerRuntimeApplyPending('chatgpt'), false);
-  } finally { await handle.dispose(); }
-});
-
-test('cold restart longer than the apply deadline still publishes the saved ChatGPT provider', async () => {
-  const configService = { getState: () => ({ preferredEngineType: 'chatgpt' }) };
-  const seed = registerStartupRuntime({ configService });
-  await seed.handle.startupReady;
-  await seed.handle.dispose();
-  const refreshCalls = [];
-  let engineAtAutoLoad;
-  const { handle, backendService } = registerStartupRuntime({
-    configService, _managedReadyOnce: false, _stopping: false,
-    currentEngineType: 'mock',
-    _lastEngineFallback: { requested_engine: 'chatgpt', reason: 'ResponsesDescriptorError' },
-    async refreshManagedConfig(reason, options) {
-      refreshCalls.push({ reason, options });
-      this.currentEngineType = options.requestedEngineType || this.currentEngineType;
-    },
-    _autoLoadDefaultModel() { engineAtAutoLoad = this.currentEngineType; },
-  }, process.cwd(), seed.userData);
-  try {
-    // Exercise the actual persisted-plugin startup chain past its 15s apply
-    // deadline, rather than accepting an unvalidated late adapter result.
-    await new Promise(resolve => setTimeout(resolve, 16_000));
-    assert.equal(refreshCalls.length, 0);
-    backendService._managedReadyOnce = true;
-    await handle.startupReady;
-    assert.equal(refreshCalls.length, 1);
-    assert.equal(refreshCalls[0].options.requestedEngineType, 'chatgpt');
-    assert.equal(engineAtAutoLoad, 'chatgpt');
-    assert.equal(backendService._providerRuntimeApplyPending('chatgpt'), false);
-    assert.ok(handle.stage7Service.getState().providers.providers.includes('chatgpt'));
-  } finally { await handle.dispose(); }
-});
-
-test('migration without an available provider settles and re-arms default-model loading', async () => {
-  let autoLoadCalls = 0;
-  const { handle, backendService } = registerStartupRuntime({
-    configService: { getState: () => ({ preferredEngineType: 'chatgpt' }) },
+    currentEngineType: 'chatgpt',
+    refreshManagedConfig: async () => { refreshCalls += 1; },
     _autoLoadDefaultModel() { autoLoadCalls += 1; },
-  }, makeRoot());
-
-  assert.equal(backendService._providerRuntimeApplyPending('chatgpt'), true);
-  const result = await handle.startupReady;
-  assert.notEqual(result.available, true);
-  assert.equal(backendService._providerRuntimeApplyPending('chatgpt'), false);
-  assert.equal(autoLoadCalls, 1);
-  await handle.dispose();
+  }, process.cwd(), makeRoot());
+  try {
+    await handle.startupReady;
+    assert.equal(refreshCalls, 0);
+    assert.equal(autoLoadCalls, 0);
+    assert.equal(backendService._providerRuntimeApplyPending, undefined);
+    assert.equal(backendService.chatgptModelCatalogService, undefined);
+  } finally { await handle.dispose(); }
 });

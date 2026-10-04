@@ -7,7 +7,7 @@ const { listHomeSiteMonitorTargets } = require('./home-config-schema');
 // Link-tile status poller for the Home dashboard. Checks ONLY the explicit
 // `siteMonitor` URLs surfaced by listHomeSiteMonitorTargets — never a tile's
 // href — so an unconfigured dashboard means zero network traffic. Mirrors the
-// weather-service conventions (EventEmitter + unref'd interval + injected
+// system-stats poller conventions (EventEmitter + unref'd interval + injected
 // fetch). Probes use HEAD first, falling back to GET for servers that reject
 // or mishandle HEAD (405/501 or a thrown request).
 const DEFAULT_LINK_STATUS_POLL_INTERVAL_MS = 60 * 1000;

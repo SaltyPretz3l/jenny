@@ -148,6 +148,34 @@ function Get-JennyRunning {
   return @{ Ok = $true; Status = 0; Running = $false }
 }
 
+function Start-Jenny {
+  $probe = Get-DockerProbe -Arguments ($script:ComposeArgs + @(
+    'run', '--rm', '--no-deps', '-T', '--entrypoint', 'node', 'setup', '-e',
+    "console.log(require('./server/config').loadHostConfig('/etc/jenny/host.json').hostExecutionPolicyVersion)"
+  ))
+  if ($probe.Status -ne 0) {
+    Write-LauncherError "execution policy read failed (exit $($probe.Status))."
+    Write-Followups
+    $script:LastStepStatus = $probe.Status
+    return
+  }
+  $policy = ($probe.Lines -join "`n").Trim()
+  if ($policy -eq '1') {
+    @('services:', '  jenny:', '    depends_on: !reset {}', '  sandbox:', '    profiles: [execution]') -join "`n" |
+      & docker @script:ComposeArgs -f - up --wait --wait-timeout 120 -d jenny
+    $script:LastStepStatus = [int]$LASTEXITCODE
+    if ($script:LastStepStatus -ne 0) {
+      Write-LauncherError "start failed (exit $script:LastStepStatus)."
+      Write-Followups
+    }
+  } elseif ($policy -eq '2') {
+    Invoke-ComposeStep 'start' @('up', '--wait', '--wait-timeout', '120', '-d', 'jenny')
+  } else {
+    Write-LauncherError 'saved execution policy is invalid; rerun configure.'
+    $script:LastStepStatus = 10
+  }
+}
+
 function Invoke-Main {
   $mode = 'setup'
   if ($script:UnexpectedParameters.Count -gt 0) {
@@ -230,7 +258,7 @@ function Invoke-Main {
   }
   $status = $script:LastStepStatus
   if ($status -ne 0) { exit $status }
-  Invoke-ComposeStep 'start' @('up', '--wait', '--wait-timeout', '120', '-d', 'jenny')
+  Start-Jenny
   $status = $script:LastStepStatus
   if ($status -ne 0) { exit $status }
   Invoke-ComposeStep 'status' @('run', '--rm', '--no-deps', '-T', 'setup', 'status')

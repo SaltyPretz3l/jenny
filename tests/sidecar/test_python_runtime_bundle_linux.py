@@ -64,7 +64,7 @@ def _add_directory(bundle: tarfile.TarFile, name: str) -> None:
 
 
 def _extract(builder: ModuleType, archive: Path, destination: Path, **caps: int) -> None:
-    builder._extract_embed_archive(  # noqa: SLF001
+    builder._extract_embed_archive(
         archive,
         destination,
         archive_format="tar.gz",
@@ -108,7 +108,7 @@ def test_extract_pbs_tar_skips_excluded_paths_but_resolves_through_them(tmp_path
     builder = _load_script("excludes")
     destination = tmp_path / "python-embed"
 
-    builder._extract_embed_archive(  # noqa: SLF001
+    builder._extract_embed_archive(
         _write_valid_archive(tmp_path),
         destination,
         archive_format="tar.gz",
@@ -193,8 +193,8 @@ def test_extract_pbs_tar_enforces_member_and_byte_caps(tmp_path: Path) -> None:
 def test_load_contract_accepts_shipped_contracts_and_resolves_defaults() -> None:
     builder = _load_script("contracts")
 
-    linux = builder._load_contract(LINUX_CONTRACT)  # noqa: SLF001
-    windows = builder._load_contract(WINDOWS_CONTRACT)  # noqa: SLF001
+    linux = builder._load_contract(LINUX_CONTRACT)
+    windows = builder._load_contract(WINDOWS_CONTRACT)
 
     assert linux["python"]["distribution"] == "python-build-standalone"
     assert linux["python"]["archive_format"] == "tar.gz"
@@ -239,21 +239,21 @@ def test_load_contract_rejects_invalid_pbs_contracts(tmp_path: Path) -> None:
         path = tmp_path / f"invalid-{index}.json"
         path.write_text(json.dumps(contract), encoding="utf-8")
         with pytest.raises(RuntimeError):
-            builder._load_contract(path)  # noqa: SLF001
+            builder._load_contract(path)
 
 
 def test_linux_pip_download_uses_all_platform_tags(tmp_path: Path, monkeypatch) -> None:
     builder = _load_script("pip")
-    python_contract = builder._load_contract(LINUX_CONTRACT)["python"]  # noqa: SLF001
+    python_contract = builder._load_contract(LINUX_CONTRACT)["python"]
     observed: list[str] = []
 
-    def _fake_run(command, **kwargs):  # noqa: ANN001
+    def _fake_run(command, **kwargs):
         del kwargs
         observed.extend(command)
         return subprocess.CompletedProcess(command, 0)
 
     monkeypatch.setattr(builder.subprocess, "run", _fake_run)
-    builder._run_pip_download(  # noqa: SLF001
+    builder._run_pip_download(
         "python", tmp_path / "runtime-lock.txt", tmp_path / "wheels", python_contract
     )
 
@@ -275,7 +275,7 @@ def test_build_runtime_bundle_from_pbs_archive(tmp_path: Path, monkeypatch) -> N
     contract_path = tmp_path / "contract.json"
     contract_path.write_text(json.dumps(contract), encoding="utf-8")
 
-    def _fake_download(_python, _lock, destination, _contract):  # noqa: ANN001
+    def _fake_download(_python, _lock, destination, _contract):
         (destination / "x-1.0-py3-none-any.whl").write_bytes(b"wheel")
 
     monkeypatch.setattr(builder, "_run_pip_download", _fake_download)

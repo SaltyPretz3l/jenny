@@ -46,8 +46,10 @@
     + '<path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.6" fill="none" '
     + 'stroke-linecap="round"/></svg>';
 
+  // No trim: a leading or trailing space is part of the name.
   function normalizePath(value) {
-    return String(value || '').trim().replace(/\\/g, '/');
+    var raw = String(value || '');
+    return raw.trim() ? raw.replace(/\\/g, '/') : '';
   }
 
   function basename(relPath) {
@@ -241,6 +243,7 @@
       var html = actionButton({
         plain: true,
         className: 'composer-popover-action composer-active-file-action',
+        role: 'menuitem',
         ariaLabel: armed ? jt('ide.activeFile.addedNextMessage', 'Active workspace file added to the next message') : jt('ide.activeFile.addNextMessage', 'Add active workspace file to the next message'),
         ariaPressed: armed,
         dataset: { 'active-file-arm': '1' },

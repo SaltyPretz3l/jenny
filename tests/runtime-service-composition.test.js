@@ -8,6 +8,9 @@ const path = require('path');
 
 const {
   createRuntimeServicesWithDeps,
+  createStatsWatchCadence,
+  STATS_WATCHED_INTERVAL_MS,
+  STATS_IDLE_INTERVAL_MS,
 } = require('../services/main/runtime-service-composition');
 
 // Build a self-contained dependency bundle for the composition root. Every
@@ -142,6 +145,18 @@ test('published core logging objects are the same instances returned in the bund
   assert.equal(published.processLogWriter, services.processLogWriter);
 });
 
+test('desktop notifier is composed onto systemStats and exposed in the bundle', (t) => {
+  const { services } = makeContext(t);
+  const notifier = services.systemStats.desktopNotifier;
+  assert.equal(typeof notifier?.notify, 'function');
+  assert.equal(typeof notifier?.stop, 'function');
+  assert.equal(services.desktopNotifier, notifier);
+  // Under plain node there is no Electron ipcMain/Notification: start() and a
+  // notify call must stay inert instead of throwing.
+  assert.equal(notifier.notify({ category: 'replies', key: 'k', title: 'Reply ready' }), false);
+  assert.doesNotThrow(() => notifier.stop());
+});
+
 test('returned bundle exposes the documented service keys with object values', (t) => {
   const { services } = makeContext(t);
   const representative = [
@@ -261,4 +276,74 @@ test('without an *_inspect deny the rich-files toggle keeps its default', (t) =>
     try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch { /* best-effort */ }
   });
   assert.equal(services.shellConfigService.getState().tools.richFiles, true);
+});
+
+// Top chrome (area 1, 2026-09-29): nothing on screen, nothing sampled.
+test('the stats monitor pauses while the window is hidden or minimised and resumes with a fresh tick', (t) => {
+  const { services, calls } = makeContext(t);
+  const stats = services.systemStats;
+  const pause = stats.visibilityPause;
+  assert.ok(pause && typeof pause.setVisible === 'function');
+  const ticks = () => calls.bridgeEvents.filter(([event]) => event === 'system.onStats').length;
+
+  stats.start();
+  assert.ok(stats.timer, 'running');
+  pause.setVisible(false);
+  assert.equal(stats.timer, null, 'paused while hidden or minimised');
+  stats.start();
+  assert.equal(stats.timer, null, 'a start while hidden stays paused');
+
+  const before = ticks();
+  pause.setVisible(true);
+  assert.ok(stats.timer, 'resumed on show / restore');
+  assert.equal(ticks(), before + 1, 'one immediate tick so the read-out catches up');
+  pause.setVisible(true);
+  assert.equal(ticks(), before + 1, 'an unchanged visibility is a no-op');
+
+  stats.stop();
+  pause.setVisible(false);
+  pause.setVisible(true);
+  assert.equal(stats.timer, null, 'a show after stop never restarts a stopped monitor');
+});
+
+test('the stats tick runs at 2 s only while a renderer watcher shows the numbers, else 15 s', (t) => {
+  const { services, calls } = makeContext(t);
+  const stats = services.systemStats;
+  const cadence = stats.watchCadence;
+  const ticks = () => calls.bridgeEvents.filter(([event]) => event === 'system.onStats').length;
+  assert.equal(stats.intervalMs, STATS_IDLE_INTERVAL_MS, 'idle at boot: the read-out is off by default');
+
+  stats.start();
+  const idleTimer = stats.timer;
+  const before = ticks();
+  assert.equal(cadence.setWatched('titlebar', true), true);
+  assert.equal(stats.intervalMs, STATS_WATCHED_INTERVAL_MS);
+  assert.notEqual(stats.timer, idleTimer, 'the running timer is re-armed at the new rate');
+  assert.equal(ticks(), before + 1, 'one immediate tick so the watcher does not wait out the idle interval');
+
+  cadence.setWatched('popover', true);
+  cadence.setWatched('titlebar', false);
+  assert.equal(stats.intervalMs, STATS_WATCHED_INTERVAL_MS, 'the popover still watches');
+  assert.equal(ticks(), before + 1, 'no extra tick while already watched');
+  cadence.setWatched('popover', false);
+  assert.equal(stats.intervalMs, STATS_IDLE_INTERVAL_MS, 'last watcher gone: slow again');
+  assert.equal(cadence.setWatched('', true), false, 'an unnamed source is ignored');
+
+  stats.stop();
+  stats.visibilityPause.setVisible(false);
+  cadence.setWatched('titlebar', true);
+  assert.equal(stats.timer, null, 'a watcher never restarts a stopped or hidden monitor');
+  assert.equal(ticks(), before + 1, 'and emits nothing while it is not running');
+});
+
+test('createStatsWatchCadence re-times a bare monitor without a pause wrapper', () => {
+  const emitted = [];
+  const monitor = { intervalMs: 2000, timer: null, setIntervalMs(ms) { this.intervalMs = ms; }, emit: (...a) => emitted.push(a), sample: () => ({ cpuPercent: 1 }) };
+  const cadence = createStatsWatchCadence(monitor, { watchedMs: 2000, idleMs: 15000 });
+  assert.equal(monitor.intervalMs, 15000);
+  monitor.timer = {};
+  cadence.setWatched('titlebar', true);
+  assert.equal(monitor.intervalMs, 2000);
+  assert.deepEqual(emitted, [['stats', { cpuPercent: 1 }]]);
+  assert.deepEqual(cadence.sources(), ['titlebar']);
 });

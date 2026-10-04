@@ -58,7 +58,7 @@ def test_top_level_layout_failure_restores_original_object(
     _fail_operation(monkeypatch, operation, fail_at)
 
     with pytest.raises(ToolExecutionFailure):
-        store._ensure_jenny_root(create=True)  # noqa: SLF001
+        store._ensure_jenny_root(create=True)
 
     assert jenny.is_file(), failure_stage
     assert jenny.read_bytes() == b"unsafe original"
@@ -89,7 +89,7 @@ def test_quarantine_layout_failure_restores_original_object(
     _fail_operation(monkeypatch, operation, fail_at)
 
     with pytest.raises(ToolExecutionFailure):
-        store._ensure_quarantine_dir()  # noqa: SLF001
+        store._ensure_quarantine_dir()
 
     assert quarantine.is_file(), failure_stage
     assert quarantine.read_bytes() == b"unsafe original"
@@ -103,7 +103,7 @@ def test_top_level_stranded_pending_is_reconciled_before_fresh_store_creation(
     pending.write_bytes(b"unsafe original")
     store = GuardedWorkspaceStore(tmp_path)
 
-    store._ensure_jenny_root(create=True)  # noqa: SLF001
+    store._ensure_jenny_root(create=True)
 
     assert not pending.exists()
     quarantined = list((tmp_path / ".jenny" / "quarantine").iterdir())
@@ -120,7 +120,7 @@ def test_quarantine_stranded_pending_is_reconciled_before_fresh_directory_creati
     pending.write_bytes(b"unsafe original")
     store = GuardedWorkspaceStore(tmp_path)
 
-    quarantine = store._ensure_quarantine_dir()  # noqa: SLF001
+    quarantine = store._ensure_quarantine_dir()
 
     assert not pending.exists()
     quarantined = list(quarantine.iterdir())

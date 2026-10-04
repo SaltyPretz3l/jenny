@@ -32,7 +32,6 @@ function buildStore(overrides = {}) {
   return createChatGptPlanUsageStore({
     filePath,
     getAccountId: () => 'acct-1',
-    getFeatureFlags: () => ({ chatgpt_plan_meter: true }),
     now: () => 1_000_000,
     ...overrides,
   });
@@ -156,24 +155,6 @@ test('a corrupt JSON file on disk resolves to null without throwing, and the nex
   assert.doesNotThrow(() => store.getSnapshot());
   assert.equal(store.getSnapshot(), null);
 
-  store.ingest(VALID_RAW, { source: 'chat_done' });
-  assert.ok(store.getSnapshot());
-});
-
-test('flag-off (chatgpt_plan_meter === false) makes ingest and getSnapshot both no-ops', () => {
-  const filePath = tempFilePath();
-  const store = buildStore({ filePath, getFeatureFlags: () => ({ chatgpt_plan_meter: false }) });
-  const changes = [];
-  store.onChange((record) => changes.push(record));
-
-  store.ingest(VALID_RAW, { source: 'chat_done' });
-  assert.equal(store.getSnapshot(), null);
-  assert.equal(changes.length, 0);
-  assert.equal(fs.existsSync(filePath), false, 'flag-off must not create the file at all');
-});
-
-test('an undefined getFeatureFlags result treats the meter as on (default-on)', () => {
-  const store = buildStore({ getFeatureFlags: () => ({}) });
   store.ingest(VALID_RAW, { source: 'chat_done' });
   assert.ok(store.getSnapshot());
 });

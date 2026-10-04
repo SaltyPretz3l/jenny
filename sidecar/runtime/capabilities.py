@@ -14,10 +14,6 @@ from sidecar.ai.engines.catalog import (
     resolve_ollama_base_url,
     served_model_inspection,
 )
-from sidecar.ai.engines.chatgpt_subscription import (
-    CHATGPT_MODEL_CONTEXT_LENGTHS,
-    CHATGPT_MODEL_REASONING_PROFILES,
-)
 from sidecar.ai.engines.ollama_model_info import (
     MAX_OLLAMA_MODEL_ID_CHARS,
     inspect_ollama_model,
@@ -25,6 +21,7 @@ from sidecar.ai.engines.ollama_model_info import (
 from sidecar.ai.host_policy import host_policy_is_enforced
 from sidecar.ai.memory.unavailable import memory_store_status_payload
 from sidecar.ai.tools.builtins.workspace_cleanup import cleanup_workspace_artifacts
+from sidecar.runtime.chatgpt_model_catalog import chatgpt_model_entries
 from sidecar.runtime.local_engine.snapshot import (
     active_app_profile_payload as _active_app_profile_payload,
 )
@@ -39,7 +36,6 @@ from sidecar.runtime.provider_capabilities import (
     ProviderCapability,
     available_engine_types,
     build_provider_capabilities,
-    entitled_chatgpt_models,
     is_engine_available,
     provider_capabilities_payload,
 )
@@ -49,7 +45,7 @@ from sidecar.runtime.provider_capability_profile import (
 from sidecar.runtime.schema_versions import get_all_schema_versions
 from sidecar.runtime.worker_secrets import BROKERED_SECRET_KEYS, SECRET_CONFIG_KEYS
 
-SERVER_VERSION = "1.2.0"
+SERVER_VERSION = "1.3.0"
 
 _ARCHIVED_CLOUD_ENGINE_TYPES = frozenset({"anthropic", "openai", "gemini"})
 _INSPECTABLE_ENGINE_TYPES = frozenset({"ollama", "openai-compatible"})
@@ -68,7 +64,7 @@ def _cached_hardware_summary() -> dict[str, object] | None:
     Never triggers a probe — safe to call from ``initialize``.
     """
     try:
-        from sidecar.runtime.hardware_profile import get_cached_hardware_summary  # noqa: PLC0415
+        from sidecar.runtime.hardware_profile import get_cached_hardware_summary
 
         return get_cached_hardware_summary()
     except Exception:  # noqa: BLE001
@@ -321,15 +317,6 @@ def models_list_result(
             "reason": f"provider '{engine_type}' is archived",
         }, model_inspection)
     runtime_config = params.get("_runtime_config") if isinstance(params, dict) else None
-    if engine_type == "plugin_host":
-        models = params.get("_plugin_engine_models", ()) if isinstance(params, dict) else ()
-        return _attach_model_inspection({
-            "engine_type": engine_type,
-            "models": [str(model) for model in models if isinstance(model, str)],
-            "stale": False,
-            "available": bool(models),
-            "reason": None if models else "plugin host engine unavailable",
-        }, model_inspection)
     if engine_type == "codex-cli":
         capabilities = (
             build_provider_capabilities(runtime_config) if runtime_config is not None else {}
@@ -368,24 +355,10 @@ def models_list_result(
             build_provider_capabilities(runtime_config) if runtime_config is not None else {}
         )
         capability = capabilities.get("chatgpt")
-        entitled_models = entitled_chatgpt_models(
-            list(CHATGPT_MODEL_CONTEXT_LENGTHS.keys()), capability=capability
-        )
-        model_entries = [
-            {
-                "id": model,
-                "capabilities": {
-                    "vision": True,
-                    "reasoning_effort": True,
-                    **CHATGPT_MODEL_REASONING_PROFILES.get(model, {}),
-                },
-            }
-            for model in entitled_models
-        ]
+        model_entries = chatgpt_model_entries(runtime_config, capability)
         return _attach_model_inspection({
             "engine_type": engine_type,
-            # A documented no-op today: without entitlement data the full catalog
-            # is returned unchanged, including when signed out.
+            # Discovery is host-owned; absent metadata uses the conservative fallback.
             "models": model_entries,
             "stale": False,
             "available": bool(capability.available) if capability is not None else False,

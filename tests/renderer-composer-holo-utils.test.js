@@ -152,11 +152,11 @@ test('disabled holo clears once and owns no recurring animation frame', () => {
   const { ctx, strokeCalls, clearCalls } = createContextRecorder();
   const scheduler = createFrameScheduler();
   const styleProps = {
-    '--sprite-holo-draw-enabled': '0',
-    '--sprite-holo-draw-stroke-scale': '0',
-    '--sprite-holo-draw-glow-scale': '0',
-    '--sprite-holo-draw-alpha-scale': '0',
-    '--sprite-holo-draw-glow-alpha-scale': '0',
+    '--composer-holo-draw-enabled': '0',
+    '--composer-holo-draw-stroke-scale': '0',
+    '--composer-holo-draw-glow-scale': '0',
+    '--composer-holo-draw-alpha-scale': '0',
+    '--composer-holo-draw-glow-alpha-scale': '0',
   };
   const restoreWindow = installWindowMock(styleProps);
 
@@ -177,7 +177,6 @@ test('disabled holo clears once and owns no recurring animation frame', () => {
       composerHoloContext: ctx,
       composerHoloRuntime: runtime,
       reducedMotionQuery: { matches: false },
-      cssVarPrefix: 'sprite-holo',
       requestAnimationFrame: (callback) => scheduler.request(callback),
       cancelAnimationFrame: (handle) => scheduler.cancel(handle),
     });
@@ -199,12 +198,12 @@ test('live holo stops immediately when appearance disables drawing', () => {
   const { ctx, strokeCalls, clearCalls } = createContextRecorder();
   const scheduler = createFrameScheduler();
   const styleProps = {
-    '--sprite-holo-border-width': '2',
-    '--sprite-holo-draw-enabled': '1',
-    '--sprite-holo-draw-stroke-scale': '1',
-    '--sprite-holo-draw-glow-scale': '1',
-    '--sprite-holo-draw-alpha-scale': '1',
-    '--sprite-holo-draw-glow-alpha-scale': '1',
+    '--composer-holo-border-width': '2',
+    '--composer-holo-draw-enabled': '1',
+    '--composer-holo-draw-stroke-scale': '1',
+    '--composer-holo-draw-glow-scale': '1',
+    '--composer-holo-draw-alpha-scale': '1',
+    '--composer-holo-draw-glow-alpha-scale': '1',
   };
   const restoreWindow = installWindowMock(styleProps);
 
@@ -225,7 +224,6 @@ test('live holo stops immediately when appearance disables drawing', () => {
       composerHoloContext: ctx,
       composerHoloRuntime: runtime,
       reducedMotionQuery: { matches: false },
-      cssVarPrefix: 'sprite-holo',
       requestAnimationFrame: (callback) => scheduler.request(callback),
       cancelAnimationFrame: (handle) => scheduler.cancel(handle),
     });
@@ -236,7 +234,7 @@ test('live holo stops immediately when appearance disables drawing', () => {
     assert.equal(strokeCalls.length, 2);
     assert.equal(scheduler.size, 1);
 
-    styleProps['--sprite-holo-draw-enabled'] = '0';
+    styleProps['--composer-holo-draw-enabled'] = '0';
     controller.setComposerHoloState(true, 'inference');
     assert.equal(scheduler.size, 0, 'appearance refresh cancels the pending live frame');
     assert.equal(clearCalls.length, 2, 'the second clear removes the last live frame');
@@ -332,12 +330,12 @@ test('live frames reuse computed style until an explicit appearance refresh', ()
   const scheduler = createFrameScheduler();
   const metrics = { computedStyleReads: 0 };
   const styleProps = {
-    '--sprite-holo-border-width': '2',
-    '--sprite-holo-draw-enabled': '1',
-    '--sprite-holo-draw-stroke-scale': '1',
-    '--sprite-holo-draw-glow-scale': '1',
-    '--sprite-holo-draw-alpha-scale': '1',
-    '--sprite-holo-draw-glow-alpha-scale': '1',
+    '--composer-holo-border-width': '2',
+    '--composer-holo-draw-enabled': '1',
+    '--composer-holo-draw-stroke-scale': '1',
+    '--composer-holo-draw-glow-scale': '1',
+    '--composer-holo-draw-alpha-scale': '1',
+    '--composer-holo-draw-glow-alpha-scale': '1',
   };
   const restoreWindow = installWindowMock(styleProps, metrics);
 
@@ -363,7 +361,6 @@ test('live frames reuse computed style until an explicit appearance refresh', ()
       composerHoloContext: ctx,
       composerHoloRuntime: runtime,
       reducedMotionQuery: { matches: false },
-      cssVarPrefix: 'sprite-holo',
       requestAnimationFrame: (callback) => scheduler.request(callback),
       cancelAnimationFrame: (handle) => scheduler.cancel(handle),
     });
@@ -377,7 +374,7 @@ test('live frames reuse computed style until an explicit appearance refresh', ()
     scheduler.flush(32);
     assert.equal(metrics.computedStyleReads, 2, 'live frames reuse the transition snapshot');
 
-    styleProps['--sprite-holo-draw-alpha-scale'] = '0.5';
+    styleProps['--composer-holo-draw-alpha-scale'] = '0.5';
     controller.setComposerHoloState(true, 'inference');
     assert.equal(metrics.computedStyleReads, 3, 'appearance refresh reads the updated CSS once');
     scheduler.flush(48);
@@ -391,7 +388,7 @@ test('live frames reuse computed style until an explicit appearance refresh', ()
 test('uncancellable stale frames cannot duplicate a restarted loop or write after disposal', () => {
   const { ctx, strokeCalls, clearCalls } = createContextRecorder();
   const scheduler = createFrameScheduler();
-  const restoreWindow = installWindowMock({ '--sprite-holo-draw-enabled': '1' });
+  const restoreWindow = installWindowMock({ '--composer-holo-draw-enabled': '1' });
 
   try {
     const runtime = {
@@ -410,7 +407,6 @@ test('uncancellable stale frames cannot duplicate a restarted loop or write afte
       composerHoloContext: ctx,
       composerHoloRuntime: runtime,
       reducedMotionQuery: { matches: false },
-      cssVarPrefix: 'sprite-holo',
       requestAnimationFrame: (callback) => scheduler.request(callback),
       cancelAnimationFrame: () => {},
     });
@@ -468,6 +464,52 @@ test('partial canvas implementations and post-disposal draw calls fail closed', 
     controller.disposeComposerHolo();
     assert.doesNotThrow(() => controller.drawComposerHolo());
     assert.equal(clearCount, 1, 'disposed controllers reject direct canvas writes');
+  } finally {
+    restoreWindow();
+  }
+});
+
+test('a canvas whose layer is display: none runs no frame loop and resumes when its box returns (W3-3 collapsed composer)', () => {
+  const { ctx } = createContextRecorder();
+  const scheduler = createFrameScheduler();
+  let observer = null;
+  class TestResizeObserver {
+    constructor(callback) { this.callback = callback; observer = this; }
+    observe() {}
+    disconnect() {}
+  }
+  const restoreWindow = installWindowMock({ '--composer-holo-draw-enabled': '1' });
+  try {
+    let box = { width: 36, height: 36 };
+    const runtime = { active: false, supported: true, mode: 'idle', frameHandle: 0, angle: 0 };
+    const controller = createComposerHoloController({
+      composer: {},
+      composerHolo: { width: 0, height: 0, getBoundingClientRect() { return box; } },
+      composerHoloContext: ctx,
+      composerHoloRuntime: runtime,
+      reducedMotionQuery: { matches: false },
+      ResizeObserver: TestResizeObserver,
+      requestAnimationFrame: (callback) => scheduler.request(callback),
+      cancelAnimationFrame: (handle) => scheduler.cancel(handle),
+    });
+    controller.initializeComposerHolo();
+    controller.setComposerHoloState(true, 'inference');
+    assert.equal(scheduler.size, 1, 'precondition: a live, visible holo animates');
+
+    box = { width: 0, height: 0 };
+    observer.callback();
+    assert.equal(scheduler.size, 0, 'hidden: the loop stops');
+    assert.equal(runtime.hidden, true);
+    controller.setComposerHoloState(true, 'waiting');
+    assert.equal(scheduler.size, 0, 'a state change while hidden schedules nothing');
+
+    box = { width: 36, height: 36 };
+    observer.callback();
+    assert.equal(scheduler.size, 1, 'shown again while live: the loop resumes');
+    observer.callback();
+    assert.equal(scheduler.size, 1, 'a resize of a running loop never doubles it');
+    controller.disposeComposerHolo();
+    assert.equal(scheduler.size, 0);
   } finally {
     restoreWindow();
   }

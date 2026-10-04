@@ -151,3 +151,58 @@ def test_diff_failure_logging_tolerates_unstringifiable_path(
     assert [
         record for record in caplog.records if getattr(record, "event", "") == "tool.diff_generation_failed"
     ]
+
+
+@pytest.mark.parametrize("builder", [compute_structured_diff, build_failed_diff_metadata])
+def test_diff_matching_is_bounded_before_repetitive_input(monkeypatch, builder):
+    calls = []
+    def forbidden_matcher(*args, **kwargs):
+        calls.append(True)
+        raise AssertionError("matching exceeded input work budget")
+    monkeypatch.setattr(structured_diff_module, "SequenceMatcher", forbidden_matcher)
+    old = "a\nb\n" * 6_000
+    new = "b\na\n" * 6_000
+    diff = builder("large.txt", old, new)
+    assert calls == []
+    assert diff is not None
+    assert diff["truncated"] is True
+    assert diff["hunks"] == []
+
+
+def test_repetitive_file_matches_only_its_changed_middle(monkeypatch):
+    real = structured_diff_module.SequenceMatcher
+    sizes = []
+    def recording_matcher(*args, **kwargs):
+        sizes.append((len(kwargs["a"]), len(kwargs["b"])))
+        return real(*args, **kwargs)
+    monkeypatch.setattr(structured_diff_module, "SequenceMatcher", recording_matcher)
+    old = "same\n" * 20_000
+    diff = compute_structured_diff("large.txt", old, old + "changed\n")
+    assert sizes == [(0, 1)]
+    assert diff is not None and diff["truncated"] is False
+    assert (diff["additions"], diff["deletions"]) == (1, 0)
+    assert len(diff["hunks"]) == 1
+
+
+def test_ordinary_edits_to_a_large_file_keep_real_hunks():
+    old_lines = [f"line {index}" for index in range(1_100)]
+    new_lines = list(old_lines)
+    new_lines[5] = "edited near the top"
+    new_lines[1_090] = "edited near the bottom"
+    diff = compute_structured_diff("big.py", "\n".join(old_lines) + "\n", "\n".join(new_lines) + "\n")
+    assert diff is not None and diff["truncated"] is False
+    assert (diff["additions"], diff["deletions"]) == (2, 2)
+    assert len(diff["hunks"]) == 2
+
+
+def test_diff_matching_is_bounded_before_large_single_line(monkeypatch):
+    calls = []
+    def forbidden_matcher(*args, **kwargs):
+        calls.append(True)
+        raise AssertionError("matching exceeded input size budget")
+    monkeypatch.setattr(structured_diff_module, "SequenceMatcher", forbidden_matcher)
+    diff = compute_structured_diff("large.txt", "x" * 2_000_000, "y" * 2_000_000)
+    assert calls == []
+    assert diff is not None
+    assert diff["body_kind"] == "summary_only"
+    assert diff["truncation_reason"] == "byte_limit"

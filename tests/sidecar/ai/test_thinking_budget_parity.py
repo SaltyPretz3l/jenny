@@ -290,9 +290,9 @@ def test_vllm_tool_stream_uses_a_fresh_guard_on_the_continuation_call(
     def _thinking(events: list[Any]) -> list[str]:
         return [e.text for e in events if getattr(e, "kind", "") == "thinking"]
 
-    # Both calls see the same stream; both suppress the third repetition and
-    # neither call inherits the other's latched guard.
+    # Both calls see the same stream; both trip on the third repetition (and
+    # abort there, HB-004) and neither call inherits the other's latched guard.
     assert len(_thinking(first_events)) == 2
     assert len(_thinking(second_events)) == 2
-    assert first_result.content == "answer"
-    assert second_result.content == "answer"
+    assert first_result.finish_reason == "thinking_budget"
+    assert second_result.finish_reason == "thinking_budget"

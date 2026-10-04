@@ -13,7 +13,7 @@
 }
 
 .artifact-html-preview-label {
-  font-size: 11px;
+  font-size: var(--font-size-caption);
   color: color-mix(in srgb, var(--text-secondary) 85%, transparent);
 }
 
@@ -62,7 +62,7 @@
 }
 
 .artifact-html-preview-count {
-  font-size: 11px;
+  font-size: var(--font-size-caption);
   color: var(--text-secondary);
 }
 

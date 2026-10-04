@@ -53,6 +53,10 @@ class ChatRequestContext:
     read_only: bool = False
     plan_decision: str = ""
     plan_feedback: str = ""
+    # True once an exit_plan_mode approval landed inside this request. The
+    # approval is a tool result, never a user row, so mid-turn compaction uses
+    # this to keep the pre-approval prompt from reading as a live request.
+    plan_approved_in_turn: bool = False
     edited_plan: dict[str, Any] | None = None
     approved_plan: dict[str, Any] | None = None
     # Set when the user accepted a plan without building it: the tool loop

@@ -52,10 +52,10 @@ for (const [kind, action] of [['user_questions', 'resume'], ['approval', 'resume
     await backend.start();
     const sessionId = (await backend.createSession({ title: 'Mutation checkpoint' })).data.id;
     const projects = backend.projectApplicationService;
-    const created = projects.createProject({ name: 'Mutation workspace' });
+    // The Workspace folder is already a project (provisioned by createSession);
+    // bindRoot refuses a second owner, so the fixture uses that project.
+    const created = backend.ensureWorkspaceProject(workspace, 'test_fixture');
     assert.equal(created.ok, true);
-    assert.equal(projects.bindProjectRoot({ project_id: created.project.id, root_path: workspace,
-      expected_root_revision: created.project.root_revision }).ok, true);
     assert.equal(projects.assignSessionProject({ session_id: sessionId, project_id: created.project.id }).ok, true);
     const sent = await backend.runtimeApplicationService.start({ session_id: sessionId,
       prompt: 'Write the fixture, then ask before finishing.', idempotency_key: 'mutation_fixture',

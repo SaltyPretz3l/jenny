@@ -1,7 +1,8 @@
 /* renderer/shell/renderer-session-actions.js
  *
  * Session row actions for the chats panel (nav overhaul W7): the ⋯ /
- * right-click context menu (Pin / Rename / Archive / Delete), inline title
+ * right-click context menu (Pin / Rename / Move to project / Archive /
+ * Delete), inline title
  * rename via the inventory inline-title-editor, pin/archive toggles over the
  * sessions:set-meta IPC, and optimistic session delete with an undo toast —
  * the real delete IPC is deferred for the undo window via the shared
@@ -22,6 +23,7 @@
   'use strict';
 
   var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
+  var resolveDefaultTitle = (globalThis.stringUtils || (typeof require === 'function' ? require('../shared/string-utils') : {})).resolveDefaultTitle;
   var jtn = (globalThis.jennyI18n && globalThis.jennyI18n.tn) || function (k, count, params, one, other) { return jt.call(null, k, count === 1 ? one : other, params); };
   var SESSION_DELETE_UNDO_MS_DEFAULT = 6000;
 
@@ -46,6 +48,8 @@
       registerCleanup,
       toggleChatsScope,
       stopSessionStream,
+      getProjectSwitcher,
+      openLinkedSessions,
     } = deps.callbacks;
 
     const contextMenu = deps.inventory?.contextMenu || windowRef.inventoryContextMenu;
@@ -316,7 +320,7 @@
       }
       const editor = inlineTitleEditor.startInlineTitleEdit({
         titleEl,
-        initialValue: summary.title === 'New Plugin Session' ? jt('session.defaultTitle.plugin', 'New Plugin Session') : (!summary.title || summary.title === 'New Chat' ? jt('session.defaultTitle.chat', 'New Chat') : summary.title),
+        initialValue: resolveDefaultTitle(summary.title),
         ariaLabel: jt('sidebar.sessionActions.renameChat', 'Rename chat'),
         onCommit: (value) => {
           Promise.resolve(renameSession(sessionId, value))
@@ -336,6 +340,32 @@
       await activateWorkspaceSession(sessionId, { mode });
       if (typeof setActiveView === 'function') { setActiveView('chat'); }
       if (typeof renderAll === 'function') { renderAll(); }
+    }
+
+    function rowMenuButton(sessionId) {
+      return windowRef.document.querySelector(
+        `.conversation-item[data-session-id="${escapeSelectorValue(sessionId)}"] [data-session-action="menu"]`
+      );
+    }
+
+    // "Move to project ›": the shared "Move this chat to" menu, anchored on the
+    // row's ⋯ (the right-click menu has no trigger). The switcher owns the
+    // idle rule, the toast and its Undo.
+    async function openMoveToProject(sessionId, trigger) {
+      const anchor = (trigger && trigger.isConnected !== false ? trigger : null)
+        || rowMenuButton(sessionId)
+        || windowRef.document.querySelector(`.conversation-item[data-session-id="${escapeSelectorValue(sessionId)}"]`);
+      const switcher = await getProjectSwitcher();
+      if (actionsDisposed || !switcher) return false;
+      if (typeof switcher.openMoveMenu === 'function') {
+        await switcher.openMoveMenu(anchor, [sessionId], { source: 'row_menu' });
+        return true;
+      }
+      if (typeof switcher.openMoveChatMenu === 'function') {
+        await switcher.openMoveChatMenu({ anchor, sessionId, projectId: getSummary(sessionId)?.project_id || '' });
+        return true;
+      }
+      return false;
     }
 
     function openSessionRowMenu({ sessionId, anchorX, anchorY, trigger }) {
@@ -359,13 +389,26 @@
           { separator: true },
         ]
         : [];
+      // Plugin sessions belong to their provider, not to a project.
+      const moveItems = typeof getProjectSwitcher === 'function' && summary.session_type !== 'plugin'
+        ? [{ label: jt('sidebar.sessionActions.moveToProject', 'Move to project ›'), action: () => openMoveToProject(sessionId, trigger) }]
+        : [];
+      // Linking is reachable from here even with one open chat (the rail's
+      // tab menu needs two tabs to exist). Same labels as the tab menu.
+      const linkedCount = (summary.linked_session_ids || []).filter(Boolean).length;
+      const linkItems = typeof openLinkedSessions === 'function' && summary.session_type !== 'plugin'
+        ? [{
+            label: linkedCount > 0
+              ? jt('shell.workspaceChrome.linkSessionsLinkedCount', 'Link sessions… · {count} linked', { count: linkedCount })
+              : jt('shell.workspaceChrome.linkSessionsMenu', 'Link sessions…'),
+            action: () => openLinkedSessions(sessionId, trigger || rowMenuButton(sessionId)),
+          }]
+        : [];
       contextMenu.show({
         rootEl: windowRef.document.body,
         anchorX,
         anchorY,
-        restoreFocusTo: trigger || windowRef.document.querySelector(
-          `.conversation-item[data-session-id="${escapeSelectorValue(sessionId)}"] [data-session-action="menu"]`
-        ),
+        restoreFocusTo: trigger || rowMenuButton(sessionId),
         onActionError: (error) => showSessionActionError(error, jt('sidebar.sessionActions.actionFailed', 'Session Action Failed')),
         items: [
           ...overrideItems,
@@ -378,6 +421,8 @@
               }]
             : []),
           { label: jt('common.rename', 'Rename'), action: () => beginInlineRename(sessionId) },
+          ...linkItems,
+          ...moveItems,
           { label: archived ? jt('sidebar.sessionActions.unarchive', 'Unarchive') : jt('sidebar.sessionActions.archive', 'Archive'), action: () => toggleArchiveSession(sessionId) },
           { separator: true },
           { label: jt('common.delete', 'Delete'), action: () => requestDeleteSession(sessionId) },

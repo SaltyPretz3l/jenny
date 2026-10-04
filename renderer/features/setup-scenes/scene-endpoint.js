@@ -40,7 +40,7 @@
   };
 
   function buildBodyHtml(viewState) {
-    var disabled = viewState.validating === true;
+    var disabled = viewState.validating === true || viewState.saving === true;
     var engineHtml = selectField ? selectField({
       id: 'setup-endpoint-engine',
       label: jt('setup.endpoint.engineTypeLabel', 'Engine type'),
@@ -69,7 +69,7 @@
             id: 'save',
             label: jt('setup.endpoint.saveEndpoint', 'Save endpoint'),
             variant: 'secondary',
-            disabled: !viewState.lastResultOk,
+            disabled: !viewState.lastResultOk || viewState.saving === true,
           });
     }
     var resultHtml = '';
@@ -120,6 +120,7 @@
       engineType: detectedEngine,
       apiUrl: ENGINE_DEFAULT_URLS[detectedEngine],
       validating: false,
+      saving: false,
       lastResult: detectedEndpoint
         ? {
             ok: true,
@@ -147,8 +148,8 @@
         summary: jt("sceneEndpoint.connectToOllamaVllmOrAnOpenaiCompatibleServer", "Connect to Ollama, vLLM, or an OpenAI-compatible server on this computer or your private network. No Ollama installation or model download is required for an existing server."),
         bodyHtml: buildBodyHtml(viewState),
         actions: [
-          { id: 'cancel', label: jt('common.cancel', 'Cancel'), variant: 'secondary' },
-          { id: 'skip', label: jt('setup.endpoint.skipForNow', 'Skip for now'), variant: 'ghost' },
+          { id: 'cancel', label: jt('common.cancel', 'Cancel'), variant: 'secondary', disabled: viewState.saving === true },
+          { id: 'skip', label: jt('setup.endpoint.skipForNow', 'Skip for now'), variant: 'ghost', disabled: viewState.saving === true },
         ],
       }) : '';
       rootEl.innerHTML = html;
@@ -193,6 +194,7 @@
     }
 
     async function handleValidate() {
+      if (viewState.saving) return;
       readInputs();
       if (!viewState.apiUrl) {
         showShellErrorToast(jt('setup.endpoint.enterUrlFirst', 'Enter a URL first.'), { title: jt('setup.endpoint.stepTitle', 'Setup Step') });
@@ -229,9 +231,9 @@
     }
 
     async function handleSave() {
-      if (!viewState.lastResultOk) return;
+      if (viewState.saving || !viewState.lastResultOk) return;
       readInputs();
-      viewState.validating = true;
+      viewState.saving = true;
       render();
       var operationGeneration = ++generation;
       try {
@@ -239,10 +241,18 @@
           engineType: viewState.engineType,
           apiUrl: viewState.apiUrl,
         });
-        if (disposed || operationGeneration !== generation) return;
-        viewState.validating = false;
+        viewState.saving = false;
+        var committed = !!(saved && saved.result && saved.result.ok);
+        if (disposed || operationGeneration !== generation) {
+          // The write is not cancellable: a scene closed mid-save still reports a committed change.
+          if (committed) {
+            if (saved.snapshot) applySnapshot(saved.snapshot);
+            showToastMessage(jt('setup.endpoint.saved', 'Endpoint saved.'));
+          }
+          return;
+        }
         viewState.lastResult = saved && saved.result;
-        viewState.lastResultOk = !!(saved && saved.result && saved.result.ok);
+        viewState.lastResultOk = committed;
         if (!viewState.lastResultOk) {
           render();
           showShellErrorToast(
@@ -255,8 +265,8 @@
         showToastMessage(jt('setup.endpoint.saved', 'Endpoint saved.'));
         closeModal();
       } catch (error) {
+        viewState.saving = false;
         if (disposed || operationGeneration !== generation) return;
-        viewState.validating = false;
         render();
         appendClientLog('WARN', 'setup.endpoint_save_failed', {
           message: error && error.message ? error.message : String(error),
@@ -266,6 +276,7 @@
     }
 
     async function handleSkip() {
+      if (viewState.saving) return;
       var operationGeneration = ++generation;
       try {
         await markStep('endpoint', 'skipped');
@@ -281,7 +292,7 @@
         render();
         unbindClicks = sceneUtils && sceneUtils.bindActionDelegation
           ? sceneUtils.bindActionDelegation(rootEl, {
-              cancel: closeModal,
+              cancel: function onCancel() { if (!viewState.saving) return closeModal(); },
               validate: handleValidate,
               save: handleSave,
               skip: handleSkip,

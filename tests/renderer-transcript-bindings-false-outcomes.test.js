@@ -87,6 +87,9 @@ function installApprovalWindowGlobals(t, window, { approve, deny } = {}) {
     } else {
       global.document = previousDocument;
     }
+    // Closing the jsdom window clears its timers (e.g. the 5 s approval-row
+    // removal watcher), so the process does not linger after the last test.
+    try { window.close(); } catch { /* already closed */ }
   });
 }
 

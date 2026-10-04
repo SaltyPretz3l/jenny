@@ -27,6 +27,7 @@ from sidecar.runtime.operation_ledger import (
 logger = logging.getLogger(__name__)
 _IDEMPOTENCY_KEY_RE = re.compile(r"idem_[0-9a-f]{24}")
 _OPERATION_LEDGER_ROOT: list[Path | None] = [None]
+_MAX_EVIDENCE_SESSION_ID = 200
 
 
 def configure_operation_ledger(root: Path | str | None) -> None:
@@ -100,6 +101,11 @@ def _pending_evidence(
     tool_name: str, arguments: dict[str, object], workspace: WorkspaceGuard
 ) -> dict[str, str]:
     evidence = {"tool": tool_name}
+    # Session attribution: the interruption overlay surfaces only this
+    # session's pendings, never another chat's or a test run's.
+    session_id = arguments.get("_jenny_session_id")
+    if isinstance(session_id, str) and session_id.strip():
+        evidence["session_id"] = session_id.strip()[:_MAX_EVIDENCE_SESSION_ID]
     if tool_name != "write_file":
         return evidence
     path = arguments.get("path")

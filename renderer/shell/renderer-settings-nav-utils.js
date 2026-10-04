@@ -17,35 +17,8 @@
     || {};
   var STORAGE_KEY = sectionRegistry.SETTINGS_STORAGE_KEY || 'jenny.settings.activeSection';
   var DEFAULT_SECTION = sectionRegistry.DEFAULT_SETTINGS_SECTION || 'models';
-  var stringUtils = (typeof globalThis !== 'undefined' && globalThis.stringUtils)
-    || (typeof require === 'function' ? require('../shared/string-utils') : null)
-    || {};
-  // Fall back to a local escaper if string-utils is somehow unavailable — escapeHtml
-  // is on the (critical) nav-render path, so a missing helper must not throw.
-  var escapeHtml = typeof stringUtils.escapeHtml === 'function'
-    ? stringUtils.escapeHtml
-    : function escapeHtmlFallback(value) {
-      return String(value == null ? '' : value)
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;')
-        .replace(/'/g, '&#39;');
-    };
-  var isRegistryAdvancedSection = sectionRegistry.isAdvancedSettingsSection || function fallbackIsAdvancedSection(sectionId) {
-    return false;
-  };
-
-  // Keyboard boundary sections (advanced disclosure <-> the always-visible list)
-  // are DERIVED from the registry so they track the section taxonomy — the nav is
-  // registry-driven, so these must not be hardcoded to specific ids. Fallbacks
-  // preserve the historical behaviour if the registry is unavailable.
-  var orderedRegistrySections = typeof sectionRegistry.getSettingsSections === 'function'
-    ? sectionRegistry.getSettingsSections()
-    : [];
-  var FIRST_ADVANCED_SECTION = (orderedRegistrySections.filter(function (s) { return s.advanced; })[0] || {}).id || '';
-  var nonAdvancedRegistrySections = orderedRegistrySections.filter(function (s) { return !s.advanced; });
-  var LAST_NONADVANCED_SECTION = (nonAdvancedRegistrySections[nonAdvancedRegistrySections.length - 1] || {}).id || 'account';
+  var escapeHtml = ((typeof globalThis !== 'undefined' && globalThis.stringUtils)
+    || (typeof require === 'function' ? require('../shared/string-utils') : null)).escapeHtml;
 
   function createSettingsNavController(deps) {
     var state = deps.state;
@@ -57,9 +30,7 @@
     var appendClientLog = typeof deps.appendClientLog === 'function'
       ? deps.appendClientLog
       : function noopAppendClientLog() {};
-    var advancedToggle = settingsNav ? settingsNav.querySelector('#settingsAdvancedToggle') : null;
-    var advancedItems = settingsNav ? settingsNav.querySelector('#settingsAdvancedItems') : null;
-    var advancedExpanded = false;
+    var sectionPicker = settingsNav ? settingsNav.querySelector('#settingsNavPicker') : null;
     var bound = false;
     var navItemCache = null;
     var cardCache = null;
@@ -87,10 +58,6 @@
         && !node.hidden
         && !node.classList.contains('hidden')
         && !node.closest('[hidden]');
-    }
-
-    function isAdvancedSection(sectionId) {
-      return isRegistryAdvancedSection(sectionId);
     }
 
     function getSectionNavItem(sectionId) {
@@ -128,17 +95,24 @@
       return id;
     }
 
-    function setAdvancedExpanded(expanded) {
-      var nextExpanded = Boolean(expanded);
-      advancedExpanded = nextExpanded;
-      if (advancedToggle) {
-        advancedToggle.setAttribute('aria-expanded', String(nextExpanded));
-        advancedToggle.classList.toggle('active', nextExpanded);
-      }
-      if (advancedItems) {
-        advancedItems.hidden = !nextExpanded;
-        advancedItems.classList.toggle('hidden', !nextExpanded);
-      }
+    function syncSectionPicker() {
+      if (!sectionPicker) return;
+      [].forEach.call(sectionPicker.options, function (option) {
+        var item = getSectionNavItem(option.value);
+        option.hidden = !isVisibleNode(item);
+        option.disabled = option.hidden;
+      });
+      sectionPicker.value = resolveSectionId(state.ui.activeSettingsSection);
+    }
+
+    function handleSectionPickerChange() {
+      setActiveSection(sectionPicker.value);
+      syncSectionPicker();
+      // Arrowing the picker changes the page on every step, and the new page takes
+      // focus for its heading a frame later; queued behind that, the picker keeps it.
+      window.requestAnimationFrame(function () {
+        sectionPicker.focus({ preventScroll: true });
+      });
     }
 
     function getAllNavItems() {
@@ -172,7 +146,7 @@
         return false;
       }
       state.ui.activeSettingsSection = id;
-      setAdvancedExpanded(isAdvancedSection(id));
+      syncSectionPicker();
 
       var navItems = getAllNavItems();
       var activeNavItem = null;
@@ -194,9 +168,9 @@
       var activeCard = null;
       var cards = getAllCards();
       for (var j = 0; j < cards.length; j++) {
-        var isCardActive = cards[j].getAttribute('data-settings-section') === id;
-        cards[j].classList.toggle('settings-section-active', isCardActive);
-        if (isCardActive) {
+        var cardSectionId = cards[j].getAttribute('data-settings-section');
+        cards[j].classList.toggle('settings-section-active', cardSectionId === id);
+        if (cardSectionId === id) {
           activeCard = cards[j];
         }
       }
@@ -249,23 +223,11 @@
       if (!targetId || !settingsNav) {
         return;
       }
-      if (isAdvancedSection(targetId)) {
-        setAdvancedExpanded(true);
-      }
       window.requestAnimationFrame(function () {
         var target = getSectionNavItem(targetId);
         if (isVisibleNode(target)) {
           target.focus();
         }
-      });
-    }
-
-    function focusAdvancedToggle() {
-      if (!advancedToggle) {
-        return;
-      }
-      window.requestAnimationFrame(function () {
-        advancedToggle.focus();
       });
     }
 
@@ -336,32 +298,8 @@
       }
     }
 
-    function toggleAdvancedDisclosure() {
-      var nextExpanded = !advancedExpanded;
-      if (!nextExpanded && isAdvancedSection(state.ui.activeSettingsSection)) {
-        nextExpanded = true;
-      }
-      setAdvancedExpanded(nextExpanded);
-    }
-
     function handleSettingsNavKeydown(event) {
-      if (advancedToggle && event.target === advancedToggle) {
-        if (event.key === 'Enter' || event.key === ' ') {
-          event.preventDefault();
-          toggleAdvancedDisclosure();
-        } else if (event.key === 'ArrowDown') {
-          event.preventDefault();
-          if (!advancedExpanded) {
-            setAdvancedExpanded(true);
-          }
-          setActiveSection(FIRST_ADVANCED_SECTION);
-          focusNavItem(FIRST_ADVANCED_SECTION);
-        } else if (event.key === 'ArrowUp') {
-          event.preventDefault();
-          focusNavItem(LAST_NONADVANCED_SECTION);
-        }
-        return;
-      }
+      if (event.target === sectionPicker) return;
       var currentItem = event.target.closest('[data-settings-section]');
       if (!currentItem || !settingsNav) {
         return;
@@ -372,21 +310,10 @@
       }
       var currentIndex = Math.max(items.indexOf(currentItem), 0);
       var nextIndex;
-      var currentSectionId = currentItem.getAttribute('data-settings-section');
 
       if (event.key === 'ArrowDown') {
-        if (!advancedExpanded && currentSectionId === LAST_NONADVANCED_SECTION && advancedToggle) {
-          event.preventDefault();
-          focusAdvancedToggle();
-          return;
-        }
         nextIndex = (currentIndex + 1) % items.length;
       } else if (event.key === 'ArrowUp') {
-        if (!advancedExpanded && currentSectionId === DEFAULT_SECTION && advancedToggle) {
-          event.preventDefault();
-          focusAdvancedToggle();
-          return;
-        }
         nextIndex = (currentIndex - 1 + items.length) % items.length;
       } else if (event.key === 'Home') {
         nextIndex = 0;
@@ -411,10 +338,6 @@
     }
 
     function handleSettingsNavClick(event) {
-      if (advancedToggle && event.target.closest('#settingsAdvancedToggle')) {
-        toggleAdvancedDisclosure();
-        return;
-      }
       var navItem = event.target.closest('[data-settings-section]');
       if (!navItem) {
         return;
@@ -451,10 +374,11 @@
           heading.setAttribute('tabindex', '-1');
         }
       }
-      if (advancedToggle && !advancedToggle.hasAttribute('aria-keyshortcuts')) {
-        advancedToggle.setAttribute('aria-keyshortcuts', 'Enter Space ArrowUp ArrowDown');
-      }
-      setAdvancedExpanded(false);
+      syncSectionPicker();
+      sectionPicker?.addEventListener('change', handleSectionPickerChange);
+      // A page can be gated on or off while Settings is open; the picker re-reads the rail as it opens.
+      sectionPicker?.addEventListener('pointerdown', syncSectionPicker);
+      sectionPicker?.addEventListener('focus', syncSectionPicker);
       settingsNav.addEventListener('keydown', handleSettingsNavKeydown);
       settingsNav.addEventListener('click', handleSettingsNavClick);
       searchController?.bind?.();
@@ -467,14 +391,15 @@
       bound = false;
       navItemCache = null;
       cardCache = null;
+      sectionPicker?.removeEventListener('change', handleSectionPickerChange);
+      sectionPicker?.removeEventListener('pointerdown', syncSectionPicker);
+      sectionPicker?.removeEventListener('focus', syncSectionPicker);
       settingsNav.removeEventListener('keydown', handleSettingsNavKeydown);
       settingsNav.removeEventListener('click', handleSettingsNavClick);
       searchController?.dispose?.();
     }
 
     return {
-      isAdvancedSection: isAdvancedSection,
-      isAdvancedExpanded: function () { return advancedExpanded; },
       setActiveSection: setActiveSection,
       restoreActiveSection: restoreActiveSection,
       focusNavItem: focusNavItem,
@@ -495,15 +420,14 @@
    */
   function buildNavItemMarkup(section, options) {
     var isDefault = Boolean(options && options.isDefault);
-    var isChild = Boolean(options && options.isChild);
     var classes = 'settings-nav-item';
-    if (isChild) { classes += ' settings-nav-item-child'; }
     if (isDefault) { classes += ' active'; }
     var navItemId = section.navItemId || ('settingsNav-' + section.id);
     var idAttr = ' id="' + escapeHtml(navItemId) + '"';
     return '<button class="' + classes + '"' + idAttr
       + ' role="tab" aria-selected="' + (isDefault ? 'true' : 'false') + '"'
       + ' aria-controls="settingsContentPanel"'
+      + (options && options.groupLabelId ? ' aria-describedby="' + escapeHtml(options.groupLabelId) + '"' : '')
       + ' tabindex="' + (isDefault ? '0' : '-1') + '"'
       + ' data-settings-section="' + escapeHtml(section.id) + '">'
       // Label span + fixed badge slot (empty at zero, so geometry never changes).
@@ -526,28 +450,17 @@
     return slot;
   }
 
+  /* A tablist may own tabs only. The group wrapper is presentational and the
+   * group name is hidden as an element, then read with each tab as its
+   * description, so the grouping is still announced. */
   function buildSettingsNavMarkup(groups, defaultSectionId) {
-    return groups.map(function (group, groupIndex) {
-      var sections = group.sections || [];
-      var divider = groupIndex > 0 ? '<div class="settings-nav-divider"></div>' : '';
-      var items = sections.map(function (section) {
-        return buildNavItemMarkup(section, { isChild: group.disclosure, isDefault: section.id === defaultSectionId });
+    return groups.map(function (group) {
+      var labelId = 'settingsNavGroupLabel-' + group.id;
+      var items = (group.sections || []).map(function (section) {
+        return buildNavItemMarkup(section, { isDefault: section.id === defaultSectionId, groupLabelId: labelId });
       }).join('');
-      if (group.disclosure) {
-        return divider
-          + '<div class="settings-nav-group settings-nav-group-advanced">'
-          + '<button class="settings-nav-disclosure" id="settingsAdvancedToggle" type="button"'
-          + ' aria-expanded="false" aria-controls="settingsAdvancedItems">'
-          + '<span class="settings-nav-label settings-nav-label-inline">' + escapeHtml(group.label) + '</span>'
-          + '<span class="settings-nav-disclosure-icon" aria-hidden="true"></span>'
-          + '</button>'
-          + '<div class="settings-nav-children" id="settingsAdvancedItems" role="group"'
-          + ' aria-labelledby="settingsAdvancedToggle" hidden>' + items + '</div>'
-          + '</div>';
-      }
-      return divider
-        + '<div class="settings-nav-group">'
-        + '<div class="settings-nav-label">' + escapeHtml(group.label) + '</div>'
+      return '<div class="settings-nav-group" role="presentation" data-settings-nav-group="' + escapeHtml(group.id) + '">'
+        + '<div class="settings-nav-label" id="' + escapeHtml(labelId) + '" aria-hidden="true">' + escapeHtml(group.label) + '</div>'
         + items
         + '</div>';
     }).join('');
@@ -579,6 +492,19 @@
     var searchEnabled = !(options && options.searchEnabled === false);
     var header = doc.querySelector('.settings-nav .settings-nav-header');
     if (header) {
+      var inventory = (typeof globalThis !== 'undefined' && globalThis.inventory)
+        || (typeof require === 'function' ? { selectField: require('../inventory/select-field') } : null);
+      var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (key, fallback) { return fallback; };
+      var existingPicker = header.querySelector('[data-settings-nav-picker]');
+      existingPicker?.remove();
+      header.insertAdjacentHTML('beforeend', '<div class="settings-nav-picker" data-settings-nav-picker>' + inventory.selectField({
+        id: 'settingsNavPicker',
+        ariaLabel: jt('settings.shell.sectionPickerLabel', 'Settings section'),
+        value: DEFAULT_SECTION,
+        options: groups.map(function (group) {
+          return { label: group.label, options: group.sections.map(function (section) { return { value: section.id, label: section.label }; }) };
+        }),
+      }) + '</div>');
       var existingSearch = header.querySelector('[data-settings-search]');
       if (existingSearch) {
         existingSearch.parentNode.removeChild(existingSearch);

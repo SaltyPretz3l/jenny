@@ -204,7 +204,7 @@ def main() -> None:
     # starting -- a failure here only loses real-time orphan protection.
     try:
         parent_watchdog = start_parent_death_watchdog(subprocess_manager=_SUBPROCESS_MANAGER)
-    except Exception:  # noqa: BLE001
+    except Exception:
         logger.exception("failed to start parent-death watchdog")
         parent_watchdog = None
 
@@ -347,12 +347,12 @@ def main() -> None:
                     },
                 )
                 continue
-            except Exception as error:  # noqa: BLE001
+            except Exception as error:
                 logger.exception("fatal error in sidecar main loop")
                 capture_exception(error)
                 message_id = None
                 try:
-                    message_id = message.get("id") if isinstance(message, dict) else None  # noqa: F821
+                    message_id = message.get("id") if isinstance(message, dict) else None
                 except Exception:  # noqa: BLE001
                     pass
                 if message_id is not None:

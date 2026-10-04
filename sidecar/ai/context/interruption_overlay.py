@@ -116,25 +116,37 @@ def merge_ledger_interruptions(receipts: Any, ledger_entries: Any) -> dict[str, 
     return merged
 
 
+def _belongs_to_session(receipt: object, session_id: str) -> bool:
+    if not isinstance(receipt, dict):
+        return False
+    evidence = receipt.get("evidence")
+    owner = evidence.get("session_id") if isinstance(evidence, dict) else None
+    return isinstance(owner, str) and owner.strip() == session_id
+
+
 def _merge_dead_generation_ledger_receipts(
-    receipts: Any, *, config: Any, mcp_client: Any
+    receipts: Any, *, config: Any, mcp_client: Any, session_id: str | None = None
 ) -> Any:
-    """Fold dead-generation ledger pendings into ``receipts``; fail closed.
+    """Fold this session's dead-generation ledger pendings into ``receipts``.
 
     Liveness gate: the live builtin generation id (initialize handshake, via
     the public MCPClient accessor) separates in-flight work from interrupted
-    work. Unknown liveness or ANY ledger error returns ``receipts`` unchanged
-    -- exact legacy behavior, never a broken turn.
+    work. Ownership gate: only receipts attributed to ``session_id`` merge, so
+    another chat's or a test run's pending (or an unattributed legacy receipt)
+    is never presented as this session's ground truth. Unknown liveness, no
+    session, or ANY ledger error returns ``receipts`` unchanged -- exact legacy
+    behavior, never a broken turn.
     """
     try:
-        if mcp_client is None:
+        owner = str(session_id or "").strip()
+        if mcp_client is None or not owner:
             return receipts
         # Local imports: config and the tool catalog both sit above this
         # module in the import graph on some paths; resolving them at call
         # time keeps the overlay import-cycle-free.
-        from sidecar.ai.config import resolve_operation_ledger_root  # noqa: PLC0415
-        from sidecar.ai.tools.catalog import BUILTIN_MCP_SERVER_NAME  # noqa: PLC0415
-        from sidecar.runtime.operation_ledger import OperationLedger  # noqa: PLC0415
+        from sidecar.ai.config import resolve_operation_ledger_root
+        from sidecar.ai.tools.catalog import BUILTIN_MCP_SERVER_NAME
+        from sidecar.runtime.operation_ledger import OperationLedger
 
         live_gen = mcp_client.server_generation_id(BUILTIN_MCP_SERVER_NAME)
         if not live_gen:
@@ -144,7 +156,11 @@ def _merge_dead_generation_ledger_receipts(
         if not root.is_dir():
             return receipts
         ledger = OperationLedger(root)
-        entries = ledger.pending_from_other_generations(live_gen)
+        entries = [
+            entry
+            for entry in ledger.pending_from_other_generations(live_gen)
+            if _belongs_to_session(entry, owner)
+        ]
         if not entries:
             return receipts
         merged = merge_ledger_interruptions(receipts, entries)
@@ -230,7 +246,10 @@ def append_interrupted_turn_receipts_runtime_system_message(
     if not getattr(config, "interrupted_turn_receipts_overlay_enabled", True):
         return
     receipts = _merge_dead_generation_ledger_receipts(
-        receipts, config=config, mcp_client=mcp_client
+        receipts,
+        config=config,
+        mcp_client=mcp_client,
+        session_id=log_context.session_id,
     )
     if receipts is None:
         return

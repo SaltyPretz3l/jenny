@@ -296,6 +296,32 @@ test('projectTurnTree preserves only bounded subagent report metadata from messa
   });
 });
 
+test('projectTurnTree reads an orphan repair saved before F3 by its recorded terminal state', () => {
+  const { statusForToolResult } = require('../renderer/chat/tool-call-utils');
+  const orphan = (callId, terminalState) => ({
+    id: `tool_result_${callId}`,
+    role: 'tool',
+    kind: 'tool_result',
+    tool_result: {
+      call_id: callId,
+      tool_name: 'python_execute',
+      output_text: 'System error: tool execution interrupted. Retry if needed.',
+      is_error: true,
+      error_code: 'CMP-LOOP-0013',
+      parent_stream_id: 'stream_orphans',
+      metadata: { recovery: 'orphaned_tool_call', terminal_state: terminalState },
+    },
+  });
+  const result = project([
+    { id: 'user_stream_orphans', role: 'user', content: 'Run it' },
+    orphan('call_stopped', 'cancelled'),
+    orphan('call_closed', 'interrupted'),
+  ]);
+  const events = result.turns[0].events.filter((entry) => entry.kind === 'tool_result');
+  assert.deepEqual(events.map((event) => event.status), ['cancelled', 'errored']);
+  assert.deepEqual(events.map((event) => statusForToolResult(event.payload)), ['cancelled', 'interrupted']);
+});
+
 test('projectTurnTree normalizes timed-out and preempted approval outcomes for tool events', () => {
   const result = project([
     { id: 'user_stream_statuses', role: 'user', content: 'Run the tools' },

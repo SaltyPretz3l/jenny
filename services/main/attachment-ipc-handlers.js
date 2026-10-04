@@ -2,7 +2,6 @@
 
 const path = require('node:path');
 const { createRejectedEntry } = require('../attachment-service');
-const { readToolResultAttachment } = require('../backend/tool-result-attachments');
 const { t } = require('../i18n-main');
 const { ensureSessionAttachmentAuthority } = require('../projects/session-attachment-authority');
 const IMAGE_DROP_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp']);
@@ -50,6 +49,18 @@ function createAttachmentIpcHandlers({ backendService, shellConfigService, dialo
         return { accepted: [], rejected: [] };
       }
       return publishImport(captured, prepareAttachmentEntries(result.filePaths, {
+        cwd: processRef.cwd(),
+        assetStore: attachmentAssetStore,
+      }));
+    },
+    // Reached only from the preload (never exposed to the page): the paths are
+    // what webUtils resolved from Files the user dropped, as user-granted as a
+    // picker selection, so they get the picker's rules instead of the root check.
+    'attachments.prepareDroppedPaths': (_, filePaths, scope = {}) => {
+      const captured = captureImport(scope);
+      const paths = (Array.isArray(filePaths) ? filePaths : [])
+        .filter((filePath) => typeof filePath === 'string' && filePath.trim());
+      return publishImport(captured, prepareAttachmentEntries(paths, {
         cwd: processRef.cwd(),
         assetStore: attachmentAssetStore,
       }));
@@ -129,20 +140,6 @@ function createAttachmentIpcHandlers({ backendService, shellConfigService, dialo
         throw error;
       }
     },
-    'attachments.saveAudioAsset': (_, payload) => {
-      if (!attachmentAssetStore) {
-        throw new Error('Audio attachments are unavailable.');
-      }
-      return attachmentAssetStore.saveAudioBuffer(payload?.bytes, {
-        mimeType: payload?.mimeType,
-        displayName: payload?.displayName,
-        sourceKind: payload?.sourceKind,
-        durationMs: payload?.durationMs,
-        transcriptText: payload?.transcriptText,
-        transcriptStatus: payload?.transcriptStatus,
-        transcriptLanguage: payload?.transcriptLanguage,
-      });
-    },
     'attachments.releaseAssets': (_, assetPaths) => {
       if (!attachmentAssetStore) {
         return { deletedCount: 0, deletedPaths: [] };
@@ -150,15 +147,6 @@ function createAttachmentIpcHandlers({ backendService, shellConfigService, dialo
       const result = attachmentAssetStore.deleteAssets(assetPaths);
       backendService?.sessionAttachmentAuthority?.revokeAssetPaths(result.deletedPaths || []);
       return result;
-    },
-    // Bounded ID-based read of a tool-result attachment previously
-    // ingested into the managed asset store from a live sidecar tool.result.
-    'attachments.readToolResultAsset': (_, payload) => {
-      if (!backendService) {
-      return { ok: false, reason: t('main.backend.serviceUnavailable', 'backend service unavailable') };
-      }
-      return readToolResultAttachment(backendService, payload?.attachment_id || payload,
-        { sessionId: payload?.session_id || '' });
     },
   };
 }

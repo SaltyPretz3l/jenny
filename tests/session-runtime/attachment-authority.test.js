@@ -5,6 +5,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const PNG_SIGNATURE = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
 
 const { AttachmentAssetStore } = require('../../services/attachment-asset-store');
 const {
@@ -30,7 +31,7 @@ function fixture(t, { maxReceipts = 4096 } = {}) {
     maxReceipts,
   });
   const image = (name) => attachmentAssetStore.saveImageBufferSync(
-    Buffer.from(`image-${name}`),
+    Buffer.concat([PNG_SIGNATURE, Buffer.from(`image-${name}`)]),
     { displayName: `${name}.png`, mimeType: 'image/png', sourceKind: 'file' }
   );
   const session = (id, overrides = {}) => {
@@ -193,7 +194,7 @@ test('receipt settlement uses session summaries without hydrating transcript rec
       },
     },
   });
-  const imported = attachmentAssetStore.saveImageBufferSync(Buffer.from('image'), {
+  const imported = attachmentAssetStore.saveImageBufferSync(Buffer.concat([PNG_SIGNATURE, Buffer.from('image')]), {
     displayName: 'image.png',
     mimeType: 'image/png',
   });
@@ -228,7 +229,7 @@ test('fresh receipts verify exact bytes and current project authority without re
       }),
     },
   });
-  const imported = attachmentAssetStore.saveImageBufferSync(Buffer.from('original-image'), {
+  const imported = attachmentAssetStore.saveImageBufferSync(Buffer.concat([PNG_SIGNATURE, Buffer.from('original-image')]), {
     displayName: 'image.png', mimeType: 'image/png',
   });
   authority.registerImportedImages(authority.captureImportScope('session-a'), [imported]);
@@ -244,7 +245,7 @@ test('fresh receipts verify exact bytes and current project authority without re
   }), /not authorized/);
   assert.equal(transcriptReads, 0);
 
-  const rootBound = attachmentAssetStore.saveImageBufferSync(Buffer.from('root-bound'), {
+  const rootBound = attachmentAssetStore.saveImageBufferSync(Buffer.concat([PNG_SIGNATURE, Buffer.from('root-bound')]), {
     displayName: 'root-bound.png', mimeType: 'image/png',
   });
   authority.registerImportedImages(authority.captureImportScope('session-a'), [rootBound]);
@@ -259,7 +260,7 @@ test('receipt-free historical image reuse falls back to canonical session histor
   const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-attachment-history-fallback-'));
   t.after(() => fs.rmSync(rootDir, { recursive: true, force: true }));
   const attachmentAssetStore = new AttachmentAssetStore({ rootDir, nativeImage: null });
-  const historical = attachmentAssetStore.saveImageBufferSync(Buffer.from('historical'), {
+  const historical = attachmentAssetStore.saveImageBufferSync(Buffer.concat([PNG_SIGNATURE, Buffer.from('historical')]), {
     displayName: 'historical.png', mimeType: 'image/png',
   });
   const summary = {

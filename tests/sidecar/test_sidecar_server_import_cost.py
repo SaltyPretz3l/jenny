@@ -43,7 +43,14 @@ import sys
 # pipe_stdin (server stdio gate), media_site (optional PDF add-on check),
 # pdf_text (PDF reader, used at filesystem_content module scope), and two
 # file-size splits (builder_workspace_files, phase_trace).
-_MEASURED_SIDECAR_MODULES = 353
+# 2026-09-30: 359. The ChatGPT model catalog (sidecar/ai/engines/chatgpt_model_catalog.py and
+# sidecar/runtime/chatgpt_model_catalog.py) is read by config_parsing and capabilities at startup;
+# the prefix-stability meter is imported per request in generation_diagnostics.py instead.
+# 2026-10-01: 365 (one per landing, no single eager regression). Dogfood batches: write_progress,
+# build_turn_tools, text_tool_calls, plan_presentation and compaction_diagnostics, all imported by
+# the tool loop and context modules that were already eager. Settings cohesion: request_safety,
+# read by tool_execution at module scope. The count sat at the 364 cap before the last one.
+_MEASURED_SIDECAR_MODULES = 365
 _MAX_SIDECAR_MODULES = _MEASURED_SIDECAR_MODULES + 5
 # Floored as well as capped: without a lower bound, a later graph reduction to
 # (say) 320 would leave this recorded 345 stale and silently widen the slack to

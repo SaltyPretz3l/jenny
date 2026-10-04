@@ -68,29 +68,36 @@ function createCanvasRecorder() {
   const frames = [];
   const transforms = [];
   let currentFrame = null;
-  let currentArc = null;
+  let currentPath = [];
   const state = { fillStyle: '', globalAlpha: 1, shadowBlur: 0, shadowColor: '' };
   return {
     frames,
     transforms,
     setTransform(...args) { transforms.push(args); },
     clearRect() {
-      currentFrame = { dots: [] };
+      currentFrame = { dots: [], fills: 0 };
       frames.push(currentFrame);
     },
-    beginPath() { currentArc = null; },
-    arc(x, y, radius) { currentArc = { x, y, radius }; },
+    beginPath() { currentPath = []; },
+    moveTo() {},
+    arc(x, y, radius) { currentPath.push({ x, y, radius }); },
+    // Fills are batched per bucket: every arc in the path paints under the
+    // state current at fill time, so each arc is recorded as one dot.
     fill() {
-      if (!currentFrame || !currentArc) return;
-      currentFrame.dots.push({
-        x: currentArc.x,
-        y: currentArc.y,
-        radius: currentArc.radius,
-        fillStyle: state.fillStyle,
-        globalAlpha: state.globalAlpha,
-        shadowBlur: state.shadowBlur,
-        shadowColor: state.shadowColor,
+      if (!currentFrame) return;
+      currentFrame.fills += 1;
+      currentPath.forEach((arc) => {
+        currentFrame.dots.push({
+          x: arc.x,
+          y: arc.y,
+          radius: arc.radius,
+          fillStyle: state.fillStyle,
+          globalAlpha: state.globalAlpha,
+          shadowBlur: state.shadowBlur,
+          shadowColor: state.shadowColor,
+        });
       });
+      currentPath = [];
     },
     get fillStyle() { return state.fillStyle; },
     set fillStyle(value) { state.fillStyle = value; },
@@ -171,11 +178,9 @@ function applyReactiveGridStyles(host) {
   host.style.setProperty('--reactive-grid-cell-size', '26');
   host.style.setProperty('--reactive-grid-hit-radius', '112');
   host.style.setProperty('--reactive-grid-strength', '1');
-  host.style.setProperty('--reactive-grid-idle-amplitude', '0.28');
   host.style.setProperty('--reactive-grid-motion-scale', '1');
   host.style.setProperty('--widget-reactive-grid-dot-idle', 'rgba(157, 197, 255, 0.18)');
   host.style.setProperty('--widget-reactive-grid-dot-active', 'rgba(111, 210, 255, 0.82)');
-  host.style.setProperty('--widget-reactive-grid-dot-glow', 'rgba(109, 130, 255, 0.28)');
 }
 
 function rectSnapshot(host) {
@@ -280,6 +285,9 @@ function withReactiveGridGlobals(callback) {
   const canvasHarness = installCanvasRecorder(window);
 
   window.devicePixelRatio = 2;
+  // jsdom reports an unfocused document, which would pin the loop to the idle
+  // frame budget; the app window these tests stand in for is focused.
+  window.document.hasFocus = () => true;
   window.requestAnimationFrame = rafHarness.requestAnimationFrame;
   window.cancelAnimationFrame = rafHarness.cancelAnimationFrame;
   global.window = window;
@@ -449,60 +457,6 @@ test('normalized move activates the field and leave decays it', () => (
   })
 ));
 
-test('first-token waits for double-rAF and aborts when the activity epoch changes', () => (
-  withReactiveGridGlobals(({ document, mediaQuery, rafHarness }) => {
-    const host = document.createElement('section');
-    applyReactiveGridStyles(host);
-    setRect(host, { width: 260, height: 180 });
-    document.body.append(host);
-    const controller = createController({ document, mediaQuery });
-    bindAndPrime(controller, rafHarness, [{ element: host, role: 'chat-left' }]);
-    controller.setActivity({
-      scopeEpoch: 1, phase: 'streaming', phaseRevision: 1, targetEnergy: 0.46, attentionScale: 1,
-    });
-
-    controller.handleActivityImpulse({
-      scopeEpoch: 1, sequence: 1, kind: 'first-token', timeStamp: rafHarness.now,
-    });
-    assert.equal(controller._internals.inspect().entries[0].impulseCount, 0);
-    rafHarness.flush(16);
-    assert.equal(controller._internals.inspect().entries[0].impulseCount, 0, 'outer rAF does not gesture');
-    rafHarness.flush(16);
-    assert.equal(controller._internals.inspect().entries[0].impulseCount, 1, 'inner rAF creates one gesture');
-    assert.equal(controller._internals.inspect().entries[0].impulseOrigins[0].direction, 'outward',
-      'first-token releases outward after the preflight inward gather (delight pass 2026-07-22)');
-
-    controller.handleActivityImpulse({
-      scopeEpoch: 1, sequence: 2, kind: 'first-token', timeStamp: rafHarness.now,
-    });
-    controller.setActivity({
-      scopeEpoch: 2, phase: 'streaming', phaseRevision: 2, targetEnergy: 0.46, attentionScale: 1,
-    });
-    rafHarness.flush(16);
-    rafHarness.flush(16);
-    assert.equal(controller._internals.inspect().entries[0].impulseCount, 1, 'epoch change aborts pending gesture');
-
-    controller.handleActivityImpulse({
-      scopeEpoch: 2, sequence: 3, kind: 'first-token', timeStamp: rafHarness.now,
-    });
-    controller.handleActivityImpulse({ scopeEpoch: 2, sequence: 4, kind: 'cancel', timeStamp: rafHarness.now });
-    rafHarness.flush(16);
-    rafHarness.flush(16);
-    assert.equal(controller._internals.inspect().entries[0].impulseCount, 0, 'cancel removes pending gestures');
-
-    controller.handleActivityImpulse({
-      scopeEpoch: 2, sequence: 5, kind: 'first-token', timeStamp: rafHarness.now,
-    });
-    controller.setActivity({
-      scopeEpoch: 2, phase: 'failed', phaseRevision: 3, targetEnergy: 0.04, attentionScale: 1,
-    });
-    rafHarness.flush(16);
-    rafHarness.flush(16);
-    assert.equal(controller._internals.inspect().entries[0].impulseCount, 0, 'failed phase removes pending gestures');
-    controller.dispose();
-  })
-));
-
 test('hidden documents do no static work and disconnected hosts cannot keep the loop ready', () => (
   withReactiveGridGlobals(({ document, mediaQuery, rafHarness, canvasHarness }) => {
     mediaQuery.matches = true;
@@ -620,13 +574,14 @@ test('draw errors report a recoverable frame fault and the loop continues', () =
       throw new Error('simulated draw failure');
     };
 
-    rafHarness.flush(16);
+    // 32ms: idle frames are budgeted to ~30fps, so a 16ms tick may skip the paint.
+    rafHarness.flush(32);
     assert.equal(reports.length, 1);
     assert.equal(reports[0].effectId, 'reactive-grid');
     assert.equal(reports[0].stage, 'frame');
     assert.equal(reports[0].recoverable, true);
     assert.equal(rafHarness.size, 1, 'frame loop reschedules after containment');
-    rafHarness.flush(16);
+    rafHarness.flush(32);
     assert.ok(ctx.frames.length > framesBefore);
     controller.dispose();
   })
@@ -777,6 +732,27 @@ test('hover drawing blends idle and active colors through multiple buckets', () 
   })
 ));
 
+test('drawing batches one fill per non-empty bucket and never uses shadow blur', () => (
+  withReactiveGridGlobals(({ document, mediaQuery, rafHarness, canvasHarness }) => {
+    const host = document.createElement('section');
+    applyReactiveGridStyles(host);
+    setRect(host, { width: 260, height: 180 });
+    document.body.append(host);
+    const controller = createController({ document, mediaQuery });
+    bindAndPrime(controller, rafHarness, [{ element: host, role: 'chat-left' }]);
+    controller.handleInput(normalizedInput('move', { x: 130, y: 90 }));
+    controller.handleInput(normalizedInput('click', { x: 130, y: 90 }));
+    for (let i = 0; i < 12; i += 1) rafHarness.flush(16);
+    const frame = getLastFrame(canvasHarness.contexts, host.querySelector('canvas'));
+    assert.ok(frame.fills > 0 && frame.fills <= 48, 'at most one fill per idle/active x alpha bucket');
+    assert.ok(frame.dots.length >= frame.fills, 'arcs are batched under their bucket fill');
+    assert.equal(frame.dots.length, controller._internals.inspect().entries[0].dotCount,
+      'every dot is painted exactly once');
+    assert.ok(frame.dots.every((dot) => dot.shadowBlur === 0), 'the glow pass is gone');
+    controller.dispose();
+  })
+));
+
 test('reactive grid produces a similar end-state at 60Hz and 144Hz tick rates', async () => {
   function runScenario(msPerFrame, frameCount) {
     return withReactiveGridGlobals(({ document, mediaQuery, rafHarness, canvasHarness }) => {
@@ -806,7 +782,7 @@ test('reactive grid produces a similar end-state at 60Hz and 144Hz tick rates', 
   );
 });
 
-test('dispose is terminal: later bind, refresh, input, activity, and motion changes are inert', () => (
+test('dispose is terminal: later bind, refresh, input, and motion changes are inert', () => (
   withReactiveGridGlobals(({ document, mediaQuery, rafHarness }) => {
     const host = document.createElement('section');
     applyReactiveGridStyles(host);
@@ -821,10 +797,6 @@ test('dispose is terminal: later bind, refresh, input, activity, and motion chan
     controller.bind(context);
     controller.refresh(context);
     controller.handleInput(normalizedInput('move'));
-    controller.setActivity({
-      scopeEpoch: 9, phase: 'streaming', phaseRevision: 1, targetEnergy: 0.46, attentionScale: 1,
-    });
-    controller.handleActivityImpulse({ scopeEpoch: 9, sequence: 1, kind: 'complete', timeStamp: 0 });
     assert.deepEqual(controller._internals.inspect(), before);
     assert.equal(before.disposed, true);
     assert.equal(host.querySelectorAll('canvas').length, 0);

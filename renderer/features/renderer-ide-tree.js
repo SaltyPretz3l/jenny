@@ -58,6 +58,9 @@
     // Projects v2 header switcher (both optional; absent = static "Explorer").
     const getProjectTitle = typeof deps?.getProjectTitle === 'function' ? deps.getProjectTitle : null;
     const onOpenProjectMenu = typeof deps?.onOpenProjectMenu === 'function' ? deps.onOpenProjectMenu : noop;
+    // Split view W3-4 Explorer nudge (both optional; absent = no nudge line).
+    const getProjectNudge = typeof deps?.getProjectNudge === 'function' ? deps.getProjectNudge : null;
+    const onOpenProjectNudge = typeof deps?.onOpenProjectNudge === 'function' ? deps.onOpenProjectNudge : noop;
     // Controller-owned extras appended to file rows' menus (Open Preview,
     // path/OS utilities, Send to Jenny).
     const buildFileContextMenuItems = typeof deps?.buildFileContextMenuItems === 'function'
@@ -101,7 +104,7 @@
     let focusAfterRender = false;
     let clipboard = null;
     let inputEventsBound = false;
-    const { parentDirOf, nameOf } = treeMarkup; const { buildTreeMarkup } = treeMarkup.createIdeTreeMarkup({
+    const { parentDirOf, nameOf } = treeMarkup; const { buildTreeMarkup, buildProjectNudge } = treeMarkup.createIdeTreeMarkup({
       // Tier-2 git slice: (relPath, kind) -> git state string | null. Defaults to
       // no decoration so the tree renders exactly as before when git is off.
       getIde, escapeHtml, getGitDecoration: typeof deps?.getGitDecoration === 'function' ? deps.getGitDecoration : () => null,
@@ -110,7 +113,7 @@
       hasChooseRoot: () => Boolean(onChooseWorkspaceRoot), onLazyLoad: loadDirectory,
       isQolEnabled, isSelected: (path) => selection.has(path),
       isCut: (path) => clipboard?.isCut(path) === true,
-      getProjectTitle,
+      getProjectTitle, getProjectNudge,
     });
     const editSession = treeEdit.createIdeTreeEditSession?.({
       getPendingEdit: () => pendingEdit,
@@ -130,9 +133,9 @@
         return onEntryRenamed(fromPath, toPath, kind, meta);
       },
       onRenameCommitted: deps?.onRenameCommitted,
-      onEntryDeleted: (path, kind) => {
+      onEntryDeleted: (path, kind, meta) => {
         selection.dropPath(path);
-        return onEntryDeleted(path, kind);
+        return onEntryDeleted(path, kind, meta);
       },
       getRootEpoch: () => rootEpoch, getPendingEdit: () => pendingEdit, setPendingEdit: (value) => { pendingEdit = value; },
       getCommittingEdit: () => committingEdit, setCommittingEdit: (value) => { committingEdit = value; },
@@ -190,6 +193,15 @@
       }
       loadingDirs.add(dirPath);
       try {
+        // A child listing implies a root was listed; only the root asks first.
+        if (dirPath === '' && typeof api.getRootState === 'function') {
+          const rootState = await api.getRootState();
+          if (epoch !== rootEpoch) return;
+          if (!rootState?.workspaceRoot) {
+            showRootless();
+            return;
+          }
+        }
         const result = await api.listDirectory({
           path: dirPath,
           showGenerated: getIde().showGenerated === true,
@@ -204,13 +216,17 @@
         errorByDir.delete(dirPath);
         if (dirPath === '') {
           rootError = '';
+          rootNeedsChoose = false;
         }
       } catch (error) {
         if (epoch !== rootEpoch) return;
-        const noRoot = String(error?.code || '') === 'CMP-WORKSPACEFS-0001';
-        const message = noRoot
-          ? jt('ide.tree.chooseFolderPrompt', 'Choose a workspace folder to browse and edit files.')
-          : jt('ide.tree.listFolderFailed', 'Could not list this folder.');
+        const noRoot = String(error?.code || '') === 'CMP-WORKSPACEFS-0001'
+          || String(error?.message || error || '').includes('CMP-WORKSPACEFS-0001');
+        if (noRoot) {
+          showRootless();
+          return;
+        }
+        const message = jt('ide.tree.listFolderFailed', 'Could not list this folder.');
         if (dirPath === '') {
           rootError = message;
           rootNeedsChoose = noRoot;
@@ -221,10 +237,21 @@
           message: String(error?.message || error || ''),
         });
       } finally {
-        if (epoch === rootEpoch) loadingDirs.delete(dirPath);
+        if (epoch === rootEpoch) {
+          loadingDirs.delete(dirPath);
+          render();
+          if (!rootNeedsChoose && refreshQueuedDirs.delete(dirPath)) refreshDirectory(dirPath);
+        }
       }
-      if (epoch === rootEpoch) render();
-      if (epoch === rootEpoch && refreshQueuedDirs.delete(dirPath)) refreshDirectory(dirPath);
+    }
+
+    function showRootless() {
+      rootNeedsChoose = true;
+      rootError = jt('ide.tree.noFolderOpen', 'No folder open');
+      childrenByDir.clear();
+      errorByDir.clear();
+      truncatedDirs.clear();
+      refreshQueuedDirs.clear();
     }
 
     async function refreshDirectory(dirPath) {
@@ -297,10 +324,33 @@
       const panel = getMountEl() || null;
       const label = panel && getProjectTitle ? panel.querySelector('.ide-tree-header-project-name') : null;
       if (label) {
-        label.textContent = getProjectTitle();
+        const title = getProjectTitle();
+        let changed = label.textContent !== title;
+        if (changed) label.textContent = title;
+        const trigger = label.closest('[data-ide-tree-action="project-menu"]');
+        const ariaLabel = jt('projects.switcher.switchCurrentAria', 'Switch project, current: {name}', { name: title });
+        if (trigger && trigger.getAttribute('aria-label') !== ariaLabel) trigger.setAttribute('aria-label', ariaLabel);
+        changed = syncProjectNudge(panel) || changed;
+        // The host no longer matches its markup key: the next render repaints.
+        if (changed) panel.__jennyIdeRailMarkup = null;
         return;
       }
       render();
+    }
+
+    // Split view W3-4: the nudge line swapped in place under the header (the
+    // title button the project menu may be anchored to stays attached). An
+    // unchanged line writes nothing. Returns whether the DOM changed.
+    function syncProjectNudge(panel) {
+      const header = panel.querySelector('.ide-tree-header');
+      if (!header || typeof buildProjectNudge !== 'function') return false;
+      const next = buildProjectNudge();
+      const sibling = header.nextElementSibling;
+      const current = sibling?.classList?.contains('ide-explorer-project-nudge') ? sibling : null;
+      if (treeMarkup.readProjectNudgeKey(current) === next.key) return false;
+      current?.remove();
+      if (next.markup) header.insertAdjacentHTML('afterend', next.markup);
+      return true;
     }
 
     function render({ restorePanelFocus = true } = {}) {
@@ -505,6 +555,8 @@
           cycleSortMode();
         } else if (action === 'project-menu') {
           onOpenProjectMenu(headerAction);
+        } else if (action === 'project-nudge') {
+          onOpenProjectNudge(headerAction.dataset.ideProjectId || '');
         }
         return;
       }
@@ -543,7 +595,7 @@
       // The tree binds BOTH the rail + secondary hosts (it may live on either
       // side); only act when explorer is the active panel AND the event is in
       // explorer's current host - never preventDefault over the other host.
-      if (!isActivePanel()) {
+      if (!isActivePanel() || rootNeedsChoose) {
         return;
       }
       const host = getMountEl();

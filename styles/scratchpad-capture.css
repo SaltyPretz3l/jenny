@@ -44,9 +44,7 @@
 
 .scratchpad-capture__title {
   color: var(--text-muted);
-  font-size: var(--font-size-sm);
-  letter-spacing: var(--tracking-ui);
-  text-transform: uppercase;
+  font-size: var(--font-size-caption);
 }
 
 /* The field comes from the inventory text-field primitive; widen its control
@@ -57,7 +55,7 @@
 
 .scratchpad-capture__card .inv-text-field-control {
   width: 100%;
-  font-size: var(--font-size-lg);
+  font-size: var(--font-size-body);
 }
 
 .scratchpad-capture__status {

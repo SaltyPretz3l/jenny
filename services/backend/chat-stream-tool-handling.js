@@ -41,6 +41,7 @@ const {
   findToolMessageId,
   approvalTerminalOutput,
   normalizeDurationMs,
+  toolResultExitCode,
   makeNoteTurnEvent,
   peekToolLookupMessages,
 } = require('./chat-stream-tool-payload-utils');
@@ -48,6 +49,7 @@ const planDocuments = require('./plan-document-events');
 
 const LOOP_TOOL_INTERRUPTED_CODE = LOOP_PROTOCOL_ERROR_CODES.TOOL_INTERRUPTED;
 const LOOP_TOOL_INTERRUPTED_OUTPUT = 'System error: tool execution interrupted. Retry if needed.';
+const LOOP_TOOL_STOPPED_OUTPUT = 'Tool execution stopped by the user before it finished.';
 
 function recordToolObservability(service, observationType, payload = {}) {
   const aggregator = service?.toolObservabilityAggregator;
@@ -239,7 +241,6 @@ function handleToolNotification(service, context, notification, options = {}) {
     model,
     resolvedSessionId,
     streamId,
-    workspaceRoot = '',
     eventBase,
     turnEventCollector = null,
   } = context;
@@ -282,7 +283,6 @@ function handleToolNotification(service, context, notification, options = {}) {
           policyDecisionId,
           toolName,
           input,
-          workspaceRoot,
           inputSnapshot: persistedInputSnapshot,
           summary,
           status,
@@ -303,7 +303,6 @@ function handleToolNotification(service, context, notification, options = {}) {
           policyDecisionId,
           toolName,
           input,
-          workspaceRoot,
           inputSnapshot: persistedInputSnapshot,
           summary,
           status,
@@ -439,7 +438,6 @@ function handleToolNotification(service, context, notification, options = {}) {
           policyDecisionId,
           toolName,
           input,
-          workspaceRoot,
           inputSnapshot: persistedInputSnapshot,
           summary,
           status: toolStatus,
@@ -465,13 +463,7 @@ function handleToolNotification(service, context, notification, options = {}) {
         summary,
         is_error: params.success === false,
         error_code: String(params.error_code || '').trim(),
-        exit_code:
-          params.metadata
-          && typeof params.metadata === 'object'
-          && !Array.isArray(params.metadata)
-          && params.metadata.exitCode != null
-            ? Number(params.metadata.exitCode)
-            : null,
+        exit_code: toolResultExitCode(params.metadata),
         duration_ms: explicitDurationMs ?? 0,
         parent_stream_id: streamId,
         generated_artifacts: generatedArtifacts,
@@ -656,7 +648,6 @@ function settleUnfinishedToolsForStream(
     model = '',
     resolvedSessionId = '',
     streamId = '',
-    workspaceRoot = '',
     eventBase = {},
     turnEventCollector = null,
   } = context || {};
@@ -666,6 +657,8 @@ function settleUnfinishedToolsForStream(
   if (!normalizedSessionId || !normalizedStreamId) {
     return [];
   }
+  const userStopped = normalizedTerminalState === 'cancelled';
+  const outputText = userStopped ? LOOP_TOOL_STOPPED_OUTPUT : LOOP_TOOL_INTERRUPTED_OUTPUT;
   const messages = service.sessionStore.getSessionMessages(normalizedSessionId);
   const completedCallIds = completedToolResultCallIdsForStream(
     messages,
@@ -693,7 +686,6 @@ function settleUnfinishedToolsForStream(
         policyDecisionId,
         toolName,
         input,
-        workspaceRoot,
         summary,
         status: normalizedTerminalState,
         approvalState: 'auto',
@@ -717,10 +709,11 @@ function settleUnfinishedToolsForStream(
       toolResult: {
         call_id: callId,
         tool_name: toolName,
-        output_text: LOOP_TOOL_INTERRUPTED_OUTPUT,
+        output_text: outputText,
         summary,
         is_error: true,
         error_code: LOOP_TOOL_INTERRUPTED_CODE,
+        approval_state: normalizedTerminalState,
         exit_code: null,
         duration_ms: 0,
         parent_stream_id: normalizedStreamId,
@@ -754,10 +747,10 @@ function settleUnfinishedToolsForStream(
         primary_message_id: toolResultMessageId,
         source_message_ids: [toolResultMessageId],
         tool_call_id: callId,
-        status: 'error',
+        status: userStopped ? 'cancelled' : 'error',
         payload: {
           tool_name: toolName,
-          output_text: LOOP_TOOL_INTERRUPTED_OUTPUT,
+          output_text: outputText,
           summary,
           is_error: true,
           error_code: LOOP_TOOL_INTERRUPTED_CODE,
@@ -787,7 +780,7 @@ function settleUnfinishedToolsForStream(
       ...(policyDecisionId ? { policyDecisionId } : {}),
       toolName,
       input: persistedInputSnapshot.input,
-      content: LOOP_TOOL_INTERRUPTED_OUTPUT,
+      content: outputText,
       summary,
       isError: true,
       approvalState: normalizedTerminalState,

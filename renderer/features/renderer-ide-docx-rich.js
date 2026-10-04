@@ -115,10 +115,11 @@
     const createModel = options.createDocxModel;
     const Parser = options.DOMParser;
     const Serializer = options.XMLSerializer;
+    const resources = { stacks: [], sequence: 0, mediaStores: [] };
     const parts = [];
     const body = {
       key: 'body', type: 'body', variant: 'default', path: 'word/document.xml',
-      model: createModel({ ...options, mediaPrefix: 'body' }),
+      model: createModel({ ...options, resources, mediaPrefix: 'body' }),
     };
     parts.push(body);
     for (const descriptor of options.relatedParts || []) {
@@ -130,6 +131,7 @@
           documentXml: wrapped.xml, numberingXml: options.numberingXml, relsXml: descriptor.relsXml,
           media: options.media, DOMParser: Parser, XMLSerializer: Serializer,
           occupiedNames: options.occupiedNames,
+          resources,
           mediaPrefix: descriptor.key,
         }),
       });
@@ -140,6 +142,17 @@
     const touchedParts = new Set();
     let transactionDepth = 0;
     let transactionPart = null;
+
+    function syncRoutes() {
+      for (const [routes, direction] of [[undoKeys, 'undo'], [redoKeys, 'redo']]) {
+        const remaining = new Map(parts.map((part) => [part.key, part.model.getHistoryCounts()[direction]]));
+        for (let index = routes.length - 1; index >= 0; index -= 1) {
+          const count = remaining.get(routes[index]) || 0;
+          if (!count) routes.splice(index, 1);
+          else remaining.set(routes[index], count - 1);
+        }
+      }
+    }
 
     function route(blockId) {
       const value = String(blockId || '');
@@ -162,6 +175,7 @@
         else {
           undoKeys.push(target.part.key);
           redoKeys.length = 0;
+          syncRoutes();
         }
       } else if (transactionDepth && !transactionPart) {
         model.endTransaction();
@@ -180,12 +194,14 @@
     }
 
     function history(redo) {
+      syncRoutes();
       const source = redo ? redoKeys : undoKeys;
       const target = redo ? undoKeys : redoKeys;
       const key = source.pop();
       const part = byKey.get(key);
       if (!part || !(redo ? part.model.redo() : part.model.undo())) return false;
       target.push(key);
+      syncRoutes();
       return true;
     }
 
@@ -219,12 +235,19 @@
           undoKeys.push(transactionPart.key);
           redoKeys.length = 0;
           transactionPart = null;
+          syncRoutes();
         }
       },
       undo: () => history(false),
       redo: () => history(true),
-      canUndo: () => undoKeys.length > 0,
-      canRedo: () => redoKeys.length > 0,
+      canUndo() {
+        syncRoutes();
+        return undoKeys.length > 0;
+      },
+      canRedo() {
+        syncRoutes();
+        return redoKeys.length > 0;
+      },
       isDirty: () => parts.some((part) => part.model.isDirty()),
       markSaved() { for (const part of parts) part.model.markSaved(); },
       getUnsupportedNotes: () => Array.from(new Set(parts.flatMap((part) => part.model.getUnsupportedNotes()))),

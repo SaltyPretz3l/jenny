@@ -374,18 +374,23 @@
         }
       }, listenerOptions);
 
+      // The version has its own line above, and the network note sits under the
+      // summary, so an unchecked state says nothing here (the button is the call
+      // to action) and a checked one says only its result.
       const summarizeUpdateState = (payload) => {
         const source = payload && typeof payload === 'object' ? payload : {};
-        const version = source.currentVersion ? jt('shell.events.currentVersion', 'Jenny {version}', { version: source.currentVersion }) : 'Jenny';
+        // Nothing checked yet: no verdict to show (the version has its own line).
+        const status = String(source.status || '').trim();
+        if ((!status || status === 'unchecked' || status === 'idle') && !source.lastCheckedAt) return '';
         const view = window.rendererUpdateDialogUtils?.deriveUpdateDialogViewModel?.(source);
-        const summary = view?.title || source.reason || jt('updates.networkDisclosure', 'Checks GitHub when you ask. Requires internet access.');
+        const summary = view?.title || source.reason || '';
         let checked = '';
         if (source.lastCheckedAt && Number.isFinite(Date.parse(source.lastCheckedAt))) {
           checked = jt('updates.lastChecked', 'Last checked: {time}', {
             time: new Date(source.lastCheckedAt).toLocaleString(globalThis.jennyI18n?.tag?.(), globalThis.jennyI18n?.timeOptions?.()),
           });
         }
-        return [version, summary, checked].filter(Boolean).join(' — ');
+        return [summary, checked].filter(Boolean).join(' — ');
       };
 
       let updatesUiDisposed = false;
@@ -394,7 +399,10 @@
       const paintUpdateSummary = (payload) => {
         if (updatesUiDisposed) return;
         const source = payload && typeof payload === 'object' ? payload : {};
-        if (updateSettingsSummary) updateSettingsSummary.textContent = summarizeUpdateState(source);
+        if (updateSettingsSummary) {
+          updateSettingsSummary.textContent = summarizeUpdateState(source);
+          updateSettingsSummary.hidden = !updateSettingsSummary.textContent;
+        }
         if (aboutVersionLine) aboutVersionLine.textContent = source.currentVersion
           ? jt('settings.about.versionLine', 'Version {version}', { version: source.currentVersion }) : jt('settings.about.versionUnavailable', 'Version unavailable');
       };

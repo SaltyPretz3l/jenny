@@ -88,21 +88,37 @@
       };
     }
 
+    // Window exits (close / reload / update-restart) pass their `intent` for the
+    // prompt copy and any dirty non-IDE `surfaces` ({ id, label }) so ONE prompt
+    // covers everything; the caller saves those surfaces. Tab closes pass
+    // neither, so their prompt payload stays { dirtyPaths }.
+    function promptPayload(dirtyPaths, intent, surfaces) {
+      return {
+        dirtyPaths: [...dirtyPaths],
+        ...(intent ? { intent: String(intent) } : {}),
+        ...(surfaces.length ? { surfaces } : {}),
+      };
+    }
+
     // Preflight is intentionally non-destructive. Save is safe to perform now,
     // but discard/close stays represented only by the returned single-use plan
     // until the caller explicitly commits after its owning mutation succeeds.
-    async function preflight(paths, { allowPrompt = true } = {}) {
+    async function preflight(paths, { allowPrompt = true, intent = '', surfaces = [] } = {}) {
       if (inFlight) {
         return failedPreflight('close_preflight_in_progress', { blocked: true });
       }
       const closing = normalizePaths(paths);
       const revisions = new Map(closing.map((path) => [path, getDocumentRevision(path)]));
       const dirtyPaths = allowPrompt ? dirtySubset(closing) : [];
-      let decision = dirtyPaths.length ? '' : 'clean';
+      const extraSurfaces = allowPrompt && Array.isArray(surfaces)
+        ? surfaces.filter((surface) => surface && surface.label).map(({ id, label }) => ({ id: String(id || ''), label: String(label) }))
+        : [];
+      const needsPrompt = dirtyPaths.length > 0 || extraSurfaces.length > 0;
+      let decision = needsPrompt ? '' : 'clean';
       inFlight = true;
       try {
-        if (dirtyPaths.length) {
-          decision = await confirmClose({ dirtyPaths: [...dirtyPaths] });
+        if (needsPrompt) {
+          decision = await confirmClose(promptPayload(dirtyPaths, intent, extraSurfaces));
           if (decision === 'cancel') {
             return failedPreflight('user_canceled', {
               canceled: true,
@@ -158,10 +174,11 @@
         return { committed: false, code: 'invalid_preflight', closedPaths: [] };
       }
       pendingPlans.delete(plan);
-      for (const path of plan.paths) {
-        if (!Object.is(getDocumentRevision(path), plan.revisions.get(path))) {
-          return { committed: false, code: 'document_changed', changedPath: path, closedPaths: [] };
-        }
+      // Report EVERY changed path (still all-or-nothing): the caller keeps each
+      // one's editor open instead of force-closing newer unsaved edits.
+      const changedPaths = plan.paths.filter((path) => !Object.is(getDocumentRevision(path), plan.revisions.get(path)));
+      if (changedPaths.length) {
+        return { committed: false, code: 'document_changed', changedPath: changedPaths[0], changedPaths, closedPaths: [] };
       }
       const closedPaths = [];
       try {

@@ -6,16 +6,17 @@
   position: absolute;
   top: -4px;
   inset-inline-end: -5px;
-  min-width: 15px;
-  height: 15px;
-  padding: 0 4px;
+  min-width: 1.35em;
+  height: 1.35em;
+  padding: 0 0.3em;
   border: 1px solid var(--bg-base);
   border-radius: var(--radius-pill);
   background: var(--accent);
   color: var(--widget-button-primary-color);
-  font-size: 9px;
-  font-weight: 700;
-  line-height: 13px;
+  font-size: var(--font-size-caption);
+  font-weight: 500;
+  /* em box: the count grows with the caption role under Text size. */
+  line-height: calc(1.35em - 2px);
   text-align: center;
 }
 
@@ -24,12 +25,9 @@
   display: none;
 }
 
-.artifact-review-panel[data-artifact-review-mode="tasks"] .artifact-panel-header,
+/* Tasks keeps the shared 36px header (title "Tasks" and its Close). */
 .artifact-review-panel[data-artifact-review-mode="tasks"] .artifact-panel-controls,
 .artifact-review-panel[data-artifact-review-mode="tasks"] .artifact-panel-status,
-.artifact-review-panel[data-artifact-review-mode="tasks"] .artifact-panel-v2-header,
-.artifact-review-panel[data-artifact-review-mode="tasks"] .artifact-panel-v2-toolbar,
-.artifact-review-panel[data-artifact-review-mode="tasks"] .artifact-panel-v2-footer,
 .artifact-review-panel[data-artifact-review-mode="tasks"] > .artifact-review-header {
   display: none;
 }
@@ -77,15 +75,9 @@
   padding: var(--space-5) var(--space-6) var(--space-3);
 }
 
-.artifact-review-panel[data-artifact-review-mode="tasks"] .task-rail-title-text {
-  color: var(--text-primary);
-  font-size: var(--tl-font-ui);
-  font-weight: 600;
-}
-
 .artifact-review-panel[data-artifact-review-mode="tasks"] .task-rail-summary {
   color: var(--text-muted);
-  font-size: var(--tl-font-meta);
+  font-size: var(--font-size-caption);
 }
 
 .artifact-review-panel[data-artifact-review-mode="tasks"] .task-rail-filters {
@@ -109,7 +101,7 @@
 .artifact-review-panel[data-artifact-review-mode="tasks"] .task-rail-error {
   padding: var(--space-2) var(--space-6);
   color: var(--text-danger-emphasis);
-  font-size: var(--tl-font-meta);
+  font-size: var(--font-size-footnote);
 }
 
 .artifact-review-panel[data-artifact-review-mode="tasks"] .task-rail-list {
@@ -126,7 +118,8 @@
   align-items: baseline;
   padding: var(--space-4) var(--space-6) var(--space-1);
   color: var(--text-decorative);
-  font-size: var(--tl-font-meta);
+  font-size: var(--font-size-caption);
+  font-weight: 500;
 }
 
 .artifact-review-panel[data-artifact-review-mode="tasks"] .task-rail-group b {
@@ -149,14 +142,14 @@
 
 .artifact-review-panel[data-artifact-review-mode="tasks"] .task-rail-check-text {
   color: var(--text-primary);
-  font-size: var(--tl-font-ui);
+  font-size: var(--font-size-body);
   line-height: 1.4;
   overflow-wrap: anywhere;
 }
 
 .artifact-review-panel[data-artifact-review-mode="tasks"] .task-rail-check-meta {
   color: var(--text-muted);
-  font-size: var(--tl-font-meta);
+  font-size: var(--font-size-caption);
 }
 
 .artifact-review-panel[data-artifact-review-mode="tasks"] .task-rail-check-dot {
@@ -206,7 +199,7 @@
 
 .artifact-review-panel[data-artifact-review-mode="tasks"] .task-rail-title {
   color: var(--text-primary);
-  font-size: var(--tl-font-ui);
+  font-size: var(--font-size-body);
   font-weight: 500;
   line-height: 1.4;
   overflow-wrap: anywhere;
@@ -222,7 +215,7 @@
   margin-top: var(--space-2);
   overflow: hidden;
   color: var(--text-secondary);
-  font-size: var(--tl-font-ui);
+  font-size: var(--font-size-footnote);
   line-height: 1.45;
   overflow-wrap: anywhere;
   -webkit-box-orient: vertical;
@@ -239,7 +232,7 @@
 .artifact-review-panel[data-artifact-review-mode="tasks"] .task-rail-meta {
   margin-top: var(--space-2);
   color: var(--text-muted);
-  font-size: var(--tl-font-meta);
+  font-size: var(--font-size-caption);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -275,7 +268,7 @@
 .artifact-review-panel[data-artifact-review-mode="tasks"] .task-rail-empty {
   padding: var(--space-7) var(--space-6);
   color: var(--text-secondary);
-  font-size: var(--tl-font-ui);
+  font-size: var(--font-size-body);
   line-height: 1.5;
   text-align: center;
 }
@@ -288,7 +281,7 @@
   padding: var(--space-3) var(--space-6);
   border-top: 1px solid var(--line);
   color: var(--text-decorative);
-  font-size: var(--tl-font-meta);
+  font-size: var(--font-size-caption);
 }
 
 .artifact-review-panel[data-artifact-review-mode="tasks"] .task-rail-row--flash {

@@ -19,14 +19,8 @@
   const WEEKDAY_LABELS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
   const MAX_STRIP_DOTS = 3;
 
-  function escapeHtml(value) {
-    return String(value || '')
-      .replaceAll('&', '&amp;')
-      .replaceAll('<', '&lt;')
-      .replaceAll('>', '&gt;')
-      .replaceAll('"', '&quot;')
-      .replaceAll("'", '&#39;');
-  }
+  const escapeHtml = ((typeof globalThis !== 'undefined' && globalThis.stringUtils)
+    || (typeof require === 'function' ? require('../shared/string-utils') : null)).escapeHtml;
 
   function resolveActionButton(actionButton) {
     if (typeof actionButton === 'function') {

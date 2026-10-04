@@ -1,5 +1,6 @@
 const path = require('path');
 const { EventEmitter } = require('events');
+const { preserveCorruptFile, readWithRetry } = require('./backend/corrupt-file-preserve');
 const { FileJsonStore } = require('./backend/file-json-store');
 const { normalizeString } = require('./backend/path-utils');
 const {
@@ -8,8 +9,9 @@ const {
   safeEmitLog,
 } = require('./backend/session-store-logging');
 const { FEATURE_OVERRIDE_KEYS, TOOL_SETTING_KEYS } = require('./feature-flags');
-const { normalizeLocalEngines } = require('./shell-config-engines');
+const { normalizeLastChatgptModel, normalizeLocalEngines } = require('./shell-config-engines');
 const { applySessionRuntimePatch } = require('./shell-config-session-runtime');
+const { mergeWorkspacePatch, workspaceStateView } = require('./shell-config-normalizers');
 const {
   CONFIG_VERSION,
   DEFAULT_CHAT_UI,
@@ -22,7 +24,6 @@ const {
   DEFAULT_SETUP,
   DEFAULT_SKILLS,
   DEFAULT_TELEMETRY,
-  DEFAULT_TIPS,
   DEFAULT_TOOLS,
   DEFAULT_WORKSPACE_STATE,
   FOLLOW_UP_DEFER_PRESETS,
@@ -49,7 +50,6 @@ const {
   normalizeSkillSettings,
   normalizeTelemetrySettings,
   normalizeState,
-  normalizeTipsSettings,
   normalizeToolsSettings,
   normalizeUiLanguage,
   normalizeUnattendedGuardMinutes,
@@ -83,6 +83,15 @@ const {
 } = require('./shell-config-compaction-tuning');
 const getAvailableFollowUpDeferPresets = (now = new Date(), scheduleOptions = {}) =>
   listAvailableFollowUpDeferPresets(now, FOLLOW_UP_DEFER_PRESETS, scheduleOptions);
+// Top-level chat UI scalars updateChatUiSettings owns: [key, normalize, changed reason].
+const CHAT_UI_TOP_LEVEL_FIELDS = [
+  ['use24HourTime', (value) => value === true, 'time_format_updated'],
+  ['defaultRunMode', normalizeRunMode, 'default_run_mode_updated'],
+  ['uiLanguage', normalizeUiLanguage, 'ui_language_updated'],
+  ['safetyMode', normalizeSafetyMode, 'safety_mode_updated'],
+  ['unattendedGuardMinutes', normalizeUnattendedGuardMinutes, 'unattended_guard_minutes_updated'],
+  ['autoApproveStreakCap', normalizeAutoApproveStreakCap, 'auto_approve_streak_cap_updated'],
+];
 
 function cloneSetupState(setup) {
   return {
@@ -146,9 +155,9 @@ class ShellConfigService extends EventEmitter {
     this._setTimeout = setTimeoutImpl;
     this._clearTimeout = clearTimeoutImpl;
     this._newerConfigVersion = 0;
-    this._blockedConfigWriteLoggedForVersion = 0;
-    const initialRawState = this.store.read({});
-    this._freshInstall = !Object.keys(initialRawState || {}).length;
+    this._blockedConfigWriteLoggedFor = '';
+    this._damagedConfigStillInPlace = false;
+    const initialRawState = this._readInitialState();
     const initialVersion = normalizeConfigVersion(initialRawState?.version);
     const workspaceIdeDropCounts = collectWorkspaceIdeDropCounts(
       initialRawState?.workspaceIde || initialRawState?.workspace_ide,
@@ -175,6 +184,35 @@ class ShellConfigService extends EventEmitter {
       this._logNewerConfigVersion('shell_config.newer_schema_detected');
     }
     this._seedWorkspaceRootFromEnvOnce();
+  }
+
+  // A missing file is a fresh install. A file that cannot be parsed, or is not
+  // a JSON object, is moved aside so the first save cannot replace its bytes;
+  // if the move fails the file stays and every config write is blocked. A file
+  // that could not be read at all (a read error code) may be healthy, so it is
+  // never moved: it stays and writes are blocked.
+  _readInitialState() {
+    const result = readWithRetry(this.store, {});
+    const isObject = Boolean(result.value) && typeof result.value === 'object'
+      && !Array.isArray(result.value);
+    if (!result.corrupted && (result.missing || isObject)) {
+      this._freshInstall = !Object.keys(result.value).length;
+      return result.value;
+    }
+    const outcome = result.corrupted && result.errorCode
+      ? { preserved: false, reason: 'unreadable' }
+      : preserveCorruptFile(this.store.filePath, { logger: this._logger });
+    this._damagedConfigStillInPlace = !outcome.preserved && outcome.reason !== 'missing';
+    this._freshInstall = false;
+    safeEmitLog(this._logger, 'ERROR', 'shell_config.corrupt_state_detected', {
+      fileName: path.basename(this.store.filePath),
+      preserved: outcome.preserved === true,
+      ...(outcome.preserved
+        ? { preservedName: path.basename(outcome.preservedPath) }
+        : { reason: outcome.reason }),
+      errorCode: result.errorCode || (result.corrupted ? 'invalid_json' : 'not_an_object'),
+    });
+    return {};
   }
 
   _resolveValidWorkspaceSessionIds() {
@@ -216,12 +254,19 @@ class ShellConfigService extends EventEmitter {
   }
 
   _shouldBlockConfigWrite() {
-    if (!this._hasNewerConfigVersion()) {
+    const reason = this._damagedConfigStillInPlace ? 'corrupt' : this._hasNewerConfigVersion() ? 'newer' : '';
+    if (!reason) {
       return false;
     }
-    if (this._blockedConfigWriteLoggedForVersion !== this._newerConfigVersion) {
-      this._blockedConfigWriteLoggedForVersion = this._newerConfigVersion;
-      this._logNewerConfigVersion('shell_config.newer_schema_write_blocked');
+    if (this._blockedConfigWriteLoggedFor !== reason) {
+      this._blockedConfigWriteLoggedFor = reason;
+      if (reason === 'corrupt') {
+        safeEmitLog(this._logger, 'ERROR', 'shell_config.corrupt_write_blocked', {
+          fileName: path.basename(this.store.filePath),
+        });
+      } else {
+        this._logNewerConfigVersion('shell_config.newer_schema_write_blocked');
+      }
     }
     return true;
   }
@@ -310,10 +355,7 @@ class ShellConfigService extends EventEmitter {
   }
 
   getWorkspaceState() {
-    return {
-      activeSessionId: this.state.workspace.activeSessionId,
-      openSessionIds: [...this.state.workspace.openSessionIds],
-    };
+    return workspaceStateView(this.state.workspace);
   }
 
   getChatUiState() {
@@ -331,9 +373,7 @@ class ShellConfigService extends EventEmitter {
   }
 
   getWindowUiState() {
-    return {
-      ...this.state.windowUi,
-    };
+    return normalizeWindowUiSettings(this.state.windowUi);
   }
 
   getHomeConfig() {
@@ -357,7 +397,7 @@ class ShellConfigService extends EventEmitter {
     const nextHome = normalizeHomeConfig({
       ...current,
       ...source,
-      ...Object.fromEntries(['weather', 'widgets', 'scratchpad', 'calendar', 'layout'].map(mergeHomeSection)),
+      ...Object.fromEntries(['widgets', 'scratchpad', 'calendar', 'layout'].map(mergeHomeSection)),
     });
     if (JSON.stringify(nextHome) === JSON.stringify(current)) {
       return this.getHomeConfig();
@@ -394,10 +434,14 @@ class ShellConfigService extends EventEmitter {
       ...this.state.setup,
       ...source,
       updatedAt: normalizeString(source.updatedAt ?? source.updated_at) || nowIso,
+      // Callers send snake_case step keys (workspace_root); stored steps are
+      // camelCase, which normalizeSetupSteps reads first, so camel-case the patch.
       steps: {
         ...this.state.setup.steps,
         ...(source.steps && typeof source.steps === 'object' && !Array.isArray(source.steps)
-          ? source.steps
+          ? Object.fromEntries(Object.entries(source.steps).map(([key, value]) => [
+            key.replace(/_([a-z])/g, (_match, letter) => letter.toUpperCase()), value,
+          ]))
           : {}),
       },
     });
@@ -582,42 +626,22 @@ class ShellConfigService extends EventEmitter {
     );
   }
 
-  updateTipsSettings(patch = {}) {
-    const source = patch && typeof patch === 'object' && !Array.isArray(patch) ? patch : {};
-    if (Object.prototype.hasOwnProperty.call(source, 'enabled')) {
-      this.updateHomeConfig({ showContextualTips: source.enabled === true });
-    }
-    const nextPatch = { ...source };
-    delete nextPatch.enabled;
-    return this._updateNormalizedSection(nextPatch, 'tips', normalizeTipsSettings, 'tips_settings_updated');
-  }
-
+  // One whole-file write per patch. `reasons` names every sub-change; `reason`
+  // stays the specific one when only one applied (listeners key off it).
   updateChatUiSettings(patch = {}) {
-    if (Object.prototype.hasOwnProperty.call(patch || {}, 'use24HourTime')) {
-      const use24HourTime = patch.use24HourTime === true;
-      if (use24HourTime !== this.state.use24HourTime) {
-        this._writeState({ ...this.state, use24HourTime }, 'time_format_updated');
-      }
+    const source = patch && typeof patch === 'object' && !Array.isArray(patch) ? patch : {};
+    const nextState = { ...this.state };
+    const reasons = [];
+    for (const [key, normalize, reason] of CHAT_UI_TOP_LEVEL_FIELDS) {
+      if (!Object.prototype.hasOwnProperty.call(source, key)) continue;
+      nextState[key] = normalize(source[key]);
+      if (nextState[key] !== this.state[key]) reasons.push(reason);
     }
-    if (Object.prototype.hasOwnProperty.call(patch || {}, 'defaultRunMode')) {
-      this.updateDefaultRunMode(patch.defaultRunMode);
+    nextState.chatUi = normalizeChatUiSettings({ ...this.state.chatUi, ...source });
+    if (JSON.stringify(nextState.chatUi) !== JSON.stringify(this.state.chatUi)) reasons.push('chat_ui_settings_updated');
+    if (reasons.length) {
+      this._writeState(nextState, reasons.length === 1 ? reasons[0] : 'chat_ui_settings_updated', { reasons });
     }
-    if (Object.prototype.hasOwnProperty.call(patch || {}, 'uiLanguage')) {
-      this.updateUiLanguage(patch.uiLanguage);
-    }
-    if (Object.prototype.hasOwnProperty.call(patch || {}, 'safetyMode')) {
-      this.updateSafetyMode(patch.safetyMode);
-    }
-    if (Object.prototype.hasOwnProperty.call(patch || {}, 'unattendedGuardMinutes')) {
-      this.updateUnattendedGuardMinutes(patch.unattendedGuardMinutes);
-    }
-    if (Object.prototype.hasOwnProperty.call(patch || {}, 'autoApproveStreakCap')) this.updateAutoApproveStreakCap(patch.autoApproveStreakCap);
-    this._updateNormalizedSection(
-      patch,
-      'chatUi',
-      normalizeChatUiSettings,
-      'chat_ui_settings_updated'
-    );
     return this.getChatUiState();
   }
 
@@ -628,47 +652,6 @@ class ShellConfigService extends EventEmitter {
       normalizeWindowUiSettings,
       'window_ui_settings_updated'
     ).windowUi;
-  }
-
-  incrementTipsSessionCount() {
-    return this._writeState(
-      {
-        ...this.state,
-        tips: {
-          ...this.state.tips,
-          sessionCount: this.state.tips.sessionCount + 1,
-        },
-      },
-      'tips_session_started'
-    );
-  }
-
-  recordTipShown(tipId, sessionCount = this.state.tips.sessionCount) {
-    const normalizedTipId = normalizeString(tipId);
-    if (!normalizedTipId) {
-      return this.getState();
-    }
-    const normalizedSessionCount =
-      Number.isFinite(Number(sessionCount)) && Number(sessionCount) >= 0
-        ? Math.floor(Number(sessionCount))
-        : this.state.tips.sessionCount;
-    if (this.state.tips.historyByTipId[normalizedTipId] === normalizedSessionCount) {
-      return this.getState();
-    }
-    return this._writeState(
-      {
-        ...this.state,
-        tips: {
-          ...this.state.tips,
-          historyByTipId: {
-            ...this.state.tips.historyByTipId,
-            [normalizedTipId]: normalizedSessionCount,
-          },
-        },
-      },
-      'tip_shown',
-      { tipId: normalizedTipId }
-    );
   }
 
   setWorkspaceSessionIdProvider(getValidWorkspaceSessionIds) {
@@ -685,10 +668,7 @@ class ShellConfigService extends EventEmitter {
     const source = patch && typeof patch === 'object' && !Array.isArray(patch) ? patch : {};
     const normalized = this._normalizeState({
       ...this.state,
-      workspace: {
-        ...this.state.workspace,
-        ...source,
-      },
+      workspace: mergeWorkspacePatch(this.state.workspace, source),
     });
     if (JSON.stringify(normalized.workspace) === JSON.stringify(this.state.workspace)) {
       return this.getWorkspaceState();
@@ -898,39 +878,35 @@ class ShellConfigService extends EventEmitter {
     );
   }
 
-  updateDefaultRunMode(value) {
-    const defaultRunMode = normalizeRunMode(value);
-    if (defaultRunMode === this.state.defaultRunMode) {
+  // Written by a successful ChatGPT model load only; startup reads it back.
+  updateLastChatgptModel(value) {
+    const lastChatgptModel = normalizeLastChatgptModel(value);
+    if (!lastChatgptModel || lastChatgptModel === this.state.lastChatgptModel) {
       return this.getState();
     }
-    return this._writeState(
-      { ...this.state, defaultRunMode },
-      'default_run_mode_updated'
-    );
+    return this._writeState({ ...this.state, lastChatgptModel }, 'last_chatgpt_model_updated');
+  }
+
+  // Cloud models group: the user's "Show ChatGPT models in Composer" choice.
+  updateChatgptModelsEnabled(value) {
+    if (typeof value !== 'boolean' || value === this.state.chatgptModelsEnabled) {
+      return this.getState();
+    }
+    return this._writeState({ ...this.state, chatgptModelsEnabled: value },
+      'chatgpt_models_enabled_updated');
+  }
+
+  updateDefaultRunMode(value) {
+    this.updateChatUiSettings({ defaultRunMode: value });
+    return this.getState();
   }
 
   updateUiLanguage(value) {
-    const uiLanguage = normalizeUiLanguage(value);
-    if (uiLanguage === this.state.uiLanguage) return this.getState();
-    return this._writeState({ ...this.state, uiLanguage }, 'ui_language_updated');
+    this.updateChatUiSettings({ uiLanguage: value });
+    return this.getState();
   }
 
-  updateSafetyMode(value) {
-    const safetyMode = normalizeSafetyMode(value);
-    if (safetyMode === this.state.safetyMode) return this.getState();
-    return this._writeState({ ...this.state, safetyMode }, 'safety_mode_updated');
-  }
-
-  updateUnattendedGuardMinutes(value) {
-    const unattendedGuardMinutes = normalizeUnattendedGuardMinutes(value);
-    if (unattendedGuardMinutes === this.state.unattendedGuardMinutes) return this.getState();
-    return this._writeState({ ...this.state, unattendedGuardMinutes }, 'unattended_guard_minutes_updated');
-  }
-  updateAutoApproveStreakCap(value) {
-    const autoApproveStreakCap = normalizeAutoApproveStreakCap(value);
-    if (autoApproveStreakCap === this.state.autoApproveStreakCap) return this.getState();
-    return this._writeState({ ...this.state, autoApproveStreakCap }, 'auto_approve_streak_cap_updated');
-  }
+  getPreferredEngineType() { return this.state.preferredEngineType; }
   saveSetupEndpoint({ engineType, port, apiUrl } = {}) {
     const preferredEngineType = normalizePreferredEngineType(engineType);
     if (!['ollama', 'vllm', 'openai-compatible'].includes(preferredEngineType)) {
@@ -983,7 +959,6 @@ module.exports = {
   DEFAULT_SETUP,
   DEFAULT_SKILLS,
   DEFAULT_TELEMETRY,
-  DEFAULT_TIPS,
   DEFAULT_TOOLS,
   DEFAULT_WORKSPACE_STATE,
   MAX_FOLLOW_UP_BODY_CHARS,
@@ -1006,7 +981,6 @@ module.exports = {
   normalizeSkillSettings,
   normalizeTelemetrySettings,
   normalizeState,
-  normalizeTipsSettings,
   normalizeToolsSettings,
   normalizeWatcherGlobs,
   normalizeWebSearchSettings,

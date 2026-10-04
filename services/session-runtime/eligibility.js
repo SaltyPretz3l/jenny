@@ -91,6 +91,9 @@ class RuntimeEligibilityCoordinator {
 
   forget(workId) { return this.waits.delete(workId); }
 
+  // True while this live wait will be resumed by the coordinator itself.
+  isTracked(workId) { return this.waits.has(workId); }
+
   forgetStream(streamId) {
     const id = String(streamId || '').trim();
     let cleared = 0;

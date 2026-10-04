@@ -120,8 +120,6 @@ test('Settings Memory category owns the memory admin surface', async () => {
     assert.equal(memorySettings.querySelector('[aria-labelledby="approvedMemoryHeading"]').hasAttribute('data-settings-field'), false);
     assert.equal(memorySettings.querySelector('h3')?.id, 'memoryPageHeading');
     assert.equal(memorySettings.querySelectorAll('h5').length, 0);
-    assert.equal(window.document.querySelector('#approvedMemoryList > .memory-page-empty')?.getAttribute('role'), 'listitem');
-    assert.equal(window.document.querySelector('#pendingMemoryList > .memory-page-empty')?.getAttribute('role'), 'listitem');
   } finally {
     await app.dispose();
   }
@@ -605,6 +603,67 @@ test('failed first toggle restores the hydrated durable preference', async () =>
     ));
     await waitForUi(app.window, 60);
     assert.equal(app.window.__rendererState.features.memory.captureSuggestions, false);
+  } finally {
+    await app.dispose();
+  }
+});
+
+test('capture switch writes once through the shared binding and adopts only the echoed preference', async () => {
+  const calls = [];
+  let release;
+  let mode = 'echo';
+  const app = await loadRendererApp({
+    shell: {
+      features: {
+        async updateSettings(patch) {
+          calls.push(JSON.parse(JSON.stringify(patch)));
+          if (mode === 'hold') await new Promise((resolve) => { release = resolve; });
+          if (mode === 'reject') throw new Error('disk unavailable');
+          if (mode === 'stale') return { memory: { captureSuggestions: !patch.memory.captureSuggestions } };
+          return { memory: { captureSuggestions: patch.memory.captureSuggestions } };
+        },
+      },
+    },
+  });
+  const doc = app.window.document;
+  const track = () => doc.querySelector('[data-inv-toggle="memoryCaptureSuggestions"]');
+  const preference = () => app.window.__rendererState.features.memory.captureSuggestions;
+  const mirror = () => app.window.localStorage.getItem('jenny.memory.captureSuggestions');
+  try {
+    await openMemorySettings(app.window, 40);
+    assert.equal(track().getAttribute('aria-checked'), 'true');
+
+    mode = 'hold';
+    track().click();
+    await waitForUi(app.window, 20);
+    assert.equal(calls.length, 1);
+    assert.deepEqual(calls[0], { memory: { captureSuggestions: false } });
+    assert.equal(preference(), true, 'the preference waits for the acknowledgement');
+    assert.equal(mirror(), null, 'storage never carries the unacknowledged value');
+    assert.equal(track().disabled, true, 'the switch is busy while the write is in flight');
+    mode = 'echo';
+    release();
+    await waitForUi(app.window, 40);
+    assert.equal(calls.length, 1, 'one toggle is one write');
+    assert.equal(preference(), false);
+    assert.equal(track().getAttribute('aria-checked'), 'false');
+    assert.equal(track().disabled, false);
+    assert.equal(mirror(), null);
+
+    for (const failure of ['stale', 'reject', 'missing']) {
+      const before = calls.length;
+      mode = failure;
+      const restoreBridge = app.window.jennyShell.features.updateSettings;
+      if (failure === 'missing') delete app.window.jennyShell.features.updateSettings;
+      track().click();
+      await waitForUi(app.window, 40);
+      if (failure === 'missing') app.window.jennyShell.features.updateSettings = restoreBridge;
+      assert.equal(calls.length, before + (failure === 'missing' ? 0 : 1), failure);
+      assert.equal(preference(), false, `${failure}: the acknowledged preference stands`);
+      assert.equal(track().getAttribute('aria-checked'), 'false', `${failure}: the switch shows the acknowledged preference`);
+      assert.equal(mirror(), null, `${failure}: storage keeps the acknowledged state`);
+      assert.equal(track().disabled, false, `${failure}: the switch is usable again`);
+    }
   } finally {
     await app.dispose();
   }

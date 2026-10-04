@@ -317,8 +317,8 @@ def test_pull_deadline_timer_is_scheduled_against_the_absolute_deadline(
     clock[0] = 400.0
     deadline.start(_ClosableResponse())
     try:
-        assert deadline._timer is not None  # noqa: SLF001
-        assert deadline._timer.interval == pytest.approx(300.0), (  # noqa: SLF001
+        assert deadline._timer is not None
+        assert deadline._timer.interval == pytest.approx(300.0), (
             "the timer must fire at the absolute deadline, not restart the budget"
         )
     finally:

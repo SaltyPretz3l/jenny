@@ -224,7 +224,7 @@ def test_runtime_overlay_stays_silent_when_a_block_already_rendered() -> None:
 def test_runtime_overlay_keeps_skills_overlay_while_suppressing_personality() -> None:
     class SkillsBuilder:
         @staticmethod
-        def build_skills_system_message(*, tool_statuses=None) -> str:  # noqa: ANN001
+        def build_skills_system_message(*, tool_statuses=None) -> str:
             del tool_statuses
             return "SKILLS-OVERLAY-MARKER"
 

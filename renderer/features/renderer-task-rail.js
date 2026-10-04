@@ -107,6 +107,12 @@
         badgeEl.dataset.taskCount = String(count);
         badgeEl.hidden = count === 0;
       }
+      // The badge is visual only: the name and tooltip carry the count too.
+      if (toggleEl) {
+        const name = count > 0 ? jt('tasks.rail.toggleNameOpen', 'Tasks, {count} open', { count }) : jt('artifactPanelV2Render.tasks', 'Tasks');
+        toggleEl.setAttribute('aria-label', name);
+        toggleEl.setAttribute('title', name);
+      }
       syncToggle();
       return count;
     }
@@ -309,10 +315,15 @@
           action: () => openOrStartSession(row),
         },
         { label: jt('common.edit', 'Edit'), action: () => { ensureUiState().editTaskId = row.followUpId; rerender(); } },
-        { label: jt('tasks.rail.deferUntilTomorrow', 'Defer until tomorrow'), action: () => runMutation(row.followUpId, () => companionApi.deferFollowUp(row.followUpId, 'tomorrow')) },
       ];
+      // The service rejects defer on resolved/archived loops; a done task reopens instead.
       if (row.status === 'resolved') {
-        items.push({ label: jt('tasks.rail.archive', 'Archive'), action: () => runMutation(row.followUpId, () => companionApi.archiveFollowUp(row.followUpId)) });
+        items.push(
+          { label: jt('companion.actions.reopen', 'Reopen'), action: () => runMutation(row.followUpId, () => companionApi.activateFollowUp(row.followUpId)) },
+          { label: jt('tasks.rail.archive', 'Archive'), action: () => runMutation(row.followUpId, () => companionApi.archiveFollowUp(row.followUpId)) },
+        );
+      } else if (row.status !== 'archived') {
+        items.push({ label: jt('tasks.rail.deferUntilTomorrow', 'Defer until tomorrow'), action: () => runMutation(row.followUpId, () => companionApi.deferFollowUp(row.followUpId, 'tomorrow')) });
       }
       items.push({ separator: true }, {
         label: jt('common.delete', 'Delete'), danger: true,
@@ -388,7 +399,7 @@
       mount.innerHTML = inventory.actionButton({
         id: 'chatTimelineTasksToggle', domId: 'chatTimelineTasksToggle', plain: true,
         className: 'chat-timeline-utility-button chat-timeline-tasks-toggle',
-        ariaLabel: jt('tasks.rail.toggleLabel', 'Toggle tasks panel'), title: jt('tasks.rail.toggleTitle', 'Show or hide the Tasks panel'), ariaPressed: false,
+        ariaLabel: jt('artifactPanelV2Render.tasks', 'Tasks'), title: jt('artifactPanelV2Render.tasks', 'Tasks'), ariaPressed: false,
         trustedHtml: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M6.25 4h7M6.25 8h7M6.25 12h7"/><path d="m2.5 4 .75.75L4.75 3.25M2.5 8l.75.75L4.75 7.25M2.5 12l.75.75 1.5-1.5"/></svg><span class="chat-timeline-utility-count" data-task-count="0" hidden>0</span>',
       });
       toggleEl = mount.firstElementChild;

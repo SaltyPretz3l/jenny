@@ -58,14 +58,12 @@ function harness(opts) {
   const ide = { activeTabPath: 'src/foo.ts', mode: 'exploded' };
   const revealed = [];
   const renders = { count: 0 };
-  const flags = { workspace_exploded_view: o.flagOn !== false };
   global.rendererIdeExplodedGraph = {
     buildExplodedGraph: async () => (typeof o.graph === 'function' ? o.graph() : (o.graph || sampleGraph())),
   };
 
   const controller = createIdeExplodeController({
     getDom: () => ({ ideExplodedHost: hostEl, ideViewModeBar: barEl }),
-    getFeatureFlags: () => flags,
     getIde: () => ide,
     ideStateUtils: {
       getTabViewMode: (s, p) => (p === s.activeTabPath ? s.mode : 'code'),
@@ -85,19 +83,6 @@ function harness(opts) {
 
   return { dom, doc, hostEl, barEl, ide, revealed, renders, controller };
 }
-
-test('flag-off: syncVisibility is byte-clean (no host DOM, toggle hidden)', async (t) => {
-  const h = harness({ flagOn: false });
-  t.after(() => h.controller.dispose());
-
-  h.controller.syncVisibility('src/foo.ts');
-  await tick();
-
-  assert.ok(h.hostEl.classList.contains('hidden'), 'host stays hidden');
-  assert.equal(h.hostEl.children.length, 0, 'no DOM mounted under host');
-  assert.ok(h.barEl.classList.contains('hidden'), 'toggle bar hidden');
-  assert.equal(h.barEl.children.length, 0, 'no toggle segment DOM built');
-});
 
 test('flag-on + exploded: paints kind cards + a call edge', async (t) => {
   const h = harness({});
@@ -230,15 +215,6 @@ test('toggleActiveTab flips mode and re-renders (flag-on, TS/JS active tab)', as
   h.controller.toggleActiveTab();
   assert.equal(h.ide.mode, 'exploded', 'mode flipped back code -> exploded');
   assert.equal(h.renders.count, 2, 'requestRender fired again');
-});
-
-test('toggleActiveTab is a no-op when the flag is off', async (t) => {
-  const h = harness({ flagOn: false });
-  t.after(() => h.controller.dispose());
-
-  h.controller.toggleActiveTab();
-  assert.equal(h.ide.mode, 'exploded', 'mode untouched');
-  assert.equal(h.renders.count, 0, 'no render requested');
 });
 
 test('toggleActiveTab is a no-op for a non-TS/JS active tab', async (t) => {

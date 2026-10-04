@@ -48,11 +48,9 @@ function createHarness(t, {
     <label class="composer-select-shell" for="composerEffortSelect"><select id="composerEffortSelect" data-reasoning-supported="true">
       <option value="default">Default</option>
     </select></label>
-    <button id="composerSettingsButton"></button>
     <span id="composerModelDisabledReason"></span>
     <span id="composerEffortDisabledReason"></span>
-    <span id="composerSettingsDisabledReason"></span>
-    <div id="composerModeChips"><div id="composerModeChipsAnnouncer"></div><span id="composerRunModeHint"></span></div>
+    <div id="composerModeChips"><div id="composerModeChipsAnnouncer"></div></div>
     <div id="composerRunModeSlot"><button id="composerRunModeChip"></button></div>
   </body>`);
   const previousWindow = global.window;
@@ -77,7 +75,10 @@ function createHarness(t, {
     composerRunMode: 'composerRunMode',
     composerModelRuntimeMirror: 'composerModelRuntimeMirror',
   };
-  const busyScopes = new Set(busyActivityScopes);
+  // Split view W3-1: a model/effort save is keyed by the session it saves
+  // (activity-utils sessionScope); the harness saves on session-1.
+  const SESSION_KEYED_SCOPES = new Set(['composerPreferredModel', 'composerReasoningEffort']);
+  const busyScopes = new Set(busyActivityScopes.map((scope) => (SESSION_KEYED_SCOPES.has(scope) ? `${scope}:session-1` : scope)));
   const calls = { popoverClosed: 0, snapshotScopes: [] };
   const state = {
     currentSessionId: 'session-1',
@@ -104,7 +105,6 @@ function createHarness(t, {
       stopStreamButton: byId('stopStreamButton'),
       composerModelSelect: byId('composerModelSelect'),
       composerEffortSelect: byId('composerEffortSelect'),
-      composerSettingsButton: byId('composerSettingsButton'),
     },
     callbacks: {
       getCurrentRuntimePreferences: () => ({
@@ -166,7 +166,6 @@ for (const phase of ['sidecar_spawned', 'model_acquiring', 'model_loading', 'sta
     pipeline.renderComposerState();
     assertUsable(document, 'composerModelSelect', 'model select');
     assertUsable(document, 'composerEffortSelect', 'effort select');
-    assertUsable(document, 'composerSettingsButton', 'settings gear');
     assert.equal(
       document.getElementById('composerModelDisabledReason').textContent, '',
       'no misleading offline copy while the model prepares'
@@ -187,7 +186,6 @@ for (const phase of ['stopped', 'stopping', 'error', 'no_such_phase']) {
     pipeline.renderComposerState();
     assertInertLocked(document, 'composerModelSelect', 'model select');
     assertInertLocked(document, 'composerEffortSelect', 'effort select');
-    assertInertLocked(document, 'composerSettingsButton', 'settings gear');
     assert.match(
       document.getElementById('composerModelDisabledReason').textContent,
       /backend is offline/, 'offline reason paired'
@@ -266,10 +264,10 @@ for (const [runMode, expectedHint] of [
   ['auto', 'Tools run without asking. Python, blocked commands, and explicit denies still prompt.'],
   ['plan', 'Read-only: Jenny plans first and presents it before acting.'],
 ]) {
-  test(`syncRunModeChip renders the exact ${runMode} hint copy`, (t) => {
+  test(`syncRunModeChip puts the exact ${runMode} hint copy in the chip title`, (t) => {
     const { document, pipeline } = createHarness(t, { runMode });
     pipeline.renderComposerState();
-    assert.equal(document.getElementById('composerRunModeHint').textContent, expectedHint);
+    assert.equal(document.getElementById('composerRunModeChip').getAttribute('title').endsWith(` · ${expectedHint}`), true);
   });
 }
 

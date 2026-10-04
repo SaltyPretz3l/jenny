@@ -108,8 +108,30 @@
     try { return require(modulePath); } catch (_error) { return null; }
   }
 
+  // A bare or partial list marker ("-", "2", "2.") is the start of an item
+  // whose space has not streamed yet; treating it as a continuation keeps the
+  // boundary pending instead of committing a loose list as two tight ones.
   function isContinuationLine(line) {
-    return /^(?:[ \t]+|[-+*][ \t]+|\d+[.)][ \t]+|>|\|)/.test(String(line || ''));
+    return /^(?:[ \t]+|[-+*](?:[ \t]+|$)|\d+(?:[.)](?:[ \t]+|$)|$)|>|\|)/.test(String(line || ''));
+  }
+
+  function firstNonblankLine(text) {
+    return /^(?:[ \t]*\r?\n)*([^\n]*)/.exec(text)?.[1] || '';
+  }
+
+  // A tail rewrite keeps the settled prefix only while the line that decided
+  // its boundary keeps its container kind: findStablePrefixEnd committed the
+  // boundary because the first non-blank line after it did not continue the
+  // prefix's list, so a rewrite that turns that line into a continuation
+  // would leave prefix units whose Markdown depends on the new tail.
+  function tailRewriteKeepsPrefix(previousState, source, options) {
+    if (options?.allowTailRewrite !== true || previousState.activeConstruct || previousState.stablePrefixEnd === 0) {
+      return false;
+    }
+    const prefixEnd = previousState.stablePrefixEnd;
+    if (!source.startsWith(previousState.source.slice(0, prefixEnd))) return false;
+    return !isContinuationLine(firstNonblankLine(source.slice(prefixEnd)))
+      || isContinuationLine(firstNonblankLine(previousState.source.slice(prefixEnd)));
   }
 
   function hasStableGuardDependencies(dependencies) {
@@ -691,7 +713,9 @@
     const previousState = stateFromOptions(options, previousUnits);
     if (!previousState) return fullRender(source, previousUnits, FALLBACK_REASONS.INITIAL, deps);
     if (!isValidState(previousState)) return fullRender(source, previousUnits, FALLBACK_REASONS.INVALID_STATE, deps);
-    if (!source.startsWith(previousState.source)) return fullRender(source, previousUnits, FALLBACK_REASONS.SOURCE_REPLACED, deps);
+    if (!source.startsWith(previousState.source) && !tailRewriteKeepsPrefix(previousState, source, options)) {
+      return fullRender(source, previousUnits, FALLBACK_REASONS.SOURCE_REPLACED, deps);
+    }
     if (!hasStableGuardDependencies(deps)) return fullRender(source, previousUnits, FALLBACK_REASONS.GUARD_UNAVAILABLE, deps);
     let state = previousState;
     if (state.activeConstruct) {

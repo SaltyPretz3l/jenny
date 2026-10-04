@@ -15,7 +15,7 @@
     const viewportWidth = Number(windowRef.innerWidth || 0) || 0;
     const top = Math.max(buttonRect.top - popoverRect.height - 10, 16);
     const left = Math.min(
-      Math.max(buttonRect.right - popoverRect.width, 16),
+      Math.max(buttonRect.left, 16),
       Math.max(viewportWidth - popoverRect.width - 16, 16)
     );
     popover.style.top = `${top}px`;
@@ -46,10 +46,8 @@
     const state = deps?.state || {};
     const windowRef = deps?.windowRef || (typeof globalThis !== 'undefined' ? globalThis : {});
     const {
-      composerSettingsPopover,
-      composerSettingsButton,
-      composerChatZoomSelect,
-      composerChatZoomStatus,
+      composerAttachMenu,
+      composerAttachShortcut,
       composerCommandPopover,
       composerCommandPopoverList,
       composerTerminalShortcut,
@@ -57,9 +55,6 @@
     const {
       listSlashCommands = () => [],
       escapeHtml = (value) => String(value || ''),
-      getChatZoomOptions = () => [],
-      normalizeChatZoomPercent = (value) => Number(value) || 100,
-      buildSelectOptionMarkup = () => '',
     } = deps?.callbacks || {};
     let commandFingerprint = '';
     let commandPositionFrame = 0;
@@ -67,21 +62,13 @@
 
     function renderComposerPopover() {
       const open = Boolean(state.ui.composerPopoverOpen);
-      if (!composerSettingsPopover || !composerSettingsButton) return;
-      composerSettingsPopover.classList.toggle('hidden', !open);
-      composerSettingsButton.setAttribute('aria-expanded', open ? 'true' : 'false');
+      if (!composerAttachMenu || !composerAttachShortcut) return;
+      composerAttachMenu.classList.toggle('hidden', !open);
+      composerAttachShortcut.setAttribute('aria-expanded', open ? 'true' : 'false');
       if (!open) {
         return;
       }
-      const chatZoomPercent = normalizeChatZoomPercent(state.ui.chatZoomPercent);
-      if (composerChatZoomSelect) {
-        composerChatZoomSelect.innerHTML = buildSelectOptionMarkup(getChatZoomOptions(), String(chatZoomPercent));
-        composerChatZoomSelect.value = String(chatZoomPercent);
-      }
-      if (composerChatZoomStatus) {
-        composerChatZoomStatus.textContent = jt('settings.shell.chatZoomInstructions', '{percent}% · Ctrl + wheel adjusts · Ctrl+0 resets.', { percent: chatZoomPercent });
-      }
-      positionPopover(composerSettingsButton, composerSettingsPopover, windowRef);
+      positionPopover(composerAttachShortcut, composerAttachMenu, windowRef);
     }
 
     function positionCommandPopover() {

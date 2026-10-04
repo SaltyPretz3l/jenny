@@ -106,7 +106,6 @@ test('chat.stream_reset reason=nudge_retry publishes the id the next persisted s
 
 test('chat.stream_reset reason=nudge_retry publishes the surviving index after earlier tool_continuation segments', () => {
   const ctx = makeSegmentAwareCtx();
-  ctx.service.featureFlags.response_loop_display_v2 = true;
 
   // Iteration one persists a tool-boundary commentary segment => index 0 is
   // consumed and textSegmentIndex advances to 1.
@@ -135,7 +134,6 @@ test('chat.stream_reset reason=nudge_retry publishes the surviving index after e
 
 test('chat.stream_reset reason=tool_continuation publishes the same id on the preserve path', () => {
   const ctx = makeSegmentAwareCtx();
-  ctx.service.featureFlags.response_loop_display_v2 = true;
 
   ctx.currentSegmentText = 'pre-tool commentary';
   ctx.persistCurrentTextSegment({ atToolBoundary: true });
@@ -162,8 +160,7 @@ test('chat.stream_reset reason=tool_continuation publishes the same id on the pr
 });
 
 // ---------------------------------------------------------------------------
-// `reason` alone does not tell the renderer what a reset erased: the
-// tool_continuation preserve is gated on response_loop_display_v2, and
+// `reason` alone does not tell the renderer what a reset erased:
 // model_winddown keeps its persisted segments while erasing the unsaved live
 // slice. Main publishes its own decision as `preserve_prior_segments` and
 // `discard_scope`; these tests pin the published labels against what the
@@ -195,10 +192,9 @@ test('chat.stream_reset reason=nudge_retry labels itself preserve=false / discar
   );
 });
 
-test('chat.stream_reset reason=tool_continuation labels itself by the display flag, not by the reason', () => {
-  // Flag ON: the documented preserve path — nothing erased.
+test('chat.stream_reset reason=tool_continuation labels itself preserve=true / discard_scope=none', () => {
+  // The documented preserve path — nothing erased.
   const preserving = makeSegmentAwareCtx();
-  preserving.service.featureFlags.response_loop_display_v2 = true;
   preserving.currentSegmentText = 'pre-tool commentary';
   preserving.persistCurrentTextSegment({ atToolBoundary: true });
 
@@ -211,19 +207,6 @@ test('chat.stream_reset reason=tool_continuation labels itself by the display fl
     'the persisted segment row survives',
   );
   assert.equal(discardScopeCalls(preserving).length, 0, 'no captured event is discarded');
-
-  // Flag OFF: the SAME reason discards everything.
-  const discarding = makeSegmentAwareCtx();
-  discarding.service.featureFlags.response_loop_display_v2 = false;
-  discarding.currentSegmentText = 'pre-tool commentary';
-  discarding.persistCurrentTextSegment({ atToolBoundary: true });
-
-  const discardedEmit = resetAndCapturePayload(discarding, 'tool_continuation');
-  assert.equal(discardedEmit.preserve_prior_segments, false);
-  assert.equal(discardedEmit.discard_scope, 'all');
-  assert.deepEqual(discarding.service.sessionStore.messages, [], 'the persisted segment row is deleted');
-  assert.equal(discardScopeCalls(discarding).length, 1);
-  assert.equal(discardScopeCalls(discarding)[0].options, undefined, 'unscoped discard');
 });
 
 test('chat.stream_reset reason=model_winddown labels itself preserve=true / discard_scope=live_slice', () => {

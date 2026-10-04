@@ -92,18 +92,25 @@
         return cloneSnapshot(entry);
       }
 
+      // One line per hidden stretch and per stream: this runs once per delta,
+      // and timeline.catchup_started reports the count when the view returns.
+      const startsHiddenStretch = !entry.dirtyWhileHidden
+        || Boolean(streamId && streamId !== entry.lastHiddenStreamId);
       entry.dirtyWhileHidden = true;
       entry.hiddenRenderableEventCount += 1;
       entry.lastHiddenStreamId = streamId || entry.lastHiddenStreamId;
       entry.lastHiddenEventType = eventType;
       entry.lastHiddenAt = nowMs();
 
-      log('DEBUG', 'timeline.hidden_stream_dirty', {
-        sessionId: entry.sessionId,
-        streamId: entry.lastHiddenStreamId,
-        eventType,
-        hiddenRenderableEventCount: entry.hiddenRenderableEventCount,
-      });
+      if (startsHiddenStretch) {
+        log('DEBUG', 'timeline.hidden_stream_dirty', {
+          sessionId: entry.sessionId,
+          streamId: entry.lastHiddenStreamId,
+          eventType,
+          activeView: normalizeId(details.activeView),
+          hiddenRenderableEventCount: entry.hiddenRenderableEventCount,
+        });
+      }
       return cloneSnapshot(entry);
     }
 

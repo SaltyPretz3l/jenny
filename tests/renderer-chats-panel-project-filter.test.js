@@ -34,7 +34,7 @@ test('the view model filters by project id, treats a missing project_id as Gener
   const ascend = buildChatsViewModel({ sessions: SESSIONS, scope: 'recent', projectId: 'project_ascend' });
   assert.deepEqual(ascend.visibleSessions.map((row) => row.id), ['s1']);
   assert.equal(ascend.projectTotal, 2, 'the project total counts archived chats too');
-  assert.equal(ascend.recentTotal, 3, 'the Recent / Archived counts stay unfiltered');
+  assert.equal(ascend.recentTotal, 1, 'the Recent / Archived counts follow the filter (D15)');
   assert.equal(ascend.archivedTotal, 1);
   assert.ok(ascend.groups.length >= 1, 'date groups survive the filter');
 
@@ -99,7 +99,7 @@ test('the filter button reads "All projects", opens the shared menu with the cur
   assert.ok(button, 'the filter renders');
   assert.ok(doc.querySelector('#chatsProjectRow > [data-chats-project-filter]'), 'the filter sits on its own row above the tabs, not inside the tab slot');
   assert.equal(doc.querySelector('#chatsScopeSlot [data-chats-project-filter]'), null);
-  assert.equal(button.getAttribute('aria-haspopup'), 'listbox');
+  assert.equal(button.getAttribute('aria-haspopup'), 'menu');
   assert.equal(button.querySelector('.chats-project-filter-name').textContent, 'All projects');
   assert.ok(doc.querySelector('#chatsScopeSlot .inv-segmented'), 'the Recent / Archived control keeps its markup');
   assert.deepEqual(rows(), ['s1', 's2', 's3']);
@@ -143,7 +143,7 @@ test('an empty project offers "New chat in {name}" only when that is the current
   assert.equal(state.ui.chatsProjectFilter, '');
   assert.equal(doc.querySelector('[data-chats-empty]'), null);
 
-  state.sessions = [];
+  state.sessions = [session('s2', 'Budget notes', 'project_budget')];
   controller.setProjectFilter('project_ascend');
   controller.renderNow();
   empty = doc.querySelector('[data-chats-empty]');
@@ -152,6 +152,13 @@ test('an empty project offers "New chat in {name}" only when that is the current
   assert.equal(create.textContent.trim(), 'New chat in Ascend');
   create.click();
   assert.equal(calls.newChat, 1);
+
+  state.sessions = [];
+  controller.renderNow();
+  empty = doc.querySelector('[data-chats-empty]');
+  assert.equal(empty.querySelector('.sidebar-empty-title').textContent, 'No chats yet.');
+  assert.equal(empty.querySelector('.sidebar-empty-copy').textContent, '');
+  assert.equal(empty.querySelector('[data-chats-empty-action="empty"]').textContent.trim(), 'New chat');
 });
 
 test('a filter pointing at a deleted project falls back to all projects; without a switcher wired the row has no filter button', async (t) => {

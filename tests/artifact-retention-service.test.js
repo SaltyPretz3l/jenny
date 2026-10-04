@@ -65,6 +65,37 @@ function fakeSessionStore(sessions) {
   };
 }
 
+test('quarantine age starts at the move and survives the next sweep', async () => {
+  const root = createTrackedTempDir('jenny-artifact-retention-clock-');
+  await makeArtifactDir(root, 'old', { ageMs: 30 * DAY_MS });
+  let now = NOW;
+  const sweeper = createArtifactRetentionService({
+    getWorkspaceRoot: () => root, getSessionStore: () => fakeSessionStore([]), nowFn: () => now,
+  });
+  assert.equal((await sweeper.sweep()).quarantined, 1);
+  now += MINUTE_MS;
+  assert.equal((await sweeper.sweep()).purgedQuarantine, 0);
+  now += 7 * DAY_MS;
+  assert.equal((await sweeper.sweep()).purgedQuarantine, 1);
+});
+
+for (const [label, record] of [['null', null], ['recovery stub', { messages: [] }]]) {
+  test(`retention keeps artifacts when a listed session reads as ${label}`, async () => {
+    const root = createTrackedTempDir('jenny-artifact-retention-incomplete-');
+    await makeArtifactDir(root, 'keep', { ageMs: 30 * DAY_MS });
+    const sweeper = createArtifactRetentionService({
+      getWorkspaceRoot: () => root,
+      getSessionStore: () => ({
+        listSessions: () => [{ id: 'broken', message_count: 2 }], peekSession: () => record,
+      }), nowFn: () => NOW,
+    });
+    const result = await sweeper.sweep();
+    assert.equal(result.referencesComplete, false);
+    assert.equal(result.quarantined, 0);
+    assert.deepEqual(await listDirs(root, '.jenny', 'artifacts'), ['keep']);
+  });
+}
+
 function service(root, sessions, { caps = {}, logger = () => {}, fsOverrides = null } = {}) {
   const fsImpl = fsOverrides ? { ...fs, ...fsOverrides } : fs;
   return createArtifactRetentionService({
@@ -326,4 +357,138 @@ test('missing root or artifacts dir degrades cleanly', async () => {
   assert.equal(empty.ok, true);
   assert.equal(empty.scannedDirs, 0);
   assert.equal(empty.quarantined, 0);
+});
+
+test('desktop project scopes sweep shared roots once and retain every project reference', async () => {
+  const { ArtifactWorkspaceService } = require('../services/artifact-workspace-service');
+  const root = createTrackedTempDir('jenny-artifact-desktop-');
+  for (const name of ['first', 'second', 'orphan']) await makeArtifactDir(root, name, { ageMs: 30 * DAY_MS });
+  const sessions = [
+    { id: 'one', messages: [artifactMessage(root, 'first', 'artifact.md')] },
+    { id: 'two', messages: [artifactMessage(root, 'second', 'artifact.md', { redacted: true })] },
+  ];
+  const authority = projectId => ({ project_id: projectId, root_path: root, root_id: projectId, root_revision: 1 });
+  const provider = {
+    _store: { getStatus: () => ({ read_only: false }), getSnapshot: () => ({ projects: { project_one: {}, project_two: {} } }) },
+    _sessionStore: fakeSessionStore(sessions),
+    captureProject: authority, captureSession: () => authority('project_one'), requireCurrent: () => {},
+  };
+  const artifacts = new ArtifactWorkspaceService({ projectAuthorityProvider: provider });
+  const sweeper = createArtifactRetentionService({
+    getWorkspaceRoot: () => artifacts.getWorkspaceRoot(),
+    getWorkspaceScopes: () => artifacts.getRetentionScopes(),
+    getSessionStore: () => fakeSessionStore(sessions), nowFn: () => NOW,
+  });
+  const result = await sweeper.sweep();
+  assert.equal(result.quarantined, 1);
+  assert.equal(result.scannedDirs, 3);
+  assert.deepEqual(await listDirs(root, '.jenny', 'artifacts'), ['first', 'second']);
+  await makeArtifactDir(root, 'failed-cleanup', { ageMs: 30 * DAY_MS });
+  const pruned = await artifacts.pruneOrphanedArtifacts(() => ['one', 'two', 'first', 'second']);
+  assert.equal(pruned.removed, 1);
+});
+
+for (const mutation of ['move', 'purge']) {
+  test(`retention revalidates project authority immediately before ${mutation}`, async () => {
+    const root = createTrackedTempDir('jenny-artifact-stale-');
+    const target = mutation === 'move'
+      ? await makeArtifactDir(root, 'orphan', { ageMs: 30 * DAY_MS })
+      : path.join(root, '.jenny', 'quarantine', quarantineEntryName('old', NOW - 10 * DAY_MS));
+    await fs.mkdir(target, { recursive: true });
+    let valid = true;
+    const sweeper = createArtifactRetentionService({
+      getWorkspaceRoot: () => root,
+      getWorkspaceScopes: () => [{ rootPath: root, assertCurrent: () => {
+        if (!valid) throw new Error('authority revoked');
+      } }],
+      getSessionStore: () => fakeSessionStore([]), nowFn: () => NOW,
+      fsImpl: { ...fs, lstat: async file => {
+        const stat = await fs.lstat(file);
+        if (file === target) valid = false;
+        return stat;
+      } },
+    });
+    const result = await sweeper.sweep();
+    assert.equal(result.quarantined, 0);
+    assert.equal(result.purgedQuarantine, 0);
+    assert.ok((await fs.stat(target)).isDirectory());
+  });
+}
+
+test('retention refuses an artifact or quarantine ancestor that resolves outside its workspace', async () => {
+  const root = createTrackedTempDir('jenny-artifact-escape-');
+  const outside = createTrackedTempDir('jenny-artifact-outside-');
+  const target = await makeArtifactDir(root, 'old', { ageMs: 30 * DAY_MS });
+  const artifactsRoot = path.dirname(target);
+  const sweeper = service(root, [], { fsOverrides: {
+    realpath: file => file === artifactsRoot ? Promise.resolve(outside) : fs.realpath(file),
+  } });
+  const result = await sweeper.sweep();
+  assert.equal(result.quarantined, 0);
+  assert.ok((await fs.stat(target)).isDirectory());
+});
+
+test('a project with no surviving sessions still receives scheduled orphan recovery', async () => {
+  const { ArtifactWorkspaceService } = require('../services/artifact-workspace-service');
+  const { initializeApplicationProjects } = require('../services/projects/application-project-scope');
+  const root = createTrackedTempDir('jenny-artifact-project-owner-');
+  const profile = createTrackedTempDir('jenny-artifact-profile-');
+  const owner = { sessionStore: fakeSessionStore([]), _emitServiceLog() {} };
+  initializeApplicationProjects(owner, { userDataPath: profile });
+  const project = owner.projectService.create({ name: 'Empty project' }).project;
+  assert.equal(owner.projectService.bindRoot(project.id, root).ok, true);
+  await makeArtifactDir(root, 'abandoned', { ageMs: 30 * DAY_MS });
+  const artifacts = new ArtifactWorkspaceService({ projectAuthorityProvider: () => owner.projectAuthority });
+  assert.equal((await artifacts.pruneOrphanedArtifacts(() => [])).removed, 1);
+  assert.deepEqual(await listDirs(root, '.jenny', 'artifacts'), []);
+});
+
+test('retention reconciles a reference added during its final containment check', async () => {
+  const root = createTrackedTempDir('jenny-artifact-fresh-ref-');
+  const target = await makeArtifactDir(root, 'old', { ageMs: 30 * DAY_MS });
+  const sessions = [];
+  const sweeper = service(root, sessions, { fsOverrides: {
+    lstat: async file => {
+      const stat = await fs.lstat(file);
+      if (file === target) sessions.push({ id: 'branch', messages: [artifactMessage(root, 'old', 'artifact.md')] });
+      return stat;
+    },
+  } });
+  assert.equal((await sweeper.sweep()).quarantined, 0);
+  assert.ok((await fs.stat(target)).isDirectory());
+});
+
+test('a sweep reads each session body once per pass plus once before its renames', async () => {
+  const rootA = createTrackedTempDir('jenny-artifact-walks-a-');
+  const rootB = createTrackedTempDir('jenny-artifact-walks-b-');
+  for (const name of ['one', 'two', 'three']) await makeArtifactDir(rootA, name, { ageMs: 30 * DAY_MS });
+  const sessions = [{ id: 's1', messages: [] }, { id: 's2', messages: [] }];
+  const store = fakeSessionStore(sessions);
+  let peeks = 0;
+  const peekSession = store.peekSession;
+  store.peekSession = (id) => { peeks += 1; return peekSession(id); };
+  const sweeper = createArtifactRetentionService({
+    getWorkspaceScopes: () => [{ rootPath: rootA }, { rootPath: rootB }],
+    getSessionStore: () => store, nowFn: () => NOW, caps: { maxUnreferencedAgeMs: 14 * DAY_MS },
+  });
+  assert.equal((await sweeper.sweep()).quarantined, 3);
+  // One shared walk for both roots, one fresh walk before root A's renames and
+  // one reconciliation walk after them.
+  assert.equal(peeks, sessions.length * 3);
+});
+
+test('a reference published while the renames run moves its directory straight back', async () => {
+  const root = createTrackedTempDir('jenny-artifact-late-ref-');
+  const target = await makeArtifactDir(root, 'old', { ageMs: 30 * DAY_MS });
+  const sessions = [];
+  const sweeper = service(root, sessions, { fsOverrides: {
+    rename: async (from, to) => {
+      await fs.rename(from, to);
+      if (from === target) sessions.push({ id: 'restored', messages: [artifactMessage(root, 'old', 'artifact.md')] });
+    },
+  } });
+  const result = await sweeper.sweep();
+  assert.equal(result.quarantined, 0);
+  assert.equal(result.restored, 1);
+  assert.equal(await fs.readFile(path.join(target, 'artifact.md'), 'utf8'), 'body');
 });

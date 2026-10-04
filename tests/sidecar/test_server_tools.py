@@ -477,7 +477,7 @@ def test_run_chat_send_with_optional_approval_executes_after_approval(
         },
     }
 
-    outcome = server._run_chat_send_with_optional_approval(message)  # noqa: SLF001
+    outcome = server._run_chat_send_with_optional_approval(message)
 
     assert any(msg["method"] == "tool.request_approval" for msg in written_messages)
     assert outcome.response is not None
@@ -615,7 +615,7 @@ def test_run_chat_send_with_optional_approval_executes_shell_tool_after_approval
         },
     }
 
-    outcome = server._run_chat_send_with_optional_approval(message)  # noqa: SLF001
+    outcome = server._run_chat_send_with_optional_approval(message)
 
     assert any(msg["method"] == "tool.request_approval" for msg in written_messages)
     assert outcome.response is not None
@@ -1105,7 +1105,7 @@ def test_run_chat_send_with_optional_approval_denies_when_approval_times_out(
         },
     }
 
-    outcome = server._run_chat_send_with_optional_approval(  # noqa: SLF001
+    outcome = server._run_chat_send_with_optional_approval(
         message,
         approval_response_reader=lambda _timeout: (_ for _ in ()).throw(TimeoutError("timeout")),
     )

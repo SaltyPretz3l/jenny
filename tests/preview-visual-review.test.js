@@ -5,7 +5,7 @@ const fs = require('node:fs/promises');
 const { capture, PNG } = require('./helpers/preview-capture-fixture');
 const { createTrackedTempDir, cleanupTrackedResources } = require('./helpers/resource-cleanup');
 const { encodePreviewImage, MAX_PREVIEW_IMAGE_BYTES } = require('../services/preview-vision-image');
-const { sanitizeBridgeMetadata } = require('../services/backend/electron-tool-bridge');
+const { sanitizeBridgeMetadata, executeElectronToolRequest } = require('../services/backend/electron-tool-bridge');
 
 test.afterEach(cleanupTrackedResources);
 async function workspace() {
@@ -63,4 +63,20 @@ test('native encoding resizes oversized captures and rejects invalid captures', 
 test('nested image-shaped metadata cannot leak image bytes', () => {
   assert.deepEqual(sanitizeBridgeMetadata({ preview_image: { data_base64: 'secret' },
     nested: { previewImage: { buffer: 'secret' }, safe: 1 } }), { nested: { safe: 1 } });
+});
+test('image_generate hands its bounded model image through the bridge; failures and other tools do not', async () => {
+  const previewImage = { buffer: PNG, width: 2, height: 1, mime_type: 'image/png' };
+  const run = (toolName, result, input = { prompt: 'fox' }) => executeElectronToolRequest(
+    { toolExecutor: { executePreApproved: async () => ({ content: 'done', metadata: {}, ...result }) } },
+    { params: { tool_name: toolName, tool_call_id: 'image_1', arguments: input } });
+  const ok = await run('image_generate', { isError: false, previewImage });
+  assert.deepEqual(ok.preview_image, { call_id: 'image_1', mime_type: 'image/png',
+    data_base64: PNG.toString('base64'), byte_length: PNG.length, width: 2, height: 1 });
+  assert.equal(JSON.stringify(ok.metadata).includes(PNG.toString('base64')), false);
+  assert.equal((await run('image_generate', { isError: true, previewImage })).preview_image, undefined);
+  const oversized = { ...previewImage, buffer: Buffer.alloc(MAX_PREVIEW_IMAGE_BYTES + 1) };
+  assert.equal((await run('image_generate', { isError: false, previewImage: oversized })).preview_image, undefined);
+  assert.equal((await run('jenny_status', { isError: false, previewImage })).preview_image, undefined);
+  assert.equal((await run('preview_test', { isError: false, previewImage })).preview_image, undefined);
+  assert.equal((await run('preview_test', { isError: false, previewImage }, { screenshot: true })).preview_image.call_id, 'image_1');
 });

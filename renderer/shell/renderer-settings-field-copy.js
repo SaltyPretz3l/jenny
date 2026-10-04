@@ -30,68 +30,67 @@
     // ── Tools ─────────────────────────────────────────────────────────
     safetyModeSelect: {
       label: jt('settings.safetyMode.label', 'Safety mode'),
-      description: jt('settings.safetyMode.description', 'Extra guard rails on top of the run mode: remove network tools or make every tool call ask.'),
+      description: jt('settings.safetyMode.description', 'Strict removes web tools. Paranoid asks before every tool call.'),
+      detail: jt('settings.safetyMode.hint', 'Normal: the run mode decides which tools ask. Strict: also removes web search and browsing. Paranoid: every tool call asks, even in Auto. Applies from the next turn.'),
       sectionId: 'tools',
       keywords: ['safety', 'strict', 'paranoid', jt('settings.fieldCopy.safetyModeSelect.keywords.guardRails', 'guard rails'), jt('settings.fieldCopy.safetyModeSelect.keywords.webTools', 'web tools')],
     },
     defaultRunModeSelect: {
-      label: jt('settings.fieldCopy.defaultRunModeSelect.label', 'Default run mode for new sessions'),
-      description: jt('settings.fieldCopy.defaultRunModeSelect.description', 'Choose how Jenny handles tool approvals when a new chat starts.'),
+      label: jt('settings.fieldCopy.defaultRunModeSelect.label', 'Default run mode'),
+      description: jt('settings.fieldCopy.defaultRunModeSelect.description', 'For new chats. Ask checks before changes, Auto runs without asking, Plan stays read-only until you approve the plan.'),
+      detail: jt('settings.runMode.detail', 'In Auto, Python and explicit denies still ask and blocked commands are refused. The composer switcher changes the current chat.'),
       sectionId: 'tools',
       keywords: [jt('settings.fieldCopy.defaultRunModeSelect.keywords.runMode', 'run mode'), 'ask', 'auto', 'plan', jt('settings.fieldCopy.defaultRunModeSelect.keywords.newChat', 'new chat'), jt('settings.fieldCopy.defaultRunModeSelect.keywords.toolApproval', 'tool approval')],
     },
     unattendedGuardMinutesInput: {
-      label: jt('settings.unattendedGuard.durationLabel', 'Pause after inactivity (minutes)'),
-      description: jt('settings.unattendedGuard.optInDescription', 'Optional inactivity pause for Auto mode. Off keeps working while you are away; enable it and choose the idle duration.'),
+      label: jt('settings.unattendedGuard.durationLabel', 'Pause Auto when you are away'),
+      description: jt('settings.unattendedGuard.optInDescription', 'After this long with no keyboard or mouse activity, the next action asks first.'),
+      detail: jt('settings.unattendedGuard.optInHint', 'Unanswered approvals stop the turn after a further 10 minutes. A paused turn stays in Ask until you change its run mode or resume it.'),
       sectionId: 'tools',
       keywords: ['unattended', 'idle', 'away', jt('settings.fieldCopy.unattendedGuardMinutesInput.keywords.autoMode', 'auto mode'), 'pause'],
     },
     autoApproveStreakCapInput: {
-      label: jt('settings.autoApproveStreakCap.label', 'Auto-approval streak cap'),
-      description: jt('settings.autoApproveStreakCap.description', 'In Auto mode, ask once after this many consecutive automatic approvals in a turn. 0 turns the cap off.'),
+      label: jt('settings.autoApproveStreakCap.label', 'Auto-approval limit'),
+      description: jt('settings.autoApproveStreakCap.description', 'In Auto, ask once after this many approvals in a single reply. Empty means no limit.'),
       sectionId: 'tools',
       keywords: ['auto', 'approval', 'streak', 'cap', 'limit', jt('settings.fieldCopy.autoApproveStreakCapInput.keywords.turn', 'turn')],
     },
     // ── Context ──────────────────────────────────────────────────────────
     modelStartupLoadToggle: {
       label: jt('settings.models.startupLoad.label', 'Load model at startup'),
-      description: jt('settings.models.startupLoad.description', 'On: your last-used local model loads when Jenny starts. Off: it loads with your first message.'),
+      description: jt('settings.models.startupLoad.description', 'On: a local model warms up when Jenny starts (the managed server resumes the model it last ran; Ollama loads your default model). Off: it loads with your first message.'),
       sectionId: 'models',
       keywords: ['startup', 'launch', 'lazy', 'message', 'warm', 'vram'],
     },
     contextHistoryScopeSelect: {
       label: jt('settings.fieldCopy.contextHistoryScopeSelect.label', 'History scope'),
-      description: jt('settings.fieldCopy.contextHistoryScopeSelect.description', 'How much of this conversation rides along with your next message.'),
+      description: jt('settings.fieldCopy.contextHistoryScopeSelect.description', 'How much of this chat goes with each message. Jenny narrows it automatically if a request would not fit the model, and says so in the conversation.'),
       sectionId: 'context',
       keywords: ['memory', jt('settings.fieldCopy.contextHistoryScopeSelect.keywords.conversationHistory', 'conversation history'), jt('settings.fieldCopy.contextHistoryScopeSelect.keywords.howMuchHistory', 'how much history'), jt('settings.fieldCopy.contextHistoryScopeSelect.keywords.contextWindow', 'context window')],
     },
     contextIncludePersonalityToggle: {
       label: jt('settings.fieldCopy.contextIncludePersonalityToggle.label', 'Personality and notes'),
-      description: jt('settings.fieldCopy.contextIncludePersonalityToggle.description', 'Send your personality note, About you, and long-term notes with every message.'),
+      description: jt('settings.fieldCopy.contextIncludePersonalityToggle.description', 'Send your personality note, About you and long-term notes.'),
+      detail: jt('settings.fieldCopy.contextIncludePersonalityToggle.detail', 'The ChatGPT engine skips them, and long-term notes go only to chats in the General project.'),
       sectionId: 'context',
       keywords: ['persona', 'voice', 'character', 'personality', jt('settings.fieldCopy.contextIncludePersonalityToggle.keywords.longTermNotes', 'long-term notes')],
     },
     contextIncludeMemoryToggle: {
-      label: jt('settings.fieldCopy.contextIncludeMemoryToggle.label', 'Include approved memory context'),
-      description: jt('settings.fieldCopy.contextIncludeMemoryToggle.description', "Allow recall from memories you've approved. This switch does not create, edit, or own durable memory."),
+      label: jt('settings.fieldCopy.contextIncludeMemoryToggle.label', 'Approved memories'),
+      description: jt('settings.fieldCopy.contextIncludeMemoryToggle.description', 'Let Jenny recall memories you have approved.'),
       sectionId: 'context',
       keywords: ['remember', 'recall', jt('settings.fieldCopy.contextIncludeMemoryToggle.keywords.savedMemories', 'saved memories'), jt('settings.fieldCopy.contextIncludeMemoryToggle.keywords.longTermMemory', 'long-term memory')],
     },
-    contextTokenBudgetToggle: {
-      label: jt('settings.fieldCopy.contextTokenBudgetToggle.label', 'Token budget controls'),
-      description: jt('settings.fieldCopy.contextTokenBudgetToggle.description', "Expert diagnostic: enforce the model's measured request limit. Turning this off can make oversized requests fail at the provider."),
-      sectionId: 'context',
-      keywords: ['tokens', jt('settings.fieldCopy.contextTokenBudgetToggle.keywords.contextLimit', 'context limit'), 'trim', 'truncate', 'budget'],
-    },
     contextCompactionToggle: {
       label: jt('settings.fieldCopy.contextCompactionToggle.label', 'Automatic summarization'),
-      description: jt('settings.fieldCopy.contextCompactionToggle.description', 'Create a bounded, non-authoritative summary of older complete turns before the request is too large. Failures are reported and never saved as a summary.'),
+      description: jt('settings.fieldCopy.contextCompactionToggle.description', 'Summarize older turns when a chat no longer fits the model.'),
+      detail: jt('settings.fieldCopy.contextCompactionToggle.detail', 'The summary is bounded and never treated as authoritative. A failed summary is reported and never saved.'),
       sectionId: 'context',
       keywords: ['summarize', 'compact', jt('settings.fieldCopy.contextCompactionToggle.keywords.shrinkHistory', 'shrink history'), 'digest'],
     },
     compactionPromptField: {
-      label: jt('settings.fieldCopy.compactionPromptField.label', 'Custom summarization prompt'),
-      description: jt('settings.fieldCopy.compactionPromptField.description', 'Adds non-authoritative guidance to Jenny’s required summary contract. It cannot remove required fields or change trust rules. Empty resets the guidance.'),
+      label: jt('settings.fieldCopy.compactionPromptField.label', 'Summary guidance'),
+      description: jt('settings.fieldCopy.compactionPromptField.description', 'Optional. Steers what a summary emphasizes; it cannot remove required fields or change trust rules.'),
       sectionId: 'context',
       keywords: [jt('settings.fieldCopy.compactionPromptField.keywords.summaryPrompt', 'summary prompt'), jt('settings.fieldCopy.compactionPromptField.keywords.customSummarize', 'custom summarize'), jt('settings.fieldCopy.compactionPromptField.keywords.compactionPrompt', 'compaction prompt')],
     },
@@ -124,18 +123,17 @@
     },
 
     // ── Personality ──────────────────────────────────────────────────────
-    personalityResetButton: {
-      label: jt('settings.fieldCopy.personalityResetButton.label', 'Reset to template'),
-      description: jt('settings.fieldCopy.personalityResetButton.description', "Discard edits to the open personality file and restore it to the starting template."),
-      sectionId: 'personality',
-      keywords: [jt('settings.fieldCopy.personalityResetButton.keywords.resetPersonality', 'reset personality'), jt('settings.fieldCopy.personalityResetButton.keywords.restoreTemplate', 'restore template'), jt('settings.fieldCopy.personalityResetButton.keywords.undoEdits', 'undo edits'), jt('settings.fieldCopy.personalityResetButton.keywords.startOver', 'start over'), jt('settings.fieldCopy.personalityResetButton.keywords.discardChanges', 'discard changes')],
-    },
 
     // ── Appearance ───────────────────────────────────────────────────────
-    use24HourTimeSelect: {
+    use24HourTimeToggle: {
       label: jt('settings.timeFormat.label', '24-hour time'),
       description: jt('settings.timeFormat.description', 'Use 00:00–23:59 throughout Jenny and in the time context given to the model.'),
       sectionId: 'appearance', keywords: ['clock', 'time', '24', 'AM', 'PM'],
+    },
+    transcriptViewDefaultSelect: {
+      label: jt('settings.transcriptView.label', 'Transcript view'),
+      description: jt('settings.transcriptView.description', "View for chats you haven't set individually: answers only, answers with thinking, or everything expanded."),
+      sectionId: 'appearance', keywords: ['transcript', 'thinking', 'reasoning', 'answers', 'expand'],
     },
     uiLanguageSelect: {
       label: jt('settings.language.label', 'Language'),
@@ -163,7 +161,7 @@
     },
     appearanceFontScaleSelect: {
       label: jt('settings.fieldCopy.appearanceFontScaleSelect.label', 'Text size'),
-      description: jt('settings.fieldCopy.appearanceFontScaleSelect.description', 'Scale shell text larger or smaller without changing your zoom level.'),
+      description: jt('settings.fieldCopy.appearanceFontScaleSelect.description', 'Scale all text in Jenny, including chat, panels, and code. Ctrl + and Ctrl - zoom the whole window.'),
       sectionId: 'appearance',
       keywords: [jt('settings.fieldCopy.appearanceFontScaleSelect.keywords.textSize', 'text size'), jt('settings.fieldCopy.appearanceFontScaleSelect.keywords.biggerText', 'bigger text'), jt('settings.fieldCopy.appearanceFontScaleSelect.keywords.smallerText', 'smaller text'), jt('settings.fieldCopy.appearanceFontScaleSelect.keywords.fontSize', 'font size'), jt('settings.fieldCopy.appearanceFontScaleSelect.keywords.zoomText', 'zoom text')],
     },
@@ -177,7 +175,7 @@
       label: jt('settings.fieldCopy.appearanceChatWidthSelect.label', 'Chat width'),
       description: jt('settings.fieldCopy.appearanceChatWidthSelect.description', 'Widen the chat transcript and composer for more text per line.'),
       sectionId: 'appearance',
-      keywords: [jt('settings.fieldCopy.appearanceChatWidthSelect.keywords.chatWidth', 'chat width'), 'wide', jt('settings.fieldCopy.appearanceChatWidthSelect.keywords.wideMode', 'wide mode'), jt('settings.fieldCopy.appearanceChatWidthSelect.keywords.readingWidth', 'reading width'), jt('settings.fieldCopy.appearanceChatWidthSelect.keywords.lineLength', 'line length'), jt('settings.fieldCopy.appearanceChatWidthSelect.keywords.columnWidth', 'column width'), 'layout'],
+      keywords: [jt('settings.fieldCopy.appearanceChatWidthSelect.keywords.chatWidth', 'chat width'), 'wide', 'narrow', 'standard', jt('settings.fieldCopy.appearanceChatWidthSelect.keywords.wideMode', 'wide mode'), jt('settings.fieldCopy.appearanceChatWidthSelect.keywords.readingWidth', 'reading width'), jt('settings.fieldCopy.appearanceChatWidthSelect.keywords.lineLength', 'line length'), jt('settings.fieldCopy.appearanceChatWidthSelect.keywords.columnWidth', 'column width'), 'layout'],
     },
     appearanceSurfaceEffectSelect: {
       label: jt('settings.fieldCopy.appearanceSurfaceEffectSelect.label', 'Effect'),
@@ -190,6 +188,24 @@
       description: jt('settings.fieldCopy.appearanceComposerHoloToggle.description', 'Add a glowing animated border around the composer while you type.'),
       sectionId: 'appearance',
       keywords: ['glow', jt('settings.fieldCopy.appearanceComposerHoloToggle.keywords.typingBorder', 'typing border'), 'holographic', jt('settings.fieldCopy.appearanceComposerHoloToggle.keywords.composerEffect', 'composer effect')],
+    },
+    appearanceStartupAnimationToggle: {
+      label: jt('settings.fieldCopy.appearanceStartupAnimationToggle.label', 'Startup animation'),
+      description: jt('settings.fieldCopy.appearanceStartupAnimationToggle.description', 'A short starfield while Jenny opens. Off shows a plain curtain. Follows your system\'s reduced-motion setting.'),
+      sectionId: 'appearance',
+      keywords: ['starfield', 'splash', 'animation', jt('settings.fieldCopy.appearanceStartupAnimationToggle.keywords.startupScreen', 'startup screen'), jt('settings.fieldCopy.appearanceStartupAnimationToggle.keywords.loadingScreen', 'loading screen')],
+    },
+    appearanceTitlebarLoadToggle: {
+      label: jt('settings.fieldCopy.appearanceTitlebarLoadToggle.label', 'Show machine load in the title bar'),
+      description: jt('settings.fieldCopy.appearanceTitlebarLoadToggle.description', 'GPU and VRAM as a small read-out next to the health dot. CPU, GPU and VRAM are always in the health popover.'),
+      sectionId: 'appearance',
+      keywords: ['cpu', 'gpu', 'vram', 'ram', jt('settings.fieldCopy.appearanceTitlebarLoadToggle.keywords.systemLoad', 'system load'), jt('settings.fieldCopy.appearanceTitlebarLoadToggle.keywords.titleBar', 'title bar')],
+    },
+    appearanceArtifactAutoOpenToggle: {
+      label: jt('settings.fieldCopy.appearanceArtifactAutoOpenToggle.label', 'Open the artifact panel when an artifact arrives'),
+      description: jt('settings.fieldCopy.appearanceArtifactAutoOpenToggle.description', 'Automatically show the side panel on the first artifact a tool produces in a chat. Off never opens it for you; a panel you opened, or left open, stays as it was.'),
+      sectionId: 'appearance',
+      keywords: [jt('settings.fieldCopy.appearanceArtifactAutoOpenToggle.keywords.artifact', 'artifact'), jt('settings.fieldCopy.appearanceArtifactAutoOpenToggle.keywords.panel', 'panel'), jt('settings.fieldCopy.appearanceArtifactAutoOpenToggle.keywords.autoOpen', 'auto-open'), jt('settings.fieldCopy.appearanceArtifactAutoOpenToggle.keywords.sidePanel', 'side panel'), jt('settings.fieldCopy.appearanceArtifactAutoOpenToggle.keywords.toolResult', 'tool result')],
     },
     appearanceAppZoomSelect: {
       label: jt('settings.fieldCopy.appearanceAppZoomSelect.label', 'Overall app zoom'),
@@ -252,13 +268,13 @@
     },
     editorFormatOnSaveToggle: {
       label: jt('settings.fieldCopy.editorFormatOnSaveToggle.label', 'Format on save'),
-      description: jt('settings.fieldCopy.editorFormatOnSaveToggle.description', 'Auto-format the file each time you save.'),
+      description: jt('settings.fieldCopy.editorFormatOnSaveToggle.description', 'Auto-format the file you are editing each time you save. Very large files and files saved in the background are skipped.'),
       sectionId: 'editor',
       keywords: [jt('settings.fieldCopy.editorFormatOnSaveToggle.keywords.autoFormat', 'auto format'), 'prettier', jt('settings.fieldCopy.editorFormatOnSaveToggle.keywords.formatOnSave', 'format on save')],
     },
     editorTrimTrailingWhitespaceToggle: {
       label: jt('settings.fieldCopy.editorTrimTrailingWhitespaceToggle.label', 'Trim trailing whitespace on save'),
-      description: jt('settings.fieldCopy.editorTrimTrailingWhitespaceToggle.description', 'Strip trailing spaces from each line when you save.'),
+      description: jt('settings.fieldCopy.editorTrimTrailingWhitespaceToggle.description', 'Strip trailing spaces from each line when you save. Very large files are skipped.'),
       sectionId: 'editor',
       keywords: [jt('settings.fieldCopy.editorTrimTrailingWhitespaceToggle.keywords.trimWhitespace', 'trim whitespace'), jt('settings.fieldCopy.editorTrimTrailingWhitespaceToggle.keywords.stripSpaces', 'strip spaces')],
     },
@@ -274,18 +290,6 @@
       sectionId: 'editor',
       keywords: [jt('settings.fieldCopy.editorAutoSaveToggle.keywords.autoSave', 'auto save'), jt('settings.fieldCopy.editorAutoSaveToggle.keywords.saveAutomatically', 'save automatically')],
     },
-    editorInlineSuggestToggle: {
-      label: jt('settings.fieldCopy.editorInlineSuggestToggle.label', 'Inline suggestions'),
-      description: jt('settings.fieldCopy.editorInlineSuggestToggle.description', 'Show inline code completions as you type.'),
-      sectionId: 'editor',
-      keywords: ['autocomplete', jt('settings.fieldCopy.editorInlineSuggestToggle.keywords.codeCompletionAssistant', 'code completion assistant'), jt('settings.fieldCopy.editorInlineSuggestToggle.keywords.inlineCompletion', 'inline completion'), jt('settings.fieldCopy.editorInlineSuggestToggle.keywords.ghostText', 'ghost text'), 'fim'],
-    },
-    editorInlineSuggestModelSelect: {
-      label: jt('settings.fieldCopy.editorInlineSuggestModelSelect.label', 'Completion model'),
-      description: jt('settings.fieldCopy.editorInlineSuggestModelSelect.description', 'The local model that generates inline code suggestions.'),
-      sectionId: 'editor',
-      keywords: [jt('settings.fieldCopy.editorInlineSuggestModelSelect.keywords.completionModel', 'completion model'), jt('settings.fieldCopy.editorInlineSuggestModelSelect.keywords.autocompleteModel', 'autocomplete model')],
-    },
     // ── Home ─────────────────────────────────────────────────────────────
     homeScratchpadCaptureSelect: {
       label: jt('settings.fieldCopy.homeScratchpadCaptureSelect.label', 'Quick-capture mode'),
@@ -299,11 +303,61 @@
       sectionId: 'home',
       keywords: [jt('settings.fieldCopy.homeScratchpadGlobalCaptureToggle.keywords.globalShortcut', 'global shortcut'), 'hotkey', jt('settings.fieldCopy.homeScratchpadGlobalCaptureToggle.keywords.quickCaptureShortcut', 'quick capture shortcut')],
     },
-    homeContextualTipsToggle: {
-      label: jt('settings.fieldCopy.homeContextualTipsToggle.label', 'Show contextual tips'),
-      description: jt('settings.fieldCopy.homeContextualTipsToggle.description', 'Show short, situational guidance on Home when it is relevant.'),
-      sectionId: 'home',
-      keywords: ['tips', 'hints', jt('settings.fieldCopy.homeContextualTipsToggle.keywords.contextualGuidance', 'contextual guidance')],
+
+    // ── Notifications (desktop toasts; renderer-settings-notifications-section.js) ──
+    notificationsEnabledToggle: {
+      label: jt('settings.fieldCopy.notificationsEnabledToggle.label', 'Desktop notifications'),
+      description: jt('settings.fieldCopy.notificationsEnabledToggle.description', 'Turn every notification from Jenny on or off.'),
+      sectionId: 'notifications',
+      keywords: ['toast', 'desktop', 'alerts', 'notify'],
+    },
+    notificationsBackgroundOnlyToggle: {
+      label: jt('settings.fieldCopy.notificationsBackgroundOnlyToggle.label', 'Only when Jenny is in the background'),
+      description: jt('settings.fieldCopy.notificationsBackgroundOnlyToggle.description', 'Skip the notification while the Jenny window is focused. Turn off to be notified every time.'),
+      sectionId: 'notifications',
+      keywords: ['background', 'focus', 'focused', 'unfocused'],
+    },
+    notificationsSoundToggle: {
+      label: jt('settings.fieldCopy.notificationsSoundToggle.label', 'Play sound'),
+      description: jt('settings.fieldCopy.notificationsSoundToggle.description', 'Use the system notification sound.'),
+      sectionId: 'notifications',
+      keywords: ['sound', 'silent', 'mute', 'chime'],
+    },
+    notificationsCategoryRepliesToggle: {
+      label: jt('settings.fieldCopy.notificationsCategoryRepliesToggle.label', 'A reply is ready'),
+      description: jt('settings.fieldCopy.notificationsCategoryRepliesToggle.description', 'A chat finished responding.'),
+      sectionId: 'notifications',
+      keywords: ['reply', 'response', 'finished', 'done'],
+    },
+    notificationsCategoryFailuresToggle: {
+      label: jt('settings.fieldCopy.notificationsCategoryFailuresToggle.label', 'A run fails'),
+      description: jt('settings.fieldCopy.notificationsCategoryFailuresToggle.description', 'A chat stopped on an error. Your own Stop never notifies.'),
+      sectionId: 'notifications',
+      keywords: ['failed', 'error', 'crash'],
+    },
+    notificationsCategoryPermissionsToggle: {
+      label: jt('settings.fieldCopy.notificationsCategoryPermissionsToggle.label', 'Jenny needs permission'),
+      description: jt('settings.fieldCopy.notificationsCategoryPermissionsToggle.description', 'A tool is waiting for your approval.'),
+      sectionId: 'notifications',
+      keywords: ['permission', 'approval', 'approve', 'tool'],
+    },
+    notificationsCategoryQuestionsToggle: {
+      label: jt('settings.fieldCopy.notificationsCategoryQuestionsToggle.label', 'Jenny asks a question or a plan is ready'),
+      description: jt('settings.fieldCopy.notificationsCategoryQuestionsToggle.description', 'A question card or a plan to review is waiting.'),
+      sectionId: 'notifications',
+      keywords: ['question', 'plan', 'review', 'ask'],
+    },
+    notificationsCategoryRemindersToggle: {
+      label: jt('settings.fieldCopy.notificationsCategoryRemindersToggle.label', 'A reminder is due'),
+      description: jt('settings.fieldCopy.notificationsCategoryRemindersToggle.description', 'Reminders you set on Home.'),
+      sectionId: 'notifications',
+      keywords: ['reminder', 'reminders', 'due'],
+    },
+    notificationsReplyPreviewToggle: {
+      label: jt('settings.fieldCopy.notificationsReplyPreviewToggle.label', 'Show the first line of the reply'),
+      description: jt('settings.fieldCopy.notificationsReplyPreviewToggle.description', 'Off keeps reply text out of the system notification center; the notification names the chat only.'),
+      sectionId: 'notifications',
+      keywords: ['preview', 'privacy', 'content'],
     },
 
     // ── Offline ──────────────────────────────────────────────────────────
@@ -352,9 +406,28 @@
     });
   }
 
+  /* The one search projection (settings-cohesion contract §8): the copy map
+   * plus every descriptor that carries its own copy, deduplicated by id with
+   * the descriptor winning. Resolved at call time so load order is free. */
+  function listSettingsSearchEntries() {
+    var descriptors = globalThis.rendererSettingsFieldDescriptors
+      || (typeof require === 'function' ? require('./renderer-settings-field-descriptors') : null);
+    var extra = descriptors && typeof descriptors.listDescriptorCopyEntries === 'function'
+      ? descriptors.listDescriptorCopyEntries()
+      : [];
+    var seen = {};
+    var entries = [];
+    extra.forEach(function (entry) { seen[entry.id] = true; entries.push(entry); });
+    listSettingsFieldCopyEntries().forEach(function (entry) {
+      if (!seen[entry.id]) entries.push(entry);
+    });
+    return entries;
+  }
+
   return {
     SETTINGS_FIELD_COPY: SETTINGS_FIELD_COPY,
     getSettingsFieldCopy: getSettingsFieldCopy,
     listSettingsFieldCopyEntries: listSettingsFieldCopyEntries,
+    listSettingsSearchEntries: listSettingsSearchEntries,
   };
 });

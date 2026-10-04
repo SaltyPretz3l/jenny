@@ -322,7 +322,8 @@ test('activateIde applies persisted editor prefs to the live Monaco editor + mod
     const editor = fakeMonaco.__editors[0];
     assert.ok(editor, 'a Monaco editor was created');
     // Editor-level prefs reached updateOptions (from applyEditorPrefs via onMonacoReady).
-    const applied = editor.updateOptionsCalls.find((opts) => opts && opts.fontSize === 16);
+    // The shared code-font broadcast sends a fontSize-only update first.
+    const applied = editor.updateOptionsCalls.find((opts) => opts && opts.fontSize === 16 && 'wordWrap' in opts);
     assert.ok(applied, 'editor-level prefs were applied');
     assert.deepEqual(applied, {
       fontSize: 16,

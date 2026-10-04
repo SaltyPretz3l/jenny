@@ -2,7 +2,7 @@
   "schema_version": 1,
   "cases": [
     {
-      "name": "tool_input_delta_is_ephemeral_and_redacted",
+      "name": "tool_input_delta_is_ephemeral_and_secret_redacted",
       "input": {
         "v": 1,
         "turn_id": "turn_packet_0",
@@ -26,9 +26,11 @@
         "part_kind": "tool_part",
         "part_state": "input_streaming",
         "redacted_substrings_absent": [
-          "G:/Users/example/secret.txt",
           "sk-test-secret",
           "do not keep"
+        ],
+        "redacted_substrings_present": [
+          "G:/Users/example/secret.txt"
         ]
       }
     },
@@ -249,7 +251,7 @@
       }
     },
     {
-      "name": "posix_paths_are_redacted_like_drive_letter_paths",
+      "name": "posix_paths_are_presented_like_drive_letter_paths",
       "input": {
         "v": 1,
         "turn_id": "turn_path_parity",
@@ -273,22 +275,16 @@
         "persisted_kind": null,
         "part_kind": "tool_part",
         "part_state": "input_streaming",
-        "redacted_substrings_absent": [
+        "redacted_substrings_present": [
           "/Users/example/secret.txt",
           "/home/gosh/.ssh/id_rsa",
           "/var/log/app.log",
           "/Users/example/Desktop/plan.md"
-        ],
-        "redacted_substrings_present": [
-          "[redacted:path]/secret.txt",
-          "[redacted:path]/id_rsa",
-          "[redacted:path]/app.log",
-          "[redacted:path]/plan.md"
         ]
       }
     },
     {
-      "name": "file_urls_redact_on_both_platforms_and_http_urls_stay_legible",
+      "name": "file_urls_on_both_platforms_and_http_urls_stay_legible",
       "input": {
         "v": 1,
         "turn_id": "turn_path_parity",
@@ -308,19 +304,15 @@
         "persisted_kind": "tool_use",
         "part_kind": "tool_part",
         "part_state": "pending",
-        "redacted_substrings_absent": [
+        "redacted_substrings_present": [
           "file:///Users/example/notes.md",
           "file:///C:/Users/example/notes.md",
-          "/Users/example/notes.md"
-        ],
-        "redacted_substrings_present": [
-          "file:///[redacted:path]/notes.md",
           "https://example.com/docs/page?q=1"
         ]
       }
     },
     {
-      "name": "assistant_text_code_and_routes_survive_root_anchored_path_redaction",
+      "name": "assistant_text_code_routes_and_paths_survive",
       "input": {
         "v": 1,
         "turn_id": "turn_path_parity",
@@ -336,18 +328,15 @@
         "persisted_kind": null,
         "part_kind": "text_part",
         "part_state": "streaming",
-        "redacted_substrings_absent": [
-          "/Users/example/.config/app.toml"
-        ],
         "redacted_substrings_present": [
           "app.get('/api/users', handler)",
           "GET /api/users/42",
-          "[redacted:path]/app.toml"
+          "/Users/example/.config/app.toml"
         ]
       }
     },
     {
-      "name": "filename_preserving_windows_path",
+      "name": "windows_path_is_presented",
       "input": {
         "v": 1,
         "turn_id": "turn_path_parity",
@@ -369,12 +358,12 @@
         "part_state": "pending",
         "sanitized_payload": {
           "tool_name": "read_file",
-          "tool_input_summary": "Roots C:\\ and [redacted:path] then read [redacted:path]\\foo.js"
+          "tool_input_summary": "Roots C:\\ and C:\\etc then read C:\\Users\\alex\\proj\\src\\foo.js"
         }
       }
     },
     {
-      "name": "filename_preserving_posix_path_with_trailing_separator",
+      "name": "posix_path_with_trailing_separator_is_presented",
       "input": {
         "v": 1,
         "turn_id": "turn_path_parity",
@@ -396,12 +385,12 @@
         "part_state": "pending",
         "sanitized_payload": {
           "tool_name": "read_file",
-          "tool_input_summary": "Roots / and [redacted:path] then read [redacted:path]/dir/ and [redacted:path]/xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+          "tool_input_summary": "Roots / and /etc then read /home/x/proj/dir/ and /home/x/xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
         }
       }
     },
     {
-      "name": "filename_preserving_file_url",
+      "name": "file_url_is_presented",
       "input": {
         "v": 1,
         "turn_id": "turn_path_parity",
@@ -423,12 +412,12 @@
         "part_state": "pending",
         "sanitized_payload": {
           "tool_name": "read_file",
-          "tool_input_summary": "Read file:///[redacted:path]/foo.js"
+          "tool_input_summary": "Read file:///C:/Users/alex/proj/foo.js"
         }
       }
     },
     {
-      "name": "filename_preserving_delimiter_path",
+      "name": "delimiter_path_is_presented",
       "input": {
         "v": 1,
         "turn_id": "turn_path_parity",
@@ -450,7 +439,7 @@
         "part_state": "pending",
         "sanitized_payload": {
           "tool_name": "read_file",
-          "tool_input_summary": "Read \"[redacted:path]/jenny\""
+          "tool_input_summary": "Read \"/var/lib/jenny\""
         }
       }
     },

@@ -8,6 +8,7 @@ const { PUBLISHER_ID_RE, PLUGIN_ID_RE } = require('../identity/authority-id');
 const { safeModeRefusal } = require('../safe-mode');
 const { runCommitSequence } = require('./commit-sequence');
 const { wireCodeFor } = require('./operation-result');
+const { runtimeEnvelope } = require('../runtime/runtime-envelope');
 const {
   CONTROL_PLANE_STAGE,
   DISABLED_ONLY_STATE,
@@ -72,19 +73,6 @@ function buildCandidatePlugins(plugins, {
     }
     return candidate;
   });
-}
-
-function runtimeEnvelope(compiled) {
-  return {
-    envelope: {
-      mode: 'plugin_runtime',
-      plugin_runtime: {
-        snapshot: compiled.snapshot,
-        declarative_content: compiled.declarative_content,
-      },
-    },
-    snapshot: compiled.snapshot,
-  };
 }
 
 async function runActivationOperation(facade, baseDir, options = {}) {

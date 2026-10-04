@@ -29,7 +29,7 @@ def _insert_pending_candidate(
     category: str = "",
 ) -> int:
     timestamp = datetime.now(timezone.utc).isoformat()
-    cursor = store._connection.execute(  # noqa: SLF001
+    cursor = store._connection.execute(
         """
         INSERT INTO pending_memory_candidates (
             session_id, source_request_id, title, lesson_text, lesson_kind,
@@ -51,7 +51,7 @@ def _insert_pending_candidate(
             timestamp,
         ),
     )
-    store._connection.commit()  # noqa: SLF001
+    store._connection.commit()
     assert cursor.lastrowid is not None
     return int(cursor.lastrowid)
 
@@ -59,7 +59,7 @@ def _insert_pending_candidate(
 def test_memory_store_initializes_schema_and_defaults(tmp_path: Path) -> None:
     store = MemoryStore(tmp_path / "memory.db")
     try:
-        version = int(store._connection.execute("PRAGMA user_version").fetchone()[0])  # noqa: SLF001
+        version = int(store._connection.execute("PRAGMA user_version").fetchone()[0])
         assert version == SCHEMA_VERSION
         assert store.journal_mode in {"wal", "memory", "delete"}
         assert store.get_all_memories() == []
@@ -125,12 +125,12 @@ def test_memory_store_migrates_v1_and_purges_legacy_raw_exchanges(tmp_path: Path
 
     store = MemoryStore(db_path)
     try:
-        assert store._connection.execute(  # noqa: SLF001
+        assert store._connection.execute(
             "SELECT 1 FROM sqlite_master WHERE name = 'memory_entries'"
         ).fetchone() is None
         memories_columns = {
             row[1]
-            for row in store._connection.execute("PRAGMA table_info(memories)").fetchall()  # noqa: SLF001
+            for row in store._connection.execute("PRAGMA table_info(memories)").fetchall()
         }
         assert {
             "session_id",
@@ -139,7 +139,7 @@ def test_memory_store_migrates_v1_and_purges_legacy_raw_exchanges(tmp_path: Path
             "content_fingerprint",
             "family_key",
         } <= memories_columns
-        version = int(store._connection.execute("PRAGMA user_version").fetchone()[0])  # noqa: SLF001
+        version = int(store._connection.execute("PRAGMA user_version").fetchone()[0])
         assert version == SCHEMA_VERSION
     finally:
         store.close()
@@ -300,15 +300,15 @@ def test_memory_store_recall_memories_scores_overlap_and_recency(tmp_path: Path)
         )
         stale_timestamp = (datetime.now(timezone.utc) - timedelta(days=45)).isoformat()
         fresh_timestamp = (datetime.now(timezone.utc) - timedelta(days=2)).isoformat()
-        store._connection.execute(  # noqa: SLF001
+        store._connection.execute(
             "UPDATE memories SET updated_at = ? WHERE id = ?",
             (stale_timestamp, older_memory.id),
         )
-        store._connection.execute(  # noqa: SLF001
+        store._connection.execute(
             "UPDATE memories SET updated_at = ? WHERE id = ?",
             (fresh_timestamp, newer_memory.id),
         )
-        store._connection.commit()  # noqa: SLF001
+        store._connection.commit()
 
         recalled = store.recall_memories("green tea please", limit=3)
 
@@ -378,15 +378,15 @@ def test_memory_store_get_recent_memories_by_kind_returns_most_recent_first(tmp_
         )
         stale_timestamp = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
         fresh_timestamp = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
-        store._connection.execute(  # noqa: SLF001
+        store._connection.execute(
             "UPDATE memories SET updated_at = ? WHERE id = ?",
             (stale_timestamp, older_style_memory.id),
         )
-        store._connection.execute(  # noqa: SLF001
+        store._connection.execute(
             "UPDATE memories SET updated_at = ? WHERE id = ?",
             (fresh_timestamp, newer_style_memory.id),
         )
-        store._connection.commit()  # noqa: SLF001
+        store._connection.commit()
 
         recalled = store.get_recent_memories_by_kind("response_style", limit=2)
 
@@ -418,15 +418,15 @@ def test_memory_store_recall_memories_breaks_score_ties_by_recency(tmp_path: Pat
         )
         stale_timestamp = (datetime.now(timezone.utc) - timedelta(days=20)).isoformat()
         fresh_timestamp = (datetime.now(timezone.utc) - timedelta(days=2)).isoformat()
-        store._connection.execute(  # noqa: SLF001
+        store._connection.execute(
             "UPDATE memories SET updated_at = ? WHERE id = ?",
             (stale_timestamp, older_memory.id),
         )
-        store._connection.execute(  # noqa: SLF001
+        store._connection.execute(
             "UPDATE memories SET updated_at = ? WHERE id = ?",
             (fresh_timestamp, newer_memory.id),
         )
-        store._connection.commit()  # noqa: SLF001
+        store._connection.commit()
 
         recalled = store.recall_memories("tea", limit=2)
 
@@ -1031,7 +1031,7 @@ def test_memory_store_fresh_db_uses_incremental_auto_vacuum(tmp_path: Path) -> N
     try:
         # auto_vacuum: 0=NONE, 1=FULL, 2=INCREMENTAL — a fresh DB must be 2 so the
         # purge sweeps can reclaim freed pages via PRAGMA incremental_vacuum.
-        mode = store._connection.execute("PRAGMA auto_vacuum").fetchone()[0]  # noqa: SLF001
+        mode = store._connection.execute("PRAGMA auto_vacuum").fetchone()[0]
         assert mode == 2
     finally:
         store.close()
@@ -1233,10 +1233,10 @@ def test_memory_store_migrates_v3_database_to_v4_extraction_tables(tmp_path: Pat
 
     store = MemoryStore(db_path)
     try:
-        version = int(store._connection.execute("PRAGMA user_version").fetchone()[0])  # noqa: SLF001
+        version = int(store._connection.execute("PRAGMA user_version").fetchone()[0])
         tables = {
             row[0]
-            for row in store._connection.execute(  # noqa: SLF001
+            for row in store._connection.execute(
                 "SELECT name FROM sqlite_master WHERE type='table'"
             ).fetchall()
         }

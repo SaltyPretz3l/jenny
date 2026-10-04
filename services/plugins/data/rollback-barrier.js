@@ -1,5 +1,7 @@
 'use strict';
 
+// Not wired yet (production validateRollbackData is a stub); plan: docs/manifests/plugin-system.md W6-DATA-COMPAT.
+
 // Decide whether restoring a retained plugin-data generation is permitted
 // (invariant 13 / PLUG-D10): "Incompatible post-update data writes erect a
 // durable rollback barrier unless a declared and validated downgrade path

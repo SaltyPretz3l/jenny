@@ -157,14 +157,12 @@ test('normalizeWorkspaceIde applies defaults and clamps', () => {
     showGenerated: false,
     explorerSortMode: 'name',
     wordWrap: 'off',
-    fontSize: 13,
+    fontSize: 0,
     tabSize: 2,
     minimap: true,
     lineNumbers: 'on',
     renderWhitespace: 'selection',
     eol: '',
-    inlineSuggestEnabled: true,
-    inlineSuggestModel: '',
     autoSaveEnabled: false,
     formatOnSave: false,
     trimTrailingWhitespace: false,
@@ -178,7 +176,7 @@ test('normalizeWorkspaceIde applies defaults and clamps', () => {
     assert.equal(normalizeWorkspaceIde(undefined)[key], false);
   }
   // auto-save: DEFAULT-OFF (writes files) — only a literal true enables it, the
-  // inverse of the default-on minimap/inlineSuggestEnabled toggles.
+  // inverse of the default-on minimap toggle.
   assert.equal(normalizeWorkspaceIde({ autoSaveEnabled: true }).autoSaveEnabled, true);
   assert.equal(normalizeWorkspaceIde({ autoSaveEnabled: false }).autoSaveEnabled, false);
   assert.equal(normalizeWorkspaceIde({ autoSaveEnabled: 'yes' }).autoSaveEnabled, false);
@@ -193,24 +191,11 @@ test('normalizeWorkspaceIde applies defaults and clamps', () => {
   assert.deepEqual(normalizeWorkspaceIde({ rulers: [-1, 0, 600, 'x', 100] }).rulers, [100]);
   assert.deepEqual(normalizeWorkspaceIde({ rulers: 'nope' }).rulers, []);
   assert.deepEqual(normalizeWorkspaceIde({ rulers: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10] }).rulers.length, 8);
-  // inline autocomplete: enabled default-on (only literal false disables), model
-  // is a sanitized Ollama tag ('' when unset/invalid); compute placement is not persisted.
-  assert.equal(normalizeWorkspaceIde({ inlineSuggestEnabled: false }).inlineSuggestEnabled, false);
-  assert.equal(normalizeWorkspaceIde({ inlineSuggestEnabled: 'no' }).inlineSuggestEnabled, true);
-  assert.equal('inlineSuggestUseGpu' in normalizeWorkspaceIde({ inlineSuggestUseGpu: true }), false);
-  assert.equal(
-    normalizeWorkspaceIde({ inlineSuggestModel: 'qwen2.5-coder:1.5b-base' }).inlineSuggestModel,
-    'qwen2.5-coder:1.5b-base'
-  );
-  assert.equal(
-    normalizeWorkspaceIde({ inlineSuggestModel: 'JetBrains/Mellum-4b-sft-all:latest' }).inlineSuggestModel,
-    'JetBrains/Mellum-4b-sft-all:latest'
-  );
-  // reject control chars / shell metacharacters / leading separators.
-  assert.equal(normalizeWorkspaceIde({ inlineSuggestModel: 'bad model;rm -rf' }).inlineSuggestModel, '');
-  assert.equal(normalizeWorkspaceIde({ inlineSuggestModel: '/leading-slash' }).inlineSuggestModel, '');
-  assert.equal(normalizeWorkspaceIde({ inlineSuggestModel: 'has\u0000nul' }).inlineSuggestModel, '');
-  assert.equal(normalizeWorkspaceIde({ inlineSuggestModel: 'x'.repeat(201) }).inlineSuggestModel, '');
+  // The removed inline-suggestion preferences (2026-10-01) are dropped, not kept.
+  const legacyInline = normalizeWorkspaceIde({ inlineSuggestEnabled: false, inlineSuggestModel: 'qwen2.5-coder:1.5b-base', inlineSuggestUseGpu: true });
+  for (const key of ['inlineSuggestEnabled', 'inlineSuggestModel', 'inlineSuggestUseGpu']) {
+    assert.equal(key in legacyInline, false, key);
+  }
   // bottom panel: open only on literal true; height clamps; view enum.
   assert.equal(normalizeWorkspaceIde({ bottomPanelOpen: true }).bottomPanelOpen, true);
   assert.equal(normalizeWorkspaceIde({ bottomPanelOpen: 'yes' }).bottomPanelOpen, false);
@@ -281,15 +266,17 @@ test('normalizeWorkspaceIde applies defaults and clamps', () => {
   );
   assert.equal(normalizeWorkspaceIde({ wordWrap: 'on' }).wordWrap, 'on');
   assert.equal(normalizeWorkspaceIde({ wordWrap: 'bogus' }).wordWrap, 'off');
-  // fontSize: valid passes, out-of-range clamps to bounds, non-finite -> default.
+  // fontSize: valid passes, out-of-range clamps to bounds; 0 / non-finite /
+  // the pre-rebase default 13 read as 0 = Match text size.
+  assert.equal(normalizeWorkspaceIde({ fontSize: 13 }).fontSize, 0);
   assert.equal(normalizeWorkspaceIde({ fontSize: 18 }).fontSize, 18);
   assert.equal(normalizeWorkspaceIde({ fontSize: 18.7 }).fontSize, 18);
   assert.equal(normalizeWorkspaceIde({ fontSize: 100 }).fontSize, 40);
   assert.equal(normalizeWorkspaceIde({ fontSize: 4 }).fontSize, 8);
-  assert.equal(normalizeWorkspaceIde({ fontSize: 0 }).fontSize, 8);
-  assert.equal(normalizeWorkspaceIde({ fontSize: -5 }).fontSize, 8);
-  assert.equal(normalizeWorkspaceIde({ fontSize: 'big' }).fontSize, 13);
-  assert.equal(normalizeWorkspaceIde({ fontSize: NaN }).fontSize, 13);
+  assert.equal(normalizeWorkspaceIde({ fontSize: 0 }).fontSize, 0);
+  assert.equal(normalizeWorkspaceIde({ fontSize: -5 }).fontSize, 0);
+  assert.equal(normalizeWorkspaceIde({ fontSize: 'big' }).fontSize, 0);
+  assert.equal(normalizeWorkspaceIde({ fontSize: NaN }).fontSize, 0);
   // tabSize: enum {2,4,8}; non-members (incl. 3) -> default 2.
   assert.equal(normalizeWorkspaceIde({ tabSize: 4 }).tabSize, 4);
   assert.equal(normalizeWorkspaceIde({ tabSize: 8 }).tabSize, 8);
@@ -416,8 +403,8 @@ test('v24 -> v25 migration fills editor-pref defaults while preserving tabs/rail
   assert.equal(ideState(migrated).railPanel, 'search');
   assert.equal(ideState(migrated).railWidth, 340);
   assert.equal(ideState(migrated).wordWrap, 'on');
-  // New editor-pref defaults are filled in.
-  assert.equal(ideState(migrated).fontSize, 13);
+  // New editor-pref defaults are filled in (0 = Match text size).
+  assert.equal(ideState(migrated).fontSize, 0);
   assert.equal(ideState(migrated).tabSize, 2);
   assert.equal(ideState(migrated).minimap, true);
   assert.equal(ideState(migrated).lineNumbers, 'on');
@@ -528,7 +515,7 @@ test('v27 -> v28 migration adds panelLocations (split default; Changes/Source Co
   assert.equal(ideState(migrated).secondaryPanelOpen, true);
 });
 
-test('v28 -> v29 migration adds inline-suggest defaults while preserving prior IDE state', () => {
+test('v28 -> v29 migration preserves prior IDE state', () => {
   const persisted = {
     version: 28, // pre-inline-autocomplete payload
     toolsWorkspaceRoot: TEST_WORKSPACE_ROOT,
@@ -552,10 +539,9 @@ test('v28 -> v29 migration adds inline-suggest defaults while preserving prior I
   assert.equal(ideState(migrated).railPanel, 'changes');
   assert.equal(ideState(migrated).fontSize, 16);
   assert.equal(ideState(migrated).panelLocations.search, 'secondary');
-  // New inline-autocomplete defaults arrive (enabled-on, no model, CPU-pinned).
-  assert.equal(ideState(migrated).inlineSuggestEnabled, true);
-  assert.equal(ideState(migrated).inlineSuggestModel, '');
-  assert.equal('inlineSuggestUseGpu' in ideState(migrated), false);
+  // The v29 inline-autocomplete keys no longer exist (removed 2026-10-01).
+  assert.equal('inlineSuggestEnabled' in ideState(migrated), false);
+  assert.equal('inlineSuggestModel' in ideState(migrated), false);
 });
 
 test('v30 -> v31 migration defaults autoSaveEnabled OFF while preserving prior IDE state', () => {
@@ -582,8 +568,9 @@ test('v30 -> v31 migration defaults autoSaveEnabled OFF while preserving prior I
   assert.deepEqual(ideState(migrated).openTabs, [{ path: 'src/index.js', pinned: false }]);
   assert.equal(ideState(migrated).railPanel, 'search');
   assert.equal(ideState(migrated).fontSize, 16);
-  assert.equal(ideState(migrated).inlineSuggestEnabled, false);
-  assert.equal(ideState(migrated).inlineSuggestModel, 'qwen2.5-coder:1.5b-base');
+  // The stored inline-suggestion values are dropped with the removed feature.
+  assert.equal('inlineSuggestEnabled' in ideState(migrated), false);
+  assert.equal('inlineSuggestModel' in ideState(migrated), false);
   // An existing config must NOT silently start auto-writing: the new field
   // defaults OFF (only a literal true would enable it).
   assert.equal(ideState(migrated).autoSaveEnabled, false);
@@ -837,7 +824,7 @@ test('v36 migration adds the generated-directory preference and preserves explic
 });
 
 test('explorer sort mode round-trips as an additive global preference', () => {
-  assert.equal(CONFIG_VERSION, 55);
+  assert.equal(CONFIG_VERSION, 59);
   const state = normalizeState({
     version: CONFIG_VERSION,
     toolsWorkspaceRoot: TEST_WORKSPACE_ROOT,

@@ -37,7 +37,6 @@ const SAFE_MODE_ON = Object.freeze({ active: true, source: 'argv' });
 const ALL_METHODS = Object.freeze([
   ['getState', {}],
   ['getDetails', { publisher_id: 'acme', plugin_id: 'alpha' }],
-  ['getPolicyStatus', {}],
   ['getOperation', { operation_id: 'op-1' }],
   ['installLocalPackage', {}],
   ['enable', { publisher_id: 'acme', plugin_id: 'alpha' }],
@@ -223,17 +222,9 @@ describe('control plane recovery is lazy and runs once', () => {
     assert.equal(recoveries, afterFirst, 'recovery must not run again');
   });
 
-  test('getPolicyStatus is pure posture and never reaches the store', async () => {
-    const { facade, service } = makeService();
-    const status = await service.getPolicyStatus();
-    assert.equal(status.ok, true);
-    assert.equal(status.disabled_only, false);
-    assert.equal(status.activation_scope, 'stage5_remote_mcp');
-    assert.equal(status.contribution_execution_permitted, true);
-    assert.equal(status.plugin_network_permitted, true);
-    assert.equal(status.plugin_views_permitted, true);
-    assert.equal(status.plugin_mcp_permitted, true);
-    assert.equal(totalFacadeCalls(facade), 0);
+  test('the retired managed-policy status query is not on the service', () => {
+    const { service } = makeService();
+    assert.equal(service.getPolicyStatus, undefined);
   });
 });
 

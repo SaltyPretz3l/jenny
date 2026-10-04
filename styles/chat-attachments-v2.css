@@ -73,8 +73,8 @@
   border-radius: var(--radius-pill);
   background: color-mix(in srgb, var(--accent) 9%, var(--widget-attachment-bg));
   color: var(--text-secondary);
-  font-size: var(--font-size-xs);
-  font-weight: 650;
+  font-size: var(--font-size-caption);
+  font-weight: 500;
 }
 
 @media (prefers-reduced-motion: reduce) {

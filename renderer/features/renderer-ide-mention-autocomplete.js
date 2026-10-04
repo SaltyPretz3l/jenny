@@ -43,8 +43,10 @@
   // up to the caret that is not whitespace or another `@`.
   var TRIGGER_RE = /(?:^|[\s([{])@([^\s@]*)$/;
 
+  // No trim: a leading or trailing space is part of the name.
   function normalizePath(value) {
-    return String(value || '').trim().replace(/\\/g, '/');
+    var raw = String(value || '');
+    return raw.trim() ? raw.replace(/\\/g, '/') : '';
   }
 
   function basename(relPath) {
@@ -125,7 +127,9 @@
     // collectMentionPaths() filters these to the ones still present in the
     // live text AND recorded under the current root, so deleting an `@mention`
     // or switching workspace roots drops it from the turn.
-    var recorded = [];
+    var recorded = []; // active primary composer only
+    var paneRecords = new WeakMap(); // other textareas receive approved draft snapshots
+    var rootEpoch = 0; // committed resets invalidate saved snapshots, even with a null root key
 
     function rootKeyOf(result) {
       if (!result || result.rootId == null) {
@@ -189,7 +193,9 @@
           // The list came back from a different workspace root (a root switch
           // that raced the TTL): accepted mentions recorded under the old root
           // must not resolve against the new one.
-          recorded = recorded.filter(function (entry) { return entry.rootKey === nextRootKey; });
+          recorded = [];
+          paneRecords = new WeakMap();
+          rootEpoch += 1;
           filesRootKey = nextRootKey;
         }
       } catch (error) {
@@ -472,6 +478,8 @@
       matches = [];
       selectedIndex = 0;
       recorded = [];
+      paneRecords = new WeakMap();
+      rootEpoch += 1;
       hidePopover();
     }
 
@@ -519,16 +527,49 @@
       }
     }
 
+    function recordsFor(input) {
+      return input === inputEl ? recorded : (input && paneRecords.get(input)) || [];
+    }
+
+    function setRecords(input, entries) {
+      if (input === inputEl) recorded = entries;
+      else if (input) paneRecords.set(input, entries);
+    }
+
+    // Renderer-only snapshots carry acceptance history, never derive it from @text.
+    // The epoch prevents a background draft from reviving records after JCA-001.
+    function exportRecords(input) {
+      var target = input || inputEl;
+      if (target && !String(target.value || '').trim()) setRecords(target, []);
+      return { rootEpoch: rootEpoch, records: recordsFor(target).map(function (entry) {
+        return { path: entry.path, rootKey: entry.rootKey };
+      }) };
+    }
+
+    function importRecords(snapshot, input) {
+      var target = input || inputEl;
+      var entries = snapshot && snapshot.rootEpoch === rootEpoch && Array.isArray(snapshot.records)
+        ? snapshot.records.filter(function (entry) {
+          return entry && typeof entry.path === 'string' && entry.rootKey === filesRootKey;
+        }).slice(-MAX_RECORDED).map(function (entry) {
+          return { path: entry.path, rootKey: entry.rootKey };
+        }) : [];
+      setRecords(target, entries);
+      if (target === inputEl) hidePopover();
+    }
+
     // Mentions still present in the live composer text (workspace-relative),
     // restricted to records accepted under the CURRENT root (JCA-001).
-    function collectMentionPaths() {
-      if (!inputEl) {
+    function collectMentionPaths(input) {
+      var target = input || inputEl;
+      if (!target) {
         return [];
       }
-      var value = String(inputEl.value || '');
+      var value = String(target.value || '');
+      var entries = recordsFor(target);
       var present = [];
-      for (var i = 0; i < recorded.length; i += 1) {
-        var entry = recorded[i];
+      for (var i = 0; i < entries.length; i += 1) {
+        var entry = entries[i];
         if (entry.rootKey !== filesRootKey) {
           continue; // accepted under a different workspace root
         }
@@ -546,7 +587,7 @@
     // instead of leaving the send awaiting a promise that never settles.
     // `collectOptions.readTimeoutMs` overrides the per-file cap (injectable for tests).
     async function collectMentionContents(collectOptions) {
-      var paths = collectMentionPaths();
+      var paths = collectMentionPaths(collectOptions && collectOptions.input);
       if (!paths.length) {
         return [];
       }
@@ -663,6 +704,8 @@
       attach: attach,
       dispose: dispose,
       resetForRoot: resetForRoot,
+      exportRecords: exportRecords,
+      importRecords: importRecords,
       collectMentionPaths: collectMentionPaths,
       collectMentionContents: collectMentionContents,
       isOpen: function isOpen() { return visible; },
@@ -769,15 +812,15 @@
     return { boot: boot, dispose: dispose };
   }
 
-  function collectMentionPaths() {
+  function collectMentionPaths(input) {
     return installedController && typeof installedController.collectMentionPaths === 'function'
-      ? installedController.collectMentionPaths()
+      ? installedController.collectMentionPaths(input)
       : [];
   }
 
-  function collectMentionContents() {
+  function collectMentionContents(options) {
     return installedController && typeof installedController.collectMentionContents === 'function'
-      ? installedController.collectMentionContents()
+      ? installedController.collectMentionContents(options)
       : Promise.resolve([]);
   }
 
@@ -785,6 +828,8 @@
     createMentionAutocomplete: createMentionAutocomplete,
     installSelf: installSelf,
     forwardClientLog: forwardClientLog,
+    exportRecords: function (input) { return installedController ? installedController.exportRecords(input) : null; },
+    importRecords: function (snapshot, input) { if (installedController) installedController.importRecords(snapshot, input); },
     collectMentionPaths: collectMentionPaths,
     collectMentionContents: collectMentionContents,
   };

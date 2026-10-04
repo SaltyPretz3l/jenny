@@ -37,8 +37,8 @@ def _artifact_files(workspace_root: Path) -> list[str]:
 
 
 def _call_create_artifact(workspace_root: Path, arguments: dict) -> dict:
-    tools = builtin_server._default_tools()  # noqa: SLF001
-    return builtin_server._handle_tools_call(  # noqa: SLF001
+    tools = builtin_server._default_tools()
+    return builtin_server._handle_tools_call(
         "fail-closed-call",
         tools,
         WorkspaceGuard(str(workspace_root)),
@@ -113,8 +113,8 @@ def test_write_file_without_key_still_executes_fail_open(
     # spec'd fail-open degradation.
     builtin_server.configure_operation_ledger(tmp_path / "ledger-root")
     try:
-        tools = builtin_server._default_tools()  # noqa: SLF001
-        response = builtin_server._handle_tools_call(  # noqa: SLF001
+        tools = builtin_server._default_tools()
+        response = builtin_server._handle_tools_call(
             "fail-open-call",
             tools,
             WorkspaceGuard(str(workspace_root)),

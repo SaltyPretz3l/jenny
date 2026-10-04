@@ -2,7 +2,6 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const crypto = require('node:crypto');
 
 const { PLUGIN_ERROR_CODES } = require('../../../services/backend/error-codes');
 const { verifyLocalPackage } = require('../../../services/plugins/package/local-package-intake');
@@ -84,76 +83,6 @@ test('a real signed ZIP verifies end-to-end and yields immutable intake metadata
   assert.equal(result.package_record.signature_bundle_state.state, 'verified');
   assert.equal(result.package_record.source_identity.package_path_digest, SOURCE_PATH_DIGEST);
   assert.equal(JSON.stringify(result).includes('private'), false);
-});
-
-test('a signed V6 restricted contribution retains its verified component digest and bytes', async () => {
-  const {
-    createStage8UnsignedFixture,
-    createV6UnsignedPackage,
-    finalizeV6Package,
-  } = await import('../../../scripts/plugins/jenny-plugin-v6-packager.mjs');
-  const componentBytes = Buffer.from([0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00]);
-  const content = {
-    content_schema_version: 4,
-    publisher_id: 'jenny-official',
-    plugin_id: 'stage8-conformance',
-    contribution_id: 'compute',
-    payload: {
-      kind: 'restricted_compute', description: 'Bounded compute',
-      input_schema_json: '{"type":"object"}', output_schema_json: '{"type":"object"}',
-      timeout_ms: 1000, capabilities: ['control.cancelled'], network_origins: [],
-    },
-  };
-  const contentBytes = Buffer.from(`${JSON.stringify(content)}\n`, 'utf8');
-  const digest = (bytes) => crypto.createHash('sha256').update(bytes).digest('hex');
-  const base = createStage8UnsignedFixture({
-    binaryBytes: Buffer.from('synthetic-executable'), platform: 'win32',
-  });
-  const manifest = {
-    ...base.manifest,
-    contributions: [...base.manifest.contributions, {
-      kind: 'restricted_compute', contribution_id: 'compute', name: 'Compute',
-      content_path: 'content/compute.json', content_sha256: digest(contentBytes),
-      component_path: 'components/compute.wasm', component_sha256: digest(componentBytes),
-      abi_world: 'jenny:plugin/restricted-host@1.0.0',
-    }],
-  };
-  const fixture = createV6UnsignedPackage({
-    manifest,
-    entries: [...base.signedEntries.slice(1),
-      { path: 'content/compute.json', bytes: contentBytes },
-      { path: 'components/compute.wasm', bytes: componentBytes }],
-  });
-  const { publicKey, privateKey } = crypto.generateKeyPairSync('ed25519');
-  const keyId = digest(publicKey.export({ format: 'der', type: 'spki' }));
-  const packaged = finalizeV6Package({
-    fixture, keyId, publicKey, signature: crypto.sign(null, fixture.canonicalBytes, privateKey),
-  });
-  const { validateTrustedPublisherRoots } = require(
-    '../../../services/plugins/package/trusted-publisher-roots'
-  );
-  const trustRoots = validateTrustedPublisherRoots({
-    trust_roots_schema_version: 1,
-    updated_at: NOW,
-    publishers: [{
-      publisher_id: 'jenny-official', current_key_id: keyId, established_at: NOW,
-      keys: [{
-        key_id: keyId, fingerprint: `SHA256:${Buffer.from(keyId, 'hex').toString('base64')}`,
-        algorithm: 'ed25519',
-        public_key_spki_der_base64: publicKey.export({ format: 'der', type: 'spki' }).toString('base64'),
-        status: 'active', added_at: NOW,
-      }],
-    }],
-  });
-  assert.equal(trustRoots.ok, true, trustRoots.reason);
-
-  const result = await verifyLocalPackage({
-    bytes: packaged.bytes, sourcePathDigest: SOURCE_PATH_DIGEST, trustRoots, now: NOW,
-  });
-  assert.equal(result.ok, true, result.reason);
-  assert.equal(result.restricted_component_bytes.length, 1);
-  assert.equal(result.restricted_component_bytes[0].component_digest, digest(componentBytes));
-  assert.deepEqual(result.restricted_component_bytes[0].bytes, componentBytes);
 });
 
 test('unsigned, unknown, revoked, rotated, and cryptographically bad keys all fail closed', async () => {

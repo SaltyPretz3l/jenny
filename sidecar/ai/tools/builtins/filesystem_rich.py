@@ -29,7 +29,7 @@ def read_rich_file(
 ) -> ToolHandlerResult:
     delegated_arguments = {"path": arguments["path"]}
     if kind == "pdf":
-        from sidecar.ai.tools.builtins.rich_files.pdf import (  # noqa: PLC0415
+        from sidecar.ai.tools.builtins.rich_files.pdf import (
             pdf_inspect_tool,
         )
 
@@ -39,24 +39,24 @@ def read_rich_file(
             delegated_arguments["cursor"] = arguments["cursor"]
         return pdf_inspect_tool(delegated_arguments, workspace)
     if kind == "document":
-        from sidecar.ai.tools.builtins.rich_files.document import (  # noqa: PLC0415
+        from sidecar.ai.tools.builtins.rich_files.document import (
             document_inspect_tool,
         )
 
         return document_inspect_tool(delegated_arguments, workspace)
     if kind == "spreadsheet":
-        from sidecar.ai.tools.builtins.rich_files.spreadsheet import (  # noqa: PLC0415
+        from sidecar.ai.tools.builtins.rich_files.spreadsheet import (
             spreadsheet_inspect_tool,
         )
 
         return spreadsheet_inspect_tool(delegated_arguments, workspace)
     if kind == "presentation":
-        from sidecar.ai.tools.builtins.rich_files.presentation import (  # noqa: PLC0415
+        from sidecar.ai.tools.builtins.rich_files.presentation import (
             presentation_inspect_tool,
         )
 
         return presentation_inspect_tool(delegated_arguments, workspace)
-    from sidecar.ai.tools.builtins.rich_files.notebook import (  # noqa: PLC0415
+    from sidecar.ai.tools.builtins.rich_files.notebook import (
         notebook_inspect_tool,
     )
 

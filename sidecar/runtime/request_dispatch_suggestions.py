@@ -33,7 +33,7 @@ def _emit_log_event(logger: logging.Logger, level: int, **kwargs: Any) -> None:
     log_event_fn(logger, level, **kwargs)
 
 
-def process_suggestions_method(  # noqa: PLR0917 -- uniform request-dispatch hook contract
+def process_suggestions_method(  # uniform request-dispatch hook contract
     method: str,
     message_id: Any,
     params: Any,

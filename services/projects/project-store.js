@@ -69,6 +69,15 @@ class ProjectStore {
     return structuredClone(this._document);
   }
 
+  // One project, cloned alone: a per-project lookup must not copy the whole
+  // document (projects.list captures every project, which made it O(n^2)).
+  getProject(projectId) {
+    const project = Object.prototype.hasOwnProperty.call(this._document.projects || {}, projectId)
+      ? this._document.projects[projectId]
+      : null;
+    return project ? structuredClone(project) : null;
+  }
+
   replace(document) {
     if (this._readOnlyReason) {
       return { ok: false, durable: false, reason: this._readOnlyReason, read_only: true };

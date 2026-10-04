@@ -816,3 +816,30 @@ describe('WorktreeService', () => {
     assert.deepEqual(registry.listAll(), []);
   });
 });
+
+
+test('selection rejects a worktree Git still lists as prunable', async () => {
+  const repoRoot = await createGitRepo();
+  const { service } = createService();
+  const created = await service.createWorktree({ workspaceRoot: repoRoot, branch: 'codex/prunable-select', baseRef: 'HEAD' });
+  const target = created.worktree.worktree_path;
+  await fs.rm(target, { recursive: true, force: true });
+  await fs.mkdir(target, { recursive: true });
+  const listed = await git(repoRoot, ['worktree', 'list', '--porcelain']);
+  assert.match(String(listed.stdout ?? listed), /prunable/);
+  const selected = await service.resolveSelectableWorktree({ workspaceRoot: repoRoot, worktreeId: created.worktree.id });
+  assert.equal(selected.success, false);
+  assert.equal(selected.reason, 'worktree_stale');
+});
+
+test('selection rejects a registered directory removed from Git inventory', async () => {
+  const repoRoot = await createGitRepo();
+  const { service } = createService();
+  const created = await service.createWorktree({ workspaceRoot: repoRoot, branch: 'codex/stale-select', baseRef: 'HEAD' });
+  const target = created.worktree.worktree_path;
+  await git(repoRoot, ['worktree', 'remove', target]);
+  await fs.mkdir(target, { recursive: true });
+  const selected = await service.resolveSelectableWorktree({ workspaceRoot: repoRoot, worktreeId: created.worktree.id });
+  assert.equal(selected.success, false);
+  assert.equal(selected.reason, 'worktree_stale');
+});

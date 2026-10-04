@@ -60,7 +60,7 @@ def prepare_first_batch_pause(
 
 def prepare_tool_continuation(loop_run: Any, **boundary: Any) -> bool:
     """Probe supported boundaries after policy filtering, before any dispatch."""
-    from sidecar.ai.routing.tool_dependency_wait import probe_dependency_wait  # noqa: PLC0415
+    from sidecar.ai.routing.tool_dependency_wait import probe_dependency_wait
 
     eligible = prepare_first_batch_pause(loop_run, **boundary)
     probe_dependency_wait(loop_run, **boundary)
@@ -68,7 +68,7 @@ def prepare_tool_continuation(loop_run: Any, **boundary: Any) -> bool:
 
 
 def resource_callback(loop_run: Any, iteration: int) -> Any:
-    from sidecar.ai.routing.tool_resource_progress import (  # noqa: PLC0415
+    from sidecar.ai.routing.tool_resource_progress import (
         resource_deferral_callback as build,
     )
     return build(loop_run, iteration)

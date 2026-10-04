@@ -9,9 +9,9 @@ from sidecar.ai.error_codes import CMP_LOOP_INVALID_TOOL_CALL
 from sidecar.ai.routing.provider_tool_limits import (
     MAX_PROVIDER_TOOL_CALLS,
     MAX_TOOL_CALL_AGGREGATE_ARGUMENT_BYTES,
-    MAX_TOOL_CALL_ARGUMENT_BYTES,
     safe_unique_tool_call_id,
     serialized_tool_arguments,
+    tool_argument_byte_cap,
     tool_call_id_diagnostic_label,
 )
 from sidecar.ai.tools.contracts import ToolExecutionFailure, canonicalize_tool_arguments
@@ -140,10 +140,13 @@ def validate_provider_tool_call_limits(
             reason = f"provider tool-call batch exceeds {MAX_PROVIDER_TOOL_CALLS} calls"
         else:
             argument_bytes = len(serialized_tool_arguments(call.arguments))
-            if argument_bytes > MAX_TOOL_CALL_ARGUMENT_BYTES:
+            # The per-tool cap (smaller for path-only builtins) is enforced here
+            # for every engine; only the vLLM stream also stops generating on it.
+            call_cap = tool_argument_byte_cap(call.tool_id)
+            if argument_bytes > call_cap:
                 reason = (
                     "provider tool-call arguments exceed the "
-                    f"{MAX_TOOL_CALL_ARGUMENT_BYTES}-byte per-call limit"
+                    f"{call_cap}-byte per-call limit"
                 )
             elif aggregate_bytes + argument_bytes > MAX_TOOL_CALL_AGGREGATE_ARGUMENT_BYTES:
                 reason = (

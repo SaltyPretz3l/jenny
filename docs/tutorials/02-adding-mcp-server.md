@@ -1,6 +1,6 @@
 ---
 kind: tutorial
-last_reviewed: 2026-09-09
+last_reviewed: 2026-10-03
 ---
 
 # 02 — Adding an MCP server
@@ -27,7 +27,7 @@ Open Settings (the gear icon) → **Plugins & Extensions**. Below the Plugins an
 
 Press **Add connection**. The drawer asks for:
 
-- **Connection name** — letters, digits, `_`, `.`, `-`, up to 64 characters. Tools from this server appear as `mcp__<name>__<tool>` in Jenny's tool list.
+- **Connection name** — start with a letter or digit, then use letters, digits, `_`, `.`, `-`, up to 64 characters. `jenny_local_tools` is reserved. Tools from this server appear as `mcp__<name>__<tool>` in Jenny's tool list.
 - **Transport** — **Local stdio** (Jenny launches the server as a subprocess) or **Remote SSE** (an HTTP endpoint).
 - **Command** (stdio) or **HTTPS URL** (SSE).
 - **Arguments (one per line)** for stdio servers.
@@ -64,7 +64,9 @@ The tools appear with the `mcp__<server>__<tool>` prefix so they cannot collide 
 
 > List the files in the folder the filesystem server exposes.
 
-MCP tools go through the same approval pipeline as built-in tools: in **Ask** run mode, side-effecting calls stop at the approval card, and **Always allow** is scoped to the tool and its target.
+MCP tools go through the same approval pipeline as built-in tools. Review the
+policy shown on each call; saved **Always allow** choices are scoped to the tool
+and, where a target is present, that target.
 
 You can also ask Jenny to run `jenny_status` and summarize the result; it reports which MCP servers are connected or failed.
 
@@ -121,4 +123,4 @@ MCP subprocesses run under the same containment as Jenny's other side-effecting 
 ## Next
 
 - Tour the built-in tool families: [docs/TOOLS.md](../TOOLS.md).
-- Package tools of your own as a plugin instead: [docs/plugins/README.md](../plugins/README.md).
+- Pair the connection with a reusable [skill folder](../SKILLS.md). Plugin-provided MCP contributions are retired in current source; standalone MCP connections use this separate trust flow.

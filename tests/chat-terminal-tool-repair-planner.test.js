@@ -103,3 +103,48 @@ test('pending approval waiter drain isolates a throwing waiter and logs the fail
   assert.equal(logs[0][0], 'WARN');
   assert.equal(logs[0][1], 'lifecycle.approval_waiter_drain_failed');
 });
+
+test('a user Stop plans its running tools as cancelled and repairs them as stopped (F3)', () => {
+  const { settleUnfinishedToolRows } = require('../services/backend/chat-stream-managed-runtime-failure');
+  const {
+    buildInterruptedToolRepairPlan, normalizeTerminalMutations,
+  } = require('../services/backend/chat-stream-terminal-tool-repairs');
+  const { statusForToolResult } = require('../renderer/chat/tool-call-utils');
+  function plan(isUserStop) {
+    const ctx = {
+      latestToolContext: {},
+      unfinishedToolsSettled: false,
+      isUserStop: () => isUserStop,
+      service: {
+        sessionStore: { getSessionMessages: () => [toolUse()] },
+        terminalCoordinator: { settle() {} },
+      },
+      resolvedSessionId: 'session_1',
+      streamId: 'stream_1',
+      model: 'test-model',
+      diagnosticToolNamesByCallId: new Map(),
+      diagnosticToolEvents: [],
+      transcriptCollector: { noteToolStep() {} },
+    };
+    assert.equal(settleUnfinishedToolRows(ctx, 'terminal_cancelled'), 1);
+    const [repair] = ctx.unfinishedToolRepairs;
+    const identity = { streamId: 'stream_1', turnId: 'turn_1' };
+    const normalized = normalizeTerminalMutations([], [repair], identity, 'now');
+    assert.equal(normalized.ok, true);
+    return { repair, built: buildInterruptedToolRepairPlan(repair, identity, 'now'), persisted: normalized.repairTurnEvents[0] };
+  }
+
+  const stopped = plan(true);
+  assert.equal(stopped.repair.patch.tool_call.status, 'cancelled');
+  assert.equal(stopped.built.resultMessage.content, 'Tool execution stopped by the user before it finished.');
+  assert.equal(stopped.built.resultMessage.tool_result.approval_state, 'cancelled');
+  // The event that is persisted (and that trace mode's result row reads).
+  assert.equal(stopped.persisted.status, 'cancelled');
+  assert.equal(statusForToolResult(stopped.persisted.payload), 'cancelled');
+  assert.equal(statusForToolResult(stopped.built.resultMessage.tool_result), 'cancelled');
+
+  const failed = plan(false);
+  assert.equal(failed.repair.patch.tool_call.status, 'interrupted');
+  assert.match(failed.built.resultMessage.content, /^System error: tool execution interrupted/);
+  assert.equal(failed.persisted.status, 'error');
+});

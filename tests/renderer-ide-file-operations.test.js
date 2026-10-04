@@ -310,6 +310,23 @@ test('root reset detaches new operations from an unresolved old-root queue', asy
   await assert.rejects(oldRead, (error) => error.code === 'workspace_file_operation_stale');
 });
 
+test('isOpenContextCurrent follows the root epoch only, not intent supersession', () => {
+  const operations = createIdeFileOperations({ getWorkspaceFsApi: () => ({}), platform: 'linux' });
+  assert.equal(operations.isOpenContextCurrent(null), false);
+
+  const intent = operations.beginOpen('a.js');
+  operations.beginOpen('b.js');
+  assert.equal(operations.isOpenIntentCurrent(intent), false, 'a newer open supersedes the intent');
+  assert.equal(operations.isOpenContextCurrent(intent), true, 'but the intent still belongs to this root');
+
+  operations.reset({ rootId: 'root-b', generation: 5 });
+  assert.equal(operations.isOpenContextCurrent(intent), false, 'a root reset ends the old root context');
+  assert.equal(operations.isOpenContextCurrent(operations.beginOpen('a.js')), true);
+
+  operations.dispose();
+  assert.equal(operations.isOpenContextCurrent(operations.beginOpen('a.js')), false, 'disposed');
+});
+
 test('an in-root canonical alias response requires the requested path identity', async () => {
   const api = {
     readText: async () => ({

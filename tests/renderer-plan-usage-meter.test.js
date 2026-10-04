@@ -152,7 +152,7 @@ test('unknown reached types and malformed windows are dropped', (t) => {
   assert.equal(meter.getSnapshot(), null);
 });
 
-test('renders nothing without a snapshot, when the engine is not chatgpt, or when the flag is off', (t) => {
+test('renders nothing without a snapshot or when the engine is not chatgpt', (t) => {
   withInventory(t);
   const dom = new JSDOM('<body></body>');
   assert.equal(renderInto(dom).innerHTML, '', 'no snapshot');
@@ -161,9 +161,6 @@ test('renders nothing without a snapshot, when the engine is not chatgpt, or whe
   assert.notEqual(renderInto(dom, { status: { engine: 'chatgpt' } }).innerHTML, '', 'renderer engine gate passes');
   meter.applyPayload(payload({ engineActive: true }));
   assert.notEqual(renderInto(dom, { status: { engine: 'ollama' } }).innerHTML, '', 'main-process engine_active passes');
-  const flagOffHost = renderInto(dom, { status: { engine: 'chatgpt' }, features: { featureFlags: { chatgpt_plan_meter: false } } });
-  flagOffHost.querySelector('.inv-plan-usage').dispatchEvent(new dom.window.Event('transitionend', { bubbles: true }));
-  assert.equal(flagOffHost.innerHTML, '', 'flag off');
 });
 
 test('selected model engine wins over the loaded ChatGPT engine', (t) => {
@@ -227,7 +224,32 @@ test('chip and popover markup carry both windows, the account line, and no raw p
   assert.match(popover.querySelector('.inv-plan-updated').textContent, /^Updated 2 min ago · from the last ChatGPT response$/);
   assert.equal(host.querySelectorAll('button').length, 1, 'the chip is the only button (inventory primitive)');
   assert.equal(host.querySelectorAll('input, select').length, 0);
-  assert.equal(host.innerHTML.includes('style='), false, 'no inline styles (CSP)');
+  // The only inline style is the chip's --usage-ratio custom property (the
+  // collapsed settings popover's bar); the popover bars stay SVG attributes.
+  assert.equal(host.querySelectorAll('[style]').length, 1, 'one inline style: the chip');
+  assert.equal(chip.getAttribute('style'), '--usage-ratio:0.62');
+});
+
+test('the chip carries the settings-popover usage bar after its percent label (spec 2026-09-26)', (t) => {
+  withInventory(t);
+  meter.applyPayload(payload());
+  const dom = new JSDOM('<body></body>');
+  const chip = renderInto(dom).querySelector('#composerPlanRing');
+  assert.equal(chip.style.getPropertyValue('--usage-ratio'), '0.62');
+  const bar = chip.querySelector(':scope > .inv-usage-bar');
+  assert.ok(bar, 'bar appended to the chip');
+  assert.equal(bar.getAttribute('aria-hidden'), 'true');
+  assert.equal(bar.children.length, 1);
+  assert.ok(bar.firstElementChild.classList.contains('inv-usage-bar-fill'));
+  assert.equal(chip.lastElementChild, bar, 'the bar is the last child');
+  assert.equal(chip.querySelectorAll('.inv-chip-label').length, 1, 'the existing percent label is reused, not duplicated');
+  assert.equal(chip.querySelector('.inv-chip-label').textContent, '62%');
+  assert.equal(chip.getAttribute('aria-label'), 'ChatGPT plan usage: 62%', 'aria-label unchanged');
+  assert.ok(chip.querySelector('.inv-context-ring-svg'), 'the ring svg stays');
+
+  meter.applyPayload(payload({ primary: 140, secondary: 5 }));
+  const clamped = renderInto(dom).querySelector('#composerPlanRing');
+  assert.equal(clamped.style.getPropertyValue('--usage-ratio'), '1', 'the ratio clamps to 1');
 });
 
 test('provider-supplied strings are escaped', (t) => {

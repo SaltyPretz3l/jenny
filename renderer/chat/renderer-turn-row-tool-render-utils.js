@@ -65,12 +65,16 @@
     });
   }
 
-  function getToolStatusLabel(status, normalizeId) {
+  function getToolStatusLabel(status, normalizeId, result) {
     const normalize = typeof normalizeId === 'function' ? normalizeId : fallbackNormalizeId;
     const normalizedStatus = normalize(status).toLowerCase();
     // Canonical labels come from tool-call-utils.getStatusLabel so trace-row and block-family labels cannot diverge.
     const toolCallUtils = (typeof globalThis !== 'undefined' && globalThis.toolCallUtils)
       || (typeof require === 'function' ? require('./tool-call-utils') : null);
+    // A command that exited non-zero reads "exit N" (the result carries the code).
+    if (result && toolCallUtils && typeof toolCallUtils.getResultStatusLabel === 'function') {
+      return toolCallUtils.getResultStatusLabel(normalizedStatus, result);
+    }
     if (toolCallUtils && typeof toolCallUtils.getStatusLabel === 'function') {
       return toolCallUtils.getStatusLabel(normalizedStatus);
     }
@@ -195,6 +199,20 @@
     _toolDetailContexts.clear();
   }
 
+  // Transcript view switch: drop one session's overrides (row keys start with
+  // `session=<enc>|`, tool-call-utils buildToolRowKey) and keep the lazy detail
+  // contexts, which another pane may still materialize from.
+  function clearToolRowExpansionOverridesForSession(sessionId) {
+    const normalized = fallbackNormalizeId(sessionId);
+    if (!normalized) return;
+    const toolCallUtils = (typeof globalThis !== 'undefined' && globalThis.toolCallUtils)
+      || require('./tool-call-utils');
+    const prefix = toolCallUtils.toolRowKeySessionPrefix(normalized);
+    for (const key of Array.from(_toolRowExpansionOverrides.keys())) {
+      if (key.startsWith(prefix)) _toolRowExpansionOverrides.delete(key);
+    }
+  }
+
   function createTurnRowToolRenderUtils(deps) {
     const settings = deps || {};
     const toolCallUtils = (typeof globalThis !== 'undefined' && globalThis.toolCallUtils)
@@ -273,6 +291,36 @@
       };
     }
 
+    // Generated images render as the inline figure (open / save / copy /
+    // reveal) the classic tool shell shows; settled rows take this minimal
+    // path, so without it an image never shows in the timeline (GIP-1).
+    // Other artifacts keep their teaser card. Resolved per call: the card
+    // utils may load after this module.
+    function resolveArtifactCardUtils() {
+      if (settings.artifactCardUtils && typeof settings.artifactCardUtils.renderArtifactCards === 'function') {
+        return settings.artifactCardUtils;
+      }
+      if (typeof globalThis !== 'undefined' && globalThis.rendererArtifactCardUtils) {
+        return globalThis.rendererArtifactCardUtils;
+      }
+      if (typeof require === 'function') {
+        try { return require('./renderer-artifact-card-utils'); } catch (_error) { /* not available */ }
+      }
+      return null;
+    }
+
+    function buildResultArtifactsMarkup(artifacts, callId, figureOptions) {
+      const list = Array.isArray(artifacts) ? artifacts : [];
+      const isImage = (artifact) => String(artifact?.artifact_kind || '').trim().toLowerCase() === 'image';
+      const images = list.filter(isImage);
+      const cardUtils = images.length ? resolveArtifactCardUtils() : null;
+      const figuresMarkup = cardUtils && typeof cardUtils.renderArtifactCards === 'function'
+        ? cardUtils.renderArtifactCards(images, callId, figureOptions)
+        : '';
+      const teasers = figuresMarkup ? list.filter((artifact) => !isImage(artifact)) : list;
+      return figuresMarkup + teasers.map((artifact) => renderArtifactTeaser(artifact)).join('');
+    }
+
     function buildToolCallRowMarkup(row, messages, options) {
       const renderOptions = options || {};
       const payload = row && row.payload && typeof row.payload === 'object' ? row.payload : {};
@@ -348,11 +396,16 @@
         ? readApprovalCardState(row, toolCallId, renderOptions) : null;
       const headerStatus = { paused: 'paused', inactive: 'withdrawn' }[approvalCardState && approvalCardState.state] || status;
       const statusAutoExpand = toolCallUtils && typeof toolCallUtils.shouldAutoExpandToolDetails === 'function'
-        ? toolCallUtils.shouldAutoExpandToolDetails(statusKey)
+        ? toolCallUtils.shouldAutoExpandToolDetails(statusKey, { transcriptView: renderOptions.transcriptView })
         : false;
       const userOverride = getToolRowExpansion(rowKey);
       const expanded = userOverride === undefined ? statusAutoExpand : userOverride === true;
       const detailsMaterialized = expanded || renderOptions.forceMaterializeToolDetails === true;
+      // The component preservation registry keys a row's expansion state by
+      // this view: a view switch renders new defaults that must not be
+      // overwritten by the old row's state when the morph restores it.
+      const transcriptViewAttr = renderOptions.transcriptView
+        ? ` data-transcript-view="${escapeHtml(String(renderOptions.transcriptView))}"` : '';
       const bodyId = `${domToken}-body`;
       const ariaBusy = status === 'running' ? ' aria-busy="true"' : '';
       const hasResultAttr = resultPayload ? ' data-has-result="true"' : '';
@@ -433,9 +486,12 @@
         ? buildMermaidFallbackBlockMarkup(resultPayload, domToken, renderOptions)
         : '';
       const artifactTeasersMarkup = resultPayload
-        ? (Array.isArray(resultPayload.generated_artifacts) ? resultPayload.generated_artifacts : [])
-            .map((artifact) => renderArtifactTeaser(artifact))
-            .join('')
+        ? buildResultArtifactsMarkup(resultPayload.generated_artifacts, toolCallId, {
+          seed: detailModel.metadata?.provenance?.seed,
+          prompt: detailModel.metadata?.provenance?.image_prompt,
+          negativePrompt: detailModel.metadata?.provenance?.image_negative_prompt,
+          sessionId: detailModel.sessionId,
+        })
         : '';
       const taskSpawnChipMarkup = taskSpawnChip?.renderTaskSpawnChipStrip?.(detailModel, {
         escapeHtml,
@@ -453,6 +509,15 @@
         : toolName;
       const isFileOperation = /^(Write|Edit|Move)$/.test(detailModel.toolKind);
       const isRunning = statusKey === 'running' || statusKey === 'executing';
+      // F30: a running image render shows its sized placeholder (with Cancel)
+      // beside the header, outside the inert body; the result render replaces
+      // it with the real figure.
+      const pendingImageFigureMarkup = isRunning && !resultPayload && normalizeId(toolName) === 'image_generate'
+        ? (resolveArtifactCardUtils()?.renderImagePendingFigure?.({
+          width: Number(summaryInput?.width) || 1024,
+          height: Number(summaryInput?.height) || 1024,
+        }) || '')
+        : '';
       const fileOperationClass = isFileOperation
         ? ` tool-call-file-operation${isRunning ? ' tool-call-file-composing' : (toolCallUtils.isFileOperationSettledStatus(status) ? ' tool-call-file-settled' : '')}`
         : '';
@@ -466,7 +531,8 @@
             isFileOperation,
             icon: toolCallUtils.getToolIcon(toolName),
             statusLabel: headerStatus === 'paused' ? jt('approval.block.paused', 'Paused')
-              : (headerStatus === 'withdrawn' ? jt('chat.toolCall.withdrawn', 'Withdrawn') : getToolStatusLabel(status, normalizeId)),
+              : (headerStatus === 'withdrawn' ? jt('chat.toolCall.withdrawn', 'Withdrawn')
+                : getToolStatusLabel(status, normalizeId, { exit_code: resultPayload?.exit_code, metadata: detailModel.metadata })),
             // R2-12: a failed row stays collapsed, so its own failure text
             // rides in the header as one bounded line.
             failureSummary: resultBodyIsError && toolCallUtils
@@ -477,6 +543,7 @@
                   errorCode: detailModel.errorCode,
                   outputText: detailModel.outputText,
                   resultSummary: detailModel.resultSummary,
+                  metadata: detailModel.metadata,
                 })
               : '',
             durationLabel: liveElapsedAttrs ? liveElapsedSeedLabel : durationLabel,
@@ -505,9 +572,22 @@
       const pdfAddonLinkMarkup = resultBodyIsError && detailModel.errorCode === 'CMP-TOOL-0047'
         ? `<div class="tool-call-row-action"><span class="tool-call-row-link" role="link" tabindex="0" data-inv-error-action="open_pdf_addon_settings">${escapeHtml(jt('chat.toolRow.setUpPdfReading', 'Set up PDF reading'))}</span></div>`
         : '';
+      // TR-008: the turn's first per-chat budget block (the sidecar flags one
+      // per turn) offers the existing start_new_session recovery action.
+      const sessionBudgetLinkMarkup = resultBodyIsError
+        && detailModel.metadata.session_budget_notice === true
+        && typeof toolCallUtils?.isSessionToolBudgetBlock === 'function'
+        && toolCallUtils.isSessionToolBudgetBlock(detailModel)
+        ? `<div class="tool-call-row-action"><span class="tool-call-row-link" role="link" tabindex="0" data-inv-error-action="start_new_session">${escapeHtml(jt('chat.errorRecovery.startNewSession', 'Start new session'))}</span></div>`
+        : '';
+      // A row that shows content beside its header (banner, action link, chip,
+      // calendar block, diagram, artifact) never folds into an Answers tool run.
+      const runFoldableAttr = renderOptions.transcriptView === 'answers' && [markerBannerMarkup, pdfAddonLinkMarkup, sessionBudgetLinkMarkup, taskSpawnChipMarkup,
+        calendarBlockMarkup, mermaidFallbackMarkup, artifactTeasersMarkup, pendingImageFigureMarkup].some((part) => String(part || '').trim())
+        ? ' data-run-foldable="false"' : '';
       return `
         ${markerBannerMarkup}
-        <div class="tool-call-row tool-call-row--minimal${fileOperationClass}" data-tool-call-id="${escapeHtml(toolCallId)}" data-tool-row-key="${escapeHtml(rowKey)}" data-tool-status="${escapeHtml(status)}" data-is-error="${resultBodyIsError ? 'true' : 'false'}"${severityAttr}${chatPathAttr} data-expanded="${expanded ? 'true' : 'false'}" data-tool-details-materialized="${detailsMaterialized ? 'true' : 'false'}"${ariaBusy}${hasResultAttr}>
+        <div class="tool-call-row tool-call-row--minimal${fileOperationClass}" data-tool-call-id="${escapeHtml(toolCallId)}" data-tool-row-key="${escapeHtml(rowKey)}" data-tool-status="${escapeHtml(status)}" data-is-error="${resultBodyIsError ? 'true' : 'false'}"${severityAttr}${chatPathAttr}${transcriptViewAttr}${runFoldableAttr} data-expanded="${expanded ? 'true' : 'false'}" data-tool-details-materialized="${detailsMaterialized ? 'true' : 'false'}"${ariaBusy}${hasResultAttr}>
           <div class="tool-call-row-header">
           <div
             class="tool-call-row-toggle"
@@ -523,9 +603,9 @@
           </div>
           ${summaryParts.pathMarkup}
           </div>
-          ${pdfAddonLinkMarkup}${taskSpawnChipMarkup}${calendarBlockMarkup}
+          ${pdfAddonLinkMarkup}${sessionBudgetLinkMarkup}${taskSpawnChipMarkup}${calendarBlockMarkup}
           ${mermaidFallbackMarkup}
-          ${artifactTeasersMarkup}
+          ${artifactTeasersMarkup}${pendingImageFigureMarkup}
           <div class="tool-call-row-body" id="${escapeHtml(bodyId)}"${expanded ? '' : ' inert'}>
             ${detailBodyMarkup}
           </div>
@@ -861,6 +941,7 @@
     setToolRowExpansion,
     getToolRowExpansion,
     clearToolRowExpansionOverrides,
+    clearToolRowExpansionOverridesForSession,
     materializeToolRowDetails,
   };
 });

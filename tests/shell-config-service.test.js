@@ -18,7 +18,7 @@ const {
 const {
   CONTEXT_LENGTH_STEPS,
 } = require('../services/shell-config-compaction-tuning');
-const { isToolsWorktreeEnabled } = require('../services/shell-config-state');
+const { isToolsWorktreeEnabled, normalizeWindowUiSettings } = require('../services/shell-config-state');
 const { PROACTIVE_ERROR_CODES } = require('../services/backend/error-codes');
 const {
   cleanupTrackedResources,
@@ -209,7 +209,7 @@ test('shell config service rejects invalid reminder upserts', () => {
 test('shell config v20 exposes setup, assistant identity, and Codex CLI defaults', () => {
   const normalized = normalizeState({});
 
-  assert.equal(CONFIG_VERSION, 55);
+  assert.equal(CONFIG_VERSION, 59);
   assert.equal(normalized.workspaceIde.preferences.showGenerated, false);
   assert.deepEqual(normalized.codexCli, DEFAULT_CODEX_CLI);
   assert.deepEqual(normalized.setup, {
@@ -551,7 +551,7 @@ test('shell config service migrates chat UI settings into v12 defaults', () => {
   assert.equal(service.getState().version, CONFIG_VERSION);
   assert.deepEqual(service.getChatUiState(), {
     zoomPercent: 100, defaultRunMode: 'ask', uiLanguage: 'en', use24HourTime: false,
-    safetyMode: 'normal', autoApproveStreakCap: 50, unattendedGuardMinutes: 0,
+    safetyMode: 'normal', autoApproveStreakCap: 50, unattendedGuardMinutes: 0, transcriptViewDefault: 'thinking',
   });
 });
 
@@ -566,7 +566,7 @@ test('shell config service clamps and persists chat UI zoom updates', () => {
 
   assert.deepEqual(service.getChatUiState(), {
     zoomPercent: 135, defaultRunMode: 'ask', uiLanguage: 'en', use24HourTime: false,
-    safetyMode: 'normal', autoApproveStreakCap: 50, unattendedGuardMinutes: 0,
+    safetyMode: 'normal', autoApproveStreakCap: 50, unattendedGuardMinutes: 0, transcriptViewDefault: 'thinking',
   });
 
   service.updateChatUiSettings({
@@ -575,13 +575,13 @@ test('shell config service clamps and persists chat UI zoom updates', () => {
 
   assert.deepEqual(service.getChatUiState(), {
     zoomPercent: 85, defaultRunMode: 'ask', uiLanguage: 'en', use24HourTime: false,
-    safetyMode: 'normal', autoApproveStreakCap: 50, unattendedGuardMinutes: 0,
+    safetyMode: 'normal', autoApproveStreakCap: 50, unattendedGuardMinutes: 0, transcriptViewDefault: 'thinking',
   });
 
   const reloaded = new ShellConfigService({ userDataPath });
   assert.deepEqual(reloaded.getChatUiState(), {
     zoomPercent: 85, defaultRunMode: 'ask', uiLanguage: 'en', use24HourTime: false,
-    safetyMode: 'normal', autoApproveStreakCap: 50, unattendedGuardMinutes: 0,
+    safetyMode: 'normal', autoApproveStreakCap: 50, unattendedGuardMinutes: 0, transcriptViewDefault: 'thinking',
   });
 });
 
@@ -590,16 +590,16 @@ test('shell config service clamps and persists overall app zoom updates', () => 
   trackDirectory(userDataPath);
 
   const service = new ShellConfigService({ userDataPath });
-  assert.deepEqual(service.getWindowUiState(), { appZoomPercent: 100 });
+  assert.deepEqual(service.getWindowUiState(), normalizeWindowUiSettings({ appZoomPercent: 110 }));
 
   service.updateWindowUiSettings({ appZoomPercent: 999 });
-  assert.deepEqual(service.getWindowUiState(), { appZoomPercent: 150 });
+  assert.deepEqual(service.getWindowUiState(), normalizeWindowUiSettings({ appZoomPercent: 150 }));
 
   service.updateWindowUiSettings({ appZoomPercent: 10 });
-  assert.deepEqual(service.getWindowUiState(), { appZoomPercent: 80 });
+  assert.deepEqual(service.getWindowUiState(), normalizeWindowUiSettings({ appZoomPercent: 80 }));
 
   const reloaded = new ShellConfigService({ userDataPath });
-  assert.deepEqual(reloaded.getWindowUiState(), { appZoomPercent: 80 });
+  assert.deepEqual(reloaded.getWindowUiState(), normalizeWindowUiSettings({ appZoomPercent: 80 }));
 });
 
 test('shell config service migrates companion state to v4 and persists companion mode changes', () => {
@@ -623,7 +623,7 @@ test('shell config service migrates companion state to v4 and persists companion
   assert.deepEqual(reloaded.getState().companion, { mode: 'builder' });
 });
 
-test('shell config service migrates skills and tips defaults in v6', () => {
+test('shell config service migrates skills defaults in v6 and keeps no tips state', () => {
   const userDataPath = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-shell-config-guidance-migrate-'));
   trackDirectory(userDataPath);
   const configPath = path.join(userDataPath, 'shell-config.json');
@@ -641,10 +641,10 @@ test('shell config service migrates skills and tips defaults in v6', () => {
     projectEnabled: false,
     disabledSkillIds: [], autoIndex: 'auto',
   });
-  assert.deepEqual(service.getState().tips, { sessionCount: 0, historyByTipId: {} });
+  assert.equal(Object.hasOwn(service.getState(), 'tips'), false);
 });
 
-test('shell config service persists skills and tips updates', () => {
+test('shell config service persists skills updates', () => {
   const userDataPath = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-shell-config-guidance-save-'));
   trackDirectory(userDataPath);
 
@@ -653,9 +653,6 @@ test('shell config service persists skills and tips updates', () => {
     userEnabled: false,
     projectEnabled: false,
   });
-  service.incrementTipsSessionCount();
-  service.recordTipShown('workspace-root');
-  service.updateTipsSettings({ enabled: false });
 
   const reloaded = new ShellConfigService({ userDataPath });
 
@@ -665,10 +662,6 @@ test('shell config service persists skills and tips updates', () => {
     projectEnabled: false,
     disabledSkillIds: [], autoIndex: 'auto',
   });
-  assert.equal(reloaded.getState().home.showContextualTips, false);
-  assert.equal(Object.hasOwn(reloaded.getState().tips, 'enabled'), false);
-  assert.equal(reloaded.getState().tips.sessionCount, 1);
-  assert.equal(reloaded.getState().tips.historyByTipId['workspace-root'], 1);
 });
 
 test('normalizeState filters invalid follow-ups without ids', () => {

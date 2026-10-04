@@ -22,7 +22,6 @@ from sidecar.ai.plugins.runtime_apply import (
 from sidecar.ai.plugins.runtime_registry import (
     MAX_UNLEASED_GENERATIONS,
     PluginAuthorityMismatchError,
-    PluginProviderDescriptor,
     PluginRuntimeAdmissionError,
     PluginRuntimeAuthority,
     PluginRuntimeFencedError,
@@ -74,27 +73,11 @@ def test_leased_turn_keeps_immutable_generation_across_publication() -> None:
             pass
 
 
-def test_provider_binding_is_invalidated_by_generation_publication() -> None:
+def test_a_registry_reports_whether_a_generation_was_published() -> None:
     registry = PluginRuntimeRegistry()
-    first_base = _generation(0)
-    provider = PluginProviderDescriptor(
-        provider_id="chatgpt",
-        engine_type="chatgpt",
-        descriptor_digest="a" * 64,
-        descriptor={"provider_id": "chatgpt"},
-    )
-    first = PluginRuntimeGeneration(
-        first_base.authority,
-        first_base.sidecar_plugin_generation,
-        first_base.contributions,
-        providers=(provider,),
-    )
-    registry.publish(first)
-    binding = registry.current_provider_binding("chatgpt")
-    assert binding is not None
-    assert registry.is_provider_binding_current(binding) is True
-    registry.publish(_generation(1))
-    assert registry.is_provider_binding_current(binding) is False
+    assert registry.has_published_generation() is False
+    registry.publish(_generation(0))
+    assert registry.has_published_generation() is True
 
 
 def test_pin_can_be_acquired_before_worker_registration_then_bound_and_released() -> None:

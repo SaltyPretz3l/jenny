@@ -57,7 +57,6 @@ test('renderer dispose unsubscribes shell listeners and re-init does not duplica
     proactive: 0,
     speech: 0,
     skills: 1,
-    tips: 1,
     system: 1,
     planUsage: 1,
   });
@@ -66,8 +65,7 @@ test('renderer dispose unsubscribes shell listeners and re-init does not duplica
   await waitForUi(window, 40);
   doc.querySelector('.settings-nav-item[data-settings-section="offline"]').click();
   await waitForUi(window, 40);
-  // Skills rides under Plugins & Extensions. Tips has no Settings section and
-  // binds eagerly at startup because contextual guidance is Home-owned.
+  // Skills rides under Plugins & Extensions.
   doc.querySelector('.settings-nav-item[data-settings-section="plugins"]').click();
   await waitForUi(window, 40);
 
@@ -80,7 +78,6 @@ test('renderer dispose unsubscribes shell listeners and re-init does not duplica
     proactive: 0,
     speech: 0,
     skills: 1,
-    tips: 1,
     system: 1,
     planUsage: 1,
   });
@@ -96,7 +93,6 @@ test('renderer dispose unsubscribes shell listeners and re-init does not duplica
     proactive: 0,
     speech: 0,
     skills: 0,
-    tips: 0,
     system: 0,
     planUsage: 0,
   });
@@ -112,7 +108,6 @@ test('renderer dispose unsubscribes shell listeners and re-init does not duplica
     proactive: 0,
     speech: 0,
     skills: 1,
-    tips: 1,
     system: 1,
     planUsage: 1,
   });
@@ -122,7 +117,7 @@ test('renderer dispose unsubscribes shell listeners and re-init does not duplica
   doc.querySelector('.settings-nav-item[data-settings-section="offline"]').click();
   await waitForUi(window, 40);
   // The plugin platform is unavailable in this harness, so the Plugins-hosted
-  // Skills subsection stays unbound. Home-owned Tips still binds at startup.
+  // Skills subsection stays unbound.
   doc.querySelector('.settings-nav-item[data-settings-section="plugins"]').click();
   await waitForUi(window, 40);
 
@@ -135,7 +130,6 @@ test('renderer dispose unsubscribes shell listeners and re-init does not duplica
     proactive: 0,
     speech: 0,
     skills: 1,
-    tips: 1,
     system: 1,
     planUsage: 1,
   });
@@ -283,6 +277,11 @@ test('a New chat clicked while the previous one opens its tab ends on the newer 
   newChatButton.click();
   await firstPersistStarted;
   assert.equal(rendererState.currentSessionId, 'session-tab-1');
+  // A draft makes the first chat touched: an untouched empty chat would be
+  // reused by the second click (real-app X3) instead of racing a second create.
+  const chatInput = window.document.getElementById('chatInput');
+  chatInput.value = 'draft in the first chat';
+  chatInput.dispatchEvent(new window.Event('input', { bubbles: true }));
   newChatButton.click();
   for (let attempt = 0; attempt < 20 && createCount < 2; attempt += 1) await waitForUi(window, 5);
   releaseFirstPersist();
@@ -290,6 +289,31 @@ test('a New chat clicked while the previous one opens its tab ends on the newer 
 
   assert.equal(rendererState.currentSessionId, 'session-tab-2');
   assert.equal(rendererState.workspace.activeSessionId, 'session-tab-2');
+});
+
+test('a second New chat click reuses the untouched empty chat instead of creating another (X3)', async (t) => {
+  const { window, shell } = await loadRendererTestApp(t);
+  const rendererState = window.__rendererState;
+  const canonicalSessions = [];
+  let createCount = 0;
+  shell.sessions.create = async () => {
+    const session = buildSession(`session-empty-${++createCount}`, { title: 'New Chat' });
+    canonicalSessions.push(session);
+    shell.__state.sessions = canonicalSessions.slice();
+    shell.__state.messagesBySession.set(session.id, []);
+    return { data: session };
+  };
+  shell.sessions.list = async () => ({ data: canonicalSessions.map((session) => ({ ...session })) });
+
+  const newChatButton = window.document.getElementById('newChatButton');
+  newChatButton.click();
+  for (let attempt = 0; attempt < 20 && rendererState.workspace?.activeSessionId !== 'session-empty-1'; attempt += 1) await waitForUi(window, 5);
+  newChatButton.click();
+  await waitForUi(window, 40);
+
+  assert.equal(createCount, 1);
+  assert.equal(rendererState.currentSessionId, 'session-empty-1');
+  assert.equal(rendererState.workspace.activeSessionId, 'session-empty-1');
 });
 
 test('renderer logout clears multi-stream controller state and legacy busy snapshots', async (t) => {

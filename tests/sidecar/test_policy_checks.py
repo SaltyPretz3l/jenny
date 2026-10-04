@@ -112,38 +112,12 @@ def test_stage5_budget_ownership_requires_executable_declarations(
     ledger_path = tmp_path / "config" / "plugins" / "stage5-budgets.json"
     _write_text(ledger_path, json.dumps(ledger))
     comment_markers = {
-        "services/plugins/network/bounded-http-client.js": (
-            "max_redirects: 5",
-            "connect_timeout_ms: 10000",
-            "first_byte_timeout_ms: 15000",
-            "total_timeout_ms: 120000",
-        ),
-        "services/plugins/network/dns-pinning.js": ("MAX_DNS_ANSWERS = 16",),
         "services/plugins/distribution/distribution-limits.js": (
             "solverNodes: 64",
             "solverDecisions: 4096",
             "solverIncompatibilities: 8192",
             "cacheBytes: 512 * 1024 * 1024",
             "retainedGenerations: 3",
-        ),
-        "services/plugins/remote-mcp/operation-scheduler.js": (
-            "global_inflight: 4",
-            "descriptor_inflight: 1",
-            "global_queue: 16",
-            "descriptor_queue: 4",
-        ),
-        "services/plugins/remote-mcp/transport.js": (
-            "RESPONSE_MAX_BYTES = 8 * 1024 * 1024",
-        ),
-        "services/plugins/remote-mcp/sse-parser.js": (
-            "max_line_bytes: 64 * 1024",
-            "max_events: 10000",
-        ),
-        "services/plugins/auth/oauth-flow-service.js": (
-            "FLOW_TTL_MS = 10 * 60 * 1000",
-            "MAX_FLOWS = 4",
-            "MAX_STEP_UP_ATTEMPTS = 2",
-            "MAX_SCOPES = 32",
         ),
     }
     for relative, markers in comment_markers.items():
@@ -157,86 +131,9 @@ def test_stage5_budget_ownership_requires_executable_declarations(
     failures = module.violations()
 
     assert (
-        "services/plugins/network/bounded-http-client.js runtime budget declarations "
-        "do not match the frozen ledger"
+        "services/plugins/distribution/distribution-limits.js runtime budget "
+        "declarations do not match the frozen ledger"
     ) in failures
-
-
-def test_stage8_ownership_requires_executable_structures(tmp_path) -> None:
-    module = _load_script_module("check_plugin_stage8_boundary.py")
-    sources = {
-        "services/plugins/lifecycle/stage-gate.js": "// const CONTROL_PLANE_STAGE = 8;\n",
-        "services/feature-flags.js": "// privileged_plugins: fe('PRIVILEGED_PLUGINS', false)\n",
-        "services/main/plugin-stage8-registration.js": "// NativeSupervisorClient\n",
-        "services/plugins/full-host/native-supervisor-client.js": (
-            "// env: {}; shell: false; stdio: ['pipe', 'pipe', 'pipe', 'pipe']; "
-            "operation: 'deliver_secret'\n"
-        ),
-        "scripts/plugins/build-stage8-conformance-kit.mjs": (
-            "// materializeCommittedCrate; run('git', ['show', value])\n"
-        ),
-        "scripts/plugins/sign-stage8-conformance-request.mjs": (
-            "// CURRENT_KEY_ID canonical_payload_sha256\n"
-        ),
-        "scripts/plugins/verify-stage8-conformance-package.mjs": (
-            "// verifyLocalPackage stage8-conformance\n"
-        ),
-        "package.json": json.dumps({
-            "description": (
-                "build:full-host-supervisor:release "
-                "build_full_host_supervisor_artifact.py --release"
-            )
-        }),
-        "sidecar/runtime/plugin_host_bridge.py": (
-            "# PLUGIN_HOST_METHOD = \"plugin.host\"\n"
-        ),
-        "sidecar/ai/engines/plugin_host.py": "",
-        "sidecar/ai/plugins/runtime_apply_stage8.py": "",
-        "services/plugins/native-mcp/runtime-registry.js": "",
-        "services/backend/secure-store.js": "// getPluginFullHostSecret safeStorage\n",
-        "config/plugins/v6/plugin-runtime-attestation.schema.json": json.dumps({
-            "description": (
-                "active_generation_id commit_epoch registry_revision dependency_graph_hash"
-            )
-        }),
-    }
-    for relative, source in sources.items():
-        _write_text(tmp_path / relative, source)
-
-    violations = module.stage8_violations(tmp_path)
-
-    assert "control-plane stage does not match the Stage-8 policy checker" in violations
-    assert "native supervisor launch does not prove an empty environment and no shell" in violations
-    assert "release packaging does not require clean full-host source provenance" in violations
-    assert "V6 runtime attestation omits active_generation_id" in violations
-
-
-def test_plugin_stage_boundary_fails_closed_on_an_undefined_stage(
-    monkeypatch, capsys
-) -> None:
-    """The invariant that survives the Stage-2..7 fence deletion.
-
-    Owner decision 2026-08-25 (code-hygiene W6-07-F09/F11) accepted that each
-    stage defines its OWN fence set and that flipping REPLACES rather than
-    accumulates, and the Stage-2..7 definitions were deleted to match. That is
-    only safe while a STAGE with no fence set defined here refuses to pass --
-    otherwise the next forward flip silently gates nothing, which is precisely
-    the failure mode the decision was about.
-
-    This replaces test_plugin_stage_boundary_follows_the_stage3_composition_graph,
-    whose subject (_stage3_violations) no longer exists. It is removed because the
-    behaviour it pinned was retired by owner decision, not to quiet a red.
-    """
-    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[2] / "scripts" / "checks"))
-    module = _load_script_module("check_plugin_stage_boundary.py")
-
-    assert module.main() == 0, "the current Stage-8 posture must pass"
-    capsys.readouterr()
-
-    monkeypatch.setattr(module, "STAGE", module.PRIVILEGED_ADAPTER_STAGE + 1)
-
-    assert module.main() == 1
-    assert "no explicit fence set" in capsys.readouterr().out
 
 
 def test_check_protocol_contract_passes_for_current_protocol(capsys) -> None:
@@ -431,6 +328,70 @@ def test_dead_code_relative_import_from_nested_entrypoint_is_reachable(
     assert exit_code == 0
     assert "PASS: no obvious dead files found" in output
     assert "app/lib/used.js" not in output
+
+
+def test_dead_code_traverses_package_script_targets_including_mjs(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    # An npm-script target used to be marked referenced but never walked, so its
+    # own imports all read as dead; .mjs targets were not even marked.
+    module = _load_script_module("check_dead_code_candidates.py")
+    _write_text(
+        tmp_path / "package.json",
+        json.dumps({"scripts": {"build": "node tools/build.mjs --flag", "host": "node server/main.js"}}),
+    )
+    _write_text(tmp_path / "tools" / "build.mjs", "import { run } from './lib/run.mjs';\nrun();\n")
+    _write_text(tmp_path / "tools" / "lib" / "run.mjs", "export function run() {}\n")
+    _write_text(tmp_path / "server" / "main.js", "require('./routes');\n")
+    _write_text(tmp_path / "server" / "routes.js", "module.exports = {};\n")
+    _write_text(tmp_path / "server" / "orphan.js", "module.exports = {};\n")
+    monkeypatch.setattr(module, "ROOT", tmp_path)
+    monkeypatch.setattr(module, "ENTRYPOINTS", [tmp_path / "package.json"])
+    monkeypatch.setattr(module, "DYNAMIC_ENTRY_GLOBS", ())
+
+    exit_code = module.main([])
+    output = capsys.readouterr().out.replace("\\", "/")
+
+    assert exit_code == 0
+    assert "WARN: candidate dead files (active source, non-test): 1" in output
+    assert "server/orphan.js" in output
+    for reached in ("tools/build.mjs", "tools/lib/run.mjs", "server/main.js", "server/routes.js"):
+        assert reached not in output
+
+
+def test_dead_code_models_lazy_scripts_dynamic_globs_and_dirname_joins(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    module = _load_script_module("check_dead_code_candidates.py")
+    entrypoint = tmp_path / "index.html"
+    _write_text(entrypoint, '<script src="renderer/shell/boot.js"></script>\n')
+    _write_text(
+        tmp_path / "renderer" / "shell" / "boot.js",
+        "loader.ensureScript({ src: 'renderer/features/lazy-pane.js' });\n"
+        "const worker = path.join(__dirname, 'boot-worker.js');\n"
+        "import('./dynamic-chunk.js');\n",
+    )
+    _write_text(tmp_path / "renderer" / "features" / "lazy-pane.js", "window.pane = 1;\n")
+    _write_text(tmp_path / "renderer" / "shell" / "boot-worker.js", "postMessage(1);\n")
+    _write_text(tmp_path / "renderer" / "shell" / "dynamic-chunk.js", "export default 1;\n")
+    _write_text(tmp_path / "locales" / "fr.catalog.js", "window.catalog = {};\n")
+    monkeypatch.setattr(module, "ROOT", tmp_path)
+    monkeypatch.setattr(module, "ENTRYPOINTS", [entrypoint])
+    monkeypatch.setattr(module, "DYNAMIC_ENTRY_GLOBS", ("locales/*.catalog.js",))
+
+    assert module.main(["--strict"]) == 0
+    assert "PASS: no obvious dead files found" in capsys.readouterr().out
+
+    # Mutation: without the dynamic glob the catalog is a candidate again.
+    monkeypatch.setattr(module, "DYNAMIC_ENTRY_GLOBS", ())
+    assert module.main(["--strict"]) == 1
+    assert "locales/fr.catalog.js" in capsys.readouterr().out.replace("\\", "/")
+
+
+def test_dead_code_entrypoints_all_exist() -> None:
+    module = _load_script_module("check_dead_code_candidates.py")
+
+    assert [path for path in module.ENTRYPOINTS if not path.is_file()] == []
 
 
 def test_dead_code_python_policy_entrypoint_reaches_javascript_probe() -> None:
@@ -687,6 +648,7 @@ def test_check_changed_target_test_map_passes_with_valid_mapping(
     checks_dir = repo_root / "scripts" / "checks"
     checks_dir.mkdir(parents=True, exist_ok=True)
 
+    (repo_root / "sidecar" / "ai" / "engines").mkdir(parents=True, exist_ok=True)
     (repo_root / "tests" / "sidecar" / "ai" / "engines").mkdir(parents=True, exist_ok=True)
     (repo_root / "tests" / "sidecar" / "ai" / "engines" / "test_factory.py").write_text(
         "def test_stub() -> None:\n    assert True\n",
@@ -824,6 +786,7 @@ def test_check_changed_target_test_map_accepts_root_node_tests_for_electron_path
     checks_dir.mkdir(parents=True, exist_ok=True)
     node_test = repo_root / "tests" / "backend-service-utils.test.js"
     node_test.parent.mkdir(parents=True, exist_ok=True)
+    (repo_root / "services").mkdir(parents=True, exist_ok=True)
     node_test.write_text("'use strict';\n", encoding="utf-8")
     map_path = checks_dir / "changed_target_test_map.json"
     map_path.write_text(
@@ -851,6 +814,43 @@ def test_check_changed_target_test_map_accepts_root_node_tests_for_electron_path
     assert "PASS: changed-target test mapping contract" in output
 
 
+def test_check_changed_target_test_map_fails_on_a_deleted_target(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    # Only test paths used to be validated, so a rule naming a deleted source
+    # file (renderer-away-digest.js, 2026-09-21) lingered and could never match.
+    module = _load_script_module("check_changed_target_test_map.py")
+    repo_root = tmp_path / "repo"
+    checks_dir = repo_root / "scripts" / "checks"
+    checks_dir.mkdir(parents=True, exist_ok=True)
+    _write_text(repo_root / "services" / "live.js", "module.exports = {};\n")
+    _write_text(repo_root / "tests" / "live.test.js", "'use strict';\n")
+    map_path = checks_dir / "changed_target_test_map.json"
+    mapping = {
+        "required_target_prefixes": ["services/"],
+        "rules": [
+            {
+                "target_prefixes": ["services/", "services/live.js", "services/gone.js", "services/gone-dir/", "renderer-"],
+                "required_tests": ["tests/live.test.js"],
+            }
+        ],
+    }
+    map_path.write_text(json.dumps(mapping), encoding="utf-8")
+    monkeypatch.setattr(module, "ROOT", repo_root)
+    monkeypatch.setattr(module, "MAP_PATH", map_path)
+
+    assert module.main() == 1
+    output = capsys.readouterr().out
+    assert "rule 1 references missing target: services/gone.js" in output
+    assert "rule 1 references missing target: services/gone-dir/" in output
+    assert "services/live.js" not in output
+    assert "renderer-" not in output
+
+    mapping["rules"][0]["target_prefixes"] = ["services/", "services/live.js", "renderer-"]
+    map_path.write_text(json.dumps(mapping), encoding="utf-8")
+    assert module.main() == 0
+
+
 def test_check_changed_target_test_map_preserves_exact_file_selectors() -> None:
     module = _load_script_module("check_changed_target_test_map.py")
     selector = "services/backend/backend-auth.js"
@@ -868,9 +868,10 @@ def test_run_all_includes_every_active_policy_check() -> None:
     checks_dir = Path(__file__).resolve().parents[2] / "scripts" / "checks"
     # Lane-scoped checks run outside the fast per-commit policy step in
     # run_all.py because they need artifacts that step does not produce:
-    # - check_coverage_ratchet.py: coverage CI lanes (after coverage:js:stable
-    #   / test:sidecar:cov); needs fresh coverage artifacts. See its module
-    #   docstring and docs/plans/TEST_COVERAGE_RATCHET.md.
+    # - check_coverage_ratchet.py: coverage lanes (ci.yml after coverage:js:stable
+    #   / test:sidecar:cov, and run_ci.py's --scope=sidecar stage after pytest);
+    #   needs fresh coverage artifacts. See its module docstring and
+    #   docs/plans/TEST_COVERAGE_RATCHET.md.
     # - check_python_runtime_bundle.py: packaging lane (package.json wires
     #   check:python-runtime-bundle before SBOM emission and Electron Builder);
     #   it fails closed unless the gitignored vendor/python-embed bundle has
@@ -881,8 +882,6 @@ def test_run_all_includes_every_active_policy_check() -> None:
         "check_coverage_ratchet.py",
         "check_python_runtime_bundle.py",
         "check_media_site.py",
-        # Composed by check_plugin_stage_boundary.py; it has no standalone main.
-        "check_plugin_stage8_boundary.py",
     }
     active_checks = sorted([
         path.name

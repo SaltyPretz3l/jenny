@@ -1,7 +1,7 @@
 """App profile system — model-family-specific knowledge for Jenny.
 
 An app profile is a data-driven bundle of model-family-specific knowledge:
-variant specs, capability flags, and runtime config overrides.  Profiles are
+variant specs, request behavior, and runtime config overrides.  Profiles are
 additive and optional — when no profile matches, behaviour is unchanged.
 
 Registration is explicit: each profile module exports a constant, and this
@@ -75,12 +75,8 @@ class VariantSpec:
     name: str
     aliases: tuple[str, ...]
     label: str
-    param_billions: float
-    active_param_billions: float
     native_context_length: int
     is_moe: bool = False
-    family_supports_vision: bool = True
-    family_supports_audio: bool = False
     overrides: ConfigOverrides | None = None
     behavior: RequestBehavior | None = None
 

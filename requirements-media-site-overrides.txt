@@ -1,0 +1,4 @@
+# rapidocr declares opencv-python; the media site ships opencv-python-headless
+# instead (no GUI/Qt payload, no libGL import on Linux). An unsatisfiable marker
+# removes the declared requirement from the resolution.
+opencv-python ; python_version < "3.0"

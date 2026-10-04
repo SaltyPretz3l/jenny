@@ -16,6 +16,7 @@ const {
 const {
   DEFAULT_SESSION_RUNTIME,
 } = require('../services/shell-config-session-runtime');
+const { CONFIG_VERSION } = require('../services/shell-config-state');
 
 function withTempDir(run) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-portable-preferences-'));
@@ -27,6 +28,13 @@ function withTempDir(run) {
 }
 
 describe('PortablePreferencesStore', () => {
+  it('keeps the startup-animation and title-bar-load switches across launches', () => withTempDir((root) => {
+    const store = new PortablePreferencesStore(root);
+    store.sync({ appearance: { paletteId: 'luma', startupAnimation: false, titlebarLoad: true } });
+    assert.deepEqual(new PortablePreferencesStore(root).read().appearance,
+      { paletteId: 'luma', startupAnimation: false, titlebarLoad: true });
+  }));
+
   it('persists only the bounded allowlisted projection', () => withTempDir((root) => {
     const store = new PortablePreferencesStore(root);
     const saved = store.sync({
@@ -65,6 +73,13 @@ describe('PortablePreferencesStore', () => {
     assert.equal(saved.chatZoomPercent, 115);
   }));
 
+  it('drops the retired timelineStyleId from an older archive', () => {
+    const result = normalizePortablePreferences({
+      appearance: { paletteId: 'paper', timelineStyleId: 'default' },
+    });
+    assert.deepEqual(result.appearance, { paletteId: 'paper' });
+  });
+
   it('normalizes malformed input to safe defaults', () => {
     const result = normalizePortablePreferences({ appearance: [], chatZoomPercent: -4 });
     assert.deepEqual(result.appearance, {});
@@ -101,6 +116,18 @@ describe('PortablePreferencesStore', () => {
     assert.equal(JSON.stringify(result).includes('token'), false);
   });
 
+  it('leaves last-used model targets out of the portable projection', () => {
+    const result = projectPortableShellConfig({
+      preferredEngineType: 'ollama',
+      lastChatgptModel: 'gpt-6-luna',
+      localEngines: { openaiCompatible: { managed: { lastUsedTag: 'ornith-9b' } } },
+    });
+    assert.equal(Object.hasOwn(result, 'lastChatgptModel'), false);
+    assert.equal(Object.hasOwn(result, 'localEngines'), false);
+    assert.equal(JSON.stringify(result).includes('gpt-6-luna'), false);
+    assert.equal(JSON.stringify(result).includes('ornith-9b'), false);
+  });
+
   it('round-trips allowlisted v54 session runtime limits', () => {
     const projected = projectPortableShellConfig({
       sessionRuntime: {
@@ -129,6 +156,19 @@ describe('PortablePreferencesStore', () => {
     assert.deepEqual(projected.session_runtime, DEFAULT_SESSION_RUNTIME);
     assert.equal(Object.hasOwn(projected.session_runtime.resources, 'sandbox_commands'), false);
   });
+
+  it('accepts a current desktop shell-config export on restore', () => withTempDir((root) => {
+    // The portable version is the shell-config schema version: a lagging
+    // constant refused every export written by the current desktop build.
+    assert.equal(PORTABLE_SHELL_CONFIG_VERSION, CONFIG_VERSION);
+    const shellPath = path.join(root, 'shell.json');
+    fs.writeFileSync(shellPath, JSON.stringify({ version: CONFIG_VERSION, preferredEngineType: 'vllm' }));
+    const restored = JSON.parse(projectRestoredPreference({
+      logical_path: 'preferences/shell-config.json',
+    }, shellPath).toString('utf8'));
+    assert.equal(restored.version, CONFIG_VERSION);
+    assert.equal(restored.preferredEngineType, 'vllm');
+  }));
 
   it('restore projection refuses future portable and shell preference versions', () => withTempDir((root) => {
     const portablePath = path.join(root, 'portable.json');

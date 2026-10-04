@@ -40,33 +40,29 @@
   // Shared across F2 edit-and-regenerate AND F4 truncate-from-selection: the
   // single source of truth for which renderer caches must drop when a session's
   // message list shrinks. Adding a new cache here updates both callers.
-  function purgeChatSessionCaches(state, sessionId, clearProjectionContextCacheForSession) {
+  function purgeChatSessionCaches(state, sessionId, clearProjectionContextCacheForSession, onIgnoredError) {
     if (!state || !sessionId) return;
-    try {
-      if (state.turnEventsBySession && typeof state.turnEventsBySession.delete === 'function') {
-        state.turnEventsBySession.delete(sessionId);
-      }
-    } catch (_) { /* ignore */ }
-    try {
-      if (state.messagesBySession && typeof state.messagesBySession.delete === 'function') {
-        state.messagesBySession.delete(sessionId);
-      }
-    } catch (_) { /* ignore */ }
-    if (typeof clearProjectionContextCacheForSession === 'function') {
-      try { clearProjectionContextCacheForSession(sessionId); } catch (_) { /* ignore */ }
+    if (state.turnEventsBySession && typeof state.turnEventsBySession.delete === 'function') {
+      state.turnEventsBySession.delete(sessionId);
     }
-    try {
-      if (state.ui && state.ui.chatTimelineRowModelMetaBySession
-        && typeof state.ui.chatTimelineRowModelMetaBySession.delete === 'function') {
-        state.ui.chatTimelineRowModelMetaBySession.delete(sessionId);
+    if (state.messagesBySession && typeof state.messagesBySession.delete === 'function') {
+      state.messagesBySession.delete(sessionId);
+    }
+    if (typeof clearProjectionContextCacheForSession === 'function') {
+      try {
+        clearProjectionContextCacheForSession(sessionId);
+      } catch (error) {
+        if (typeof onIgnoredError === 'function') onIgnoredError('clear_projection_context_cache', error);
       }
-    } catch (_) { /* ignore */ }
-    try {
-      if (state.ui && state.ui.chatTimelineRowModelBySession
-        && typeof state.ui.chatTimelineRowModelBySession.delete === 'function') {
-        state.ui.chatTimelineRowModelBySession.delete(sessionId);
-      }
-    } catch (_) { /* ignore */ }
+    }
+    if (state.ui && state.ui.chatTimelineRowModelMetaBySession
+      && typeof state.ui.chatTimelineRowModelMetaBySession.delete === 'function') {
+      state.ui.chatTimelineRowModelMetaBySession.delete(sessionId);
+    }
+    if (state.ui && state.ui.chatTimelineRowModelBySession
+      && typeof state.ui.chatTimelineRowModelBySession.delete === 'function') {
+      state.ui.chatTimelineRowModelBySession.delete(sessionId);
+    }
   }
 
   function defaultEnsureUiState(state) {
@@ -114,6 +110,14 @@
     var appendClientLog = typeof settings.appendClientLog === 'function'
       ? settings.appendClientLog
       : noopFn;
+    // A best-effort callback (renderAll, toast, virtualizer) threw: the edit
+    // state machine carries on, but the failure stays visible in the log.
+    function logIgnoredError(site, error) {
+      appendClientLog('DEBUG', 'chat.edit_ignored_error', {
+        site: site,
+        error: String((error && error.message) || error || ''),
+      });
+    }
     var showComposerActionError = typeof settings.showComposerActionError === 'function'
       ? settings.showComposerActionError
       : noopFn;
@@ -173,7 +177,9 @@
         try {
           var found = doc.querySelector(selectorPrefix + '[' + attrName + '="' + safeId + '"]');
           if (found) return found;
-        } catch (_) { /* fall back to linear scan */ }
+        } catch (error) {
+          logIgnoredError('attr_selector', error); // fall back to linear scan
+        }
       }
       if (typeof doc.querySelectorAll !== 'function') return null;
       var candidates = doc.querySelectorAll(selectorPrefix + '[' + attrName + ']');
@@ -198,7 +204,7 @@
       ) {
         return;
       }
-      try { timelineVirtualizer.ensureMounted(entry); } catch (_) { /* best-effort */ }
+      try { timelineVirtualizer.ensureMounted(entry); } catch (error) { logIgnoredError('ensure_mounted', error); }
     }
 
     function restoreFocusToEntry(messageId) {
@@ -211,17 +217,14 @@
           ? entry.hasAttribute('tabindex')
           : entry.getAttribute && entry.getAttribute('tabindex') !== null;
         var previousTabindex = entry.getAttribute ? entry.getAttribute('tabindex') : null;
-        try {
-          if (!hadTabindex && typeof entry.setAttribute === 'function') {
-            entry.setAttribute('tabindex', '-1');
-          }
-          entry.focus({ preventScroll: true });
-        } catch (_) { /* best-effort */ } finally {
-          if (!hadTabindex && typeof entry.removeAttribute === 'function') {
-            try { entry.removeAttribute('tabindex'); } catch (__e) { /* best-effort */ }
-          } else if (hadTabindex && previousTabindex != null && typeof entry.setAttribute === 'function') {
-            try { entry.setAttribute('tabindex', previousTabindex); } catch (__e2) { /* best-effort */ }
-          }
+        if (!hadTabindex && typeof entry.setAttribute === 'function') {
+          entry.setAttribute('tabindex', '-1');
+        }
+        entry.focus({ preventScroll: true });
+        if (!hadTabindex && typeof entry.removeAttribute === 'function') {
+          entry.removeAttribute('tabindex');
+        } else if (hadTabindex && previousTabindex != null && typeof entry.setAttribute === 'function') {
+          entry.setAttribute('tabindex', previousTabindex);
         }
       }
       return entry;
@@ -237,11 +240,11 @@
     function clearCancelHighlight() {
       var windowRef = getWindowRef();
       if (cancelHighlightTimer != null && windowRef && typeof windowRef.clearTimeout === 'function') {
-        try { windowRef.clearTimeout(cancelHighlightTimer); } catch (_) { /* ignore */ }
+        windowRef.clearTimeout(cancelHighlightTimer);
       }
       cancelHighlightTimer = null;
       if (cancelHighlightTarget && cancelHighlightTarget.classList) {
-        try { cancelHighlightTarget.classList.remove(CANCEL_HIGHLIGHT_CLASS); } catch (_) { /* ignore */ }
+        cancelHighlightTarget.classList.remove(CANCEL_HIGHLIGHT_CLASS);
       }
       cancelHighlightTarget = null;
     }
@@ -310,7 +313,9 @@
       });
       try {
         renderAll();
-      } catch (_) { /* renderAll failures shouldn't break the state machine */ }
+      } catch (error) {
+        logIgnoredError('render_enter', error); // renderAll failures shouldn't break the state machine
+      }
       // After renderAll the textarea should exist; sync wires the listeners.
       syncFromState({ focus: true });
       return true;
@@ -338,7 +343,9 @@
       });
       try {
         renderAll();
-      } catch (_) { /* ignore */ }
+      } catch (error) {
+        logIgnoredError('render', error);
+      }
       if (!skipFocusRestore) {
         applyCancelHighlight(restoreFocusToEntry(msgId));
       }
@@ -391,12 +398,16 @@
       if (hadTextAttachments) {
         try {
           showToastMessage({ message: EDIT_TEXT_ATTACHMENT_NOTICE, kind: 'warning' });
-        } catch (_) { /* toast best-effort */ }
+        } catch (error) {
+          logIgnoredError('toast', error);
+        }
       }
       state.ui.editCommitting = true;
       try {
         renderAll();
-      } catch (_) { /* ignore */ }
+      } catch (error) {
+        logIgnoredError('render', error);
+      }
 
       var commitToken = editGeneration.capture();
       function isCurrentCommit() {
@@ -443,7 +454,9 @@
         });
         try {
           renderAll();
-        } catch (_) { /* ignore */ }
+        } catch (error) {
+          logIgnoredError('render', error);
+        }
         return true;
       }
 
@@ -474,7 +487,9 @@
           state.ui.editCommitting = false;
           try {
             renderAll();
-          } catch (_) { /* ignore */ }
+          } catch (error) {
+            logIgnoredError('render', error);
+          }
           syncFromState();
           return null;
         }
@@ -489,7 +504,9 @@
         state.ui.editCommitting = false;
         try {
           renderAll();
-        } catch (_) { /* ignore */ }
+        } catch (error) {
+          logIgnoredError('render', error);
+        }
         syncFromState();
         showComposerActionError(error, jt('chat.transcript.editFailedTitle', 'Edit Failed'));
         return null;
@@ -497,7 +514,7 @@
     }
 
     function invalidateRendererCachesForSession(sessionId) {
-      purgeChatSessionCaches(state, sessionId, clearProjectionContextCacheForSession);
+      purgeChatSessionCaches(state, sessionId, clearProjectionContextCacheForSession, logIgnoredError);
     }
 
     function reconcileRendererStateForCommittedEdit(sessionId, messageId, content) {
@@ -542,8 +559,8 @@
         return;
       }
       if (typeof wiredTextarea.removeEventListener === 'function') {
-        try { wiredTextarea.removeEventListener('input', wiredTextareaListeners.input); } catch (_) { /* ignore */ }
-        try { wiredTextarea.removeEventListener('keydown', wiredTextareaListeners.keydown); } catch (_) { /* ignore */ }
+        wiredTextarea.removeEventListener('input', wiredTextareaListeners.input);
+        wiredTextarea.removeEventListener('keydown', wiredTextareaListeners.keydown);
       }
       wiredTextarea = null;
       wiredTextareaListeners = null;
@@ -611,7 +628,20 @@
       if (!msgId) return;
       if (!doc) return;
       var textarea = findElementByAttrValue('textarea', 'data-edit-target-message-id', msgId);
-      if (!textarea) return;
+      if (!textarea) {
+        // Split view: a second pane renders its transcript on a microtask
+        // after renderAll, so its editor does not exist yet. Look once more
+        // after that render, or the editor is never wired or focused.
+        if (settings.deferred !== true) {
+          var retry = function () {
+            if (state.ui.editingMessageId !== msgId) return;
+            syncFromState({ focus: shouldFocus, deferred: true });
+          };
+          if (typeof queueMicrotask === 'function') queueMicrotask(retry);
+          else Promise.resolve().then(retry);
+        }
+        return;
+      }
       wireTextareaListeners(textarea);
       // Re-mirror the draft into the textarea if the renderer rebuilt the markup
       // with the original text (e.g. first render after enterEdit).
@@ -622,21 +652,17 @@
         if (!shouldFocus && typeof textarea.setSelectionRange === 'function'
           && Number.isFinite(selectionStart) && Number.isFinite(selectionEnd)) {
           var nextLength = String(state.ui.editingDraftText || '').length;
-          try {
-            textarea.setSelectionRange(
-              Math.max(0, Math.min(selectionStart, nextLength)),
-              Math.max(0, Math.min(selectionEnd, nextLength))
-            );
-          } catch (_) { /* selection restore is best-effort */ }
+          textarea.setSelectionRange(
+            Math.max(0, Math.min(selectionStart, nextLength)),
+            Math.max(0, Math.min(selectionEnd, nextLength))
+          );
         }
       }
       if (shouldFocus && typeof textarea.focus === 'function') {
-        try {
-          textarea.focus();
-          if (typeof textarea.select === 'function') {
-            textarea.select();
-          }
-        } catch (_) { /* focus best-effort */ }
+        textarea.focus();
+        if (typeof textarea.select === 'function') {
+          textarea.select();
+        }
       }
     }
 

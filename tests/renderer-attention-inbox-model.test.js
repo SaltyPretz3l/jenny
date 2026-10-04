@@ -101,7 +101,7 @@ test('nothing waiting is a hidden inbox with zero counts and no rows', () => {
   const inbox = build({ sessions: [session('s1')] });
   assert.equal(inbox.hidden, true);
   assert.deepEqual(inbox.rows, []);
-  assert.deepEqual({ ...inbox.counts }, { approvals: 0, planReviews: 0, questions: 0, answerable: 0 });
+  assert.deepEqual({ ...inbox.counts }, { approvals: 0, planReviews: 0, questions: 0, stuckSends: 0, answerable: 0 });
 });
 
 test('the whole result, its rows and its counts are frozen', () => {
@@ -231,7 +231,7 @@ test('approvals and questions in the same session are two different waits', () =
     pendingToolApprovals: approvalMap([liveApproval()]),
   });
   assert.deepEqual(inbox.rows.map((row) => row.kind), ['approval', 'question']);
-  assert.deepEqual({ ...inbox.counts }, { approvals: 1, planReviews: 0, questions: 1, answerable: 2 });
+  assert.deepEqual({ ...inbox.counts }, { approvals: 1, planReviews: 0, questions: 1, stuckSends: 0, answerable: 2 });
 });
 
 test('ordering is approvals, then plan reviews, then questions, oldest first inside each kind', () => {
@@ -253,7 +253,7 @@ test('ordering is approvals, then plan reviews, then questions, oldest first ins
     'question:s1:b1', 'question:s2:b2',
   ]);
   assert.deepEqual(inbox.rows.map((row) => row.order), [0, 1, 2, 3, 4, 5]);
-  assert.deepEqual({ ...inbox.counts }, { approvals: 2, planReviews: 2, questions: 2, answerable: 6 });
+  assert.deepEqual({ ...inbox.counts }, { approvals: 2, planReviews: 2, questions: 2, stuckSends: 0, answerable: 6 });
 });
 
 test('the conversation on screen keeps its rows but sorts last inside its kind', () => {

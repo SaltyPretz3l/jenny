@@ -3,6 +3,7 @@
 
 const fs = require('node:fs');
 const path = require('node:path');
+const { parseCatalog } = require('./build-catalogs');
 
 // Share of English base keys a shipped catalog must still cover when missing
 // keys are only warnings (the default mode).
@@ -28,10 +29,6 @@ function parseArguments(argv) {
   return options;
 }
 
-function isPlainObject(value) {
-  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
-}
-
 function readCatalog(localesDir, tag) {
   const filename = `${tag}.json`;
   let parsed;
@@ -40,17 +37,13 @@ function readCatalog(localesDir, tag) {
   } catch (error) {
     throw new Error(`${filename}:<catalog>: ${error.message}`, { cause: error });
   }
-  if (!isPlainObject(parsed)) throw new Error(`${filename}:<catalog>: catalog must be a JSON object`);
-  const wrapped = Object.prototype.hasOwnProperty.call(parsed, 'strings');
-  const strings = wrapped ? parsed.strings : parsed;
-  if (!isPlainObject(strings)) throw new Error(`${filename}:<catalog>: strings must be a JSON object`);
-  if (wrapped && parsed.tag !== tag) {
-    throw new Error(`${filename}:<catalog>: tag must match filename (${tag})`);
+  try {
+    return parseCatalog(parsed, tag);
+  } catch (error) {
+    const diagnostic = error.message.includes(': value must be a string')
+      ? error.message : `<catalog>: ${error.message}`;
+    throw new Error(`${filename}:${diagnostic}`, { cause: error });
   }
-  for (const [key, value] of Object.entries(strings)) {
-    if (typeof value !== 'string') throw new Error(`${filename}:${key}: value must be a string`);
-  }
-  return strings;
 }
 
 function splitKey(key) {

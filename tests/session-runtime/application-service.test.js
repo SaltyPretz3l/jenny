@@ -17,6 +17,7 @@ const {
   capacityResource,
 } = require('../../services/session-runtime/resource-broker');
 const { RuntimeStore } = require('../../services/session-runtime/store');
+const { SessionRuntimeScheduler } = require('../../services/session-runtime/scheduler');
 const { cleanupTrackedResources, createTrackedTempDir } = require('../helpers/resource-cleanup');
 
 test.afterEach(async () => cleanupTrackedResources());
@@ -119,6 +120,7 @@ test('snapshot pages safe summaries using listSummaries without record, transcri
   assert.equal(result.schema_version, 1);
   assert.equal(result.enabled, false);
   assert.equal(result.work.length, 1);
+  assert.equal(result.work[0].admission_wait, null);
   assert.equal(typeof result.next_cursor, 'string');
   assert.deepEqual(result.lanes.downstream_limits, {
     runnable_turns: 3,
@@ -226,7 +228,8 @@ test('work detail projects attempt and recovery state without durable private co
   assert.equal(result.work.recovery, null);
   assert.deepEqual(Object.keys(result.work), [
     'work_id', 'project_id', 'session_id', 'turn_id', 'purpose', 'status', 'revision',
-    'submission_sequence', 'created_at', 'updated_at', 'attempt', 'checkpoint', 'control', 'recovery',
+    'submission_sequence', 'created_at', 'updated_at', 'admission_wait', 'prompt_preview', 'attempt', 'checkpoint',
+    'control', 'recovery',
   ]);
   const serialized = JSON.stringify(result);
   for (const forbidden of [
@@ -235,8 +238,93 @@ test('work detail projects attempt and recovery state without durable private co
   ]) assert.equal(serialized.includes(forbidden), false, forbidden);
 });
 
+// FG-007: a restored paused send names what Resume would send. The preview is
+// derived from the visible prompt on the work read; snapshot rows stay
+// index-only (no record read), so they never carry it.
+test('work detail carries a short single-line visible-prompt preview and snapshot rows stay record-free', () => {
+  const store = createStore();
+  const submitPrompt = (suffix, request) => store.submit({ idempotencyKey: `preview_key_${suffix}`,
+    projectId: 'project_p', sessionId: 'session_p', purpose: 'chat', input: { request },
+    authority: authority('project_p', '7'), workId: `work_p${suffix}`, turnId: `turn_p${suffix}` }).record;
+  const long = submitPrompt('1', { visiblePrompt: `Reconcile   the March\nstatement\t\u0000against the ledger ${'x'.repeat(200)}`,
+    prompt: 'expanded-hidden-prompt' });
+  const short = submitPrompt('2', { visiblePrompt: '  Continue G1  ' });
+  const emoji = submitPrompt('3', { visiblePrompt: `${'a'.repeat(118)}\u{1F600}\u{1F600}tail` });
+  const hidden = submitPrompt('4', { prompt: 'only-an-expanded-prompt' });
+  const blank = submitPrompt('5', { visiblePrompt: ' \n\t ' });
+  const service = new RuntimeApplicationService({ getRuntime: () => runtimeFor(store) });
+  const preview = record => service.getWork({ work_id: record.work_id }).work.prompt_preview;
+
+  assert.equal(preview(long), `Reconcile the March statement against the ledger ${'x'.repeat(70)}…`);
+  assert.equal([...preview(long)].length, 120);
+  assert.equal(preview(short), 'Continue G1');
+  assert.equal(preview(emoji), `${'a'.repeat(118)}\u{1F600}…`, 'a cut never splits a surrogate pair');
+  assert.equal(preview(hidden), null, 'the expanded model prompt is never previewed');
+  assert.equal(preview(blank), null);
+  assert.equal(JSON.stringify(service.getWork({ work_id: long.work_id })).includes('expanded-hidden-prompt'), false);
+  store.get = undefined;
+  const snapshot = service.getSnapshot({});
+  assert.equal(snapshot.ok, true);
+  assert.equal(snapshot.work.some(row => Object.hasOwn(row, 'prompt_preview')), false);
+});
+
+test('quarantined lane cleanup is projected until backend-restart reclaim dispatches pending work', async () => {
+  const store = createStore('jenny-runtime-application-admission-wait-');
+  const lanes = new RuntimeLaneAdmission({ now: () => Date.UTC(2026, 8, 10, 12, 30) });
+  const route = captureRuntimeRoute({ engine_type: 'ollama', provider_id: 'ollama',
+    configuration_revision: 'revision_1', requires_gpu: true, resource_class: 'local' });
+  const producerCalls = [];
+  const scheduler = new SessionRuntimeScheduler({ store, lanes, resolveRoute: () => route,
+    validateWork: () => {}, claimCanonical: work => ({ streamId: `stream_${work.work_id}`,
+      authorityRevision: 'authority_1', rollbackBeforeStart: () => true, assertCurrent: () => {} }),
+    startProducer: () => new Promise((resolve, reject) => producerCalls.push({ resolve, reject })) });
+  const resourceBroker = new ResourceBroker();
+  const runtime = { store, lanes, resourceBroker, scheduler };
+  const service = new RuntimeApplicationService({ getRuntime: () => runtime });
+  const active = submit(store, '1', { sessionId: 'session_shared' });
+  const started = scheduler.tryDispatch(active.work_id);
+  await Promise.resolve();
+  producerCalls[0].reject(new Error('sidecar exited'));
+  await started.completion;
+
+  const pending = submit(store, '2', { sessionId: 'session_shared' });
+  assert.equal(scheduler.tryDispatch(pending.work_id).reason, 'session_busy');
+  const expected = { reason: 'cleanup_unconfirmed', since: '2026-09-10T12:30:00.000Z',
+    blocking_session_id: 'session_shared' };
+  assert.deepEqual(service.getSnapshot().work.find(item => item.work_id === pending.work_id).admission_wait,
+    expected);
+  assert.deepEqual(service.getWork({ work_id: pending.work_id }).work.admission_wait, expected);
+
+  scheduler.reclaimAbandoned({ reason: 'backend_restart' });
+  const [resumed] = scheduler.pump();
+  assert.equal(resumed.status, 'started');
+  assert.equal(service.getSnapshot().work.find(item => item.work_id === pending.work_id).admission_wait, null);
+  assert.equal(service.getWork({ work_id: pending.work_id }).work.admission_wait, null);
+  await Promise.resolve();
+  producerCalls[1].resolve({ status: 'completed', producerSettled: true, canonicalSettled: true });
+  await resumed.completion;
+});
+
+test('invalid scheduler admission waits fail closed while absent or throwing access projects null', () => {
+  const store = createStore('jenny-runtime-application-admission-validation-');
+  const work = submit(store, '1');
+  const runtime = runtimeFor(store);
+  const service = new RuntimeApplicationService({ getRuntime: () => runtime });
+  for (const invalidWait of [
+    { reason: 'unknown', since: 1, blocking_session_id: null },
+    { reason: 'session_busy', since: Number.NaN, blocking_session_id: null },
+    { reason: 'model_busy', since: 1, blocking_session_id: 'not valid' },
+  ]) {
+    runtime.scheduler.admissionWait = () => invalidWait;
+    assert.equal(service.getWork({ work_id: work.work_id }).error.reason, 'runtime_projection_unavailable');
+  }
+  runtime.scheduler.admissionWait = () => { throw new Error('inspection failed'); };
+  assert.equal(service.getWork({ work_id: work.work_id }).work.admission_wait, null);
+  delete runtime.scheduler.admissionWait;
+  assert.equal(service.getWork({ work_id: work.work_id }).work.admission_wait, null);
+});
+
 test('pause answers "requested" for a running turn and pauses queued work outright', () => {
-  const { SessionRuntimeScheduler } = require('../../services/session-runtime/scheduler');
   const store = createStore('jenny-runtime-application-pause-');
   const queued = submit(store, '1');
   const attempt = { attempt_id: 'attempt_1', stream_id: 'stream_1', incarnation: 'incarnation_1',
@@ -402,6 +490,17 @@ test('the refusal passthrough is a closed allowlist, not the raw failure text', 
     assert.equal(result.error.reason, 'runtime_submission_refused');
     assert.equal(JSON.stringify(result).includes('private'), false);
   }
+});
+
+// Owner gate P4: the chat-turn admission refusal while an image render holds
+// the GPU (`gpu_busy_plugin`) reaches the composer by name, so it can say why.
+test('a submission refused because the GPU is leased to an image render keeps its reason', async () => {
+  const store = createStore('jenny-runtime-application-submit-gpu-');
+  const runtime = { store, submit: async () => { throw Object.assign(new Error('A privileged local workload is using the GPU.'), { code: 'gpu_busy_plugin', submissionOutcome: 'rejected' }); } };
+  const result = await new RuntimeApplicationService({ getRuntime: () => runtime }).submit({ ...SUBMISSION_PAYLOAD });
+  assert.equal(result.acceptance, 'rejected');
+  assert.equal(result.error.reason, 'gpu_busy_plugin');
+  assert.equal(JSON.stringify(result).includes('privileged'), false);
 });
 
 test('the refusal reason never changes the acceptance verdict', async () => {

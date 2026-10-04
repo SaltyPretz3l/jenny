@@ -84,6 +84,67 @@ test('adapter binds the captured route and inference gateway through terminal pr
   });
 });
 
+test('a quarantined tool no longer holds the settled chat turn; its late proof frees the handler (HB-009)', async t => {
+  const { adapter, service, sessionId } = createAdapterHarness(t);
+  const logs = [];
+  service._emitServiceLog = (level, event, details) => logs.push({ level, event, details });
+  const prepared = await adapter.prepareImmediate(request(sessionId), {}, {
+    workId: 'work-tool-quarantine', turnId: 'logical-turn-tool-quarantine',
+  });
+  adapter.register('work-tool-quarantine', prepared);
+  const work = {
+    work_id: 'work-tool-quarantine', turn_id: 'logical-turn-tool-quarantine', session_id: sessionId,
+    project_id: AUTHORITY.project_id, input: prepared.input,
+  };
+  const claim = adapter.claimCanonical(work, prepared.route);
+  let gateway;
+  let toolOperation;
+  let unregisterCalls = 0;
+  service._startManagedSidecarChatStream = async options => {
+    gateway = options.runtimeOperationGateway;
+    const common = {
+      api_version: '2026-08-17', schema_version: 1, request_id: claim.streamId, session_id: sessionId,
+      authority_revision: getTrustedExecutionBinding(prepared.binding).authorityRevision,
+    };
+    const inference = { ...common, kind: 'inference', operation_id: 'inference-q' };
+    assert.equal(gateway.handle({ ...inference, phase: 'admit', engine_type: 'mock' }).status, 'granted');
+    assert.equal(gateway.handle({ ...inference, phase: 'settle', status: 'succeeded', cleanup: 'confirmed',
+      consumption: 'unknown', charge_consumption: true }).status, 'settled');
+    toolOperation = { ...common, kind: 'tool', operation_id: 'tool-q' };
+    const admitted = gateway.handle({ ...toolOperation, phase: 'admit', tool_name: 'web_search',
+      arguments: { query: 'bank reconciliation' } });
+    assert.equal(admitted.status, 'granted', JSON.stringify(admitted));
+    assert.equal(gateway.handle({ ...toolOperation, phase: 'settle', status: 'failed',
+      cleanup: 'uncertain' }).status, 'settled');
+    const controller = new AbortController();
+    service.sessionTurnActors.attachController(options.turnLease, controller);
+    controller._runtimeSettlementUnregister = () => { unregisterCalls += 1; };
+    controller._runtimeCompletion = Promise.resolve({
+      status: 'completed', producerSettled: true, canonicalSettled: true,
+    });
+    const started = retainManagedRuntimeController({ sessionId, streamId: claim.streamId }, controller);
+    service.sessionTurnActors.release(options.turnLease, { status: 'completed' });
+    return started;
+  };
+
+  const outcome = await adapter.startProducer({
+    work, route: prepared.route, assertCurrent: claim.assertCurrent, confirmLateSettlement: () => {
+      throw new Error('a settled turn needs no late work settlement');
+    },
+  });
+  assert.deepEqual(outcome, { status: 'completed', producerSettled: true, canonicalSettled: true });
+  assert.equal(gateway.snapshot().tools.quarantined, 1, 'the broker keeps fencing the unproven tool');
+  assert.deepEqual(logs.filter(row => row.event === 'session_runtime.tool_cleanup_pending'),
+    [{ level: 'WARN', event: 'session_runtime.tool_cleanup_pending',
+      details: { work_id: 'work-tool-quarantine', quarantined: 1 } }]);
+  assert.equal(unregisterCalls, 0, 'the late tool proof still needs the settlement handler');
+
+  assert.equal(gateway.handle({ ...toolOperation, phase: 'settle', status: 'failed',
+    cleanup: 'confirmed' }).status, 'settled');
+  assert.equal(gateway.snapshot().tools.quarantined, 0);
+  assert.equal(unregisterCalls, 1);
+});
+
 test('startup cancellation retains exact completion after stream-map removal and accepts late cleanup', async t => {
   const { adapter, lanes, service, sessionId } = createAdapterHarness(t);
   const runtimeRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-runtime-chat-late-settlement-'));

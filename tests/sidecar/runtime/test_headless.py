@@ -11,7 +11,7 @@ from sidecar.runtime.chat_models import ChatResponse
 
 
 class _TtyInput(io.StringIO):
-    def isatty(self) -> bool:  # noqa: D401
+    def isatty(self) -> bool:
         return True
 
 

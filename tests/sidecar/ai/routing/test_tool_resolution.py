@@ -15,6 +15,7 @@ Covers dark branches including:
 from __future__ import annotations
 
 from types import SimpleNamespace
+from typing import Any
 
 import sidecar.ai.routing.tool_resolution as tr  # (static import for the existence gate)
 from sidecar.ai.config import RuntimeConfig
@@ -543,3 +544,28 @@ def test_assemble_tool_contract_with_no_tool_calling_support(tmp_path) -> None:
     assert ws_entry is not None
     assert ws_entry.available is False
     assert ws_entry.reason == "model/runtime does not support tool calling"
+
+def test_assembly_context_carries_the_request_safety_mode() -> None:
+    from sidecar.ai.routing import tool_resolution as _tool_resolution
+    from sidecar.ai.routing.request_safety import with_request_safety
+
+    kernel = _kernel(RuntimeConfig(safety_mode="normal"))
+
+    def build() -> Any:
+        return _tool_resolution._context_from_request(
+            kernel,
+            request_context=None,
+            resolution_context=None,
+            enforce_mode_policy=True,
+            enforce_request_preferences=True,
+            include_deferred_tools=True,
+        )
+
+    @with_request_safety
+    def in_chat_send(*, params: Any) -> Any:
+        del params
+        return build()
+
+    assert build().safety_mode == "normal"
+    assert in_chat_send(params={"safety_mode": "strict"}).safety_mode == "strict"
+    assert build().safety_mode == "normal", "the binding must not outlive its request"

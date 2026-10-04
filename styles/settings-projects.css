@@ -1,6 +1,7 @@
-/* styles/settings-projects.css - Settings > Projects list (Projects v2, 2026-09-20).
+/* styles/settings-projects.css - Settings > Projects, the manager (2026-09-27).
  * Plain rows separated by the settings-group hairline; no cards, no accent bars.
- * Buttons come from the shared .btn primitive through action-button.js. */
+ * Buttons come from the shared .btn primitive through action-button.js; the
+ * row's ⋯ opens the shared project menu (styles/project-menu.css). */
 
 .projects-list {
   list-style: none;
@@ -28,8 +29,8 @@
   gap: var(--space-4);
   margin: 0;
   color: var(--text-primary);
-  font-size: var(--font-size-lg);
-  font-weight: 600;
+  font-size: var(--font-size-body);
+  font-weight: 500;
 }
 
 .projects-row-folder {
@@ -37,7 +38,7 @@
   overflow: hidden;
   color: var(--text-muted);
   font-family: var(--font-family-mono);
-  font-size: var(--font-size-sm);
+  font-size: var(--font-size-caption);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -45,22 +46,36 @@
 .projects-row-meta {
   margin: var(--space-1) 0 0;
   color: var(--text-secondary);
-  font-size: var(--font-size-sm);
+  font-size: var(--font-size-caption);
+}
+
+.projects-row-main {
+  min-width: 0;
 }
 
 .projects-row-actions {
   display: flex;
   flex-wrap: wrap;
+  align-items: center;
   justify-content: flex-end;
   gap: var(--space-2);
 }
 
+/* The ⋯ command trigger: a ghost icon button, square like its row neighbours. */
+.projects-row-more {
+  padding-inline: var(--space-3);
+}
+
+.projects-row-more-icon {
+  width: 16px;
+  height: 16px;
+  fill: currentColor;
+}
+
 .projects-tag {
   color: var(--accent);
-  font-size: var(--font-size-xs);
-  font-weight: 700;
-  letter-spacing: var(--tracking-kicker-sm);
-  text-transform: uppercase;
+  font-size: var(--font-size-caption);
+  font-weight: 500;
 }
 
 .projects-tag--muted {
@@ -92,7 +107,7 @@
 .projects-confirm p {
   margin: 0 0 var(--space-2);
   color: var(--text-secondary);
-  font-size: var(--font-size-md);
+  font-size: var(--font-size-body);
   line-height: 1.55;
 }
 

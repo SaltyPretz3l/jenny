@@ -767,7 +767,7 @@ test('companion service labels agent task follow-ups with the dedicated source b
 
   assert.equal(payload.openLoopsBoard.active.length, 1);
   assert.equal(payload.openLoopsBoard.active[0].sourceBadge, 'Agent task');
-  assert.equal(payload.openLoopsBoard.active[0].sourceLabel, 'Tracked from an agent task');
+  assert.equal(payload.openLoopsBoard.active[0].sourceKind, 'agent_task');
 });
 
 test('companion service uses active_turn lifecycle summaries for the ready-to-resume card when task lifecycle is enabled', async () => {

@@ -7,12 +7,16 @@ from dataclasses import replace
 from types import SimpleNamespace
 from typing import Any
 
-from sidecar.ai.context.builder import looks_like_current_info_request
+from sidecar.ai.context.builder import (
+    looks_like_current_info_request,
+    request_skill_config_fields,
+)
 from sidecar.ai.execution_policy import (
     ELECTRON_TOOL_BRIDGE_SERVER_NAME,
     desktop_policy_is_enforced,
 )
 from sidecar.ai.host_policy import host_execution_worker_enabled
+from sidecar.ai.routing.request_safety import current_request_safety, resolve_safety_mode
 from sidecar.ai.tools.assembly import (
     ToolAssemblyContext,
     tool_preference_set,
@@ -38,25 +42,14 @@ def _request_scoped_config(config: Any, request_context: ChatRequestContext | No
     execution = getattr(request_context, "execution_context", None)
     if execution is None:
         return config
-    skills = getattr(execution, "skills_config", None)
     changes: dict[str, Any] = {
         "tools_workspace_root": execution.root_path,
         "agent_workspace_root": execution.root_path,
         "tool_policy_snapshot": execution.tool_policy_snapshot,
         "tools_knowledge_enabled": bool(execution.knowledge_roots),
         "knowledge_roots": execution.knowledge_roots,
-        "skills_project_root": getattr(skills, "project_root", None),
-        "skills_project_enabled": bool(getattr(skills, "project_enabled", False)),
+        **request_skill_config_fields(execution),
     }
-    if skills is not None:
-        changes.update({
-            "skills_bundled_root": skills.bundled_root,
-            "skills_user_root": skills.user_root,
-            "skills_bundled_enabled": skills.bundled_enabled,
-            "skills_user_enabled": skills.user_enabled,
-            "skills_disabled_ids": skills.disabled_ids,
-            "skills_auto_index": skills.auto_index,
-        })
     try:
         return replace(config, **changes)
     except TypeError:
@@ -126,8 +119,7 @@ def _electron_bridge_runtime_descriptors(
                 # build_tool_catalog keeps only server_name/runtime_registered/
                 # search_hint from a runtime descriptor, so the effective
                 # read_only for a manifest-known tool comes from the manifest
-                # descriptor (which is why `home` keeps read_only=False despite
-                # side_effecting=False).
+                # descriptor (including its per-action side effects).
                 read_only=entry.get("read_only", entry.get("side_effecting") is not True),
                 server_name=ELECTRON_TOOL_BRIDGE_SERVER_NAME,
                 source_kind="builtin",
@@ -235,6 +227,7 @@ def _context_from_request(
             enforce_mode_policy=enforce_mode_policy,
             enforce_request_preferences=enforce_request_preferences,
             include_deferred_tools=include_deferred_tools,
+            safety_mode=resolve_safety_mode(current_request_safety(), kernel._config),
         )
     tool_preferences = request_context.tool_preferences
     if request_context.session_offline_lockdown:
@@ -263,6 +256,7 @@ def _context_from_request(
         enforce_mode_policy=enforce_mode_policy,
         enforce_request_preferences=enforce_request_preferences,
         include_deferred_tools=include_deferred_tools,
+        safety_mode=resolve_safety_mode(current_request_safety(), kernel._config),
     )
 
 

@@ -3,8 +3,7 @@
 This module exports ``QWEN36_PROFILE`` only.  It does **not** self-register;
 ``app_profiles/__init__.py`` handles registration explicitly.
 
-Model-card constants (``param_billions``, ``active_param_billions``,
-``native_context_length``, ``is_moe``, 40-block layout) verified against
+Model-card constants (``native_context_length``, ``is_moe``, 40-block layout) verified against
 https://huggingface.co/Qwen/Qwen3.6-35B-A3B on 2026-04-19.  The card states
 "Number of Parameters: 35B in total and 3B activated", "Context Length:
 262,144 natively and extensible up to 1,010,000 tokens", "Mixture Of
@@ -39,12 +38,8 @@ QWEN36_PROFILE = AppProfile(
             name="35b-a3b",
             aliases=("35ba3b", "35b-a3b", "qwen3.6-35b-a3b"),
             label="Qwen3.6 35B A3B",
-            param_billions=35.0,
-            active_param_billions=3.0,
             native_context_length=262_144,
             is_moe=True,
-            family_supports_vision=False,
-            family_supports_audio=False,
             overrides=ConfigOverrides(context_length=131_072),
             behavior=RequestBehavior(
                 # Managed OpenAI-compatible local runtimes need this sampler.

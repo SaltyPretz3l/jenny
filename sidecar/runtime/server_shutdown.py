@@ -67,7 +67,7 @@ def _close_container_bounded(context: ShutdownContext, deadline: float) -> bool:
     def close_container() -> None:
         try:
             context.brain_container.close()
-        except Exception:  # noqa: BLE001
+        except Exception:
             failed.set()
             context.logger.exception("sidecar container close failed")
         finally:
@@ -91,7 +91,7 @@ def shutdown_server_runtime(context: ShutdownContext) -> None:  # noqa: PLR0915
     if context.parent_watchdog is not None:
         try:
             context.parent_watchdog.stop()
-        except Exception:  # noqa: BLE001
+        except Exception:
             shutdown_confirmed = False
             context.logger.exception("parent watchdog stop failed during sidecar shutdown")
 
@@ -109,7 +109,7 @@ def shutdown_server_runtime(context: ShutdownContext) -> None:  # noqa: PLR0915
             shutdown_worker_grace_seconds=remaining_seconds(worker_deadline),
             logger=context.logger,
         )
-    except Exception:  # noqa: BLE001
+    except Exception:
         chat_failed = True
         context.logger.exception("chat worker drain failed during sidecar shutdown")
     chat_remaining = sum(thread.is_alive() for thread in context.worker_threads)
@@ -137,7 +137,7 @@ def shutdown_server_runtime(context: ShutdownContext) -> None:  # noqa: PLR0915
             logger=context.logger,
             shutdown_gate=context.auxiliary_shutdown_gate,
         )
-    except Exception:  # noqa: BLE001
+    except Exception:
         auxiliary_failed = True
         context.logger.exception("auxiliary worker drain failed during sidecar shutdown")
     auxiliary_remaining = sum(
@@ -164,7 +164,7 @@ def shutdown_server_runtime(context: ShutdownContext) -> None:  # noqa: PLR0915
             transport_result = context.multiplexer.close(
                 timeout_seconds=remaining_seconds(shutdown_deadline)
             )
-        except Exception:  # noqa: BLE001
+        except Exception:
             context.logger.exception("transport drain failed during sidecar shutdown")
         transport_drained = transport_result is not None and transport_result.drained
         shutdown_confirmed = shutdown_confirmed and transport_drained
@@ -203,7 +203,7 @@ def shutdown_server_runtime(context: ShutdownContext) -> None:  # noqa: PLR0915
         subprocess_result = context.subprocess_manager.close(
             timeout_seconds=remaining_seconds(shutdown_deadline),
         )
-    except Exception:  # noqa: BLE001
+    except Exception:
         subprocess_result = None
         context.logger.exception("owned subprocess cleanup failed during sidecar shutdown")
     subprocess_drained = subprocess_result is not None and subprocess_result.drained
@@ -232,5 +232,5 @@ def shutdown_server_runtime(context: ShutdownContext) -> None:  # noqa: PLR0915
             shutdown_deadline=shutdown_deadline,
             shutdown_confirmed=shutdown_confirmed,
         )
-    except Exception:  # noqa: BLE001
+    except Exception:
         context.logger.exception("diagnostics flush failed during sidecar shutdown")

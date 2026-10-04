@@ -1,7 +1,7 @@
 const {
   touchActiveTurnProgress,
 } = require('./chat-stream-session-lifecycle');
-const { normalizeString } = require('../../renderer/shared/string-utils');
+const { normalizeString } = require('../shared/normalize');
 const { normalizeUsage } = require('./subagent-report-metadata');
 
 const TERMINAL_AGENT_STATUSES = new Set([
@@ -182,8 +182,17 @@ function agentExecutorLifecycleEnabled(service) {
   return service?.featureFlags?.agent_executor === true;
 }
 
-function isAgentStatusSurfaceEnabled(service) {
-  return agentExecutorLifecycleEnabled(service);
+// Delegate child progress feeds the subagent monitor, which ships with
+// `delegate` itself (docs/operations/SUB_AGENT_DESIGN.md "Monitor and
+// telemetry contract"); only the executor's own lifecycle waits on the flag.
+const DELEGATE_PROGRESS_SOURCES = new Set(['delegate', 'subagent_run', 'subagent_batch']);
+
+function isDelegateChildProgress(event) {
+  return event?.taskType === 'sub_agent' && DELEGATE_PROGRESS_SOURCES.has(event.source);
+}
+
+function isAgentStatusSurfaceEnabled(service, event) {
+  return agentExecutorLifecycleEnabled(service) || isDelegateChildProgress(event);
 }
 
 function coordinateWorkLifecycle(service, adapter, event) {

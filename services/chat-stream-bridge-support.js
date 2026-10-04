@@ -4,7 +4,8 @@ const {
   normalizeTerminalStatus,
 } = require('./backend/generated-chat-lifecycle-contract');
 
-const TOOL_CHAT_STREAM_TYPES = new Set(['tool_use', 'tool_result', 'tool_approval_needed', 'tool_approval_withdrawn']);
+const TOOL_CHAT_STREAM_TYPES = new Set(['tool_use', 'tool_result', 'tool_approval_needed', 'tool_approval_withdrawn',
+  'user_questions_withdrawn']);
 
 function normalizeEventPayload(event) {
   return event && typeof event === 'object' && !Array.isArray(event) ? { ...event } : {};

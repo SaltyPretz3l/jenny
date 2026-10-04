@@ -126,7 +126,7 @@ def _format_traceback(error: BaseException) -> str:
 def _collect_tables(namespace: dict[str, Any]) -> list[dict[str, object]]:
     try:
         import pandas as pd  # type: ignore
-    except Exception:
+    except Exception:  # noqa: BLE001  # optional
         return []
 
     tables: list[dict[str, object]] = []

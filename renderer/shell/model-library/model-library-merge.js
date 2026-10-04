@@ -134,9 +134,10 @@
     var mtpEnabled = selectedEngine === 'llama-server'
       && objectOrEmpty(perModel.mtp).mode === 'mtp'
       && eligible;
-    var serving = Boolean(context.llamaServer
-      && context.llamaServer.state === 'ready'
-      && managedAliasKey(context.llamaServer.alias) === managedAliasKey(tag));
+    var server = context.llamaServer;
+    var serving = Boolean(server && server.state === 'ready' && managedAliasKey(server.alias) === managedAliasKey(tag));
+    // Parked by the chat GPU handoff for an image render: stopped, identity kept.
+    var paused = Boolean(server && server.state === 'stopped' && server.identityRetained === true && managedAliasKey(server.alias) === managedAliasKey(tag));
     return {
       managedKey: managedKey,
       engines: {
@@ -157,7 +158,7 @@
         enabled: mtpEnabled,
         headroomMb: cardHeadroomMb(family, context.acceleration, mtpEnabled),
       },
-      serving: serving,
+      serving: serving, servingPaused: paused,
       servingPort: serving ? context.llamaServer.port : 0,
       // The model's own llama-server build, shown as " · build N"; 0 = bundled.
       customBuild: selectedEngine === 'llama-server' && typeof perModel.runtimePath === 'string' && perModel.runtimePath !== '' ? Number(perModel.runtimeBuild) || 0 : 0,
@@ -292,15 +293,17 @@
     };
   }
 
-  function buildCatalogCard(recommendation, installedEntry, ollamaTag, context) {
+  function buildCatalogCard(recommendation, installedEntry, ollamaTag, context, fitEstimate) {
     var tag = entryTag(recommendation);
     var key = canonicalTag(tag);
     var installed = Boolean(installedEntry || ollamaTag);
-    var vramRequiredMb = nonNegativeNumber(recommendation.vramRequiredMb);
+    var observed = fitEstimate && fitEstimate.fitSource === 'observed' ? fitEstimate : null;
+    var resolvedFit = observed || recommendation;
+    var vramRequiredMb = nonNegativeNumber(resolvedFit.vramRequiredMb);
     var family = matchAccelerationFamily(tag, context.acceleration);
     var engine = engineFields(tag, family, context, installedEntry, ollamaTag);
     var headroomMb = engine.mtp.headroomMb;
-    var fit = computeCardFit(recommendation, vramRequiredMb, context, headroomMb);
+    var fit = computeCardFit(resolvedFit, vramRequiredMb, context, headroomMb);
     return {
       key: key,
       tag: tag,
@@ -308,11 +311,11 @@
       tier: String(recommendation.tier || ''),
       params: String(recommendation.params || ''),
       quant: String(recommendation.quant || ''),
-      contextLength: nonNegativeNumber(recommendation.contextLength),
+      contextLength: nonNegativeNumber(resolvedFit.contextLength),
       sizeBytes: installedEntry ? installedEntry.sizeBytes : (ollamaTag ? ollamaTag.sizeBytes : 0),
       downloadSizeMb: nonNegativeNumber(recommendation.downloadSizeMb),
       vramRequiredMb: vramRequiredMb,
-      ramRequiredMb: nonNegativeNumber(recommendation.ramRequiredMb),
+      ramRequiredMb: nonNegativeNumber(resolvedFit.ramRequiredMb),
       installed: installed,
       engineVisible: Boolean(installedEntry),
       ollamaOnly: Boolean(ollamaTag && !installedEntry),
@@ -325,7 +328,7 @@
       fitState: fit.fitState,
       fitRatio: fit.fitRatio,
       fitLabel: fit.fitLabel,
-      fitSource: 'catalog',
+      fitSource: observed ? 'observed' : 'catalog',
       fitConfidence: 'high',
       accelerationEligible: isEligibleFamily(family),
       accelerationHeadroomMb: headroomMb,
@@ -333,7 +336,7 @@
       engines: engine.engines,
       selectedEngine: engine.selectedEngine,
       mtp: engine.mtp,
-      serving: engine.serving,
+      serving: engine.serving, servingPaused: engine.servingPaused,
       servingPort: engine.servingPort,
       customBuild: engine.customBuild,
       libraryGguf: Boolean(installedEntry && installedEntry.libraryGguf),
@@ -400,7 +403,7 @@
       engines: engine.engines,
       selectedEngine: engine.selectedEngine,
       mtp: engine.mtp,
-      serving: engine.serving,
+      serving: engine.serving, servingPaused: engine.servingPaused,
       servingPort: engine.servingPort,
       customBuild: engine.customBuild,
       libraryGguf: entry.libraryGguf === true,
@@ -524,28 +527,24 @@
       var recommendation = objectOrEmpty(item);
       var key = canonicalTag(entryTag(recommendation));
       if (!key) return;
+      var keptIndex = cardIndexByKey.get(key);
+      // Catalog twins share a pull tag; keep the sidecar's recommended twin.
+      if (usedKeys.has(key) && (recommendation.recommended !== true
+          || cards[keptIndex].recommended === true)) return;
+      var card = buildCatalogCard(
+        recommendation,
+        installedByKey.get(key),
+        ollamaByKey.get(key),
+        context,
+        fitEstimatesByKey.get(key)
+      );
       if (usedKeys.has(key)) {
-        var keptIndex = cardIndexByKey.get(key);
-        // Catalog twins share a pull tag; preserve whichever twin the sidecar
-        // actually flagged so the single rendered card keeps its badge.
-        if (recommendation.recommended === true && cards[keptIndex].recommended !== true) {
-          cards[keptIndex] = buildCatalogCard(
-            recommendation,
-            installedByKey.get(key),
-            ollamaByKey.get(key),
-            context
-          );
-        }
+        cards[keptIndex] = card;
         return;
       }
       usedKeys.add(key);
       cardIndexByKey.set(key, cards.length);
-      cards.push(buildCatalogCard(
-        recommendation,
-        installedByKey.get(key),
-        ollamaByKey.get(key),
-        context
-      ));
+      cards.push(card);
     });
 
     installedByKey.forEach(function (entry, key) {

@@ -54,6 +54,10 @@
     return specific ? `${base} ${specific}` : base;
   }
 
+  // Each overlay's listbox gets a unique id so the text control's aria-controls
+  // and the row ids (aria-activedescendant targets) never collide across pickers.
+  let listboxCounter = 0;
+
   function createIdePickerOverlay(deps) {
     const options = deps || {};
     const getDom = typeof options.getDom === 'function' ? options.getDom : () => ({});
@@ -96,9 +100,42 @@
     // backdrop) can return focus there instead of stranding it (Monaco's
     // textarea does not auto-reclaim). Mirrors inventory/help-overlay.js.
     let savedFocus = null;
+    let listboxId = '';
 
     function readQuery() {
       return String(inputEl && inputEl.value ? inputEl.value : '').trim();
+    }
+
+    // Expose the keyboard selection to assistive technology: the text control
+    // keeps DOM focus (combobox pattern), so the selected row is announced
+    // through aria-activedescendant instead of focus. Attributes are set on the
+    // live rows after render; the callers' markup builders stay untouched.
+    function syncOptionAttributes() {
+      if (!inputEl) {
+        return;
+      }
+      const rows = visible && rowSelector && resultsEl
+        ? [...resultsEl.querySelectorAll(rowSelector)]
+        : [];
+      let activeId = '';
+      rows.forEach((row, index) => {
+        if (!row.id) {
+          row.id = `${listboxId}-option-${index}`;
+        }
+        if (!row.getAttribute('role')) {
+          row.setAttribute('role', 'option');
+        }
+        const isSelected = index === selectedIndex;
+        row.setAttribute('aria-selected', isSelected ? 'true' : 'false');
+        if (isSelected) {
+          activeId = row.id;
+        }
+      });
+      if (activeId) {
+        inputEl.setAttribute('aria-activedescendant', activeId);
+      } else {
+        inputEl.removeAttribute('aria-activedescendant');
+      }
     }
 
     // query -> caller matches -> markup. Mirrors the (loading | empty | rows +
@@ -123,6 +160,7 @@
         markup += call('renderTrailingStatus', matches, query) || '';
       }
       resultsEl.innerHTML = markup;
+      syncOptionAttributes();
       const selected = resultsEl.querySelector(selectedRowSelector);
       if (selected && selected.scrollIntoView) {
         selected.scrollIntoView({ block: 'nearest' });
@@ -197,6 +235,8 @@
       if (!stage || !documentRef || typeof textField !== 'function') {
         return null;
       }
+      listboxCounter += 1;
+      listboxId = `ide-picker-listbox-${listboxCounter}`;
       overlayEl = documentRef.createElement('div');
       overlayEl.className = `${pickerClass('ide-picker-overlay', overlayClass)} hidden`;
       if (overlayAttrs) {
@@ -216,7 +256,7 @@
       overlayEl.innerHTML = `<div class="${pickerClass('ide-picker-panel', panelClass)}">`
         + textField(fieldOpts)
         + `<div class="${pickerClass('ide-picker-results', resultsClass)}"`
-        + ` role="listbox" aria-label="${resultsAriaLabel}"></div>`
+        + ` id="${listboxId}" role="listbox" aria-label="${resultsAriaLabel}"></div>`
         + '</div>';
       stage.appendChild(overlayEl);
       inputEl = (inputSelector && overlayEl.querySelector(inputSelector))
@@ -225,6 +265,11 @@
       resultsEl = overlayEl.querySelector('.ide-picker-results');
       overlayEl.addEventListener('click', handleOverlayClick);
       if (inputEl) {
+        inputEl.setAttribute('role', 'combobox');
+        inputEl.setAttribute('aria-autocomplete', 'list');
+        inputEl.setAttribute('aria-haspopup', 'listbox');
+        inputEl.setAttribute('aria-controls', listboxId);
+        inputEl.setAttribute('aria-expanded', 'false');
         inputEl.addEventListener('keydown', handleInputKeydown);
         inputEl.addEventListener('input', handleInput);
       }
@@ -270,6 +315,7 @@
       overlayEl.classList.remove('hidden');
       if (inputEl) {
         inputEl.value = '';
+        inputEl.setAttribute('aria-expanded', 'true');
       }
       selectedIndex = 0;
       call('resetOnOpen');
@@ -292,6 +338,10 @@
       visible = false;
       if (overlayEl) {
         overlayEl.classList.add('hidden');
+      }
+      if (inputEl) {
+        inputEl.setAttribute('aria-expanded', 'false');
+        inputEl.removeAttribute('aria-activedescendant');
       }
       if (savedFocus && typeof savedFocus.focus === 'function') {
         try {

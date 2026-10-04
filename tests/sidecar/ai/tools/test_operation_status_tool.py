@@ -47,8 +47,8 @@ def test_enumerates_pending_operations_with_key_and_status(ledger_root, tmp_path
         generation_id="gen_dead",
         now_iso="2026-08-28T12:00:00Z",
     )
-    tools = builtin_server._default_tools()  # noqa: SLF001
-    response = builtin_server._handle_tools_call(  # noqa: SLF001
+    tools = builtin_server._default_tools()
+    response = builtin_server._handle_tools_call(
         "opstatus-call",
         tools,
         WorkspaceGuard(str(tmp_path)),
@@ -61,8 +61,8 @@ def test_enumerates_pending_operations_with_key_and_status(ledger_root, tmp_path
 
 
 def test_empty_state_reports_no_active_operations(ledger_root, tmp_path) -> None:
-    tools = builtin_server._default_tools()  # noqa: SLF001
-    response = builtin_server._handle_tools_call(  # noqa: SLF001
+    tools = builtin_server._default_tools()
+    response = builtin_server._handle_tools_call(
         "opstatus-empty",
         tools,
         WorkspaceGuard(str(tmp_path)),
@@ -80,8 +80,8 @@ def test_status_output_never_authorizes_re_execution(ledger_root, tmp_path) -> N
         generation_id="gen_dead",
         now_iso="2026-08-28T12:00:00Z",
     )
-    tools = builtin_server._default_tools()  # noqa: SLF001
-    response = builtin_server._handle_tools_call(  # noqa: SLF001
+    tools = builtin_server._default_tools()
+    response = builtin_server._handle_tools_call(
         "opstatus-doctrine",
         tools,
         WorkspaceGuard(str(tmp_path)),

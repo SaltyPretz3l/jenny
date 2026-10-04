@@ -4,10 +4,13 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const test = require('node:test');
+const { JSDOM } = require('jsdom');
 
 const fieldCopy = require('../renderer/shell/renderer-settings-field-copy.js');
+const descriptors = require('../renderer/shell/renderer-settings-field-descriptors');
 const support = require('../renderer/shell/renderer-settings-support.js');
 const registry = require('../renderer/shell/renderer-settings-section-registry.js');
+const { toggleSwitch } = require('../renderer/inventory/toggle-switch');
 
 test('every static Settings toggle id has descriptive copy', () => {
   const shellDir = path.join(__dirname, '..', 'renderer', 'shell');
@@ -23,9 +26,14 @@ test('every static Settings toggle id has descriptive copy', () => {
     }
   }
 
-  assert.ok(matches.length >= 12, `expected at least 12 Settings toggle ids, found ${matches.length}`);
+  // Wave 1 moved most switches onto descriptors (checked below); a few literal ids remain.
+  assert.ok(matches.length >= 3, `expected the remaining literal Settings toggle ids, found ${matches.length}`);
+  for (const descriptor of descriptors.listSettingDescriptors()) {
+    if (descriptor.kind === 'boolean') matches.push({ id: descriptor.controlId, file: 'renderer-settings-field-descriptors.js' });
+  }
+  const projection = new Map(fieldCopy.listSettingsSearchEntries().map((entry) => [entry.id, entry]));
   const missing = matches.filter(({ id }) => {
-    const copy = fieldCopy.getSettingsFieldCopy(id);
+    const copy = fieldCopy.getSettingsFieldCopy(id) || projection.get(id);
     return !copy || !copy.description || !copy.description.trim();
   });
   assert.deepEqual(
@@ -54,7 +62,7 @@ test('every field-copy entry carries a non-empty label, description, and known s
 });
 
 test('getSettingsFieldCopy returns entries by id and null for unknown ids', () => {
-  const entry = fieldCopy.getSettingsFieldCopy('contextTokenBudgetToggle');
+  const entry = fieldCopy.getSettingsFieldCopy('contextCompactionToggle');
   assert.ok(entry);
   assert.equal(entry.sectionId, 'context');
   assert.equal(fieldCopy.getSettingsFieldCopy('nope-not-a-field'), null);
@@ -78,45 +86,35 @@ test('chat UI settings fields carry searchable copy in their owning sections', (
 });
 
 test('toggle-list builders inherit descriptions from the copy map', () => {
-  const seen = [];
-  const stubToggleSwitch = (opts) => {
-    seen.push(opts);
-    return `<span data-stub="${opts.id}"></span>`;
-  };
   const lists = support.buildContextToggleListsMarkup({
-    toggleSwitch: stubToggleSwitch,
+    toggleSwitch,
     contextPreferences: { includePersonality: true },
-    featureFlags: { token_budget: true },
+    featureFlags: { context_compaction: true },
   });
   assert.ok(lists.sources && lists.runtime, 'both context lists render');
-  assert.equal(seen.length, 4);
-  for (const opts of seen) {
-    const copy = fieldCopy.getSettingsFieldCopy(opts.id);
-    assert.ok(copy, `${opts.id}: context toggle ids must exist in the copy map`);
-    assert.ok(
-      opts.description && opts.description.trim(),
-      `${opts.id}: builder must pass a description through to the switch`
-    );
+  const doc = new JSDOM(`<!doctype html><body>${lists.sources}${lists.runtime}</body>`).window.document;
+  const rows = doc.querySelectorAll('.settings-field--row');
+  assert.equal(rows.length, 3);
+  for (const row of rows) {
+    const id = row.querySelector('[data-inv-toggle]').getAttribute('data-inv-toggle');
+    const copy = fieldCopy.getSettingsFieldCopy(id);
+    assert.ok(copy, `${id}: context toggle ids must exist in the copy map`);
+    assert.equal(row.querySelector('.settings-field-help').textContent, copy.description, `${id}: builder passes the description through`);
   }
 });
 
 test('call-site descriptions win over the copy-map baseline', () => {
-  const seen = [];
-  const stubToggleSwitch = (opts) => {
-    seen.push(opts);
-    return '';
-  };
-  support.buildSettingsToggleListMarkup({
-    toggleSwitch: stubToggleSwitch,
+  const markup = support.buildSettingsToggleListMarkup({
+    toggleSwitch,
     fields: [
-      { id: 'contextTokenBudgetToggle', description: 'Dynamic override text.' },
+      { id: 'contextCompactionToggle', description: 'Dynamic override text.' },
     ],
   });
-  assert.equal(seen.length, 1);
-  assert.equal(seen[0].description, 'Dynamic override text.');
+  const row = new JSDOM(`<!doctype html><body>${markup}</body>`).window.document.querySelector('.settings-field--row');
+  assert.equal(row.querySelector('.settings-field-help').textContent, 'Dynamic override text.');
   assert.equal(
-    seen[0].label,
-    fieldCopy.getSettingsFieldCopy('contextTokenBudgetToggle').label,
+    row.querySelector('.settings-field-title').textContent,
+    fieldCopy.getSettingsFieldCopy('contextCompactionToggle').label,
     'label falls back to the copy map when the call site omits it'
   );
 });

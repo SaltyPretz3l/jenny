@@ -14,6 +14,24 @@ async function flush() {
   await new Promise((resolve) => setImmediate(resolve));
 }
 
+test('settings model status is empty with an active model and keeps catalog reasons', async (t) => {
+  const { loadRendererApp } = require('./helpers/renderer-shell-harness');
+  for (const [model, available, reason, expected] of [
+    ['installed:1b', true, '', ''],
+    ['installed:1b', false, 'Engine unreachable', 'Loaded model: installed:1b (catalog unavailable: Engine unreachable)'],
+    ['', false, 'Engine unreachable', 'Engine unreachable'],
+    ['', true, '', 'No model is currently loaded.'],
+  ]) {
+    const app = await loadRendererApp({ shell: {
+      status: { async get() { return { model, model_loaded: Boolean(model) }; } },
+      models: { async list() { return { data: [], active_model: model, available, reason }; } },
+    } });
+    t.after(() => app.dispose());
+    assert.equal(app.window.document.getElementById('modelStatus').textContent, expected);
+    await app.dispose();
+  }
+});
+
 function deferred() {
   let resolve;
   let reject;
@@ -288,6 +306,41 @@ test('GGUF folders render only behind llama-server acceleration', async (t) => {
   assert.equal(disabledHarness.document.getElementById('modelLibraryFoldersHost'), null);
 });
 
+test('the Image engine section renders only behind the image_generate kill switch', async (t) => {
+  const enabledState = state(true);
+  enabledState.features.featureFlags.tools_image_generate_enabled = true;
+  const enabledHarness = harness(t, { state: enabledState });
+  enabledHarness.windowRef.jennyShell.imageEngine = {
+    async getState() {
+      return { status: 'not_installed', engine_tag: 'master-929-3f8527a', download_size_bytes: 337915440,
+        handoff: { retained: false }, model_sets: { sets: [], default_id: null }, families: {} };
+    },
+    onChanged() { return () => {}; },
+  };
+  let subscribed = 0;
+  enabledHarness.windowRef.jennyShell.imageEngine.onChanged = () => { subscribed += 1; return () => { subscribed -= 1; }; };
+  enabledHarness.controller.bind();
+  await flush();
+  const host = enabledHarness.document.getElementById('modelLibraryImageEngineHost');
+  assert.ok(host);
+  assert.match(host.textContent, /Image engine/);
+  assert.match(host.textContent, /Install engine… \(322 MB\)/);
+  assert.equal(subscribed, 1);
+  // The flag turning off at runtime drops the section and its bridge subscription.
+  enabledState.features.featureFlags.tools_image_generate_enabled = false;
+  enabledHarness.controller.render();
+  await flush();
+  assert.equal(enabledHarness.document.getElementById('modelLibraryImageEngineHost'), null);
+  assert.equal(subscribed, 0);
+
+  const disabledState = state(true);
+  disabledState.features.featureFlags.tools_image_generate_enabled = false;
+  const disabledHarness = harness(t, { state: disabledState });
+  disabledHarness.controller.bind();
+  await flush();
+  assert.equal(disabledHarness.document.getElementById('modelLibraryImageEngineHost'), null);
+});
+
 test('an installed non-catalog model with a fit estimate renders an estimated fit row', async (t) => {
   const h = harness(t, {
     models: {
@@ -320,7 +373,9 @@ test('an installed non-catalog model with a fit estimate renders an estimated fi
   const row = [...h.document.querySelectorAll('.model-row')]
     .find((el) => el.textContent.includes('private/estimated:q4'));
   assert.ok(row);
-  assert.match(row.querySelector('.model-row-fit').textContent, /estimated/);
+  const fit = row.querySelector('.model-row-fit-text');
+  assert.doesNotMatch(fit.textContent, /estimated/);
+  assert.match(fit.title, /estimated/);
 });
 
 test('pull action starts one pull and patches only that row, leaving siblings and toolbar intact', async (t) => {

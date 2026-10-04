@@ -1,6 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const { syncDirectoryAsync, syncFileAsync } = require('./file-json-store');
 
 // Session ids are produced by createSessionId() (sess_<ts>_<hex>) and never
 // contain path separators. File ids are still encoded defensively for import
@@ -24,7 +25,9 @@ async function writeJsonAtomicAsync(filePath, value) {
   const tempPath = `${filePath}.${Date.now()}.${crypto.randomBytes(6).toString('hex')}.tmp`;
   try {
     await fs.promises.writeFile(tempPath, JSON.stringify(value, null, 2), 'utf8');
+    await syncFileAsync(tempPath);
     await fs.promises.rename(tempPath, filePath);
+    await syncDirectoryAsync(path.dirname(filePath));
   } catch (error) {
     try {
       await fs.promises.unlink(tempPath);

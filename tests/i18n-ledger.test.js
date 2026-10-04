@@ -464,9 +464,11 @@ test('recognizes main-process translator calls and rejects dynamic service keys'
   const result = run(root, 'scan');
   assert.equal(result.status, 2, result.stdout + result.stderr);
   assert.match(result.stderr, /services\/translated\.js:7:.*key.*plain string literal/i);
-  const ledger = JSON.parse(fs.readFileSync(path.join(root, 'docs/i18n/STRING_LEDGER.json'), 'utf8'));
+  const artifacts = require('../scripts/i18n/ledger').generate(root);
+  const ledger = artifacts.ledger;
+  assert.equal(fs.existsSync(path.join(root, 'docs/i18n/STRING_LEDGER.json')), false);
   assert.equal(occurrence(ledger, 'Hello {name}')?.disposition, 'migrated');
-  const catalog = JSON.parse(fs.readFileSync(path.join(root, 'locales/en.json'), 'utf8'));
+  const catalog = JSON.parse(artifacts.files['locales/en.json']);
   assert.equal(catalog['x.y'], 'Hello {name}');
   assert.equal(catalog['x.member'], 'Member default');
   assert.equal(catalog['x.main'], 'Main default');
@@ -533,7 +535,8 @@ test('dynamic translation scanner errors fail scan and check end to end', () => 
   const scanResult = run(root, 'scan', '--write-baseline');
   assert.equal(scanResult.status, 2, scanResult.stdout + scanResult.stderr);
   assert.match(scanResult.stderr, /renderer\/dynamic\.js:1:.*key.*plain string literal/i);
-  const ledger = JSON.parse(fs.readFileSync(path.join(root, 'docs/i18n/STRING_LEDGER.json'), 'utf8'));
+  const { ledger } = require('../scripts/i18n/ledger').generate(root);
+  assert.equal(fs.existsSync(path.join(root, 'docs/i18n/STRING_LEDGER.json')), false);
   assert.equal(ledger.errors.length, 1);
 
   const checkResult = run(root, 'check');
@@ -845,4 +848,17 @@ test('security policy constants are excluded from translatable prose', () => {
   const policy = "default-src 'none'; base-uri 'none'";
   write(root, 'renderer/policy.js', `const CSP = ${JSON.stringify(policy)}; node.textContent = CSP;`);
   assert.equal(occurrence(scan(root), policy)?.disposition, 'excluded:code');
+});
+
+test('failed scan preserves all generated catalogs and the baseline', () => {
+  const root = fixture();
+  write(root, 'renderer/valid.js', "showToast('Valid text');");
+  scan(root, '--write-baseline');
+  const paths = ['docs/i18n/STRING_LEDGER.json', 'docs/i18n/STRING_LEDGER.md', 'locales/en.json', 'locales/qps-ploc.json', 'docs/i18n/string_ledger_baseline.json'];
+  const before = paths.map(relative => fs.readFileSync(path.join(root, relative), 'utf8'));
+  write(root, 'renderer/invalid.js', 'const broken = ;');
+  const result = run(root, 'scan', '--write-baseline');
+  assert.equal(result.status, 2);
+  assert.match(result.stderr, /parse error/);
+  assert.deepEqual(paths.map(relative => fs.readFileSync(path.join(root, relative), 'utf8')), before);
 });

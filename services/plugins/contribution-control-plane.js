@@ -228,9 +228,7 @@ function createContributionMutations(deps) {
         runtimeCoordinator,
         stage: controlPlaneStage,
       });
-      return settleAndPublishMutation(operation, outcome, timestamp, {
-        publisher_id: envelope.publisherId, plugin_id: envelope.pluginId,
-      });
+      return settleAndPublishMutation(operation, outcome, timestamp);
     }));
   }
 

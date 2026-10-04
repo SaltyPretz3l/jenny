@@ -65,7 +65,7 @@ def test_frozen_approval_metadata_stays_out_of_worker_bridge_arguments(monkeypat
     frozen = freeze_effective_execution_inputs(kernel, call, session_id="proof-session", read_snapshot_cache={})
     assert "_jenny_session_id" in frozen.effective_tool_arguments
     seen = []
-    monkeypatch.setattr(tool_execution, "execute_electron_tool", lambda request: seen.append(request))
+    monkeypatch.setattr(tool_execution, "execute_electron_tool", seen.append)
     tool_execution._dispatch_tool_call(
         kernel=kernel, call=call, tool_arguments=dict(frozen.effective_tool_arguments),
         descriptor=descriptor, request_id="proof-stream", session_id="proof-session",

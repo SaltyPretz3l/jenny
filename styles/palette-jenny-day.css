@@ -5,7 +5,7 @@
   --widget-context-weave-pointer-radius: 150;
   --widget-context-weave-interlace: 3;
   --widget-context-weave-weft-alpha: 0.72;
-  --widget-context-weave-lit-gain: 2.2;
+  --widget-context-weave-lit-gain: 2;
   --widget-context-weave-density: 0.92;
 
   /* ── Base palette ── XJ-9 daytime: cool icy teal-slate world, Jenny-cyan brand, dark-teal ink ── */
@@ -48,37 +48,35 @@
 
   /* ── Atomic burst — Jenny teal lead, pigtail amber, Brad red sparkles ── */
   /* MLAATR daytime palette: Jenny sky blue, sunshine gold, bubblegum coral. */
-  --widget-atomic-burst-color-a: rgba(74, 174, 230, 0.88);
-  --widget-atomic-burst-color-b: rgba(255, 196, 88, 0.86);
-  --widget-atomic-burst-color-c: rgba(255, 122, 144, 0.84);
-  --widget-atomic-burst-flare-color: rgba(255, 252, 240, 0.98);
-  --widget-atomic-burst-link-color: rgba(255, 232, 178, 0.72);
-  --widget-atomic-burst-wave-color: rgba(255, 152, 168, 0.86);
-  --widget-atomic-burst-size: 28;
-  --widget-atomic-burst-density: 9.2;
+  --widget-atomic-burst-color-a: rgba(74, 174, 230, 0.94);
+  --widget-atomic-burst-color-b: rgba(255, 196, 88, 0.92);
+  --widget-atomic-burst-color-c: rgba(255, 122, 144, 0.92);
+  --widget-atomic-burst-flare-color: rgba(22, 88, 100, 1);
+  --widget-atomic-burst-link-color: rgba(79, 169, 176, 0.5);
+  --widget-atomic-burst-wave-color: rgba(22, 88, 100, 0.8);
 
   /* ── Circuit trace — deep teal grid; pigtail amber hover line for contrast ── */
-  --widget-circuit-trace-grid-color: rgba(31, 74, 82, 0.28);
-  --widget-circuit-trace-line-color: rgba(232, 158, 24, 0.92);
-  --widget-circuit-trace-glow-color: rgba(95, 198, 205, 0.94);
-  --widget-circuit-trace-accent-color: rgba(20, 132, 148, 0.90);
-  --widget-circuit-trace-hex-size: 36;
+  --widget-circuit-trace-grid-color: rgba(31, 74, 82, 0.34);
+  --widget-circuit-trace-line-color: rgba(22, 88, 100, 0.94);
+  --widget-circuit-trace-glow-color: rgba(196, 110, 20, 0.94);
+  --widget-circuit-trace-accent-color: rgba(31, 74, 82, 0.68);
+  --widget-circuit-trace-inner-color: rgba(90, 120, 120, 0.10);
+  --widget-circuit-trace-shadow-color: rgba(10, 40, 45, 0.07);
   --widget-circuit-trace-density: 1.0;
 
   /* ── Reactive grid: teal idle, amber active ── */
   --widget-reactive-grid-dot-idle: rgba(79, 169, 176, 0.32);
   --widget-reactive-grid-dot-active: rgba(232, 158, 24, 0.98);
-  --widget-reactive-grid-dot-glow: rgba(79, 169, 176, 0.50);
+  --reactive-grid-wave-contrast: 1.75;
 
   /* ── Playlist scroll ── */
   --playlist-scroll-line-color: rgba(31, 74, 82, 0.50);
   --playlist-scroll-lane-alpha: 0.10;
   --playlist-scroll-bar-alpha: 0.18;
   --playlist-scroll-sub-alpha: 0.07;
-  --playlist-scroll-band-alpha: 0.04;
   --playlist-scroll-ghost-color: rgba(31, 74, 82, 0.18);
-  --playlist-scroll-pad-color: rgba(48, 110, 122, 0.04);
   --playlist-scroll-accent-color: rgba(31, 74, 82, 0.55);
+  --playlist-scroll-contrast: 1.5;
 
   /* ── Shadows ── */
   --shadow-soft: 0 18px 42px rgba(10, 35, 41, 0.20);
@@ -136,17 +134,6 @@
   --surface-prompt-chip-hover: rgba(255, 255, 255, 0.96);
   --surface-prompt-chip-border: rgba(10, 35, 41, 0.18);
   --surface-prompt-chip-border-hover: rgba(79, 169, 176, 0.40);
-
-  --surface-assistant-sprite-background:
-    radial-gradient(circle at 32% 28%, rgba(255, 255, 255, 0.84), rgba(255, 255, 255, 0) 42%),
-    linear-gradient(180deg, rgba(248, 252, 253, 0.98), rgba(216, 230, 234, 0.98));
-  --surface-assistant-sprite-border: rgba(10, 35, 41, 0.24);
-  --surface-assistant-sprite-holo:
-    rgba(79, 169, 176, 0.96) 0deg,
-    rgba(95, 198, 205, 0.96) 90deg,
-    rgba(210, 168, 44, 0.96) 180deg,
-    rgba(200, 69, 60, 0.92) 270deg,
-    rgba(79, 169, 176, 0.96) 360deg;
 
   --surface-interactive-card-background:
     linear-gradient(180deg, rgba(248, 252, 253, 0.96), rgba(220, 230, 234, 0.96)),
@@ -244,14 +231,8 @@
   --widget-copy-chip-color: #0a2329;
 
 
-  /* Sprite streaming */
+  /* Rail J glyph */
   --widget-sprite-color: rgba(10, 35, 41, 0.92);
-  --widget-sprite-streaming-border: rgba(79, 169, 176, 0.36);
-  --widget-sprite-streaming-shadow:
-    0 0 0 1px rgba(10, 35, 41, 0.10),
-    0 12px 30px rgba(79, 169, 176, 0.14),
-    0 0 22px rgba(79, 169, 176, 0.12),
-    inset 0 1px 0 rgba(255, 255, 255, 0.55);
 
   /* Home orbit */
   --widget-face-glow-color: var(--accent-cyan);

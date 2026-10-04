@@ -33,7 +33,7 @@ const {
 } = require('./phase-percentiles-aggregator');
 const {
   CANCEL_REASON_SESSION_DELETE,
-  CANCEL_REASON_TIMEOUT,
+  CANCEL_REASON_TIMEOUT, CANCEL_REASON_USER,
   buildTerminalErrorPayload,
   createCancellationError,
   enrichTerminalErrorPayloadForEmit,
@@ -92,7 +92,7 @@ const { resolveConfiguredLocalMaxLoopWallSeconds } = require('./chat-stream-admi
 const {
   applyCompactionSnapshotForChatSend,
 } = require('./session-compaction-snapshot');
-const { computeInterruptedTurnReceipts } = require('./interrupted-turn-receipts');
+const { computeInterruptedTurnReceipts, acknowledgeInterruptedTurnReceipts } = require('./interrupted-turn-receipts');
 const { buildManagedStartResult, retainManagedRuntimeController } = require('./chat-lifecycle-contracts');
 const { ensureSessionTurnActorRegistry } = require('./session-turn-actor');
 const {
@@ -109,6 +109,11 @@ const { prepareManagedCheckpointHistory, createManagedContinuationSend } = requi
 // ceilings than local ones) — see resolveChatStreamCeilings in
 // managed-sidecar-chat-helpers.js for the values and rationale.
 const CHAT_STREAM_REQUEST_SETTLE_GRACE_MS = 1_000;
+// Owner D3: the safety policy captured with the turn (session runtime) or the live chatUi state rides every chat.send (omitted when unknown).
+function safetyRequestFields(service, captured) {
+  const chatUi = captured ? null : service?.configService?.getChatUiState?.();
+  return captured ? { ...captured } : (chatUi ? { safety_mode: chatUi.safetyMode, auto_approve_streak_cap: chatUi.autoApproveStreakCap } : {});
+}
 async function startManagedSidecarChatStream(service, {
   sessionId,
   prompt,
@@ -124,13 +129,13 @@ async function startManagedSidecarChatStream(service, {
   approvalMode,
   debugOptions,
   clientTiming,
-  pluginCommandInvocation, skillInvocation,
+  skillInvocation,
   editedMessageId,
   failureRetry,
   turnLease = null,
   runtimeExecutionAuthority = null, runtimeOperationGateway = null,
   runtimeRoute = null, runtimeAssertCurrent = null, runtimeOnInferenceSettlement = null,
-  runtimeContinuation = null, runtimeAdmission = null,
+  runtimeContinuation = null, runtimeAdmission = null, safetyPolicy = null,
 }) {
   const {
     exchangeTitle, existingSession, imageAttachments, normalizedAttachments,
@@ -176,7 +181,7 @@ async function startManagedSidecarChatStream(service, {
     let terminalSettledAt;
     let executionAuthority = null;
     let continuationPausePending = false;
-    let providerDiagnosticsRecorded = false;
+    let providerDiagnosticsPromise;
     const turnDiagnosticState = {
       engineType: null,
       effectiveMode: null,
@@ -232,7 +237,7 @@ async function startManagedSidecarChatStream(service, {
       failureRetry,
       turnLease: activeTurnLease, runtimeAdmission,
       getSuspendedDecision: () => controller._runtimeDecisionControl?.suspendedDecision(),
-      exchangeTitle,
+      exchangeTitle, isUserStop: () => controller.signal.reason?.cancel_reason === CANCEL_REASON_USER,
       turnEventCollector, canonicalBridge: canonicalBridgeEnabled,
       onVisibleCompletion: () => {
         streamWatchdog.clear();
@@ -255,12 +260,10 @@ async function startManagedSidecarChatStream(service, {
       sessionId: resolvedSessionId,
       streamId,
       traceId: requestTraceId,
-      ipc_latency_ms: Number.isFinite(Number(normalizedClientTiming?.sendStartedAtMs))
-        ? Math.max(Date.now() - Number(normalizedClientTiming.sendStartedAtMs), 0)
-        : null,
-      local_render_latency_ms: Number.isFinite(Number(normalizedClientTiming?.localRenderLatencyMs))
-        ? Number(normalizedClientTiming.localRenderLatencyMs)
-        : null,
+      // Unmeasured markers are null; Number(null) === 0 once logged the epoch here.
+      ipc_latency_ms: normalizedClientTiming.sendStartedAtMs != null
+        ? Math.max(Date.now() - normalizedClientTiming.sendStartedAtMs, 0) : null,
+      local_render_latency_ms: normalizedClientTiming.localRenderLatencyMs,
     });
     function logTiming(event, startedAt, details = {}) {
       service._emitServiceLog('DEBUG', event, {
@@ -277,17 +280,15 @@ async function startManagedSidecarChatStream(service, {
     function recordTimingMarker(name) {
       timingMarkers.push({ name: String(name), ts_ms: Date.now() });
     }
-    async function fetchAndRecordProviderDiagnosticPhases() {
-      if (providerDiagnosticsRecorded) {
-        return null;
-      }
-      providerDiagnosticsRecorded = true;
-      const providerDiagnostics = await fetchTurnProviderDiagnostics({
+    function fetchAndRecordProviderDiagnosticPhases() {
+      providerDiagnosticsPromise ||= fetchTurnProviderDiagnostics({
         service,
         requestId,
+      }).then((providerDiagnostics) => {
+        recordProviderDiagnosticPhases(service, providerDiagnostics);
+        return providerDiagnostics;
       });
-      recordProviderDiagnosticPhases(service, providerDiagnostics);
-      return providerDiagnostics;
+      return providerDiagnosticsPromise;
     }
     function abortStreamForTimeout(message) {
       if (controller.signal.aborted) {
@@ -369,6 +370,7 @@ async function startManagedSidecarChatStream(service, {
           contextContributions: null,
           contextAssemblyBreakdown: null,
           toolEvents: runtime.getDiagnosticToolEvents(),
+          compactions: runtime.getDiagnosticCompactions?.(),
           terminalError: null,
           engineType: null,
           model: null,
@@ -392,7 +394,7 @@ async function startManagedSidecarChatStream(service, {
       const requestedModel = String(runtimePreferredModel || normalizedPreferences.preferred_model || '').trim();
       const requestedEngine = String(runtimePreferredEngineType || '').trim().toLowerCase();
       const lockdownRequest = resolveSessionLockdownRequest(service, sessionSummary,
-        { requestedEngine, requestedModel }, normalizeManagedToolPreferences(toolPreferences));
+        { requestedEngine, requestedModel }, normalizeManagedToolPreferences(toolPreferences, { catalog: service.currentStatus?.tools_status }));
       const requestToolPreferences = lockdownRequest.toolPreferences;
       const modelTimingStartedAt = Date.now();
       runtimeAssertCurrent?.();
@@ -500,11 +502,9 @@ async function startManagedSidecarChatStream(service, {
 
       const contextAssemblyStartedAt = Date.now();
       recordTimingMarker('context_assembly_started');
-      recordServicePhasePercentile(
-        service,
-        'click_to_optimistic_render',
-        normalizedClientTiming.localRenderLatencyMs
-      );
+      if (normalizedClientTiming.localRenderLatencyMs != null) {
+        recordServicePhasePercentile(service, 'click_to_optimistic_render', normalizedClientTiming.localRenderLatencyMs);
+      }
       if (normalizedClientTiming.optimisticRenderedAtMs != null) {
         recordServicePhasePercentile(
           service,
@@ -647,9 +647,7 @@ async function startManagedSidecarChatStream(service, {
         journal: service.turnEventJournal,
         sessionId: resolvedSessionId,
         currentTurnId: requestId,
-        logger: typeof service._emitServiceLog === 'function'
-          ? service._emitServiceLog.bind(service)
-          : null,
+        logger: promotionLogger,
       });
       const chatSendParams = {
         accept_version: API_VERSION,
@@ -675,11 +673,10 @@ async function startManagedSidecarChatStream(service, {
         memory_policy: memoryPolicy,
         ...(contextBlocks?.length ? { context_blocks: contextBlocks } : {}),
         ...(requestToolPreferences ? { tool_preferences: requestToolPreferences } : {}),
-        approval_mode: requestApprovalMode,
+        approval_mode: requestApprovalMode, ...safetyRequestFields(service, safetyPolicy),
         ...(normalizedDebugOptions ? { debug_options: normalizedDebugOptions } : {}),
-        ...(pluginCommandInvocation ? { plugin_command_invocation: pluginCommandInvocation } : {}), ...(skillInvocation ? { skill_invocation: skillInvocation } : {}),
-        plugin_runtime_authority: getManagedPluginRuntime(service)?.getChatAuthority?.()
-          || { mode: 'core_only' },
+        ...(skillInvocation ? { skill_invocation: skillInvocation } : {}),
+        plugin_runtime_authority: getManagedPluginRuntime(service)?.getChatAuthority?.() || { mode: 'core_only' },
         execution_context: service.sessionExecutionAuthority.toExecutionContext(executionAuthority),
       };
       await waitForManagedInitialization(service, controller.signal);
@@ -780,6 +777,8 @@ async function startManagedSidecarChatStream(service, {
       noteToolObservationPayload(result?.tool_observations);
       await settleHostedExecution(service, streamId);
       const settledTerminal = await require('../execution/execution-settlement').settleManagedTerminal(service, streamId, runtime, result);
+      acknowledgeInterruptedTurnReceipts({ journal: service.turnEventJournal, store: service.sessionStore, result,
+        sessionId: resolvedSessionId, receipts: boundedChatSendParams.interrupted_turn_receipts, logger: promotionLogger });
       deferredQuestionBatchEvent = settledTerminal?.coordinated
         ? null : (settledTerminal?.questionBatch || null);
       if (deferredQuestionBatchEvent && runtime.isTerminalCoordinatorHandled()) {
@@ -790,7 +789,7 @@ async function startManagedSidecarChatStream(service, {
         || TERMINAL_STATUS_COMPLETED;
       terminalSettledAt = Date.now();
       recordTimingMarker('terminal_settled');
-      await fetchAndRecordProviderDiagnosticPhases();
+      const providerDiagnostics = await fetchAndRecordProviderDiagnosticPhases();
       // Record the actual non-throwing terminal status, including denial.
       Promise.resolve(dumpTurnDiagnostic({
         service,
@@ -803,12 +802,14 @@ async function startManagedSidecarChatStream(service, {
         contextContributions: turnDiagnosticState.promptContributions,
         contextAssemblyBreakdown: turnDiagnosticState.contextAssemblyBreakdown,
         toolEvents: runtime.getDiagnosticToolEvents(),
+        compactions: runtime.getDiagnosticCompactions?.(),
         terminalError: null,
         engineType: turnDiagnosticState.engineType,
         model,
         mode: turnDiagnosticState.effectiveMode,
         counts: null,
         clientTiming: normalizedClientTiming,
+        providerDiagnostics,
       })).catch((dumpError) => {
         if (typeof service._emitServiceLog === 'function') {
           service._emitServiceLog('WARN', 'chat.turn_diagnostic_dump_unexpected_error', {
@@ -924,7 +925,8 @@ async function startManagedSidecarChatStream(service, {
       approvalCleanupTerminalState = terminal.status;
       recordTimingMarker('terminal_settled');
       terminalSettledAt = Date.now();
-      Promise.resolve(fetchAndRecordProviderDiagnosticPhases()).catch((providerDiagnosticError) => {
+      // A failed phase recording yields undefined, so the dump still runs and fetches for itself.
+      fetchAndRecordProviderDiagnosticPhases().catch((providerDiagnosticError) => {
         if (typeof service._emitServiceLog === 'function') {
           service._emitServiceLog('WARN', 'chat.provider_phase_percentiles_failed', {
             sessionId: resolvedSessionId,
@@ -933,8 +935,7 @@ async function startManagedSidecarChatStream(service, {
             message: String(providerDiagnosticError?.message || providerDiagnosticError),
           });
         }
-      });
-      dumpFailedTurnDiagnostic({
+      }).then((providerDiagnostics) => dumpFailedTurnDiagnostic({
         service,
         sessionId: resolvedSessionId,
         streamId,
@@ -948,7 +949,8 @@ async function startManagedSidecarChatStream(service, {
         sidecarErrorMessage,
         model,
         clientTiming: normalizedClientTiming,
-      });
+        providerDiagnostics,
+      }));
       if (terminal.logOnlyLateFailure) {
         const expectedLifecycleCancellation = isExpectedLifecycleCancellation(normalizedErrorPayload);
         const settlementEvent = expectedLifecycleCancellation ? 'cancelled' : 'failed';

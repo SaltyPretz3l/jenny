@@ -28,12 +28,13 @@ function projectNameForRoot(canonicalRoot) {
 }
 
 // list() is ordered by created_at, so the earliest project bound to the folder
-// wins when the owner bound the same folder twice by hand.
+// wins when the owner bound the same folder twice by hand. Identity is the
+// canonical root id (case-folded on Windows), the same key bindRoot refuses a
+// second owner on; an exact path match is preferred among legacy duplicates.
 function findProjectBoundTo(projectService, canonicalRoot) {
   const rootId = workspaceRootId(canonicalRoot);
-  return projectService.list().find((project) => (
-    project.root_id === rootId && project.root_path === canonicalRoot
-  )) || null;
+  const bound = projectService.list().filter((project) => project.root_id === rootId);
+  return bound.find((project) => project.root_path === canonicalRoot) || bound[0] || null;
 }
 
 function ensureWorkspaceProject(service, rootPath, { reason = 'unspecified' } = {}) {

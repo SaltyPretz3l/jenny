@@ -35,18 +35,18 @@ function applyOllamaRuntimeDefaults(childEnv, defaults = OLLAMA_RUNTIME_DEFAULTS
   return childEnv;
 }
 
-// Resolve the runtime defaults for this spawn. The MAX_LOADED_MODELS ceiling is
-// normally 1 (the anti-thrash pin above), but inline autocomplete needs a small
-// FIM model to coexist with the chat model so switching between editing and chat
-// doesn't evict either runner. When the caller signals coexistence is needed it
-// passes maxLoadedModels=2; we only RAISE the default (never lower it below 1),
-// and a user-set OLLAMA_MAX_LOADED_MODELS still wins via applyOllamaRuntimeDefaults.
-function resolveOllamaRuntimeDefaults({ maxLoadedModels } = {}) {
-  const ceiling = Number(maxLoadedModels);
-  if (Number.isInteger(ceiling) && ceiling > Number(OLLAMA_RUNTIME_DEFAULTS.OLLAMA_MAX_LOADED_MODELS)) {
-    return { ...OLLAMA_RUNTIME_DEFAULTS, OLLAMA_MAX_LOADED_MODELS: String(ceiling) };
-  }
-  return OLLAMA_RUNTIME_DEFAULTS;
+// Resolve the runtime defaults for this spawn. The 30 m keep-alive exists for Ollama as the CHAT engine. When chat is known
+// to run elsewhere (managed llama-server, a cloud provider), the daemon only
+// serves auxiliary loads, and holding one of those in VRAM for 30 minutes
+// beside the chat model starves it (dogfood HB-033). Ollama's own default
+// (5 m) applies then. An unknown engine keeps the 30 m default. The daemon
+// reads this at spawn: a mid-session switch to Ollama keeps the short default
+// until the next app start.
+function resolveOllamaRuntimeDefaults({ chatEngineType } = {}) {
+  const defaults = { ...OLLAMA_RUNTIME_DEFAULTS };
+  const engine = String(chatEngineType || '').trim().toLowerCase();
+  if (engine && engine !== 'ollama') delete defaults.OLLAMA_KEEP_ALIVE;
+  return defaults;
 }
 
 function getConfiguredOllamaModelsDir(env = process.env) {
@@ -161,7 +161,7 @@ function buildSanitizedOllamaEnv(options = {}) {
     delete childEnv.OLLAMA_MODELS;
   }
   applyOllamaRuntimeDefaults(childEnv, resolveOllamaRuntimeDefaults({
-    maxLoadedModels: options.maxLoadedModels,
+    chatEngineType: options.chatEngineType,
   }));
   return {
     ...resolved,

@@ -7,7 +7,7 @@ const { RUN_TASK_ERROR_CODES } = require('./backend/error-codes');
 const { t } = require('./i18n-main');
 const { createTerminalOutputQueue } = require('./workspace-terminal-output-queue');
 
-const MAX_CHUNK_BYTES = 64 * 1024; // per onData event, mirrors workspace-terminal-service.js
+const MAX_CHUNK_BYTES = 64 * 1024; // per onData event, mirrors workspace-pty-service.js
 const MAX_LABEL_CHARS = 200;
 
 class WorkspaceRunTaskError extends Error {
@@ -43,7 +43,7 @@ class WorkspaceRunTaskService {
     this._logger = typeof logger === 'function' ? logger : null;
     this._scheduleOutputFlush = scheduleOutputFlush;
     this._cancelOutputFlush = cancelOutputFlush;
-    this._task = null; // { id, cwd, settled, outputQueue, controller }
+    this._task = null; // { id, cwd, settled, outputQueue, controller, cleanupFailed?, killConfirmed? }
     this._taskCounter = 0;
     this._disposed = false;
     this._disposePromise = null;
@@ -98,7 +98,13 @@ class WorkspaceRunTaskService {
     }
     task.settled = true;
     task.outputQueue.dispose({ flushPending: true });
-    if (this._task === task) {
+    // An unconfirmed tree kill means a child may still be running under this
+    // root: keep owning the task (hasActiveTask stays true) until a retried
+    // kill confirms it. A retry that already confirmed releases it as usual.
+    if (result?.status === 'killed' && result.terminationConfirmed === false && !task.killConfirmed) {
+      task.cleanupFailed = true;
+      this._log('WARN', 'workspace_run_task.termination_unconfirmed', { task_id: task.id });
+    } else if (this._task === task) {
       this._task = null;
     }
     const payload = {
@@ -127,6 +133,19 @@ class WorkspaceRunTaskService {
     const cmd = String(command || '').trim();
     if (!cmd) {
       return { ok: false, code: RUN_TASK_ERROR_CODES.SPAWN_FAILED, message: t('main.workspaceTask.noCommand', 'No command to run.') };
+    }
+    if (this._task?.cleanupFailed) {
+      const retried = await this.kill({ taskId: this._task.id });
+      if (retried.terminationConfirmed !== true) {
+        return {
+          ok: false,
+          code: RUN_TASK_ERROR_CODES.ALREADY_RUNNING,
+          message: t(
+            'main.workspaceTask.previousStopUnconfirmed',
+            'The previous task could not be confirmed stopped, so a new one was not started. Try again once it has ended.'
+          ),
+        };
+      }
     }
     if (this._task) {
       return {
@@ -171,7 +190,15 @@ class WorkspaceRunTaskService {
       return { killed: false };
     }
     const outcome = await task.controller.kill();
-    return { killed: outcome?.terminated === true, terminationConfirmed: outcome?.terminated === true };
+    const confirmed = outcome?.terminated === true;
+    if (confirmed) task.killConfirmed = true;
+    // A retained cleanup-failed task has already settled, so nothing else will
+    // release it: a confirmed retry does. (A task still settling releases itself
+    // from _settleTask, which sees the confirmed result.)
+    if (confirmed && task.cleanupFailed && this._task === task) {
+      this._task = null;
+    }
+    return { killed: confirmed, terminationConfirmed: confirmed };
   }
 
   // Window close / app shutdown / workspace-root switch: never orphan a

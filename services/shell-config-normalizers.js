@@ -9,6 +9,14 @@ const {
   normalizeToolSettings,
 } = require('./tool-config-schema');
 const { isEngineTuningValueInRange } = require('../renderer/shared/engine-tuning-schema');
+// The split-view pane rules live in ONE place (UMD, loads under Node); the
+// workspace normalizer derives the persisted layout through it.
+const {
+  DEFAULT_SPLIT_RATIO,
+  deriveCurrentSessionId,
+  normalizePaneLayout,
+  resolvePaneForSession,
+} = require('../renderer/shell/renderer-pane-model');
 
 const DEFAULT_COMPANION = Object.freeze({
   mode: DEFAULT_COMPANION_MODE,
@@ -16,6 +24,9 @@ const DEFAULT_COMPANION = Object.freeze({
 const DEFAULT_WORKSPACE_STATE = Object.freeze({
   activeSessionId: null,
   openSessionIds: [],
+  panes: Object.freeze([Object.freeze({ paneId: 0, sessionId: '' })]),
+  focusedPaneId: 0,
+  splitRatio: DEFAULT_SPLIT_RATIO,
 });
 const DEFAULT_SKILLS = Object.freeze({
   bundledEnabled: true,
@@ -260,6 +271,54 @@ function normalizeWorkspaceSessionIdList(value, validSessionIds = null) {
   return result;
 }
 
+function firstDefined(...values) {
+  return values.find((value) => value !== undefined);
+}
+
+// The stored layout fields, camelCase first, then the snake_case aliases, then
+// a nested `pane_layout` block. `panes` stays null when nothing was stored.
+function readStoredPaneLayout(source) {
+  const nested = source.pane_layout && typeof source.pane_layout === 'object' ? source.pane_layout : {};
+  const panes = firstDefined(source.panes, nested.panes);
+  return {
+    panes: panes == null ? null : panes,
+    focusedPaneId: firstDefined(
+      source.focusedPaneId, source.focused_pane_id, nested.focusedPaneId, nested.focused_pane_id
+    ),
+    splitRatio: firstDefined(source.splitRatio, source.split_ratio, nested.splitRatio, nested.split_ratio),
+  };
+}
+
+function toPlainPaneLayout(layout) {
+  return {
+    panes: layout.panes.map(({ paneId, sessionId }) => ({ paneId, sessionId })),
+    focusedPaneId: layout.focusedPaneId,
+    splitRatio: layout.splitRatio,
+  };
+}
+
+/**
+ * The persisted pane layout: the pane model's rules (one pane at least, a
+ * session in one pane only, known sessions only, focus in range, ratio in
+ * [0.2, 0.8]) plus the rail's: a pane may only show an OPEN tab, so a pane
+ * whose session is not in `openSessionIds` holds nothing. Nothing stored seeds
+ * one pane from the active tab. Returns plain objects (never the frozen value).
+ */
+function normalizeWorkspacePaneLayout(source, activeSessionId, openSessionIds, validSessionIds) {
+  const stored = readStoredPaneLayout(source);
+  const layout = normalizePaneLayout({
+    panes: stored.panes == null ? [activeSessionId || ''] : stored.panes,
+    focusedPaneId: stored.focusedPaneId,
+    splitRatio: stored.splitRatio,
+  }, { validSessionIds });
+  const open = new Set(openSessionIds);
+  return toPlainPaneLayout(normalizePaneLayout({
+    panes: layout.panes.map(({ sessionId }) => (open.has(sessionId) ? sessionId : '')),
+    focusedPaneId: layout.focusedPaneId,
+    splitRatio: layout.splitRatio,
+  }));
+}
+
 function normalizeWorkspaceState(value = {}, validSessionIds = null) {
   const source = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
   const normalizedValidIds = normalizeValidWorkspaceSessionIds(validSessionIds);
@@ -269,13 +328,59 @@ function normalizeWorkspaceState(value = {}, validSessionIds = null) {
   if (normalizedValidIds && activeSessionId && !normalizedValidIds.has(activeSessionId)) {
     activeSessionId = null;
   }
+  const openSessionIds = normalizeWorkspaceSessionIdList(
+    source.openSessionIds || source.open_session_ids,
+    normalizedValidIds
+  );
+  const layout = normalizeWorkspacePaneLayout(source, activeSessionId, openSessionIds, normalizedValidIds);
+  // The focused pane's session IS the active tab; a blank focused pane leaves
+  // activeSessionId as it was, so every existing reader keeps its meaning.
   return {
-    activeSessionId,
-    openSessionIds: normalizeWorkspaceSessionIdList(
-      source.openSessionIds || source.open_session_ids,
-      normalizedValidIds
-    ),
+    activeSessionId: deriveCurrentSessionId(layout) || activeSessionId,
+    openSessionIds,
+    ...layout,
   };
+}
+
+const PANE_FOCUS_PATCH_KEYS = ['panes', 'focusedPaneId', 'pane_layout', 'focused_pane_id'];
+
+/**
+ * Merge a `workspace.updateState` patch over the stored workspace. A patch that
+ * names the layout (panes or focus) is authoritative and activeSessionId is
+ * derived from it. A rail-only patch (activeSessionId, no layout) moves the
+ * layout with the rail, so today's writers keep their meaning: focus the pane
+ * already showing that session, otherwise show it in the focused pane.
+ */
+function mergeWorkspacePatch(current = {}, patch = {}) {
+  const merged = { ...current, ...patch };
+  const railOnly = Object.prototype.hasOwnProperty.call(patch, 'activeSessionId')
+    && !PANE_FOCUS_PATCH_KEYS.some((key) => Object.prototype.hasOwnProperty.call(patch, key));
+  if (!railOnly || !Array.isArray(current.panes)) return merged;
+  const activeSessionId = normalizeString(patch.activeSessionId);
+  const layout = normalizePaneLayout(current);
+  const holder = resolvePaneForSession(layout, activeSessionId);
+  if (holder) return { ...merged, focusedPaneId: holder.paneId };
+  return {
+    ...merged,
+    panes: layout.panes.map((pane) => (pane.paneId === layout.focusedPaneId ? activeSessionId : pane.sessionId)),
+    focusedPaneId: layout.focusedPaneId,
+  };
+}
+
+/**
+ * What `workspace.getState` hands out: fresh copies. The layout fields are left
+ * out while the layout is exactly what the two rail fields would seed (one
+ * pane, focus 0, default ratio), so single-pane readers see the v55 shape and
+ * the renderer seeds the same layout back on hydrate.
+ */
+function workspaceStateView(workspace = {}) {
+  const view = {
+    activeSessionId: workspace.activeSessionId,
+    openSessionIds: [...workspace.openSessionIds],
+  };
+  const layout = toPlainPaneLayout(normalizePaneLayout(workspace));
+  const seeded = normalizeWorkspacePaneLayout({}, workspace.activeSessionId, workspace.openSessionIds, null);
+  return JSON.stringify(layout) === JSON.stringify(seeded) ? view : { ...view, ...layout };
 }
 
 module.exports = {
@@ -296,6 +401,7 @@ module.exports = {
   cloneFeatureOverrides,
   hasOwnConfigField,
   isToolsWorktreeEnabled,
+  mergeWorkspacePatch,
   normalizeAutoApproveStreakCap,
   normalizeCompanion,
   normalizeMaxBudgetUsd,
@@ -313,4 +419,5 @@ module.exports = {
   normalizeWorkspaceSessionId,
   normalizeWorkspaceSessionIdList,
   normalizeWorkspaceState,
+  workspaceStateView,
 };

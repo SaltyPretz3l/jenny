@@ -116,6 +116,14 @@ class TranscriptCacheAccounting {
   }
 
   snapshot(isProtected) {
+    // An entry left unmeasured by a hot-path invalidation (a streaming turn's
+    // ~1 Hz progress touch) is measured here, when admission asks. Left
+    // unknown, it read as pressure and held every other turn until the
+    // stream's final write. An entry that cannot be measured stays unknown.
+    for (const [sessionId, entry] of [...this.entries]) {
+      if (entry.bytes != null) continue;
+      try { this.measure(sessionId, entry.value); } catch (_error) { this.invalidate(sessionId, entry.value); }
+    }
     let protectedBytes = 0;
     let unknownSessions = 0;
     for (const [sessionId, entry] of this.entries) {

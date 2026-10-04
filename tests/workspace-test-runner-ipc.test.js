@@ -45,7 +45,6 @@ function realService() {
 
 test('s9: the workspaceTestRunner.* descriptors map to kebab channels', () => {
   // RED-BECAUSE: this fails until the descriptors are added to the contract table.
-  assert.equal(JENNY_SHELL_BRIDGE_DESCRIPTORS['workspaceTestRunner.listConfigs'].channel, 'workspace-test-runner:list-configs');
   assert.equal(JENNY_SHELL_BRIDGE_DESCRIPTORS['workspaceTestRunner.run'].channel, 'workspace-test-runner:run');
   assert.equal(JENNY_SHELL_BRIDGE_DESCRIPTORS['workspaceTestRunner.getState'].channel, 'workspace-test-runner:get-state');
   assert.equal(getBridgeChannel('workspaceTestRunner.run', 'invoke'), 'workspace-test-runner:run');
@@ -97,23 +96,19 @@ test('s18: the workspaceTestRunner.saveConfigs descriptor maps to its channel an
 });
 
 test('s9: handlers round-trip a structured run record and the CMP error envelope', async () => {
-  // RED-BECAUSE: the real service's run()/listConfigs() throw NotImplementedError.
+  // RED-BECAUSE: the real service's run() throws NotImplementedError.
   const service = realService();
   const ipcMain = fakeIpcMain();
   registerIpcInvokeHandlers(ipcMain, {
-    'workspaceTestRunner.listConfigs': () => service.listConfigs(),
     'workspaceTestRunner.run': (_event, payload) => service.run(payload),
     'workspaceTestRunner.getState': () => service.getState(),
   });
 
   assert.deepEqual(ipcMain.registered().sort(), [
     'workspace-test-runner:get-state',
-    'workspace-test-runner:list-configs',
     'workspace-test-runner:run',
   ]);
 
-  const listed = await ipcMain.invoke('workspace-test-runner:list-configs');
-  assert.equal(listed.configs[0].id, 'unit');
 
   const ran = await ipcMain.invoke('workspace-test-runner:run', { configId: 'unit' });
   assert.deepEqual(ran, {

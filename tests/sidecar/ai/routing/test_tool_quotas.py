@@ -118,14 +118,15 @@ def test_tool_quota_policy_from_config_fails_open_on_malformed_values() -> None:
 
     assert policy.max_web_tool_calls_per_turn == 10
     assert policy.max_code_intelligence_tool_calls_per_turn == 16
-    assert policy.max_tool_calls_per_session == 200
+    assert policy.max_tool_calls_per_session == 2_000
 
 
 def test_tool_quota_policy_from_config_uses_the_local_profile_by_default() -> None:
     policy = policy_from_config(parse_runtime_config({}))
 
     assert policy.max_web_tool_calls_per_turn == 10
-    assert policy.max_tool_calls_per_session == 200
+    # TR-008 (owner 2026-09-28): the local per-chat budget matches cloud.
+    assert policy.max_tool_calls_per_session == 2_000
     assert policy.max_code_intelligence_tool_calls_per_turn == 16
 
 
@@ -136,17 +137,6 @@ def test_tool_quota_policy_from_config_widens_web_and_session_quotas_for_cloud_e
     assert policy.max_tool_calls_per_session == 2_000
     # The code-intelligence cap is profile-independent.
     assert policy.max_code_intelligence_tool_calls_per_turn == 16
-
-
-def test_tool_quota_policy_from_config_returns_local_quotas_when_flag_is_off() -> None:
-    policy = policy_from_config(
-        parse_runtime_config(
-            {"engine_type": "codex-cli", "feature_flags": {"cloud_loop_profile": False}}
-        )
-    )
-
-    assert policy.max_web_tool_calls_per_turn == 10
-    assert policy.max_tool_calls_per_session == 200
 
 
 def test_refund_web_call_releases_budget() -> None:

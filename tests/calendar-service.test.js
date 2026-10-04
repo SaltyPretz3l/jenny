@@ -38,13 +38,49 @@ function createConfigStub(home = {}) {
   return emitter;
 }
 
+test('HOM-01 calendar blocks damaged storage and recovers only after a successful read', () => {
+  const store = createMemoryStore({ events: [{ id: 'saved', title: 'Saved', start: '2026-06-12T09:00' }] });
+  let damaged = true;
+  store.readWithStatus = () => damaged
+    ? { value: {}, corrupted: true, missing: false, errorMessage: 'Access denied' }
+    : { value: store.value, corrupted: false, missing: false };
+  const service = new CalendarService({ store, configService: createConfigStub() });
+  assert.throws(() => service.createEvent({ start: '2026-06-13T09:00' }), /calendar storage/i);
+  assert.equal(store.writes.length, 0);
+  damaged = false;
+  service.createEvent({ start: '2026-06-13T09:00' });
+  assert.equal(store.value.events.length, 2);
+  assert.equal(store.value.events[0].id, 'saved');
+});
+
+test('HOM-05 failed calendar mutations leave memory and notifications unchanged', () => {
+  for (const mutation of ['create', 'update', 'split', 'delete']) {
+    const { service, store } = createService();
+    service.createEvent({ title: 'Saved', start: '2026-06-12T09:00', recurrence: 'daily' });
+    const before = service.getState().events;
+    let emitted = 0;
+    service.on('changed', () => { emitted += 1; });
+    store.writeImmediate = () => { throw new Error('disk full'); };
+    const id = before[0].id;
+    const mutate = {
+      create: () => service.createEvent({ start: '2026-06-13T09:00' }),
+      update: () => service.updateEvent(id, { title: 'Changed' }),
+      split: () => service.updateEvent(id, { occurrenceStart: '2026-06-13T09:00', start: '2026-06-13T10:00' }),
+      delete: () => service.deleteEvent(id),
+    }[mutation];
+    assert.throws(mutate, /disk full/);
+    assert.deepEqual(service.getState().events, before, mutation);
+    assert.equal(emitted, 0);
+  }
+});
+
 function createService({ home = {}, seed, fetchImpl } = {}) {
   const store = createMemoryStore(seed);
   const configService = createConfigStub(home);
   const service = new CalendarService({
     store,
     configService,
-    fetchImpl: fetchImpl || (async () => ({ ok: true, text: async () => FEED_ICS })),
+    fetchImpl: fetchImpl || (async () => new Response(FEED_ICS)),
     logger: () => {},
     nowProvider: () => FIXED_NOW,
     setIntervalImpl: () => ({ unref() {} }),
@@ -52,6 +88,70 @@ function createService({ home = {}, seed, fetchImpl } = {}) {
   });
   return { service, store, configService };
 }
+
+test('HOM-09 feed refresh cancels stalled bodies and permits a subsequent refresh', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  let signal;
+  let finish;
+  let cancelled = false;
+  let stalled = true;
+  const { service } = createService({ home: { calendar: { feeds: [{ id: 'feed', url: 'https://example.test/feed.ics' }] } },
+    fetchImpl: async (_url, options) => {
+      signal = options.signal;
+      if (!stalled) return new Response(FEED_ICS);
+      return { ok: true, body: { getReader: () => ({ read: () => new Promise((resolve) => { finish = resolve; }),
+        cancel: async () => { cancelled = true; finish?.({ done: true }); }, releaseLock() {} }) },
+        text: () => new Promise((resolve) => { finish = () => resolve(''); }) };
+    } });
+  const pending = service.refreshFeeds();
+  await new Promise((resolve) => setImmediate(resolve));
+  t.mock.timers.tick(8000);
+  await new Promise((resolve) => setImmediate(resolve));
+  // Release the old implementation too, so a red run cannot hang.
+  finish?.({ done: true });
+  await pending;
+  assert.equal(signal.aborted, true);
+  assert.equal(cancelled, true);
+  assert.equal(service.getState().feeds[0].ok, false);
+  stalled = false;
+  await service.refreshFeeds();
+  assert.equal(service.getState().feeds[0].ok, true);
+});
+
+test('HOM-09 oversized feed streams are cancelled before their remainder is consumed', async () => {
+  let reads = 0;
+  let cancelled = false;
+  const { service } = createService({ home: { calendar: { feeds: [{ id: 'feed', url: 'https://example.test/feed.ics' }] } },
+    fetchImpl: async () => ({ ok: true, body: { getReader: () => ({
+      read: async () => { reads += 1; return { done: false, value: Buffer.alloc(1_000_001) }; },
+      cancel: async () => { cancelled = true; }, releaseLock() {},
+    }) } }) });
+  await service.refreshFeeds();
+  assert.equal(reads, 2);
+  assert.equal(cancelled, true);
+  assert.match(service.getState().feeds[0].warning, /size limit/i);
+});
+
+test('HOM-13 requested ranges re-expand the last good feed body and report uncovered feeds', async () => {
+  let online = true;
+  const { service } = createService({ home: { calendar: { feeds: [{ id: 'feed', name: 'Work', url: 'https://example.test/feed.ics' }] } },
+    fetchImpl: async () => {
+      if (!online) throw new Error('offline');
+      return new Response(FEED_ICS.replaceAll('20260615', '20260915'));
+    } });
+  service.createEvent({ title: 'Local', start: '2026-09-15T12:00', end: '2026-09-15T13:00' });
+  const range = { start: '2026-09-15T00:00', end: '2026-09-16T00:00' };
+  const before = service.getState(range);
+  assert.deepEqual(before.instances.map((item) => item.title), ['Local']);
+  assert.deepEqual(before.uncoveredFeeds, ['Work']);
+  await service.refreshFeeds();
+  online = false;
+  await service.refreshFeeds();
+  const after = service.getState(range);
+  assert.equal(after.feeds[0].ok, false);
+  assert.deepEqual(after.instances.map((item) => item.title).sort(), ['Feed Standup', 'Local']);
+  assert.deepEqual(after.uncoveredFeeds, []);
+});
 
 test('calendar start can defer only the initial refresh while keeping the poll timer', () => {
   const configService = createConfigStub();
@@ -217,7 +317,7 @@ test('feed failure keeps last-good instances and surfaces a warning', async () =
     if (fail) {
       throw new Error('socket hangup');
     }
-    return { ok: true, text: async () => FEED_ICS };
+    return new Response(FEED_ICS);
   };
   const { service } = createService({ home, fetchImpl });
 

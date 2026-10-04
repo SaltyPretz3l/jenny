@@ -88,7 +88,7 @@ test('canonical session display prefers actual model and hydrated transcript fac
   assert.equal(malformed.contextLimit, 0);
 });
 
-test('rehydrated session facts agree across pulse, sidebar, and chats strip', async (t) => {
+test('rehydrated session facts agree across sidebar and chats strip', async (t) => {
   const app = await loadRendererApp();
   t.after(async () => app.dispose());
   const { window, shell } = app;
@@ -106,14 +106,6 @@ test('rehydrated session facts agree across pulse, sidebar, and chats strip', as
     ['user_1', 'assistant_1'],
     'rehydration restores the canonical deduplicated transcript'
   );
-  const pulseText = window.document.getElementById('contextPulse').textContent.replace(/\s+/g, ' ');
-  assert.match(pulseText, /Model\s*actual-new/);
-  const contextLimitLabel = Number(
-    window.__rendererState.status.effective_context_length
-  ).toLocaleString();
-  assert.match(pulseText, new RegExp(`Tokens\\s*5 / ${contextLimitLabel}`));
-  assert.match(pulseText, /Messages\s*2/);
-
   const sidebarTitle = window.document.querySelector(
     `.conversation-item[data-session-id="${session.id}"] [data-session-open]`
   );

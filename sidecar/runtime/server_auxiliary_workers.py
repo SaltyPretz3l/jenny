@@ -15,7 +15,6 @@ from sidecar.protocol import (
     COMMIT_GENERATE_MESSAGE_METHOD,
     HARDWARE_PROFILE_METHOD,
     HARDWARE_VRAM_USAGE_METHOD,
-    INLINE_COMPLETE_METHOD,
     MCP_INSPECT_METHOD,
     MEMORY_LIST_METHOD,
     MODELS_LIST_METHOD,
@@ -60,7 +59,6 @@ AUXILIARY_FAMILY_BY_METHOD: dict[str, str] = {
     HARDWARE_VRAM_USAGE_METHOD: "probe",
     SUGGESTIONS_GENERATE_METHOD: "inference",
     COMMIT_GENERATE_MESSAGE_METHOD: "inference",
-    INLINE_COMPLETE_METHOD: "inference",
     WORKSPACE_LIST_CHANGE_SETS_METHOD: "workspace_recovery",
     WORKSPACE_PREFLIGHT_UNDO_METHOD: "workspace_recovery",
     WORKSPACE_UNDO_CHANGE_SET_METHOD: "workspace_recovery",
@@ -139,7 +137,7 @@ class AuxiliaryWorkerGate:
                 self._inflight_deliveries -= 1
 
 
-def create_process_message_runner(  # noqa: PLR0913 -- explicit server dependencies
+def create_process_message_runner(  # explicit server dependencies
     *,
     brain_container: Callable[[], Any],
     request_runner: Callable[[], RequestRunner],
@@ -241,7 +239,7 @@ def _make_auxiliary_worker(  # noqa: PLR0913
                     )
                 )
             )
-        except Exception as error:  # noqa: BLE001
+        except Exception as error:
             if shutdown_gate.closed:
                 return
             error_type = type(error).__name__

@@ -145,8 +145,7 @@ function locateSequenceViolationIndex(events) {
  * @returns {{ok:true,document:object}|{ok:false,reason:string,detail?:object}}
  */
 async function exportAuditLog(facade, baseDir, params = {}) {
-  const { now = null, filter, maxEntries, redact = findUnredactedLeaf,
-    managedPolicy = null, policyMaxEntries = DEFAULT_EXPORT_MAX_ENTRIES } = params;
+  const { now = null, filter, maxEntries, redact = findUnredactedLeaf } = params;
 
   const filterCheck = validateFilterShape(filter);
   if (!filterCheck.ok) {
@@ -155,9 +154,7 @@ async function exportAuditLog(facade, baseDir, params = {}) {
 
   const requestedMax = Number.isInteger(maxEntries) && maxEntries >= 0
     ? maxEntries : DEFAULT_EXPORT_MAX_ENTRIES;
-  const managedMax = Number.isInteger(policyMaxEntries) && policyMaxEntries >= 1
-    ? Math.min(policyMaxEntries, DEFAULT_EXPORT_MAX_ENTRIES) : DEFAULT_EXPORT_MAX_ENTRIES;
-  const cappedMax = Math.min(requestedMax, managedMax, DEFAULT_EXPORT_MAX_ENTRIES);
+  const cappedMax = Math.min(requestedMax, DEFAULT_EXPORT_MAX_ENTRIES);
 
   const { events, corruptCount, invalidCount } = await readAuditLog(facade, baseDir);
   const matched = events.filter((event) => matchesFilter(event, filterCheck.value));
@@ -188,20 +185,6 @@ async function exportAuditLog(facade, baseDir, params = {}) {
   const sequenceResult = findSequenceViolation(exported);
   const sequenceViolationIndex = sequenceResult.ok ? -1 : locateSequenceViolationIndex(exported);
 
-  const policySummary = managedPolicy ? Object.freeze({
-    status: managedPolicy.status,
-    reason: managedPolicy.reason,
-    revision: managedPolicy.revision,
-    source_revision: managedPolicy.source_revision,
-    policy_digest: managedPolicy.policy_digest,
-    source_kind: managedPolicy.source_kind,
-    source_fingerprint: managedPolicy.source_fingerprint,
-    privileged_execution: managedPolicy.privileged_execution,
-    update_ring: managedPolicy.update_ring,
-  }) : null;
-  const policyLeak = policySummary && redact(policySummary);
-  if (policyLeak) return { ok: false, reason: 'managed_policy_provenance_unredacted' };
-
   const document = Object.freeze({
     generated_at: now,
     filter: Object.freeze({ ...filterCheck.value }),
@@ -216,7 +199,6 @@ async function exportAuditLog(facade, baseDir, params = {}) {
       : Object.freeze({ index: sequenceViolationIndex, ...sequenceResult.detail }),
     corrupt_count: corruptCount,
     invalid_count: invalidCount,
-    ...(policySummary ? { managed_policy: policySummary } : {}),
   });
 
   return { ok: true, document };

@@ -74,7 +74,9 @@ def validate_request(request: Any) -> dict[str, Any]:
     if operation == "status":
         expected = required
     elif operation == "submit":
-        expected = required | {"incarnation", "job_id", "command", "cwd", "timeout_seconds"}
+        expected = required | {
+            "incarnation", "job_id", "command", "cwd", "input_root", "timeout_seconds"
+        }
     else:
         expected = required | {"incarnation", "job_id"}
     if set(request) != expected:
@@ -86,6 +88,7 @@ def validate_request(request: Any) -> dict[str, Any]:
         if not _bounded_text(request["command"], "command", MAX_COMMAND_BYTES).strip():
             raise ProtocolError("command_invalid")
         _cwd(request["cwd"])
+        _cwd(request["input_root"])
         timeout = request["timeout_seconds"]
         if isinstance(timeout, bool) or not isinstance(timeout, (int, float)):
             raise ProtocolError("timeout_invalid")

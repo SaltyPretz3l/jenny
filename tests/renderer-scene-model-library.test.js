@@ -112,6 +112,36 @@ function pullRequest(h) {
   return h.calls.find((entry) => entry[0] === 'startOllamaPull')[1];
 }
 
+test('Back is disabled during a pull and returns after a cancel, even a failed one', async (t) => {
+  const h = harness(t, { setupService: {
+    async cancelOllamaPull() { return { cancelled: false }; },
+  } });
+  await flush();
+  click(h.windowRef, h.root.querySelector('[data-model-key="catalog:3b"] [data-model-card-action="pull"]'));
+  const back = h.root.querySelector('[data-step-modal-action="close"]');
+  assert.equal(back.disabled, true);
+  click(h.windowRef, back);
+  assert.equal(h.calls.some((entry) => entry[0] === 'closeModal'), false);
+  h.progress()({ requestId: pullRequest(h).requestId, status: 'running', percent: 42 });
+  assert.match(h.root.querySelector('[data-model-key="catalog:3b"]').textContent, /42/);
+  click(h.windowRef, h.root.querySelector('[data-model-key="catalog:3b"] [data-model-card-action="cancel"]'));
+  await flush();
+  // A pull nobody can stop must not trap the user in setup.
+  assert.equal(back.disabled, false);
+  click(h.windowRef, back);
+  assert.equal(h.calls.filter((entry) => entry[0] === 'closeModal').length, 1);
+});
+
+test('confirmed cancellation progress releases Back without waiting for a cancel response', async (t) => {
+  const h = harness(t);
+  await flush();
+  click(h.windowRef, h.root.querySelector('[data-model-key="catalog:3b"] [data-model-card-action="pull"]'));
+  h.progress()({ requestId: pullRequest(h).requestId, status: 'cancelled' });
+  assert.equal(h.root.querySelector('[data-step-modal-action="close"]').disabled, false);
+  click(h.windowRef, h.root.querySelector('[data-step-modal-action="close"]'));
+  assert.equal(h.calls.filter((entry) => entry[0] === 'closeModal').length, 1);
+});
+
 test('installed cards render first and best-fit badge is fixture-driven', async (t) => {
   const h = harness(t);
   await flush();

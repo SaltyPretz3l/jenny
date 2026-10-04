@@ -17,6 +17,8 @@
       isSetLike,
       buildInteractiveRecapViewModel,
     } = deps;
+    // The pane's own session (split view); default is the single-pane currentSessionId.
+    const getSessionId = typeof deps.getSessionId === 'function' ? deps.getSessionId : () => state.currentSessionId;
 
     function ensureInteractiveRecapExpandedMap() {
       if (!isMapLike(state.ui.interactiveRecapExpandedBySession)) {
@@ -122,7 +124,7 @@
 
     function isInteractiveRoundRecapExpanded(recapId, sessionId) {
       const expandedSet = getInteractiveRecapExpandedSet(
-        String(sessionId || state.currentSessionId || '').trim()
+        String(sessionId || getSessionId() || '').trim()
       );
       if (!expandedSet) {
         return false;
@@ -163,7 +165,7 @@
         return false;
       }
       const normalizedRecapId = String(recapId || '').trim();
-      const normalizedSessionId = String(sessionId || state.currentSessionId || '').trim();
+      const normalizedSessionId = String(sessionId || getSessionId() || '').trim();
       if (!normalizedRecapId || !normalizedSessionId) {
         return false;
       }
@@ -195,7 +197,7 @@
       if (!normalizedSessionId) {
         return [];
       }
-      if (normalizedSessionId === String(state.currentSessionId || '').trim()) {
+      if (normalizedSessionId === String(getSessionId() || '').trim()) {
         return getCurrentSessionMessages();
       }
       const messagesBySession = state.messagesBySession;
@@ -240,7 +242,7 @@
       const messageId = String(source.messageId || '').trim();
       const resolvedSessionId = String(
         source.sessionId
-        || state.currentSessionId
+        || getSessionId()
         || state.activeSessionId
         || findRecapSessionId(recapId, messageId)
         || ''

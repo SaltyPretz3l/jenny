@@ -91,6 +91,10 @@
       const taskId = String(session?.linked_task_id || '').trim();
       if (taskId && !linkedSessions.has(taskId)) linkedSessions.set(taskId, String(session?.id || '').trim());
     }
+    // Loops inside the delete-undo window are already gone from the user's view.
+    const pendingDeleteIds = new Set(Array.isArray(state?.ui?.pendingLoopDeleteIds)
+      ? state.ui.pendingLoopDeleteIds.map((id) => String(id || '').trim()).filter(Boolean)
+      : []);
     const sources = [
       ['active', board.active],
       ['deferred', board.deferred],
@@ -106,7 +110,7 @@
         const sourceBadge = String(entry?.sourceBadge || '').trim().toLowerCase();
         if (sourceKind !== 'agent_task' && sourceBadge !== 'agent task') continue;
         const followUpId = String(entry?.followUpId || '').trim();
-        if (!followUpId) continue;
+        if (!followUpId || pendingDeleteIds.has(followUpId)) continue;
         const linkedSessionId = linkedSessions.get(followUpId) || '';
         rows.push({
           followUpId,
@@ -238,8 +242,9 @@
     const list = checklistMarkup || followUpMarkup
       ? checklistMarkup + followUpMarkup
       : '<div class="task-rail-empty">' + escapeHtml(emptyCopy) + '</div>';
-    return '<section class="task-rail-surface" aria-label="Tasks"><header class="task-rail-header">'
-      + '<b class="task-rail-title-text">Tasks</b><span class="task-rail-summary">' + summary + '</span></header>'
+    // The panel header carries the "Tasks" title and Close; the rail keeps the summary.
+    return '<section class="task-rail-surface" aria-label="' + escapeHtml(jt('artifactPanelV2Render.tasks', 'Tasks')) + '"><header class="task-rail-header">'
+      + '<span class="task-rail-summary">' + summary + '</span></header>'
       + filters + '<div class="task-rail-add">'
       + field({ id: 'taskRailDraftTitle', value: String(state.draftTitle || ''), placeholder: jt('tasks.rail.addFollowUpPlaceholder', 'Add a follow-up'), ariaLabel: jt('tasks.rail.taskTitle', 'Task title'), multiline: true, rows: 1, maxLength: 200, disabled: addBusy, dataset: { 'task-draft-title': '' } })
       + action({ id: 'task-rail-add', label: jt('tasks.rail.add', 'Add'), variant: 'primary', size: 'sm', disabled: addBusy }) + '</div>'

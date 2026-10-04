@@ -158,9 +158,9 @@
 
     const v2Renderer = createReasoningV2RendererFn ? createReasoningV2RendererFn(deps) : null;
 
-    function renderThinkingWidget(message, latestAssistantMessageId) {
+    function renderThinkingWidget(message, latestAssistantMessageId, options) {
       if (v2Renderer) {
-        return v2Renderer.renderThinkingWidget(message, latestAssistantMessageId);
+        return v2Renderer.renderThinkingWidget(message, latestAssistantMessageId, options);
       }
       return '';
     }
@@ -187,13 +187,12 @@
       } else if (strategy === 'narrowed' || reasonCode === 'semantic_history_limit') {
         variant = jt('chat.thinking.olderTurnsOmitted', 'Older complete turns were omitted to fit the context limit');
       }
+      // A failed summary always falls back to trimming, so no summary exists (HB-028).
       const tier = summaryStatus === 'created'
         ? jt('chat.thinking.summarizedWithModel', 'Summarized older context with the model')
-        : summaryStatus === 'not_applicable'
+        : summaryStatus === 'not_applicable' || summaryStatus === 'failed'
           ? jt('chat.thinking.trimmedWithoutSummarizing', 'Trimmed without summarizing')
-          : summaryStatus === 'failed'
-            ? jt('chat.thinking.summarizerFailedFallback', 'Summarizer failed; used a bounded fallback')
-            : jt('chat.thinking.reducedToFit', 'Reduced to fit');
+          : jt('chat.thinking.reducedToFit', 'Reduced to fit');
       const details = [variant, tier];
       if (phase === 'preflight') {
         details.push(jt('chat.thinking.beforeRequest', 'Before sending the request'));
@@ -212,7 +211,7 @@
       details.push(compaction?.summaryPersisted === true
         ? jt('chat.thinking.summarySaved', 'Summary saved for future turns')
         : jt('chat.thinking.requestOnly', 'Applied to this request only'));
-      if (compaction?.inputComplete === false) {
+      if (compaction?.inputComplete === false || Number(compaction?.summarySourceDroppedMessages) > 0) {
         details.push(jt('chat.thinking.summarizerInputOmitted', 'Some older messages were omitted from the summarizer input'));
       }
       return details;

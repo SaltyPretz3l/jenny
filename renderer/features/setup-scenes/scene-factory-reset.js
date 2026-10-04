@@ -102,7 +102,7 @@
           applySnapshot(snapshot);
         }
         showHome();
-        showToastMessage(jt('setup.factoryReset.complete', 'Onboarding reset complete — setup tiles reopened on Companion Home.'), {
+        showToastMessage(jt('setup.factoryReset.completeHome', 'Onboarding reset complete — setup tiles reopened on Home.'), {
           title: jt('setup.factoryReset.successTitle', 'Onboarding Reset'),
           tone: 'success',
           source: 'setup.factory_reset',

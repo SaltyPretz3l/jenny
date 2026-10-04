@@ -75,3 +75,11 @@ test('host failures never expose exception text as a reason', () => {
     ok: false, error: { code: 'CMP-HOST-0006', reason: 'host_unavailable', retryable: false },
   });
 });
+
+test('the Runs view snapshot is a valid hosted command; other views are refused', () => {
+  const snapshot = (params) => ({ api_version: 1, operation: 'sessionRuntime.getSnapshot', request_id: 'request-1',
+    client_id: 'client-1', boot_epoch: 'epoch-1', params });
+  assert.equal(validateCommand(snapshot({ view: 'runs', limit: 100, finished_since: '2026-09-27T05:00:00.000Z' })).ok, true);
+  assert.equal(validateCommand(snapshot({ limit: 100, cursor: null })).ok, true);
+  assert.equal(validateCommand(snapshot({ view: 'everything' })).ok, false);
+});

@@ -95,7 +95,6 @@ test('cancelChatStream declines pending questions for only the cancelled stream'
       [cancelled.pending.questionRef, cancelled.pending],
       [retained.pending.questionRef, retained.pending],
     ]),
-    toolExecutor: { cancelPendingForStream() {} },
     _emitServiceLog() {},
   };
 

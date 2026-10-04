@@ -113,26 +113,33 @@ test('buildSanitizedOllamaEnv never overrides user-provided OLLAMA_* runtime val
   assert.equal(result.env.OLLAMA_FLASH_ATTENTION, '1');
 });
 
-test('buildSanitizedOllamaEnv raises the loaded-models ceiling for inline-suggest coexistence', () => {
-  // When the caller signals coexistence (maxLoadedModels=2) the default ceiling
-  // rises so a FIM model can stay resident beside the chat model.
-  const raised = buildSanitizedOllamaEnv({ env: { PATH: 'x' }, maxLoadedModels: 2 });
-  assert.equal(raised.env.OLLAMA_MAX_LOADED_MODELS, '2');
-  // Other anti-thrash defaults are untouched.
-  assert.equal(raised.env.OLLAMA_NUM_PARALLEL, '1');
-  assert.equal(raised.env.OLLAMA_KEEP_ALIVE, '30m');
+test('buildSanitizedOllamaEnv keeps the anti-thrash ceiling of 1 (no coexistence raise)', () => {
+  // The two-model raise existed only for the removed inline suggestions; a
+  // stray maxLoadedModels option is ignored and only a user value moves it.
+  const pinned = buildSanitizedOllamaEnv({ env: { PATH: 'x' }, maxLoadedModels: 2 });
+  assert.equal(pinned.env.OLLAMA_MAX_LOADED_MODELS, '1');
+  const userWins = buildSanitizedOllamaEnv({ env: { PATH: 'x', OLLAMA_MAX_LOADED_MODELS: '4' } });
+  assert.equal(userWins.env.OLLAMA_MAX_LOADED_MODELS, '4');
 });
 
-test('buildSanitizedOllamaEnv only RAISES the ceiling and still defers to a user value', () => {
-  // A lower/equal request never lowers the anti-thrash default of 1.
-  const noChange = buildSanitizedOllamaEnv({ env: { PATH: 'x' }, maxLoadedModels: 1 });
-  assert.equal(noChange.env.OLLAMA_MAX_LOADED_MODELS, '1');
-  const garbage = buildSanitizedOllamaEnv({ env: { PATH: 'x' }, maxLoadedModels: 'nope' });
-  assert.equal(garbage.env.OLLAMA_MAX_LOADED_MODELS, '1');
-  // A user-set value wins even when coexistence is requested.
-  const userWins = buildSanitizedOllamaEnv({
-    env: { PATH: 'x', OLLAMA_MAX_LOADED_MODELS: '4' },
-    maxLoadedModels: 2,
-  });
-  assert.equal(userWins.env.OLLAMA_MAX_LOADED_MODELS, '4');
+test('the 30 m keep-alive default applies only when Ollama is (or may be) the chat engine', () => {
+  const env = { PATH: 'x' };
+  // Dogfood HB-033: chat on the managed llama-server, and an auxiliary Ollama
+  // load stayed resident for 30 minutes beside the 12 GB chat model.
+  for (const chatEngineType of ['openai-compatible', 'chatgpt', 'OpenAI-Compatible']) {
+    const aux = buildSanitizedOllamaEnv({ env, chatEngineType });
+    assert.equal(Object.prototype.hasOwnProperty.call(aux.env, 'OLLAMA_KEEP_ALIVE'), false, chatEngineType);
+    // The other anti-thrash defaults are untouched.
+    assert.equal(aux.env.OLLAMA_MAX_LOADED_MODELS, '1');
+    assert.equal(aux.env.OLLAMA_KV_CACHE_TYPE, 'q8_0');
+  }
+  for (const chatEngineType of ['ollama', '', undefined]) {
+    assert.equal(buildSanitizedOllamaEnv({ env, chatEngineType }).env.OLLAMA_KEEP_ALIVE, '30m');
+  }
+  // A user-set value wins on every engine.
+  assert.equal(buildSanitizedOllamaEnv({
+    env: { PATH: 'x', OLLAMA_KEEP_ALIVE: '-1' }, chatEngineType: 'openai-compatible',
+  }).env.OLLAMA_KEEP_ALIVE, '-1');
+  // The shared defaults object is never mutated.
+  assert.equal(buildSanitizedOllamaEnv({ env }).env.OLLAMA_KEEP_ALIVE, '30m');
 });

@@ -13,7 +13,7 @@ const { createSendOutbox } = require('../renderer/chat/renderer-send-outbox');
 test('real shell -> render pipeline -> chrome queue controls mutate current store entries', async () => {
   let shell = null;
   const composerDom = {};
-  for (const name of ['chatInput', 'sendButton', 'composer', 'composerModelSelect', 'composerEffortSelect', 'composerSettingsButton']) {
+  for (const name of ['chatInput', 'sendButton', 'composer', 'composerModelSelect', 'composerEffortSelect']) {
     composerDom[name] = dom.window.document.createElement(name === 'chatInput' ? 'textarea' : 'div');
   }
   const { state, pipeline } = createPipelineHarness({ dom, composerDom,

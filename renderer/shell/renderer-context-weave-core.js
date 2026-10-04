@@ -20,13 +20,12 @@
   // Six alpha buckets, batched into one path each per thread family: ~12
   // stroke calls per frame instead of one per segment. `reactive-grid` uses
   // the same pattern; its 2026-07-22 pass recorded the trap this repo already
-  // hit once -- a subtle alpha-only signal can die inside the quantisation, so
-  // the streaming band is verified to survive bucketing rather than assumed to.
+  // hit once -- a subtle alpha-only signal can die inside the quantisation.
   var ALPHA_BUCKETS = 6;
   var PLUCK_DECAY_MS = 420, PLUCK_EPSILON = 0.02;
-  var PLUCK_BASE_AMPLITUDE = 10, PLUCK_WAVENUMBER = 1.35, PLUCK_ANGULAR_MS = 0.021;
-  var BAND_PERIOD_MS = 2600, BAND_HALF_WIDTH = 0.26;
-  var SHEEN_FLOOR = 0.18, SHEEN_ANISOTROPY = 0.62;
+  // Pluck amplitude in px at motion scale 1; the controller multiplies it by
+  // the motion-scale token. It is NOT scaled by lit-gain.
+  var PLUCK_BASE_AMPLITUDE = 14, PLUCK_WAVENUMBER = 1.35, PLUCK_ANGULAR_MS = 0.021;
   var MIN_SEGMENT_GAP_RATIO = 2.2;
 
   function clamp(value, min, max) { return Math.min(max, Math.max(min, value)); }
@@ -91,8 +90,11 @@
   // along the thread, and the trailing sine pins BOTH ends at exactly zero so
   // the thread stays anchored at the selvedge. Stateless -- no integration, no
   // arrays, and it self-terminates when the decay crosses PLUCK_EPSILON.
-  function pluckOffset(index, count, ageMs, amplitude) {
-    if (!(count > 1) || !(ageMs >= 0)) { return 0; }
+  function pluckOffset(index, count, rawAgeMs, amplitude) {
+    // Age is clamped at zero: a click stamped a hair ahead of the frame clock
+    // must not read as "not started yet" (or, worse, as expired).
+    var ageMs = rawAgeMs > 0 ? rawAgeMs : 0;
+    if (!(count > 1) || Number.isNaN(rawAgeMs)) { return 0; }
     var decay = Math.exp(-ageMs / PLUCK_DECAY_MS);
     if (decay < PLUCK_EPSILON) { return 0; }
     return amplitude * decay
@@ -101,7 +103,7 @@
   }
 
   function pluckExpired(ageMs) {
-    return !(ageMs >= 0) || Math.exp(-ageMs / PLUCK_DECAY_MS) < PLUCK_EPSILON;
+    return Number.isNaN(ageMs) || Math.exp(-(ageMs > 0 ? ageMs : 0) / PLUCK_DECAY_MS) < PLUCK_EPSILON;
   }
 
   function createBucketPaths() {
@@ -130,23 +132,19 @@
     return Math.min(1, resting + (1 - resting) * (index / (ALPHA_BUCKETS - 1)));
   }
 
-  function bandLevelAt(bandEnergy, verticalFraction, now) {
-    if (!(bandEnergy > 0)) { return 0; }
-    var center = (now % BAND_PERIOD_MS) / BAND_PERIOD_MS;
-    return bandEnergy * Math.max(0, 1 - Math.abs(verticalFraction - center) / BAND_HALF_WIDTH);
-  }
-
-  function sheenAt(pointer, midX, midY, radius, isWarp) {
-    if (!pointer.active) { return 0; }
+  // Radial sheen only. `gain` is fade x motion scale, so a fading-out pointer
+  // keeps its last position while the light drains. Falloff is q^2 with
+  // q = 1 - d/R; warp answers to |dx|/d and weft to |dy|/d (0.5 + 0.5 u), so
+  // the highlight rakes across each family differently. Nothing here looks
+  // beyond the radius: a thread far from the pointer stays at resting alpha.
+  function sheenAt(pointer, midX, midY, radius, isWarp, gain) {
+    if (!(gain > 0)) { return 0; }
     var dx = pointer.x - midX, dy = pointer.y - midY;
-    var distance = Math.hypot(dx, dy);
+    var distance = Math.sqrt(dx * dx + dy * dy);
     if (!(distance < radius)) { return 0; }
-    var falloff = (1 - distance / radius) * (1 - distance / radius);
-    // Anisotropy is what separates the two thread families: warp answers to
-    // |u.x| and weft to |u.y|, so the highlight rakes across each differently
-    // instead of painting one isotropic blob.
+    var q = 1 - distance / radius;
     var unit = distance > 0.001 ? (isWarp ? Math.abs(dx) : Math.abs(dy)) / distance : 1;
-    return falloff * (SHEEN_FLOOR + SHEEN_ANISOTROPY * unit);
+    return Math.min(1, q * q * (0.5 + 0.5 * unit) * gain);
   }
 
   // Displacement is applied at PAINT time only; the lattice's typed arrays are
@@ -178,16 +176,12 @@
   }
 
   // `view` is a plain read-only bundle the controller reuses across frames:
-  // { lattice, pointer, pluck, age, bandEnergy, now, radius, gap, hi, hj }.
-  // hi/hj are the pointer's nearest crossing, or -1 when the pointer is away
-  // so the thread-trace term drops out entirely instead of lighting column 0.
-  function nearestCrossing(view) {
-    if (!view.pointer.active) { return { hi: -1, hj: -1 }; }
-    var lattice = view.lattice;
-    return {
-      hi: clamp(Math.round(view.pointer.x / Math.max(lattice.width / (lattice.cols - 1), 0.001)), 0, lattice.cols - 1),
-      hj: clamp(Math.round(view.pointer.y / Math.max(lattice.height / (lattice.rows - 1), 0.001)), 0, lattice.rows - 1),
-    };
+  // { lattice, pointer, pluck, age, motionScale, radius, gap }. pointer carries
+  // { x, y, fade } and pluck { active, col, row, amplitude }.
+  function sheenGain(view) { return view.pointer.fade * view.motionScale; }
+  // A plucked thread lights with the wave's own envelope, unscaled.
+  function pluckLevel(view) {
+    return view.pluck.active ? Math.exp(-(view.age > 0 ? view.age : 0) / PLUCK_DECAY_MS) : 0;
   }
 
   // Warp (columns): plain weave puts warp OVER at (i+j) even, so it is drawn
@@ -195,14 +189,13 @@
   function collectWarp(view, buckets) {
     resetBuckets(buckets);
     var lattice = view.lattice, cols = lattice.cols, rows = lattice.rows;
-    var crossing = nearestCrossing(view), span = Math.max(rows - 1, 1);
+    var gain = sheenGain(view), plucked = pluckLevel(view), pluckCol = view.pluck.col;
     for (var i = 0; i < cols; i += 1) {
       for (var j = 0; j < rows - 1; j += 1) {
         var x1 = displacedX(view, i, j), y1 = displacedY(view, i, j);
         var x2 = displacedX(view, i, j + 1), y2 = displacedY(view, i, j + 1);
-        var level = sheenAt(view.pointer, (x1 + x2) * 0.5, (y1 + y2) * 0.5, view.radius, true)
-          + bandLevelAt(view.bandEnergy, (j + 0.5) / span, view.now);
-        if (i === crossing.hi) { level += Math.max(0, 1 - Math.abs(j + 0.5 - crossing.hj) / span); }
+        var level = sheenAt(view.pointer, (x1 + x2) * 0.5, (y1 + y2) * 0.5, view.radius, true, gain);
+        if (i === pluckCol && plucked > level) { level = plucked; }
         pushSegment(buckets[bucketIndexFor(level)], x1, y1, x2, y2,
           (i + j) % 2 === 1, (i + j + 1) % 2 === 1, view.gap);
       }
@@ -214,15 +207,13 @@
   function collectWeft(view, buckets) {
     resetBuckets(buckets);
     var lattice = view.lattice, cols = lattice.cols, rows = lattice.rows;
-    var crossing = nearestCrossing(view);
-    var span = Math.max(cols - 1, 1), rowSpan = Math.max(rows - 1, 1);
+    var gain = sheenGain(view), plucked = pluckLevel(view), pluckRow = view.pluck.row;
     for (var j = 0; j < rows; j += 1) {
       for (var i = 0; i < cols - 1; i += 1) {
         var x1 = displacedX(view, i, j), y1 = displacedY(view, i, j);
         var x2 = displacedX(view, i + 1, j), y2 = displacedY(view, i + 1, j);
-        var level = sheenAt(view.pointer, (x1 + x2) * 0.5, (y1 + y2) * 0.5, view.radius, false)
-          + bandLevelAt(view.bandEnergy, j / rowSpan, view.now);
-        if (j === crossing.hj) { level += Math.max(0, 1 - Math.abs(i + 0.5 - crossing.hi) / span); }
+        var level = sheenAt(view.pointer, (x1 + x2) * 0.5, (y1 + y2) * 0.5, view.radius, false, gain);
+        if (j === pluckRow && plucked > level) { level = plucked; }
         pushSegment(buckets[bucketIndexFor(level)], x1, y1, x2, y2,
           (i + j) % 2 === 0, (i + 1 + j) % 2 === 0, view.gap);
       }
@@ -255,8 +246,6 @@
     PLUCK_DECAY_MS: PLUCK_DECAY_MS,
     PLUCK_EPSILON: PLUCK_EPSILON,
     PLUCK_BASE_AMPLITUDE: PLUCK_BASE_AMPLITUDE,
-    BAND_PERIOD_MS: BAND_PERIOD_MS,
-    BAND_HALF_WIDTH: BAND_HALF_WIDTH,
     resolvePitch: resolvePitch,
     lineCount: lineCount,
     buildWeaveLattice: buildWeaveLattice,
@@ -266,9 +255,7 @@
     resetBuckets: resetBuckets,
     bucketIndexFor: bucketIndexFor,
     alphaForBucket: alphaForBucket,
-    bandLevelAt: bandLevelAt,
     sheenAt: sheenAt,
-    nearestCrossing: nearestCrossing,
     pushSegment: pushSegment,
     collectWarp: collectWarp,
     collectWeft: collectWeft,

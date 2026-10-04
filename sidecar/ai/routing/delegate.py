@@ -7,6 +7,7 @@ import threading
 import time
 from typing import Any
 
+from sidecar.ai.routing.delegate_child_steps import MAX_CHILD_ANSWER_CHARS, build_child_steps
 from sidecar.ai.routing.delegate_contracts import (
     DELEGATE_EXECUTION_FAILURE_CODE as CMP_TOOL_EXECUTION_FAILED,
 )
@@ -16,7 +17,9 @@ from sidecar.ai.routing.delegate_contracts import (
     DelegateTask,
     ToolExecutionFailure,
     build_compact_delegate_settlement,
+    delegate_task_label,
     extract_tool_observed_evidence,
+    strip_format_controls,
     validate_delegate_arguments,
 )
 from sidecar.ai.routing.sub_agent_invocation import (
@@ -287,7 +290,7 @@ def _task_report(
         return {
             "task_id": identity.task_id,
             "ordinal": task.ordinal,
-            "label": f"Task {task.ordinal}",
+            "label": delegate_task_label(task),
             "agent_id": identity.agent_id,
             "parent_agent_id": identity.parent_agent_id,
             "status": "failed",
@@ -306,6 +309,7 @@ def _task_report(
             "usage": None,
             "terminal_reason": "rejected",
             "error": _safe_error(rejected_error),
+            "steps": [],
         }
 
     result = invocation.result
@@ -329,7 +333,7 @@ def _task_report(
     return {
         "task_id": identity.task_id,
         "ordinal": task.ordinal,
-        "label": f"Task {task.ordinal}",
+        "label": delegate_task_label(task),
         "agent_id": result.agent_id or identity.agent_id,
         "parent_agent_id": result.parent_agent_id or identity.parent_agent_id,
         "status": status,
@@ -352,6 +356,10 @@ def _task_report(
             error_message=result.error_message,
         ),
         "error": error,
+        # UI-only fields for the monitor: parent-facing output is built from
+        # summary/evidence/status only (build_compact_delegate_settlement).
+        "steps": build_child_steps(result.decision),
+        "answer": strip_format_controls(_safe_text(result.response_text, MAX_CHILD_ANSWER_CHARS)),
     }
 
 
@@ -474,7 +482,7 @@ def _emit_initial_task_states(  # noqa: PLR0913 - fixed progress-envelope fields
             ),
             child_ordinal=task.ordinal,
             child_count=task_count,
-            child_label=f"Task {task.ordinal}",
+            child_label=delegate_task_label(task),
             child_terminal=rejected,
             terminal_reason="rejected" if rejected else None,
             route=route,
@@ -504,7 +512,7 @@ def _emit_task_started(  # noqa: PLR0913 - fixed progress-envelope fields.
         child_identity=task_identity,
         child_ordinal=task.ordinal,
         child_count=task_count,
-        child_label=f"Task {task.ordinal}",
+        child_label=delegate_task_label(task),
         route=route,
         source=DELEGATE_TOOL_NAME,
     )
@@ -531,7 +539,7 @@ def _emit_task_settled(  # noqa: PLR0913 - fixed progress-envelope fields.
         child_identity=invocation.identity,
         child_ordinal=invocation.task.ordinal,
         child_count=task_count,
-        child_label=f"Task {invocation.task.ordinal}",
+        child_label=delegate_task_label(invocation.task),
         child_terminal=True,
         child_success=status in {"completed", "partial"},
         usage=usage_from_decision(invocation.result.decision),

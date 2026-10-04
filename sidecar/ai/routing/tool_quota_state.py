@@ -26,7 +26,7 @@ def arguments_digest(arguments: Any) -> str:
 
 
 def call_arguments_digest(call: Any) -> str:
-    from sidecar.ai.routing.tool_execution_snapshots import (  # noqa: PLC0415
+    from sidecar.ai.routing.tool_execution_snapshots import (
         split_visible_execution_arguments,
     )
 

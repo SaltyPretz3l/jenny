@@ -34,7 +34,7 @@ def _git_root_present(context: ProbeContext) -> bool:
         return False
 
     # Lazy: probes must not pull the builtins graph into assembly import time.
-    from sidecar.ai.tools.builtins.git_ops import _find_git_root  # noqa: PLC0415
+    from sidecar.ai.tools.builtins.git_ops import _find_git_root
 
     return _find_git_root(root, root) is not None
 
@@ -43,7 +43,7 @@ def _python_runtime_ready(context: ProbeContext) -> bool:
     if context.config is None:
         return False
 
-    from sidecar.ai.tools.builtins.python_runtime.interpreter import (  # noqa: PLC0415
+    from sidecar.ai.tools.builtins.python_runtime.interpreter import (
         _ready_marker,
         _venv_dir,
     )
@@ -98,5 +98,5 @@ def run_probe(probe_id: str, context: ProbeContext) -> bool:
     try:
         probe = PRECONDITION_PROBES.get(probe_id)
         return bool(probe(context)) if probe is not None else False
-    except Exception:
+    except Exception:  # noqa: BLE001  # fail-soft
         return False

@@ -295,3 +295,55 @@ test('bind-dispose-bind reinitializes lazy section bindings and init hooks', () 
     global.document = previousDocument;
   }
 });
+
+test('showing Runtime limits (view switch or section pick) tells the section, and its Limits & budgets host, it is shown; a stored Runs section opens the default', () => {
+  const previousWindow = global.window;
+  const previousDocument = global.document;
+  global.window = { localStorage: createLocalStorage() };
+  global.document = { getElementById() { return null; } };
+  const shown = [];
+  let navArgs = null;
+  const state = { ui: { activeView: 'settings', activeSettingsSection: 'advanced' } };
+  try {
+    const controller = createSettingsShellController({
+      state,
+      composerLayoutRuntime: {},
+      dom: { settingsView: { querySelector() { return null; } }, getSectionDom() { return {}; } },
+      constants: { ACTIVITY_SCOPE: {}, TOAST_SOURCE: {} },
+      callbacks: {
+        appendClientLog() {}, renderAll() {}, renderSessions() {},
+        getCurrentRuntimePreferences() { return {}; }, getRuntimePreferenceSnapshot() { return {}; },
+        runRuntimePreferenceActivity: async () => {}, listSlashCommands() { return []; },
+      },
+      factories: {
+        settingsRendererUtils: { createSettingsRenderer() { return { renderSettings() {} }; } },
+        settingsEventUtils: {
+          createSettingsEventBindings() {
+            return { bind() {}, dispose() {}, ensureSectionBindings() { return true; }, sectionShown(id) { shown.push(id); } };
+          },
+        },
+        settingsNavUtils: {
+          createSettingsNavController(args) {
+            navArgs = args;
+            return { bind() {}, dispose() {}, restoreActiveSection() {} };
+          },
+        },
+      },
+    });
+    controller.bind();
+    // setActiveView('settings') refreshes the active section: the return from Chat.
+    // Runs moved to Diagnostics (2026-10-03): its old id resolves to the
+    // default section and tells nobody it is shown.
+    void controller.refreshSettingsSection('runs');
+    assert.deepEqual(shown, []);
+    void controller.refreshSettingsSection('runtimeLimits');
+    navArgs.onSectionChange('models', 'runtimeLimits');
+    // Runtime limits is merged into Limits & budgets ('advanced'), whose engine
+    // lines re-read their state when shown (SW1-2 / F14).
+    assert.deepEqual(shown, ['runtimeLimits', 'advanced']);
+    controller.dispose();
+  } finally {
+    global.window = previousWindow;
+    global.document = previousDocument;
+  }
+});

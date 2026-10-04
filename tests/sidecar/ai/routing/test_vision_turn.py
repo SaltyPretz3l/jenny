@@ -5,7 +5,10 @@ from types import SimpleNamespace
 
 import pytest
 
-from sidecar.ai.context.compaction_window import MID_TURN_TASK_STUB
+from sidecar.ai.context.compaction_window import (
+    MID_TURN_ANSWERED_TASK_PREFIX,
+    MID_TURN_TASK_STUB,
+)
 from sidecar.ai.context.messages import compact_semantic_messages, sanitize_semantic_message
 from sidecar.ai.engines.base import BaseEngine, ModelModality
 from sidecar.ai.engines.vision_input import VisionImage
@@ -91,6 +94,18 @@ def test_current_turn_anchor_index_accepts_mid_turn_task_stub() -> None:
 
     assert current_turn_anchor_index(messages, anchor_text="original prompt") == 1
     assert current_turn_anchor_index(messages) == 3
+
+
+def test_current_turn_anchor_index_matches_the_answered_task_prefix() -> None:
+    messages = [
+        {"role": "system", "content": "summary"},
+        {"role": "user", "content": MID_TURN_ANSWERED_TASK_PREFIX + "original prompt"},
+        {"role": "assistant", "content": "calling a tool"},
+        {"role": "user", "content": "Continue with the tools available."},
+    ]
+
+    assert current_turn_anchor_index(messages, anchor_text="original prompt") == 1
+    assert current_turn_anchor_index(messages, anchor_text="another prompt") is None
 
 
 def test_attach_vision_images_uses_last_live_lane_user_row() -> None:
@@ -189,3 +204,19 @@ def test_legacy_vision_generation_supported_requires_an_override() -> None:
     assert legacy_vision_generation_supported(_Legacy.__new__(_Legacy)) is True
     assert legacy_vision_generation_supported(_DuckTyped()) is True
     assert legacy_vision_generation_supported(object()) is False
+
+
+# Astra B5 review: the anchor must survive a prefixed stub and a prefixed prompt.
+def test_current_turn_anchor_index_matches_a_prefixed_stub() -> None:
+    from sidecar.ai.context.compaction_window import (
+        MID_TURN_ANSWERED_TASK_PREFIX,
+        MID_TURN_TASK_STUB,
+    )
+
+    messages = [
+        {"role": "system", "content": "sys"},
+        {"role": "user", "content": MID_TURN_ANSWERED_TASK_PREFIX + MID_TURN_TASK_STUB},
+        {"role": "assistant", "content": "ok"},
+        {"role": "user", "content": "corrective"},
+    ]
+    assert current_turn_anchor_index(messages, anchor_text="Build M4") == 1

@@ -1,11 +1,14 @@
 'use strict';
 
 const { validateTurnEvent } = require('./canonical-turn-event');
+const { redactTranscriptPaths } = require('./transcript-export-redaction');
 
 // Older canonical-primary captures kept the base assistant ID after the stream
 // persisted segmented messages. Resolve only a unique, exact content match in
 // the same logical turn and physical attempt. Comparing through the canonical
-// sanitizer accounts for redacted paths without fuzzy matching or lost content.
+// sanitizer accounts for redacted secrets without fuzzy matching or lost
+// content; captures persisted before HB-012 also carry path-redacted text, so
+// the historical path rules give each message its legacy form too.
 function resolveCanonicalTextMessageOwners(events, messages) {
   const source = Array.isArray(events) ? events : [];
   const saved = Array.isArray(messages) ? messages : [];
@@ -40,7 +43,9 @@ function resolveCanonicalTextMessageOwners(events, messages) {
     // A truncated candidate cannot establish that the entire message is covered.
     if (normalized.status !== 'accepted' || normalized.diagnostics.length) continue;
     const text = normalized.event.payload.text;
-    group.set(text, group.has(text) ? null : message.id);
+    for (const candidate of new Set([text, redactTranscriptPaths(text)])) {
+      group.set(candidate, group.has(candidate) ? null : message.id);
+    }
   }
   return source.map(event => {
     const key = pending.get(event);

@@ -134,19 +134,22 @@ and a 16-char SHA-256 prefix.
 
 ## Python Runtime Threat Model
 
-Last reviewed: 2026-07-12
+Last reviewed: 2026-10-03
 
 This document is the ground-truth threat model for the
-`python_runtime` tool (`sidecar/ai/tools/builtins/python_runtime/`).
+`python_execute` tool (`sidecar/ai/tools/builtins/python_runtime/`).
+The public descriptor is currently Windows-only; POSIX implementation notes below
+describe the helper's platform behavior, not a shipped POSIX tool exposure.
 It tells a reviewer what the sandbox is meant to block, what it is
 NOT meant to block, and which risks have been explicitly accepted
 as out of scope for this layer.
 
 Trust boundary: **the sandbox is a defence-in-depth layer**, not a
 primary security perimeter. The primary perimeter is model output
-classification plus the user-approval gate: every `python_runtime`
-invocation by a non-trusted model path passes through the same tool
-approval flow as shell execution. The sandbox is the last line of
+classification plus the user-approval gate: every `python_execute`
+invocation passes through the ordinary tool-policy and approval flow. The default
+asks for approval; an explicitly saved allow policy can authorize later calls,
+and paranoid mode still requires per-call approval. The sandbox is the last line of
 defence if the model slips past classification *and* the user
 approves a call whose payload turns out to be hostile.
 
@@ -211,7 +214,7 @@ approves a call whose payload turns out to be hostile.
 
 ### What the sandbox does NOT block
 
-These are **accepted risks** given the trust model: Jenny is a
+These are **accepted risks** given the desktop trust model: Jenny is a
 single-user local app; the approval gate is the primary enforcement
 point.
 
@@ -241,7 +244,7 @@ point.
   HTTP/DNS/raw sockets work.
 - Impact: the model can exfiltrate data by making HTTP requests. No
   URL allowlist; no DNS sinkhole. Acceptable because any approved
-  `python_runtime` call implicitly already has equivalent authority
+  `python_execute` call implicitly already has equivalent authority
   via `curl` through the shell tool with approval.
 
 #### Encoded payload detection
@@ -251,8 +254,8 @@ point.
   imported modules). Detection happens at the shell classifier for
   shell-facing decoders; equivalent payload forms inside
   `python_runtime` pass through.
-- Mitigation: the tool approval gate forces a human decision on
-  every invocation.
+- Mitigation: the tool policy requires an approval or an explicit applicable
+  allow rule; paranoid mode requires a human decision on every invocation.
 
 #### AST / bytecode restriction
 
@@ -267,7 +270,11 @@ point.
 
 ### Deferred / follow-up items
 
-Tracked in `BACKEND_PROMPT_LIFECYCLE_REVIEW.md` Bundle 5B / 5E.
+The original review recorded these items under
+`BACKEND_PROMPT_LIFECYCLE_REVIEW.md` Bundle 5B / 5E. Current priorities and gates
+belong to NEXT_STEPS.md; this list does not authorize work.
+Hosted policy does not expose `python_execute`, so Docker command isolation is
+not a claim about this desktop helper.
 
 - **Network namespace isolation** — would require launching the
   child inside a Linux network namespace or blocking outbound on

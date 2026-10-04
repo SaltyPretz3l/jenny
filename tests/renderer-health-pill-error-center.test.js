@@ -54,9 +54,15 @@ test('pill markup shows a danger count badge only when unseen errors exist', () 
   assert.doesNotMatch(buildPillMarkup(tone), /workbench-health-pill-error-badge/);
   assert.doesNotMatch(buildPillMarkup(tone, { unseenErrorCount: 0 }), /workbench-health-pill-error-badge/);
   const badged = buildPillMarkup(tone, { unseenErrorCount: 3 });
-  assert.match(badged, /workbench-health-pill-error-badge/);
-  assert.match(badged, /aria-label="3 recent errors"/);
+  assert.match(badged, /workbench-health-pill-error-badge" aria-hidden="true">3</);
+  assert.doesNotMatch(badged, /role="status"/, 'badge is presentational; the button label carries the count');
+  assert.match(badged, /aria-label="Healthy · 3 recent errors"/);
+  assert.match(badged, /title="Healthy · 3 recent errors"/);
+  assert.match(buildPillMarkup(tone, { unseenErrorCount: 1 }), /aria-label="Healthy · 1 recent error"/);
+  assert.match(buildPillMarkup(tone, { unseenErrorCount: 9 }), />9</);
+  assert.match(buildPillMarkup(tone, { unseenErrorCount: 10 }), />9\+</);
   assert.match(buildPillMarkup(tone, { unseenErrorCount: 12 }), />9\+</);
+  assert.doesNotMatch(buildPillMarkup(tone, { unseenErrorCount: 0 }), /recent error/);
 });
 
 test('recent-errors section renders at most five entries with code badge + relative time, empty omitted', () => {

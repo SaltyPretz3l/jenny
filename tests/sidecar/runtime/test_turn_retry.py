@@ -203,3 +203,32 @@ def test_exhausted_factory_reraise_crosses_a_context_manager_intact() -> None:
             )
 
     assert exc_info.value.terminal_subcode == "schema_retry_exhausted"
+
+
+def test_execute_with_inner_turn_retry_settles_a_non_retryable_error_on_first_attempt() -> None:
+    attempts = {"count": 0}
+
+    def _deterministic(_params: dict[str, object]) -> dict[str, object]:
+        attempts["count"] += 1
+        raise InnerRetryableTurnError(
+            reason="Frozen plan drifted.",
+            retry_prompt="Re-evaluate.",
+            terminal_subcode="approval_plan_drift",
+            retryable=False,
+        )
+
+    result = execute_with_inner_turn_retry(
+        params={"messages": [{"role": "user", "content": "hello"}]},
+        execute_attempt=_deterministic,
+        max_inner_retries=2,
+        exhausted_factory=lambda error, attempt: {"attempts": attempt, "reason": error.reason},
+    )
+
+    assert attempts["count"] == 1
+    assert result == {"attempts": 1, "reason": "Frozen plan drifted."}
+
+    with pytest.raises(InnerRetryableTurnError):
+        execute_with_inner_turn_retry(
+            params={"messages": []}, execute_attempt=_deterministic, max_inner_retries=2
+        )
+    assert attempts["count"] == 2

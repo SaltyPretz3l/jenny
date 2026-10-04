@@ -20,6 +20,7 @@ from typing import Any, Callable
 # stay within the per-module import-fanout budget. Those have zero call sites in
 # this file and carry a per-import noqa (F401) so ruff keeps them; do not remove.
 from sidecar.ai.config import resolve_effective_max_tokens  # noqa: F401
+from sidecar.ai.context import turn_context  # noqa: F401
 from sidecar.ai.context.builder import looks_like_current_info_request
 from sidecar.ai.context.messages import (
     build_generation_messages,  # noqa: F401
@@ -42,8 +43,11 @@ from sidecar.ai.feature_flags import (
 )
 from sidecar.ai.routing import (  # noqa: F401
     loop_event_emit,
+    plan_presentation,
+    thinking_checkpoint,
     tool_loop_compaction,
     tool_loop_recovery,
+    write_progress,
 )
 from sidecar.ai.routing.auto_checkpoint import maybe_create_auto_checkpoint  # noqa: F401
 from sidecar.ai.routing.loop_events import (
@@ -76,6 +80,7 @@ from sidecar.ai.routing.tool_observation import (
     KIND_TURN_FAILED,  # noqa: F401
     KIND_USER_APPROVAL_REQUESTED,  # noqa: F401
 )
+from sidecar.ai.tools import text_tool_calls  # noqa: F401
 from sidecar.ai.tools.assembly import current_info_remediation
 from sidecar.ai.tools.contracts import ToolExecutionFailure
 from sidecar.ai.tools.models import GenerationUsage, ToolCallRequest
@@ -105,7 +110,7 @@ _TOOL_BURST_CALL_ID_PREVIEW_LIMIT = 8
 
 
 def build_approval_plan(**kwargs: Any) -> Any:
-    from sidecar.ai.routing.mutation_change_set_lifecycle import (  # noqa: PLC0415
+    from sidecar.ai.routing.mutation_change_set_lifecycle import (
         current_run_change_set_id,
     )
 
@@ -621,8 +626,9 @@ def _quota_block_guidance(reason: str, cap: int) -> str:
         )
     if reason == "session_tool_budget":
         return (
-            f"this session's tool budget ({cap} calls) is used up. Wrap up using what "
-            "you already have."
+            f"this chat's tool budget ({cap} tool calls) is used up, so no more tools can "
+            "run in this chat. Answer with what you already have, and tell the user that "
+            "starting a new chat resets the budget."
         )
     if reason == "tool_cooldown":
         return (
@@ -888,7 +894,7 @@ def _build_stopped_tool_loop_result(
 # ---------------------------------------------------------------------------
 
 
-def run_tool_loop(  # noqa: C901, PLR0912, PLR0915
+def run_tool_loop(
     *,
     runtime: LoopRuntime,
     kernel: Any,
@@ -964,10 +970,10 @@ def run_tool_loop(  # noqa: C901, PLR0912, PLR0915
     except Exception as error:
         # Cancellation and provider failures escape execute() without _finish;
         # settle the journal so the set is never stranded in_progress.
-        from sidecar.ai.routing.mutation_change_set_lifecycle import (  # noqa: PLC0415
+        from sidecar.ai.routing.mutation_change_set_lifecycle import (
             finish_run_change_set,
         )
-        from sidecar.ai.routing.tool_resource_deferral import ToolLoopSuspended  # noqa: PLC0415
+        from sidecar.ai.routing.tool_resource_deferral import ToolLoopSuspended
 
         try:
             finish_run_change_set(

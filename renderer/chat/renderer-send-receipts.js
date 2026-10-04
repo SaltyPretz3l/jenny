@@ -55,9 +55,22 @@
     const releasedAssetPaths = new Set();
     let disposed = false;
 
+    // Split view W2-2b: the live queue (state.attachments.queued) is the session
+    // pane 0 shows -- currentSessionId with one pane; with two, currentSessionId
+    // follows focus and another pane's queue is its record.
+    function queueSessionId() {
+      const utils = globalThis.rendererPaneVisibilityUtils;
+      return normalizeId(typeof utils?.resolvePaneSessionId === 'function' ? utils.resolvePaneSessionId(state, 0) : state.currentSessionId);
+    }
+
+    function isQueueSession(sessionId) {
+      const queueId = queueSessionId();
+      return !queueId || queueId === normalizeId(sessionId);
+    }
+
     function retainedAssetPaths(options = {}) {
       const retained = new Set();
-      const currentSessionId = normalizeId(state.currentSessionId);
+      const currentSessionId = queueSessionId();
       const addAttachments = (attachments) => {
         for (const path of assetPaths(attachments)) retained.add(path);
       };
@@ -190,10 +203,12 @@
         record.touchedAtMs = Date.now();
       }
       const liveSessionId = normalizeId(state.currentSessionId);
-      if (receipt.consumeDraft
-        && (!liveSessionId || liveSessionId === sessionId)
-        && Number(record?.generation || 0) === receipt.rendererGeneration) {
+      const generationCurrent = Number(record?.generation || 0) === receipt.rendererGeneration;
+      if (receipt.consumeDraft && (!liveSessionId || liveSessionId === sessionId) && generationCurrent) {
         if (chatInput) chatInput.value = '';
+      }
+      // Another pane's queue IS its record (cleared above); only pane 0's session owns the live array.
+      if (receipt.consumeDraft && isQueueSession(sessionId) && generationCurrent) {
         if (!state.attachments || typeof state.attachments !== 'object') state.attachments = {};
         state.attachments.queued = record?.attachments || [];
       }
@@ -272,6 +287,8 @@
       const liveSessionId = normalizeId(state.currentSessionId);
       if (!liveSessionId || liveSessionId === sessionId) {
         if (chatInput) chatInput.value = record.text;
+      }
+      if (isQueueSession(sessionId)) {
         if (!state.attachments || typeof state.attachments !== 'object') state.attachments = {};
         state.attachments.queued = record.attachments;
       }

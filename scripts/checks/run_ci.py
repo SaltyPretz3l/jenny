@@ -25,17 +25,30 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
+
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+# The Windows power-throttling (EcoQoS) keeper lives in its own module so the
+# safe Node runner can start the same keeper for a direct `npm test` run.
+from scripts.checks.power_throttling_keeper import _start_power_throttling_keeper  # noqa: E402
+
 NPM_COMMAND = "npm.cmd" if sys.platform.startswith("win") else "npm"
 
-# pytest-xdist fans the sidecar suite out across 8 workers. The Node lane uses
-# 10 workers so the concurrent wave keeps two logical CPUs of headroom for each
-# child process's own threads and Windows filesystem/antivirus work. Eight Node
-# workers stretched the lane to 420.8s; twelve plus pytest ended the Node parent
-# early under contention even though the same 12-worker lane passed standalone.
-_PYTEST_WORKERS = "8"
-_NODE_WORKERS = "10"
-# Covers policy + wave 1, the Node lane's 20 minutes and the 8-minute packaged
-# smoke tail; the old 900 s could not hold the 1.2.0 suite (owner, 2026-09-24).
+# pytest and the Node lane run in separate waves. The 2026-10-03 failures that
+# prompted the split turned out to be Windows power throttling (see
+# power_throttling_keeper.py), but with that fixed the overlap still does not
+# pay: on the 20-logical-CPU host (8 P-cores + 4 E-cores) each lane fills the
+# machine, and overlapped they took 386 s against 419 s back to back while
+# pytest more than doubled (2026-10-04). The Node lane's time is total CPU work,
+# so 14 workers (two of them reserved for the one-at-a-time chains) is where
+# adding workers stops helping.
+_PYTEST_WORKERS = "12"
+_NODE_WORKERS = "14"
+# The old 900 s could not hold the 1.2.0 suite (owner, 2026-09-24). The gate
+# takes about 450 s when healthy (2026-10-04); the stage caps (Node 1200 s,
+# smoke 480 s) do not fit inside this together with pytest, so the global
+# deadline is what bounds a slow run and a lane near its own cap fails the tail.
 DEFAULT_GLOBAL_TIMEOUT_SECONDS = 1800
 HEARTBEAT_INTERVAL_SECONDS = 15
 FAILURE_TAIL_LINES = 200
@@ -56,7 +69,17 @@ _PYTEST_CMD = [
     sys.executable, "-m", "pytest", "tests/sidecar",
     "-n", _PYTEST_WORKERS, "--dist=loadscope",
     "-vv", "--durations=25", "--durations-min=1.0",
-    "--cov=sidecar", "--cov-report=term-missing",
+    "--cov=sidecar", "--cov-report=term-missing", "--cov-report=json:coverage.json",
+]
+
+# The sidecar coverage ratchet reads the coverage.json the pytest stage writes,
+# so it runs in a later wave. --scope=sidecar because no local stage produces
+# the c8 JS summary (the Node lane is not instrumented; wrapping it in c8 would
+# slow the heaviest lane), and a stale coverage/coverage-summary.json from an
+# older coverage run must not decide this gate. The JS scope stays in the
+# ci.yml coverage-gate job. See docs/plans/TEST_COVERAGE_RATCHET.md.
+_COVERAGE_RATCHET_CMD = [
+    sys.executable, "scripts/checks/check_coverage_ratchet.py", "--scope=sidecar",
 ]
 
 # Timeout-enforced wrapper so a hanging Node suite can't stall the gate;
@@ -75,6 +98,7 @@ STAGES: list[Stage] = [
           [sys.executable, "scripts/checks/run_backend_contract_tests.py"], wave=1),
     Stage("mypy", [sys.executable, "-m", "mypy", "sidecar"], wave=1),
     Stage("lint", [NPM_COMMAND, "run", "lint"], wave=1),
+    Stage("lint_py", [sys.executable, "-m", "ruff", "check", "sidecar", "tests/sidecar"], wave=1),
     Stage(
         "smoke_packaged_flow",
         [
@@ -87,11 +111,15 @@ STAGES: list[Stage] = [
             "--allow-stale-source",
         ],
         # Packaging is the serial release tail so its process tree does not
-        # compete with the settled 10-Node + 8-pytest heavy wave.
-        wave=3,
+        # compete with the pytest or Node waves (beside pytest it took 147 s
+        # instead of 48 s and saved nothing, 2026-10-04).
+        wave=4,
     ),
-    Stage("pytest_sidecar", _PYTEST_CMD, wave=2),
-    Stage("node_test_safe", _NODE_TEST_CMD, wave=2, env={"JENNY_TEST_WORKERS": _NODE_WORKERS}),
+    # pytest shares wave 1 with the quick static stages (they finish in ~25 s
+    # and left the wave mostly idle); it still never overlaps the Node lane.
+    Stage("pytest_sidecar", _PYTEST_CMD, wave=1),
+    Stage("coverage_ratchet_sidecar", _COVERAGE_RATCHET_CMD, wave=3),
+    Stage("node_test_safe", _NODE_TEST_CMD, wave=3, env={"JENNY_TEST_WORKERS": _NODE_WORKERS}),
 ]
 
 _PRINT_LOCK = threading.Lock()
@@ -107,10 +135,15 @@ class StageResult:
 
 
 def _stage_env(stage: Stage) -> dict[str, str] | None:
-    if stage.env is None:
+    # An agent or IDE shell may export PYTHONDONTWRITEBYTECODE. pytest then
+    # re-does its assertion rewriting for ~210 test modules in every xdist
+    # worker on every run (102 s vs 83 s for the sidecar suite, 2026-10-04).
+    # The bytecode caches are gitignored, so the gate always allows them.
+    if stage.env is None and "PYTHONDONTWRITEBYTECODE" not in os.environ:
         return None
     merged = dict(os.environ)
-    merged.update(stage.env)
+    merged.pop("PYTHONDONTWRITEBYTECODE", None)
+    merged.update(stage.env or {})
     return merged
 
 
@@ -129,7 +162,8 @@ def _terminate_process_tree(process: subprocess.Popen[str]) -> None:
             if taskkill_result.returncode == 0:
                 return
             detail = (taskkill_result.stderr or taskkill_result.stdout or "taskkill failed").strip()
-            print(f"WARN: taskkill failed; killing parent process: {detail[-500:]}", file=sys.stderr)
+            print(f"WARN: taskkill failed; killing parent process: {detail[-500:]}",
+                  file=sys.stderr)
         except (OSError, subprocess.TimeoutExpired):
             pass
         try:
@@ -236,7 +270,8 @@ def _run_stage_buffered(stage: Stage, *, verbose: bool, deadline: float) -> Stag
                 _print_stage_event(
                     stage,
                     start,
-                    f"HEARTBEAT running; {max(0, deadline - time.monotonic()):.0f}s global budget left",
+                    f"HEARTBEAT running; {max(0, deadline - time.monotonic()):.0f}s "
+                    "global budget left",
                 )
     finally:
         if timed_out:
@@ -328,7 +363,7 @@ def _run_waves(stages: list[Stage], *, verbose: bool, fail_fast: bool,
             )
             continue
 
-        with ThreadPoolExecutor(max_workers=4) as pool:
+        with ThreadPoolExecutor(max_workers=len(wave_stages)) as pool:
             futures = {
                 pool.submit(_run_stage_buffered, stage, verbose=verbose, deadline=deadline): stage
                 for stage in wave_stages
@@ -382,11 +417,20 @@ def main() -> int:
         parser.error(f"--timeout-seconds must be between 1 and {DEFAULT_GLOBAL_TIMEOUT_SECONDS}")
     deadline = time.monotonic() + args.timeout_seconds
 
-    if serial_mode:
-        results = _run_serial(stages, deadline=deadline)
-    else:
-        results = _run_waves(stages, verbose=args.verbose, fail_fast=args.fail_fast,
-                             deadline=deadline)
+    keeper = _start_power_throttling_keeper()
+    try:
+        if serial_mode:
+            results = _run_serial(stages, deadline=deadline)
+        else:
+            results = _run_waves(stages, verbose=args.verbose, fail_fast=args.fail_fast,
+                                 deadline=deadline)
+    finally:
+        if keeper is not None:
+            keeper.stop()
+            print(f"[power-throttling keeper] opted {keeper.opted_out} process(es) out", flush=True)
+        elif sys.platform.startswith("win"):
+            print("WARN: power-throttling keeper unavailable; heavy test files may be throttled",
+                  flush=True)
 
     failed = [r.stage.name for r in results if r.ran and not r.passed]
     not_run = [r.stage.name for r in results if not r.ran]

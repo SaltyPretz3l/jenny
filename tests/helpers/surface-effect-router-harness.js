@@ -214,6 +214,15 @@ function makeFakeSurfaceElement(rect) {
       if (node) { node.parentNode = element; }
       return node;
     },
+    insertBefore(node, referenceNode) {
+      element.appendChild(node);
+      const refIdx = referenceNode ? element.children.indexOf(referenceNode) : -1;
+      if (refIdx !== -1) {
+        element.children.splice(element.children.indexOf(node), 1);
+        element.children.splice(refIdx, 0, node);
+      }
+      return node;
+    },
     removeChild(node) {
       const idx = element.children.indexOf(node);
       if (idx === -1) {

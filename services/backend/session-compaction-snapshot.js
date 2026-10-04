@@ -152,13 +152,30 @@ function summarizeCompactionSnapshot(value) {
   };
 }
 
+// Where a full result's verbatim tail starts in canonical history, and the
+// rows it must equal. With the compact payload (backend-compact-payload.js)
+// the tail is a suffix of the prepared rows sent, placed by the anchor of its
+// first row; without one, the canonical rows were sent one-to-one.
+function locateResultTail(tailLength, canonicalMessages, payload) {
+  if (!payload) {
+    const boundaryCount = canonicalMessages.length - tailLength;
+    return { boundaryCount, expected: canonicalMessages.slice(Math.max(boundaryCount, 0)) };
+  }
+  const tailStart = payload.messages.length - tailLength;
+  const anchor = payload.anchors.find((entry) => entry?.index === tailStart);
+  const boundaryCount = tailLength === 0 ? canonicalMessages.length : Number(anchor?.origin ?? -1);
+  return { boundaryCount, expected: payload.messages.slice(Math.max(tailStart, 0)) };
+}
+
 // Builds the persistable snapshot from a chat.compact ok-result plus the
 // boundary captured from the canonical history that was sent to the sidecar.
+// `payload` ({ messages, anchors }) is the prepared history actually sent.
 // Returns null when the result does not carry a usable compaction.
 function buildCompactionSnapshotFromResult(result, {
   boundaryMessageId,
   boundaryMessageCount,
   canonicalMessages,
+  payload = null,
   createdAt = new Date().toISOString(),
 } = {}) {
   if (String(result?.status || '') !== 'ok' || result?.compacted !== true) {
@@ -183,13 +200,16 @@ function buildCompactionSnapshotFromResult(result, {
   const summaryIndex = resultMessages.findIndex(isCompactionSummaryMessage);
   if (String(result.strategy || '').trim() === 'full' && Array.isArray(canonicalMessages) && summaryIndex >= 0) {
     const tail = resultMessages.slice(summaryIndex + 1);
-    const boundaryCount = canonicalMessages.length - tail.length;
-    const tailMatches = boundaryCount >= 1
-      && tail.every((row, index) => {
-        const canonicalRow = canonicalMessages[boundaryCount + index] || {};
-        return String(row?.role) === String(canonicalRow.role || '')
-          && String(row?.content ?? '') === String(canonicalRow.content || '');
-      });
+    const validPayload = payload && Array.isArray(payload.messages) && Array.isArray(payload.anchors)
+      ? payload
+      : null;
+    const { boundaryCount, expected } = locateResultTail(tail.length, canonicalMessages, validPayload);
+    const tailMatches = Number.isSafeInteger(boundaryCount)
+      && boundaryCount >= 1
+      && boundaryCount <= canonicalMessages.length
+      && expected.length === tail.length
+      && tail.every((row, index) => String(row?.role) === String(expected[index]?.role || '')
+        && String(row?.content ?? '') === String(expected[index]?.content ?? ''));
     if (!tailMatches) {
       return null;
     }
@@ -294,12 +314,19 @@ function applyCompactionSnapshotToHistory(snapshot, messages) {
   };
 }
 
+// Automatic snapshots keep the context_compaction rollback switch; manual
+// snapshots are unconditional since the compaction_manual flag retired
+// (post-1.2.0 sweep S6).
+function isCompactionSnapshotEnabled(featureFlags, snapshot) {
+  return snapshot?.origin !== 'automatic' || featureFlags?.context_compaction === true;
+}
+
 // chat.send seam (managed-sidecar-chat.js): resolves the session's persisted
 // snapshot, applies it to the prompt history, and lazily clears a snapshot the
 // prefix check proves stale (defense-in-depth behind the store's eager
-// invalidation). Manual and automatic snapshots retain independent internal
-// rollback switches, so disabling either producer also disables its persisted
-// output without invalidating the other contract.
+// invalidation). Automatic snapshots keep the context_compaction rollback
+// switch, so disabling that producer also disables its persisted output;
+// manual snapshots are unconditional since the compaction_manual flag retired.
 function applyCompactionSnapshotForChatSend(service, sessionId, canonicalMessages) {
   const history = Array.isArray(canonicalMessages) ? canonicalMessages : [];
   try {
@@ -308,10 +335,7 @@ function applyCompactionSnapshotForChatSend(service, sessionId, canonicalMessage
     if (!snapshot) {
       return { applied: false, messages: history };
     }
-    const enabled = snapshot.origin === 'automatic'
-      ? service?.featureFlags?.context_compaction === true
-      : service?.featureFlags?.compaction_manual === true;
-    if (!enabled) {
+    if (!isCompactionSnapshotEnabled(service?.featureFlags, snapshot)) {
       return { applied: false, messages: history };
     }
     const result = applyCompactionSnapshotToHistory(snapshot, history);
@@ -351,6 +375,8 @@ module.exports = {
   buildAutomaticCompactionSnapshot,
   buildCompactionSnapshotFromResult,
   fingerprintCompactionPrefix,
+  isCompactionSnapshotEnabled,
+  isCompactionSummaryMessage,
   normalizeCompactionSnapshot,
   retainCompactionSnapshotForMessages,
   summarizeCompactionSnapshot,

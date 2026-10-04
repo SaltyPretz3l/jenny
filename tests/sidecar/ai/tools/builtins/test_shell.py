@@ -44,6 +44,51 @@ def test_expected_nonzero_exit_succeeds_and_reports_shell(tmp_path: Path) -> Non
     assert payload["shell"] == ("cmd.exe" if os.name == "nt" else "/bin/sh")
 
 
+def test_result_metadata_carries_the_exit_code(tmp_path: Path) -> None:
+    """The tool row and the stored result read the exit status from metadata (HB-035)."""
+    failed = run_command_tool({"command": _exit_command(3)}, _guard(tmp_path))
+    passed = run_command_tool({"command": _exit_command(0)}, _guard(tmp_path))
+    assert failed.success is False
+    assert failed.metadata["exit_code"] == 3
+    assert passed.metadata["exit_code"] == 0
+
+
+def test_a_non_zero_exit_is_the_commands_result_not_an_internal_error(tmp_path: Path) -> None:
+    # Dogfood HB-035: CMP-TOOL-0008 classes as internal_error / retry never, so
+    # the model reported a requested failing test as an internal error.
+    from sidecar.ai.routing.router import ToolExecutionOutcome
+    from sidecar.ai.routing.tool_execution_results import tool_result_message
+    from sidecar.ai.tools.models import ToolCallRequest
+
+    result = run_command_tool({"command": _exit_command(1)}, _guard(tmp_path))
+    assert result.success is False
+    assert result.metadata["failure_class"] == "precondition_unmet"
+
+    message = tool_result_message(
+        ToolCallRequest(tool_id="run_command", arguments={}, call_id="c1"),
+        ToolExecutionOutcome(
+            tool_name="run_command", output=result.output, success=False,
+            error_code=result.error_code, metadata=dict(result.metadata),
+        ),
+        SimpleNamespace(tool_result_envelope_enabled=True),
+    )
+    content = str(message["content"])
+    assert "error_class: precondition_unmet" in content
+    assert "retry: after_fix" in content
+    assert "fix: The command ran and exited with code 1" in content
+    assert "not a tool failure" in content
+    assert "internal_error" not in content
+
+    passed = run_command_tool({"command": _exit_command(0)}, _guard(tmp_path))
+    assert "failure_class" not in passed.metadata
+    assert "remediation" not in passed.metadata
+
+    unmet = run_command_tool(
+        {"command": _exit_command(0), "expected_exit_codes": [1]}, _guard(tmp_path)
+    )
+    assert "not one of the expected exit codes [1]" in unmet.metadata["remediation"]
+
+
 def test_unexpected_zero_or_code_fails_explicit_contract(tmp_path: Path) -> None:
     zero = run_command_tool(
         {"command": _exit_command(0), "expected_exit_codes": [1]}, _guard(tmp_path)
@@ -132,7 +177,7 @@ def _legacy_unit_process_adapters(monkeypatch: pytest.MonkeyPatch) -> None:
             encoding="utf-8",
             errors="replace",
         )
-        return shell_background_module._ManagedBackgroundProcess(process=process)  # noqa: SLF001
+        return shell_background_module._ManagedBackgroundProcess(process=process)
 
     monkeypatch.setattr(shell_module, "_run_owned_process", _run_owned)
     monkeypatch.setattr(
@@ -524,7 +569,7 @@ def test_background_job_uses_the_same_platform_shell_argv(
 ) -> None:
     captured: dict[str, object] = {}
 
-    def fake_start_background_job(argv, **kwargs):  # noqa: ANN001, ANN003
+    def fake_start_background_job(argv, **kwargs):
         captured["argv"] = argv
         captured.update(kwargs)
         return shell_background_module.BackgroundJobStart("0123456789ab", 4242)
@@ -551,7 +596,7 @@ def test_background_spawn_failure_is_not_reported_as_started(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    def fail_spawn(*_args, **_kwargs):  # noqa: ANN002, ANN003
+    def fail_spawn(*_args, **_kwargs):
         raise FileNotFoundError("missing shell")
 
     monkeypatch.setattr(shell_background_module, "_spawn_background_process", fail_spawn)
@@ -1233,3 +1278,42 @@ def test_shell_environment_adds_powershell_directory_when_missing(
     # Already present -> no override, so the child keeps the inherited env.
     monkeypatch.setenv("PATH", os.pathsep.join([r"C:\Windows\System32", str(directory)]))
     assert shell_module._shell_environment() is None
+
+
+def test_timeout_tells_the_model_to_raise_the_limit_not_retry_unchanged(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    # Dogfood B11: `ping -n 40` hit the 10 s default and the transient class of
+    # CMP_TOOL_IO_FAILED told the model to retry the same arguments, so it
+    # reported a "transient tool infrastructure error".
+    from sidecar.ai.routing.router import ToolExecutionOutcome
+    from sidecar.ai.routing.tool_execution_results import tool_result_message
+    from sidecar.ai.tools.models import ToolCallRequest
+
+    monkeypatch.setattr(
+        shell_module,
+        "_run_owned_process",
+        lambda *_a, **_kw: SimpleNamespace(
+            returncode=-1, stdout="", stderr="", timed_out=True, aborted=False,
+            drain_incomplete=False,
+        ),
+    )
+    result = run_command_tool({"command": "ping -n 40 127.0.0.1"}, _guard(tmp_path))
+    assert result.error_code == CMP_TOOL_IO_FAILED
+    assert "timed out after 10 seconds" in json.loads(result.output)["message"]
+
+    message = tool_result_message(
+        ToolCallRequest(tool_id="run_command", arguments={}, call_id="c1"),
+        ToolExecutionOutcome(
+            tool_name="run_command", output=result.output, success=False,
+            error_code=result.error_code, metadata=dict(result.metadata),
+        ),
+        SimpleNamespace(tool_result_envelope_enabled=True),
+    )
+    content = str(message["content"])
+    assert "error_class: limit_exceeded" in content
+    assert "retry: changed_args" in content
+    assert "fix: The command timed out after 10 seconds" in content
+    assert "larger timeout_seconds (up to 600)" in content
+    assert "transient" not in content

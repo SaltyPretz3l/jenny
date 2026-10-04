@@ -446,10 +446,6 @@ same model; record the recovery time.
 
 ## Known interactions / limitations
 
-- **FIM / inline suggest**: the same llama-server instance serves chat and
-  inline completion; there is no per-request speculation switch. If ghost-text
-  latency regresses with acceleration on, the honest outcome is acceleration
-  stays off — record it, don't special-case.
 - **Exclusive GPU coordinator**: `services/backend/exclusive-gpu-coordinator.js`
   has no VRAM accounting; the drafter's extra residency raises the OOM odds for
   a privileged plugin workload after a lease handoff. The coordinator is

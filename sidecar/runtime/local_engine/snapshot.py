@@ -121,12 +121,26 @@ def build_local_runtime_payload(
     app_profile = active_app_profile_payload(runtime_config)
     capability_sources = _engine_capability_sources(engine)
     active_capabilities = active_model_capabilities_payload(engine)
+    residency = getattr(engine, "MODEL_RESIDENCY", "local")
+    local_residency = residency not in {"remote", "cli"}
     loaded_model = str(getattr(engine, "model_name", "") or "").strip()
     configured_model = str(getattr(runtime_config, "model", "") or "").strip()
     effective_model = loaded_model or configured_model
     ready_flag = getattr(engine, "_ready", None)
     has_explicit_readiness = isinstance(ready_flag, bool)
-    model_loaded = ready_flag if has_explicit_readiness else bool(loaded_model)
+    configured = bool(effective_model)
+    model_loaded = (
+        (ready_flag if has_explicit_readiness else bool(loaded_model)) if local_residency else None
+    )
+    readiness = build_readiness_payload(
+        ready=(
+            (ready_flag if has_explicit_readiness else model_loaded)
+            if local_residency else configured
+        ),
+        model_loaded=model_loaded,
+    )
+    if not local_residency:
+        readiness["model_loaded"] = None
     context = context_metadata_payload(
         configured_context_length=getattr(runtime_config, "context_length", None),
         native_context_length=_engine_model_context_length(engine),
@@ -150,11 +164,10 @@ def build_local_runtime_payload(
         "model": {
             "id": effective_model or None,
             "loaded": model_loaded,
+            "configured": configured,
+            "residency": residency if not local_residency else "local",
         },
-        "readiness": build_readiness_payload(
-            ready=ready_flag if has_explicit_readiness else model_loaded,
-            model_loaded=model_loaded,
-        ),
+        "readiness": readiness,
         "fallback": fallback,
         "capabilities": {
             "text": build_capability_entry(

@@ -272,7 +272,6 @@ const VALID_PREFERRED_ENGINE_TYPES = Object.freeze([
   'openai-compatible',
   'codex-cli',
   'chatgpt',
-  'plugin_host',
   'mock',
   // Deterministic scripted engine for agentic GUI testing (dev/CI).
   'replay',
@@ -281,6 +280,22 @@ const VALID_PREFERRED_ENGINE_TYPES = Object.freeze([
 function normalizePreferredEngineType(value) {
   const token = String(value || '').trim().toLowerCase();
   return VALID_PREFERRED_ENGINE_TYPES.includes(token) ? token : '';
+}
+
+// The model of the last successful ChatGPT load (B13). Shape only, the same id
+// shape the authenticated catalog admits: startup sends it only while the
+// current catalog still lists it, so a stale id falls back to booting unloaded.
+const CHATGPT_MODEL_ID = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/;
+function normalizeLastChatgptModel(value) {
+  const token = typeof value === 'string' ? normalizeString(value) : '';
+  return CHATGPT_MODEL_ID.test(token) ? token : '';
+}
+
+// Cloud models group (plugin platform retirement, stage 2): null until the
+// one-time migration from the retired ChatGPT plugin records the user's
+// choice; null and true both mean the ChatGPT models are shown.
+function normalizeChatgptModelsEnabled(value) {
+  return typeof value === 'boolean' ? value : null;
 }
 
 function normalizeCodexCliModelId(value, { allowDefault = false } = {}) {
@@ -394,6 +409,8 @@ module.exports = {
   normalizeOpenAICompatibleSettings,
   normalizeLocalEngines,
   normalizePreferredEngineType,
+  normalizeLastChatgptModel,
+  normalizeChatgptModelsEnabled,
   normalizeCodexCliModelId,
   normalizeCodexCliSettings,
 };

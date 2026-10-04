@@ -87,6 +87,35 @@ def update_read_snapshot_cache(  # noqa: PLR0913
         )
         if normalized_path is not None:
             cache.pop(normalized_path, None)
+    if success and tool_name in {"write_file", "edit_file"}:
+        _record_written_snapshot(kernel, cache, metadata, execution_context=execution_context)
+
+
+def _record_written_snapshot(
+    kernel: Any,
+    cache: dict[str, dict[str, object]],
+    metadata: dict[str, object],
+    *,
+    execution_context: Any | None,
+) -> None:
+    """A successful write/edit leaves the bytes it wrote as the path's snapshot.
+
+    Dogfood TR-007: popping the snapshot made rewriting a file the model itself
+    just wrote fail CMP-TOOL-0018 "must be read in this conversation". The
+    written snapshot's digest still fails the stale-snapshot check if anything
+    else changes the file before the next write.
+    """
+    snapshot = read_snapshot_from_metadata(metadata.get("written_snapshot"))
+    if snapshot is None or snapshot.scope != READ_SNAPSHOT_SCOPE_FULL:
+        return
+    written_path = normalize_snapshot_lookup_path(
+        kernel, snapshot.path, execution_context=execution_context
+    )
+    if written_path is None or written_path != normalize_snapshot_lookup_path(
+        kernel, metadata.get("path"), execution_context=execution_context
+    ):
+        return
+    cache[written_path] = snapshot.to_metadata()
 
 
 def _successful_mutation_paths(
@@ -249,7 +278,7 @@ def split_visible_execution_arguments(
     return visible_tool_arguments, attribution_arguments
 
 
-def freeze_effective_execution_inputs(  # noqa: C901, PLR0912, PLR0913, PLR0915
+def freeze_effective_execution_inputs(  # noqa: PLR0913
     kernel: Any,
     call: ToolCallRequest,
     *,
@@ -301,7 +330,7 @@ def freeze_effective_execution_inputs(  # noqa: C901, PLR0912, PLR0913, PLR0915
     ):
         injected_arg_keys.append("expected_read_snapshot")
     normalized_session_id = str(session_id or "").strip()
-    from sidecar.ai.routing.mutation_change_set_lifecycle import (  # noqa: PLC0415
+    from sidecar.ai.routing.mutation_change_set_lifecycle import (
         inject_tool_attribution,
     )
 

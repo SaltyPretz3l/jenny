@@ -160,6 +160,24 @@ test('app-only preparation drains the app but cannot invoke data cleanup', async
   assert.equal(result.status, 'data_preserved');
 });
 
+test('cleanup preparation forwards the workspace removal scope to the cleanup', async () => {
+  const received = [];
+  const prepare = createRemovalPreparation({
+    cleanupOptions: { userDataPath: 'profile' },
+    cleanupData: async (options) => { received.push(options); return { ok: true }; },
+  });
+  await prepare({
+    choice: 'archive_and_remove', removeWorkspaceData: true, workspaceRemovalScope: 'archived', workspaceRoot: 'ws',
+  });
+  await prepare({
+    choice: 'permanent', removeWorkspaceData: true, workspaceRemovalScope: 'all', workspaceRoot: 'ws',
+  });
+  assert.deepEqual(
+    received.map((options) => [options.workspaceRoot, options.removeWorkspaceData, options.workspaceRemovalScope, options.includeUserData]),
+    [['ws', true, 'archived', false], ['ws', true, 'all', false]]
+  );
+});
+
 test('cleanup preparation fails closed when any selected target is incomplete', async () => {
   const prepare = createRemovalPreparation({
     cleanupData: async () => ({ ok: false, status: 'incomplete' }),
@@ -245,6 +263,7 @@ test('runtime registration tolerates older or fake Electron app objects without 
       getMainWindow: () => null,
       sendBridgeEvent: () => {},
       log: () => {},
+      homeDir: path.join(root, 'home'),
     });
     assert.equal(registration.service.appVersion, '0.0.0');
     assert.equal(handlers.size > 0, true);
@@ -254,10 +273,15 @@ test('runtime registration tolerates older or fake Electron app objects without 
   }
 });
 
-test('runtime removal deletes the remote control record through the reachable secure store', async () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-data-ipc-remote-cleanup-'));
-  let remoteDeletes = 0;
+test('runtime removal cleans the runtime folder under the home it is given', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-data-ipc-runtime-cleanup-'));
   try {
+    // The removal cleans the runtime folder under the home it is given. Without
+    // an injected home this test deleted the real ~/.companion logs and memory.
+    const homeDir = path.join(root, 'home');
+    const runtimeLog = path.join(homeDir, '.companion', 'sidecar.log');
+    fs.mkdirSync(path.dirname(runtimeLog), { recursive: true });
+    fs.writeFileSync(runtimeLog, 'log');
     const registration = registerDataLifecycleRuntime({ handle() {} }, {
       app: {
         getPath: (name) => path.join(root, name),
@@ -265,7 +289,6 @@ test('runtime removal deletes the remote control record through the reachable se
         isPackaged: false,
       },
       backendService: {
-        secureStore: { deleteRemoteControlRecord: async () => { remoteDeletes += 1; } },
         sessionStore: { listSessions: () => [], flushAsync: async () => {} },
         stop: async () => {},
       },
@@ -275,18 +298,13 @@ test('runtime removal deletes the remote control record through the reachable se
       getMainWindow: () => null,
       sendBridgeEvent: () => {},
       log: () => {},
+      homeDir,
     });
-    const result = await registration.service.prepareRemoval({
+    await registration.service.prepareRemoval({
       choice: 'permanent',
       confirmation: 'REMOVE JENNY',
     });
-    assert.equal(remoteDeletes, 1);
-    assert.deepEqual(result.cleanupResults.find((item) => item.kind === 'remote_control'), {
-      kind: 'remote_control',
-      name: 'remote control pairing record',
-      status: 'removed',
-      reason: '',
-    });
+    assert.equal(fs.existsSync(runtimeLog), false);
     registration.dispose();
   } finally {
     fs.rmSync(root, { recursive: true, force: true });

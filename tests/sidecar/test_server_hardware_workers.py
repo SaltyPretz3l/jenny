@@ -59,7 +59,7 @@ def test_hardware_profile_worker_keeps_unrelated_dispatch_responsive(
         message={"jsonrpc": "2.0", "id": 41, "method": HARDWARE_PROFILE_METHOD},
         transport=transport,  # type: ignore[arg-type]
         worker_threads=worker_threads,
-        request_runner=lambda m, i: server.process_message(m, i),
+        request_runner=server.process_message,
         outcome_sender=lambda outcome, **_kwargs: transport.send_control(outcome.response),
         logger=server.logger,
     )
@@ -137,7 +137,7 @@ def test_hardware_profile_notification_cap_does_not_send_null_id_response() -> N
 
 def test_hardware_profile_notification_fatal_error_does_not_send_null_id_response() -> None:
     transport = _FakeTransport()
-    worker = server_auxiliary_workers._make_auxiliary_worker(  # noqa: SLF001
+    worker = server_auxiliary_workers._make_auxiliary_worker(
         method_label="hardware.profile",
         message={"jsonrpc": "2.0", "method": HARDWARE_PROFILE_METHOD},
         transport=transport,
@@ -232,9 +232,9 @@ def test_direct_transport_hardware_worker_keeps_dispatch_responsive(
         direct_transport=direct_transport,
         hardware_worker_threads=worker_threads,
         compact_worker_threads=set(),
-        request_runner=lambda m, i: server.process_message(m, i),
+        request_runner=server.process_message,
         send_outcome=server_chat_workers.send_outcome,
-        write_outcome_direct=lambda outcome: server._write_outcome_direct(outcome),  # noqa: SLF001
+        write_outcome_direct=server._write_outcome_direct,
         logger=server.logger,
     )
     assert hardware_started.wait(1.0)

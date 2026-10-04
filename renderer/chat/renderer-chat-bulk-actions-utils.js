@@ -214,13 +214,16 @@
     return runCopy({ action: jt('chat.bulkActions.copyAsText', 'Copy as text'), builder: 'buildPlainText', formatLabel: jt('chat.bulkActions.plainTextFormat', 'plain text') });
     }
 
+    // Every file this controller saves is a transcript export: the app shows
+    // real paths, and the save boundary anonymises them on the way out (HB-012).
     function saveFile(payload, action) {
       if (!jennyShellDialog || typeof jennyShellDialog.saveFile !== 'function') {
         showToastMessage(jt('chat.bulkActions.saveFileUnavailable', 'Save-file bridge is not available.'), { tone: 'danger', title: action });
         return Promise.resolve(null);
       }
+      var exportPayload = Object.assign({}, payload, { anonymizePaths: true });
       return Promise.resolve()
-        .then(function () { return jennyShellDialog.saveFile(payload); })
+        .then(function () { return jennyShellDialog.saveFile(exportPayload); })
         .then(function (result) {
           if (!result || result.canceled) {
             appendClientLog('INFO', 'chat.bulk_export_canceled', { action });
@@ -360,7 +363,9 @@
     }
 
     function invalidateRendererCachesForSession(sessionId) {
-      purgeChatSessionCaches(state, sessionId, clearProjectionContextCacheForSession);
+      purgeChatSessionCaches(state, sessionId, clearProjectionContextCacheForSession, function (site, error) {
+        appendClientLog('DEBUG', 'chat.bulk_ignored_error', { site: site, error: String((error && error.message) || error || '') });
+      });
     }
 
     function setBulkTruncateCommitting(value) {

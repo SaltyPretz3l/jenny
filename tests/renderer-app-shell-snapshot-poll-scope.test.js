@@ -153,12 +153,10 @@ function buildAppShellPollerHarness() {
     ui: { appearance: { surfaceEffectId: 'none' } },
   };
   const callbacks = {
-    activateCometIfEnabled() {},
     activateSurfaceEffect() {},
     appendClientLog() {},
     applySurfaceEffect() {},
     async bootstrap() {},
-    disposeCometPersonality() {},
     ensureComposerFeatureStateLoaded: async () => {},
     hydrateCachedLazyShellState() {},
     initSetupController: async () => {},

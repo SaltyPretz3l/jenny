@@ -13,7 +13,6 @@ from sidecar.runtime.ipc_payloads import (
     _truncate_text_to_bytes,
 )
 
-
 # ---------------------------------------------------------------------------
 # _clamp_max_inline_payload_bytes
 # ---------------------------------------------------------------------------

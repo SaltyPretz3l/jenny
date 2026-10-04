@@ -17,7 +17,7 @@
   scrollbar-width: none;
   background: var(--bg-surface-2);
   border-bottom: 1px solid var(--line);
-  font-size: 11px;
+  font-size: var(--font-size-footnote);
   white-space: nowrap;
 }
 
@@ -30,7 +30,7 @@
   padding: 2px 4px;
   border-radius: 3px;
   background: transparent;
-  font-size: 11px;
+  font-size: var(--font-size-footnote);
   cursor: pointer;
 }
 
@@ -62,7 +62,7 @@
   padding: 0 12px;
   background: var(--bg-surface-2);
   border-top: 1px solid var(--line);
-  font-size: 11px;
+  font-size: var(--font-size-footnote);
   color: var(--text-muted);
   white-space: nowrap;
   overflow: hidden;
@@ -97,7 +97,7 @@
   border-radius: 3px;
   background: transparent;
   color: var(--text-muted);
-  font-size: 11px;
+  font-size: var(--font-size-footnote);
   cursor: pointer;
 }
 
@@ -120,26 +120,6 @@
 .ide-statusbar-panel {
   display: inline-flex;
   align-items: center;
-}
-
-.ide-statusbar-inline-suggest {
-  display: inline-flex;
-  align-items: center;
-}
-
-/* The inline-suggest toggle + its menu caret read as one control. */
-.ide-statusbar-inline-suggest-group {
-  display: inline-flex;
-  align-items: center;
-  gap: 0;
-}
-
-/* Caret button beside the toggle: opens the completion-model menu. Reuses the
-   statusbar-action look with tighter padding so it hugs the toggle. */
-.ide-statusbar-inline-suggest-caret {
-  display: inline-flex;
-  align-items: center;
-  padding: 1px 2px;
 }
 
 .ide-statusbar-spacer {
@@ -291,7 +271,7 @@
   border-radius: 5px;
   background: var(--bg-base);
   color: var(--text-primary);
-  font-size: 13px;
+  font-size: var(--font-size-body);
 }
 
 .ide-picker-results {
@@ -306,7 +286,7 @@
   gap: 8px;
   min-width: 0;
   padding: 4px 12px;
-  font-size: 12px;
+  font-size: var(--font-size-body);
   cursor: pointer;
   white-space: nowrap;
 }
@@ -330,13 +310,13 @@
   overflow: hidden;
   text-overflow: ellipsis;
   color: var(--text-muted);
-  font-size: 11px;
+  font-size: var(--font-size-caption);
 }
 
 .ide-picker-status {
   padding: 6px 12px;
   color: var(--text-muted);
-  font-size: 11px;
+  font-size: var(--font-size-caption);
   font-style: italic;
 }
 
@@ -349,7 +329,7 @@
 .ide-quick-open-path mark {
   background: transparent;
   color: var(--accent);
-  font-weight: 600;
+  font-weight: 500;
 }
 
 /* "@" symbol mode rows (Ctrl+P): the leading kind chip reuses the Go-to-Symbol
@@ -358,7 +338,7 @@
 .ide-quick-open-symbol-row .ide-quick-open-name mark {
   background: transparent;
   color: var(--accent);
-  font-weight: 600;
+  font-weight: 500;
 }
 
 /* == Symbol breadcrumb segments (caret symbol path, appended after the
@@ -392,15 +372,13 @@
   flex-shrink: 0;
   min-width: 56px;
   color: var(--text-muted);
-  font-size: 10px;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
+  font-size: var(--font-size-caption);
 }
 
 .ide-symbol-open-name mark {
   background: transparent;
   color: var(--accent);
-  font-weight: 600;
+  font-weight: 500;
 }
 
 /* == Image preview pane (W7) - overlays the editor like .ide-diff-pane == */
@@ -424,7 +402,7 @@
   min-height: 26px;
   padding: 0 10px;
   border-bottom: 1px solid var(--line);
-  font-size: 11px;
+  font-size: var(--font-size-footnote);
 }
 
 .ide-image-zoom-button {
@@ -433,7 +411,7 @@
   border-radius: 3px;
   background: transparent;
   color: var(--text-muted);
-  font-size: 11px;
+  font-size: var(--font-size-footnote);
   cursor: pointer;
 }
 
@@ -501,14 +479,12 @@
   min-height: 30px;
   padding: 0 10px;
   border-bottom: 1px solid var(--line);
-  font-size: 11px;
+  font-size: var(--font-size-footnote);
 }
 
 .ide-terminal-title {
   color: var(--text-primary);
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
+  font-weight: 500;
 }
 
 .ide-terminal-status {
@@ -543,7 +519,7 @@
   border-radius: 3px;
   background: transparent;
   color: var(--text-muted);
-  font-size: 11px;
+  font-size: var(--font-size-footnote);
   cursor: pointer;
 }
 
@@ -576,7 +552,7 @@
   background: var(--bg-base);
   color: var(--text-secondary);
   font-family: var(--font-family-mono);
-  font-size: 11.5px;
+  font-size: var(--font-size-code);
   line-height: 1.45;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
@@ -607,7 +583,7 @@
   background: var(--bg-base);
   color: var(--text-primary);
   font-family: var(--font-family-mono);
-  font-size: 12px;
+  font-size: var(--font-size-code);
 }
 
 .ide-terminal-field .inv-text-field-control:focus-visible {

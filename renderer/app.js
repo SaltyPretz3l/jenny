@@ -12,7 +12,15 @@ var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18
     if (typeof cleanup !== 'function') {
       return cleanup;
     }
-    rendererCleanupFns.push(cleanup);
+    if (rendererDisposed) {
+      try {
+        Promise.resolve(cleanup()).catch(() => {});
+      } catch (_error) {
+        // Late registrations follow the same best-effort teardown contract.
+      }
+    } else {
+      rendererCleanupFns.push(cleanup);
+    }
     return cleanup;
   }
 
@@ -35,10 +43,11 @@ var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18
   }
 
   window.__disposeRenderer = disposeRenderer;
-  const _fb = window.rendererFallbackRegistry?.buildFallbacks(window) || {};
-  const _workspaceFallbacks = window.rendererFallbackWorkspaceRegistry?.buildFallbacks(window) || {};
-  const workspaceStateUtils = window.rendererWorkspaceStateUtils || _workspaceFallbacks.workspaceStateUtils || {};
-  const workspaceChromeUtils = window.rendererWorkspaceChromeUtils || _workspaceFallbacks.workspaceChromeUtils || {};
+  // Real modules only (renderer-bootstrap-utils resolveShellModules): a module
+  // missing from index.html throws with its window global name instead of booting
+  // a silently degraded shell.
+  const shellModules = window.rendererBootstrapUtils.resolveShellModules(window);
+  const { workspaceStateUtils, workspaceChromeUtils } = shellModules;
   const {
     normalizeChatMessage, normalizeChatMessages, buildAssistantMetaLabel, mergeReasoningEntries,
     getLatestAssistantMessageId, MESSAGE_STATUS, MAX_INTERACTIVE_QUESTIONS, MAX_INTERACTIVE_ROUNDS,
@@ -52,7 +61,7 @@ var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18
     deriveFollowLatestFromScroll, shouldAutoScrollThread, formatTokenUsageDisplay,
     normalizeReasoningEffort, resolveComposerModelSelectWidth, appearanceUtils,
     getDefaultAppearancePreferences, normalizeAppearancePreferences, getPalettePresets,
-    getTypographyPresets, getSurfaceEffectPresets, getFontScalePresets: rawGetFontScalePresets, applyAppearanceToDocument, loadStoredAppearancePreferences,
+    getTypographyPresets, getSurfaceEffectPresets, getFontScalePresets, applyAppearanceToDocument, loadStoredAppearancePreferences,
     saveStoredAppearancePreferences,
     toolCallUtils, transcriptUtils, composerHoloUtils, sessionUtils,
     streamHandlerUtils, sendUtils, interactivePanelUtils, personalityEditorUtils, toastControllerUtils,
@@ -62,13 +71,8 @@ var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18
     beginActivity, clearActivity, failActivity, getActivitySnapshot, getMostRecentActivity,
     resolveActivity, setActivityChangeListener, applyActivityAttributes, isActivityBusy,
     createToastStore, buildLogViewModel,
-  } = _fb;
-  const getFontScalePresets = typeof rawGetFontScalePresets === 'function'
-    ? rawGetFontScalePresets
-    : (typeof appearanceUtils?.getFontScalePresets === 'function' ? appearanceUtils.getFontScalePresets.bind(appearanceUtils) : noopArr);
+  } = shellModules;
   const chatZoomUtils = window.chatZoomUtils || {};
-  const cometOverlayPresenceUtils = window.rendererCometOverlayPresenceUtils || {};
-  const cometPresenceArbiterUtils = window.rendererCometPresenceArbiter || {};
   const {
     DEFAULT_CHAT_ZOOM_PERCENT = 100,
     getChatZoomOptions = noopArr,
@@ -101,19 +105,17 @@ var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18
     toastViewport, sessionActionButton, logLevelFilter, logList,
     logResultsLabel, logSearchInput, logSourceFilter, copyLogsReportButton, logAutoScrollToggle,
     observabilityRefreshButton, toolLatencyTable, slowOperationsList, recentTracesList,
-    modelBadge, composerModelSelect, composerEffortSelect, composerSettingsButton,
-    jumpToTopButton, jumpToLastPromptButton, jumpToBottomButton, composerSettingsPopover, composerCommandPopover,
+    modelBadge, composerModelSelect, composerEffortSelect,
+    jumpToTopButton, jumpToLastPromptButton, jumpToBottomButton, composerAttachMenu, composerCommandPopover,
     composerCommandPopoverList,
     commandPaletteOverlay, commandPaletteInput, commandPaletteList, titlebarPalettePill,
-    attachFilesButton, captureScreenButton, openComposerSettingsViewButton, composerChatZoomSelect, composerChatZoomStatus,
-    settingsAdvancedToggle, settingsAdvancedItems,
+    attachFilesButton, captureScreenButton,
     settingsModelCard, composerModelSelectShell,
-    composerEffortSelectShell, appearanceBadge, appearanceThemeBundleSelect, appearancePaletteSelect, appearanceTypographySelect,
-    appearanceSurfaceEffectSelect, appearanceHoloList, appearanceResetButton, appearanceStatus,
+    composerEffortSelectShell, appearanceHoloList, appearanceResetButton,
     modelStatus,
-    offlineBadge, offlineSummary, offlineStatus,
-    contextBadge, contextStatus, contextHistoryScopeSelect, contextSourcesList, contextRuntimeList,
-    toolsWorkspacePath, toolsWorkspaceStatus, toolsWorkspaceChooseButton, toolsSummary,
+    offlineSummary, offlineStatus,
+    contextStatus, contextSourcesList, contextRuntimeList,
+    toolsWorkspacePath, toolsWorkspaceStatus, toolsWorkspaceChooseButton,
     contextPreview,
     skillsSettingsNavItem, skillsSettingsSection,
     artifactsSessionTitle,
@@ -124,12 +126,12 @@ var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18
     artifactsSaveButton, artifactsRevertButton, artifactsRevealButton, artifactsOpenExternalButton,
     artifactsJumpButton, artifactsDeleteButton, artifactsMetaPane, artifactsProvenanceTimeline,
     harnessBadge, harnessSummary, harnessStatus, harnessRuntimeList, harnessToolList, harnessMemoryList,
-    harnessSkillsList, harnessShellList, accountBadge, accountSummary, backendSummary,
+    harnessSkillsList, harnessShellList, accountSummary, backendSummary,
     localProfileSettingsMount, titlebar, sidebar, composer, composerHolo,
-    composerHoloContext, chatSpriteHolo, chatSpriteHoloContext, composerWrap,
+    composerHoloContext, composerWrap,
     workbenchHealthPillSlot,
     chatOriginChip, chatOriginLabel,
-    artifactSplitViewToggle, artifactReviewResizer, artifactReviewPanel, artifactReviewStatus,
+    artifactSplitViewToggle, artifactReviewResizer, artifactReviewPanel,
     artifactReviewCollapseButton, artifactReviewDetailEmpty,
     artifactReviewDetailPanel, artifactReviewDetailKicker, artifactReviewDetailTitle,
     artifactReviewDetailPath, artifactReviewDetailStatus, artifactReviewDetailMeta,
@@ -137,7 +139,7 @@ var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18
     artifactReviewEditorHost, artifactReviewEditorFallback, artifactReviewSaveButton,
     artifactReviewRevertButton, artifactReviewRevealButton, artifactReviewOpenExternalButton,
     artifactReviewJumpButton, artifactReviewDeleteButton, artifactReviewProvenanceTimeline,
-    chatContextPanel, contextArtifactList, contextPulse, contextSessionLogs, contextPanelToggle, contextArtifactExpand,
+    chatContextPanel, contextArtifactList, contextSessionLogs, contextPanelToggle, contextArtifactExpand,
   } = rendererBootstrap.dom;
   const {
     APPEARANCE_STORAGE_KEY, SIDEBAR_STORAGE_KEY,
@@ -177,7 +179,6 @@ var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18
   const {
     saveReasoningPhaseExpansionPreferences,
     setReasoningPhaseExpandedPreference,
-    setReasoningPhaseExpandedPreferences,
     syncPersistedReasoningPhaseExpansionState,
   } = reasoningPhaseExpansionController;
 
@@ -203,49 +204,34 @@ var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18
   // pane this is an identity change -- same object shape, same lazy writes.
   const paneSharedStore = window.rendererPaneRuntime.createSharedSessionStore();
   const uiRuntime = window.rendererPaneRuntime.createPaneRuntime({ paneId: 0, shared: paneSharedStore });
-  const spriteRuntime = { frameHandle: 0, targetMessageId: '', visible: false, streaming: false, currentY: 0, targetY: 0 };
+  const spriteRuntime = { frameHandle: 0, targetMessageId: '', targetY: 0 };
+  // Split view W1-4c: the ONE writer of state.panes; the second pane's lifecycle
+  // (paneComposition) is built after the controller composition below.
+  let paneComposition = null;
+  const paneLayoutController = window.rendererPaneLayoutController?.createPaneLayoutController?.({
+    state, getWorkspaceStateController: () => workspaceStateController,
+    onLayoutChanged: (prev, next, meta) => paneComposition?.handleLayoutChanged?.(prev, next, meta),
+  }) || null;
   const composerHoloRuntime = {
     active: false, mode: 'idle', angle: 0, frameHandle: 0, lastFrame: 0,
     pixelRatio: 1, cssWidth: 0, cssHeight: 0, resizeObserver: null,
     supported: Boolean(composerHoloContext && typeof composerHoloContext.createConicGradient === 'function'),
   };
-  const spriteHoloRuntime = {
-    active: false, mode: 'idle', angle: 0, frameHandle: 0, lastFrame: 0,
-    pixelRatio: 1, cssWidth: 0, cssHeight: 0, resizeObserver: null,
-    supported: Boolean(chatSpriteHoloContext && typeof chatSpriteHoloContext.createConicGradient === 'function'),
-  };
   const sidebarRuntime = { resizePointerId: null, startX: 0, startWidth: SIDEBAR_DEFAULT_WIDTH };
-  const cometRuntime = window.rendererAppCometRuntime.createCometRuntime({
-    state,
-    windowRef: window,
-    reducedMotionQuery,
-    dom: { workspace, chatSpriteLayer, chatAssistantSprite, chatInput, chatThreadScroll },
-    modules: {
-      cometModule: window.cometModule,
-      overlayPresenceUtils: cometOverlayPresenceUtils,
-      presenceArbiterUtils: cometPresenceArbiterUtils,
-    },
-    callbacks: {
-      appendClientLog: (...a) => appendClientLog(...a),
-      inferSentimentFromText:
-        window.cometSentimentUtils?.inferSentimentFromText
-        || (() => ({ sentiment: 'neutral', expression: 'idle' })),
-      refreshFeatureState: (...a) => refreshFeatureState(...a),
-    },
-  });
-  const {
-    activateCometIfEnabled: _activateCometIfEnabled,
-    ensureComposerFeatureStateLoaded: _ensureComposerFeatureStateLoaded,
-    handleCometOverlayToggleChange,
-    handlePresenceStreamEvent,
-    setFaceReaction,
-    submitCometIndicatorState,
-    submitCometUserAction,
-    disposeCometPersonality,
-  } = cometRuntime;
+  // First feature-state pull at boot; a failure is logged here and never
+  // rejects, so the shell bootstrap can await it alongside other hydration.
+  let composerFeatureStateLoaded = false;
+  async function _ensureComposerFeatureStateLoaded() {
+    if (composerFeatureStateLoaded) return;
+    try {
+      await refreshFeatureState();
+      composerFeatureStateLoaded = true;
+    } catch (error) {
+      appendClientLog('WARN', 'features.bootstrap_failed', { message: error?.message || String(error) });
+    }
+  }
   // Living Atlas seam (WORKSPACE_FILE_MAP atlas plan, W3): ONE shared
-  // activity bus ingests the same stream payloads as Comet presence above
-  // (handleWorkspaceActivityStreamEvent mirrors handlePresenceStreamEvent).
+  // activity bus ingests the stream payloads the chat stream handler fans out.
   // Stashed on state.workspaceActivityBus so the IDE controller chain — which
   // already threads the shared `state` object to every layer — can hand it
   // to the map controller without adding a new explicit param at each layer.
@@ -265,6 +251,17 @@ var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18
     workspaceActivityBus?.ingest(rawPayload);
   }
   const thinkingController = new ThinkingPanelController();
+  // Transcript view (answers | thinking | everything) per session; built here rather than beside the
+  // reasoning controller because it needs the thinking controller itself.
+  const transcriptViewController = appLifecyclePreferenceUtils.createTranscriptViewController({
+    state, storage: window.localStorage, thinkingController, reasoningExpansionController: reasoningPhaseExpansionController,
+    getPaneThinkingControllers: () => [window.rendererAppPaneComposition?.getPaneComposition?.()?.getPane?.(1)?.thinkingController],
+    renderAll: (...a) => renderAll(...a), appendClientLog: (...a) => appendClientLog(...a),
+  });
+  window.rendererTranscriptViewController = transcriptViewController;
+  registerRendererCleanup(() => {
+    if (window.rendererTranscriptViewController === transcriptViewController) window.rendererTranscriptViewController = null;
+  });
   let renderLiveThinkingChip = noop;
   let updateAssistantSpritePositionRef = noop;
   let thinkingIndicatorRenderFrame = 0;
@@ -283,9 +280,6 @@ var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18
     ? thinkingIndicatorUtils.createThinkingIndicator({
       onStateChange: () => {
         queueLiveThinkingChipRender();
-        /* forward thinking indicator state to comet personality (no-op if comet not active) */
-        const ds = thinkingIndicator?.getDisplayState?.();
-        submitCometIndicatorState(ds);
       },
     })
     : null;
@@ -332,27 +326,10 @@ var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18
     initializeComposerHolo = noop, setComposerHoloState = noop,
     disposeComposerHolo = noop,
   } = composerHoloController || {};
-  /* spriteHoloController — same controller, parameterized for sprite element */
-  const spriteHoloController = (chatAssistantSprite && composerHoloUtils.createComposerHoloController)
-    ? composerHoloUtils.createComposerHoloController({
-        composer: chatAssistantSprite,
-        composerHolo: chatSpriteHolo,
-        composerHoloContext: chatSpriteHoloContext,
-        composerHoloRuntime: spriteHoloRuntime,
-        reducedMotionQuery,
-        cssVarPrefix: 'sprite-holo',
-      })
-    : null;
-  const {
-    initializeComposerHolo: initializeSpriteHolo = noop,
-    setComposerHoloState: setSpriteHoloState = noop,
-    disposeComposerHolo: disposeSpriteHolo = noop,
-  } = spriteHoloController || {};
   let renderSettings = noop;
   let renderComposerPopover = noop;
   let renderCommandPopover = noop;
   let syncComposerInputHeight = noop;
-  let syncComposerModelSelectWidth = noop;
   let flushPendingStreamCommitsForSession = () => ({ flushedCount: 0, catchupRequired: false });
   let rehydrateSessionFromPersistedTurnEvents = () => null;
   let applySurfaceEffect = noop;
@@ -361,7 +338,7 @@ var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18
   let syncBackendActivityFromStatus = noop;
   const lifecycleComposition = await window.rendererAppLifecycleComposition.createLifecycleComposition({
     window, document, globalThis, noop, noopAsync, noopNull, noopFalse, noopObj, noopArr, noopStr,
-    state, sidebarRuntime, surfaceDom, lazyDom, lifecycleUtils, appLifecyclePreferenceUtils,
+    state, sidebarRuntime, surfaceDom, lazyDom, lifecycleUtils, appLifecyclePreferenceUtils, paneLayoutController,
     fileDiffBindings: window.rendererFileDiffBindings || {}, codeHighlight: window.rendererCodeHighlight || {},
     monacoEditorUtils: window.rendererMonacoEditorUtils || {},
     personalityEditorUtils, memoryManagerUtils, viewportUtils, transcriptUtils, toolCallUtils, interactivePanelUtils,
@@ -380,9 +357,9 @@ var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18
     getChatWayfinderController: () => chatWayfinderController,
     renderComposerJumpControls: (...a) => renderComposerJumpControls(...a),
     registerRendererCleanup,
+    isDisposed: () => rendererDisposed,
     renderSettings: (...a) => renderSettings(...a), renderComposerPopover: (...a) => renderComposerPopover(...a),
     renderCommandPopover: (...a) => renderCommandPopover(...a), syncComposerInputHeight,
-    syncComposerModelSelectWidth,
     thinkingController, reducedMotionQuery, toastStore, toastActionHandlers, renderAll: (...a) => renderAll(...a),
     renderLayout: (...a) => renderLayout(...a), renderHeader: (...a) => renderHeader(...a),
     renderLogs: (...a) => renderLogs(...a),
@@ -391,7 +368,7 @@ var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18
     activateIdeSafe: (...a) => activateIdeSafe(...a), layoutIdeEditorSafe: (...a) => layoutIdeEditorSafe(...a),
     renderHomePanelSafe: (...a) => renderHomePanelSafe(...a),
     renderSessions: (...a) => renderSessions(...a), getCurrentVisibleMessages: (...a) => getCurrentVisibleMessages(...a),
-    saveReasoningPhaseExpansionPreferences,
+    saveReasoningPhaseExpansionPreferences, transcriptViewController,
     getCurrentSessionMessages: (...a) => getCurrentSessionMessages(...a), getSessionMessages: (...a) => getSessionMessages(...a),
     setSessionMessages: (...a) => setSessionMessages(...a), setSessionTurnEventState: (...a) => setSessionTurnEventState(...a),
     scrollThreadToTop: (...a) => scrollThreadToTop(...a), scrollThreadToBottom: (...a) => scrollThreadToBottom(...a),
@@ -404,12 +381,12 @@ var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18
     applySurfaceEffect: (...a) => applySurfaceEffect(...a), flushPendingStreamCommitsForSession: (...a) => flushPendingStreamCommitsForSession(...a),
     clearProjectionContextCacheForSession: (...a) => clearProjectionContextCacheForSession(...a),
     rehydrateSessionFromPersistedTurnEvents: (...a) => rehydrateSessionFromPersistedTurnEvents(...a),
-    initializeComposerHolo, initializeSpriteHolo,
+    initializeComposerHolo,
     _applySidebarLayout, hideAssistantSprite: (...a) => hideAssistantSprite(...a), updateAssistantSpritePosition: (...a) => updateAssistantSpritePosition(...a),
     setSidebarCollapsed: (...a) => setSidebarCollapsed(...a),
     invalidateSessionArtifacts: (...a) => invalidateSessionArtifacts(...a),
     pruneSessionArtifacts: (...a) => pruneSessionArtifacts(...a), resetArtifactsState: (...a) => resetArtifactsState(...a),
-    handleCometOverlayToggleChange, getDefaultAppearancePreferences, normalizeAppearancePreferences, applyAppearanceToDocument,
+    getDefaultAppearancePreferences, normalizeAppearancePreferences, applyAppearanceToDocument,
     normalizeReasoningEffort, loadStoredAppearancePreferences, normalizeChatZoomPercent, applyChatZoomToDocument,
     saveStoredAppearancePreferences, stepChatZoomPercent, buildMessageActionModel, buildPersonalityStatusTextModel,
     resolvePreferredPersonalityTab, composerOfflineLabel,
@@ -430,6 +407,7 @@ var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18
     applyWorkspaceSnapshot: (...a) => applyWorkspaceSnapshot(...a), openSettingsSection: (...a) => openSettingsSection(...a),
     getCurrentMessageById: (...a) => getCurrentMessageById(...a), setActiveView: (...a) => setActiveView(...a),
   });
+  if (rendererDisposed) return;
   let chatWayfinderController = lifecycleComposition.chatWayfinderController || null;
   let clearProjectionContextCacheForSession = lifecycleComposition.clearProjectionContextCacheForSession || noopFalse;
   let rekeyProjectionContextCache = lifecycleComposition.rekeyProjectionContextCache || noopStr;
@@ -456,7 +434,7 @@ var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18
     refreshProactiveStateSafe,
     handleUseProactiveSuggestionMessageSafe, refreshSkillsStateSafe,
     renderSkillsManagerSafe, updateSkillsSettingsSafe, openSkillsScopeFolderSafe, bindSkillsShellEventsSafe,
-    refreshTipsStateSafe, bindTipsShellEventsSafe, refreshOfflineStateSafe,
+    refreshOfflineStateSafe,
     renderOfflineManagerSafe, bindOfflineShellEventsSafe, handleOfflineModeChangeSafe,
     refreshApprovedMemoriesSafe, refreshPendingMemoriesSafe, refreshMemoryStatusSafe,
     renderApprovedMemoryManagerSafe, maybeSuggestMemoryCaptureSafe,
@@ -475,8 +453,7 @@ var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18
     showSessionActionError, showComposerActionError, reportErrorWhenActive, errorCenterStore, shellStatusController, getRuntimePreferenceSnapshot,
     renderComposerStatusNotice, handleActivityChange, runRuntimePreferenceActivity, persistRuntimePreferences,
     syncBackendNotice, retryBackendStart, _handleLifecycleProgress, _handleLifecycleBackendStatus, beginModelSwitch, updateModelSwitch,
-    failModelSwitch, publishLifecycleStatus, setTurnStatusPill, clearTurnStatusPill, clearTurnStatusPillSources,
-    renderTurnStatusPill, renderMessageAttachments, buildInteractiveRecapViewModel, renderInteractiveRoundRecap,
+    failModelSwitch, renderMessageAttachments, buildInteractiveRecapViewModel, renderInteractiveRoundRecap,
     renderMessageHoverRow, renderAgentStatusWidget, renderAssistantFailureNotice, renderContextCompactedNotice,
     renderThinkingWidget, renderToolCallBlock, setToolCallExpansion, renderProactiveSuggestionBlock, renderSlashCommandOutput,
     interactivePanelController, queueInteractiveComposerFocus, flushInteractiveComposerFocus, renderComposerInteractivePanel,
@@ -538,16 +515,16 @@ var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18
   } = openLoopActionHandlers;
   const controllerComposition = window.rendererAppControllerComposition.createControllerComposition({
     window, document, globalThis, noop, noopAsync, noopNull, noopFalse, noopObj, noopArr, noopStr,
-    state, staticModel, surfaceDom, composerLayoutRuntime, reducedMotionQuery, chatInput,
+    state, staticModel, surfaceDom, composerLayoutRuntime, reducedMotionQuery, chatInput, paneLayoutController, getPaneComposition: () => paneComposition,
     ACTIVITY_SCOPE, TOAST_SOURCE, DEFAULT_CHAT_ZOOM_PERCENT, MESSAGE_STATUS,
     MAX_INTERACTIVE_QUESTIONS, MAX_INTERACTIVE_ROUNDS, INTERACTIVE_GUARDRAIL_PROMPT,
     INTERACTIVE_SEQUENCE_IDLE, INTERACTIVE_SEQUENCE_STRUCTURED_ACTIVE, INTERACTIVE_SEQUENCE_FALLBACK_REQUESTED,
     settingsShellController, chatShellController, chatWayfinderController,
     renderSettings, renderComposerPopover, renderCommandPopover,
-    syncComposerInputHeight, syncComposerModelSelectWidth, flushPendingStreamCommitsForSession,
+    syncComposerInputHeight, flushPendingStreamCommitsForSession,
     rehydrateSessionFromPersistedTurnEvents, clearProjectionContextCacheForSession,
     rekeyProjectionContextCache, updateAssistantSpritePositionRef, renderLiveThinkingChip,
-    settingsRendererUtils, appearanceUtils, renderPipelineUtils, sendUtils, streamHandlerUtils, _fb,
+    settingsRendererUtils, appearanceUtils, renderPipelineUtils, sendUtils, streamHandlerUtils, shellModules,
     lifecycleController, workspaceStateController, workspaceChromeController, contextPanelController,
     pinToTopController, chatScrollCoordinator, thinkingController, thinkingIndicator, toastActionHandlers, multiStreamController,
     onSurfaceLifecycleSync, publishFirstTokenImpulse, publishToolStartImpulse, publishCompleteImpulse, publishCancelImpulse,
@@ -560,7 +537,6 @@ var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18
     heroAvatar, heroTitle, heroSubtitle, heroRuntimeHint, heroStack,
     logSearchInput, logLevelFilter, logSourceFilter, logResultsLabel, logList,
     stopStreamButton, sendButton, composer, composerModelSelect, composerEffortSelect,
-    composerSettingsButton,
     jumpToTopButton, jumpToBottomButton, jumpToLastPromptButton, composerModelSelectShell, composerEffortSelectShell,
     workbenchHealthPillSlot,
     chatSurfaceEffects, chatSurfaceEffectLeft, chatThreadStage, composerWrap, chatOriginChip, chatOriginLabel,
@@ -577,13 +553,12 @@ var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18
     loadMemoryContextFileSafe, setMemoryContextDraftSafe, getMemoryContextActiveFileSafe,
     saveMemoryContextFileSafe, resetMemoryContextFileSafe, hasMemoryContextUnsavedChangesSafe,
     showToastMessage, showShellErrorToast, toErrorMessage, reportErrorWhenActive, errorCenterStore, appendClientLog: (...a) => appendClientLog(...a), showSessionActionError,
-    getCurrentRuntimePreferences, getRuntimePreferenceSnapshot, runRuntimePreferenceActivity,
-    handleWorkspaceRootChoose, clearWorkspaceRoot, handleRunSetupAgain, showSetupHelpSafe, showFactoryResetSafe,
+    getCurrentRuntimePreferences, getRuntimePreferencesFromSession, getRuntimePreferenceSnapshot, runRuntimePreferenceActivity,
+    handleWorkspaceRootChoose, clearWorkspaceRoot, getProjectSwitcher, handleRunSetupAgain, showSetupHelpSafe, showFactoryResetSafe,
     refreshProactiveStateSafe,
     refreshSkillsStateSafe, bindSkillsShellEventsSafe, updateSkillsSettingsSafe, openSkillsScopeFolderSafe,
-    refreshTipsStateSafe, bindTipsShellEventsSafe,
     refreshOfflineStateSafe, bindOfflineShellEventsSafe, handleOfflineModeChangeSafe,
-    refreshFeatureState, handleCometOverlayToggleChange, refreshPhasePercentiles,
+    refreshFeatureState, refreshPhasePercentiles,
     resetPhasePercentiles,
     refreshApprovedMemoriesSafe, refreshPendingMemoriesSafe, refreshMemoryStatusSafe, refreshPersonalityWorkspaceSafe,
     buildModelOptionMarkup, buildSelectOptionMarkup,
@@ -600,13 +575,13 @@ var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18
     hasPendingToolApprovalForSession, getActiveStreamSessionId, isInteractiveRoundRecapExpanded,
     pruneInteractiveRoundRecapExpansionState,
     setFollowLatest, scheduleMessageViewportSync, getScrollMetrics, scrollMessageIntoView, getPendingQuestionBatch,
-    hasStalePendingQuestionBatch, renderComposerInteractivePanel, setComposerHoloState, setSpriteHoloState,
+    hasStalePendingQuestionBatch, renderComposerInteractivePanel, setComposerHoloState,
     renderSessions, renderAttachmentTray, renderComposerStatusNotice, syncBackendNotice, renderIdeSafe, activateIdeSafe, layoutIdeEditorSafe, reconcileChatDockHostSafe, openIdeChangeDiffSafe, openIdeFileAtLineSafe,
     renderArtifactReviewPanelSafe, isArtifactReviewVisible, getArtifactsForSession, selectArtifact,
     shouldRenderHomePanelSafe, renderHomePanelSafe, renderToastViewport,
-    setReasoningPhaseExpandedPreference, setReasoningPhaseExpandedPreferences,
+    setReasoningPhaseExpandedPreference,
     syncPersistedReasoningPhaseExpansionState,
-    publishLifecycleStatus, renderTurnStatusPill, getChatSendLifecycle, getChatTimelineRowModelEnabled,
+    getChatSendLifecycle, getChatTimelineRowModelEnabled,
     recordChatTimelineRolloutSignal, rollbackChatTimelineRowModel,
     refreshActiveSurfaceEffect, registerRendererCleanup, formatLogTimestamp,
     areInteractiveQuestionsAnswered, getInteractiveNextUnansweredIndex, getInteractiveQuestionOptions,
@@ -617,12 +592,11 @@ var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18
     upsertSessionSummary, removeSessionState, rekeySessionState, buildAttachmentBudget,
     clearComposerStatusNotice, showComposerActionError,
     syncWorkspaceFromStore, applyWorkspaceSnapshot, activateWorkspaceSession, openArtifactTarget,
-    handleCreateSessionWithWorkspace, submitCometUserAction,
+    handleCreateSessionWithWorkspace,
     setChatSendLifecycle, clearChatSendLifecycle, moveChatSendLifecycle, buildInteractiveAnswerPrompt,
     buildInteractiveSelectedAnswers, ensureInteractiveDraft, getInteractiveDraft, persistRuntimePreferences,
     queueInteractiveComposerFocus, getActiveSendPreflight, setComposerStatusNotice,
-    setTurnStatusPill, clearTurnStatusPill, clearTurnStatusPillSources, setFaceReaction,
-    handlePresenceStreamEvent, handleWorkspaceActivityStreamEvent, buildInteractiveQuestionBatchVisibleText, toastStore, maybeSuggestMemoryCaptureSafe,
+    handleWorkspaceActivityStreamEvent, buildInteractiveQuestionBatchVisibleText, toastStore, maybeSuggestMemoryCaptureSafe,
     mergeMessageReasoning, setActivityChangeListener, handleActivityChange,
     pushIncomingLog, syncBackendActivityFromStatus, getRendererElapsedMs,
     resetArtifactsState, resetMemorySuggestionStateSafe, openSetupTileSafe, syncThreadScrollState, renderWorkspaceChrome,
@@ -641,7 +615,6 @@ var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18
     renderComposerPopover,
     renderCommandPopover,
     syncComposerInputHeight,
-    syncComposerModelSelectWidth,
     flushPendingStreamCommitsForSession,
     rehydrateSessionFromPersistedTurnEvents,
     clearProjectionContextCacheForSession,
@@ -661,7 +634,6 @@ var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18
     syncChatState = noop,
     escapeSelectorValue = (v) => String(v || ''),
     hideAssistantSprite = noop,
-    applyAssistantSprite = noop,
     updateAssistantSpritePosition = noop,
     renderLayout = noop,
     renderHeader = noop,
@@ -731,6 +703,80 @@ var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18
   applySurfaceEffect = controllerApplySurfaceEffect;
   handleCreateSessionWithWorkspace = controllerHandleCreateSessionWithWorkspace;
   syncBackendActivityFromStatus = controllerSyncBackendActivityFromStatus;
+  // Split view W1-4c: pane 1 is built by the SAME builders as pane 0 (the three
+  // compositions export them) and routed by the render frame through
+  // renderSessionPane; with one pane every entry point answers "not mine".
+  let paneProjectSwitcher = null;
+  const getPaneProjectName = (projectId) => {
+    if (!paneProjectSwitcher) {
+      Promise.resolve(getProjectSwitcher?.()).then((switcher) => {
+        if (!switcher || paneProjectSwitcher) return undefined;
+        paneProjectSwitcher = switcher;
+        // The switcher lists projects lazily (its menu refreshes on open); read
+        // the list once so a kicker can name a project the menu never showed.
+        return Promise.resolve(switcher.refresh?.()).then(() => paneComposition?.renderKickers?.());
+      }).catch(() => {});
+    }
+    const project = paneProjectSwitcher?.projectById?.(projectId);
+    if (project?.name) return project.name;
+    return projectId === 'project_general' ? jt('projects.switcher.generalName', 'General') : '';
+  };
+  paneComposition = paneLayoutController && window.rendererAppPaneComposition?.createPaneComposition?.({
+    documentRef: document, windowRef: window, state, chatView, layoutController: paneLayoutController,
+    resolvePane: (paneRoot) => surfaceDom.chat.resolvePane(paneRoot),
+    createPaneRuntime: ({ paneId }) => window.rendererPaneRuntime.createPaneRuntime({ paneId, shared: paneSharedStore }),
+    buildPaneSurface: lifecycleComposition.buildPaneSurface,
+    buildRenderPipeline: controllerComposition.buildRenderPipeline,
+    buildChatShellController: controllerComposition.buildChatShellController,
+    createThinkingController: () => new ThinkingPanelController(), // pane 1's own reasoning-disclosure state
+    relatchPrimaryFollow: () => { thinkingController.resumeAutoScroll(); setFollowLatest(true); }, // pane 0 took another session through a layout change
+    getPrimaryShell: () => chatShellController,
+    createResizer: (resizerDeps) => window.rendererChatPaneResizer?.createChatPaneResizer?.(resizerDeps) || null,
+    persistSplitRatio: (splitRatio) => workspaceStateController?.persistPaneLayout?.({ splitRatio }),
+    renderPrimaryMessages: () => renderMessages(),
+    requestFullRender: () => renderAll(),
+    getStoredLayout: () => workspaceStateController?.getPaneLayout?.() || null,
+    collapseSidePanel: () => { shellArtifactBridge?.collapseSidePanel?.(); contextPanelController?.collapseForOwnerClose?.(); }, // W3-2: the owning pane closed
+    getSessionSummary: (sessionId) => (state.sessions || []).find((session) => session?.id === sessionId) || null,
+    getProjectName: getPaneProjectName,
+    getSessionMessages: (sessionId) => getSessionMessages(sessionId),
+    getVisibleSessionMessages: (sessionId) => getVisibleSessionMessages(sessionId),
+    loadSessionMessages: async (sessionId) => {
+      if (!sessionId || state.messagesBySession.has(sessionId) || !window.jennyShell?.sessions?.getMessages) return false;
+      const payload = await window.jennyShell.sessions.getMessages(sessionId);
+      if (!payload || state.messagesBySession.has(sessionId)) return false;
+      setSessionMessages(sessionId, payload.data || [], `session_${sessionId}`);
+      setSessionTurnEventState(sessionId, {
+        turnEventLogVersion: Number(payload?.turn_event_log_version || 0),
+        turnEvents: Array.isArray(payload?.turn_events) ? payload.turn_events : [],
+        activeTurn: payload?.active_turn ?? null,
+      });
+      return true;
+    },
+    listSwitchCandidates: () => {
+      const snapshot = workspaceStateController?.getRollbackSnapshot?.() || {};
+      const open = Array.isArray(snapshot.openSessionIds) ? snapshot.openSessionIds : [];
+      return (Array.isArray(snapshot.mruStack) ? snapshot.mruStack : []).filter((id) => open.includes(id)).concat(open);
+    },
+    isSessionStreaming: (sessionId) => isSessionStreaming(sessionId),
+    hasPendingToolApproval: (sessionId) => hasPendingToolApprovalForSession(sessionId),
+    getSendLifecycle: (sessionId) => getChatSendLifecycle(sessionId),
+    countQueuedSends: (sessionId) => (state.queuedSendBySession?.get?.(sessionId) ? 1 : 0)
+      + (state.runtimeSendController?.listPending?.(sessionId) || []).length,
+    appendClientLog: (...a) => appendClientLog(...a),
+    // W2-2b: pane 1's attachments (its queue is its session's composer record).
+    TOAST_SOURCE, getQueuedAttachments: (sessionId) => window.rendererComposerSessionState?.getQueuedAttachments?.(state, sessionId) || [],
+    renderAttachmentTray: (target) => renderAttachmentTray(target),
+    // W3-1: pane 1's status notice (the slot keyed to its session) and its failed-send notice.
+    renderComposerStatusNotice: (target) => renderComposerStatusNotice(target), clearComposerStatusNotice: () => clearComposerStatusNotice(),
+    mountFailedSendNotice: (notice) => window.rendererAppShellBindings?.mountFailedSendNotice?.({ ...notice, getSessionMessages, setSessionMessages, renderAll, appendClientLog }) || null,
+    attachmentCallbacks: { resetAttachmentQueue, removeQueuedAttachment, beginAttachmentToken, cancelAttachmentToken, handleAttachmentPicker,
+      prepareDroppedAttachments, queueInlineImageAttachment, suppressFileDropNavigation, getDroppedFilePaths, showToastMessage, toErrorMessage,
+      appendClientLog: (...a) => appendClientLog(...a) },
+    createPaneComposerRail: (railOptions) => window.rendererPaneComposerRail?.createPaneComposerRail?.({ ...railOptions, deps: { getRuntimePreferencesFromSession, getActivitySnapshot, isActivityBusy, applyActivityAttributes, ACTIVITY_SCOPE, buildModelOptionMarkup } }) || null, // W2-2a
+  }) || null;
+  registerRendererCleanup(() => paneComposition?.dispose?.());
+  workspaceChromeController?.setPaneDropTarget?.(paneComposition?.getDropTarget?.() || null); // W2-1: rail tab drag -> drop zones
   state.harness.agentActions = { loadSessions, openSession, setActiveView };
   await window.rendererAppShellBindings.bindAppShell({
     state,
@@ -750,8 +796,7 @@ var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18
       composerAttachShortcut,
       composerCommandPopover,
       composerCommandPopoverList,
-      composerSettingsButton,
-      composerSettingsPopover,
+      composerAttachMenu,
       composerTerminalShortcut,
       conversationGroups,
       copyLogsReportButton,
@@ -794,7 +839,6 @@ var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18
       },
     },
     callbacks: {
-      activateCometIfEnabled: (...a) => _activateCometIfEnabled(...a),
       activateSurfaceEffect: (...a) => activateSurfaceEffect(...a),
       activateWorkspaceSession: (...a) => activateWorkspaceSession(...a),
       appendClientLog: (...a) => appendClientLog(...a),
@@ -805,10 +849,9 @@ var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18
       chooseWorkspaceRoot: (...a) => handleWorkspaceRootChoose(...a), getProjectSwitcher: (...a) => getProjectSwitcher(...a),
       closeCommandPopover: (...a) => closeCommandPopover(...a),
       closeComposerPopover: (...a) => closeComposerPopover(...a),
+      openComposerPopover: (...a) => openComposerPopover(...a),
       dismissToast: (...a) => dismissToast(...a),
-      disposeCometPersonality: (...a) => disposeCometPersonality(...a),
       disposeComposerHolo: (...a) => disposeComposerHolo?.(...a),
-      disposeSpriteHolo: (...a) => disposeSpriteHolo?.(...a),
       disposeViewportController: (...a) => disposeViewportController?.(...a),
       ensureComposerFeatureStateLoaded: (...a) => _ensureComposerFeatureStateLoaded(...a),
       escapeHtml,
@@ -823,6 +866,7 @@ var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18
       handleAttachmentPicker: (...a) => handleAttachmentPicker(...a),
       handleDeleteSessionWithWorkspace: (...a) => handleDeleteSessionWithWorkspace(...a),
       handleLifecycleBackendStatus: (...a) => _handleLifecycleBackendStatus(...a),
+      handleLinkedSessionPopover: (...a) => handleLinkedSessionPopover(...a),
       handleRenameSession: (...a) => handleRenameSession(...a),
       handleSidebarResizeKeydown: (...a) => handleSidebarResizeKeydown(...a),
       handleSidebarResizeMove: (...a) => handleSidebarResizeMove(...a),
@@ -832,6 +876,7 @@ var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18
       openIdeHelpOverlay: (...a) => openIdeHelpOverlaySafe(...a),
       hydrateCachedLazyShellState: (...a) => hydrateCachedLazyShellState(...a),
       initSetupController: (...a) => initSetupControllerSafe(...a),
+      isDisposed: () => rendererDisposed,
       isSendPreflightPending,
       loadSessions: (...a) => loadSessions(...a),
       logSurfaceEffectFailure: (...a) => _logSurfaceEffectFailure(...a),
@@ -880,8 +925,9 @@ var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18
       suppressFileDropNavigation,
       syncBackendActivityFromStatus: (...a) => syncBackendActivityFromStatus(...a),
       syncComposerInputHeight: (...a) => syncComposerInputHeight(...a),
-      syncComposerModelSelectWidth,
       syncComposerVisualState: (...a) => syncComposerVisualState(...a),
+      // The stored second pane hydrates after the first real restore
+      // (workspace coordinator onWorkspaceRestored; W1-4c).
       syncWorkspaceFromStore: (...a) => syncWorkspaceFromStore(...a),
       toErrorMessage,
       updateComposerSafeOffset,
@@ -911,7 +957,7 @@ var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18
       overlay.setAttribute('data-state', 'error');
       const sublabel = document.getElementById('startupOverlaySublabel');
       if (sublabel) {
-        sublabel.textContent = jt('app.startup.failed', 'Startup failed');
+        sublabel.textContent = jt('setup.startup.failed', 'Jenny could not start');
       }
       const secondary = document.getElementById('startupOverlaySecondary');
       if (secondary) {

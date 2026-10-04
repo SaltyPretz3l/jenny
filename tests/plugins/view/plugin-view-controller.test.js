@@ -57,7 +57,8 @@ function harness(load = Promise.resolve(), options = {}) {
     },
     getContentBounds: () => ({ width: 900, height: 700 }),
     isDestroyed: () => false,
-    webContents: { send: (...args) => hostCommands.push(args), focus() {} },
+    webContents: { send: (...args) => hostCommands.push(args), focus() {},
+      ...(options.frameZoom ? { getZoomFactor: () => options.frameZoom } : {}) },
   };
   const controller = new PluginViewController({
     WebContentsView: FakeView, session, preloadPath: 'fixed-preload.js', getMainWindow: () => mainWindow,
@@ -88,7 +89,7 @@ test('a view uses an ephemeral sandboxed partition and remains hidden until trus
   assert.equal(view.options.webPreferences.sandbox, true);
   assert.equal(view.options.webPreferences.contextIsolation, true);
   assert.equal(view.options.webPreferences.nodeIntegration, false);
-  assert.match(sessions.at(-1).partition, /^plugin-view-view_[a-f0-9]{24}$/);
+  assert.match(sessions.at(-1).partition, /^plugin-view-pool-[0-3]$/);
   assert.deepEqual(view.visible, [false, true]);
   assert.deepEqual(view.bounds, { x: 10, y: 100, width: 800, height: 550 });
 });
@@ -118,19 +119,17 @@ test('zoom clamps to the frozen range and teardown detaches bridge state', async
   assert.deepEqual(destroyed, [opened.view_instance_id]);
 });
 
-test('failed session teardown is retained and retried after the view is detached', async () => {
+test('failed teardown is retained and retried after the view is detached', async () => {
   const { controller } = harness();
   let attempts = 0;
   controller.setOnViewDestroyed((_id, _reason, context) => {
     attempts += 1;
-    assert.equal(context.sessionId, 'plugin-session');
+    assert.equal(Object.hasOwn(context, 'sessionId'), false);
     return attempts === 1 ? { ok: false, reason: 'tree_death_unproven' } : { ok: true };
   });
   await controller.commitGeneration({ commit_epoch: 3, assets: new Map(), descriptors: new Map() });
   await controller.open(descriptor(), {
     bounds: { x: 0, y: 80, width: 700, height: 500 },
-    sessionId: 'plugin-session',
-    sessionIncarnation: 'incarnation-1',
   });
 
   assert.equal((await controller.destroyAll('session_left')).reason, 'tree_death_unproven');
@@ -163,6 +162,22 @@ test('malformed renderer bounds and zoom fail closed without reaching Electron',
   assert.equal(views.at(-1).webContents.zoom, undefined);
 });
 
+test('renderer CSS-px bounds are scaled by the host frame zoom into DIP before the clamps', async () => {
+  const { controller, views } = harness(Promise.resolve(), { frameZoom: 1.1 });
+  await controller.commitGeneration({ commit_epoch: 3, assets: new Map(), descriptors: new Map() });
+  // A 110% frame reports the slot at 1/1.1 of its DIP size; the view must fill the slot.
+  await controller.open(descriptor(), { bounds: { x: 10, y: 100, width: 700, height: 500 } });
+  assert.deepEqual(views.at(-1).bounds, { x: 11, y: 110, width: 770, height: 550 });
+  // Scaled bounds still clamp to the window's DIP content box.
+  assert.equal(controller.setBounds({ x: 0, y: 0, width: 900, height: 700 }).ok, true);
+  assert.deepEqual(views.at(-1).bounds, { x: 0, y: 0, width: 900, height: 700 });
+  // An unknown zoom (no getZoomFactor, or a bad value) leaves the bounds as sent.
+  const plain = harness(Promise.resolve(), { frameZoom: Number.NaN });
+  await plain.controller.commitGeneration({ commit_epoch: 3, assets: new Map(), descriptors: new Map() });
+  await plain.controller.open(descriptor(), { bounds: { x: 10, y: 100, width: 700, height: 500 } });
+  assert.deepEqual(plain.views.at(-1).bounds, { x: 10, y: 100, width: 700, height: 500 });
+});
+
 test('the first two renderer crashes restart in fresh partitions and the third quarantines', async () => {
   const quarantines = [];
   const { controller, views, sessions } = harness(Promise.resolve(), {
@@ -171,14 +186,12 @@ test('the first two renderer crashes restart in fresh partitions and the third q
   await controller.commitGeneration({ commit_epoch: 3, assets: new Map(), descriptors: new Map() });
   await controller.open(descriptor(), {
     bounds: { x: 0, y: 80, width: 700, height: 500 },
-    sessionId: 'plugin-session',
-    sessionIncarnation: 'incarnation-1',
   });
   views[0].webContents.emit('render-process-gone');
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(views.length, 2);
   assert.notEqual(sessions[0].partition, sessions[1].partition);
-  assert.equal(controller.contextForEvent({ sender: views[1].webContents }).sessionId, 'plugin-session');
+  assert.equal(Object.hasOwn(controller.contextForEvent({ sender: views[1].webContents }), 'sessionId'), false);
   views[1].webContents.emit('render-process-gone');
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(views.length, 3);

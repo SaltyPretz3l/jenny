@@ -280,6 +280,7 @@
       stateSeq += 1;
       cachedState = EMPTY_STATE;
       loadedOnce = false;
+      panel?.resetForRoot?.(); // the old root's add-form draft must not reach the new root
       return refresh();
     }
 

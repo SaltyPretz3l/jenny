@@ -161,6 +161,73 @@ test('openSession honors an explicit outgoing session after workspace state publ
   assert.deepEqual(composerCalls.restore, ['session-new']);
 });
 
+test('split view: opening the session pane 1 shows, while pane 0 is focused, leaves pane 0\'s live composer alone', async (t) => {
+  const previousController = globalThis.rendererComposerSessionStateController;
+  const composerCalls = { capture: [], restore: [] };
+  globalThis.rendererComposerSessionStateController = {
+    captureActive(sessionId, reason) { composerCalls.capture.push({ sessionId, reason }); },
+    restoreForSession(sessionId) { composerCalls.restore.push(sessionId); },
+  };
+  t.after(() => { globalThis.rendererComposerSessionStateController = previousController; });
+  const state = {
+    currentSessionId: 'session-left',
+    panes: { panes: [{ paneId: 0, sessionId: 'session-left' }, { paneId: 1, sessionId: 'session-right' }], focusedPaneId: 0, splitRatio: 0.5 },
+    sessionMessageAccessOrder: new Map(),
+    pendingToolApprovals: new Map(),
+    messagesBySession: new Map(),
+  };
+  const controller = createSessionLifecycleController({
+    state,
+    sessionCacheController: { async evictColdSessionCaches() {} },
+    thinkingController: { resumeAutoScroll() {} },
+    jennyShell: {
+      sessions: { async getMessages() { return { data: [], turn_events: [] }; } },
+      chat: { async getActiveTurnState() { return null; } },
+    },
+  });
+
+  // The rail tab of pane 1's session: the switch lands in pane 1 (the layout
+  // moves focus there afterwards), so pane 1's queue must not be restored into
+  // pane 0's #chatInput and live queue.
+  await controller.openSession('session-right', { silent: true });
+  assert.deepEqual(composerCalls.restore, []);
+
+  // A session no pane shows still lands in the focused pane 0.
+  state.currentSessionId = 'session-left';
+  await controller.openSession('session-other', { silent: true });
+  assert.deepEqual(composerCalls.restore, ['session-other']);
+});
+
+test('split view: a session landing in pane 1 leaves the follow intent and reasoning pauses of pane 0 alone (CTR-001)', async () => {
+  const calls = [];
+  const state = {
+    currentSessionId: 'session-left',
+    panes: { panes: [{ paneId: 0, sessionId: 'session-left' }, { paneId: 1, sessionId: 'session-right' }], focusedPaneId: 1, splitRatio: 0.5 },
+    sessionMessageAccessOrder: new Map(),
+    pendingToolApprovals: new Map(),
+    messagesBySession: new Map(),
+  };
+  const controller = createSessionLifecycleController({
+    state,
+    sessionCacheController: { async evictColdSessionCaches() {} },
+    thinkingController: { resumeAutoScroll() { calls.push('resume'); } },
+    callbacks: { setFollowLatest(value) { calls.push(['follow', value]); } },
+    jennyShell: {
+      sessions: { async getMessages() { return { data: [], turn_events: [] }; } },
+      chat: { async getActiveTurnState() { return null; } },
+    },
+  });
+
+  // Pane 1 is focused: the opened session lands there, so pane 0 keeps reading where it was.
+  await controller.openSession('session-other', { silent: true });
+  assert.deepEqual(calls, []);
+
+  // One pane (or pane 0 focused): the open re-latches pane 0, as before split view.
+  state.panes = { panes: [{ paneId: 0, sessionId: '' }], focusedPaneId: 0, splitRatio: 0.5 };
+  await controller.openSession('session-solo', { silent: true });
+  assert.deepEqual(calls, ['resume', ['follow', true]]);
+});
+
 test('openSession prepares the outgoing chat anchor before publishing the incoming session', async () => {
   const state = {
     currentSessionId: 'session-new',

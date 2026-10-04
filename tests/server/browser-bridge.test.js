@@ -15,6 +15,48 @@ const {
 })();
 const { ReconnectController } = require('../../renderer/browser/browser-reconnect');
 
+function boundedOutcome(promise) {
+  let timer;
+  return Promise.race([promise, new Promise((_resolve, reject) => {
+    timer = setTimeout(() => reject(new Error('SSE deadline missing')), 150);
+  })]).finally(() => clearTimeout(timer));
+}
+
+test('SSE connection establishment has an application deadline', async () => {
+  const bridge = new BrowserBridge({ requestTimeoutMs: 20, fetchImpl: () => new Promise(() => {}) });
+  Object.assign(bridge, { clientId: 'client_a', clientToken: 'token', bootEpoch: 'boot_a' });
+  try {
+    await assert.rejects(boundedOutcome(bridge.connectEvents()), (error) => error.code === 'request_timeout');
+  } finally { bridge.dispose(); }
+});
+
+test('SSE inactivity cancels a stalled reader even after heartbeat bytes', async () => {
+  let cancelled = false;
+  const stream = new ReadableStream({
+    start(controller) { controller.enqueue(new TextEncoder().encode(': heartbeat\n\n')); },
+    cancel() { cancelled = true; },
+  });
+  const bridge = new BrowserBridge({ eventsInactivityTimeoutMs: 20,
+    fetchImpl: async () => ({ ok: true, status: 200, body: stream }) });
+  Object.assign(bridge, { clientId: 'client_a', clientToken: 'token', bootEpoch: 'boot_a' });
+  try {
+    const connection = await bridge.connectEvents();
+    await assert.rejects(boundedOutcome(connection.done), (error) => error.code === 'events_timeout');
+    assert.equal(cancelled, true);
+  } finally { bridge.dispose(); }
+});
+
+test('SSE inactivity settles even when reader cancellation stalls', async () => {
+  const reader = { read: () => new Promise(() => {}), cancel: () => new Promise(() => {}) };
+  const bridge = new BrowserBridge({ eventsInactivityTimeoutMs: 20,
+    fetchImpl: async () => ({ ok: true, status: 200, body: { getReader: () => reader } }) });
+  Object.assign(bridge, { clientId: 'client_a', clientToken: 'token', bootEpoch: 'boot_a' });
+  try {
+    const connection = await bridge.connectEvents();
+    await assert.rejects(boundedOutcome(connection.done), (error) => error.code === 'events_timeout');
+  } finally { bridge.dispose(); }
+});
+
 function response(payload, status = 200, extra = {}) {
   return {
     ok: status >= 200 && status < 300,

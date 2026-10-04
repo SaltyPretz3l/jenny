@@ -195,10 +195,11 @@
   const LEGACY_STREAM_RESET_PRESERVE_REASONS = new Set(['tool_continuation', 'model_winddown']);
 
   // What the reset erased, as main decided it. Main is the authority and the
-  // renderer must never re-derive it from `reason`: the tool_continuation
-  // preserve is gated on response_loop_display_v2 (flag off => main discards
-  // EVERYTHING under that same reason), and model_winddown preserves the
-  // persisted segments while erasing the unsaved live slice.
+  // renderer must never re-derive it from `reason`: transcripts recorded
+  // before the post-1.2.0 flag collapse carry 'all' for tool_continuation
+  // (main then discarded EVERYTHING under that same reason), and
+  // model_winddown preserves the persisted segments while erasing the unsaved
+  // live slice.
   function resolveStreamResetDiscardScope(event) {
     const scope = normalizeId(event && event.discard_scope);
     if (STREAM_RESET_DISCARD_SCOPES.has(scope)) {

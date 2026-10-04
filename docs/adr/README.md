@@ -1,6 +1,6 @@
 ---
 kind: docs-index
-last_reviewed: 2026-05-09
+last_reviewed: 2026-10-03
 ---
 
 # Architecture Decision Records
@@ -13,6 +13,11 @@ history.
 
 The numbering uses four-digit padding (`ADR-0001-…`). The numbering is global
 and chronological by acceptance date, not per-track.
+
+The accepted status records the original decision, not a claim that its implementation
+is still active. In particular, the face/comet and proactive programs were retired.
+Use the workspace manifest and
+[current architecture](../ARCHITECTURE.md) for today's owners and behavior.
 
 ## Index
 

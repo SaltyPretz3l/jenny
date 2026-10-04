@@ -12,7 +12,6 @@ const {
   OFFICIAL_CURRENT_KEY_ID,
   ELIGIBILITY_REASON_CODES,
   evaluateActivationEligibility,
-  dedupeWorkflowToolBindings,
   compileRuntimeSnapshot,
 } = require('../../../services/plugins/runtime/declarative-compiler');
 
@@ -72,16 +71,6 @@ test('eligibility is wholly first-party, permissionless, dependency-free skill/p
   assert.equal(evaluateActivationEligibility({ pluginEntry: subject, verdict: { ...valid, manifest: { requested_permissions: [], contributions: [contribution, { kind: 'theme', contribution_id: 'later' }] } } }).activation_reason_code, 'mixed_or_unsupported_contributions');
   assert.equal(evaluateActivationEligibility({ pluginEntry: subject, verdict: null }).activation_reason_code, 'package_record_unavailable');
   assert.equal(new Set(ELIGIBILITY_REASON_CODES).size, 11);
-});
-
-test('workflow binding deduplication retains same-named nodes from distinct plugin authorities', () => {
-  const binding = (pluginId) => ({
-    publisher_id: 'jenny-official', plugin_id: pluginId, workflow_id: 'workflow-main',
-    node_id: 'read', tool_id: 'read_file', manifest_version: 2, descriptor_sha256: 'a'.repeat(64),
-  });
-  assert.deepEqual(dedupeWorkflowToolBindings([
-    binding('zeta'), binding('alpha'), binding('alpha'),
-  ]).map((item) => item.plugin_id), ['alpha', 'zeta']);
 });
 
 test('compiler re-verifies stored bytes and emits deterministic skill/prompt-only snapshot', async () => {

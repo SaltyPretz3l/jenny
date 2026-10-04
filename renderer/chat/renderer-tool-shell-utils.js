@@ -380,8 +380,9 @@
 
       var stdout = typeof model.metadata.stdout === 'string' ? model.metadata.stdout : '';
       var stderr = typeof model.metadata.stderr === 'string' ? model.metadata.stderr : '';
-      var exitCode = model.metadata.exitCode != null ? Number(model.metadata.exitCode) : null;
-      var timedOut = Boolean(model.metadata.timedOut);
+      var rawExitCode = model.metadata.exitCode != null ? model.metadata.exitCode : model.metadata.exit_code;
+      var exitCode = rawExitCode != null ? Number(rawExitCode) : null;
+      var timedOut = Boolean(model.metadata.timedOut) || model.metadata.timed_out === true;
       var prettyStdout = tryPrettyPrintJson(stdout);
       var stdoutDisplay = prettyStdout || stdout;
       var fallbackOutput = !stdout && !stderr ? String(model.outputText || '') : '';

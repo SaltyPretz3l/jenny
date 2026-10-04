@@ -38,11 +38,6 @@
     occurrencesHighlight: 'singleFile',
     renderLineHighlight: 'all',
     mouseWheelZoom: true,
-    // Enable Monaco's ghost-text UX (Tab-to-accept). The actual suggestions come
-    // from the InlineCompletionsProvider that renderer-ide-inline-suggest registers
-    // only when the workspace_inline_suggest feature is on; with no provider this
-    // option is inert, so it's safe to leave enabled unconditionally.
-    inlineSuggest: { enabled: true },
   };
 
   function createIdeEditorHost(deps) {
@@ -122,12 +117,13 @@
     let lastAppliedLargeFile = null;
     // Per-open-file bookkeeping. Monaco mode: docs hold models + view states.
     // Fallback mode: docs hold plain string buffers. Diff docs (kind 'diff')
-    // hold original/modified text plus their own pair of Monaco models.
+    // hold original/modified fallback text until their Monaco models own it.
     const docs = new Map(); // path -> { kind, model, viewState, savedAltVersionId, buffer, savedBuffer, mtimeMs, eol, dirty, ... }
     // Overlay panes (image W7, preview W8, PDF/DOCX documents) share `docs`;
     // the panes module owns their DOM and per-format pane instances.
     const panes = panesUtils.createEditorHostPanes?.({
       docs, getDom, log, onDirtyChange, onDocumentEdit, onSaveRequest, onPreviewDomInjected,
+      asyncFence, ownerFence: disposalFence,
       hideEditorSurfaces: () => { setDiffPaneVisible(false); setFallbackVisible(false); },
       imageHostUtils: deps?.imageHostUtils, previewHostUtils: deps?.previewHostUtils,
       imageMemoryUtils: deps?.imageMemoryUtils, imageMemoryOptions: deps?.imageMemoryOptions,
@@ -283,13 +279,20 @@
         }
         const doc = getDoc(activePath);
         if (doc) {
-          doc.buffer = String(textarea.value || '');
+          doc.buffer = withEol(textarea.value, doc.eol);
         }
         syncDirty(activePath);
         onModelChange(activePath);
       };
       textarea.addEventListener('input', fallbackInputHandler);
       return textarea;
+    }
+
+    // The textarea reports LF breaks; the fallback buffer must carry the
+    // document's own line endings (normalizes CRLF / lone CR / LF).
+    function withEol(text, eol) {
+      const lf = String(text || '').replace(/\r\n?/g, '\n');
+      return eol === 'crlf' ? lf.replace(/\n/g, '\r\n') : lf;
     }
 
     function syncDirty(path) {
@@ -405,9 +408,11 @@
       doc.modified = String(modified ?? '');
       if (doc.originalModel) {
         doc.originalModel.setValue(doc.original);
+        doc.original = null;
       }
       if (doc.modifiedModel) {
         doc.modifiedModel.setValue(doc.modified);
+        doc.modified = null;
       }
       return doc;
     }
@@ -438,9 +443,11 @@
         } else if (ensureDiffEditor()) {
           if (!doc.originalModel) {
             doc.originalModel = monacoApi.editor.createModel(doc.original, doc.language);
+            doc.original = null;
           }
           if (!doc.modifiedModel) {
             doc.modifiedModel = monacoApi.editor.createModel(doc.modified, doc.language);
+            doc.modified = null;
           }
           diffEditor.setModel({ original: doc.originalModel, modified: doc.modifiedModel });
           diffPlaceholderEl.classList.add('hidden');
@@ -655,6 +662,9 @@
         applied.minimap = { ...next.minimap, enabled: minimapEnabled && getDoc(activePath)?.largeFile !== true };
       }
       monacoEditor?.updateOptions?.(applied);
+      // The diff editor is a separate instance; without this the editor font
+      // size never reached diffs.
+      if (typeof next.fontSize === 'number') diffEditor?.updateOptions?.({ fontSize: next.fontSize });
     }
 
     function getEol(path) {
@@ -856,8 +866,8 @@
     }
 
     // Sets a document's end-of-line. doc.eol always tracks the choice so
-    // getEol() stays truthful; the Monaco model EOL only changes under Monaco
-    // (changing EOL marks the buffer dirty).
+    // getEol() stays truthful; under Monaco the model EOL changes, in the textarea
+    // fallback the buffer is converted (either way a real change marks it dirty).
     function setEol(path, eol) {
       const doc = getDoc(String(path || '') || activePath);
       if (!doc) {
@@ -868,6 +878,10 @@
       const sequence = monacoApi?.editor?.EndOfLineSequence;
       if (doc.model && typeof doc.model.setEOL === 'function' && sequence) {
         doc.model.setEOL(next === 'crlf' ? sequence.CRLF : sequence.LF);
+      } else if (doc.kind === 'file' && !doc.model && typeof doc.buffer === 'string') {
+        doc.buffer = withEol(doc.buffer, next);
+        syncDirty(String(path || '') || activePath);
+        onModelChange(String(path || '') || activePath);
       }
       return true;
     }

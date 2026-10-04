@@ -5,6 +5,9 @@ const { readCommittedState } = require('./lifecycle/commit-sequence');
 const { exportAuditLog } = require('./lifecycle/audit-export');
 const { evaluateStatusQuery } = require('./store/operation-receipts');
 const { evaluateActivationEligibility, reverifyInstalledPackage } = require('./runtime/declarative-compiler');
+const {
+  RETIRED_CONTRIBUTION_KIND_SET, declaresRetiredKind,
+} = require('./runtime/declarative-compiler-constants');
 const { PUBLISHER_ID_RE, PLUGIN_ID_RE } = require('./identity/authority-id');
 const { isValidOperationId } = require('./paths/store-paths');
 const { DISABLED_ONLY_STATE } = require('./lifecycle/stage-gate');
@@ -54,9 +57,7 @@ function createControlPlaneQueries({
   getRecoverySummary,
   getReceiptEvictionCount,
   getLastOperation,
-  managedPolicy = null,
 }) {
-  const privilegedKinds = new Set(['native_mcp', 'session_provider', 'engine_adapter', 'hook']);
   async function summarizePlugins(generation) {
     const entries = generation && Array.isArray(generation.plugins) ? generation.plugins : [];
     const listed = [];
@@ -82,7 +83,7 @@ function createControlPlaneQueries({
           kind: item.kind,
           desired_enabled: entry.desired_state === 'active',
           effective_enabled: entry.effective_state === 'active'
-            && (item.kind !== 'mcp_descriptor' || entry.remote_binding_digests?.length > 0),
+            && item.kind !== 'mcp_descriptor',
           blocked_reason: entry.effective_state === 'active' ? 'none' : 'master_disabled',
           content_digest: item.content_sha256,
         })) : []);
@@ -92,15 +93,15 @@ function createControlPlaneQueries({
         const manifestContribution = reverified.ok
           ? reverified.verdict.manifest.contributions.find((item) => item.contribution_id === contribution.contribution_id)
           : null;
-        const policyBlocked = privilegedKinds.has(contribution.kind)
-          && managedPolicy?.guard?.().ok === false;
+        // Retired kinds stay listed but never run.
+        const retired = RETIRED_CONTRIBUTION_KIND_SET.has(contribution.kind);
         const summary = {
           contribution_id: contribution.contribution_id,
           display_name: safeDisplayName(manifestContribution?.name),
           kind: contribution.kind,
           desired_enabled: contribution.desired_enabled === true,
-          effective_enabled: contribution.effective_enabled === true && !policyBlocked,
-          blocked_reason: policyBlocked ? 'managed_policy' : contribution.blocked_reason,
+          effective_enabled: contribution.effective_enabled === true && !retired,
+          blocked_reason: contribution.blocked_reason,
           content_digest: contribution.content_digest,
         };
         if (content?.payload?.kind === 'theme') summary.theme = { tokens: content.payload.tokens };
@@ -126,17 +127,6 @@ function createControlPlaneQueries({
               );
             }
           }
-        }
-        if (content?.payload?.kind === 'mcp_descriptor') {
-          summary.mcp = {
-            display_name: safeDisplayName(content.payload.display_name),
-            transport_class: content.payload.transport_class,
-            capabilities: content.payload.capabilities || content.payload.feature_classes,
-            endpoint_origin_digest: content.payload.endpoint_origin_digest || null,
-            destination_scope: content.payload.destination_scope || null,
-            auth_policy: content.payload.auth_policy || 'none',
-            active: contribution.effective_enabled === true,
-          };
         }
         const stage7Content = content?.payload || content || null;
         if (stage7Content?.content_schema_version === 5) {
@@ -169,6 +159,11 @@ function createControlPlaneQueries({
         generation_id: generation?.generation_id || null,
         contributions,
         ...activation,
+        // A package declaring a retired kind cannot be (re-)enabled.
+        ...(reverified.ok && declaresRetiredKind(reverified.verdict.manifest)
+          && activation.activation_eligible
+          ? { activation_eligible: false,
+            activation_reason_code: 'mixed_or_unsupported_contributions' } : {}),
       });
     }
     return {
@@ -194,28 +189,11 @@ function createControlPlaneQueries({
         revision: pointer ? pointer.revision : 0,
         ...await summarizePlugins(state.generation),
         ...runtime.state(),
-        managed_policy: managedPolicy?.status?.() || null,
         recovery: getRecoverySummary(),
         receipt_eviction_count: getReceiptEvictionCount(),
         last_operation: getLastOperation(),
       };
     });
-  }
-
-  async function getPolicyStatus() {
-    return run('policy_status', async () => ({
-      ok: true,
-      ...posture(),
-      disabled_only: false,
-      committed_state: DISABLED_ONLY_STATE,
-      activation_scope: posture().activation_scope,
-      contribution_execution_permitted: true,
-      privileged_execution_permitted: managedPolicy?.guard?.().ok === true,
-      plugin_network_permitted: posture().stage >= 5,
-      plugin_views_permitted: posture().stage >= 7,
-      plugin_mcp_permitted: posture().stage >= 5,
-      managed_policy: managedPolicy?.status?.() || null,
-    }), { needsStore: false });
   }
 
   async function getDetails(payload = {}) {
@@ -234,11 +212,11 @@ function createControlPlaneQueries({
         && entry.plugin_id === payload.plugin_id);
       const sourceEvidence = installed?.source_trust_digest
         ? await getEvidence(facade, baseDir, 'source_trust', installed.source_trust_digest) : null;
-      const authentication = plugin.contributions.filter((entry) => entry.mcp || entry.provider).map((entry) => ({
+      const authentication = plugin.contributions.filter((entry) => entry.provider).map((entry) => ({
         contribution_id: entry.contribution_id,
-        kind: entry.mcp ? 'mcp' : 'provider',
-        policy: entry.mcp?.auth_policy || entry.provider?.auth_profile || 'none',
-        active: entry.mcp?.active === true || entry.effective_enabled === true,
+        kind: 'provider',
+        policy: entry.provider?.auth_profile || 'none',
+        active: entry.effective_enabled === true,
       }));
       return { ok: true, ...posture(), plugin: { ...plugin,
         source_evidence: { kind: String(sourceEvidence?.value?.source?.kind || 'verified_package'),
@@ -287,8 +265,6 @@ function createControlPlaneQueries({
       }
       const exported = await exportAuditLog(facade, baseDir, {
         now: clock(),
-        managedPolicy: managedPolicy?.status?.() || null,
-        policyMaxEntries: managedPolicy?.status?.().audit_max_entries || 1000,
         ...(payload.filter === undefined ? {} : { filter: payload.filter }),
         ...(Number.isInteger(payload.max_entries) ? { maxEntries: payload.max_entries } : {}),
       });
@@ -301,7 +277,7 @@ function createControlPlaneQueries({
     });
   }
 
-  return Object.freeze({ getState, getDetails, getPolicyStatus, getOperation, exportAudit });
+  return Object.freeze({ getState, getDetails, getOperation, exportAudit });
 }
 
 module.exports = { createControlPlaneQueries, indexDeclarativeContents };

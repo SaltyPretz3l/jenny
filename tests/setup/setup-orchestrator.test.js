@@ -5,79 +5,9 @@ const assert = require('node:assert/strict');
 const { EventEmitter } = require('events');
 
 const { EXIT, parseArgs, npmCommand, runSetup } = require('../../scripts/setup/setup');
-
-function makeUi() {
-  const log = [];
-  const rec = (kind) => (text) => log.push([kind, text]);
-  return {
-    log,
-    heading: rec('heading'),
-    step: rec('step'),
-    ok: rec('ok'),
-    skip: rec('skip'),
-    warn: rec('warn'),
-    fail: rec('fail'),
-    info: rec('info'),
-    progress: (label, percent) => log.push(['progress', label, percent]),
-  };
-}
-
-function fakeChild() {
-  const child = new EventEmitter();
-  child.stdout = new EventEmitter();
-  child.stderr = new EventEmitter();
-  return child;
-}
-function autoCloseSpawn(code) {
-  return () => {
-    const child = fakeChild();
-    process.nextTick(() => child.emit('close', code));
-    return child;
-  };
-}
-
-function isVenvCommand(command) {
-  return String(command || '').replaceAll('\\', '/').includes('/.venv/');
-}
-
-// A capture-run that satisfies prereqs on macOS and lets per-test overrides
-// tweak the model-show / pip results.
-function makeRunCapture({ modelShowStatus = 0, pipStatus = 0, pythonFound = true } = {}) {
-  return (cmd, args = []) => {
-    const joined = args.join(' ');
-    if (joined.includes('--version')) {
-      if (isVenvCommand(cmd)) {
-        return joined.includes('-m pip')
-          ? { status: 0, stdout: 'pip 24.3.1' }
-          : { status: 0, stdout: 'Python 3.11.9' };
-      }
-      if (cmd === 'npm') return { status: 0, stdout: '10.9.2' };
-      if (cmd === 'git') return { status: 0, stdout: 'git version 2.45.0' };
-      if ((cmd === 'python3.11' || cmd === 'python3') && pythonFound) {
-        return { status: 0, stdout: 'Python 3.11.9' };
-      }
-      return { status: 127, stdout: '', stderr: '' };
-    }
-    if (cmd === 'ollama' && args[0] === 'show') return { status: modelShowStatus };
-    if (cmd === 'which' || cmd === 'where') return { status: 0, stdout: 'ollama\n' };
-    if (joined.includes('pip install -e')) return { status: pipStatus, stderr: pipStatus ? 'pip boom' : '' };
-    return { status: 0, stdout: '' };
-  };
-}
-
-function baseDeps(overrides = {}) {
-  return {
-    runCapture: makeRunCapture(),
-    runStreaming: async () => ({ status: 0 }),
-    fetchImpl: async () => ({ ok: true, json: async () => ({ version: '0.30.10' }) }),
-    spawnImpl: autoCloseSpawn(0),
-    fileExists: () => true,
-    sleepImpl: async () => {},
-    promptYesNo: async () => true,
-    rename: () => {},
-    ...overrides,
-  };
-}
+const {
+  autoCloseSpawn, baseDeps, fakeChild, isVenvCommand, makeRunCapture, makeUi,
+} = require('../helpers/setup-orchestrator-fixture');
 
 test('parseArgs reads every flag', () => {
   const opts = parseArgs(['--yes', '--skip-model', '--no-launch', '--no-precommit', '--dev', '--model', 'foo:bar', '--force']);
@@ -157,6 +87,71 @@ for (const distribution of [false, true]) {
 test('npmCommand is .cmd on Windows only', () => {
   assert.equal(npmCommand('win32'), 'npm.cmd');
   assert.equal(npmCommand('darwin'), 'npm');
+});
+
+for (const bootstrapped of [false, true]) {
+  test(`setup prepares the Electron runtime and preload bundle (bootstrapped=${bootstrapped})`, async () => {
+    const commands = [];
+    const code = await runSetup({
+      argv: ['--no-launch', ...(bootstrapped ? ['--bootstrapped-npm'] : [])],
+      platform: 'darwin',
+      nodeVersion: '22.23.2',
+      ui: makeUi(),
+      repoRoot: '/repo',
+      deps: baseDeps({
+        runStreaming: async (cmd, args) => { commands.push([cmd, ...args]); return { status: 0 }; },
+      }),
+    });
+    assert.equal(code, EXIT.OK);
+    const scripts = commands.filter(([cmd]) => cmd === process.execPath)
+      .map(([, script]) => String(script).replaceAll('\\', '/'));
+    assert.deepEqual(scripts, [
+      '/repo/node_modules/electron/install.js',
+      '/repo/scripts/build/build-preload.js',
+    ]);
+  });
+}
+
+test('a failed Electron runtime download stops setup before the Python phase', async () => {
+  const ui = makeUi();
+  const code = await runSetup({
+    argv: ['--no-launch'],
+    platform: 'darwin',
+    nodeVersion: '22.23.2',
+    ui,
+    deps: baseDeps({
+      runStreaming: async (cmd, args) =>
+        ({ status: cmd === process.execPath && String(args[0]).includes('electron') ? 1 : 0 }),
+    }),
+  });
+  assert.equal(code, EXIT.UNKNOWN);
+  assert.ok(ui.log.some(([kind, text]) => kind === 'fail' && /Electron runtime/.test(text)));
+  assert.ok(!ui.log.some(([kind, text]) => kind === 'heading' && /Python/.test(text)));
+});
+
+test('Windows npm probe reaches the prereq pass through npm.cmd', async () => {
+  const probes = [];
+  const fallback = makeRunCapture();
+  const ui = makeUi();
+  const code = await runSetup({
+    argv: ['--no-launch', '--existing-server'],
+    platform: 'win32',
+    nodeVersion: '22.23.2',
+    ui,
+    deps: baseDeps({
+      runCapture: (cmd, args = [], opts) => {
+        if (/^npm/.test(cmd)) {
+          probes.push([cmd, opts]);
+          return cmd === 'npm.cmd' ? { status: 0, stdout: '11.10.1' } : { status: 127 };
+        }
+        if (cmd === 'py') return { status: 0, stdout: 'Python 3.11.9' };
+        return fallback(cmd, args);
+      },
+    }),
+  });
+  assert.equal(code, EXIT.OK);
+  assert.deepEqual(probes, [['npm.cmd', { shell: true }]]);
+  assert.ok(ui.log.some(([kind, text]) => kind === 'ok' && text === 'npm 11.10.1'));
 });
 
 test('--help returns OK without running phases', async () => {
@@ -290,7 +285,7 @@ test('Ollama installed via winget mid-run self-heals without a fresh shell (stal
               ? { status: 0, stdout: 'pip 24.3.1' }
               : { status: 0, stdout: 'Python 3.11.9' };
           }
-          if (cmd === 'npm') return { status: 0, stdout: '10.9.2' };
+          if (cmd === 'npm.cmd') return { status: 0, stdout: '10.9.2' };
           if (cmd === 'python3.11' || cmd === 'python3') return { status: 0, stdout: 'Python 3.11.9' };
           if (cmd === 'git') return { status: 0, stdout: 'git version 2.45.0' };
           return { status: 127 };
@@ -350,6 +345,60 @@ test('an outdated running Ollama is upgraded, restarted, and re-probed before se
     commands.some(([cmd, args]) => cmd === 'winget' && args[0] === 'upgrade'),
     true
   );
+});
+
+test('a stopped, outdated Ollama install is offered the upgrade in the same run', async () => {
+  let upgraded = false;
+  let served = false;
+  let restartCalls = 0;
+  const commands = [];
+  const prompts = [];
+  const baseRun = makeRunCapture();
+  const code = await runSetup({
+    argv: ['--no-launch'],
+    platform: 'darwin',
+    nodeVersion: '22.23.2',
+    ui: makeUi(),
+    deps: baseDeps({
+      // The server is down until `ollama serve` is spawned after the upgrade.
+      fetchImpl: async () => ({ ok: served, json: async () => ({ version: '0.30.10' }) }),
+      spawnImpl: (cmd, args) => {
+        if (args && args[0] === 'serve') served = true;
+        return autoCloseSpawn(0)();
+      },
+      runCapture: (cmd, args = []) => {
+        if (cmd === 'ollama' && args[0] === '--version') {
+          return {
+            status: 0,
+            stdout: '',
+            stderr: upgraded
+              ? 'Warning: could not connect to a running Ollama instance\nWarning: client version is 0.30.10\n'
+              : 'Warning: could not connect to a running Ollama instance\nWarning: client version is 0.5.1\n',
+          };
+        }
+        return baseRun(cmd, args);
+      },
+      promptYesNo: async (question) => {
+        prompts.push(question);
+        return true;
+      },
+      runStreaming: async (cmd, cmdArgs) => {
+        commands.push([cmd, cmdArgs]);
+        if (cmd === 'brew') upgraded = true;
+        return { status: 0 };
+      },
+      restartOllamaAfterUpgrade: async () => {
+        restartCalls += 1;
+        return { ok: true };
+      },
+    }),
+  });
+
+  assert.equal(code, EXIT.OK);
+  assert.ok(prompts.some((question) => /Upgrade Ollama/.test(question)), 'the upgrade must be offered on the first run');
+  assert.ok(commands.some(([cmd, cmdArgs]) => cmd === 'brew' && cmdArgs[0] === 'upgrade'));
+  assert.equal(restartCalls, 1);
+  assert.equal(served, true, 'the daemon starts only after the upgrade');
 });
 
 test('a failed Ollama package-manager upgrade does not restart or continue to model pulls', async () => {

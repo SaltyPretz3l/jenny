@@ -86,10 +86,12 @@ async function waitForOperation(handle, operationId) {
   return { receipt: state.receipt, terminal };
 }
 
-test('developer flag defaults on, has a kill switch, and registers the path method', async () => {
-  assert.equal(buildFeatureFlags({}).plugin_developer_profile, true);
-  assert.equal(buildFeatureFlags({ JENNY_ENABLE_PLUGIN_DEVELOPER_PROFILE: '0' })
-    .plugin_developer_profile, false);
+test('developer flag defaults off, has an opt-in, and registers the path method', async () => {
+  assert.equal(buildFeatureFlags({}).plugin_developer_profile, false);
+  assert.equal(buildFeatureFlags({ JENNY_ENABLE_PLUGIN_DEVELOPER_PROFILE: '1' })
+    .plugin_developer_profile, true);
+  assert.equal(buildFeatureFlags({}, { plugin_developer_profile: true }).plugin_developer_profile,
+    false, 'a stored override cannot turn unsigned installs on');
   assert.equal(PLUGIN_STAGE5_INVOKE_METHODS['plugins.installLocalPackageFromPath'],
     'installPackageFromPath');
   let release;
@@ -104,7 +106,7 @@ test('developer flag defaults on, has a kill switch, and registers the path meth
   assert.equal(ran, true);
 });
 
-test('developer seam is signed-first, managed-policy bounded, and observable', async () => {
+test('developer seam is signed-first and observable', async () => {
   const fixture = buildSignedPluginPackage({ contractVersion: 3 });
   const selected = { bytes: fixture.bytes, sourcePathDigest: fixture.sourcePathDigest };
   const logs = [];
@@ -124,7 +126,7 @@ test('developer seam is signed-first, managed-policy bounded, and observable', a
   }]);
 
   const disabled = createDeveloperProfileSeams({ enabled: false,
-    trustRootsProvider: enabledTrustRoots, managedPolicy: null });
+    trustRootsProvider: enabledTrustRoots });
   const refused = await disabled.inspectLocalPackage(selected);
   assert.deepEqual({ code: refused.code, reason: refused.reason }, {
     code: PLUGIN_ERROR_CODES.PUBLISHER_UNTRUSTED, reason: 'publisher_not_pretrusted',
@@ -170,9 +172,10 @@ test('install-from-path commits developer source kind and catalog update is refu
   });
   const update = await createContext({ operation: { kind: 'update',
     source_kind: 'signed_catalog', target: { publisher_id: 'acme-labs', plugin_id: 'widgets' } } });
-  assert.deepEqual({ ok: update.ok, code: update.code, reason: update.reason }, {
-    ok: false, code: PLUGIN_ERROR_CODES.POLICY_BLOCKED,
-    reason: 'developer_install_not_updatable',
+  // Catalog updates are retired, so a developer install is no longer reachable
+  // through one: the context refuses the source itself.
+  assert.deepEqual({ ok: update.ok, reason: update.reason }, {
+    ok: false, reason: 'distribution_source_retired',
   });
 });
 

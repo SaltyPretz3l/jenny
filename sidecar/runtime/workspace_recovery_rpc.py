@@ -82,13 +82,13 @@ def process_workspace_recovery_method(
         return _invalid(message_id, initialized, "params must be an object")
     try:
         if method == WORKSPACE_RECONCILE_RUNTIME_PREPARATIONS_METHOD:
-            from sidecar.runtime.mutation_preparation_recovery import (  # noqa: PLC0415
+            from sidecar.runtime.mutation_preparation_recovery import (
                 reconcile_mutation_preparations,
             )
             result = reconcile_mutation_preparations(params, brain_container.stack.config)
             return _outcome(result_response(message_id, result), initialized)
         if method in {WORKSPACE_RELEASE_RUNTIME_CHECKPOINT_METHOD, WORKSPACE_CONFIRM_RUNTIME_CHECKPOINT_METHOD}:
-            from sidecar.runtime.mutation_checkpoint_release import (  # noqa: PLC0415
+            from sidecar.runtime.mutation_checkpoint_release import (
                 release_mutation_checkpoint,
             )
             result = release_mutation_checkpoint(params, brain_container.stack.config,

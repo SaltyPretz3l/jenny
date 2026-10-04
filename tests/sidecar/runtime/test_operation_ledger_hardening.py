@@ -35,7 +35,7 @@ class TestLockReleaseOwnership:
     def test_release_leaves_a_stolen_successor_lock_in_place(self, tmp_path: Path) -> None:
         ledger = _ledger(tmp_path)
         lock_path = _operations_dir(tmp_path) / ".lock"
-        with ledger._locked():  # noqa: SLF001 - the lock protocol is the unit under test
+        with ledger._locked():  # the lock protocol is the unit under test
             # Simulate a successor that (rightly or wrongly) stole the lock while
             # this holder stalled: our lock file is gone, theirs is in place.
             lock_path.unlink()
@@ -46,7 +46,7 @@ class TestLockReleaseOwnership:
     def test_release_removes_its_own_lock(self, tmp_path: Path) -> None:
         ledger = _ledger(tmp_path)
         lock_path = _operations_dir(tmp_path) / ".lock"
-        with ledger._locked():  # noqa: SLF001
+        with ledger._locked():
             assert lock_path.exists()
         assert not lock_path.exists()
 

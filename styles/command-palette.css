@@ -74,9 +74,8 @@
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-xs);
   color: var(--text-secondary);
-  font-size: var(--font-size-sm);
-  letter-spacing: var(--tracking-kicker-sm);
-  text-transform: uppercase;
+  font-size: var(--font-size-caption);
+  font-weight: 500;
   user-select: none;
 }
 
@@ -89,7 +88,7 @@
   background: transparent;
   color: var(--text-primary);
   font-family: var(--font-family-body);
-  font-size: var(--font-size-xl);
+  font-size: var(--font-size-prose);
   letter-spacing: var(--tracking-ui);
   outline: none;
 }
@@ -148,7 +147,7 @@
   cursor: pointer;
   text-align: start;
   font-family: var(--font-family-body);
-  font-size: var(--font-size-md);
+  font-size: var(--font-size-body);
   transition: background-color var(--transition-fast);
 }
 
@@ -181,7 +180,7 @@
 .command-palette-item-trailing {
   flex: 0 0 auto;
   color: var(--text-muted);
-  font-size: var(--font-size-sm);
+  font-size: var(--font-size-caption);
   white-space: nowrap;
 }
 
@@ -206,7 +205,7 @@
 .command-palette-item mark {
   background: none;
   color: inherit;
-  font-weight: 600;
+  font-weight: 500;
 }
 
 /* ── Empty state ── */
@@ -223,7 +222,7 @@
   padding: var(--space-3) var(--space-8);
   border-top: 1px solid var(--border-subtle);
   color: var(--text-muted);
-  font-size: var(--font-size-sm);
+  font-size: var(--font-size-caption);
   user-select: none;
 }
 
@@ -247,7 +246,7 @@
   background: color-mix(in srgb, var(--accent) 4%, transparent);
   color: var(--text-muted);
   font-family: var(--font-family-body);
-  font-size: var(--font-size-sm);
+  font-size: var(--font-size-caption);
   letter-spacing: var(--tracking-ui);
   cursor: pointer;
   user-select: none;
@@ -270,32 +269,15 @@
   margin-inline-start: var(--space-2);
 }
 
-/* ── Titlebar "Go anywhere" pill (sits in the status cluster, next to CPU) ── */
-.titlebar-palette-pill {
-  flex: 0 1 auto;
-  min-width: 0;
-  /* Responsive width — grows gently on wide windows, shrinks on narrow ones,
-     matching the clamp() idiom used for composer/bubble widths elsewhere. */
-  max-width: clamp(150px, 16vw, 280px);
-}
+/* ── Titlebar palette trigger: a search glyph in the right cluster (the
+   label and the Ctrl K keycap live in its tooltip; base look in
+   shell-chrome.css .titlebar-icon-button) ── */
 
-.titlebar-palette-pill .palette-pill-label {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-/* On narrow windows collapse the label to just the kbd hint so the status
-   cluster never crowds the window controls. */
-@media (max-width: 900px) {
-  .titlebar-palette-pill .palette-pill-label { display: none; }
-}
-
-/* The center column carries the pinned-note tab strip; on very narrow windows it
-   collapses so the status cluster never crowds the window controls (pins stay
-   reachable from Home). */
+/* Pinned notes yield on narrow windows so the right cluster never crowds the
+   window controls (pins stay reachable from Home). The live turn pill shares
+   the gutter and stays. */
 @media (max-width: 720px) {
-  .titlebar-center { display: none; }
+  .titlebar-center > .pin-tabs { display: none; }
 }
 
 /* At phone-width app shells the wordmark and native controls consume the row.

@@ -27,7 +27,7 @@ test('the composer meta row follows the composer card inside composerWrap', () =
     'meta row follows the composer card'
   );
   assert.equal(doc.getElementById('composerModeChipsAnnouncer')?.parentElement, row, 'announcer stays in the meta row');
-  assert.equal(doc.getElementById('composerRunModeHint')?.parentElement, row, 'hint stays in the meta row');
+  assert.equal(doc.getElementById('composerRunModeHint'), null, 'the hint sentence lives in the run-mode chip title, not the meta row');
   const timer = doc.getElementById('composerTurnTimer');
   assert.equal(timer?.parentElement, row, 'turn timer ships in the meta row');
   assert.equal(timer?.getAttribute('data-turn-timer-state'), 'idle', 'timer ships idle');

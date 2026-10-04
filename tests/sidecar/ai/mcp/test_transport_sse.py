@@ -52,7 +52,7 @@ class _FakeMcpServer:
             def log_message(self, *args: Any) -> None:
                 return
 
-            def do_POST(self) -> None:  # noqa: N802
+            def do_POST(self) -> None:
                 length = int(self.headers.get("Content-Length", "0") or "0")
                 raw = self.rfile.read(length) if length else b""
                 try:

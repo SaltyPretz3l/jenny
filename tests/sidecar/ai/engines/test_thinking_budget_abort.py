@@ -10,10 +10,10 @@ from typing import Any
 
 import pytest
 
-from sidecar.ai.engines.provider_http import ProviderHttpService
-from sidecar.ai.engines.vllm_engine import VLLMEngine
 from sidecar.ai.engines import ollama_runtime
 from sidecar.ai.engines.ollama_runtime import stream, stream_with_tools
+from sidecar.ai.engines.provider_http import ProviderHttpService
+from sidecar.ai.engines.vllm_engine import VLLMEngine
 from sidecar.ai.thinking_guard import ThinkingRepetitionGuard
 from tests.sidecar.ai.engines.test_ollama_runtime import FakeEngine
 
@@ -125,8 +125,8 @@ def _patch_vllm_stream(
     monkeypatch.setattr(ProviderHttpService, "stream_response", _stream_response)
     engine = VLLMEngine(host="http://localhost:8000")
     engine.model_name = "Qwen/Qwen3.5-9B"
-    engine._ready = True  # noqa: SLF001
-    engine._thinking = True  # noqa: SLF001
+    engine._ready = True
+    engine._thinking = True
     return engine, response
 
 
@@ -378,3 +378,147 @@ def test_vllm_plain_stream_repetition_then_budget_aborts_with_thinking_budget(
 
     assert events[-1].finish_reason == "thinking_budget"
     assert response.consumed < len(lines)
+
+
+# ---------------------------------------------------------------------------
+# HB-004 (dogfood 2026-09-28): a repetition trip used to hide every later delta
+# while the engine generated on for minutes until the char budget aborted it,
+# leaving the live reasoning row silent. Abort on: end the call at the trip.
+# Abort off: the tool-loop stream says the reasoning is hidden, once.
+# ---------------------------------------------------------------------------
+
+
+def _repetition_only_lines() -> list[str]:
+    return [
+        *(_vllm_chunk({"reasoning_content": _REPEATED_REASONING}) for _ in range(4)),
+        _vllm_chunk({"content": "answer"}),
+        "data: [DONE]",
+    ]
+
+
+def _status_events(events: list[Any]) -> list[Any]:
+    return [event for event in events if getattr(event, "kind", "") == "thinking_status"]
+
+
+def test_vllm_tool_stream_aborts_on_the_repetition_trip_itself(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    lines = _repetition_only_lines()
+    engine, response = _patch_vllm_stream(monkeypatch, lines)
+
+    events, result = _drain(
+        engine.stream_with_tools(prompt="hi", tools=[], max_tokens=_BUDGET_MAX_TOKENS)
+    )
+
+    assert result.finish_reason == "thinking_budget"
+    assert response.consumed == 3  # the tripping chunk; nothing streamed after it
+    assert not _status_events(events)
+    assert not [event for event in events if getattr(event, "kind", "") == "content"]
+
+
+def test_vllm_plain_stream_aborts_on_the_repetition_trip_itself(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    lines = _repetition_only_lines()
+    engine, response = _patch_vllm_stream(monkeypatch, lines)
+
+    events = list(engine.stream(prompt="hi", max_tokens=_BUDGET_MAX_TOKENS))
+
+    assert events[-1].finish_reason == "thinking_budget"
+    assert response.consumed == 3
+
+
+def test_vllm_tool_stream_repetition_with_abort_off_yields_one_status(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("JENNY_ENABLE_THINKING_BUDGET_ABORT", "0")
+    lines = _repetition_only_lines()
+    engine, response = _patch_vllm_stream(monkeypatch, lines)
+
+    events, result = _drain(
+        engine.stream_with_tools(prompt="hi", tools=[], max_tokens=_BUDGET_MAX_TOKENS)
+    )
+
+    assert response.consumed == len(lines)
+    assert result.finish_reason != "thinking_budget"
+    assert result.content == "answer"
+    assert [event.text for event in _status_events(events)] == [
+        "Reasoning hidden - repetition detected"
+    ]
+    thinking = [event for event in events if getattr(event, "kind", "") == "thinking"]
+    assert len(thinking) == 2  # the two windows before the trip
+
+
+def test_vllm_plain_stream_never_yields_the_status_kind(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """chat_streaming renders unknown kinds as visible text; stream() must not."""
+    monkeypatch.setenv("JENNY_ENABLE_THINKING_BUDGET_ABORT", "0")
+    engine, _response = _patch_vllm_stream(monkeypatch, _repetition_only_lines())
+
+    events = list(engine.stream(prompt="hi", max_tokens=_BUDGET_MAX_TOKENS))
+
+    assert not _status_events(events)
+    assert [event.text for event in events if event.kind == "content"] == ["answer"]
+
+
+def _patch_ollama_chunks(
+    monkeypatch: pytest.MonkeyPatch, chunks: list[dict[str, Any]]
+) -> _TrackingResponse:
+    response = _TrackingResponse([json.dumps(chunk).encode() + b"\n" for chunk in chunks])
+    monkeypatch.setattr(urllib.request, "urlopen", lambda _req, timeout=None: response)
+    return response
+
+
+def _ollama_repetition_chunks() -> list[dict[str, Any]]:
+    return [
+        *({"message": {"thinking": _REPEATED_REASONING}} for _ in range(4)),
+        {"message": {"content": "answer"}},
+        {"message": {}, "done": True, "done_reason": "stop"},
+    ]
+
+
+def test_ollama_tool_stream_aborts_on_the_repetition_trip_itself(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    response = _patch_ollama_chunks(monkeypatch, _ollama_repetition_chunks())
+
+    events, result = _drain(
+        stream_with_tools(
+            FakeEngine(think_value=True),
+            prompt="hi",
+            tools=[{"function": {"name": "read_file"}}],
+            max_tokens=_BUDGET_MAX_TOKENS,
+        )
+    )
+
+    assert result.finish_reason == "thinking_budget"
+    assert response.consumed == 3
+    assert not _status_events(events)
+
+
+@pytest.mark.parametrize("with_tools", [False, True])
+def test_ollama_repetition_with_abort_off_status_only_on_the_tool_stream(
+    monkeypatch: pytest.MonkeyPatch,
+    with_tools: bool,
+) -> None:
+    monkeypatch.setenv("JENNY_ENABLE_THINKING_BUDGET_ABORT", "0")
+    chunks = _ollama_repetition_chunks()
+    response = _patch_ollama_chunks(monkeypatch, chunks)
+    engine = FakeEngine(think_value=True)
+
+    if with_tools:
+        events, _result = _drain(
+            stream_with_tools(
+                engine,
+                prompt="hi",
+                tools=[{"function": {"name": "read_file"}}],
+                max_tokens=_BUDGET_MAX_TOKENS,
+            )
+        )
+    else:
+        events = list(stream(engine, prompt="hi", max_tokens=_BUDGET_MAX_TOKENS))
+
+    assert response.consumed == len(chunks)
+    expected = ["Reasoning hidden - repetition detected"] if with_tools else []
+    assert [event.text for event in _status_events(events)] == expected

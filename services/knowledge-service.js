@@ -429,6 +429,80 @@ class KnowledgeService extends EventEmitter {
     return { ok: true };
   }
 
+  // Project delete (PO review 2026-09-27, D10): every folder registered under
+  // `fromProjectId` moves to `toProjectId` in one durable write. A folder the
+  // target already has merges into it. Runs regardless of the feature flag so a
+  // folder registered while the flag was on is never orphaned under a deleted
+  // project id. The receipt lets restoreProjectFolders undo exactly this move.
+  moveProjectFolders({ fromProjectId, toProjectId } = {}) {
+    const from = normalizeProjectId(fromProjectId);
+    const to = normalizeProjectId(toProjectId);
+    if (!from || !to || from !== fromProjectId || to !== toProjectId || from === to) {
+      return { ok: false, reason: 'invalid_project_id' };
+    }
+    const document = this._ensureDocument();
+    if (this._readOnlyReason) return { ok: false, reason: this._readOnlyReason };
+    const moving = document.roots.filter((root) => root.project_id === from);
+    if (!moving.length) return { ok: true, moved: 0, receipt: null };
+    const targetPaths = new Set(
+      document.roots.filter((root) => root.project_id === to).map((root) => root.path)
+    );
+    const merged = moving.filter((root) => targetPaths.has(root.path));
+    const mergedIds = new Set(merged.map((root) => root.id));
+    const revision = this._nextRevision(document);
+    if (revision === null) return { ok: false, reason: 'revision_exhausted' };
+    const nextDocument = {
+      ...document,
+      revision,
+      roots: document.roots
+        .filter((root) => !mergedIds.has(root.id))
+        .map((root) => (root.project_id === from ? { ...root, project_id: to } : root)),
+    };
+    this._persistDocument(nextDocument);
+    this._document = nextDocument;
+    this._emitChanged('knowledge_project_moved', to);
+    return {
+      ok: true,
+      moved: moving.length,
+      receipt: {
+        from_project_id: from,
+        to_project_id: to,
+        moved_ids: moving.filter((root) => !mergedIds.has(root.id)).map((root) => root.id),
+        merged_roots: merged.map((root) => cloneRoot(root)),
+      },
+    };
+  }
+
+  restoreProjectFolders(receipt) {
+    const from = normalizeProjectId(receipt?.from_project_id);
+    const to = normalizeProjectId(receipt?.to_project_id);
+    if (!from || !to || !Array.isArray(receipt.moved_ids) || !Array.isArray(receipt.merged_roots)) {
+      return { ok: false, reason: 'invalid_receipt' };
+    }
+    const document = this._ensureDocument();
+    if (this._readOnlyReason) return { ok: false, reason: this._readOnlyReason };
+    const movedIds = new Set(receipt.moved_ids);
+    const presentIds = new Set(document.roots.map((root) => root.id));
+    const revision = this._nextRevision(document);
+    if (revision === null) return { ok: false, reason: 'revision_exhausted' };
+    const nextDocument = {
+      ...document,
+      revision,
+      roots: [
+        ...document.roots.map((root) => (
+          movedIds.has(root.id) && root.project_id === to ? { ...root, project_id: from } : root
+        )),
+        ...receipt.merged_roots
+          .filter((root) => root && !presentIds.has(root.id))
+          .map((root) => ({ ...cloneRoot(root), project_id: from })),
+      ].slice(0, this.maxRoots),
+    };
+    this._persistDocument(nextDocument);
+    this._document = nextDocument;
+    this._emitChanged('knowledge_project_restored', from);
+    return { ok: true };
+  }
+
   getStateSnapshot({ projectId } = {}) {
     const enabled = this._isFeatureEnabled();
     const scope = this._resolveProjectId(projectId);

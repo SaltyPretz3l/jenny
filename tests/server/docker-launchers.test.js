@@ -6,11 +6,22 @@ const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 const { test } = require('node:test');
+const yaml = require('js-yaml');
 
 const ROOT = path.resolve(__dirname, '..', '..');
 const SH_LAUNCHER = path.join(ROOT, 'docker-setup.sh');
 const PS_LAUNCHER = path.join(ROOT, 'docker-setup.ps1');
 const COMPOSE = path.join(ROOT, 'compose.host.easy.yml');
+
+test('manual and guided Compose retain the policy 2 health gate before launcher overrides', () => {
+  const easy = yaml.load(fs.readFileSync(COMPOSE, 'utf8'));
+  const manual = yaml.load(fs.readFileSync(path.join(ROOT, 'compose.host.yml'), 'utf8'));
+  assert.equal(easy.services.jenny.extends.service, 'jenny');
+  assert.equal(easy.services.jenny.extends.file, 'compose.host.yml');
+  assert.equal(easy.services.sandbox.profiles, undefined);
+  assert.equal(manual.services.jenny.depends_on.sandbox.condition, 'service_healthy');
+  assert.equal(manual.services.sandbox.profiles, undefined);
+});
 
 const STUB = String.raw`
 'use strict';
@@ -37,8 +48,16 @@ if (command === 'ps') {
   if (process.env.JENNY_RUNNING === '1') console.log('jenny');
   process.exit(0);
 }
+if (command === 'up' && args.includes('-')) {
+  fs.writeFileSync(log + '.override.yml', fs.readFileSync(0, 'utf8'));
+}
 const commandIndex = args.indexOf('setup');
 const operation = commandIndex >= 0 ? args[commandIndex + 1] : command;
+if (args.includes('--entrypoint') && args.includes('-e')) {
+  if (fail === 'policy') process.exit(22);
+  console.log(process.env.JENNY_EXECUTION_POLICY || '1');
+  process.exit(0);
+}
 if (fail && operation === fail) process.exit(22);
 if (operation === 'doctor' || operation === 'status' || operation === 'init' || operation === 'configure') {
   console.log(operation + ' ok');
@@ -56,6 +75,7 @@ function makeFixture(t) {
   const stub = path.join(fixture, process.platform === 'win32' ? 'docker.cmd' : 'docker');
   if (process.platform === 'win32') {
     fs.writeFileSync(stub, '@echo off\r\nnode "%~dp0docker-stub.js" %*\r\n', 'utf8');
+    fs.writeFileSync(path.join(fixture, 'docker'), `#!/bin/bash\nnode '${stubSource.replace(/\\/gu, '/')}' "$@"\n`, 'utf8');
   } else {
     fs.writeFileSync(stub, `#!/usr/bin/env node\nrequire(${JSON.stringify(stubSource)});\n`, 'utf8');
     fs.chmodSync(stub, 0o755);
@@ -118,6 +138,73 @@ function bashAvailable() {
   if (process.platform === 'win32') return false;
   const result = spawnSync(bashExecutable(), ['-c', 'exit 0'], { encoding: 'utf8', windowsHide: true });
   return !result.error && result.status === 0;
+}
+
+function startupBashAvailable() {
+  const result = spawnSync(bashExecutable(), ['-c', 'exit 0'], { encoding: 'utf8', windowsHide: true });
+  return !result.error && result.status === 0;
+}
+
+function runWithTerminal(fixture, label, args, env) {
+  // Mock only the console prerequisite; Docker remains a recording stub.
+  const filename = path.join(fixture, label === 'Bash' ? 'docker-setup.sh' : 'docker-setup.ps1');
+  const source = fs.readFileSync(filename, 'utf8');
+  fs.writeFileSync(filename, label === 'Bash'
+    ? source.replace('require_interactive() {', 'require_interactive() { return 0;')
+    : source.replace('function Test-InteractiveTerminal {', 'function Test-InteractiveTerminal { return $true;'), 'utf8');
+  return (label === 'Bash' ? runBash : runPowerShell)(fixture, args, env);
+}
+
+for (const label of ['Bash', 'PowerShell']) {
+  for (const policy of [1, 2]) {
+    test(`${label} startup selects the saved execution policy ${policy}`, {
+      skip: label === 'Bash' ? !startupBashAvailable() : !powershellAvailable(),
+    }, (t) => {
+      const { fixture, log, env } = makeFixture(t);
+      const result = runWithTerminal(fixture, label, [], { ...env, JENNY_EXECUTION_POLICY: String(policy) });
+      assert.equal(result.status, 0, `${result.stdout}${result.stderr}`);
+      const calls = readCalls(log);
+      const probe = calls.find((args) => args.includes('--entrypoint'));
+      assert.ok(probe, 'saved policy is read from the configured setup volume before startup');
+      const up = calls.find((args) => args.includes('up'));
+      assert.ok(up);
+      assert.equal(up.includes('--profile'), false);
+      assert.equal(up.filter((arg) => arg === '-f').length, policy === 1 ? 2 : 1,
+        'only policy 1 removes the mandatory health dependency');
+      assert.deepEqual(up.slice(up.indexOf('up')), ['up', '--wait', '--wait-timeout', '120', '-d', 'jenny']);
+      assert.ok(calls.indexOf(probe) < calls.indexOf(up));
+      if (policy === 1) {
+        const reset = new yaml.Type('!reset', { kind: 'mapping', construct: () => ({}) });
+        const override = yaml.load(fs.readFileSync(`${log}.override.yml`, 'utf8'), {
+          schema: yaml.DEFAULT_SCHEMA.extend([reset]),
+        });
+        assert.deepEqual(override, {
+          services: { jenny: { depends_on: {} }, sandbox: { profiles: ['execution'] } },
+        });
+      }
+    });
+  }
+  test(`${label} refuses startup when the saved policy probe fails or is invalid`, {
+    skip: label === 'Bash' ? !startupBashAvailable() : !powershellAvailable(),
+  }, (t) => {
+    for (const setting of [{ JENNY_DOCKER_FAIL: 'policy' }, { JENNY_EXECUTION_POLICY: 'unexpected' }]) {
+      const { fixture, log, env } = makeFixture(t);
+      const result = runWithTerminal(fixture, label, [], { ...env, ...setting });
+      assert.notEqual(result.status, 0);
+      assert.equal(readCalls(log).some((args) => args.includes('up')), false);
+    }
+  });
+  test(`${label} policy 2 startup preserves a worker health failure`, {
+    skip: label === 'Bash' ? !startupBashAvailable() : !powershellAvailable(),
+  }, (t) => {
+    const { fixture, log, env } = makeFixture(t);
+    const result = runWithTerminal(fixture, label, ['configure'], {
+      ...env, JENNY_EXECUTION_POLICY: '2', JENNY_DOCKER_FAIL: 'up',
+    });
+    assert.equal(result.status, 22);
+    assert.match(`${result.stdout}${result.stderr}`, /start failed \(exit 22\)/u);
+    assert.equal(readCalls(log).some((args) => args.at(-1) === 'status'), false);
+  });
 }
 
 function powershellAvailable() {
@@ -234,9 +321,9 @@ test('Bash PTY exercises stopped, running, configure, and failure paths when scr
   const stopped = runBashInteractive(fixture, [], env);
   assert.equal(stopped.status, 0, stopped.stderr);
   const stoppedCalls = readCalls(log);
-  assert.deepEqual(stoppedCalls.map(operation), ['version', 'info', 'ps', 'build', 'run', 'up', 'run']);
+  assert.deepEqual(stoppedCalls.map(operation), ['version', 'info', 'ps', 'build', 'run', 'run', 'up', 'run']);
   assert.equal(stoppedCalls[4].at(-1), 'init');
-  assert.equal(stoppedCalls[6].at(-1), 'status');
+  assert.equal(stoppedCalls[7].at(-1), 'status');
 
   fs.writeFileSync(log, '', 'utf8');
   const running = runBashInteractive(fixture, [], { ...env, JENNY_RUNNING: '1' });
@@ -251,7 +338,7 @@ test('Bash PTY exercises stopped, running, configure, and failure paths when scr
   const configured = runBashInteractive(fixture, ['configure'], env);
   assert.equal(configured.status, 0, configured.stderr);
   const configuredCalls = readCalls(log);
-  assert.deepEqual(configuredCalls.map(operation), ['version', 'info', 'ps', 'build', 'run', 'up', 'run']);
+  assert.deepEqual(configuredCalls.map(operation), ['version', 'info', 'ps', 'build', 'run', 'run', 'up', 'run']);
   assert.equal(configuredCalls[4].at(-1), 'configure');
 
   fs.writeFileSync(log, '', 'utf8');

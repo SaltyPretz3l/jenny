@@ -20,11 +20,6 @@ from sidecar.ai.error_codes import (
     CMP_PLUGIN_EXPECTED_GENERATION_CONFLICT,
     CMP_PLUGIN_LEASE_BUSY,
 )
-from sidecar.ai.plugins.generated_plugin_contracts import validate
-from sidecar.ai.plugins.runtime_privileged import (
-    PluginEngineBinding,
-    PluginNativeToolDescriptor,
-)
 
 MAX_UNLEASED_GENERATIONS: Final[int] = 4
 MAX_SAFE_INTEGER: Final[int] = 9_007_199_254_740_991
@@ -48,11 +43,10 @@ class PluginRuntimeGeneration:
     contributions: tuple[PluginContextItem, ...]
     declarative: tuple["PluginDeclarativeContribution", ...] = ()
     settings: tuple["PluginSettingsRecord", ...] = ()
-    workflow_tool_bindings: tuple["PluginWorkflowToolBinding", ...] = ()
+    # Retired slot: plugin workflows no longer exist. Kept (always empty) so the
+    # frozen generation fingerprint and the V2-V6 builders stay byte-stable.
+    workflow_tool_bindings: tuple[()] = ()
     remote_tools: tuple["PluginRemoteToolDescriptor", ...] = ()
-    providers: tuple["PluginProviderDescriptor", ...] = ()
-    native_tools: tuple["PluginNativeToolDescriptor", ...] = ()
-    engine_bindings: tuple["PluginEngineBinding", ...] = ()
     expected_rejections_digest: str = (
         "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
     )
@@ -79,17 +73,6 @@ class PluginSettingsRecord:
 
 
 @dataclass(frozen=True, slots=True)
-class PluginWorkflowToolBinding:
-    publisher_id: str
-    plugin_id: str
-    workflow_id: str
-    node_id: str
-    tool_id: str
-    manifest_version: int
-    descriptor_sha256: str
-
-
-@dataclass(frozen=True, slots=True)
 class PluginRemoteToolDescriptor:
     name: str
     description: str
@@ -99,30 +82,7 @@ class PluginRemoteToolDescriptor:
     source_kind: str = "mcp"
     tool_family: str = "other"
     server_tool_name: str = ""
-
-
-@dataclass(frozen=True, slots=True)
-class PluginProviderDescriptor:
-    provider_id: str
-    engine_type: str
-    descriptor_digest: str
-    descriptor: dict[str, Any]
-
-
-@dataclass(frozen=True, slots=True)
-class PluginProviderBinding:
-    authority: PluginRuntimeAuthority
-    provider_id: str
-    descriptor_digest: str
-    descriptor: dict[str, Any]
-
-
-@dataclass(frozen=True, slots=True)
-class PluginCommandResolution:
-    generation: PluginRuntimeGeneration
-    command: PluginDeclarativeContribution
-    target: PluginDeclarativeContribution
-    inputs: tuple[tuple[str, str, object], ...]
+    connection_id: str = ""
 
 
 class PluginAuthorityMismatchError(RuntimeError):
@@ -145,34 +105,6 @@ class PluginRuntimeAdmissionError(ValueError):
         self.code = code
         self.reason_code = reason_code
         self.retryable = retryable
-
-
-def _normalize_command_inputs(
-    command: PluginDeclarativeContribution,
-    supplied_rows: list[dict[str, Any]],
-) -> tuple[tuple[str, str, object], ...]:
-    supplied = {str(item["key"]): item for item in supplied_rows}
-    normalized: list[tuple[str, str, object]] = []
-    for field in cast(list[dict[str, Any]], command.payload["inputs"]):
-        key = str(field["key"])
-        item = supplied.pop(key, None)
-        expected = "string" if field["type"] == "enum" else str(field["type"])
-        if item is None:
-            normalized.append((key, expected, field["default"]))
-            continue
-        if item["type"] != expected:
-            raise PluginAuthorityMismatchError("plugin command input type changed")
-        value = item["value"]
-        if field["type"] == "integer" and not field["minimum"] <= value <= field["maximum"]:
-            raise PluginAuthorityMismatchError("plugin command input is out of range")
-        if field["type"] == "string" and len(value.encode("utf-8")) > field["max_length"]:
-            raise PluginAuthorityMismatchError("plugin command input is too long")
-        if field["type"] == "enum" and value not in field["values"]:
-            raise PluginAuthorityMismatchError("plugin command input is not permitted")
-        normalized.append((key, expected, value))
-    if supplied:
-        raise PluginAuthorityMismatchError("plugin command input is unknown")
-    return tuple(normalized)
 
 
 class PluginTurnPin:
@@ -217,10 +149,6 @@ class PluginRuntimeRegistry:
             PluginRuntimeAuthority, PluginRuntimeGeneration
         ] = OrderedDict()
         self._lease_counts: dict[PluginRuntimeAuthority, int] = {}
-        self._workflow_cancellations: dict[
-            PluginRuntimeAuthority, dict[int, Callable[[], None]]
-        ] = {}
-        self._workflow_cancellation_sequence = 0
         self._current: PluginRuntimeAuthority | None = None
         self._fence_reason: str | None = None
         self._active_lease: ContextVar[PluginRuntimeGeneration | None] = ContextVar(
@@ -229,39 +157,16 @@ class PluginRuntimeRegistry:
         )
         self._event_sink = event_sink
 
-    def current_provider_binding(self, provider_id: str) -> PluginProviderBinding | None:
+    def has_published_generation(self) -> bool:
+        """Whether Electron has published any plugin runtime generation yet."""
         with self._lock:
-            generation = self._generations.get(self._current) if self._current else None
-            if generation is None:
-                return None
-            for provider in generation.providers:
-                if provider.provider_id == provider_id:
-                    return PluginProviderBinding(
-                        authority=generation.authority,
-                        provider_id=provider.provider_id,
-                        descriptor_digest=provider.descriptor_digest,
-                        descriptor=dict(provider.descriptor),
-                    )
-        return None
-
-    def is_provider_binding_current(self, binding: PluginProviderBinding) -> bool:
-        with self._lock:
-            if self._current != binding.authority:
-                return False
-            generation = self._generations.get(self._current)
-            if generation is None:
-                return False
-            return any(
-                provider.provider_id == binding.provider_id
-                and provider.descriptor_digest == binding.descriptor_digest
-                for provider in generation.providers
-            )
+            return self._current is not None and self._current in self._generations
 
     def _emit(self, event: str, data: dict[str, object]) -> None:
         if self._event_sink is not None:
             try:
                 self._event_sink(event, data)
-            except Exception:
+            except Exception:  # noqa: BLE001  # telemetry
                 # Observability cannot mutate publication/fence authority.
                 return
 
@@ -278,7 +183,6 @@ class PluginRuntimeRegistry:
         self._emit("plugin.runtime.fence_end", {"reason_code": prior or "none"})
 
     def publish(self, generation: PluginRuntimeGeneration) -> PluginRuntimeGeneration:
-        cancellations: tuple[Callable[[], None], ...] = ()
         with self._lock:
             current = self._current
             retained = self._generations.get(generation.authority)
@@ -297,58 +201,14 @@ class PluginRuntimeRegistry:
                 self._current = retained.authority
                 self._generations.move_to_end(retained.authority)
                 self._evict_unleased_locked()
-                cancellations = self._take_workflow_cancellations_locked(current)
                 published = retained
             else:
                 self._generations[generation.authority] = generation
                 self._generations.move_to_end(generation.authority)
                 self._current = generation.authority
                 self._evict_unleased_locked()
-                cancellations = self._take_workflow_cancellations_locked(current)
                 published = generation
-        self._cancel_workflows(cancellations)
         return published
-
-    def _take_workflow_cancellations_locked(
-        self, authority: PluginRuntimeAuthority | None
-    ) -> tuple[Callable[[], None], ...]:
-        if authority is None:
-            return ()
-        return tuple(self._workflow_cancellations.pop(authority, {}).values())
-
-    def _cancel_workflows(self, callbacks: tuple[Callable[[], None], ...]) -> None:
-        for callback in callbacks:
-            try:
-                callback()
-            except Exception:
-                self._emit(
-                    "plugin.runtime.workflow_cancel_failed",
-                    {"reason_code": "generation_withdrawn"},
-                )
-
-    def register_workflow_cancellation(
-        self,
-        authority: PluginRuntimeAuthority,
-        callback: Callable[[], None],
-    ) -> Callable[[], None]:
-        """Cancel only workflow turns when their immutable generation is withdrawn."""
-        with self._lock:
-            if authority != self._current:
-                raise PluginAuthorityMismatchError("plugin workflow authority is stale")
-            self._workflow_cancellation_sequence += 1
-            token = self._workflow_cancellation_sequence
-            self._workflow_cancellations.setdefault(authority, {})[token] = callback
-
-        def unregister() -> None:
-            with self._lock:
-                callbacks = self._workflow_cancellations.get(authority)
-                if callbacks is None:
-                    return
-                callbacks.pop(token, None)
-                if not callbacks:
-                    self._workflow_cancellations.pop(authority, None)
-
-        return unregister
 
     def _evict_unleased_locked(self) -> None:
         candidates = [
@@ -408,66 +268,6 @@ class PluginRuntimeRegistry:
     def build_turn_tool_descriptors(self) -> tuple[PluginRemoteToolDescriptor, ...]:
         generation = self._active_lease.get()
         return generation.remote_tools if generation is not None else ()
-
-    def build_turn_native_tool_descriptors(self) -> tuple[PluginNativeToolDescriptor, ...]:
-        generation = self._active_lease.get()
-        return generation.native_tools if generation is not None else ()
-
-    def current_engine_binding(self, adapter_id: str) -> PluginEngineBinding | None:
-        with self._lock:
-            generation = self._generations.get(self._current) if self._current else None
-            if generation is None:
-                return None
-            return next(
-                (item for item in generation.engine_bindings if item.adapter_id == adapter_id),
-                None,
-            )
-
-    def current_engine_ids(self) -> tuple[str, ...]:
-        with self._lock:
-            generation = self._generations.get(self._current) if self._current else None
-            if generation is None:
-                return ()
-            return tuple(item.adapter_id for item in generation.engine_bindings)
-
-    def is_engine_binding_current(self, binding: PluginEngineBinding) -> bool:
-        with self._lock:
-            generation = self._generations.get(self._current) if self._current else None
-            return generation is not None and binding in generation.engine_bindings
-
-    def resolve_command(self, raw_invocation: object) -> PluginCommandResolution:
-        generation = self._active_lease.get()
-        if generation is None:
-            raise PluginAuthorityMismatchError("plugin runtime lease is unavailable")
-        verdict = validate("PluginCommandInvocationV2", raw_invocation)
-        if verdict.get("ok") is not True or not isinstance(verdict.get("value"), dict):
-            raise PluginAuthorityMismatchError("plugin command invocation is invalid")
-        value = cast(dict[str, Any], verdict["value"])
-        if (
-            value["observed_generation_id"] != generation.authority.active_generation_id
-            or value["observed_registry_revision"] != generation.authority.registry_revision
-        ):
-            raise PluginAuthorityMismatchError("plugin command authority is stale")
-        identity = (value["publisher_id"], value["plugin_id"], value["command_id"])
-        command = next((item for item in generation.declarative if (
-            item.publisher_id, item.plugin_id, item.contribution_id
-        ) == identity and item.kind == "command"), None)
-        if command is None:
-            raise PluginAuthorityMismatchError("plugin command is unavailable")
-        target_id = str(command.payload["target_contribution_id"])
-        target_kind = str(command.payload["target_kind"])
-        target = next((item for item in generation.declarative if (
-            item.publisher_id == command.publisher_id
-            and item.plugin_id == command.plugin_id
-            and item.contribution_id == target_id
-            and item.kind == target_kind
-        )), None)
-        if target is None:
-            raise PluginAuthorityMismatchError("plugin command target is unavailable")
-        normalized = _normalize_command_inputs(
-            command, cast(list[dict[str, Any]], value["inputs"])
-        )
-        return PluginCommandResolution(generation, command, target, normalized)
 
 
 @dataclass(frozen=True, slots=True)

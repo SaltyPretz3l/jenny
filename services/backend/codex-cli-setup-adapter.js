@@ -136,7 +136,8 @@ function resolveCodexFromVscodeExtensions(env = process.env) {
 
 function resolveCodexCommandPath(command = 'codex', env = process.env, platform = process.platform) {
   const normalized = normalizeCommand(command);
-  if (isPathLikeCommand(normalized)) {
+  const explicitPath = isPathLikeCommand(normalized);
+  if (explicitPath && (platform !== 'win32' || path.extname(normalized).toLowerCase() === '.exe')) {
     return normalized;
   }
 
@@ -148,9 +149,8 @@ function resolveCodexCommandPath(command = 'codex', env = process.env, platform 
   // to a path that could never start, and the VS Code-extension codex.exe
   // fallback below was unreachable because `candidates` was non-empty.
   const extensions = platform === 'win32' ? ['.exe', '.cmd', '.bat', ''] : [''];
-  const SHELL_ONLY_EXTENSIONS = new Set(['.cmd', '.bat']);
-  const candidates = [];
-  if (pathValue) {
+  const candidates = explicitPath ? [normalized] : [];
+  if (pathValue && !explicitPath) {
     for (const rawDir of pathValue.split(path.delimiter)) {
       const dir = String(rawDir || '').trim();
       if (!dir) {
@@ -170,23 +170,36 @@ function resolveCodexCommandPath(command = 'codex', env = process.env, platform 
   }
 
   const usable = candidates.filter((candidate) => !isWindowsAppsCodexPath(candidate));
-  // A .cmd/.bat shim is not "found" for our purposes: the caller spawns with
-  // shell:false. Fall through to the VS Code-extension codex.exe instead, and
-  // only return the shim if that lookup also comes up empty (better a command
-  // that fails loudly than the bare name).
-  const preferred = usable.find(
-    (candidate) => !SHELL_ONLY_EXTENSIONS.has(path.extname(candidate).toLowerCase())
+  // Only native Windows executables can be forwarded to shell:false consumers.
+  const preferred = usable.find((candidate) =>
+    platform !== 'win32' || path.extname(candidate).toLowerCase() === '.exe'
   );
   if (preferred) {
     return preferred;
   }
   if (platform === 'win32') {
+    // Resolve npm's launcher to the same native binary its package uses.
+    for (const candidate of usable) {
+      if (!/^codex\.(cmd|bat)$/i.test(path.basename(candidate))) continue;
+      const packageRoot = path.join(path.dirname(candidate), 'node_modules', '@openai', 'codex');
+      let vendorRoot = path.join(packageRoot, 'vendor');
+      try {
+        vendorRoot = path.join(path.dirname(require.resolve(
+          `@openai/codex-win32-${process.arch}/package.json`, { paths: [packageRoot] }
+        )), 'vendor');
+      } catch (_error) {
+        // Older npm releases carry the vendor directory in the main package.
+      }
+      const triple = process.arch === 'arm64' ? 'aarch64-pc-windows-msvc' : 'x86_64-pc-windows-msvc';
+      const native = findExistingFile([path.join(vendorRoot, triple, 'bin', 'codex.exe')]);
+      if (native) return native;
+    }
     const extensionResolved = resolveCodexFromVscodeExtensions(env);
     if (extensionResolved) {
       return extensionResolved;
     }
   }
-  return usable[0] || candidates[0] || normalized;
+  return platform === 'win32' ? '' : (usable[0] || normalized);
 }
 
 function classifyAuthType(stdout, stderr) {
@@ -279,6 +292,12 @@ async function checkCodexDiagnosticSetup({
   outputLimit = DEFAULT_OUTPUT_LIMIT,
 } = {}) {
   const commandPath = resolveCodexCommandPath(codexCommand, env, platform);
+  if (!commandPath) {
+    return createCodexSetupCheckResult({
+      code: 'cli_spawn_failed',
+      message: 'No supported Codex executable found. Select codex.exe or install the Codex extension.',
+    });
+  }
   const commandSource = classifyCodexCommandSource(commandPath, codexCommand);
   const command = 'codex login status';
   const limit = Math.max(Number(outputLimit) || DEFAULT_OUTPUT_LIMIT, 1);
@@ -404,6 +423,7 @@ async function openCodexLoginTerminal({
     return loginTerminalResultForCommand(false, 'unsupported_platform');
   }
   const commandPath = resolveCodexCommandPath(codexCommand, env, platform);
+  if (!commandPath) return loginTerminalResultForCommand(false, 'auth_required_or_cli_missing');
   const loginCommand = `${quoteWindowsCmdArgument(commandPath)} login`;
   let child = null;
   try {

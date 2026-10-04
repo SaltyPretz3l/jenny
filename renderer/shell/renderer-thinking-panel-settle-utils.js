@@ -12,9 +12,13 @@
   root.rendererThinkingPanelSettleUtils = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   const SETTLED_CLASS = 'reasoning-row-panel--settled';
+  // One armed settle per panel, whoever armed it (viewport expand/sync or the
+  // stream reveal controller's flip-to-complete), so a collapse or re-expand
+  // can cancel a settle it did not start.
+  const armedCleanupByPanel = new WeakMap();
 
   function settleThinkingPanelNow(panel, reducedMotion) {
-    if (!panel || reducedMotion) {
+    if (!panel || reducedMotion || !panel.classList.contains('expanded') || panel.dataset?.collapsing === 'true') {
       return;
     }
     panel.classList.add(SETTLED_CLASS);
@@ -26,6 +30,8 @@
       return;
     }
     panel.classList.remove(SETTLED_CLASS);
+    const armed = armedCleanupByPanel.get(panel);
+    if (armed) armed();
   }
 
   // options: { skip, ifLive(fn), transitionMs, onSettled }
@@ -38,6 +44,8 @@
     const onCleanup = typeof opts.onCleanup === 'function' ? opts.onCleanup : null;
     const onSettled = typeof opts.onSettled === 'function' ? opts.onSettled : null;
     const transitionMs = Math.max(Number(opts.transitionMs) || 0, 0);
+    const previous = armedCleanupByPanel.get(panel);
+    if (previous) previous();
     let settled = false;
     let cleaned = false;
     let timeoutHandle = 0;
@@ -54,15 +62,19 @@
         win.clearTimeout(timeoutHandle);
       }
       timeoutHandle = 0;
+      if (armedCleanupByPanel.get(panel) === cleanup) armedCleanupByPanel.delete(panel);
       onCleanup?.();
     };
+    armedCleanupByPanel.set(panel, cleanup);
     const finish = ifLive(() => {
       if (settled || cleaned) return;
       settled = true;
-      if (panel.classList.contains('expanded')) {
-        panel.classList.add(SETTLED_CLASS);
-        if (panel.style) panel.style.maxHeight = '';
+      if (!panel.classList.contains('expanded') || panel.dataset?.collapsing === 'true') {
+        cleanup();
+        return;
       }
+      panel.classList.add(SETTLED_CLASS);
+      if (panel.style) panel.style.maxHeight = '';
       try { onSettled?.(); } finally { cleanup(); }
     });
     if (typeof panel.addEventListener === 'function') {

@@ -197,10 +197,17 @@ test('canonical reads discard bytes when session authority changes during file I
     sessionMessageReader: async () => [{ tool_result: { generated_artifacts: [metadata] } }],
     fsImpl: {
       ...fs.promises,
-      async readFile(target, ...args) {
-        const result = await fs.promises.readFile(target, ...args);
-        if (target === metadata.absolute_path) provider.moveSession('session_alpha', 'project_beta');
-        return result;
+      async open(target, ...args) {
+        const handle = await fs.promises.open(target, ...args);
+        if (fs.realpathSync(target) === fs.realpathSync(metadata.absolute_path)) {
+          const read = handle.read.bind(handle);
+          handle.read = async (...readArgs) => {
+            const result = await read(...readArgs);
+            provider.moveSession('session_alpha', 'project_beta');
+            return result;
+          };
+        }
+        return handle;
       },
     },
   });

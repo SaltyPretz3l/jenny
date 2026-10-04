@@ -39,7 +39,6 @@ class _Client:
         self.transport = _Transport(
             [
                 {"name": "weather", "description": "Forecast", "inputSchema": {"type": "object"}},
-                {"description": "missing name"},
             ]
         )
         self.closed = False
@@ -75,7 +74,7 @@ def test_probe_returns_bounded_surface_and_closes_owned_resources(monkeypatch: A
     assert result["identity"] == {"name": "weather"}
     assert result["transport"] == "stdio"
     assert result["tool_count"] == 1
-    assert result["malformed_tool_count"] == 1
+    assert result["malformed_tool_count"] == 0
     assert result["tools"][0]["name"] == "weather"
     assert len(result["tools"][0]["schema_digest"]) == SHA256_HEX_LENGTH
     assert len(result["tools_digest"]) == SHA256_HEX_LENGTH
@@ -111,10 +110,9 @@ def test_probe_rejects_unbounded_tool_schema_without_hashing_it(monkeypatch: Any
 
     monkeypatch.setattr(inspection, "MCPClient", OversizedSchemaClient)
     result = inspection.inspect_server(_stdio_params())
-    assert result["ok"] is True
-    assert result["tool_count"] == 1
-    assert result["malformed_tool_count"] == 1
-    assert result["tools"][0]["name"] == "safe"
+    assert result["ok"] is False
+    assert result["failure"] == {"code": "CMP-MCP-0004", "reason": "ValueError"}
+    assert "tools_digest" not in result
     assert OversizedSchemaClient.last is not None
     assert OversizedSchemaClient.last.transport.closed is True
 

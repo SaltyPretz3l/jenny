@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const test = require('node:test');
-const { ROOT, waitFor, createBackend, holdAtAdmission } = require('../helpers/session-runtime-stdio-fixture');
+const { ROOT, waitFor, createBackend, holdAtAdmission, stopReleasingHolds } = require('../helpers/session-runtime-stdio-fixture');
 for (const child of [false, true]) test(`real ${child ? 'dependency' : 'decision'} -> resource -> ${child ? 'dependency' : 'decision'} preserves progress`, { timeout: 55000 }, async t => {
   const root = fs.mkdtempSync(path.join(ROOT, 'artifacts', 'resource-transitions-'));
   const profile = path.join(root, 'profile'); fs.mkdirSync(profile);
@@ -22,7 +22,7 @@ for (const child of [false, true]) test(`real ${child ? 'dependency' : 'decision
   const seen = []; const logs = [];
   const make = () => createBackend(profile, workspace, seen, logs, 'user_questions', child
     ? [path.join(ROOT, 'tests/helpers/session-runtime-resource-child-sidecar.py')] : undefined);
-  let backend = make(); let workId;
+  let backend = make(); let workId; let held = null;
   const work = () => backend.sessionRuntime.store.get(workId);
   const resume = () => assert.equal(backend.runtimeApplicationService.resume({ work_id: workId, expected_revision: work().revision }).ok, true);
   const checkpoint = () => backend.sessionRuntime.checkpointStore.read(work().checkpoint_ref, work());
@@ -35,15 +35,16 @@ for (const child of [false, true]) test(`real ${child ? 'dependency' : 'decision
     assert.equal(backend.answerUserQuestions(reference, { answers: [] }), false);
     return checkpoint();
   };
-  const restart = async () => { await backend.stop(); backend.dispose(); backend = make(); await backend.start(); };
+  const restart = async () => { await stopReleasingHolds(backend, held); held = null; backend.dispose(); backend = make(); await backend.start(); };
   try {
     await backend.start();
     const sessionId = (await backend.createSession({ title: 'Resource transitions' })).data.id;
     const projects = backend.projectApplicationService;
-    const project = projects.createProject({ name: 'Resource workspace' }).project;
-    assert.equal(projects.bindProjectRoot({ project_id: project.id, root_path: workspace, expected_root_revision: project.root_revision }).ok, true);
+    // The Workspace folder is already a project (provisioned by createSession);
+    // bindRoot refuses a second owner, so the fixture uses that project.
+    const project = backend.ensureWorkspaceProject(workspace, 'test_fixture').project;
     assert.equal(projects.assignSessionProject({ session_id: sessionId, project_id: project.id }).ok, true);
-    if (child) holdAtAdmission(backend.sessionRuntime, workspace, 1);
+    if (child) held = holdAtAdmission(backend.sessionRuntime, workspace, 1);
     const request = { session_id: sessionId, prompt: 'Resource transition parent', idempotency_key: 'transition_fixture' };
     const sent = child ? await backend.runtimeApplicationService.start({ ...request, purpose: 'Resource child transitions',
       limits: { inference_requests: 12, input_tokens: 1000000, output_tokens: 1000000 } })
@@ -51,7 +52,7 @@ for (const child of [false, true]) test(`real ${child ? 'dependency' : 'decision
     assert.equal(sent.ok, true); workId = sent.work_id;
     if (!child) {
       const first = await pauseQuestion(); assert.equal(first.kind, 'before_decision_wait');
-      await restart(); holdAtAdmission(backend.sessionRuntime, workspace, 1); resume();
+      await restart(); held = holdAtAdmission(backend.sessionRuntime, workspace, 1); resume();
       answer((await waitFor(pending))[0]);
     }
     await waitFor(() => work().status === 'paused' && checkpoint().kind === 'before_tool_dispatch');
@@ -75,5 +76,5 @@ for (const child of [false, true]) test(`real ${child ? 'dependency' : 'decision
       assert.equal(work().checkpoint_ref !== null, true);
     }
   } catch (error) { t.diagnostic(JSON.stringify({ work: workId ? work() : null, errors: seen.filter(row => row.type === 'error'), logs: logs.slice(-6) })); throw error; }
-  finally { await backend.stop(); backend.dispose(); }
+  finally { await stopReleasingHolds(backend, held); backend.dispose(); }
 });

@@ -68,7 +68,7 @@ test('clean LRU records are evicted to the 64 MiB byte ceiling', (t) => {
   assert.equal(pressure.backpressured, false);
 });
 
-test('accepted same-identity mutation invalidates bytes until durable and then remeasures', (t) => {
+test('accepted same-identity mutation is measured when pressure is read, before it is durable', (t) => {
   const target = backend(t);
   const session = record('dirty', 16);
   assert.equal(target.upsertSession('dirty', session, { alreadyNormalized: true }), true);
@@ -78,10 +78,15 @@ test('accepted same-identity mutation invalidates bytes until durable and then r
   assert.equal(target.upsertSession('dirty', session, {
     persist: false, alreadyNormalized: true,
   }), true);
+  assert.equal(target._transcriptCache.entries.get('dirty').bytes, null);
+  // A streaming session's unsaved progress no longer reads as pressure: the
+  // split-view gate's second pane waited for the first pane's whole stream.
+  assert.equal(target.hasPendingWriteForSession('dirty'), true);
   const dirty = target.getCachePressure();
-  assert.equal(dirty.loadedBytes, null);
-  assert.equal(dirty.unknownSessions, 1);
-  assert.equal(dirty.backpressured, true);
+  assert.equal(dirty.loadedBytes, measureTranscriptBytes(session));
+  assert.equal(dirty.unknownSessions, 0);
+  assert.equal(dirty.protectedBytes, dirty.loadedBytes);
+  assert.equal(dirty.backpressured, false);
 
   assert.equal(target.flushSession('dirty'), true);
   const durable = target.getCachePressure();
@@ -93,6 +98,18 @@ test('accepted same-identity mutation invalidates bytes until durable and then r
   assert.equal(target.restoreSessionSnapshot('dirty', restored, null), true);
   assert.equal(target.getCachePressure().loadedBytes,
     measureTranscriptBytes(target._loadedSessions.get('dirty')));
+});
+
+test('an unmeasurable unknown entry stays unknown and keeps admission closed', (t) => {
+  const target = backend(t);
+  const cyclic = record('cyclic', 8);
+  cyclic.self = cyclic;
+  target._transcriptCache.invalidate('cyclic', cyclic);
+
+  const pressure = target._transcriptCache.snapshot(() => true);
+  assert.equal(pressure.unknownSessions, 1);
+  assert.equal(pressure.loadedBytes, null);
+  assert.equal(pressure.backpressured, true);
 });
 
 test('an oversized clean cache hit returns its record even when it self-evicts', (t) => {
@@ -208,6 +225,6 @@ test('failed snapshot restore remains dirty, cached, and backpressured', (t) => 
   assert.equal(target._loadedSessions.has('restore'), true);
   assert.equal(target.hasPendingWriteForSession('restore'), true);
   const pressure = target.getCachePressure();
-  assert.equal(pressure.loadedBytes, null);
+  assert.ok(pressure.overLimitBytes > 0);
   assert.equal(pressure.backpressured, true);
 });

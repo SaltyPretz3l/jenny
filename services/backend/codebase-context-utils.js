@@ -16,6 +16,12 @@
  * suitable for splicing in as a system message, or null when there is nothing
  * useful to contribute (no root, unreadable root, no usable query keywords, or
  * no matches).
+ *
+ * Runs automatically with no tool approval, so it stays inside the workspace:
+ * before a candidate is read, its directory's real path must resolve inside the
+ * real workspace root and the file itself must not be a link. That check runs
+ * on cached listings too, so a scanned directory swapped for a junction/symlink
+ * during the cache TTL is never read or cited.
  */
 
 const fs = require('fs');
@@ -241,6 +247,29 @@ function writeCandidateCache(root, candidate, expires) {
   });
 }
 
+// True when realTarget is realRoot itself or a descendant of it. Both inputs
+// must already be real paths. path.relative is case-insensitive on Windows and
+// never treats a sibling like `C:/root-other` as inside `C:/root`.
+function isRealPathInside(realRoot, realTarget) {
+  const rel = path.relative(realRoot, realTarget);
+  return rel === '' || (rel !== '..' && !rel.startsWith(`..${path.sep}`) && !path.isAbsolute(rel));
+}
+
+// Whether `dir` resolves (symlinks/junctions followed) to a place inside the
+// real root. Memoized per call so each distinct directory is resolved once; an
+// unresolvable directory is treated as outside.
+async function isDirectoryContained(realRoot, dir, memo) {
+  let pending = memo.get(dir);
+  if (!pending) {
+    pending = fsp.realpath(dir).then(
+      (realDir) => isRealPathInside(realRoot, realDir),
+      () => false
+    );
+    memo.set(dir, pending);
+  }
+  return pending;
+}
+
 function toPosixRelative(root, absPath) {
   return path.relative(root, absPath).split(path.sep).join('/');
 }
@@ -369,12 +398,15 @@ async function getCodebaseContext(workspaceRoot, query, options = {}) {
     return null;
   }
 
-  // Confirm the root is a readable directory before walking.
+  // Confirm the root is a readable directory before walking, and resolve its
+  // real path once for the per-candidate containment checks below.
+  let realRoot;
   try {
     const rootStat = await fsp.stat(workspaceRoot);
     if (!rootStat.isDirectory()) {
       return null;
     }
+    realRoot = await fsp.realpath(workspaceRoot);
   } catch {
     return null;
   }
@@ -384,6 +416,7 @@ async function getCodebaseContext(workspaceRoot, query, options = {}) {
   // deadline-truncated list is non-deterministic and likely partial, so we let
   // the next turn retry with a fresh budget rather than pin a degenerate list).
   let candidate = cacheEnabled ? readCandidateCache(workspaceRoot, startedAt) : null;
+  const fromCache = candidate !== null;
   if (!candidate) {
     try {
       candidate = await collectCandidateFiles(workspaceRoot, deadline);
@@ -400,6 +433,8 @@ async function getCodebaseContext(workspaceRoot, query, options = {}) {
   const scored = [];
   let totalRead = 0;
   let readTruncated = false;
+  let containmentFailed = false;
+  const directoryContainment = new Map(); // dir -> Promise<boolean>, per call
   for (const absPath of files) {
     if (Date.now() > deadline || totalRead >= maxTotalReadBytes) {
       readTruncated = true;
@@ -411,10 +446,19 @@ async function getCodebaseContext(workspaceRoot, query, options = {}) {
       // and don't let it count toward the read budget or truncation note.
       continue;
     }
+    // Never read through a swapped directory or a link, even from the cache.
+    if (!(await isDirectoryContained(realRoot, path.dirname(absPath), directoryContainment))) {
+      containmentFailed = true;
+      continue;
+    }
     let stats;
     try {
-      stats = await fsp.stat(absPath);
+      stats = await fsp.lstat(absPath);
     } catch {
+      continue;
+    }
+    if (stats.isSymbolicLink()) {
+      containmentFailed = true;
       continue;
     }
     if (!stats.isFile() || stats.size === 0 || stats.size > maxFileBytes) {
@@ -434,6 +478,12 @@ async function getCodebaseContext(workspaceRoot, query, options = {}) {
     if (result) {
       scored.push(result);
     }
+  }
+
+  if (fromCache && containmentFailed) {
+    // The cached listing is stale (a scanned path now escapes the workspace):
+    // drop it so the next turn re-walks.
+    candidateCache.delete(workspaceRoot);
   }
 
   if (scored.length === 0) {

@@ -11,12 +11,8 @@ the foundation pass registered in ``sidecar/ai/tools/tool_families.py``.
 
 from sidecar.ai.tools.builtins.lsp.manager import (
     LSPDocumentSyncResult,
-    LSPLanguage,
     LSPManager,
-    LSPServerCommand,
     LSPSessionStatus,
-    LSPUnavailableResult,
-    detect_language_servers,
     resolve_language_for_path,
 )
 from sidecar.ai.tools.builtins.lsp.normalizers import (
@@ -31,6 +27,12 @@ from sidecar.ai.tools.builtins.lsp.protocol import (
     LSPProtocolError,
     LSPRequestTimeout,
     LSPServerTerminated,
+)
+from sidecar.ai.tools.builtins.lsp.server_detection import (
+    LSPLanguage,
+    LSPServerCommand,
+    LSPUnavailableResult,
+    detect_language_servers,
 )
 from sidecar.ai.tools.builtins.lsp.tools import (
     configure_lsp_tools,

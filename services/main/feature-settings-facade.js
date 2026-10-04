@@ -7,15 +7,12 @@ const {
   buildEffectiveFeatureFlags: buildEffectiveFeatureFlagsWithDeps,
   buildFeatureStatePayload: buildFeatureStatePayloadWithDeps,
 } = require('../feature-settings-service');
-const { handleCometOverlayToggle } = require('./comet-overlay-controller');
 
 function createFeatureSettingsFacade({
   env = process.env,
   platform = process.platform,
   getShellConfigService = () => null,
   getBackendService = () => null,
-  getOverlayRef = () => null,
-  setOverlayRef = () => {},
   sendToWindow = () => {},
 } = {}) {
   function buildEffectiveFeatureFlags() {
@@ -23,30 +20,6 @@ function createFeatureSettingsFacade({
       shellConfigService: getShellConfigService(),
       env,
     });
-  }
-
-  // The overrides exist so a caller can evaluate the flag against a snapshot
-  // other than the live one; the defaults read live state on every call so a
-  // mid-session settings change wins over a stale startup value.
-  function isCometOverlayEnabled({
-    configService = getShellConfigService(),
-    env: envOverride = env,
-  } = {}) {
-    return buildEffectiveFeatureFlagsWithDeps({
-      shellConfigService: configService,
-      env: envOverride,
-    }).comet_overlay === true;
-  }
-
-  function closeCometOverlayIfDisabled() {
-    const currentOverlayRef = getOverlayRef();
-    if (!currentOverlayRef || isCometOverlayEnabled()) {
-      return;
-    }
-    setOverlayRef(handleCometOverlayToggle({
-      data: { enabled: false },
-      currentOverlayRef,
-    }));
   }
 
   function buildFeatureStatePayload() {
@@ -73,8 +46,6 @@ function createFeatureSettingsFacade({
     applyFeatureSettingsPatch,
     buildEffectiveFeatureFlags,
     buildFeatureStatePayload,
-    closeCometOverlayIfDisabled,
-    isCometOverlayEnabled,
   };
 }
 

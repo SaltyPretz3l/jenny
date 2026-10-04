@@ -247,7 +247,7 @@ test('admission is bound to session, workspace, snapshot, policy, container, and
   assert.equal(binding.session_id, 'session-1');
   assert.equal(binding.stream_id, 'stream-1');
   assert.equal(binding.tool_call_id, 'call-1');
-  assert.equal(binding.command_digest, digest({ command: 'printf hello', cwd: 'src', timeoutSeconds: 4, expectedExitCodes: [0] }));
+  assert.equal(binding.command_digest, digest({ command: 'printf hello', cwd: 'src', inputRoot: '.', timeoutSeconds: 4, expectedExitCodes: [0] }));
   assert.equal(binding.policy_generation, 0);
   assert.equal(binding.workspace_generation, 0);
   assert.equal(binding.workspace_id, digest(path.resolve(setup.workspace)));

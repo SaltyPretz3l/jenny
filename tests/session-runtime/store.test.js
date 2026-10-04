@@ -397,6 +397,36 @@ test('equal-length payload tampering is refused before recovery or idempotent re
   assert.throws(() => reopened.submit(submission()), { code: 'store_read_only' });
 });
 
+test('restart retires unproven needs-attention work; a pause or cancel intent keeps it recoverable (HB-009)', () => {
+  const { io, store } = harness();
+  const park = (control) => {
+    const pending = store.submit(submission({ idempotencyKey: `submit_${control}` })).record;
+    let current = store.transition(pending.work_id, { expectedRevision: pending.revision,
+      to: 'running', reason: 'dispatch', attempt: attempt(1) }).record;
+    if (control !== 'none') {
+      current = (control === 'pause' ? store.requestPause(current.work_id, {
+        expectedRevision: current.revision, expectedAttempt: attempt(1), reason: 'user' })
+        : store.requestCancellation(current.work_id, {
+          expectedRevision: current.revision, expectedAttempt: attempt(1), reason: 'user' })).record;
+    }
+    return store.transition(current.work_id, { expectedRevision: current.revision,
+      expectedAttempt: attempt(1), to: 'needs_attention', reason: 'settlement_unconfirmed' }).record;
+  };
+  const unproven = park('none');
+  const pausing = park('pause');
+  const cancelling = park('cancel');
+
+  const reopened = harness(io).store;
+  const retired = reopened.get(unproven.work_id);
+  assert.equal(retired.status, 'failed');
+  assert.equal(retired.transition.from, 'needs_attention');
+  assert.equal(retired.transition.reason, 'restart_retired');
+  assert.equal(retired.recovery, null);
+  assert.deepEqual(retired.attempt, unproven.attempt);
+  assert.equal(reopened.get(pausing.work_id).status, 'needs_attention');
+  assert.equal(reopened.get(cancelling.work_id).status, 'needs_attention');
+});
+
 test('restart pauses persisted running work without allocating a new attempt', () => {
   const { io, store } = harness();
   const pending = store.submit(submission()).record;

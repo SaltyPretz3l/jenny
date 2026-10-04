@@ -56,6 +56,10 @@ const DEFAULT_TOOL_DEFAULTS = Object.freeze({
   // prompted every turn would not be a gate, so the default is auto and stays
   // user-overridable through the normal per-tool policy rules.
   verify: 'auto',
+  // Side-effecting: writes one PNG into the session artifact store and parks the
+  // chat engine for the render, but bounded to the user's own installed engine
+  // and saved model set; nothing leaves the machine.
+  image_generate: 'auto',
   // `task_board`'s manifest declares per-action side_effecting (add/update/
   // complete: true, list: false), so without this scalar entry every
   // mutation would fall through to the side-effecting 'ask' default on every

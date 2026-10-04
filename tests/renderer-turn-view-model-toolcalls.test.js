@@ -10,7 +10,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const { projectTurnRows } = require('../renderer/chat/renderer-turn-row-projector');
+const { projectTurnRows, projectTurn } = require('../renderer/chat/renderer-turn-row-projector');
 const { buildTurnViewModel } = require('../renderer/chat/renderer-turn-view-model');
 const { projectTurnTree } = require('../renderer/chat/renderer-turn-tree-projector');
 const { normalizeChatMessages } = require('../renderer/chat/chat-message-utils');
@@ -445,4 +445,119 @@ test('reopening a turn that failed after an approval request settles the call an
   assert.deepEqual(reopen([user, toolUse, failure]), { toolCall: 'interrupted', gap: 'interrupted' });
   // Still waiting: no failure followed the request, so the card stays answerable.
   assert.deepEqual(reopen([user, toolUse]), { toolCall: 'awaiting_approval', gap: 'awaiting_approval' });
+});
+
+
+// Dogfood B11: the canonical view model overwrites the projector's row state,
+// so a command stopped at its time limit must be timed_out here too.
+test('buildTurnViewModel/toolCalls: a command stopped at its time limit is timed_out, not errored', () => {
+  const messages = (metadata) => [
+    { id: 'user_to', role: 'user', content: 'Ping' },
+    {
+      id: 'tool_use_to',
+      role: 'assistant',
+      kind: 'tool_use',
+      tool_call: { call_id: 'call_to', tool_name: 'run_command', parent_stream_id: 'stream_to', status: 'running' },
+    },
+    {
+      id: 'tool_result_to',
+      role: 'assistant',
+      kind: 'tool_result',
+      tool_result: {
+        call_id: 'call_to',
+        tool_name: 'run_command',
+        output_text: '{"timed_out": true}',
+        is_error: true,
+        error_code: 'CMP-TOOL-0006',
+        parent_stream_id: 'stream_to',
+        metadata,
+      },
+    },
+  ];
+  const timedOut = buildViewModelFromMessages(messages({ timed_out: true, timeout_seconds: 10 })).toolCalls[0];
+  assert.equal(timedOut.state, 'timed_out');
+  assert.equal(timedOut.rawTerminal, 'timeout');
+  // The row projectTurn hands the timeline takes the canonical state.
+  const tree = projectTurnTree({ messages: normalizeChatMessages(messages({ timed_out: true })) });
+  const row = projectTurn(tree.turns[0], { deterministicRowId: true }).rows
+    .find((candidate) => candidate.payload && candidate.payload.tool_call_id === 'call_to');
+  assert.equal(row && row.payload.state, 'timed_out');
+  const failed = buildViewModelFromMessages(messages({ exit_code: 1 })).toolCalls[0];
+  assert.equal(failed.state, 'errored');
+});
+
+// Dogfood HB-035 (B12): the message-history projection keeps the command's
+// exit status (its metadata is an allow-list), so the row reads "exit N"
+// after a reopen as well.
+test('projectTurn keeps a command exit status on the tool result row', () => {
+  const messages = [
+    { id: 'user_ex', role: 'user', content: 'Run the tests' },
+    {
+      id: 'tool_use_ex',
+      role: 'assistant',
+      kind: 'tool_use',
+      tool_call: { call_id: 'call_ex', tool_name: 'run_command', parent_stream_id: 'stream_ex', status: 'running' },
+    },
+    {
+      id: 'tool_result_ex',
+      role: 'assistant',
+      kind: 'tool_result',
+      tool_result: {
+        call_id: 'call_ex',
+        tool_name: 'run_command',
+        output_text: '{"exit_code": 1}',
+        is_error: true,
+        error_code: 'CMP-TOOL-0008',
+        parent_stream_id: 'stream_ex',
+        metadata: { exit_code: 1, shell: 'cmd' },
+      },
+    },
+  ];
+  const tree = projectTurnTree({ messages: normalizeChatMessages(messages) });
+  const rows = projectTurn(tree.turns[0], { deterministicRowId: true }).rows;
+  const resultRow = rows.find((candidate) => candidate.kind === 'tool_result'
+    && candidate.payload && candidate.payload.tool_call_id === 'call_ex');
+  assert.ok(resultRow, 'tool result row');
+  assert.equal(resultRow.payload.metadata && resultRow.payload.metadata.exit_code, 1);
+  assert.equal(buildViewModelFromMessages(messages).toolCalls[0].state, 'errored');
+});
+
+// B12 review: stored results from before this fix carry the exit status only
+// at the tool_result's top level, and a Docker sandbox receipt carries it
+// under metadata.execution; both must reach the projected row.
+test('projectTurn finds the exit status at the result top level and in a sandbox receipt', () => {
+  const messages = (toolResult) => [
+    { id: 'user_ex2', role: 'user', content: 'Run the tests' },
+    {
+      id: 'tool_use_ex2',
+      role: 'assistant',
+      kind: 'tool_use',
+      tool_call: { call_id: 'call_ex2', tool_name: 'run_command', parent_stream_id: 'stream_ex2', status: 'running' },
+    },
+    {
+      id: 'tool_result_ex2',
+      role: 'assistant',
+      kind: 'tool_result',
+      tool_result: {
+        call_id: 'call_ex2',
+        tool_name: 'run_command',
+        output_text: '',
+        is_error: true,
+        error_code: 'CMP-TOOL-0008',
+        parent_stream_id: 'stream_ex2',
+        ...toolResult,
+      },
+    },
+  ];
+  const exitCodeOf = (toolResult) => {
+    const tree = projectTurnTree({ messages: normalizeChatMessages(messages(toolResult)) });
+    const row = projectTurn(tree.turns[0], { deterministicRowId: true }).rows
+      .find((candidate) => candidate.kind === 'tool_result' && candidate.payload && candidate.payload.tool_call_id === 'call_ex2');
+    return row && row.payload.metadata ? row.payload.metadata.exit_code : undefined;
+  };
+  assert.equal(exitCodeOf({ exit_code: 2 }), 2);
+  assert.equal(exitCodeOf({ exit_code: 2, metadata: { shell: 'cmd' } }), 2);
+  assert.equal(exitCodeOf({ metadata: { execution: { backend: 'docker', status: 'completed', exit_code: 3 } } }), 3);
+  assert.equal(exitCodeOf({ metadata: { execution: { backend: 'docker', status: 'timed_out', exit_code: 137 } } }), undefined);
+  assert.equal(exitCodeOf({}), undefined);
 });

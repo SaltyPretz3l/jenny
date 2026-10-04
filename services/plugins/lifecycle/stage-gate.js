@@ -33,10 +33,8 @@
 const { PLUGIN_ERROR_CODES } = require('../../backend/error-codes');
 const { STATES, isState } = require('./state-machine');
 
-// The program stage this control plane implements. This constant and
-// scripts/checks/check_plugin_stage_boundary.py's `STAGE` move together, in the
-// same owner-approved commit that opens the next stage's surfaces -- one of
-// them advancing alone means either the fence or the boundary check is lying.
+// The program stage this control plane implements (getState reports it). The
+// plugin platform is being retired in place, so the number stays where it is.
 const CONTROL_PLANE_STAGE = 8;
 
 // Which of state-machine.js's STATES a given stage is allowed to COMMIT.

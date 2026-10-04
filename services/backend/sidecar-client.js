@@ -24,16 +24,15 @@ const {
 const {
   emitSidecarErrorSafely,
 } = require('./sidecar-client-reverse-rpc');
-const { handleElectronToolRequest, handlePluginHostRequest,
+const { handleElectronToolRequest,
   handleRuntimeOperationRequest } = require('./sidecar-client-request-rpc');
 const { notificationRequestId, notifyEngineActivity, notifySessionRunModeUpdated } = require('./sidecar-client-notifications');
-const { armPendingTimeout, suspendRequestTimeout } = require('./sidecar-client-request-timeout');
+const { armPendingTimeout, sendPendingChatCancel, suspendRequestTimeout } = require('./sidecar-client-request-timeout');
 const API_VERSION = '2026-08-17';
 const JSONRPC_VERSION = '2.0';
 const CHAT_CANCEL_METHOD = 'chat.cancel';
 const TOOL_REQUEST_APPROVAL_METHOD = 'tool.request_approval';
 const TOOL_EXECUTE_ELECTRON_METHOD = 'tool.execute_electron';
-const PLUGIN_HOST_METHOD = 'plugin.host';
 const MCP_INSPECT_METHOD = 'mcp.inspect';
 const JSONRPC_CANCEL_REQUEST_METHOD = '$/cancelRequest';
 const MAX_HEADER_BYTES = 16 * 1024;
@@ -59,7 +58,6 @@ class SidecarClient extends EventEmitter {
     this.notificationHandlers = new Map();
     this.approvalHandlers = new Map();
     this.electronToolHandlers = new Map();
-    this.pluginHostHandlers = new Map();
     this.runtimeOperationHandlers = new Map();
     this.cancelledRequestKeys = new Map();
     // Counts unmatched notifications by request_id so each request warns once.
@@ -100,6 +98,8 @@ class SidecarClient extends EventEmitter {
       accept_version: API_VERSION,
       engine_type: String(engineType || '').trim() || 'mock',
       ...(normalizedInspectModelId ? { inspect_model_id: normalizedInspectModelId } : {}),
+      ...(Array.isArray(options.chatgptModelCatalog)
+        ? { chatgpt_model_catalog: options.chatgptModelCatalog } : {}),
     });
   }
   async modelsUnload() {
@@ -153,7 +153,6 @@ class SidecarClient extends EventEmitter {
     onNotification,
     onApprovalRequest,
     onElectronToolRequest,
-    onPluginHostRequest,
     onRuntimeOperation,
     timeoutMs,
     signal,
@@ -162,26 +161,35 @@ class SidecarClient extends EventEmitter {
     if (!requestId) {
       throw new Error('chat.send requires a non-empty request_id.');
     }
-    this.notificationHandlers.set(requestId, onNotification || null);
-    this.approvalHandlers.set(requestId, onApprovalRequest || null);
-    this.electronToolHandlers.set(requestId, onElectronToolRequest || null);
-    this.pluginHostHandlers.set(requestId, onPluginHostRequest || null);
-    this.runtimeOperationHandlers.set(requestId, onRuntimeOperation || null);
-    return this.request('chat.send', {
-      accept_version: API_VERSION,
-      ...params,
-    }, {
-      timeoutMs,
-      signal,
-      requestKey: requestId,
-      onCleanup: () => {
-        this.notificationHandlers.delete(requestId);
-        this.approvalHandlers.delete(requestId);
-        this.electronToolHandlers.delete(requestId);
-        this.pluginHostHandlers.delete(requestId);
-        this.runtimeOperationHandlers.delete(requestId);
-      },
+    const registrations = [
+      [this.notificationHandlers, onNotification],
+      [this.approvalHandlers, onApprovalRequest],
+      [this.electronToolHandlers, onElectronToolRequest],
+      [this.runtimeOperationHandlers, onRuntimeOperation],
+    ].map(([handlers, callback]) => {
+      // Unique identities also fence reused callbacks and unavailable handlers.
+      const handler = typeof callback === 'function' ? (...args) => callback(...args) : {};
+      handlers.set(requestId, handler);
+      return [handlers, handler];
     });
+    const retire = () => {
+      for (const [handlers, handler] of registrations) {
+        if (handlers.get(requestId) === handler) handlers.delete(requestId);
+      }
+    };
+    try {
+      return await this.request('chat.send', {
+        accept_version: API_VERSION,
+        ...params,
+      }, {
+        timeoutMs,
+        signal,
+        requestKey: requestId,
+        onCleanup: retire,
+      });
+    } finally {
+      retire();
+    }
   }
 
   // Manual/on-demand compaction: runs an LLM summarization pass over the
@@ -237,6 +245,8 @@ class SidecarClient extends EventEmitter {
     return new Promise((resolve, reject) => {
       const pending = {
         id, resolve, reject, method, requestKey, onCleanup,
+        // chat.cancel correlation for the abort and timeout paths.
+        traceId: String(params?.trace_id || '').trim(), sessionId: String(params?.session_id || '').trim(),
         initializeMode: String(options?.initializeMode || ''),
         timer: null, removeAbortListener: null, frameWritten: false,
         // suspendRequestTimeout() suspend state.
@@ -246,16 +256,7 @@ class SidecarClient extends EventEmitter {
 
       if (signal && typeof signal === 'object') {
         const handleAbort = () => {
-          if (method === 'chat.send' && requestKey && this._batch4TransportEnabled()) {
-            const cancelReason = this._cancelReasonFromSignal(signal, CANCEL_REASON_USER);
-            this._recordCancelledRequestKey(requestKey);
-            this._sendBestEffortChatCancel({
-              requestId: requestKey,
-              traceId: String(params && params.trace_id || '').trim() || requestKey,
-              sessionId: String(params && params.session_id || '').trim(),
-              cancelReason,
-            });
-          }
+          sendPendingChatCancel(this, pending, this._cancelReasonFromSignal(signal, CANCEL_REASON_USER));
           if (method === MCP_INSPECT_METHOD && pending.frameWritten) {
             this._sendBestEffortRequestCancel(id);
           }
@@ -305,8 +306,8 @@ class SidecarClient extends EventEmitter {
     );
   }
 
-  // Extends a pending request's RPC deadline by an ask_user human-wait; see
-  // sidecar-client-request-timeout.js.
+  // Extends a pending request's RPC deadline by a human wait (ask_user, tool
+  // approval); see sidecar-client-request-timeout.js.
   suspendRequestTimeout(requestKey) {
     return suspendRequestTimeout(this, requestKey);
   }
@@ -446,11 +447,6 @@ class SidecarClient extends EventEmitter {
     }
     if (pending.requestKey) {
       this.unmatchedNotificationCounts.delete(pending.requestKey);
-      this.notificationHandlers.delete(pending.requestKey);
-      this.approvalHandlers.delete(pending.requestKey);
-      this.electronToolHandlers.delete(pending.requestKey);
-      this.pluginHostHandlers.delete(pending.requestKey);
-      this.runtimeOperationHandlers.delete(pending.requestKey);
       if (outcome && outcome.type === 'resolve') {
         this.cancelledRequestKeys.delete(pending.requestKey);
       }
@@ -507,7 +503,6 @@ class SidecarClient extends EventEmitter {
     this.notificationHandlers.clear();
     this.approvalHandlers.clear();
     this.electronToolHandlers.clear();
-    this.pluginHostHandlers.clear();
     this.runtimeOperationHandlers.clear();
     this.cancelledRequestKeys.clear();
     this.unmatchedNotificationCounts.clear();
@@ -650,7 +645,6 @@ class SidecarClient extends EventEmitter {
     this.notificationHandlers.clear();
     this.approvalHandlers.clear();
     this.electronToolHandlers.clear();
-    this.pluginHostHandlers.clear();
     this.runtimeOperationHandlers.clear();
     this.unmatchedNotificationCounts.clear();
     throw error;
@@ -735,11 +729,6 @@ class SidecarClient extends EventEmitter {
 
     if (message.method === TOOL_EXECUTE_ELECTRON_METHOD) {
       void this._handleElectronToolExecuteRequest(message);
-      return;
-    }
-
-    if (message.method === PLUGIN_HOST_METHOD) {
-      void this._handlePluginHostRequest(message);
       return;
     }
 
@@ -889,10 +878,6 @@ class SidecarClient extends EventEmitter {
     return handleElectronToolRequest(this, message);
   }
 
-  async _handlePluginHostRequest(message) {
-    return handlePluginHostRequest(this, message);
-  }
-
   _recordCancelledRequestKey(requestKey) {
     const normalized = String(requestKey || '').trim();
     if (!normalized) {
@@ -1001,5 +986,4 @@ module.exports = {
   SidecarClient,
   TOOL_EXECUTE_ELECTRON_METHOD,
   TOOL_REQUEST_APPROVAL_METHOD,
-  PLUGIN_HOST_METHOD,
 };

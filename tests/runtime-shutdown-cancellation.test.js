@@ -27,7 +27,7 @@ function createProbe(pausedStage) {
     app: { getPath: () => '' },
     clearSuggestionCache: () => {},
     getSetupService: () => ({ disposeActivePulls: () => run('setup') }),
-    getWorkspaceTerminalService: () => ({ dispose: () => run('workspace') }),
+    getWorkspacePtyService: () => ({ dispose: () => run('workspace') }),
     getBackendService: () => ({
       async stop(options) {
         await run('backend');

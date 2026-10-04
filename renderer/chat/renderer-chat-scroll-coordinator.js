@@ -15,11 +15,20 @@
   var FOLLOW_THRESHOLD = Number(scrollUtils.DEFAULT_SCROLL_FOLLOW_THRESHOLD) || 48;
   var USER_INTENT_WINDOW_MS = 180;
   var PROGRAMMATIC_MARKER_TTL_MS = 1000;
+  // Backstop for a smooth explicit navigation that never reports scrollend
+  // (the target was already in place, or the animation was cut short).
+  var SMOOTH_NAVIGATION_BACKSTOP_MS = 1000;
+  // A smooth reveal whose target already sits in place animates nothing and
+  // reports no scrollend: with no scroll event in this window the hold ends.
+  var SMOOTH_NAVIGATION_IDLE_RELEASE_MS = 100;
   var SLOW_FRAME_MS = 50;
   var DIAGNOSTIC_INTERVAL_MS = 5000;
   var TELEMETRY_INTERVAL_MS = 1000;
   var UNATTRIBUTED_JUMP_PX = 120;
   var MAX_TELEMETRY_ROW_KINDS = 12;
+  // HB-005: one live-follow writer runs at most once per display frame (60-144
+  // per second); a sustained rate above this is a write feedback loop.
+  var SCROLL_WRITE_RATE_WARN_PER_SECOND = 240;
   var SCROLL_KEYS = new Set([
     'ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' ', 'Spacebar',
   ]);
@@ -61,6 +70,10 @@
     var options = deps || {};
     var state = options.state || { ui: {} };
     if (!state.ui || typeof state.ui !== 'object') state.ui = {};
+    // Split view: the pane's own follow intent and session; unsupplied, the single-pane backing.
+    var followState = options.followState || { get: function () { return state.ui.followLatest; } };
+    var getSessionId = typeof options.getSessionId === 'function'
+      ? options.getSessionId : function () { return state.currentSessionId; };
     var scrollContainer = options.scrollContainer || null;
     var timelineContainer = options.timelineContainer || scrollContainer;
     var win = options.window || (typeof window !== 'undefined' ? window : globalThis);
@@ -114,6 +127,11 @@
     var userIntentUntil = 0;
     var pendingProgrammaticReason = null;
     var programmaticMarkerArmedAt = 0;
+    var smoothNavigationUntil = 0;
+    var smoothNavigationTimer = null;
+    var smoothNavigationStartTop = 0;
+    var smoothNavigationScrolls = 0;
+    var deferredAnchorRestore = false;
     var lastScrollTop = finiteNumber(scrollContainer && scrollContainer.scrollTop, 0);
     var lastSnapshot = null;
     var detachListeners = [];
@@ -140,6 +158,10 @@
       disposed: false,
     };
     var publishedStats = {};
+    var writeRateMeter = typeof scrollUtils.createScrollWriteRateMeter === 'function'
+      ? scrollUtils.createScrollWriteRateMeter({ windowMs: 1000 })
+      : null;
+    var writeRateLoggedThisTurn = false;
 
     if (win && typeof win.MutationObserver === 'function' && timelineContainer) {
       try {
@@ -202,7 +224,7 @@
       var details = context || {};
       var delta = finiteNumber(details.delta, 0);
       return {
-        sessionId: String(state.currentSessionId || ''),
+        sessionId: String(getSessionId() || ''),
         jumpPx: Math.abs(delta),
         direction: snapshot.direction,
         followLatest: details.followLatest === true,
@@ -253,6 +275,28 @@
     function armProgrammaticMarker(reason) {
       pendingProgrammaticReason = String(reason || '').trim() || 'message_jump';
       programmaticMarkerArmedAt = now(win);
+      noteWriteRateWindow(writeRateMeter?.noteWrite(pendingProgrammaticReason, programmaticMarkerArmedAt));
+    }
+
+    // At most one WARN per streaming turn: the latch re-opens on any frame or
+    // closed window observed while nothing streams.
+    function noteWriteRateWindow(summary) {
+      if (!summary) return;
+      if (!readStreamingState()) {
+        writeRateLoggedThisTurn = false;
+        return;
+      }
+      if (writeRateLoggedThisTurn || summary.writesPerSecond < SCROLL_WRITE_RATE_WARN_PER_SECOND) return;
+      writeRateLoggedThisTurn = true;
+      try {
+        appendClientLog('WARN', 'chat.scroll_write_rate_high', {
+          sessionId: String(getSessionId() || ''),
+          ...summary,
+          followLatest: followState.get() !== false,
+          frames: stats.frames,
+          userFrames: stats.userFrames,
+        });
+      } catch (_error) { /* best-effort */ }
     }
 
     function readSnapshot(timestamp) {
@@ -303,17 +347,76 @@
     function captureReaderAnchor(snapshot) {
       if (disposed || !anchorRegistry || !scrollContainer) return false;
       var current = snapshot || readSnapshot(now(win));
-      if (current.nearBottom || state.ui.followLatest !== false) {
+      if (current.nearBottom || followState.get() !== false) {
         anchorRegistry.clear('reader');
         return false;
       }
       return anchorRegistry.capture('reader', scrollContainer, timelineContainer || scrollContainer);
     }
 
+    // A smooth explicit navigation (message jump) animates toward the target
+    // over several frames, and Chromium aborts that animation on any
+    // programmatic scrollTop write. The reader anchor still names the row the
+    // jump started from, so a restore mid-flight (the view activation's
+    // viewport sync, a virtualizer mount) pinned the reader back to the
+    // origin: the target got highlighted and the transcript never moved
+    // (2026-09-27 gate F5). Restores stand down until the animation settles.
+    function isSmoothNavigationInFlight() {
+      if (!smoothNavigationUntil) return false;
+      if (now(win) <= smoothNavigationUntil) return true;
+      // Past the backstop with no timer to have ended it: the caller's own
+      // restore is the compensation a deferred one would have replayed.
+      clearSmoothNavigation();
+      return false;
+    }
+
+    function clearSmoothNavigation() {
+      smoothNavigationUntil = 0;
+      deferredAnchorRestore = false;
+      if (smoothNavigationTimer !== null && win && typeof win.clearTimeout === 'function') {
+        win.clearTimeout(smoothNavigationTimer);
+      }
+      smoothNavigationTimer = null;
+    }
+
+    // scrollend, the idle release or the backstop. A restore deferred while
+    // the reader never moved (the target was already in place) is replayed
+    // against the anchor from the navigation start, so growth above the
+    // viewport is still compensated; after a real jump the anchor is re-read
+    // at the destination.
+    function endSmoothNavigation() {
+      if (!smoothNavigationUntil) return;
+      var replay = deferredAnchorRestore
+        && Math.abs(finiteNumber(scrollContainer && scrollContainer.scrollTop, 0) - smoothNavigationStartTop) < 1;
+      clearSmoothNavigation();
+      if (replay) restoreReaderAnchor();
+      captureReaderAnchor();
+    }
+
+    function armSmoothNavigation() {
+      clearSmoothNavigation();
+      smoothNavigationUntil = now(win) + SMOOTH_NAVIGATION_BACKSTOP_MS;
+      smoothNavigationStartTop = finiteNumber(scrollContainer && scrollContainer.scrollTop, 0);
+      smoothNavigationScrolls = 0;
+      if (!win || typeof win.setTimeout !== 'function') return;
+      smoothNavigationTimer = win.setTimeout(function releaseIdleNavigation() {
+        smoothNavigationTimer = null;
+        if (smoothNavigationScrolls === 0) { endSmoothNavigation(); return; }
+        smoothNavigationTimer = win.setTimeout(function releaseAtBackstop() {
+          smoothNavigationTimer = null;
+          endSmoothNavigation();
+        }, SMOOTH_NAVIGATION_BACKSTOP_MS - SMOOTH_NAVIGATION_IDLE_RELEASE_MS);
+      }, SMOOTH_NAVIGATION_IDLE_RELEASE_MS);
+    }
+
     function restoreReaderAnchor() {
-      if (disposed || !anchorRegistry || !scrollContainer || state.ui.followLatest !== false) return 'skipped';
+      if (disposed || !anchorRegistry || !scrollContainer || followState.get() !== false) return 'skipped';
+      if (isSmoothNavigationInFlight()) { deferredAnchorRestore = true; return 'navigating'; }
+      var topBefore = scrollContainer.scrollTop;
       var outcome = anchorRegistry.restore('reader', scrollContainer, timelineContainer || scrollContainer);
-      if (!['skipped', 'unavailable', 'missing'].includes(outcome)) {
+      // The registry skips a write when the anchor did not move; a marker for
+      // that no-op would excuse the next genuine unattributed jump.
+      if (!['skipped', 'unavailable', 'missing'].includes(outcome) && scrollContainer.scrollTop !== topBefore) {
         armProgrammaticMarker('anchor_restore');
       }
       return outcome;
@@ -324,8 +427,11 @@
       if (!hasContentMutationObserver) contentGeneration += 1;
       frameHandle = 0;
       stats.pendingFrame = false;
+      // Content mutations (the terminal render, the next user row) run frames
+      // even while the viewport sits still: re-open the per-turn WARN latch.
+      if (!readStreamingState()) writeRateLoggedThisTurn = false;
       var startedAt = now(win);
-      var followLatestAtFrameStart = state.ui.followLatest !== false;
+      var followLatestAtFrameStart = followState.get() !== false;
       var frameContentGeneration = contentGeneration;
       var renderedInFrame = hasContentMutationObserver
         && frameContentGeneration !== lastFrameContentGeneration;
@@ -451,6 +557,8 @@
     function markUserIntent(source, event) {
       if (disposed) return;
       if (event && event.ctrlKey && source === 'wheel') return;
+      // The reader took over: their input cancels the animation anyway.
+      clearSmoothNavigation();
       pendingUserIntent = true;
       userIntentUntil = now(win) + USER_INTENT_WINDOW_MS;
       stats.inputEvents += 1;
@@ -460,6 +568,8 @@
     function handleNativeScroll() {
       if (disposed) return;
       stats.scrollEvents += 1;
+      noteWriteRateWindow(writeRateMeter?.noteScrollEvent(now(win)));
+      if (smoothNavigationUntil) smoothNavigationScrolls += 1;
       if (readSnapshot(now(win)).userInitiated) {
         try { viewportController?.noteScrollInputIntent?.(); } catch (_error) {
           logRateLimited('chat.scroll_consumer_failed', { consumer: 'viewport_intent' });
@@ -559,6 +669,7 @@
           passive: true,
         });
       registerManaged(registerListener, scrollContainer, 'scroll', handleNativeScroll, passiveOptions);
+      registerManaged(registerListener, scrollContainer, 'scrollend', endSmoothNavigation, passiveOptions);
       registerManaged(registerListener, scrollContainer, 'wheel', handleWheel, passiveOptions);
       registerManaged(registerListener, scrollContainer, 'pointerdown', handlePointerDown, passiveOptions);
       registerManaged(registerListener, scrollContainer, 'pointermove', handlePointerMove, passiveOptions);
@@ -588,6 +699,8 @@
       armProgrammaticMarker(settings.reason);
       pendingUserIntent = false;
       userIntentUntil = 0;
+      if (settings.smooth === true && settings.followLatest !== true) armSmoothNavigation();
+      else clearSmoothNavigation();
       if (settings.followLatest === true) anchorRegistry?.clear?.('reader');
       else captureReaderAnchor();
     }
@@ -607,6 +720,7 @@
       userIntentUntil = 0;
       pendingProgrammaticReason = null;
       programmaticMarkerArmedAt = 0;
+      clearSmoothNavigation();
       lastTelemetryAtByEvent.clear();
       lastAttributedMoveReason = null;
       lastAttributedFrameAt = 0;

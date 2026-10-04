@@ -17,6 +17,8 @@ const DEFAULT_COMPACTION_RECORD_LIMIT = 128;
 const DEFAULT_COMPACTION_BYTE_LIMIT = 1024 * 1024;
 const MAX_RECORD_BYTES = 8 * 1024 * 1024;
 
+let directoryFsyncUnavailableLogged = false;
+
 function normalizeEvents(events) {
   return Array.isArray(events)
     ? events.filter((event) => event && typeof event === 'object' && !Array.isArray(event))
@@ -566,9 +568,15 @@ class TurnEventJournal {
       this._partitionCount += 1;
     }
     this._totalPartitionBytes += payloadBytes;
+    // Compact on what was appended since the last snapshot, and let the byte
+    // threshold grow with the snapshot: measuring the whole file would make
+    // every append after a >limit snapshot rewrite (and fsync) the entire turn.
+    const snapshotBytes = stats.snapshotBytes || 0;
+    const appendedRecords = stats.records - (snapshotBytes > 0 ? 1 : 0);
+    const appendedBytes = stats.bytes - snapshotBytes;
     if (
-      stats.records >= this._compactionRecordLimit
-      || stats.bytes >= this._compactionByteLimit
+      appendedRecords >= this._compactionRecordLimit
+      || appendedBytes >= Math.max(this._compactionByteLimit, snapshotBytes)
     ) {
       if (!this._compactPartition(sessionId, turnId, compactionEvents)) {
         this._blockedPartitions.add(key);
@@ -619,6 +627,7 @@ class TurnEventJournal {
     this._partitionStats.set(key, {
       records: 1,
       bytes: serializedBytes,
+      snapshotBytes: serializedBytes,
     });
     if (createsPartition) {
       this._partitionCount += 1;
@@ -695,9 +704,13 @@ class TurnEventJournal {
       if (process.platform !== 'win32') {
         throw error;
       }
-      this._log('DEBUG', 'turn_journal.directory_fsync_unavailable', {
-        errorCode: normalizeId(error?.code) || null,
-      });
+      // Every durable write hits this on Windows; say so once per process.
+      if (!directoryFsyncUnavailableLogged) {
+        directoryFsyncUnavailableLogged = true;
+        this._log('DEBUG', 'turn_journal.directory_fsync_unavailable', {
+          errorCode: normalizeId(error?.code) || null,
+        });
+      }
       return false;
     } finally {
       if (handle != null) {

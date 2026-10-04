@@ -9,7 +9,7 @@
   function ensure(state) {
     state.ui = state.ui || {}; state.ui.logs = state.ui.logs || {};
     var value = state.ui.logs;
-    if (!['overview', 'activity'].includes(value.activeTab)) value.activeTab = 'overview';
+    if (!['overview', 'activity', 'runs'].includes(value.activeTab)) value.activeTab = 'overview';
     if (!value.selectedRunId) value.selectedRunId = '';
     if (!value.levelFilter) value.levelFilter = 'all';
     if (!value.sourceFilter) value.sourceFilter = 'all';
@@ -21,6 +21,25 @@
   function resetLogsViewState(state) {
     var value = ensure(state); value.query = ''; value.levelFilter = 'all'; value.sourceFilter = 'all';
     value.selectedEntryId = ''; value.issueScope = null; value.autoScroll = true; return value;
+  }
+  function focusDiagnosticsTarget(state, target) {
+    var value = ensure(state);
+    if (!value.returnState) {
+      value.returnState = {
+        activeTab: value.activeTab, query: value.query,
+        levelFilter: value.levelFilter, sourceFilter: value.sourceFilter,
+        issueScope: value.issueScope || null, selectedRunId: value.selectedRunId,
+        selectedEntryId: value.selectedEntryId, autoScroll: value.autoScroll,
+      };
+    }
+    value.activeTab = target.tab;
+    value.query = target.query || '';
+    value.levelFilter = 'all'; value.sourceFilter = 'all';
+    value.issueScope = target.issueScope || null;
+    if (target.runId !== undefined) value.selectedRunId = target.runId;
+    value.selectedEntryId = target.entryId || '';
+    value.autoScroll = false;
+    return value;
   }
   function trimBucket(entries, limit) {
     if (entries.length <= limit) return entries;
@@ -43,23 +62,68 @@
     });
     return trimBucket(prior, PRIOR_LIMIT).concat(trimBucket(active, CURRENT_LIMIT));
   }
-  function updateActiveSource(snapshot, entry) {
+  function updateActiveSources(snapshot, entries) {
     var activeRunId = String(snapshot && snapshot.active_run && snapshot.active_run.run_id || '');
-    if (!snapshot || (entry.run_id && activeRunId && String(entry.run_id) !== activeRunId)) return;
-    var sourceName = String(entry.layer || entry.source || 'electron').trim() || 'electron';
     [snapshot.sources, snapshot.active_run && snapshot.active_run.sources].filter(function (value, index, values) {
       return value && values.indexOf(value) === index;
     }).forEach(function (sources) {
-      var source = sources[sourceName]; if (!source) return;
-      source.count = Number(source.count || 0) + 1; source.last_seen = entry.ts || null;
-      source.state = 'observed'; source.capture_state = 'capturing';
+      Object.keys(sources).forEach(function (name) {
+        var retained = entries.filter(function (entry) {
+          return String(entry.run_id || activeRunId) === activeRunId && String(entry.layer || entry.source || 'electron') === name;
+        });
+        var source = sources[name]; source.count = retained.length;
+        var integrity = snapshot.active_run && snapshot.active_run.integrity || snapshot.integrity || {};
+        source.dropped = Number((integrity.dropped_by_source || {})[name] || 0);
+        if (retained.length) {
+          source.last_seen = retained[retained.length - 1].ts || null;
+          source.state = 'observed'; source.capture_state = 'capturing';
+        }
+      });
+    });
+  }
+  function eachPartialIntegrity(snapshot, reason, apply) {
+    [snapshot, snapshot.active_run].filter(Boolean).map(function (run) {
+      return run.integrity || (run.integrity = {});
+    }).filter(function (value, index, values) { return values.indexOf(value) === index; }).forEach(function (integrity) {
+      integrity.complete = false;
+      integrity.partial_reasons = Array.from(new Set((integrity.partial_reasons || []).concat(reason))).slice(0, 12);
+      apply(integrity);
+    });
+  }
+  function recordLoss(snapshot, source, count, reason) {
+    if (!snapshot || !Number.isSafeInteger(count) || count <= 0) return;
+    eachPartialIntegrity(snapshot, reason, function (integrity) {
+      var drops = integrity.dropped_by_source || (integrity.dropped_by_source = {});
+      drops[source] = Math.min(Number.MAX_SAFE_INTEGER, Number(drops[source] || 0) + count);
+    });
+  }
+  // Records the sidecar accepted but could not persist or mirror; mirrors the
+  // main process tally in diagnostic-log-service.js (integrity.sink_failures).
+  function recordSinkFailures(snapshot, failures) {
+    if (!snapshot || !failures || typeof failures !== 'object') return;
+    ['file', 'mirror'].forEach(function (sink) {
+      var count = failures[sink];
+      if (!Number.isSafeInteger(count) || count <= 0) return;
+      eachPartialIntegrity(snapshot, 'sidecar_sink_failed', function (integrity) {
+        var bySource = integrity.sink_failures || (integrity.sink_failures = {});
+        var sidecar = bySource.sidecar || (bySource.sidecar = { file: 0, mirror: 0 });
+        sidecar[sink] = Math.min(Number.MAX_SAFE_INTEGER, Number(sidecar[sink] || 0) + count);
+      });
     });
   }
   function appendEntryToState(state, entry) {
     var snapshot = state.diagnosticsSnapshot || {}; var activeRunId = String(snapshot.active_run && snapshot.active_run.run_id || '');
     var normalized = entry.run_id || !activeRunId ? entry : Object.assign({}, entry, { run_id: activeRunId });
-    state.logs.push(normalized); updateActiveSource(snapshot, normalized);
-    state.logs = retainRunEntries(state.logs, activeRunId, snapshot.prior_run && snapshot.prior_run.run_id);
+    if (normalized.entry_id && state.logs.some(function (row) { return row.entry_id === normalized.entry_id; })) return normalized;
+    state.logs.push(normalized);
+    if (normalized.event === 'sidecar.runtime.diagnostics_queue_dropped') {
+      recordLoss(snapshot, 'sidecar', normalized.data && normalized.data.dropped_count, 'entries_dropped');
+      recordSinkFailures(snapshot, normalized.data && normalized.data.sink_failures);
+    }
+    // Display retention is not capture loss: integrity reports only what capture
+    // lost, and the source counts describe the retained rows, here and on refresh.
+    var retained = retainRunEntries(state.logs, activeRunId, snapshot.prior_run && snapshot.prior_run.run_id);
+    state.logs = retained; updateActiveSources(snapshot, retained);
     return normalized;
   }
   function mergeSnapshotEntries(existingEntries, snapshot) {
@@ -67,7 +131,14 @@
     var canonical = Array.isArray(snapshot && snapshot.entries) ? snapshot.entries : [];
     var activeRunId = String(snapshot && snapshot.active_run && snapshot.active_run.run_id || '');
     var priorRunId = String(snapshot && snapshot.prior_run && snapshot.prior_run.run_id || '');
-    var canonicalOrigins = new Set(canonical.map(function (entry) { return entry.origin_entry_id; }).filter(Boolean));
+
+    var identities = new Set(canonical.map(function (entry) { return entry.entry_id || (entry.run_id && entry.sequence ? entry.run_id + ':' + entry.sequence : ''); }).filter(Boolean));
+    var watermark = Math.max(Number(snapshot.active_run && snapshot.active_run.sequence) || 0, ...canonical.filter(function (entry) { return entry.run_id === activeRunId; }).map(function (entry) { return Number(entry.sequence) || 0; }));
+    var newer = current.filter(function (entry) {
+      var identity = entry.entry_id || (entry.run_id && entry.sequence ? entry.run_id + ':' + entry.sequence : '');
+      return entry.run_id === activeRunId && Number(entry.sequence) > watermark && !identities.has(identity);
+    });
+    var canonicalOrigins = new Set(canonical.concat(newer).map(function (entry) { return entry.origin_entry_id; }).filter(Boolean));
     var localRenderer = current.filter(function (entry) {
       return (entry && entry.source === 'renderer') || (entry && entry.layer === 'renderer');
     }).filter(function (entry) {
@@ -75,7 +146,7 @@
     }).map(function (entry) {
       return entry.run_id || !activeRunId ? entry : Object.assign({}, entry, { run_id: activeRunId });
     });
-    return retainRunEntries(canonical.concat(localRenderer), activeRunId, priorRunId);
+    return retainRunEntries(canonical.concat(newer, localRenderer), activeRunId, priorRunId);
   }
   function createDiagnosticsWorkspaceRefresher(options) {
     var refreshPromise = null;
@@ -99,6 +170,16 @@
           if (!snapshot || !Array.isArray(snapshot.entries)) throw new Error('logs unavailable');
           options.state.diagnosticsSnapshot = snapshot;
           options.state.logs = mergeSnapshotEntries(options.state.logs, snapshot);
+          var watermark = Math.max(Number(snapshot.active_run && snapshot.active_run.sequence) || 0, ...snapshot.entries.map(function (entry) {
+            return entry.run_id === snapshot.active_run?.run_id ? Number(entry.sequence) || 0 : 0;
+          }));
+          options.state.logs.forEach(function (entry) {
+            if (entry.run_id === snapshot.active_run?.run_id && Number(entry.sequence) > watermark && entry.event === 'sidecar.runtime.diagnostics_queue_dropped') {
+              recordLoss(snapshot, 'sidecar', entry.data && entry.data.dropped_count, 'entries_dropped');
+              recordSinkFailures(snapshot, entry.data && entry.data.sink_failures);
+            }
+          });
+          updateActiveSources(snapshot, options.state.logs);
         }],
         ['status', async function () {
           var status = await shell.diagnostics?.getJennyStatus?.({ include_harness: false });
@@ -155,7 +236,6 @@
           var results = await Promise.allSettled([
             shell.plugins.getState(),
             shell.plugins.getDistributionState?.() || Promise.resolve(null),
-            shell.plugins.getCatalogState?.() || Promise.resolve(null),
           ]);
           if (isDisposed()) return;
           if (results[0].status !== 'fulfilled') {
@@ -165,7 +245,6 @@
           options.state.pluginPlatformDiagnostics = {
             platform: results[0].value,
             distribution: results[1].status === 'fulfilled' ? results[1].value : null,
-            catalog: results[2].status === 'fulfilled' ? results[2].value : null,
           };
         }],
         ['phase_percentiles', async function () {
@@ -212,6 +291,7 @@
   return Object.freeze({
     ensureDiagnosticsViewState: ensure,
     resetLogsViewState: resetLogsViewState,
+    focusDiagnosticsTarget: focusDiagnosticsTarget,
     mergeSnapshotEntries: mergeSnapshotEntries,
     retainRunEntries: retainRunEntries,
     appendEntryToState: appendEntryToState,

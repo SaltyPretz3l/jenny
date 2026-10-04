@@ -480,7 +480,8 @@
             break;
           }
           if (message?.kind === 'tool_use' && tool?.parent_stream_id === streamId
-            && tool.status === 'pending_user_input' && !tool.user_questions_stale) {
+            && tool.status === 'pending_user_input' && !tool.user_questions_stale
+            && !tool.user_questions_withdrawn) {
             attention.set(id, 'input_needed');
           }
         }

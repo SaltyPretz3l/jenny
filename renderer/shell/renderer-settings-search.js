@@ -80,7 +80,8 @@
         keywords: Array.isArray(section.keywords) ? section.keywords : [],
       });
     }
-    var fields = typeof copy.listSettingsFieldCopyEntries === 'function' ? copy.listSettingsFieldCopyEntries() : [];
+    var fields = typeof copy.listSettingsSearchEntries === 'function' ? copy.listSettingsSearchEntries()
+      : (typeof copy.listSettingsFieldCopyEntries === 'function' ? copy.listSettingsFieldCopyEntries() : []);
     for (var j = 0; j < fields.length; j++) {
       var field = fields[j];
       var fieldHostId = resolveHostSectionId(field.sectionId);
@@ -170,14 +171,8 @@
   // so preset scaling and reduced-motion zeroing stay in sync with CSS.
   var HIT_FLASH_MS = 2500;
 
-  function escapeHtml(value) {
-    return String(value == null ? '' : value)
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;')
-      .replace(/'/g, '&#39;');
-  }
+  const escapeHtml = ((typeof globalThis !== 'undefined' && globalThis.stringUtils)
+    || (typeof require === 'function' ? require('../shared/string-utils') : null)).escapeHtml;
 
   /** Markup for the search box + empty results list, meant for `.settings-nav-header`. */
   function buildSettingsSearchBoxMarkup() {
@@ -286,7 +281,15 @@
       }
     }
 
-    function flashRow(sectionId, fieldId) {
+    function findFieldTarget(fieldId) {
+      var toggleTrack = doc.querySelector('[data-inv-toggle="' + fieldId + '"]');
+      if (toggleTrack) return toggleTrack.closest('.settings-field') || toggleTrack.closest('.inv-toggle') || toggleTrack;
+      var target = doc.querySelector('[data-limits-line="' + fieldId + '"]') || doc.getElementById(fieldId) || doc.querySelector('[data-settings-field="' + fieldId + '"]');
+      var row = target && (target.closest('.settings-field') || target);
+      return row && row.closest('[hidden]') ? null : row;
+    }
+
+    function flashRow(sectionId, fieldId, rawSectionId) {
       if (flashTimer) {
         clearTimeout(flashTimer);
         flashTimer = null;
@@ -296,23 +299,20 @@
       }
       var target = null;
       if (fieldId) {
-        var toggleTrack = doc.querySelector('[data-inv-toggle="' + fieldId + '"]');
-        if (toggleTrack) {
-          target = toggleTrack.closest('.inv-toggle') || toggleTrack;
-        }
-        if (!target) {
-          target = doc.getElementById(fieldId);
-        }
-        if (!target) {
-          target = doc.querySelector('[data-settings-field="' + fieldId + '"]');
-        }
+        target = findFieldTarget(fieldId);
       }
       if (!target) {
-        target = doc.querySelector('.settings-card[data-settings-section="' + sectionId + '"]');
+        // A page folded into another is a group on its host page, or its own card under the host's.
+        var ownId = rawSectionId || sectionId;
+        target = doc.querySelector('[data-settings-merged-section="' + ownId + '"]')
+          || doc.querySelector('.settings-card[data-settings-section="' + ownId + '"]:not([hidden])')
+          || doc.querySelector('.settings-card[data-settings-section="' + sectionId + '"]');
       }
       if (!target) {
         return;
       }
+      var fold = target.closest('details');
+      if (fold) fold.open = true;
       if (typeof target.scrollIntoView === 'function') {
         target.scrollIntoView({ block: 'center' });
       }
@@ -417,7 +417,7 @@
           var frameIndex = queuedAnimationFrames.indexOf(frame);
           if (frameIndex >= 0) queuedAnimationFrames.splice(frameIndex, 1);
           if (activeFence.isDisposed() || !bindingGate.isCurrent(token)) return;
-          flashRow(hit.sectionId, fieldId);
+          flashRow(hit.sectionId, fieldId, hit.rawSectionId);
         });
       }
       // navigateToSection() may have just kicked off (synchronously, via the

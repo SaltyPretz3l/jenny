@@ -151,3 +151,54 @@ test('an absent activity callback leaves dispatch unchanged (byte-identical no-o
   assert.equal(completeResult.terminal, true);
   assert.equal(harness.activityFailedLogs().length, 0);
 });
+
+// HB-034 F5: the waiting notice is a live-only state report. It reaches its
+// handler, is never terminal, and is never buffered for a later replay.
+test('a waiting notice reaches its handler once and is not a terminal', async () => {
+  const waitingRow = require('../renderer/chat/renderer-stream-waiting-line');
+  const seen = [];
+  const wiring = waitingRow.createWaitingRowWiring({
+    state: {
+      sessions: [{ id: 'session-a', title: '  G5 fix attempt 4 ' }, { id: 'session-b', title: '' }],
+      runtimeSendController: {
+        openChat: (sessionId) => seen.push(['open', sessionId]),
+        restartEngine: (sessionId) => seen.push(['restart', sessionId]),
+        refreshSessionRows: (sessionId) => { seen.push(['rows', sessionId]); return Promise.resolve(true); },
+      },
+    },
+    queueSessionRender: (sessionId, parts) => seen.push(['render', sessionId, Object.keys(parts).sort().join()]),
+  });
+  assert.equal(wiring.rowOptions.getSessionTitle('session-a'), 'G5 fix attempt 4');
+  assert.equal(wiring.rowOptions.getSessionTitle('session-b'), '');
+  assert.equal(wiring.rowOptions.getSessionTitle('session-gone'), '');
+  wiring.rowOptions.onOpenChat('session-a');
+  wiring.rowOptions.onRestartEngine('session-1');
+
+  assert.deepEqual(await wiring.handleRuntimeWaiting({ type: 'runtime_waiting', sessionId: 'session-1', waitState: 'waiting' }),
+    { buffered: false, terminal: false });
+  // Paused for good: the strip needs its row, so the session's rows are read again.
+  await wiring.handleRuntimeWaiting({ type: 'runtime_waiting', sessionId: 'session-1', waitState: 'ended' });
+  assert.deepEqual(seen, [
+    ['open', 'session-a'], ['restart', 'session-1'],
+    ['render', 'session-1', 'composer,composerStatus'],
+    ['rows', 'session-1'], ['render', 'session-1', 'composer,composerStatus'],
+  ]);
+});
+
+test('through the real stream handler a waiting reply is marked waiting until its resumed stream starts', async (t) => {
+  const { createHarness } = require('./helpers/renderer-stream-handler-harness');
+  const harness = createHarness();
+  t.after(() => harness.restore());
+  await harness.emit({ type: 'started', sessionId: 'session-1', streamId: 'stream-1' });
+  await harness.emit({ type: 'runtime_waiting', sessionId: 'session-1', streamId: 'stream-1', workId: 'work_1',
+    waitState: 'waiting', resourceClass: 'filesystem', blockingSessionId: 'session-2' });
+  assert.equal(harness.state.streamWaits.isWaitingStream('stream-1'), true);
+  assert.equal(harness.state.streamWaits.isWaitingWork('work_1'), true);
+  // Not a terminal: the paused stream stays the session's live stream, so Stop still targets it.
+  assert.equal(harness.multiStreamController.getStreamIdForSession('session-1'), 'stream-1');
+  assert.equal(harness.multiStreamController.isStreamFinalized('stream-1'), false);
+
+  await harness.emit({ type: 'started', sessionId: 'session-1', streamId: 'stream-2' });
+  assert.equal(harness.state.streamWaits.isWaitingStream('stream-1'), false);
+  assert.equal(harness.state.streamWaits.isWaitingWork('work_1'), false);
+});

@@ -2,6 +2,7 @@
 
 // W2-2: background-job tracker — status.json polling, liveness backstop, kill.
 
+const path = require('node:path');
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
@@ -14,6 +15,8 @@ const {
 } = require('../services/main/background-job-tracker');
 
 const JOB_ID = 'abc123def456';
+
+const flushAsync = () => new Promise((resolve) => setImmediate(resolve));
 
 function makeTracker(t, overrides = {}) {
   const bridgeEvents = [];
@@ -30,6 +33,7 @@ function makeTracker(t, overrides = {}) {
       return { ok: true, text: JSON.stringify(statusByPath.get(statusPath)) };
     }),
     isPidAliveImpl: overrides.isPidAliveImpl || (() => true),
+    getProcessStartTimeImpl: overrides.getProcessStartTimeImpl || (() => 'generation-1'),
     killPidTreeImpl: overrides.killPidTreeImpl || (async () => ({ ok: true, reason: '' })),
     nowImpl: () => now,
     // Long interval: tests drive polls deterministically via pollNow().
@@ -54,6 +58,122 @@ test('registerJob validates the job id and requires a workspace root', (t) => {
 
   const rootless = makeTracker(t, { workspaceRoot: '' });
   assert.equal(rootless.tracker.registerJob({ jobId: JOB_ID }), false);
+});
+
+test('MON-05: a job polls under its own execution root, not the global root', (t) => {
+  const h = makeTracker(t);
+  const projectRoot = path.join('D:', 'proj');
+  const projectStatus = path.join(projectRoot, '.jenny', 'tool-results', JOB_ID, 'status.json');
+  h.statusByPath.set(projectStatus, { job_id: JOB_ID, state: 'completed', exit_code: 0 });
+  assert.equal(h.tracker.registerJob({ jobId: JOB_ID, workspaceRoot: projectRoot }), true);
+  h.tracker.pollNow();
+  const job = h.tracker.getState().jobs.find((entry) => entry.jobId === JOB_ID);
+  assert.equal(job.state, 'completed', 'status read from the project root settles the job');
+
+  const rootless = makeTracker(t, { workspaceRoot: '' });
+  assert.equal(rootless.tracker.registerJob({ jobId: JOB_ID, workspaceRoot: projectRoot }), true,
+    'an explicit execution root registers without a global root');
+});
+
+test('Stop never adopts a baseline identity after registration failed to read one', async (t) => {
+  let identity = '';
+  const killCalls = [];
+  const { tracker } = makeTracker(t, {
+    getProcessStartTimeImpl: () => identity,
+    killPidTreeImpl: async (pid) => { killCalls.push(pid); return { ok: true }; },
+  });
+  tracker.registerJob({ jobId: JOB_ID, pid: 555 });
+  await flushAsync();
+  identity = 'replacement-process';
+  assert.deepEqual(await tracker.killJob(JOB_ID), { ok: false, reason: 'pid_identity_unverified' });
+  assert.deepEqual(killCalls, []);
+});
+
+test('Stop refuses a reused or unverifiable pid before signaling', async (t) => {
+  for (const replacement of ['generation-2', '']) {
+    let identity = 'generation-1';
+    const killCalls = [];
+    const { tracker } = makeTracker(t, {
+      getProcessStartTimeImpl: () => identity,
+      killPidTreeImpl: async (pid) => { killCalls.push(pid); return { ok: true }; },
+    });
+    tracker.registerJob({ jobId: JOB_ID, pid: 555 });
+    await flushAsync();
+    identity = replacement;
+    assert.deepEqual(await tracker.killJob(JOB_ID), { ok: false, reason: 'pid_identity_unverified' });
+    assert.deepEqual(killCalls, []);
+    const job = tracker.getState().jobs[0];
+    if (replacement) {
+      assert.match(job.error, /no longer be verified/, 'a different creation time settles the job');
+    } else {
+      assert.equal(job.state, 'running', 'a failed lookup keeps the job and its Stop');
+      identity = 'generation-1';
+      assert.equal((await tracker.killJob(JOB_ID)).ok, true, 'Stop succeeds once the lookup works');
+    }
+  }
+});
+
+test('escalation rechecks process identity before its forceful signal', async (t) => {
+  let identity = 'generation-1';
+  const killCalls = [];
+  const { tracker, statusByPath, statusPath, advance } = makeTracker(t, {
+    getProcessStartTimeImpl: () => identity,
+    killPidTreeImpl: async (pid) => { killCalls.push(pid); return { ok: true }; },
+  });
+  tracker.registerJob({ jobId: JOB_ID, pid: 555 });
+  statusByPath.set(statusPath(), { state: 'running' });
+  await tracker.killJob(JOB_ID);
+  identity = 'generation-2';
+  advance(KILL_ESCALATION_MS + 1);
+  tracker.pollNow();
+  await flushAsync();
+  assert.deepEqual(killCalls, [555], 'replacement process must receive no escalation');
+});
+
+test('a transient status read failure preserves Stop and recovers on the next poll', async (t) => {
+  let read = { ok: false, reason: 'read_failed' };
+  const { tracker } = makeTracker(t, { readStatusFileImpl: () => read });
+  tracker.registerJob({ jobId: JOB_ID, pid: 555 });
+  tracker.pollNow();
+  assert.equal(tracker.getState().jobs[0].state, 'running', 'observation failure is not termination');
+  assert.equal((await tracker.killJob(JOB_ID)).ok, true);
+  read = { ok: true, text: JSON.stringify({ state: 'completed', exit_code: 0 }) };
+  tracker.pollNow();
+  assert.equal(tracker.getState().jobs[0].state, 'completed');
+});
+
+test('a successful observation resets the consecutive status failure bound', (t) => {
+  let read = { ok: false, reason: 'read_failed' };
+  const { tracker } = makeTracker(t, { readStatusFileImpl: () => read });
+  tracker.registerJob({ jobId: JOB_ID, pid: 555 });
+  tracker.pollNow();
+  tracker.pollNow();
+  assert.equal(tracker.getState().jobs[0].state, 'running');
+  read = { ok: true, text: JSON.stringify({ state: 'running' }) };
+  tracker.pollNow();
+  assert.equal(tracker.getState().jobs[0].error, '');
+  read = { ok: false, reason: 'read_failed' };
+  tracker.pollNow();
+  tracker.pollNow();
+  assert.equal(tracker.getState().jobs[0].state, 'running');
+  tracker.pollNow();
+  assert.equal(tracker.getState().jobs[0].state, 'failed');
+});
+
+test('default Stop keeps POSIX group semantics without signaling a replacement pid fallback', async (t) => {
+  const signals = [];
+  t.mock.method(process, 'kill', (pid, signal) => {
+    signals.push({ pid, signal });
+    throw Object.assign(new Error('group gone'), { code: 'ESRCH' });
+  });
+  const tracker = createBackgroundJobTracker({
+    getWorkspaceRoot: () => 'C:\\ws', platform: 'linux',
+    getProcessStartTimeImpl: () => 'generation-1', isPidAliveImpl: () => false,
+  });
+  t.after(() => tracker.dispose());
+  tracker.registerJob({ jobId: JOB_ID, pid: 555 });
+  assert.equal((await tracker.killJob(JOB_ID)).ok, true);
+  assert.deepEqual(signals, [{ pid: -555, signal: 'SIGTERM' }]);
 });
 
 test('registration emits a running snapshot and duplicate ids are idempotent', (t) => {
@@ -101,10 +221,13 @@ test('the registered pid is authoritative and status pids are ignored; terminal 
   assert.equal(bridgeEvents.length, emitted);
 });
 
-test('an unrecognized status state settles the job as a local failure', (t) => {
+test('consecutive unrecognized status states settle the job as a local failure', (t) => {
   const { tracker, bridgeEvents, statusByPath, statusPath } = makeTracker(t);
   tracker.registerJob({ jobId: JOB_ID });
   statusByPath.set(statusPath(), { job_id: JOB_ID, state: 'totally-bogus' });
+  tracker.pollNow();
+  assert.equal(tracker.getState().jobs[0].state, 'running');
+  tracker.pollNow();
   tracker.pollNow();
   const snapshot = bridgeEvents.at(-1).payload.jobs[0];
   assert.equal(snapshot.state, 'failed');
@@ -133,16 +256,20 @@ test('a missing status file is tolerated within the grace and fails after it', (
   assert.equal(bridgeEvents.at(-1).payload.jobs[0].state, 'running', 'startup race tolerated');
   advance(MISSING_STATUS_GRACE_MS + 1_000);
   tracker.pollNow();
+  tracker.pollNow();
+  tracker.pollNow();
   const snapshot = bridgeEvents.at(-1).payload.jobs[0];
   assert.equal(snapshot.state, 'failed');
   assert.match(snapshot.error, /not found/);
 });
 
-test('oversized and malformed status files settle as local failures', (t) => {
+test('consecutive oversized and malformed status files settle as local failures', (t) => {
   const first = makeTracker(t, {
     readStatusFileImpl: () => ({ ok: false, reason: 'status_too_large' }),
   });
   first.tracker.registerJob({ jobId: JOB_ID });
+  first.tracker.pollNow();
+  first.tracker.pollNow();
   first.tracker.pollNow();
   assert.equal(first.bridgeEvents.at(-1).payload.jobs[0].state, 'failed');
 
@@ -150,6 +277,8 @@ test('oversized and malformed status files settle as local failures', (t) => {
     readStatusFileImpl: () => ({ ok: true, text: 'not json {{' }),
   });
   second.tracker.registerJob({ jobId: JOB_ID });
+  second.tracker.pollNow();
+  second.tracker.pollNow();
   second.tracker.pollNow();
   const snapshot = second.bridgeEvents.at(-1).payload.jobs[0];
   assert.equal(snapshot.state, 'failed');
@@ -318,10 +447,12 @@ test('a kill that leaves the process alive escalates to a forceful kill after th
   assert.equal(killCalls.length, 1, 'no escalation before the grace');
   advance(KILL_ESCALATION_MS + 500);
   tracker.pollNow();
+  await flushAsync();
   assert.deepEqual(killCalls.at(-1), { pid: 555, force: true });
   // Escalation fires once, not on every subsequent poll.
   advance(1_000);
   tracker.pollNow();
+  await flushAsync();
   assert.equal(killCalls.length, 2);
 });
 

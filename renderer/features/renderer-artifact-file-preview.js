@@ -526,6 +526,7 @@
       }
       disposeFrame();
       host.innerHTML = buildBodyHtml(slot);
+      markdownUtils?.pruneDetachedMermaidObservations?.();
       frameSignature = nextSignature;
       hydrate(host, slot);
       scrollToCitedRow(host);
@@ -594,6 +595,7 @@
       disposed = true;
       renderToken += 1;
       disposeFrame();
+      markdownUtils?.pruneDetachedMermaidObservations?.();
       if (bound && panelEl && typeof panelEl.removeEventListener === 'function') {
         panelEl.removeEventListener('click', handleRailClick);
         panelEl.removeEventListener('keydown', handleRailKeydown);

@@ -236,11 +236,17 @@ class ContextCompactedEvent(LoopEvent):
     input_complete: bool = True
     dropped_messages: int = 0
     dropped_bytes: int = 0
+    # Older messages the summarizer's own input omitted (CMC-008); unlike
+    # input_complete, which is ingress completeness.
+    summary_source_dropped_messages: int = 0
     # Electron-only persistence input. Serialization intentionally excludes it
     # from canonical turn events and renderer forwarding.
     summary_message: dict[str, Any] | None = None
     # Electron-only, like summary_message.
     covered_through_tool_call_id: str | None = None
+    # Electron-only diagnostics (FG-008): content-free rows of the rebuilt
+    # window from compaction_diagnostics.compaction_window_shape.
+    window_shape: list[dict[str, Any]] | None = None
 
 
 @dataclass

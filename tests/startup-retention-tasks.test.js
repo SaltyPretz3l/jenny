@@ -397,3 +397,36 @@ test('both prunes ride one walk of the session bodies', () => {
   for (const timer of timers) timer.fn();
   assert.deepEqual(sessionStore.reads, ['s1', 's2']);
 });
+
+test('desktop startup and periodic artifact tasks recover an authorized empty project', async t => {
+  const fs = require('node:fs/promises');
+  const path = require('node:path');
+  const { createTrackedTempDir, cleanupTrackedResources } = require('./helpers/resource-cleanup');
+  const { ArtifactWorkspaceService } = require('../services/artifact-workspace-service');
+  const { initializeApplicationProjects } = require('../services/projects/application-project-scope');
+  t.after(cleanupTrackedResources);
+  const root = createTrackedTempDir('jenny-startup-artifacts-');
+  const profile = createTrackedTempDir('jenny-startup-profile-');
+  const backend = createFakeBackend('ready');
+  backend.sessionStore = createFakeSessionStore([]);
+  backend._emitServiceLog = () => {};
+  initializeApplicationProjects(backend, { userDataPath: profile });
+  const project = backend.projectService.create({ name: 'Artifact recovery' }).project;
+  assert.equal(backend.projectService.bindRoot(project.id, root).ok, true);
+  const artifacts = new ArtifactWorkspaceService({ projectAuthorityProvider: () => backend.projectAuthority });
+  const timers = [];
+  const intervals = [];
+  scheduleStartupRetentionTasks({ artifactService: artifacts, backendService: backend,
+    setTimeoutRef: (fn, ms) => { timers.push({ fn, ms }); return { unref() {} }; },
+    setIntervalRef: fn => { intervals.push(fn); return { unref() {} }; },
+  });
+  for (const task of [timers.find(timer => timer.ms === 1000).fn,
+    timers.find(timer => timer.ms === 4000).fn, ...intervals]) {
+    const target = path.join(root, '.jenny', 'artifacts', 'abandoned');
+    await fs.mkdir(target, { recursive: true });
+    const old = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+    await fs.utimes(target, old, old);
+    await task();
+    await assert.rejects(fs.stat(target), { code: 'ENOENT' });
+  }
+});

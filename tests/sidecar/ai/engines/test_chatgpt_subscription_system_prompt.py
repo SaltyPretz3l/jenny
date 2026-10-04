@@ -121,7 +121,7 @@ def _engine(
         base_url="https://example.test/backend-api/codex",
     )
     fake_client = _FakeStreamingClient(_FakeSSEStream([_completed()]))
-    monkeypatch.setattr(engine._service, "_client", fake_client)  # noqa: SLF001
+    monkeypatch.setattr(engine._service, "_client", fake_client)
     return engine, fake_client
 
 
@@ -133,7 +133,7 @@ class _Kernel:
     """
 
     _config = SimpleNamespace(engine_type="chatgpt")
-    _system_prompt_for_engine = AgentKernel._system_prompt_for_engine  # noqa: SLF001
+    _system_prompt_for_engine = AgentKernel._system_prompt_for_engine
 
 
 def _drive(

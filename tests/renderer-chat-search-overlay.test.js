@@ -422,6 +422,80 @@ test('paired-result search mounts only the selected tool row and restores prior 
   assert.equal(renders, 3);
 });
 
+// The pane's transcript-view-rendered notice also fires when the pane changes
+// session (previousView from session A, view from session B): only A's own
+// records are stale after a switch of A; B's session change must not strand a
+// search-only expansion in A as a permanent override.
+test("a transcript view change drops only that session's transient expansions", async (t) => {
+  const keyA = 'session=' + encodeURIComponent('sess A') + '|call=a';
+  const keyB = 'session=' + encodeURIComponent('sess B') + '|call=b';
+  const toolArticle = (messageId, callId, rowKey) => '<article class="chat-entry" data-message-id="' + messageId + '" tabindex="-1">'
+    + '<div class="tool-call-row tool-call-row--minimal" data-tool-call-id="' + callId + '" data-tool-row-key="' + rowKey + '" data-expanded="false" data-tool-details-materialized="false">'
+    + '<div data-tool-row-toggle="true" data-tool-row-key="' + rowKey + '" role="button" aria-expanded="false"></div>'
+    + '<div class="tool-call-row-body" inert></div></div></article>';
+  const html = toolArticle('m-tool-a', 'call-a', keyA) + toolArticle('m-tool-b', 'call-b', keyB);
+  const expansion = new Map();
+  const previousToolUtils = globalThis.rendererTurnRowToolRenderUtils;
+  globalThis.rendererTurnRowToolRenderUtils = {
+    setToolRowExpansion(rowKey, value) { expansion.set(rowKey, value); },
+  };
+  t.after(() => {
+    if (previousToolUtils === undefined) delete globalThis.rendererTurnRowToolRenderUtils;
+    else globalThis.rendererTurnRowToolRenderUtils = previousToolUtils;
+  });
+  const { dom, overlay } = buildEnv(html, {
+    getCurrentSessionMessages: () => [
+      { id: 'u-a', role: 'user', content: 'first' },
+      { id: 'm-tool-a', role: 'assistant', kind: 'tool_use', tool_call: { call_id: 'call-a', input_json: '{}' } },
+      { id: 'm-result-a', role: 'assistant', kind: 'tool_result', tool_result: { call_id: 'call-a', output_text: 'needle alpha' } },
+      { id: 'u-b', role: 'user', content: 'second' },
+      { id: 'm-tool-b', role: 'assistant', kind: 'tool_use', tool_call: { call_id: 'call-b', input_json: '{}' } },
+      { id: 'm-result-b', role: 'assistant', kind: 'tool_result', tool_result: { call_id: 'call-b', output_text: 'needle beta' } },
+    ],
+    getSessionTurnEventState: () => ({ turnEvents: [] }),
+    renderAll() {
+      for (const [rowKey, text] of [[keyA, 'needle alpha'], [keyB, 'needle beta']]) {
+        const row = dom.window.document.querySelector('[data-tool-row-key="' + rowKey + '"]');
+        const expanded = expansion.get(rowKey) === true;
+        row.setAttribute('data-expanded', expanded ? 'true' : 'false');
+        row.setAttribute('data-tool-details-materialized', expanded ? 'true' : 'false');
+        row.querySelector('.tool-call-row-body').innerHTML = expanded ? '<span>' + text + '</span>' : '';
+      }
+    },
+  });
+  overlay.attach();
+  const chatTimeline = dom.window.document.getElementById('chatTimeline');
+  const notice = (sessionId) => chatTimeline.dispatchEvent(new dom.window.CustomEvent('transcript-view-rendered', {
+    detail: { view: 'everything', previousView: 'thinking', sessionId },
+  }));
+
+  overlay.open();
+  const input = dom.window.document.querySelector('.chat-search-bar-input');
+  input.value = 'needle';
+  input.dispatchEvent(new dom.window.Event('input', { bubbles: true }));
+  await waitForUiState(dom.window, () => expansion.get(keyA) === true);
+
+  notice('sess B');
+  overlay.close();
+  assert.equal(expansion.get(keyA), false, "another session's view change keeps A's restore");
+
+  overlay.open();
+  input.value = 'needle';
+  input.dispatchEvent(new dom.window.Event('input', { bubbles: true }));
+  await waitForUiState(dom.window, () => expansion.get(keyA) === true);
+  notice('sess A');
+  overlay.close();
+  assert.equal(expansion.get(keyA), true, "A's own view change already reset its overrides; nothing is written back");
+
+  overlay.open();
+  input.value = 'needle';
+  input.dispatchEvent(new dom.window.Event('input', { bubbles: true }));
+  await waitForUiState(dom.window, () => expansion.get(keyA) === true);
+  notice(' sess A ');
+  overlay.close();
+  assert.equal(expansion.get(keyA), true, 'a padded session id is trimmed like the row keys');
+});
+
 test('open search overlay rescans after timeline DOM changes while visible', async () => {
   const { dom, overlay } = buildEnv(
     '<article class="chat-entry" data-message-id="m1" tabindex="-1"><div class="chat-bubble">hello first</div></article>'
@@ -496,6 +570,6 @@ test('an over-cap query surfaces the omitted-matches state in the search bar', a
   const count = dom.window.document.querySelector('.chat-search-bar-count');
   await waitForUiState(dom.window, () => /of/.test(count.textContent));
 
-  assert.equal(count.textContent, '1 of 500+', 'the bar reports the floor, not a fabricated exact total');
+  assert.equal(count.textContent, '1 of first 500', 'the bar says the list is capped, not a fabricated exact total');
   overlay.dispose();
 });

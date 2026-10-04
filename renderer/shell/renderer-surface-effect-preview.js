@@ -111,17 +111,30 @@
     // the app-wide router from also forwarding them to the live effect.
     function attachListeners(host) {
       if (!host || typeof host.addEventListener !== 'function') { return; }
+      // Chromium reports a click's isPrimary as false even for the main mouse
+      // button: a click takes the flag its own pointer last hovered with.
+      var hoverPrimary = new Map();
       function forward(type) {
         return function handlePointerEvent(event) {
           if (!controller || typeof controller.handleInput !== 'function') { return; }
+          var pointerId = Number.isFinite(event.pointerId) ? event.pointerId : 1;
+          var isPrimary = event.isPrimary !== false;
+          if (type === 'click') {
+            isPrimary = hoverPrimary.has(pointerId) ? hoverPrimary.get(pointerId) : true;
+          } else if (type === 'leave') {
+            hoverPrimary.delete(pointerId);
+          } else {
+            if (hoverPrimary.size >= 16 && !hoverPrimary.has(pointerId)) { hoverPrimary.clear(); }
+            hoverPrimary.set(pointerId, isPrimary);
+          }
           var rect = readRect(host);
           var localX = (event.clientX || 0) - rect.left;
           var localY = (event.clientY || 0) - rect.top;
           controller.handleInput({
             type: type,
-            pointerId: Number.isFinite(event.pointerId) ? event.pointerId : 1,
+            pointerId: pointerId,
             pointerType: event.pointerType || 'mouse',
-            isPrimary: event.isPrimary !== false,
+            isPrimary: isPrimary,
             buttons: event.buttons || 0,
             pressure: Number.isFinite(event.pressure) ? event.pressure : 0,
             timeStamp: Number.isFinite(event.timeStamp) ? event.timeStamp : 0,

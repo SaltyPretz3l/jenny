@@ -23,8 +23,16 @@ function configFor(root) {
   return { getState: () => ({ toolsWorkspaceRoot: root }) };
 }
 
-function backendFor(messages) {
+function authorityFor(root) {
   return {
+    captureSession() { return { project_id: 'project_test', root_path: root, root_id: 'root_test', root_revision: 1 }; },
+    requireCurrent(authority) { assert.equal(authority.root_path, root); },
+  };
+}
+
+function backendFor(messages, root) {
+  return {
+    projectAuthority: authorityFor(root),
     async getSessionMessages(sessionId) {
       return { data: messages[sessionId] || [] };
     },
@@ -33,7 +41,7 @@ function backendFor(messages) {
 
 async function createCanonicalArtifact(root, messages, options = {}) {
   const configService = configFor(root);
-  const writer = new ArtifactWorkspaceService({ configService });
+  const writer = new ArtifactWorkspaceService({ configService, projectAuthorityProvider: authorityFor(root) });
   const sessionId = options.sessionId || 'session_1';
   const created = options.binary
     ? await writer.createBinaryArtifact(sessionId, options.binary)
@@ -58,17 +66,63 @@ function context(response, pathname, authorized = true) {
     authorized, deviceId: 'device_1', clientId: 'client_1', requestId: 'request_1' };
 }
 
+test('artifact reads use the bound session project instead of the global workspace', async (t) => {
+  const root = makeTemp(t);
+  const projectRoot = path.join(root, 'project');
+  fs.mkdirSync(projectRoot);
+  const messages = {};
+  const { metadata } = await createCanonicalArtifact(projectRoot, messages);
+  const backend = backendFor(messages, root);
+  backend.projectAuthority = {
+    captureSession(sessionId) {
+      assert.equal(sessionId, 'session_1');
+      return { project_id: 'project_a', root_path: projectRoot, root_id: 'root_a', root_revision: 1 };
+    },
+    requireCurrent(authority) { assert.equal(authority.root_path, projectRoot); },
+  };
+  const commands = createArtifactCommands({ backend, configService: configFor(root) });
+  const result = await commands.read('session_1', metadata.artifact_id);
+  assert.equal(result.ok, true, 'project-scoped canonical artifact must resolve');
+  assert.equal(result.bytes.toString(), 'artifact body');
+  backend.projectAuthority.captureSession = () => { throw new Error('session_unbound'); };
+  assert.equal((await commands.read('session_1', metadata.artifact_id)).ok, false);
+});
+
+test('artifact reads fail closed when backend project authority is missing', async (t) => {
+  const root = makeTemp(t);
+  const messages = {};
+  const { configService, metadata } = await createCanonicalArtifact(root, messages);
+  const backend = backendFor(messages, root);
+  delete backend.projectAuthority;
+  const commands = createArtifactCommands({ backend, configService });
+  assert.equal((await commands.read('session_1', metadata.artifact_id)).ok, false);
+});
+
+test('artifact routes preserve the shared semantic failure envelope for each host code', async () => {
+  const { ERROR_CODES, hostFailure } = require('../../server/api-contract');
+  const statuses = { invalid: 400, unauthorized: 401, forbidden: 403, conflict: 409,
+    limit: 429, persistence: 503, unavailable: 503 };
+  for (const kind of Object.keys(ERROR_CODES)) {
+    const result = hostFailure(kind, 'artifact_test_failure', '', kind === 'persistence');
+    const response = responseStub();
+    const routes = createArtifactRoutes({ commands: { async read() { return result; } } });
+    await routes(context(response, '/api/v1/sessions/session_1/artifacts/artifact_1'));
+    assert.equal(response.statusCode, statuses[kind]);
+    assert.deepEqual(JSON.parse(response.body), hostFailure(kind, 'artifact_test_failure', 'request_1', kind === 'persistence'));
+  }
+});
+
 test('read resolves a canonical ArtifactWorkspaceService row and returns bounded metadata plus bytes', async (t) => {
   const root = makeTemp(t);
   const messages = {};
   const { configService, metadata } = await createCanonicalArtifact(root, messages);
-  const commands = createArtifactCommands({ backend: backendFor(messages), configService });
+  const commands = createArtifactCommands({ backend: backendFor(messages, root), configService });
   const result = await commands.read('session_1', metadata.artifact_id);
   assert.deepEqual(result.artifact, {
     artifact_id: metadata.artifact_id,
     title: metadata.title,
     file_name: metadata.file_name,
-    mime_type: 'application/octet-stream',
+    mime_type: 'text/markdown',
     language: 'markdown',
     artifact_kind: 'document',
   });
@@ -80,7 +134,7 @@ test('read requires the exact canonical session reference and rejects traversal 
   const root = makeTemp(t);
   const messages = {};
   const { configService, metadata } = await createCanonicalArtifact(root, messages);
-  const commands = createArtifactCommands({ backend: backendFor(messages), configService });
+  const commands = createArtifactCommands({ backend: backendFor(messages, root), configService });
   assert.equal((await commands.read('session_2', metadata.artifact_id)).error.reason, 'artifact_reference_not_found');
   const outside = path.join(root, 'outside.md');
   fs.writeFileSync(outside, 'private', 'utf8');
@@ -115,7 +169,7 @@ test('read rejects symlink escapes, hardlinks, and files over 10 MiB', async (t)
     base('artifact_huge', huge, 'huge.bin')];
   if (hasSymlink) artifacts.unshift(base('artifact_linked', linked, 'linked.txt'));
   const messages = { session_1: [{ tool_result: { generated_artifacts: artifacts } }] };
-  const commands = createArtifactCommands({ backend: backendFor(messages), configService });
+  const commands = createArtifactCommands({ backend: backendFor(messages, root), configService });
   if (hasSymlink) {
     assert.equal((await commands.read('session_1', 'artifact_linked')).error.reason, 'artifact_path_rejected');
   }
@@ -167,4 +221,76 @@ test('artifact route keeps the route closed for invalid ids and unauthenticated 
   assert.equal(await routes(context(unauthorized, '/api/v1/sessions/session_1/artifacts/artifact_1', false)), true);
   assert.equal(unauthorized.statusCode, 403);
   assert.equal(reads, 0);
+});
+
+function rawArtifact(scratch, fileName, language = 'plaintext') {
+  return { artifact_id: `artifact_${fileName.replace(/[^A-Za-z0-9]/gu, '_')}`, artifact_kind: 'document',
+    title: fileName, file_name: fileName, display_path: `.jenny/artifacts/session_1/${fileName}`,
+    absolute_path: path.join(scratch, fileName), language, status: 'available', editable: false };
+}
+
+test('read allocates a buffer sized to the file, not the 10 MiB maximum', async (t) => {
+  const root = makeTemp(t);
+  const scratch = path.join(root, '.jenny', 'artifacts', 'session_1');
+  fs.mkdirSync(scratch, { recursive: true });
+  fs.writeFileSync(path.join(scratch, 'small.txt'), Buffer.alloc(16, 97));
+  const art = rawArtifact(scratch, 'small.txt');
+  const commands = createArtifactCommands({ backend: backendFor({ session_1: [{ tool_result: { generated_artifacts: [art] } }] }, root),
+    configService: configFor(root) });
+  const result = await commands.read('session_1', art.artifact_id);
+  assert.equal(result.bytes.length, 16);
+  assert.ok(result.bytes.buffer.byteLength <= 17, `backing store ${result.bytes.buffer.byteLength}`);
+});
+
+test('read enforces the size limit at exactly MAX and rejects MAX+1', async (t) => {
+  const root = makeTemp(t);
+  const scratch = path.join(root, '.jenny', 'artifacts', 'session_1');
+  fs.mkdirSync(scratch, { recursive: true });
+  fs.writeFileSync(path.join(scratch, 'max.bin'), Buffer.alloc(MAX_ARTIFACT_BYTES));
+  fs.writeFileSync(path.join(scratch, 'over.bin'), Buffer.alloc(MAX_ARTIFACT_BYTES + 1));
+  const arts = [rawArtifact(scratch, 'max.bin'), rawArtifact(scratch, 'over.bin')];
+  const commands = createArtifactCommands({ backend: backendFor({ session_1: [{ tool_result: { generated_artifacts: arts } }] }, root),
+    configService: configFor(root) });
+  const ok = await commands.read('session_1', arts[0].artifact_id);
+  assert.equal(ok.ok, true);
+  assert.equal(ok.bytes.length, MAX_ARTIFACT_BYTES);
+  assert.equal((await commands.read('session_1', arts[1].artifact_id)).error.reason, 'artifact_size_limit');
+});
+
+test('read rejects a file that grows during the read', async (t) => {
+  const root = makeTemp(t);
+  const scratch = path.join(root, '.jenny', 'artifacts', 'session_1');
+  fs.mkdirSync(scratch, { recursive: true });
+  const file = path.join(scratch, 'grow.txt');
+  fs.writeFileSync(file, 'abcd');
+  const art = rawArtifact(scratch, 'grow.txt');
+  const realOpen = fs.promises.open;
+  t.mock.method(fs.promises, 'open', async (...args) => {
+    const handle = await realOpen.apply(fs.promises, args);
+    const realRead = handle.read.bind(handle);
+    handle.read = async (...a) => { fs.appendFileSync(file, 'more'); return realRead(...a); };
+    return handle;
+  });
+  const commands = createArtifactCommands({ backend: backendFor({ session_1: [{ tool_result: { generated_artifacts: [art] } }] }, root),
+    configService: configFor(root) });
+  const result = await commands.read('session_1', art.artifact_id);
+  assert.equal(result.ok, false);
+  assert.ok(['artifact_changed_during_read', 'artifact_size_limit'].includes(result.error.reason));
+});
+
+test('read projects MIME from a narrow filename-extension allowlist when the producer gives none', async (t) => {
+  const root = makeTemp(t);
+  const scratch = path.join(root, '.jenny', 'artifacts', 'session_1');
+  fs.mkdirSync(scratch, { recursive: true });
+  const cases = [['notes.md', 'markdown', 'text/markdown'], ['x.html', 'html', 'text/html'],
+    ['d.json', 'json', 'application/json'], ['v.svg', 'svg', 'image/svg+xml'],
+    ['x.bin', 'plaintext', 'application/octet-stream'], ['x.md.exe', 'markdown', 'application/octet-stream'],
+    ['a.txt', 'html', 'text/plain'], ['noext', 'html', 'application/octet-stream']];
+  const arts = cases.map(([name, lang]) => { fs.writeFileSync(path.join(scratch, name), 'x'); return rawArtifact(scratch, name, lang); });
+  const commands = createArtifactCommands({ backend: backendFor({ session_1: [{ tool_result: { generated_artifacts: arts } }] }, root),
+    configService: configFor(root) });
+  for (let i = 0; i < cases.length; i += 1) {
+    const result = await commands.read('session_1', arts[i].artifact_id);
+    assert.equal(result.artifact.mime_type, cases[i][2], cases[i][0]);
+  }
 });

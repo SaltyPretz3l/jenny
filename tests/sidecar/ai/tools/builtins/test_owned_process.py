@@ -134,13 +134,13 @@ def test_background_process_saturation_refuses_before_spawn(
     def _spawn(_argv: list[str], *, cwd: Path) -> object:
         nonlocal spawned
         spawned += 1
-        return shell_background_module._ManagedBackgroundProcess(  # noqa: SLF001
+        return shell_background_module._ManagedBackgroundProcess(
             process=_BlockingProcess(release, 10_000 + spawned)
         )
 
     monkeypatch.setattr(shell_background_module, "_spawn_background_process", _spawn)
-    with shell_background_module._lock:  # noqa: SLF001
-        shell_background_module._active_jobs.clear()  # noqa: SLF001
+    with shell_background_module._lock:
+        shell_background_module._active_jobs.clear()
 
     try:
         for _ in range(4):
@@ -162,7 +162,7 @@ def test_background_process_saturation_refuses_before_spawn(
         assert spawned == 4
     finally:
         release.set()
-        _wait_until(lambda: not shell_background_module._active_jobs)  # noqa: SLF001
+        _wait_until(lambda: not shell_background_module._active_jobs)
 
 
 def test_initial_status_publication_failure_terminates_before_refusal(
@@ -171,7 +171,7 @@ def test_initial_status_publication_failure_terminates_before_refusal(
 ) -> None:
     release = threading.Event()
     process = _BlockingProcess(release, 20_001)
-    managed = shell_background_module._ManagedBackgroundProcess(process=process)  # noqa: SLF001
+    managed = shell_background_module._ManagedBackgroundProcess(process=process)
     terminated: list[object] = []
 
     monkeypatch.setattr(
@@ -186,8 +186,8 @@ def test_initial_status_publication_failure_terminates_before_refusal(
         process.terminate()
 
     monkeypatch.setattr(shell_background_module, "_terminate_background_process", _terminate)
-    with shell_background_module._lock:  # noqa: SLF001
-        shell_background_module._active_jobs.clear()  # noqa: SLF001
+    with shell_background_module._lock:
+        shell_background_module._active_jobs.clear()
 
     with pytest.raises(ToolExecutionFailure) as raised:
         shell_background_module.start_background_job(
@@ -200,7 +200,7 @@ def test_initial_status_publication_failure_terminates_before_refusal(
     assert raised.value.code == CMP_TOOL_IO_FAILED
     assert terminated == [managed]
     assert process.poll() is not None
-    assert not shell_background_module._active_jobs  # noqa: SLF001
+    assert not shell_background_module._active_jobs
 
 
 def test_terminal_status_failure_uses_bounded_in_memory_fallback(
@@ -210,8 +210,8 @@ def test_terminal_status_failure_uses_bounded_in_memory_fallback(
     release = threading.Event()
     release.set()
     process = _BlockingProcess(release, 30_001)
-    managed = shell_background_module._ManagedBackgroundProcess(process=process)  # noqa: SLF001
-    original_write_status = shell_background_module._write_status  # noqa: SLF001
+    managed = shell_background_module._ManagedBackgroundProcess(process=process)
+    original_write_status = shell_background_module._write_status
 
     monkeypatch.setattr(
         shell_background_module,
@@ -226,8 +226,8 @@ def test_terminal_status_failure_uses_bounded_in_memory_fallback(
         return False
 
     monkeypatch.setattr(shell_background_module, "_write_status", _fail_terminal_status)
-    with shell_background_module._lock:  # noqa: SLF001
-        shell_background_module._active_jobs.clear()  # noqa: SLF001
+    with shell_background_module._lock:
+        shell_background_module._active_jobs.clear()
 
     job_id, _pid = shell_background_module.start_background_job(
         ["fake"],
@@ -235,7 +235,7 @@ def test_terminal_status_failure_uses_bounded_in_memory_fallback(
         workspace_root=tmp_path,
         timeout_seconds=30,
     )
-    _wait_until(lambda: job_id not in shell_background_module._active_jobs)  # noqa: SLF001
+    _wait_until(lambda: job_id not in shell_background_module._active_jobs)
 
     status = shell_background_module.read_background_job(tmp_path, job_id)
     assert status["state"] == "completed"
@@ -584,7 +584,7 @@ def test_windows_target_cannot_start_before_job_assignment(
     def _spawn() -> None:
         try:
             spawned.append(service.spawn(argv, cwd=tmp_path, allow_queue=False))
-        except BaseException as error:  # pragma: no cover - reported below
+        except BaseException as error:  # noqa: BLE001  # pragma: no cover - reported below
             errors.append(error)
 
     thread = threading.Thread(target=_spawn)
@@ -771,7 +771,7 @@ def test_git_adapter_routes_through_owned_process_service(
         _get_owner,
     )
 
-    output = git_ops_module._run_git(["status"], cwd=tmp_path)  # noqa: SLF001
+    output = git_ops_module._run_git(["status"], cwd=tmp_path)
 
     assert output == "owned-output"
     argv = captured["argv"]

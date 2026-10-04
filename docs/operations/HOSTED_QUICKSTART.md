@@ -1,6 +1,6 @@
 # Run Jenny with Docker
 
-Experimental source workflow for the 1.1 candidate. This guide does not imply
+Source workflow for the shipped hosted profile (see NEXT_STEPS.md for status). This guide does not imply
 a published image or qualified installer; read the qualification status below.
 
 The guided Docker profile runs Jenny on one computer and serves its browser UI
@@ -17,9 +17,7 @@ configure a different mode.
 ## Before you start
 
 - A Linux x64 Docker host, or Docker Desktop using Linux containers, with
-  Docker Compose 2.24.4 or newer and cgroup v2 enabled. The worker service is
-  created by Compose even when execution is disabled, so cgroup v2 is required
-  for the easy profile in either case. Native ARM images are not qualified.
+  Docker Compose 2.24.4 or newer. Enabling offline commands (policy 2) also requires cgroup v2 and a healthy worker. Guided launchers omit the worker dependency for saved policy 1; direct manual Compose retains it. Native ARM images are not qualified.
 - A checkout containing `compose.host.easy.yml`. The first build needs internet
   access to obtain image dependencies and may take several minutes.
 - An Ollama or OpenAI-compatible model server with an installed model. Its
@@ -124,18 +122,26 @@ docker compose -p jenny-host -f compose.host.easy.yml stop jenny sandbox
 repair procedures. If a command result or cleanup state is uncertain, preserve
 the control volume and profile together and use the documented recovery path.
 
+The launchers read the saved execution policy before startup. Policy 1 starts `jenny` without a sandbox dependency using a generated Compose override. Policy 2 keeps the worker health requirement. Use the launcher for this policy-aware startup path.
+
 ## Persistent volumes
 
-The easy profile uses the fixed Compose project `jenny-host` and five named
+The easy profile uses the fixed Compose project `jenny-host` and six named
 volumes:
 
 | Volume | Contents |
 | --- | --- |
 | `jenny-host_jenny_control` | Private worker controller key and last admission/terminal receipt; paired with the profile receipt |
 | `jenny-host_jenny_profile` | Canonical conversations, attachments, owner login, and runtime metadata |
-| `jenny-host_jenny_workspace` | Durable files created by enabled typed tools and the read-only input workspace for the sandbox |
+| `jenny-host_jenny_workspace` | Durable files created by enabled typed tools; never mounted into the sandbox |
+| `jenny-host_jenny_staging` | Ephemeral per-command copy of the approved project, mounted read-only as the sandbox's `/inputs`; no backup needed |
 | `jenny-host_jenny_config` | Hosted settings, browser mode, model selection, and endpoint configuration |
 | `jenny-host_jenny_secrets` | Mounted model API key, when configured |
+
+Approved commands see only a staged copy of the selected project. Staging and
+the worker copy both allow at most 64 MiB, 2048 entries and depth 32, with no
+links or special files; POSIX names containing `\` or `:` are kept. A larger
+project cannot run commands until it is trimmed.
 
 Back up the profile, control, workspace, and configuration volumes together;
 protect the secret backup separately. Never delete `jenny_control` alone to

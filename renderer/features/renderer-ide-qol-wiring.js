@@ -63,7 +63,7 @@
     const ideStateUtils = d.ideStateUtils || {};
     const requestRender = typeof d.requestRender === 'function' ? d.requestRender : noop;
     // Living Atlas seam (W3): the ONE shared activity bus (constructed at the
-    // app layer, alongside handlePresenceStreamEvent) and the active chat
+    // app layer) and the active chat
     // session id accessor, both handed straight to the map controller's
     // presenter below.
     const activityBus = d.activityBus || null;

@@ -200,6 +200,21 @@ test('plain ArrowRight selects its expanded directory child before Delete', asyn
   assert.deepEqual(harness.bridge.calls.delete, [{ path: 'src/child.js', expectedGeneration: 1 }]);
 });
 
+test('ArrowRight on an expanded empty folder keeps focus and selection on the folder', async (t) => {
+  const harness = await createHarness({
+    files: { 'zeta.js': 'z' }, dirs: ['empty'], expanded: ['empty'],
+  });
+  t.after(() => harness.dispose());
+  harness.tree.selection.replace(['empty'], 'empty');
+  const folder = getRow(harness, 'empty');
+  folder.focus();
+  assert.equal(getRow(harness, 'zeta.js').dataset.ideTreeKind, 'file', 'an unrelated row follows the empty folder');
+
+  pressKey(harness, folder, 'ArrowRight');
+  assert.equal(harness.dom.window.document.activeElement.dataset.ideTreePath, 'empty');
+  assert.deepEqual(harness.tree.selection.getPaths(), ['empty']);
+});
+
 test('plain ArrowLeft selects the parent before Delete', async (t) => {
   const harness = await createHarness({
     files: { 'src/child.js': 'child', 'stale.js': 'stale' }, dirs: ['src'], expanded: ['src'],

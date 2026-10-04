@@ -65,8 +65,7 @@
   inset-inline-end: 0;
   text-align: center;
   font-family: var(--font-family-mono);
-  font-size: 11px;
-  letter-spacing: 0.04em;
+  font-size: var(--font-size-caption);
   color: var(--text-muted);
   pointer-events: none;
 }
@@ -130,7 +129,7 @@
   background: var(--surface-card-background, var(--bg-panel));
   color: var(--text-primary);
   font-family: var(--font-family-mono);
-  font-size: calc(12px * var(--explode-node-scale));
+  font-size: calc(var(--font-size-caption) * var(--explode-node-scale, 1));
   line-height: 1.2;
   white-space: nowrap;
   cursor: pointer;
@@ -165,7 +164,7 @@
   border-radius: 999px;
   background: color-mix(in srgb, var(--explode-node-kind) 16%, transparent);
   color: var(--text-secondary);
-  font-size: calc(10px * var(--explode-node-scale));
+  font-size: calc(var(--font-size-caption) * var(--explode-node-scale, 1));
 }
 
 /* Kind color channel — derived from palette tokens so every palette themes it. */
@@ -266,12 +265,12 @@
 }
 
 .ide-explode-state-title {
-  font-size: 14px;
+  font-size: var(--font-size-body);
   color: var(--text-primary);
 }
 
 .ide-explode-state-detail {
-  font-size: 12px;
+  font-size: var(--font-size-footnote);
   max-width: 42ch;
   color: var(--text-muted);
 }
@@ -320,7 +319,7 @@
   border: none;
   background: transparent;
   color: var(--text-secondary);
-  font-size: 12px;
+  font-size: var(--font-size-body);
   cursor: pointer;
   transition: background var(--transition-fast), color var(--transition-fast);
 }

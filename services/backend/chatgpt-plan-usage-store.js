@@ -4,9 +4,9 @@
 // (<userData>/chatgpt-plan-usage.json). Wraps FileJsonStore for the atomic
 // write + corruption-tolerant read (see file-json-store.js) and layers on:
 // account-key scoping (so a stale record from a different signed-in account
-// can never render), a 7-day read-side TTL, a feature-flag gate, and a
-// sign-out hook that clears the file. See docs/plans "ChatGPT plan-usage
-// meter" W2 and the seam-failure-contract table there.
+// can never render), a 7-day read-side TTL, and a sign-out hook that clears
+// the file. See docs/plans "ChatGPT plan-usage meter" W2 and the
+// seam-failure-contract table there.
 
 const crypto = require('node:crypto');
 
@@ -25,18 +25,15 @@ function isPlainRecord(value) {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 
-// createChatGptPlanUsageStore({ filePath, getAccountId, getFeatureFlags, logger, now })
+// createChatGptPlanUsageStore({ filePath, getAccountId, logger, now })
 //  - filePath: absolute path to chatgpt-plan-usage.json.
 //  - getAccountId(): () => string, the current signed-in ChatGPT account id
 //    (raw, never persisted -- only its truncated sha256 is written to disk).
-//  - getFeatureFlags(): () => object; `chatgpt_plan_meter === false` gates
-//    both ingest and read (byte-identical rollback -- no file, no channel data).
 //  - logger(level, event, fields): optional, matches _emitServiceLog.
 //  - now(): () => number, defaults to Date.now.
 function createChatGptPlanUsageStore({
   filePath,
   getAccountId = () => '',
-  getFeatureFlags = () => ({}),
   logger = null,
   now = Date.now,
 } = {}) {
@@ -62,16 +59,6 @@ function createChatGptPlanUsageStore({
 
   function currentNow() {
     return typeof now === 'function' ? now() : Number(now);
-  }
-
-  function flagsEnabled() {
-    let flags = null;
-    try {
-      flags = getFeatureFlags();
-    } catch (_error) {
-      // Treat a throwing flags getter the same as no flags: default-on.
-    }
-    return !(flags && flags.chatgpt_plan_meter === false);
   }
 
   function logEvent(level, event, fields) {
@@ -104,15 +91,11 @@ function createChatGptPlanUsageStore({
     return cachedRecord;
   }
 
-  // getSnapshot() -> the persisted record, or null when: the flag is off, no
-  // record is on disk, the record belongs to a different account (stale
+  // getSnapshot() -> the persisted record, or null when: no record is on disk, the record belongs to a different account (stale
   // sign-in), or the record is older than PLAN_USAGE_MAX_AGE_MS. A stale/
   // mismatched record is never deleted here -- TTL and account-key checks are
   // read-side filters, not write-side mutations (clear() is the only deleter).
   function getSnapshot() {
-    if (!flagsEnabled()) {
-      return null;
-    }
     const record = readRecord();
     if (!record) {
       return null;
@@ -134,14 +117,11 @@ function createChatGptPlanUsageStore({
     return record;
   }
 
-  // ingest(raw, { source }) -- flag gate -> normalize -> build record ->
+  // ingest(raw, { source }) -- normalize -> build record ->
   // persist -> emit. A write failure is logged and swallowed: the in-memory
   // `changed` emission still fires so the live meter updates even when the
   // disk write did not land (rewritten on the next ingest).
   function ingest(raw, { source } = {}) {
-    if (!flagsEnabled()) {
-      return;
-    }
     const normalized = normalizePlanUsageSnapshot(raw);
     if (!normalized) {
       return;

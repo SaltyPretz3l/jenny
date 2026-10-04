@@ -119,3 +119,22 @@ test('stopRuntimeWithDependencies still stops the backend gracefully when sandbo
   assert.deepEqual(calls, ['sandbox.close', 'backend.stop:any_local', 'progress:done', 'emergency']);
   assert.deepEqual(logs, [{ level: 'WARN', event: 'command_sandbox.close_failed', details: { message: 'docker_operation_failed' } }]);
 });
+
+test('stopRuntimeWithDependencies stops the reminder and desktop notifiers before system stats', async () => {
+  const calls = [];
+  const systemStats = {
+    reminderNotifier: { stop() { calls.push('reminders.stop'); } },
+    desktopNotifier: { stop() { calls.push('desktop.stop'); } },
+    stop() { calls.push('stats.stop'); },
+  };
+
+  await stopRuntimeWithDependencies({
+    systemStats,
+    clearSuggestionCacheImpl() {},
+    emitLifecycleProgressImpl() {},
+    logImpl() {},
+    runEmergencyShutdownImpl() {},
+  });
+
+  assert.deepEqual(calls, ['reminders.stop', 'desktop.stop', 'stats.stop']);
+});

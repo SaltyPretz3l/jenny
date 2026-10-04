@@ -1,17 +1,21 @@
 # Jenny
 
-Jenny is a desktop AI assistant that runs on your computer. She can help you write code, edit files, run commands, and make charts and diagrams. You choose the model, the project folder, and the permissions for her tools. You can also change her name and personality.
+**Jenny is an AI coding harness that keeps you in the loop.** It is built for local models and works with cloud ones. Jenny shows every step it takes, asks before it acts, and puts a real editor beside the chat, so you stay the one who understands the code.
 
-With a local model, Jenny processes your prompts locally and saves conversations on your computer. You can use [Ollama](https://ollama.com/), [vLLM](https://docs.vllm.ai/), or an existing OpenAI-compatible server on this computer or your private network. Ollama is optional.
+Jenny is a desktop app. She can help you write code, edit files, run commands, and make charts and diagrams. You choose the model, the project folder, and the permissions for her tools. You can also change her name and personality.
+
+With a local model, Jenny processes your prompts locally; no cloud account is needed. You can use [Ollama](https://ollama.com/), managed llama-server, [vLLM](https://docs.vllm.ai/), or an existing OpenAI-compatible server on this computer or your private network. Ollama is optional. Optional ChatGPT sign-in and the Codex CLI route use cloud inference. Either way, conversations are saved on your computer.
 
 Jenny is built around smaller models, roughly 9B–35B parameters. How well she handles a task depends on the model you choose and the hardware you have. Expect mistakes, especially on complicated tasks, and review code and commands before relying on them.
 
-## Jenny 1.1.0
+## Jenny 1.3.0
 
-**[Jenny 1.1.0 is available](https://github.com/SaltyPretz3l/jenny/releases/tag/v1.1.0)**
-with 19 interface languages and Arabic RTL, an optional 24-hour clock, bulk chat
-management, clearer waiting states, improved artifact/preview workflows and
-explicit update controls. See the [release notes](RELEASE_NOTES.md).
+**[Jenny 1.3.0 is available](https://github.com/SaltyPretz3l/jenny/releases/tag/v1.3.0)**
+with two chats side by side, a per-chat choice of how much of a turn to show,
+ChatGPT sign-in as a core connection, bring-your-own image models, reorganized
+Settings and Diagnostics, and faster long tool-heavy turns. It retains the
+Workspace PDF/DOCX editor, the optional PDF reading add-on, 19 interface
+languages, Arabic RTL, and explicit update controls. See the [release notes](RELEASE_NOTES.md).
 
 Windows is the supported desktop platform. This release also provides
 experimental Linux x64 AppImage/deb packages; macOS remains source-only pending
@@ -74,9 +78,9 @@ The current public release has no macOS installer. The Apple Silicon build pipel
 
 ### Linux (experimental)
 
-Jenny 1.1.0 includes experimental **`Jenny-x86_64.AppImage`** and
+Jenny 1.3.0 includes experimental **`Jenny-x86_64.AppImage`** and
 **`Jenny-amd64.deb`** packages on the
-[release page](https://github.com/SaltyPretz3l/jenny/releases/tag/v1.1.0).
+[release page](https://github.com/SaltyPretz3l/jenny/releases/tag/v1.3.0).
 Native CI verified the glibc floor and packaged-app startup. Installed-format,
 upgrade and bare-metal qualification remain outstanding.
 These x64 packages target Ubuntu 22.04+, Debian 12+, and compatible
@@ -198,7 +202,7 @@ Ornith is a coding model that works with text. It runs comfortably on a **12 GB 
 
 ### Starting Jenny later
 
-On **Windows**, use the **Jenny** desktop shortcut created during setup, or double-click **`launch-jenny.cmd`** in the project folder. The shortcut starts Jenny without a console window.
+On **Windows**, use the **Jenny (Dev)** desktop shortcut for this checkout, or double-click **`launch-jenny.cmd`** in the project folder. The packaged app maintains its separate **Jenny** shortcut. The shortcut starts Jenny without a console window.
 
 On **macOS or Linux**, run:
 
@@ -277,7 +281,7 @@ Development happens in a private repository. Accepted changes are copied there b
 
 Jenny is a hobby project maintained by one person. Bug reports are read, but replies, reviews, and releases happen as time allows. Security reports take priority through the [private advisory process](SECURITY.md).
 
-### Source version 1.2.0
+### Source version 1.3.0
 
 This source tree includes guided setup, local coding tools with live command output, experimental platform and Docker workflows, and the plugin host. Downloadable installers are listed separately on the [releases page](https://github.com/SaltyPretz3l/jenny/releases); a source version does not establish that its installers have been published. No plugins are bundled. Crash reporting is optional and off by default.
 

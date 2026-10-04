@@ -5,7 +5,9 @@ const crypto = require('node:crypto');
 const { PLUGIN_ERROR_CODES } = require('../../backend/error-codes');
 const { validate } = require('../contracts/generated-plugin-contracts');
 const { validateDeclarativeContent } = require('../data/declarative-content-validator');
-const { validateRestrictedContent } = require('../restricted-host/contribution-compiler');
+const {
+  RESTRICTED_KIND_SET: RESTRICTED_KINDS, validateRestrictedContent,
+} = require('./restricted-content-validator');
 const { validateDisplayString } = require('../identity/display-strings');
 const { readZipPackage } = require('./zip-package-reader');
 const { verifyPackage, CONTRACT_VERSION_MAXIMA_V4,
@@ -31,9 +33,6 @@ const MAX_SIGNATURES = 8;
 const SHA256_RE = /^[0-9a-f]{64}$/;
 const EXECUTABLE_EXTENSION = /\.(?:bat|bin|cjs|cmd|com|dll|dylib|exe|jar|js|mjs|node|ps1|py|sh|so|wasm)$/i;
 const PRIVILEGED_KINDS = new Set(['native_mcp', 'session_provider', 'engine_adapter', 'hook']);
-const RESTRICTED_KINDS = new Set([
-  'restricted_transform', 'restricted_formatter', 'restricted_renderer', 'restricted_compute',
-]);
 function fail(reason, code = PLUGIN_ERROR_CODES.ARCHIVE_REJECTED, detail = null) {
   return { ok: false, code, reason, detail };
 }

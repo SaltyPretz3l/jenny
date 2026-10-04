@@ -4,6 +4,7 @@ const { JSDOM } = require('jsdom');
 
 const {
   LIVE_WINDOW_CHARS,
+  LIVE_WINDOW_DETACHED_CHARS,
   LIVE_WINDOW_ELIDED_FINGERPRINT,
   LIVE_WINDOW_NOTE_FINGERPRINT,
   resolveLiveWindowStart,
@@ -40,7 +41,7 @@ function makeUnits(count, htmlChars = 1024) {
   }));
 }
 
-function makeRenderer(unitsRef) {
+function makeRenderer(unitsRef, thinkingController = new ThinkingPanelController()) {
   return createReasoningV2Renderer({
     escapeHtml,
     groupReasoningByPhase,
@@ -52,8 +53,16 @@ function makeRenderer(unitsRef) {
       streamState: { version: 1 },
     }),
     shouldShowThinkingToggle,
-    thinkingController: new ThinkingPanelController(),
+    thinkingController,
   });
+}
+
+// Timeline scroll metrics as the coordinator reports them to the controller.
+const SCROLLED_AWAY = { scrollTop: 0, scrollHeight: 5000, clientHeight: 500 };
+const AT_LIVE_EDGE = { scrollTop: 4500, scrollHeight: 5000, clientHeight: 500 };
+
+function elidedCountOf(html) {
+  return unitsOf(html).filter((unit) => unit.fp === LIVE_WINDOW_ELIDED_FINGERPRINT || unit.fp === LIVE_WINDOW_NOTE_FINGERPRINT).length;
 }
 
 function message(status, text) {
@@ -237,4 +246,91 @@ test('the cached elided budget keeps its historical maximum across a tail-clampe
   assert.equal(elidedCount(renderer.renderThinkingWidget(floorMessage, messageId)), 0, 'frame 2 cannot elide its only unit');
   unitsRef.units = makeUnits(20);
   assert.equal(elidedCount(renderer.renderThinkingWidget(floorMessage, messageId)), 8, 'frame 3 restores the 8 KiB floor');
+});
+
+// HB-024 (dogfood B5): a reader who scrolled up inside a still-streaming block
+// watched the live window empty units above them on every delta, so the text
+// slid under their eyes. While the reader is away the renderer widens the
+// window; the forward-only floor then holds where it was when they left.
+test('a widened window holds the elided floor while the reader is away', () => {
+  assert.equal(LIVE_WINDOW_DETACHED_CHARS, 4 * LIVE_WINDOW_CHARS);
+  const units = makeUnits(48);
+  assert.equal(resolveLiveWindowStart(units, 8, { previousElidedChars: 8 * 1024, windowChars: LIVE_WINDOW_DETACHED_CHARS }), 8,
+    'the detached window keeps the floor exactly where it was');
+  assert.equal(resolveLiveWindowStart(units, 8, { previousElidedChars: 8 * 1024 }), 16,
+    'the live-edge window keeps sliding');
+});
+
+test('streaming markup stops eliding while the reader is scrolled away and resumes at the live edge', () => {
+  const controller = new ThinkingPanelController();
+  const unitsRef = { units: makeUnits(40) };
+  const renderer = makeRenderer(unitsRef, controller);
+  const messageId = 'live_window_reader_away';
+  const streaming = { ...message('streaming', 'body'), id: messageId };
+
+  // Frame 1: the reader follows the live edge; the usual 8 KiB is elided.
+  assert.equal(elidedCountOf(renderer.renderThinkingWidget(streaming, messageId)), 8);
+
+  // The reader scrolls up. Frame 2 grows by 8 KiB: nothing new is emptied above them.
+  assert.equal(controller.handleScroll(SCROLLED_AWAY), false);
+  assert.equal(controller.isReaderAway(), true);
+  unitsRef.units = makeUnits(48);
+  const detached = unitsOf(renderer.renderThinkingWidget(streaming, messageId));
+  assert.equal(detached.filter((unit) => unit.fp === LIVE_WINDOW_ELIDED_FINGERPRINT || unit.fp === LIVE_WINDOW_NOTE_FINGERPRINT).length, 8);
+  assert.equal(detached[7].fp, LIVE_WINDOW_NOTE_FINGERPRINT, 'the note stays where the floor was');
+  for (let index = 8; index < 48; index += 1) {
+    assert.equal(detached[index].fp, `fp_${index}`, `unit ${index} stays live while the reader is away`);
+  }
+
+  // The reader returns to the live edge: frame 3 slides the window forward again.
+  assert.equal(controller.handleScroll(AT_LIVE_EDGE), true);
+  assert.equal(controller.isReaderAway(), false);
+  assert.equal(elidedCountOf(renderer.renderThinkingWidget(streaming, messageId)), 16);
+});
+
+// Astra B5 review: a wider window only postponed the slide. Past the detached
+// budget the floor still holds; the DOM is bounded from the tail instead, and
+// the held-back units appear once the reader returns to the live edge.
+test('past the detached budget the floor still holds and the tail is held back until follow resumes', () => {
+  const controller = new ThinkingPanelController();
+  const unitsRef = { units: makeUnits(40) };
+  const renderer = makeRenderer(unitsRef, controller);
+  const messageId = 'live_window_detached_ceiling';
+  const streaming = { ...message('streaming', 'body'), id: messageId };
+  assert.equal(elidedCountOf(renderer.renderThinkingWidget(streaming, messageId)), 8);
+  controller.handleScroll(SCROLLED_AWAY);
+  const detachedUnits = LIVE_WINDOW_DETACHED_CHARS / 1024;
+  unitsRef.units = makeUnits(8 + detachedUnits + 4);
+  const held = unitsOf(renderer.renderThinkingWidget(streaming, messageId));
+  assert.equal(held.filter((unit) => unit.fp === LIVE_WINDOW_ELIDED_FINGERPRINT || unit.fp === LIVE_WINDOW_NOTE_FINGERPRINT).length, 8,
+    'the floor never advances while the reader is away');
+  assert.equal(held.length, 8 + detachedUnits, 'units past the detached budget are held back');
+  assert.equal(held[held.length - 1].fp, `fp_${8 + detachedUnits - 1}`);
+  controller.handleScroll(AT_LIVE_EDGE);
+  const resumed = unitsOf(renderer.renderThinkingWidget(streaming, messageId));
+  assert.equal(resumed.length, unitsRef.units.length, 'every unit renders again at the live edge');
+  assert.equal(elidedCountOf(renderer.renderThinkingWidget(streaming, messageId)), unitsRef.units.length - 32,
+    'the live-edge window slides forward again');
+});
+
+test('resolveDetachedTailEnd keeps at least one unit past the start and stops at the budget', () => {
+  const { resolveDetachedTailEnd } = require('../renderer/chat/reasoning-row-v2-utils');
+  assert.equal(resolveDetachedTailEnd(makeUnits(10), 0, 4 * 1024), 4);
+  assert.equal(resolveDetachedTailEnd(makeUnits(10), 8, 4 * 1024), 10, 'a short tail renders whole');
+  assert.equal(resolveDetachedTailEnd([{ html: 'a'.repeat(9000) }, { html: 'b' }], 0, 100), 1, 'an oversized first unit still renders');
+  assert.equal(resolveDetachedTailEnd(makeUnits(3), 7, 1024), 3, 'a start past the end clamps');
+  assert.equal(resolveDetachedTailEnd([], 0, 1024), 0);
+});
+
+test('ThinkingPanelController.isReaderAway tracks the reader_away pause from handleScroll', () => {
+  const controller = new ThinkingPanelController();
+  assert.equal(controller.isReaderAway(), false);
+  controller.handleScroll(SCROLLED_AWAY);
+  assert.equal(controller.isReaderAway(), true);
+  controller.handleScroll(AT_LIVE_EDGE);
+  assert.equal(controller.isReaderAway(), false);
+  // Another pause reason alone does not count as a detached reader.
+  controller.pauseAutoScroll('user_expanded');
+  assert.equal(controller.isReaderAway(), false);
+  assert.equal(controller.shouldAutoScroll(), false);
 });

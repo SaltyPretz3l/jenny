@@ -13,7 +13,7 @@ from sidecar.ai.feature_flags import FEATURE_TOKEN_BUDGET, is_feature_flag_enabl
 from sidecar.ai.routing.tool_budget_filter import count_full_tool_schemas
 
 
-def resume_budget_tracker(  # noqa: PLR0913 - keyword-only budget inputs.
+def resume_budget_tracker(  # keyword-only budget inputs.
     config: Any,
     engine: Any,
     working_messages: list[dict[str, Any]],

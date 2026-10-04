@@ -13,6 +13,13 @@ function captureDirectory(directory) {
   if (!stat.isDirectory() || stat.isSymbolicLink()) fail('lineage_directory_unsafe');
   return { real: fs.realpathSync.native(directory), dev: String(stat.dev), ino: String(stat.ino) };
 }
+function pathMissing(target) {
+  try { fs.lstatSync(target); return false; }
+  catch (error) {
+    if (error?.code === 'ENOENT') return true;
+    throw error;
+  }
+}
 function assertDirectory(directory, identity) {
   if (stableJson(captureDirectory(directory)) !== stableJson(identity)) fail('lineage_directory_changed');
 }
@@ -36,17 +43,22 @@ function readRecord(root, rootIdentity, directory, io, { allowEmpty = false } = 
   if (rootDirectory(root, record.root_run_id) !== directory) fail('lineage_root_id_conflict');
   return record;
 }
-function readInventory(root, identity, io) {
+function readInventory(root, identity, io, { discardEmpty = false } = {}) {
   const names = fs.readdirSync(root).sort();
   if (names.length > MAX_LINEAGE_ROOTS) fail('lineage_root_capacity');
+  const leftovers = [];
   const records = names.map(name => {
     if (!/^[a-f0-9]{64}$/u.test(name)) fail('lineage_entry_unresolved');
-    const document = readRecord(root, identity, path.join(root, name), io);
+    const directory = path.join(root, name);
+    const document = readRecord(root, identity, directory, io, { allowEmpty: true });
+    if (!document) { leftovers.push(directory); return null; }
     return { root_run_id: document.root_run_id, document };
-  });
+  }).filter(record => record !== null);
   assertDirectory(root, identity);
   if (stableJson(fs.readdirSync(root).sort()) !== stableJson(names)) fail('lineage_inventory_changed');
-  return validatePortableLineageSnapshot({ schema_version: 1, records });
+  const snapshot = validatePortableLineageSnapshot({ schema_version: 1, records });
+  if (discardEmpty) for (const directory of leftovers) fs.rmdirSync(directory);
+  return snapshot;
 }
 function readPortableLineageSnapshot(root, { io = createRuntimeStoreIO() } = {}) {
   const resolved = path.resolve(root);
@@ -75,7 +87,7 @@ class RuntimeLineageStore {
     try {
       fs.mkdirSync(this.root, { recursive: true, mode: 0o700 });
       this.identity = captureDirectory(this.root);
-      const snapshot = readInventory(this.root, this.identity, this.io);
+      const snapshot = readInventory(this.root, this.identity, this.io, { discardEmpty: true });
       for (const item of snapshot.records) {
         this.rootIds.add(item.root_run_id);
         this.rootWorkIds.add(item.document.root_work_id);
@@ -95,16 +107,50 @@ class RuntimeLineageStore {
     catch (error) { this._block(error); throw error; }
   }
 
-  hasSessionReferences(sessionId) {
+  // Read-only. With `isSettled`, a record whose root and children are all
+  // settled no longer counts: deletion may retire it (retireSessionReferences).
+  hasSessionReferences(sessionId, isSettled = null) {
     const snapshot = this.exportPortableSnapshot();
-    return snapshot.records.some(({ document }) => document.root_session_id === sessionId
-      || document.children.some(child => child.session_id === sessionId));
+    return snapshot.records.some(({ document }) => (document.root_session_id === sessionId
+      || document.children.some(child => child.session_id === sessionId))
+      && !(typeof isSettled === 'function'
+        && [document.root_work_id, ...document.children.map(child => child.work_id)]
+          .every(id => isSettled(id) === true)));
+  }
+
+  retireSessionReferences(sessionId, isSettled) {
+    this._available();
+    const snapshot = this.exportPortableSnapshot();
+    let retired = 0;
+    for (const { document } of snapshot.records) {
+      if (document.root_session_id !== sessionId && !document.children.some(child => child.session_id === sessionId)) continue;
+      const workIds = [document.root_work_id, ...document.children.map(child => child.work_id)];
+      if (!workIds.every(id => isSettled(id) === true)) continue;
+      try {
+        const directory = rootDirectory(this.root, document.root_run_id);
+        if (stableJson(this._read(document.root_run_id)) !== stableJson(document)) fail('lineage_publication_conflict');
+        this.io.remove(path.join(directory, 'record.json'));
+        assertDirectory(this.root, this.identity);
+        fs.rmdirSync(directory);
+        this.rootIds.delete(document.root_run_id);
+        this.rootWorkIds.delete(document.root_work_id);
+        retired += 1;
+      } catch (error) { this._block(error); throw error; }
+    }
+    return retired;
   }
 
   exportPortableSnapshot() {
-    this._available();
-    try { return readInventory(this.root, this.identity, this.io); }
-    catch (error) { this._block(error); throw error; }
+    if (this.readOnly) fail(this.reason || 'lineage_store_read_only');
+    try {
+      // An absent root holds no lineage, like the offline reader; registered roots without it fail closed.
+      if (pathMissing(this.root)) {
+        if (this.rootIds.size > 0) fail('lineage_directory_changed');
+        return validatePortableLineageSnapshot({ schema_version: 1, records: [] });
+      }
+      assertDirectory(this.root, this.identity);
+      return readInventory(this.root, this.identity, this.io);
+    } catch (error) { this._block(error); throw error; }
   }
 
   create({ rootRunId, rootWorkId, rootSessionId, rootTurnId, projectId, providerId,

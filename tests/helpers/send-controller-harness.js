@@ -65,7 +65,7 @@ function createControllerHarness(messages, options = {}) {
     sendPreflight: null,
     ui: { activeView: 'chat', chatSendLifecycleBySession: new Map() },
   };
-  const chatInput = { value: String(options.chatInputValue || ''), disabled: false };
+  const chatInput = options.chatInput || { value: String(options.chatInputValue || ''), disabled: false };
   const calls = {
     startStream: [],
     editAndRegenerate: [],
@@ -75,11 +75,12 @@ function createControllerHarness(messages, options = {}) {
     logs: [],
     resetQueue: 0,
     optimisticAppend: [],
-    cometUserSendStarted: [],
+    userSendStarted: [],
     sessionPatches: [],
     composerNotices: [],
     toasts: [],
     activations: [],
+    renderSessions: 0,
     renderAll: 0,
     renderComposerState: 0,
     clearedProjectionSessions: [],
@@ -133,6 +134,8 @@ function createControllerHarness(messages, options = {}) {
     createSendReceiptStore: options.createSendReceiptStore,
     compactionCoordinator: options.compactionCoordinator || null,
     slashCommandRegistry: null,
+    // Split view W1-4b: a pane session context built over this harness's state.
+    ...(typeof options.sessionContextFor === 'function' ? { sessionContext: options.sessionContextFor(state) } : {}),
     constants: {
       MESSAGE_STATUS: {
         STREAMING: 'streaming',
@@ -220,6 +223,7 @@ function createControllerHarness(messages, options = {}) {
         });
       },
       renderComposerState: () => { calls.renderComposerState += 1; },
+      renderSessions: () => { calls.renderSessions += 1; },
       renderAll: () => { calls.renderAll += 1; },
       syncComposerInputHeight: () => {},
       syncComposerVisualState: () => {},
@@ -256,7 +260,7 @@ function createControllerHarness(messages, options = {}) {
         return message;
       },
       onUserSendStarted: (payload) => {
-        calls.cometUserSendStarted.push(payload);
+        calls.userSendStarted.push(payload);
       },
       isSendBusy: () => false,
       isAnySendBusy: () => options.isAnySendBusy === true,
@@ -331,6 +335,7 @@ function createControllerHarness(messages, options = {}) {
       clearProjectionContextCacheForSession: (sessionId) => {
         calls.clearedProjectionSessions.push(String(sessionId || '').trim());
       },
+      ...(options.callbacks || {}),
     },
   });
 

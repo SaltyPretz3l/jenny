@@ -19,10 +19,8 @@
 
 .usage-stat-label {
   color: var(--text-muted);
-  font-size: var(--font-size-sm);
-  font-weight: 700;
-  letter-spacing: var(--tracking-kicker-sm);
-  text-transform: uppercase;
+  font-size: var(--font-size-caption);
+  font-weight: 500;
 }
 
 .usage-stat-value {
@@ -36,14 +34,14 @@
 
 .usage-stat-unit {
   color: var(--text-muted);
-  font-size: var(--font-size-base);
+  font-size: var(--font-size-footnote);
   font-weight: 400;
 }
 
 .usage-stat-note {
   margin-top: var(--space-2);
   color: var(--text-muted);
-  font-size: var(--font-size-md);
+  font-size: var(--font-size-body);
   font-variant-numeric: tabular-nums;
 }
 
@@ -84,17 +82,15 @@
   padding: var(--space-3) var(--space-2);
   border-bottom: 1px solid color-mix(in srgb, var(--settings-shell-muted-border) 80%, transparent);
   color: var(--text-decorative);
-  font-size: var(--font-size-sm);
-  font-weight: 700;
-  letter-spacing: var(--tracking-kicker-sm);
+  font-size: var(--font-size-caption);
+  font-weight: 500;
   text-align: start;
-  text-transform: uppercase;
 }
 
 .usage-table td {
   padding: var(--space-4) var(--space-2);
   color: var(--text-primary);
-  font-size: var(--font-size-md);
+  font-size: var(--font-size-body);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -104,7 +100,7 @@
   padding: var(--space-4) var(--space-2);
   color: var(--text-primary);
   font-family: var(--font-family-mono);
-  font-size: var(--font-size-base);
+  font-size: var(--font-size-footnote);
   font-weight: 400;
   overflow: hidden;
   text-align: start;
@@ -163,7 +159,7 @@
   overflow: hidden;
   color: var(--text-secondary);
   font-family: var(--font-family-mono);
-  font-size: var(--font-size-base);
+  font-size: var(--font-size-code);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -173,7 +169,7 @@
 }
 
 .usage-est {
-  font-size: var(--font-size-sm);
+  font-size: var(--font-size-caption);
 }
 
 .usage-outcome {
@@ -186,7 +182,7 @@
   border-radius: var(--radius-pill);
   background: color-mix(in srgb, var(--state-warning) 10%, transparent);
   color: var(--state-warning);
-  font-size: var(--font-size-sm);
+  font-size: var(--font-size-caption);
   line-height: 1.5;
 }
 
@@ -210,7 +206,7 @@
 
 .usage-link {
   color: var(--text-link);
-  font-size: var(--font-size-base);
+  font-size: var(--font-size-footnote);
   text-decoration: none;
 }
 
@@ -226,7 +222,7 @@
   gap: var(--space-6);
   margin-top: var(--space-4);
   color: var(--text-muted);
-  font-size: var(--font-size-md);
+  font-size: var(--font-size-body);
 }
 
 .usage-table-empty {
@@ -263,6 +259,11 @@
   margin-top: var(--space-5);
 }
 
+/* The destructive action keeps its distance from the routine one. */
+.usage-actions [data-usage-action="clear"] {
+  margin-inline-start: auto;
+}
+
 #usageActionStatus[data-visual="hidden"] {
   position: absolute;
   width: 1px;
@@ -280,7 +281,7 @@
 .usage-record-warning {
   margin-top: var(--space-4);
   color: var(--text-muted);
-  font-size: var(--font-size-md);
+  font-size: var(--font-size-body);
 }
 
 .usage-record-warning,
@@ -292,18 +293,16 @@
   color: var(--state-danger);
 }
 
+/* One plain sentence in the body font stands in for the hidden data groups. */
 .usage-empty {
-  margin-top: var(--space-8);
+  margin: var(--space-8) 0 0;
+  color: var(--text-secondary);
+  font-size: var(--font-size-body);
 }
 
-.usage-empty .empty-state-claim:first-child {
-  font-family: var(--font-family-emotive);
-  font-style: italic;
-}
-
-.usage-empty .empty-state-claim + .empty-state-claim {
-  margin-top: var(--space-2);
-  color: var(--text-muted);
+.usage-empty[hidden],
+.usage-card > .settings-group[hidden] {
+  display: none;
 }
 
 @media (max-width: 899px) {

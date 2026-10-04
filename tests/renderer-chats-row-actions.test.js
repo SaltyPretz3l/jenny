@@ -88,8 +88,8 @@ test('the ⋯ button and right-click both open the row menu with the W7 anatomy'
   // whenever the workspace-open path is wired -- which it is in the full shell.
   assert.deepEqual(
     getMenuItems(window).map((button) => button.textContent.trim()),
-    ['Open in New Tab', 'Pin', 'Rename', 'Archive', 'Delete'],
-    'menu leads with the open-mode override, then Pin / Rename / Archive / Delete'
+    ['Open in New Tab', 'Pin', 'Rename', 'Link sessions…', 'Move to project ›', 'Archive', 'Delete'],
+    'menu leads with the open-mode override, then Pin / Rename / Link sessions / Move to project / Archive / Delete'
   );
   assert.ok(
     doc.querySelector('.inv-context-menu .inv-context-menu-separator'),

@@ -78,6 +78,17 @@
     return Math.min(MAX_RAIL_WIDTH, Math.max(MIN_RAIL_WIDTH, Math.round(width)));
   }
 
+  // Tab-strip arrow step: the strip is horizontal, so ArrowRight/Left move to
+  // the next/previous tab (mirrored under dir=rtl); ArrowDown/Up keep working.
+  function tabArrowStep(event) {
+    const key = event?.key;
+    if (key === 'ArrowDown') return 1;
+    if (key === 'ArrowUp') return -1;
+    if (key !== 'ArrowRight' && key !== 'ArrowLeft') return 0;
+    const rtl = event.target?.ownerDocument?.documentElement?.dir === 'rtl';
+    return (key === 'ArrowRight') !== rtl ? 1 : -1;
+  }
+
   // A panel lives on exactly one side (the "Move View" model); the activity bar
   // only lists the panels currently homed in the primary rail.
   function railPanelLocation(ide, id) {
@@ -128,6 +139,23 @@
         ? Math.max(MIN_RAIL_WIDTH, Math.min(bounded, Math.trunc(dynamicMax)))
         : bounded;
     }
+
+    // The width a drag or keyboard step SAVES. Within the viewport ceiling the
+    // request is the user's new choice; past it (only the viewport holds the
+    // rail back) the saved preference is kept, or raised to the ceiling, so a
+    // narrow window never overwrites a wider choice. The shown width stays
+    // derived from saved + clamp (applyRailWidth / the layout's geometry pass).
+    function resolveSavedRailWidth(requested) {
+      const bounded = clampRailWidth(requested);
+      const shown = clampRailWidthForViewport(bounded);
+      // At the ceiling (past it, or exactly on it: a vertical-only pointer
+      // move requests the shown width) the saved preference is kept.
+      const ceiling = clampRailWidthForViewport(Number.MAX_SAFE_INTEGER);
+      return shown >= ceiling ? Math.max(clampRailWidth(getIde().railWidth), shown) : shown;
+    }
+    // The secondary sidebar and the chat dock are budgeted against the SHOWN
+    // rail (renderer-ide-layout.js): a rail gesture re-applies their widths.
+    const onWidthApplied = typeof deps?.onWidthApplied === 'function' ? deps.onWidthApplied : null;
     const actionButton = resolveActionButton();
     const contextMenu = resolveContextMenu();
     const windowRef = globalRef.window || globalRef;
@@ -165,6 +193,8 @@
           role: 'tab',
           ariaSelected: active,
           tabIndex: index === focusIndex ? 0 : -1,
+          domId: `ideRailTab-${panel.id}`,
+          ariaControls: 'ideRailPanel',
           label: panel.label,
           title: panel.title,
           dataset: { 'ide-rail-panel': panel.id },
@@ -200,7 +230,7 @@
       const stageGroup = stageButtons.length
         ? `<div class="ide-stage-group" role="group" aria-label="${(actionButton.escapeHtml || String)(jt('ide.rail.workspaceViews', 'Workspace views'))}">${stageButtons.join('')}</div>`
         : '';
-      const tabStrip = `<div class="ide-activitybar-scroll"><div class="ide-tablist-group" role="tablist" aria-label="${(actionButton.escapeHtml || String)(jt('ide.workspacePanelsLabel', 'Workspace panels'))}">${tabs.join('')}</div>${stageGroup}</div>`;
+      const tabStrip = `<div class="ide-activitybar-scroll"><div class="ide-tablist-group" role="tablist" aria-orientation="horizontal" aria-label="${(actionButton.escapeHtml || String)(jt('ide.workspacePanelsLabel', 'Workspace panels'))}">${tabs.join('')}</div>${stageGroup}</div>`;
       const extras = [];
       // The visibility toggle only makes sense once the secondary side hosts a
       // panel (moving one there forces it open); hide it while the side is empty.
@@ -254,11 +284,30 @@
         bar.innerHTML = markup;
         bar.__jennyIdeActivityMarkup = markup;
       }
+      syncPanelRelationship();
+    }
+
+    // The rail panel host is the tabpanel every activity tab controls; it is
+    // labelled by the ACTIVE tab (no label while no primary tab is active).
+    function syncPanelRelationship() {
+      const host = getDom().ideRailPanel || null;
+      if (!host) {
+        return;
+      }
+      const ide = getIde();
+      const active = RAIL_PANELS.some((panel) => panel.id === ide.railPanel
+        && railPanelLocation(ide, panel.id) !== 'secondary');
+      host.setAttribute('role', 'tabpanel');
+      if (active) {
+        host.setAttribute('aria-labelledby', `ideRailTab-${ide.railPanel}`);
+      } else {
+        host.removeAttribute('aria-labelledby');
+      }
     }
 
     function applyRailWidth() {
       const shell = getDom().ideShell || null;
-      shell?.style?.setProperty('--ide-rail-width', `${getIde().railWidth}px`);
+      shell?.style?.setProperty('--ide-rail-width', `${clampRailWidthForViewport(getIde().railWidth)}px`);
     }
 
     function handleActivityClick(event) {
@@ -331,8 +380,9 @@
       });
     }
 
-    // Roving arrow-key focus across the panel tabs (vertical activity bar, so
-    // ArrowUp/Down + Home/End), with automatic activation: moving focus switches
+    // Roving arrow-key focus across the panel tabs (the strip lays out
+    // horizontally: ArrowLeft/Right, mirrored under dir=rtl, plus the legacy
+    // ArrowUp/Down and Home/End), with automatic activation: moving focus switches
     // the panel. renderIde rebuilds the bar synchronously, so we re-query the new
     // active tab and restore focus to it after the re-render. The flip/toggle
     // toolbar buttons are NOT tabs, so arrows pressed on them are ignored.
@@ -341,7 +391,7 @@
       if (!fromTab) {
         return;
       }
-      const step = event.key === 'ArrowDown' ? 1 : event.key === 'ArrowUp' ? -1 : 0;
+      const step = tabArrowStep(event);
       if (step === 0 && event.key !== 'Home' && event.key !== 'End') {
         return;
       }
@@ -378,10 +428,11 @@
       // Right-pinned rail grows when the pointer moves left, and vice versa;
       // under dir=rtl the layout mirrors, so the persisted side flips physically.
       const rtl = (event.target?.ownerDocument || event.target?.document || (typeof document !== 'undefined' ? document : null))?.documentElement?.dir === 'rtl';
-      ide.railWidth = clampRailWidthForViewport(
+      ide.railWidth = resolveSavedRailWidth(
         (dragState.side === 'left') !== rtl ? dragState.startWidth + delta : dragState.startWidth - delta
       );
       applyRailWidth();
+      onWidthApplied?.();
     }
 
     function endDrag() {
@@ -400,9 +451,12 @@
         return;
       }
       const ide = getIde();
+      // Start from the SHOWN (viewport-clamped) width, not the saved one: a
+      // narrow window showing a saved 600 at 400 would otherwise swallow the
+      // first ~200px of drag (the chat dock's effectiveWidth precedent).
       dragState = {
         startX: event.clientX,
-        startWidth: clampRailWidth(ide.railWidth),
+        startWidth: clampRailWidthForViewport(ide.railWidth),
         side: ide.railSide === 'right' ? 'right' : 'left',
       };
       try {
@@ -423,8 +477,10 @@
       const ide = getIde();
       const grows = ide.railSide === 'left' ? 'ArrowRight' : 'ArrowLeft';
       const step = event.key === grows ? KEYBOARD_RESIZE_STEP : -KEYBOARD_RESIZE_STEP;
-      ide.railWidth = clampRailWidthForViewport((Number(ide.railWidth) || MIN_RAIL_WIDTH) + step);
+      // Step from the shown (viewport-clamped) width, like the pointer drag.
+      ide.railWidth = resolveSavedRailWidth(clampRailWidthForViewport(ide.railWidth) + step);
       applyRailWidth();
+      onWidthApplied?.();
       schedulePersist();
       event.preventDefault();
     }
@@ -463,6 +519,9 @@
       bindEvents,
       dispose,
       renderActivityBar,
+      // Re-apply the shown width from the saved one through the live clamp
+      // (another column's gesture changed the budget).
+      syncWidth: applyRailWidth,
     };
   }
 

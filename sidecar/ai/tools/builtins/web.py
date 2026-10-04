@@ -40,6 +40,7 @@ from sidecar.ai.tools.builtins.web_http import (
     UrlReadResult,
     ValidatedUrl,
     WebRateLimiter,
+    _remaining_seconds,
     read_url_response,
     validate_public_url,
 )
@@ -271,7 +272,9 @@ def _build_cached_fetch_entry(validated: ValidatedUrl, result: UrlReadResult) ->
     )
 
 
-def _load_fetch_entry(validated: ValidatedUrl, *, timeout_s: int) -> tuple[_CachedFetchEntry, bool]:
+def _load_fetch_entry(
+    validated: ValidatedUrl, *, timeout_s: float, deadline: float
+) -> tuple[_CachedFetchEntry, bool]:
     cached = _fetch_cache.get(validated.url)
     if cached is not None:
         return cached, True
@@ -280,6 +283,7 @@ def _load_fetch_entry(validated: ValidatedUrl, *, timeout_s: int) -> tuple[_Cach
         timeout_s=timeout_s,
         max_bytes=_max_fetch_bytes,
         allow_private=_allow_private_addresses,
+        deadline=deadline,
     )
     entry = _build_cached_fetch_entry(validated, result)
     _fetch_cache.set(validated.url, entry)
@@ -393,8 +397,12 @@ def fetch_url_tool(arguments: dict[str, object], workspace: object) -> ToolHandl
             retryable=False,
         )
 
+    timeout_s = max(1, min(30, _coerce_int_argument(arguments, "timeout_s", 10)))
+    deadline = time.monotonic() + timeout_s
     try:
-        validated = validate_public_url(url, allow_private=_allow_private_addresses)
+        validated = validate_public_url(
+            url, allow_private=_allow_private_addresses, deadline=deadline
+        )
     except PermissionError as exc:
         raise ToolExecutionFailure(
             code=CMP_WEB_SSRF_BLOCKED,
@@ -408,12 +416,18 @@ def fetch_url_tool(arguments: dict[str, object], workspace: object) -> ToolHandl
             retryable=False,
         ) from exc
 
+    except TimeoutError as exc:
+        raise ToolExecutionFailure(
+            code=CMP_WEB_FETCH_FAILED, message="Failed to fetch URL.", retryable=True
+        ) from exc
+
     requested = _coerce_int_argument(arguments, "max_chars", _DEFAULT_FETCH_MAX_CHARS)
     max_chars = _safe_fetch_content_limit(requested)
-    timeout_s = max(1, min(30, _coerce_int_argument(arguments, "timeout_s", 10)))
 
     try:
-        entry, cache_hit = _load_fetch_entry(validated, timeout_s=timeout_s)
+        entry, cache_hit = _load_fetch_entry(
+            validated, timeout_s=_remaining_seconds(deadline), deadline=deadline
+        )
     # A redirect hop that lands on a rejected address is the same policy block as
     # the first-hop check above — never a retryable fetch failure. These two arms
     # must stay ahead of the RedirectBlockedError arm they subclass.
@@ -443,7 +457,7 @@ def fetch_url_tool(arguments: dict[str, object], workspace: object) -> ToolHandl
         ) from exc
     except ToolExecutionFailure:
         raise
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         raise ToolExecutionFailure(
             code=CMP_WEB_FETCH_FAILED,
             message="Failed to fetch URL.",

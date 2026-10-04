@@ -24,15 +24,16 @@ const SERVICE_TEMP_FILE_RE = /(?:\.tmp-\d+-[0-9a-f]+|\.[^/]+\.jenny-vfs-\d+-[0-9
 const WATCH_IGNORE_POLICY = createWalkIgnorePolicy({ extraSkipNames: ['node_modules'] });
 
 function normalizeWatchedRelPath(value) {
-  const raw = String(value || '').trim().replace(/\\/g, '/');
-  if (!raw || raw.includes('\0') || raw.startsWith('/') || /^[A-Za-z]:/.test(raw)) return '';
+  const raw = String(value || '').replace(/\\/g, '/');
+  const lead = raw.trimStart();
+  if (!lead || raw.includes('\0') || lead.startsWith('/') || /^[A-Za-z]:/.test(lead)) return '';
   const segments = raw.split('/').filter((segment) => segment.length > 0 && segment !== '.');
   if (!segments.length || segments.some((segment) => segment === '..') || segments.includes('.git')) return '';
   return segments.join('/');
 }
 
 function isGitMetaPath(value) {
-  const raw = String(value || '').trim().replace(/\\/g, '/');
+  const raw = String(value || '').replace(/\\/g, '/');
   const segments = raw.split('/').filter((segment) => segment.length > 0 && segment !== '.');
   if (segments.length < 2 || segments[0] !== '.git') return false;
   // WIDE-028 (b): `.git/index` is a git-meta move too - external `git add`/

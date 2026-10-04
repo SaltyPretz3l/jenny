@@ -124,7 +124,7 @@ class ExecutionBroker {
       this._persist(pending);
       this._log('host.sandbox_admitted', { job_id: pending.job_id, stream_id: operation.streamId });
       try {
-        await this.request('submit', { ...pending, command: args.command, cwd: args.cwd,
+        await this.request('submit', { ...pending, command: args.command, cwd: args.cwd, input_root: args.inputRoot,
           timeout_seconds: args.timeoutSeconds });
       } catch {
         // The request may have crossed admission. Consume the incarnation even

@@ -3,21 +3,23 @@
  * launch-and-attach scope only; the embedded breakpoint/step/variables panel is
  * a separate Tier-4 item).
  *
- * Flow: a Monaco editor action gates to JavaScript files, reveals + starts the
- * single piped workspace terminal (so the user sees the inspector output),
- * writes `node --inspect-brk "<path>"` to that session, and scrapes the V8
- * banner ("Debugger listening on ws://HOST:PORT/UUID") from the terminal
- * onData stream. On a hit it builds the canonical browser DevTools attach URL
+ * Flow: a Monaco editor action gates to JavaScript files, reveals the Terminal
+ * tab, and sends `node --inspect-brk '<path>'` through the PTY terminal panel's
+ * sendCommand (which starts the single ConPTY session when needed and quotes for
+ * its live shell), then scrapes the V8 banner ("Debugger listening on
+ * ws://HOST:PORT/UUID") from the workspacePty onData stream after stripping VT
+ * control sequences. On a hit it builds the canonical browser DevTools attach URL
  * (devtools://devtools/bundled/js_app.html?...&ws=HOST:PORT/UUID) and copies it
  * to the clipboard with a toast (paste into a Chromium-compatible DevTools window to attach). The raw
  * ws:// line stays visible in the Terminal panel - the "terminal echo".
  *
  * Why no IPC / no native module: CDP is just a websocket the EXTERNAL DevTools
- * front-end speaks; we only launch the process (via the existing terminal stdin
- * write) and surface the URL. There is no renderer-callable bridge that can OS-
- * open a ws:// / devtools:// URL (workspaceFs.openInDefaultApp does path
- * containment + an existence check + shell.openPath, and those schemes are not
- * OS-shell-openable), so v1 surfaces the URL via the clipboard instead. */
+ * front-end speaks; we only launch the process (via the terminal panel's
+ * sanctioned command write) and surface the URL. There is no renderer-callable
+ * bridge that can OS-open a ws:// / devtools:// URL
+ * (workspaceFs.openInDefaultApp does path containment + an existence check +
+ * shell.openPath, and those schemes are not OS-shell-openable), so v1 surfaces
+ * the URL via the clipboard instead. */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) {
     module.exports = factory();
@@ -30,6 +32,8 @@
   const globalRef = typeof globalThis !== 'undefined' ? globalThis : {};
   const asyncFence = globalRef.rendererAsyncFence
     || (typeof require === 'function' ? require('../shared/async-fence') : {});
+  const ansiStreamUtils = globalRef.rendererAnsiStreamUtils
+    || (typeof require === 'function' ? require('../shared/ansi-stream-utils') : {});
 
   const ACTION_ID = 'jenny.debug.inspect-node';
   const ACTION_LABEL = jt('ide.debug.actionLabel', 'Debug this file (Node Inspector)');
@@ -37,8 +41,11 @@
   // The DevTools front-end parses the ws target itself, so the value is the RAW
   // host:port/uuid (NOT percent-encoded - encoding the ':' breaks attach).
   const DEVTOOLS_URL_PREFIX = 'devtools://devtools/bundled/js_app.html?experiments=true&v8only=true&ws=';
-  // V8 prints the banner to stderr; capture everything after "ws://".
-  const WS_BANNER_RE = /Debugger listening on (ws:\/\/\S+)/;
+  // V8 prints the banner to stderr as ws://HOST:PORT/UUID. The full UUID is
+  // required: a PTY can hard-wrap a long line, and a truncated target must
+  // never be copied as if it were the real one (the timeout toast then points
+  // the user at the banner in the Terminal panel instead).
+  const WS_BANNER_RE = /Debugger listening on (ws:\/\/[^\s/]+\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?![0-9a-f-])/i;
   // node --inspect-brk only runs JavaScript; .ts needs a loader, so gate it out.
   const JS_LANGUAGE_IDS = new Set(['javascript']);
   const JS_EXTENSION_RE = /\.(c|m)?js$/i;
@@ -60,20 +67,38 @@
       ? text.replace(/'/g, "''") : text.replace(/'/g, "'\\''")) + "'";
   }
 
+  // Joins the workspace-relative editor path onto the live root with the
+  // separator the root itself uses. Only a drive-letter or UNC root is a Windows
+  // path; a backslash elsewhere is a legal character in a POSIX folder name.
+  function absoluteTarget(rootPath, relPath) {
+    const sep = /^(?:[A-Za-z]:\\|\\\\)/.test(rootPath) ? '\\' : '/';
+    const rel = sep === '/' ? relPath : relPath.replace(/\//g, sep);
+    return rootPath.replace(/[\\/]+$/, '') + sep + rel;
+  }
+
   function createIdeDebugInspector(deps) {
     const options = deps || {};
     const editorHost = options.editorHost || null;
     const isDiffTabId = typeof options.isDiffTabId === 'function' ? options.isDiffTabId : () => false;
-    const getWorkspaceTerminalApi = typeof options.getWorkspaceTerminalApi === 'function'
-      ? options.getWorkspaceTerminalApi
+    // workspacePty bridge: only its onData stream is read (the banner scrape).
+    const getWorkspacePtyApi = typeof options.getWorkspacePtyApi === 'function'
+      ? options.getWorkspacePtyApi
       : () => null;
     const getClipboardApi = typeof options.getClipboardApi === 'function' ? options.getClipboardApi : () => null;
     // Opens the bottom panel on the Terminal tab (the terminal moved off the rail)
     // so node's ws:// banner is visible there; the controller wires this.
     const openTerminalPanel = typeof options.openTerminalPanel === 'function' ? options.openTerminalPanel : () => {};
-    const startTerminalSession = typeof options.startTerminalSession === 'function'
-      ? options.startTerminalSession
+    // The PTY panel's sendCommand(builder): starts the session when needed,
+    // calls builder(shell) and writes one CRLF line; resolves true on success
+    // and false (nothing written) on failure or when the builder throws.
+    const sendTerminalCommand = typeof options.sendTerminalCommand === 'function'
+      ? options.sendTerminalCommand
       : () => Promise.resolve(false);
+    // Live workspace root (captureContext) so the launch targets an ABSOLUTE
+    // path: the shared interactive shell's cwd may have moved off the root.
+    const getWorkspaceRootApi = typeof options.getWorkspaceRootApi === 'function' ? options.getWorkspaceRootApi : () => null;
+    // Saves one open file; resolves true only on a successful save.
+    const saveFile = typeof options.saveFile === 'function' ? options.saveFile : () => Promise.resolve(false);
     const showToastMessage = typeof options.showToastMessage === 'function' ? options.showToastMessage : () => {};
     const appendClientLog = typeof options.appendClientLog === 'function' ? options.appendClientLog : () => {};
     const inspectTimeoutMs = Number.isFinite(options.inspectTimeoutMs) ? options.inspectTimeoutMs : DEFAULT_TIMEOUT_MS;
@@ -129,14 +154,6 @@
       return JS_LANGUAGE_IDS.has(language) || JS_EXTENSION_RE.test(path);
     }
 
-    // Open the bottom panel on the Terminal tab and let the panel adopt the
-    // (now-running) session so node's output - including the ws:// banner - is
-    // visible there.
-    async function revealTerminal() {
-      openTerminalPanel();
-      await startTerminalSession();
-    }
-
     function copyInspectorUrl(wsUrl) {
       const wsTarget = wsUrl.replace(/^ws:\/\//i, '');
       const devtoolsUrl = DEVTOOLS_URL_PREFIX + wsTarget;
@@ -179,11 +196,25 @@
         toast(jt('ide.debug.javascriptOnly', 'Debugging is currently available for JavaScript files only.'));
         return;
       }
-      const terminal = getWorkspaceTerminalApi();
-      if (!terminal || typeof terminal.start !== 'function'
-        || typeof terminal.write !== 'function' || typeof terminal.onData !== 'function') {
+      const terminal = getWorkspacePtyApi();
+      if (!terminal || typeof terminal.onData !== 'function') {
         toast(jt('ide.debug.terminalUnavailable', 'The workspace terminal is unavailable in this shell mode.'));
         return;
+      }
+
+      // The terminal runs the SAVED file: persist the visible buffer first (busy
+      // holds the single-launch guard across the save).
+      if (editorHost?.isDirty?.(path) === true) {
+        busy = true;
+        const saved = await Promise.resolve(saveFile(path)).then((ok) => ok === true, () => false);
+        busy = false;
+        if (disposalFence.isDisposed()) {
+          return;
+        }
+        if (!saved) {
+          toast(jt('ide.debug.saveBeforeDebugFailed', 'Could not save {path}, so the debug session was not started.', { path }));
+          return;
+        }
       }
 
       busy = true;
@@ -191,9 +222,13 @@
       launchGate.bump();
       const launchToken = launchGate.capture();
       let buffer = '';
-      // Set once start() resolves; the onData filter ignores any other session's
-      // output (a restart/another consumer reuses the shared piped terminal).
-      let launchSessionId = '';
+      // ConPTY output carries VT control sequences (colors, cursor moves, window
+      // titles) that can split across chunks; the stateful stripper removes
+      // them so the banner is matched on visible text. The PTY is single-session,
+      // so every data event belongs to the terminal this launch writes into.
+      const stripper = typeof ansiStreamUtils.createAnsiStreamStripper === 'function'
+        ? ansiStreamUtils.createAnsiStreamStripper()
+        : { push: (text) => text };
       // Subscribe BEFORE writing the command so the banner is never missed (the
       // child can emit before the write promise resolves).
       try {
@@ -201,16 +236,8 @@
           if (settled) {
             return;
           }
-          const chunk = payload && typeof payload.chunk === 'string' ? payload.chunk : '';
+          const chunk = payload && typeof payload.data === 'string' ? stripper.push(payload.data) : '';
           if (!chunk) {
-            return;
-          }
-          // Scrape only this launch's session. node prints the banner after the
-          // command write (after start() resolves), so launchSessionId is always
-          // known by then; an unknown id degrades to no-filter rather than over-
-          // filtering. Mirrors run-scripts' handleData session guard.
-          const eventId = payload && payload.sessionId != null ? String(payload.sessionId) : '';
-          if (launchSessionId && eventId !== launchSessionId) {
             return;
           }
           // Match only COMPLETE lines so a banner split across chunks (e.g.
@@ -240,16 +267,31 @@
       }, inspectTimeoutMs);
 
       try {
-        // Start first (reliable session id even when the terminal was idle); a
-        // missing workspace root throws here, before the panel is touched.
-        const session = await terminal.start();
+        // Capture the live root first (same rule as Open in Terminal): a missing
+        // or not-ready root launches nothing.
+        const context = await getWorkspaceRootApi()?.captureContext?.();
         if (!launchIsCurrent(launchToken)) return;
-        const sessionId = session && session.sessionId ? String(session.sessionId) : '';
-        launchSessionId = sessionId;
-        await revealTerminal();
+        const rootPath = String(context?.rootPath ?? context?.root_path ?? '');
+        if (!rootPath || (context?.phase && context.phase !== 'ready')) {
+          appendClientLog('WARN', 'ide.debug.launch_failed', { message: 'workspace_root_unavailable' });
+          finishWith(() => toast(jt('ide.debug.launchFailed', 'Could not launch the debug session.')));
+          return;
+        }
+        // Reveal the Terminal tab first so the panel owns (spawns and sizes) the
+        // PTY session and node's output - including the ws:// banner - is
+        // visible there. The builder runs after the session is up and refuses
+        // (throws, so nothing is written) once this launch is stale.
+        openTerminalPanel();
+        const sent = await sendTerminalCommand((shell) => {
+          if (!launchIsCurrent(launchToken)) throw new Error('stale debug launch');
+          return 'node --inspect-brk ' + quoteArg(absoluteTarget(rootPath, path), shell);
+        });
         if (!launchIsCurrent(launchToken)) return;
-        await terminal.write({ sessionId, data: 'node --inspect-brk ' + quoteArg(path, session && session.shell) + '\r\n' });
-        if (!launchIsCurrent(launchToken)) return;
+        if (sent !== true) {
+          appendClientLog('WARN', 'ide.debug.launch_failed', { message: 'terminal_command_not_sent' });
+          finishWith(() => toast(jt('ide.debug.launchFailed', 'Could not launch the debug session.')));
+          return;
+        }
         appendClientLog('INFO', 'ide.debug.launched', {});
       } catch (error) {
         appendClientLog('WARN', 'ide.debug.launch_failed', { message: messageOf(error) });

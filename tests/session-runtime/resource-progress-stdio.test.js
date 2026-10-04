@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const test = require('node:test');
-const { ROOT, waitFor, createBackend, holdAtAdmission } = require('../helpers/session-runtime-stdio-fixture');
+const { ROOT, waitFor, createBackend, holdAtAdmission, stopReleasingHolds } = require('../helpers/session-runtime-stdio-fixture');
 for (const [laterGeneration, repeated, action = 'resume'] of [
   [false, false], [false, true], [true, false], [true, true],
   [false, false, 'write_failure'], [false, false, 'cancel'], [false, false, 'policy'],
@@ -23,16 +23,17 @@ for (const [laterGeneration, repeated, action = 'resume'] of [
     fs.rmSync(root, { recursive: true, force: true }); });
   const seen = []; const logs = [];
   const make = () => createBackend(profile, workspace, seen, logs, 'user_questions');
-  let backend = make(); let workId;
+  let backend = make(); let workId; let held = null;
   try {
     await backend.start();
     const sessionId = (await backend.createSession({ title: 'Resource suffix' })).data.id;
     const projects = backend.projectApplicationService;
-    const project = projects.createProject({ name: 'Resource workspace' }).project;
-    assert.equal(projects.bindProjectRoot({ project_id: project.id, root_path: workspace, expected_root_revision: project.root_revision }).ok, true);
+    // The Workspace folder is already a project (provisioned by createSession);
+    // bindRoot refuses a second owner, so the fixture uses that project.
+    const project = backend.ensureWorkspaceProject(workspace, 'test_fixture').project;
     assert.equal(projects.assignSessionProject({ session_id: sessionId, project_id: project.id }).ok, true);
     const runtime = backend.sessionRuntime;
-    holdAtAdmission(runtime, workspace, 2);
+    held = holdAtAdmission(runtime, workspace, 2);
     if (['write_failure', 'cancel'].includes(action)) runtime.checkpointStore.begin = () => {
       if (action === 'cancel') {
         const current = runtime.store.get(workId);
@@ -60,7 +61,7 @@ for (const [laterGeneration, repeated, action = 'resume'] of [
     assert.equal(checkpoint.quota_state.admissions.length, 2);
     const before = backend.sessionStore.getSession(sessionId).turn_events.filter(event => event.kind === 'tool_result');
     assert.equal(before.length, 1); assert.match(before[0].payload.tool_output_summary, /first.txt/);
-    await backend.stop(); backend.dispose(); backend = make(); await backend.start();
+    await stopReleasingHolds(backend, held); held = null; backend.dispose(); backend = make(); await backend.start();
     if (action === 'policy') backend.toolPermissionStore.setPolicy('read_file', 'deny');
     const release = repeated ? holdAtAdmission(backend.sessionRuntime, workspace, 1) : null;
     let saved = backend.sessionRuntime.store.get(workId);
@@ -90,5 +91,5 @@ for (const [laterGeneration, repeated, action = 'resume'] of [
   } catch (error) {
     t.diagnostic(JSON.stringify({ work: workId ? backend.sessionRuntime.store.get(workId) : null,
       errors: seen.filter(row => row.type === 'error'), results: workId ? backend.sessionStore.getSession(backend.sessionRuntime.store.get(workId).session_id).turn_events.filter(row => row.kind === 'tool_result') : [], logs: logs.filter(row => /resource|capture|stderr|error/i.test(JSON.stringify(row))).slice(-16) })); throw error;
-  } finally { await backend.stop(); backend.dispose(); }
+  } finally { await stopReleasingHolds(backend, held); backend.dispose(); }
 });

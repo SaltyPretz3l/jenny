@@ -41,11 +41,6 @@ function platform(overrides = {}) {
     plugins, ...overrides };
 }
 
-function catalog(overrides = {}) {
-  return { ok: true, revision: 1, configured: false,
-    empty_reason: 'no_catalog_sources_configured', sources: [], entries: [], ...overrides };
-}
-
 function dom() {
   return new JSDOM(`<!doctype html><body><nav class="settings-nav">
     <button data-settings-section="plugins">Plugins</button></nav>
@@ -66,8 +61,7 @@ function harness(t, { bridge = {}, enabled = true, statePayload = platform() } =
   const toasts = [];
   const logs = [];
   const views = [];
-  const plugins = { getState: async () => statePayload, getCatalogState: async () => catalog(),
-    refreshCatalogs: async () => catalog(), ...bridge };
+  const plugins = { getState: async () => statePayload, ...bridge };
   windowRef.jennyShell = { plugins, dialog: { async saveFile(payload) { calls.push(['save', payload]); } } };
   const previous = [globalThis.inventoryActionButton, globalThis.inventoryTextField,
     globalThis.inventoryToggleSwitch];
@@ -104,8 +98,11 @@ test('feature flag off clears only plugin hosts and never calls plugin IPC', asy
 });
 
 test('installed and sources render independently as flat full-width groups', async (t) => {
-  let catalogRefreshes = 0;
-  const h = harness(t, { bridge: { refreshCatalogs: async () => { catalogRefreshes += 1; return catalog(); } } });
+  const retiredCalls = [];
+  const h = harness(t, { bridge: {
+    getCatalogState: async () => { retiredCalls.push('getCatalogState'); return {}; },
+    refreshCatalogs: async () => { retiredCalls.push('refreshCatalogs'); return {}; },
+  } });
   h.controller.bind();
   await flush();
   const installed = h.document.getElementById('pluginsSettingsGroup');
@@ -116,13 +113,34 @@ test('installed and sources render independently as flat full-width groups', asy
   assert.equal(sources.querySelector('h4').textContent, 'Advanced');
   assert.ok(installed.querySelector('.settings-field-row[data-plugin-row="acme/notes"]'));
   assert.match(installed.textContent, /1\.0\.0 · acme · turned off/);
-  assert.match(sources.textContent, /No catalog configured/);
+  assert.match(sources.textContent, /Package sources/);
+  assert.doesNotMatch(sources.textContent, /catalog|mirror/i);
+  assert.equal(sources.querySelector('.plugin-catalog-list, [data-plugins-mirror-form]'), null);
   assert.equal(h.document.querySelector('#pluginsHeaderActionsHost [data-plugins-settings-action="install-package"]')
     .textContent, 'Install plugin');
   assert.ok(installed.querySelector('[data-plugins-drop-zone]'));
   assert.equal(installed.querySelector('[data-plugins-installed-count]'), null);
   assert.equal(h.card.querySelector('.plugin-manager-overflow'), null);
-  assert.equal(catalogRefreshes, 1);
+  assert.deepEqual(retiredCalls, [], 'the retired catalog bridge methods are never called');
+});
+
+test('Installed reads zero plugins once as the empty state and shows the count only beside rows', async (t) => {
+  const empty = harness(t, { statePayload: platform({ plugins: [] }) });
+  empty.controller.bind();
+  await flush();
+  const emptyGroup = empty.document.getElementById('pluginsSettingsGroup');
+  assert.equal(emptyGroup.querySelectorAll('[data-plugins-empty-state]').length, 1);
+  assert.match(emptyGroup.textContent, /No plugins installed\./);
+  assert.doesNotMatch(emptyGroup.textContent, /installed plugins?\./, 'no "0 installed plugins." beside the empty state');
+  assert.equal(emptyGroup.querySelector('.settings-group-copy'), null);
+
+  const two = harness(t, { statePayload: platform({ plugins: [plugin(), plugin({ plugin_id: 'tasks', display_name: 'Tasks' })] }) });
+  two.controller.bind();
+  await flush();
+  const group = two.document.getElementById('pluginsSettingsGroup');
+  assert.equal(group.querySelector('.settings-group-copy')?.textContent, '2 installed plugins.');
+  assert.equal(group.querySelector('[data-plugins-empty-state]'), null);
+  assert.doesNotMatch(group.textContent, /No plugins installed/);
 });
 
 function dispatchDrop(windowRef, target, file) {
@@ -183,7 +201,7 @@ test('Advanced row persists disclosure state and contains the three source actio
   assert.deepEqual([...disclosure.querySelectorAll('[data-plugins-settings-action]')]
     .map((button) => button.textContent.trim()).filter((label) => [
       'Add offline mirror', 'Install signed package', 'Export audit log',
-    ].includes(label)), ['Add offline mirror', 'Install signed package', 'Export audit log']);
+    ].includes(label)), ['Install signed package', 'Export audit log']);
   h.controller.render();
   assert.equal(h.document.querySelector('[data-plugins-advanced-disclosure]').hidden, false);
 });
@@ -249,18 +267,6 @@ test('a view whose contribution is not running offers an inert button that says 
   assert.equal(open.title, 'Turn this plugin on to open its view.');
   open.click();
   assert.deepEqual(h.views, []);
-});
-
-test('a managed-policy block names the policy instead of the master switch', async (t) => {
-  const blocked = runningPlugin({ contributions: [{ contribution_id: 'setup',
-    display_name: 'Notes setup', kind: 'setup_scene', view: { view_kind: 'setup_scene' },
-    effective_enabled: false, blocked_reason: 'managed_policy' }] });
-  const h = harness(t, { statePayload: platform({ plugins: [blocked] }) });
-  h.controller.bind();
-  await flush();
-  const open = h.card.querySelector('[data-plugins-settings-action="open-view"]');
-  assert.equal(open.disabled, true);
-  assert.equal(open.title, 'Managed policy blocks this plugin view.');
 });
 
 test('missing bridge methods produce bounded visible diagnostics', async (t) => {
@@ -340,36 +346,6 @@ test('progress mutates only the permanent status node', async (t) => {
     'Cleaning up…');
   finishes[1]({ ok: true, operation_id: 'op-2' });
   await flush();
-});
-
-test('offline mirror validates input and treats picker cancellation as neutral', async (t) => {
-  const payloads = [];
-  const h = harness(t, { bridge: { selectOfflineMirror: async (payload) => {
-    payloads.push(payload); return { ok: false, canceled: true, selected_path: 'G:\\secret' };
-  } } });
-  h.controller.bind();
-  await flush();
-  h.card.querySelector('[data-plugins-settings-action="add-mirror"]').click();
-  // source_id is the ONLY mirror identity that survives: plugin-source-trust.schema.json
-  // is frozen with additional_properties "reject" and its offline_mirror variant has no
-  // name field, so the form must not collect one it cannot persist.
-  assert.equal(h.document.getElementById('pluginMirrorDisplayName'), null);
-  const source = h.document.getElementById('pluginMirrorSourceId');
-  source.value = 'INVALID';
-  source.dispatchEvent(new h.windowRef.Event('input', { bubbles: true }));
-  h.card.querySelector('[data-plugins-settings-action="save-mirror"]').click();
-  await flush();
-  assert.equal(payloads.length, 0);
-  assert.match(h.card.textContent, /Source ID must start with a letter/);
-  const nextSource = h.document.getElementById('pluginMirrorSourceId');
-  nextSource.value = 'team_mirror';
-  nextSource.dispatchEvent(new h.windowRef.Event('input', { bubbles: true }));
-  h.card.querySelector('[data-plugins-settings-action="save-mirror"]').click();
-  await flush();
-  assert.deepEqual(payloads, [{ source_id: 'team_mirror' }]);
-  assert.ok(h.card.querySelector('[data-plugins-mirror-form]'));
-  assert.equal(h.toasts.length, 0);
-  assert.equal(JSON.stringify(h.logs).includes('G:\\secret'), false);
 });
 
 const drawerDetail = { publisher_id: 'acme', plugin_id: 'notes', display_name: 'Notes',
@@ -475,24 +451,15 @@ test('a stale plugin-details load cannot repaint a newer drawer selection', asyn
   assert.equal(instance.window.document.querySelector('.inv-drawer-header h2').textContent, 'Plugin B');
 });
 
-test('verified catalog install and audit export retain bounded payloads', async (t) => {
-  const calls = [];
-  const entry = { source_id: 'usb', publisher_id: 'acme', plugin_id: 'weather', display_name: 'Weather',
-    version: '2.0.0', summary: 'Forecasts', package_size_bytes: 42, package_sha256: 'a'.repeat(64) };
+test('audit export saves the returned document and nothing else', async (t) => {
   const h = harness(t, { bridge: {
-    getCatalogState: async () => catalog({ configured: true, entries: [entry] }),
-    installFromCatalog: async (payload) => { calls.push(payload); return { ok: true }; },
     exportAudit: async () => ({ ok: true, document: { audit_schema_version: 1 } }),
   } });
   h.controller.bind();
   await flush();
-  h.card.querySelector('[data-plugins-settings-action="catalog-install"]').click();
-  await flush();
+  assert.equal(h.card.querySelector('[data-plugins-settings-action="catalog-install"]'), null);
   h.card.querySelector('[data-plugins-settings-action="export-audit"]').click();
   await flush();
-  assert.deepEqual(calls, [{ source_id: 'usb', publisher_id: 'acme', plugin_id: 'weather',
-    version: '2.0.0', package_sha256: 'a'.repeat(64) }]);
-  assert.equal(JSON.stringify(calls).includes('path'), false);
   assert.match(h.calls[0][1].content, /audit_schema_version/);
 });
 
@@ -519,13 +486,13 @@ test('a rejected audit save is contained and reported without provider details',
 test('stale revisions are ignored and disposal suppresses late paint', async (t) => {
   let resolveState;
   const pending = new Promise((resolve) => { resolveState = resolve; });
-  const h = harness(t, { bridge: { getState: () => pending, refreshCatalogs: async () => catalog() } });
+  const h = harness(t, { bridge: { getState: () => pending } });
   h.controller._test.setPlatform(pluginsSettings.classifyPluginsPlatform(true, platform({ revision: 9 })));
   const refresh = h.controller.refresh();
   resolveState(platform({ revision: 2, plugins: [], installed_count: 0 }));
   await refresh;
   assert.equal(h.controller._test.getPlatform().revision, 9);
-  const second = harness(t, { bridge: { getState: () => new Promise(() => {}), refreshCatalogs: async () => catalog() } });
+  const second = harness(t, { bridge: { getState: () => new Promise(() => {}) } });
   second.controller.bind();
   second.controller.dispose();
   await flush();
@@ -545,8 +512,7 @@ test('controller activation order cannot change Installed → Skills → MCP →
   for (const order of ['plugins-first', 'mcp-first']) {
     const instance = dom();
     instance.window.jennyShell = {
-      plugins: { getState: async () => platform(), getCatalogState: async () => catalog(),
-        refreshCatalogs: async () => catalog() },
+      plugins: { getState: async () => platform() },
       mcpDiscovery: { getState: async () => ({ schemaVersion: 1, servers: [] }) },
       mcpAuth: { getStatus: async () => ({ loaded: true, store: { status: 'ready' }, servers: [] }) },
     };
@@ -572,7 +538,12 @@ test('platform classifier keeps fail-closed postures distinct', () => {
   assert.equal(pluginsSettings.classifyPluginsPlatform(true, { safe_mode_active: true }).kind, 'safe_mode');
   assert.equal(pluginsSettings.classifyPluginsPlatform(true, { ok: false, enabled: true }).kind, 'refused');
   assert.equal(pluginsSettings.classifyPluginsPlatform(true, platform()).kind, 'ready');
-  assert.equal(pluginsSettings.isNewerVersion('1.1.0', '1.0.9'), true);
-  assert.equal(pluginsSettings.isNewerVersion('1.0.0-beta.2', '1.0.0-beta.1'), true);
-  assert.equal(pluginsSettings.isNewerVersion('1.0.0-2', '1.0.0-1'), true);
+  assert.equal(Object.hasOwn(pluginsSettings, 'isNewerVersion'), false);
+});
+
+test('an update flag on the plugin itself is the only update signal', async (t) => {
+  const h = harness(t, { statePayload: platform({ plugins: [plugin({ update_available: true })] }) });
+  h.controller.bind();
+  await flush();
+  assert.match(h.document.getElementById('pluginsSettingsGroup').textContent, /update available/);
 });

@@ -159,7 +159,106 @@ function buildFeatureStatePayload({
   };
 }
 
-async function applyFeatureSettingsPatch({
+const RUNTIME_SETTINGS_KEYS = ['tools', 'webSearch', 'featureOverrides'];
+const FEATURE_SETTINGS_KEYS = [...RUNTIME_SETTINGS_KEYS, 'memory'];
+const transactionTails = new WeakMap();
+let awaitedCommitService = null;
+
+// True only while a transaction's own commit emits 'changed'. Every commit
+// reason the shell-config listener refreshes for changes tools or overrides,
+// so that transaction already awaits a refresh and the listener must not race it.
+function isAwaitedFeatureSettingsCommit(shellConfigService) {
+  return awaitedCommitService !== null && awaitedCommitService === shellConfigService;
+}
+
+function commitFeatureSettings(shellConfigService, patch) {
+  awaitedCommitService = shellConfigService;
+  try {
+    return shellConfigService.updateFeatureSettings(patch);
+  } finally {
+    awaitedCommitService = null;
+  }
+}
+
+// The revision lives on the backend: its initialize flight records the revision
+// it built from and publishes it on success (local-engine-status.js).
+function bumpFeatureSettingsRevision(backendService) {
+  if (!backendService) {
+    return 0;
+  }
+  backendService._featureSettingsRevision = (Number(backendService._featureSettingsRevision) || 0) + 1;
+  return backendService._featureSettingsRevision;
+}
+
+// A refresh can join an initialize flight built before this revision; refresh
+// again until one built from it has completed. null means the save is persisted
+// and no initialize ran now: there is no managed sidecar, or a GPU lease holds
+// the refresh and replays it on release (the same deferred success engine
+// tuning reports; rolling back would block every toggle while an image
+// generates). A backend that does not track the published
+// revision reads NaN and stops after one refresh. The commit precedes the first
+// refresh, so only that first flight can predate it: a third unpublished
+// refresh means the flight is not reporting, and the save fails instead of spinning.
+const MAX_PUBLISH_REFRESHES = 3;
+async function refreshUntilPublished(backendService, revision) {
+  for (let attempt = 0; attempt < MAX_PUBLISH_REFRESHES; attempt += 1) {
+    const result = await backendService.refreshManagedConfig('feature_settings_updated');
+    if (result === null || !(Number(backendService._publishedFeatureSettingsRevision) < revision)) {
+      return;
+    }
+  }
+  throw new Error('Feature settings were saved but the runtime did not confirm them.');
+}
+
+function collectWrittenSettings(previousState, nextState) {
+  const written = [];
+  for (const key of FEATURE_SETTINGS_KEYS) {
+    const before = previousState?.[key] || {};
+    const after = nextState?.[key] || {};
+    for (const subKey of new Set([...Object.keys(before), ...Object.keys(after)])) {
+      if (JSON.stringify(before[subKey]) !== JSON.stringify(after[subKey])) {
+        written.push({ key, subKey, before: before[subKey], after: after[subKey], existed: Object.hasOwn(before, subKey) });
+      }
+    }
+  }
+  return written;
+}
+
+// Puts back only sub-keys that still hold this transaction's value, so a commit
+// that landed after it (another section or another sub-key) survives.
+function restoreWrittenSettings(shellConfigService, written) {
+  const restored = shellConfigService.getState();
+  let changed = false;
+  for (const { key, subKey, before, after, existed } of written) {
+    const section = { ...(restored[key] || {}) };
+    if (JSON.stringify(section[subKey]) !== JSON.stringify(after)) {
+      continue;
+    }
+    if (existed) {
+      section[subKey] = before;
+    } else {
+      delete section[subKey];
+    }
+    restored[key] = section;
+    changed = true;
+  }
+  if (changed) {
+    shellConfigService.replaceState(restored, 'feature_settings_reverted');
+  }
+  return shellConfigService.getState();
+}
+
+// Transactions run one at a time per config service, in submission order, so
+// one save's flags, refresh and rollback never interleave with another's.
+async function applyFeatureSettingsPatch(options = {}) {
+  const { shellConfigService } = options;
+  const run = (transactionTails.get(shellConfigService) || Promise.resolve())
+    .then(() => runFeatureSettingsTransaction(options));
+  transactionTails.set(shellConfigService, run.catch(() => {}));
+  return run;
+}
+
+async function runFeatureSettingsTransaction({
   patch = {},
   shellConfigService,
   backendService,
@@ -168,16 +267,16 @@ async function applyFeatureSettingsPatch({
   platform = process.platform,
 } = {}) {
   const previousConfigState = shellConfigService.getState();
-  const previousFlags = buildFeatureFlags(env, previousConfigState.featureOverrides || {});
-  const nextConfigState = shellConfigService.updateFeatureSettings(patch);
+  const nextConfigState = commitFeatureSettings(shellConfigService, patch);
   const nextFlags = buildFeatureFlags(env, nextConfigState.featureOverrides || {});
-  const runtimeSettingsChanged = ['tools', 'webSearch', 'featureOverrides'].some(
+  const runtimeSettingsChanged = RUNTIME_SETTINGS_KEYS.some(
     (key) => JSON.stringify(previousConfigState[key]) !== JSON.stringify(nextConfigState[key])
   );
+  const revision = runtimeSettingsChanged ? bumpFeatureSettingsRevision(backendService) : 0;
   try {
     if (runtimeSettingsChanged) {
       await Promise.resolve(backendService?.setFeatureFlags?.(nextFlags));
-      await backendService.refreshManagedConfig('feature_settings_updated');
+      await refreshUntilPublished(backendService, revision);
     }
     const payload = buildFeatureStatePayload({
       shellConfigService,
@@ -188,9 +287,15 @@ async function applyFeatureSettingsPatch({
     sendToWindow?.(getBridgeChannel('features.onChanged', 'subscribe'), payload);
     return payload;
   } catch (error) {
-    shellConfigService.replaceState(previousConfigState, 'feature_settings_reverted');
+    const restoredState = restoreWrittenSettings(
+      shellConfigService,
+      collectWrittenSettings(previousConfigState, nextConfigState)
+    );
     if (runtimeSettingsChanged) {
-      await Promise.resolve(backendService?.setFeatureFlags?.(previousFlags));
+      bumpFeatureSettingsRevision(backendService);
+      await Promise.resolve(
+        backendService?.setFeatureFlags?.(buildFeatureFlags(env, restoredState.featureOverrides || {}))
+      );
       try {
         await backendService.refreshManagedConfig('feature_settings_rollback');
       } catch (rollbackError) {
@@ -301,5 +406,6 @@ module.exports = {
   buildEffectiveFeatureFlags,
   buildFeatureStatePayload,
   buildWebSearchSecretStatus,
+  isAwaitedFeatureSettingsCommit,
   registerFeatureIpcHandlers,
 };

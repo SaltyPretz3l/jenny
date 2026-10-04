@@ -38,7 +38,7 @@ class _Config:
     tools_enabled = True
     engine_type = "chatgpt"
     model = "probe-model"
-    system_prompt = "s" * 36_000
+    system_prompt = "s" * 50_000  # 12.5k tokens: just under the 24-tool warning (13,107)
     system_prompt_profile = "auto"
     assistant_name = "Jenny"
     tools_workspace_manifest_enabled = False
@@ -459,13 +459,13 @@ def test_error_pressure_keeps_repair_tools_without_file_keyword(
 
 
 def test_filesystem_priority_does_not_widen_web_gate_or_other_contracts() -> None:
-    incident_names = tool_budget_filter_module._budget_relevant_family_names(  # noqa: SLF001
+    incident_names = tool_budget_filter_module._budget_relevant_family_names(
         "the start button does not currently work!", _incident_tool_contract()
     )
 
     assert "read_file" in incident_names
     assert "web_search" not in incident_names
-    assert tool_budget_filter_module._budget_relevant_family_names(  # noqa: SLF001
+    assert tool_budget_filter_module._budget_relevant_family_names(
         "the start button does not currently work!", _tool_contract()
     ) == ()
 

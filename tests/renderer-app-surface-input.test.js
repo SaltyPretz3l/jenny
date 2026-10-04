@@ -641,6 +641,33 @@ test('surface input routing: press, release, and click dispatch immediately in e
   assert.equal(raf.size, 0, 'nothing was deferred to a rAF -- no move was ever queued');
 });
 
+test('surface input routing: a click inherits the primary flag of the pointer that pressed (Chromium reports click isPrimary false)', () => {
+  const controller = makeFakeController();
+  const dom = makeRouterDom();
+  const { manager, raf } = makeRouterManager({
+    dom, registry: [NATIVE_ENTRY], factories: { 'fake-native': () => controller },
+  });
+  manager.activateSurfaceEffect('fake-native');
+  raf.flush();
+
+  // Main mouse button: Chromium's click PointerEvent carries isPrimary false.
+  dom.chatView.fire('pointerdown', makePointerEvent('pointerdown', { pointerId: 1, clientX: 5, clientY: 5 }));
+  dom.chatView.fire('pointerup', makePointerEvent('pointerup', { pointerId: 1, clientX: 5, clientY: 5 }));
+  dom.chatView.fire('click', makePointerEvent('click', { pointerId: 1, isPrimary: false, clientX: 5, clientY: 5 }));
+  // A second touch contact stays non-primary through its click, even after
+  // capture loss clears its pointer state between release and click.
+  const touch = { pointerId: 7, pointerType: 'touch', isPrimary: false, clientX: 9, clientY: 9 };
+  dom.chatView.fire('pointerdown', makePointerEvent('pointerdown', touch));
+  dom.chatView.fire('pointerup', makePointerEvent('pointerup', touch));
+  dom.chatView.fire('lostpointercapture', makePointerEvent('lostpointercapture', touch));
+  dom.chatView.fire('click', makePointerEvent('click', touch));
+
+  const clicks = controller.calls.handleInput.map((a) => a[0]).filter((p) => p.type === 'click');
+  assert.deepEqual(clicks.map((p) => [p.pointerId, p.isPrimary]), [[1, true], [7, false]]);
+  const touchPayloads = controller.calls.handleInput.map((a) => a[0]).filter((p) => p.pointerId === 7);
+  assert.ok(touchPayloads.every((p) => p.isPrimary === false), 'no synthesized payload of the second contact turns primary');
+});
+
 test('surface input routing: input queued before an activation bump is dropped on generation mismatch', () => {
   const controllerA = makeFakeController();
   const controllerB = makeFakeController();

@@ -26,7 +26,13 @@ from sidecar.ai.routing.provider_stream_normalizer import (
     NormalizedStreamEvent,
     ProviderStreamNormalizer,
 )
-from sidecar.ai.thinking_guard import budget_trip_check, thinking_budget_abort_enabled
+from sidecar.ai.thinking_guard import (
+    THINKING_STATUS_EVENT_KIND,
+    budget_trip_check,
+    guard_log_data,
+    take_hidden_reasoning_notice,
+    thinking_budget_abort_enabled,
+)
 from sidecar.ai.tools.models import ToolCallRequest
 from sidecar.runtime.vllm_engine_support import (
     GenerationError,
@@ -42,6 +48,7 @@ logger = logging.getLogger(__name__)
 
 THINKING_BUDGET_ABORT_EVENT = "ai.engines.vllm.thinking_budget_abort"
 THINKING_GUARD_SUPPRESSED_EVENT = "ai.engines.vllm.thinking_guard_suppressed"
+THINKING_GUARD_TRIPPED_EVENT = "ai.engines.vllm.thinking_guard_tripped"
 TOOL_CALL_TRUNCATED_EVENT = "ai.engines.vllm.tool_call_truncated"
 TOOL_CALL_REJECTED_EVENT = "ai.engines.vllm.tool_call_rejected"
 
@@ -117,19 +124,8 @@ def log_truncated_tool_calls(
     truncated: list[NormalizedStreamEvent],
     *,
     terminal_finish_reason: str,
-    rejected: bool = False,
 ) -> None:
     """Name the tool calls dropped because their arguments never finished."""
-    if rejected:
-        logger.warning(
-            "Dropped tool-call input rejected at the argument cap.",
-            extra={
-                "event": TOOL_CALL_REJECTED_EVENT,
-                "model": engine.model_name,
-                "reason": "argument_bytes",
-                "terminal_finish_reason": str(terminal_finish_reason or ""),
-            },
-        )
     if not truncated:
         return
     logger.warning(
@@ -145,6 +141,29 @@ def log_truncated_tool_calls(
     )
 
 
+def log_rejected_tool_input(
+    engine: Any,
+    *,
+    reason: str,
+    finish_reason: str,
+    terminal_finish_reason: str,
+) -> None:
+    """Say once that tool input was dropped at a provider cap, and under which finish."""
+    logger.warning(
+        "Dropped tool-call input rejected at the %s cap.",
+        reason,
+        extra={
+            "event": TOOL_CALL_REJECTED_EVENT,
+            "data": {
+                "model": engine.model_name,
+                "reason": reason,
+                "finish_reason": str(finish_reason or ""),
+                "terminal_finish_reason": str(terminal_finish_reason or ""),
+            },
+        },
+    )
+
+
 def log_guard_verdict(
     engine: Any,
     guard: ThinkingRepetitionGuard | None,
@@ -155,37 +174,57 @@ def log_guard_verdict(
 
     The engine can suppress deltas before the router ever sees them, so the
     router's own guard log cannot be relied on to explain a silent stream.
+    The fields ride ``data`` (the only extra the JSON log sink keeps) and are
+    mirrored as record attributes for in-process callers.
     """
     if aborted:
-        logger.info(
+        _log_guard_event(
+            THINKING_BUDGET_ABORT_EVENT,
             "Thinking budget aborted.",
-            extra={
-                "event": THINKING_BUDGET_ABORT_EVENT,
-                "model": engine.model_name,
-                "reason": "char_limit",
-                "counted_chars": guard.total_chars if guard is not None else None,
-                "max_chars": guard.max_chars if guard is not None else None,
-            },
+            guard_log_data(guard, model=engine.model_name),
         )
         return
     if guard is None or not guard.should_stop:
         return
-    logger.info(
+    _log_guard_event(
+        THINKING_GUARD_SUPPRESSED_EVENT,
         "Thinking stream suppressed by the guard.",
+        guard_log_data(guard, model=engine.model_name),
+    )
+
+
+def _log_guard_event(event: str, message: str, data: dict[str, Any]) -> None:
+    logger.info(
+        message,
         extra={
-            "event": THINKING_GUARD_SUPPRESSED_EVENT,
-            "model": engine.model_name,
-            "reason": guard.stop_reason,
-            "counted_chars": guard.total_chars,
-            "max_chars": guard.max_chars,
+            **data,
+            "reason": data.get("stop_reason"),
+            "event": event,
+            "data": data,
         },
     )
 
 
+def log_guard_trip(engine: Any, guard: ThinkingRepetitionGuard) -> None:
+    """Say when the guard first trips: the moment the live reasoning goes quiet."""
+    data = guard_log_data(guard, model=engine.model_name)
+    data["abort_enabled"] = thinking_budget_abort_enabled()
+    _log_guard_event(THINKING_GUARD_TRIPPED_EVENT, "Thinking guard tripped.", data)
+
+
 def _emit_tool_thinking(
-    guard: ThinkingRepetitionGuard | None, text: str, parts: list[str]
+    engine: Any, guard: ThinkingRepetitionGuard | None, text: str, parts: list[str]
 ) -> Generator[StreamChunk, None, None]:
-    if not text or (guard is not None and guard.feed(text)):
+    if not text:
+        return
+    if guard is not None and guard.feed(text):
+        if guard.dropped_deltas == 1:
+            log_guard_trip(engine, guard)
+        # Abort off: the rest of the reasoning is hidden but the generation
+        # runs on, so name that on the live row instead of going silent.
+        notice = take_hidden_reasoning_notice(guard)
+        if notice:
+            yield StreamingEvent(kind=THINKING_STATUS_EVENT_KIND, text=notice)
         return
     parts.append(text)
     yield StreamingEvent(kind="thinking", text=text)
@@ -240,6 +279,7 @@ def _stream_tool_response(  # noqa: C901, PLR0912, PLR0913, PLR0915 - bounded SS
                 chunk,
                 model_name=engine.model_name,
                 provider=engine._PROVIDER_LABEL,
+                time_to_first_token_ms=engine._current_time_to_first_token_ms(),
             )
         normalized = list(normalizer.process_chunk(chunk))
         if _collect_normalized_tool_calls(normalized, tool_calls, truncated=truncated):
@@ -264,7 +304,7 @@ def _stream_tool_response(  # noqa: C901, PLR0912, PLR0913, PLR0915 - bounded SS
         if reasoning:
             native_thinking_seen = True
             if engine._reasoning_output_enabled():
-                yield from _emit_tool_thinking(guard, reasoning, thinking_parts)
+                yield from _emit_tool_thinking(engine, guard, reasoning, thinking_parts)
             else:
                 _log_native_reasoning_suppressed(engine, reasoning)
         content = _normalize_content(delta.get("content"))
@@ -275,7 +315,7 @@ def _stream_tool_response(  # noqa: C901, PLR0912, PLR0913, PLR0915 - bounded SS
                 parsed_reasoning, parsed_visible = parser.feed(content)
                 parsed_reasoning = engine._sanitize_thinking(parsed_reasoning)
                 visible_content = engine._sanitize_content(parsed_visible)
-            yield from _emit_tool_thinking(guard, parsed_reasoning, thinking_parts)
+            yield from _emit_tool_thinking(engine, guard, parsed_reasoning, thinking_parts)
             if visible_content:
                 engine._record_visible_output(visible_content)
                 content_parts.append(visible_content)
@@ -289,10 +329,23 @@ def _stream_tool_response(  # noqa: C901, PLR0912, PLR0913, PLR0915 - bounded SS
             and thinking_budget_abort_enabled()
         ):
             return usage, saw_sentinel, True, inband_error
+        if normalizer.tool_input_rejected:
+            # Dogfood MQ-033 (one delete_file call streamed 41.6 KB of arguments
+            # for 3 minutes): the rejected call's input is already dropped, so stop
+            # reading; leaving the stream closes the response and the provider
+            # stops generating instead of running on to max output tokens.
+            # The deliberate stop is a definite end, reported as a clean one so
+            # the result takes the existing rejected-call path (``stop``, no
+            # tool calls, ``tool_call_rejected_reason``) and no terminal gap.
+            # A call already completed from parsed dict arguments goes too: the
+            # model is told none of the response ran.
+            tool_calls.clear()
+            saw_sentinel = True
+            break
     if parser is not None and not native_thinking_seen:
         tail_reasoning, tail_visible = parser.flush()
         yield from _emit_tool_thinking(
-            guard, engine._sanitize_thinking(tail_reasoning), thinking_parts
+            engine, guard, engine._sanitize_thinking(tail_reasoning), thinking_parts
         )
         if (
             not (saw_sentinel or normalizer.saw_terminal_evidence)

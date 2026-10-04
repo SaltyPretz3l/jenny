@@ -97,7 +97,7 @@ def _write_linux_contract(target: Path, windows: dict[str, object]) -> Path:
 
 
 def _lock_pins(checker: ModuleType, lock: Path) -> dict[str, str]:
-    pins, errors = checker._parse_hashed_lock(lock)  # noqa: SLF001
+    pins, errors = checker._parse_hashed_lock(lock)
     assert errors == []
     return pins
 
@@ -258,7 +258,7 @@ def test_linux_bundle_rejects_wrong_distribution(
 def test_windows_bundle_marker_keeps_tzdata(tmp_path: Path) -> None:
     checker = _load_script("scripts/checks/check_python_runtime_bundle.py", "windows")
     existing = _load_script("tests/sidecar/test_python_runtime_bundle.py", "fixture")
-    embed, wheelhouse = existing._build_valid_bundle(tmp_path)  # noqa: SLF001
+    embed, wheelhouse = existing._build_valid_bundle(tmp_path)
     assert checker.validate_python_runtime_bundle(
         tmp_path, embed_dir=embed, wheelhouse_dir=wheelhouse, probe_python=False
     ) == []
@@ -305,21 +305,21 @@ def test_runtime_pins_evaluate_markers_for_target(tmp_path: Path) -> None:
     checker = _load_script("scripts/checks/check_python_runtime_bundle.py", "markers")
     lock = tmp_path / "requirements-lock.txt"
     _write_synthetic_lock(lock, "python_version < '3'")
-    assert checker._runtime_pins_for_target(lock, "linux") == ({"foo": "1.0"}, [])  # noqa: SLF001
-    assert checker._runtime_pins_for_target(lock, "win32") == ({}, [])  # noqa: SLF001
+    assert checker._runtime_pins_for_target(lock, "linux") == ({"foo": "1.0"}, [])
+    assert checker._runtime_pins_for_target(lock, "win32") == ({}, [])
 
 
 def test_runtime_pins_reject_invalid_marker_and_missing_packaging(tmp_path: Path) -> None:
     checker = _load_script("scripts/checks/check_python_runtime_bundle.py", "bad_markers")
     lock = tmp_path / "requirements-lock.txt"
     _write_synthetic_lock(lock, "sys_platform === 'linux'")
-    _pins, errors = checker._runtime_pins_for_target(lock, "linux")  # noqa: SLF001
+    _pins, errors = checker._runtime_pins_for_target(lock, "linux")
     assert any("bar" in error for error in errors)
 
     monkeypatch = pytest.MonkeyPatch()
     monkeypatch.setattr(checker, "Marker", None)
     try:
-        _pins, errors = checker._runtime_pins_for_target(lock, "linux")  # noqa: SLF001
+        _pins, errors = checker._runtime_pins_for_target(lock, "linux")
     finally:
         monkeypatch.undo()
     assert "packaging is required to evaluate lock markers" in errors
@@ -329,9 +329,9 @@ def test_runtime_pins_evaluate_python_markers_against_the_bundle(tmp_path: Path)
     checker = _load_script("scripts/checks/check_python_runtime_bundle.py", "python_markers")
     lock = tmp_path / "requirements-lock.txt"
     _write_synthetic_lock(lock, "python_full_version >= '3.13'")
-    kept = checker._runtime_pins_for_target(lock, "linux", "3.13.15")  # noqa: SLF001
+    kept = checker._runtime_pins_for_target(lock, "linux", "3.13.15")
     assert kept == ({"foo": "1.0", "bar": "1.0"}, [])
-    dropped = checker._runtime_pins_for_target(lock, "linux", "3.11.9")  # noqa: SLF001
+    dropped = checker._runtime_pins_for_target(lock, "linux", "3.11.9")
     assert dropped == ({"foo": "1.0"}, [])
 
 
@@ -344,15 +344,15 @@ def test_runtime_pins_evaluate_implementation_and_machine_markers(
         lock, "implementation_version >= '3.13' and platform_machine == 'x86_64'"
     )
 
-    linux = checker._runtime_pins_for_target(  # noqa: SLF001
+    linux = checker._runtime_pins_for_target(
         lock, "linux", "3.13.15", architecture="x64"
     )
     assert linux == ({"foo": "1.0", "bar": "1.0"}, [])
-    windows = checker._runtime_pins_for_target(  # noqa: SLF001
+    windows = checker._runtime_pins_for_target(
         lock, "win32", "3.13.15", architecture="x64"
     )
     assert windows == ({}, [])
-    unsupported = checker._runtime_pins_for_target(  # noqa: SLF001
+    unsupported = checker._runtime_pins_for_target(
         lock, "linux", "3.13.15", architecture="riscv"
     )
     assert unsupported == (
@@ -365,6 +365,6 @@ def test_lock_parser_rejects_wildcard_pins(tmp_path: Path) -> None:
     checker = _load_script("scripts/checks/check_python_runtime_bundle.py", "wildcard")
     lock = tmp_path / "requirements-lock.txt"
     lock.write_text(f"foo==1.* \\\n    --hash=sha256:{'0' * 64}\n", encoding="utf-8")
-    _pins, errors = checker._parse_hashed_lock(lock)  # noqa: SLF001
+    _pins, errors = checker._parse_hashed_lock(lock)
     assert any("unparseable" in error for error in errors)
     assert checker.PIN_RE.fullmatch("pandas==3.*") is None

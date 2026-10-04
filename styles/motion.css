@@ -37,3 +37,26 @@
   from { opacity: 0; }
   to   { opacity: 1; }
 }
+
+@keyframes status-dot-pulse {
+  0%,
+  100% {
+    opacity: 1;
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--status-dot-accent) 32%, transparent);
+  }
+
+  50% {
+    opacity: 0.55;
+    box-shadow: 0 0 0 5px color-mix(in srgb, var(--status-dot-accent) 14%, transparent);
+  }
+}
+
+@keyframes tool-call-running-breathe {
+  from { opacity: 1; }
+  to { opacity: 0.55; }
+}
+
+@keyframes shimmer-text {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
+}

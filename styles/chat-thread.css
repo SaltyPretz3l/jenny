@@ -49,7 +49,7 @@
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: calc(var(--space-7) * var(--chat-zoom-factor, 1));
+  gap: var(--space-7);
   width: min(560px, calc(100vw - 120px));
   max-width: 100%;
   text-align: center;
@@ -62,15 +62,12 @@
 .hero-avatar {
   display: grid;
   place-items: center;
-  width: calc(50px * var(--chat-zoom-factor, 1));
-  height: calc(50px * var(--chat-zoom-factor, 1));
+  width: 50px;
+  height: 50px;
   border-radius: 50%;
   background: var(--widget-hero-avatar-bg);
   color: color-mix(in srgb, var(--bg-base) 88%, black);
-  /* Literal 26px (was --font-size-6xl) so the chat hero avatar stays governed
-     solely by --chat-zoom-factor and does not compound with the global
-     --font-scale typography axis. */
-  font-size: calc(26px * var(--chat-zoom-factor, 1));
+  font-size: var(--font-size-6xl);
   /* Anastasia ships a single 400 weight; anything heavier would be synthesized
      (faux bold), which distorts display faces. */
   font-weight: 400;
@@ -87,12 +84,8 @@
 }
 
 .hero-title {
-  margin: calc(var(--space-4) * var(--chat-zoom-factor, 1)) 0 0;
-  font-size: clamp(
-    calc(28px * var(--chat-zoom-factor, 1)),
-    calc(3vw * var(--chat-zoom-factor, 1)),
-    calc(40px * var(--chat-zoom-factor, 1))
-  );
+  margin: var(--space-4) 0 0;
+  font-size: var(--font-size-display-3);
   font-family: var(--font-family-display);
   font-weight: 700;
   letter-spacing: -0.04em;
@@ -103,7 +96,7 @@
   margin: 0;
   max-width: 540px;
   color: var(--text-secondary);
-  font-size: calc(14px * var(--chat-zoom-factor, 1));
+  font-size: var(--font-size-body);
   line-height: 1.55;
 }
 
@@ -115,9 +108,8 @@
   border: 1px solid color-mix(in srgb, var(--border-default) 60%, transparent);
   border-radius: var(--radius-pill);
   color: var(--text-muted);
-  font-size: calc(12px * var(--chat-zoom-factor, 1));
+  font-size: var(--font-size-caption);
   line-height: 1.4;
-  letter-spacing: 0.01em;
 }
 
 .chat-thread-stage {
@@ -145,7 +137,7 @@
   overflow-y: auto;
   overflow-anchor: none;
   overscroll-behavior-y: contain;
-  scroll-padding-bottom: calc(24px * var(--chat-zoom-factor, 1));
+  scroll-padding-bottom: 24px;
   scrollbar-gutter: stable;
   scrollbar-width: thin;
   scrollbar-color: var(--widget-scrollbar-color) transparent;
@@ -262,68 +254,46 @@
 }
 
 :root {
-  --sprite-holo-opacity-idle: 0.34;
-  --sprite-holo-filter-idle: saturate(1.28) brightness(1.16);
-  --sprite-holo-ring-width-idle: 2.4px;
-  --sprite-holo-shadow-idle:
-    0 10px 22px rgba(0, 0, 0, 0.2),
-    0 0 20px color-mix(in srgb, var(--widget-input-focus-glow) 32%, transparent),
-    inset 0 1px 0 color-mix(in srgb, var(--text-primary) 8%, transparent);
-  --sprite-holo-opacity-streaming: 0.96;
-  --sprite-holo-filter-streaming: saturate(1.48) brightness(1.32);
-  --sprite-holo-ring-width-streaming: 3.4px;
-  --sprite-holo-shadow-streaming:
-    0 0 0 1px rgba(0, 0, 0, 0.26),
-    0 10px 24px rgba(109, 130, 255, 0.2),
-    0 0 32px color-mix(in srgb, var(--widget-input-focus-glow) 92%, transparent),
-    inset 0 1px 0 rgba(255, 255, 255, 0.12);
   /* Quiet-timeline overhaul: the rail is orientation furniture, not content —
      smaller dots + lower opacity keep it present without competing with the
-     one-liner machinery. bold-graph below stays the deliberately loud opt-in. */
-  --thread-dot-size: calc(5px * var(--chat-zoom-factor, 1));
-  --thread-dot-hit-size: max(24px, calc(24px * var(--chat-zoom-factor, 1)));
+     one-liner machinery. */
+  --thread-dot-size: 5px;
+  --thread-dot-hit-size: 24px;
   --thread-rail-width: 1px;
   --thread-rail-opacity: 0.35;
-  --thread-node-gap: calc(14px * var(--chat-zoom-factor, 1));
+  --thread-node-gap: 14px;
   --thread-holo-scale: 1;
-  --_dot-offset: calc(10px * var(--chat-zoom-factor, 1));
+  --_dot-offset: 10px;
 }
 
 :root[data-thread-style="subtle"] {
-  --thread-dot-size: calc(5px * var(--chat-zoom-factor, 1));
-  --thread-dot-hit-size: max(24px, calc(24px * var(--chat-zoom-factor, 1)));
+  --thread-dot-size: 5px;
+  --thread-dot-hit-size: 24px;
   --thread-rail-width: 1px;
   --thread-rail-opacity: 0.35;
-  --thread-node-gap: calc(14px * var(--chat-zoom-factor, 1));
-}
-
-:root[data-thread-style="bold-graph"] {
-  --thread-dot-size: calc(10px * var(--chat-zoom-factor, 1));
-  --thread-dot-hit-size: max(28px, calc(28px * var(--chat-zoom-factor, 1)));
-  --thread-rail-width: 2px;
-  --thread-rail-opacity: 0.74;
-  --thread-node-gap: calc(18px * var(--chat-zoom-factor, 1));
+  --thread-node-gap: 14px;
 }
 
 .chat-sprite-layer {
   position: absolute;
-  inset: var(--chat-thread-offset) auto var(--composer-safe-offset) 0;
+  inset-block: var(--chat-thread-offset) var(--composer-safe-offset);
+  inset-inline-start: 0;
+  inset-inline-end: auto;
   width: var(--chat-sprite-rail-offset);
   overflow: visible;
   pointer-events: none;
   z-index: calc(var(--z-content) + 1);
   opacity: 0;
-  transition: opacity var(--motion-duration-regular) var(--motion-ease-standard);
 }
 
 .chat-sprite-layer.visible {
   opacity: 1;
+  /* Fade in only: an old session's identity never fades out over the next
+     thread. Reduced motion zeroes the duration token. */
+  transition: opacity var(--transition-regular);
 }
 
 .chat-assistant-sprite {
-  --sprite-holo-opacity: var(--sprite-holo-opacity-idle);
-  --sprite-holo-filter: var(--sprite-holo-filter-idle);
-  --sprite-holo-ring-width: var(--sprite-holo-ring-width-idle);
   position: absolute;
   top: 0;
   inset-inline-start: 2px;
@@ -332,124 +302,12 @@
   place-items: center;
   width: var(--chat-sprite-size);
   height: var(--chat-sprite-size);
-  border-radius: var(--radius-pill);
-  border: 1px solid var(--surface-assistant-sprite-border);
-  background: var(--surface-assistant-sprite-background);
-  box-shadow: var(--sprite-holo-shadow-idle);
+  /* The J keeps the widget sprite color; the activity dot inside owns its
+     own tones (chat-sprite-dot.css). No disc, border or glow: the sprite is
+     a coordinate space for the dot and the J. */
   color: var(--widget-sprite-color);
-  opacity: 0.84;
   isolation: isolate;
   transform: translate3d(0, 0, 0);
-  /* Promote the sprite only while it is live; settled thread anchors stay
-     static and do not hold compositor resources indefinitely. */
-  transition:
-    border-color var(--motion-duration-regular) var(--motion-ease-standard),
-    box-shadow var(--motion-duration-emphasis) var(--motion-ease-standard),
-    filter var(--motion-duration-emphasis) var(--motion-ease-standard),
-    opacity var(--motion-duration-regular) var(--motion-ease-standard);
-}
-
-.chat-sprite-holo {
-  position: absolute;
-  top: calc(-1 * var(--sprite-holo-border-width, 2px));
-  inset-inline-start: calc(-1 * var(--sprite-holo-border-width, 2px));
-  width: calc(100% + (2 * var(--sprite-holo-border-width, 2px)));
-  height: calc(100% + (2 * var(--sprite-holo-border-width, 2px)));
-  display: block;
-  pointer-events: none;
-  z-index: 0;
-  border-radius: 50%;
-  mix-blend-mode: screen;
-}
-
-:root[data-palette="paper"] .chat-sprite-holo,
-:root[data-palette="woolly"] .chat-sprite-holo {
-  mix-blend-mode: multiply;
-}
-
-.chat-assistant-sprite::before,
-.chat-assistant-sprite::after {
-  content: "";
-  position: absolute;
-  inset: calc(-1 * var(--sprite-holo-ring-width));
-  padding: var(--sprite-holo-ring-width);
-  border-radius: inherit;
-  pointer-events: none;
-  background: conic-gradient(
-    from 270deg,
-    var(--surface-assistant-sprite-holo)
-  );
-  -webkit-mask:
-    linear-gradient(#fff 0 0) content-box,
-    linear-gradient(#fff 0 0);
-  -webkit-mask-composite: xor;
-  mask:
-    linear-gradient(#fff 0 0) content-box,
-    linear-gradient(#fff 0 0);
-  mask-composite: exclude;
-}
-
-.chat-assistant-sprite::before {
-  opacity: var(--sprite-holo-opacity);
-  filter: var(--sprite-holo-filter);
-  transform: scale(0.996);
-  transform-origin: center;
-  transition:
-    opacity var(--motion-duration-emphasis) var(--motion-ease-standard),
-    filter var(--motion-duration-emphasis) var(--motion-ease-standard),
-    transform var(--motion-duration-regular) var(--motion-ease-standard);
-}
-
-.chat-assistant-sprite::after {
-  inset: calc(-1 * (var(--sprite-holo-ring-width) + 1px));
-  padding: calc(var(--sprite-holo-ring-width) + 1px);
-  opacity: 0;
-  filter: blur(10px) var(--sprite-holo-filter);
-  transform: scale(1.04);
-  transform-origin: center;
-  transition:
-    opacity var(--motion-duration-emphasis) var(--motion-ease-standard),
-    filter var(--motion-duration-emphasis) var(--motion-ease-standard),
-    transform var(--motion-duration-regular) var(--motion-ease-standard);
-}
-
-@supports not ((-webkit-mask-composite: xor) or (mask-composite: exclude)) {
-  .chat-assistant-sprite::before {
-    inset: -1px;
-    padding: 0;
-    background: none;
-    border: 1px solid color-mix(in srgb, var(--surface-assistant-sprite-holo) 72%, transparent);
-    -webkit-mask: none;
-    mask: none;
-  }
-
-  .chat-assistant-sprite::after {
-    display: none;
-  }
-}
-
-.chat-assistant-sprite.is-streaming {
-  --sprite-holo-opacity: var(--sprite-holo-opacity-streaming);
-  --sprite-holo-filter: var(--sprite-holo-filter-streaming);
-  --sprite-holo-ring-width: var(--sprite-holo-ring-width-streaming);
-  border-color: var(--widget-sprite-streaming-border);
-  box-shadow: var(--sprite-holo-shadow-streaming);
-  opacity: 0.94;
-  will-change: transform;
-}
-
-.chat-assistant-sprite.is-streaming::before {
-  transform: scale(1);
-  animation: sprite-holo-cycle var(--holo-duration-active) linear infinite;
-  will-change: filter, opacity, transform;
-}
-
-.chat-assistant-sprite.is-streaming::after {
-  opacity: 0.72;
-  filter: blur(12px) saturate(1.35) brightness(1.16);
-  transform: scale(1.12);
-  animation: sprite-holo-cycle var(--holo-duration-active) linear infinite;
-  will-change: filter, opacity, transform;
 }
 
 .chat-assistant-sprite-glyph {
@@ -457,9 +315,9 @@
   z-index: var(--z-content);
   /* Anastasia is a lighter-optical-weight display face than Fraunces bold;
      16px (up from the previous 14px bold) restores comparable visual weight
-     without crowding the smallest sprite breakpoint (22px circle, see
+     without crowding the smallest sprite breakpoint (22px slot, see
      --chat-sprite-size in chat-media-queries.css). */
-  font-size: 16px;
+  font-size: var(--font-size-heading);
   font-family: var(--font-family-brand);
   letter-spacing: 0.02em;
   text-transform: uppercase;
@@ -467,15 +325,6 @@
      parent's `place-items: center` centers the visible J — conservative,
      unverified without a GUI pass. */
   line-height: 1;
-}
-
-.chat-comet-svg {
-  position: absolute;
-  top: 0;
-  inset-inline-start: 0;
-  pointer-events: none;
-  overflow: visible;
-  z-index: 0;
 }
 
 .chat-timeline {
@@ -571,15 +420,15 @@
    syncChatEntryCvExemptAttribute. Bottom-2 is a pure structural selector
    (belt-and-braces for pinned-to-bottom height stability). DOM-window and
    fully mounted strategies explicitly force content-visibility: visible. */
-:root[data-chat-content-visibility="on"] #chatTimeline[data-timeline-render-strategy="content-visibility"] .chat-entry {
+:root[data-chat-content-visibility="on"] .chat-timeline[data-timeline-render-strategy="content-visibility"] .chat-entry {
   content-visibility: auto;
   contain-intrinsic-size: auto var(--chat-entry-est-height, 150px);
 }
 
-:root[data-chat-content-visibility="on"] #chatTimeline[data-timeline-render-strategy="content-visibility"] .chat-entry[data-cv-exempt="true"],
-:root[data-chat-content-visibility="on"] #chatTimeline[data-timeline-render-strategy="content-visibility"] .chat-thread-root:nth-last-child(-n+2) .chat-entry,
-#chatTimeline[data-timeline-render-strategy="dom-window"] .chat-entry,
-#chatTimeline[data-timeline-render-strategy="none"] .chat-entry {
+:root[data-chat-content-visibility="on"] .chat-timeline[data-timeline-render-strategy="content-visibility"] .chat-entry[data-cv-exempt="true"],
+:root[data-chat-content-visibility="on"] .chat-timeline[data-timeline-render-strategy="content-visibility"] .chat-thread-root:nth-last-child(-n+2) .chat-entry,
+.chat-timeline[data-timeline-render-strategy="dom-window"] .chat-entry,
+.chat-timeline[data-timeline-render-strategy="none"] .chat-entry {
   content-visibility: visible;
 }
 
@@ -648,7 +497,7 @@
   gap: var(--space-3);
 }
 
-/* Stream units paint in place; .stream-reveal-entry and .is-revealed remain settle-logic markers only. */
+/* Answer stream units paint in place; there are no reveal markers. */
 /* chat_stream_token_fade: the tail unit's newly appended text fades in per
    frame; opacity only (inline spans must not transform), token-timed. */
 @keyframes chat-stream-token-in { from { opacity: 0; } to { opacity: 1; } }
@@ -685,7 +534,7 @@
   width: 100%;
   overflow-wrap: anywhere;
   padding: var(--space-6) var(--space-8);
-  border-radius: var(--radius-md);
+  border-radius: var(--tl-radius-bubble);
   background: var(--tl-user-bubble-bg);
   border: 0;
   color: var(--text-primary);
@@ -695,10 +544,6 @@
   padding: var(--space-1) 0;
   color: var(--mat-work-text);
   overflow-x: hidden;
-}
-
-.chat-bubble-streaming[data-streaming-bubble="true"] .chat-stream-unit {
-  display: block;
 }
 
 /* Legacy read-only surface (old sessions only — the feature no longer emits
@@ -726,7 +571,7 @@
 .proactive-suggestion-title {
   color: var(--text-primary);
   font-size: var(--tl-font-prose);
-  font-weight: var(--tl-weight-emphasis);
+  font-weight: var(--tl-weight-label);
 }
 
 .proactive-suggestion-body {
@@ -741,5 +586,5 @@
 }
 
 .proactive-suggestion-action {
-  min-height: calc(36px * var(--chat-zoom-factor, 1));
+  min-height: 36px;
 }

@@ -209,15 +209,7 @@ test('release-compat: current V6 Stage 8 generation is readable without rewritin
 
 test('release-compat: V7 future generation schema is preserved, read-only, and unexecuted', async () => {
   const rootDir = loadFixture('plugin-store-v7-future');
-  let policyInitializations = 0;
-  await assertReadOnlyAndMutationBlocked(rootDir, 'generation_schema_newer', {
-    managedPolicy: {
-      initialize: async () => { policyInitializations += 1; return { ok: true }; },
-      status: () => ({ status: 'blocked', reason: 'managed_policy_loading' }),
-      guard: () => ({ ok: false, reason: 'managed_policy_loading' }),
-    },
-  });
-  assert.equal(policyInitializations, 0);
+  await assertReadOnlyAndMutationBlocked(rootDir, 'generation_schema_newer');
 });
 
 test('release-compat: current V1 active state loads and rehydrates without migration', async () => {

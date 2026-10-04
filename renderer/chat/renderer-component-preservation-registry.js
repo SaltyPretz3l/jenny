@@ -84,24 +84,35 @@
       {
         name: 'mermaid',
         selector: '.markdown-mermaid-block[data-mermaid-source]',
+        tagNames: new Set(['DIV']),
         preserveIdentity: true,
         source(node) { return String(node.getAttribute('data-mermaid-source') || '').trim(); },
       },
       {
         name: 'code',
         selector: '.markdown-code-block',
+        tagNames: new Set(['DIV']),
         preserveIdentity: true,
         source: readCodeSource,
       },
       {
         name: 'media',
         selector: 'audio, video',
+        tagNames: new Set(['AUDIO', 'VIDEO']),
         preserveIdentity: true,
         source: readMediaSource,
       },
       {
+        name: 'artifact-image',
+        selector: 'img[data-inv-artifact-image-key]',
+        tagNames: new Set(['IMG']),
+        preserveIdentity: true,
+        source(node) { return String(node.getAttribute('data-inv-artifact-image-key') || '').trim(); },
+      },
+      {
         name: 'details',
         selector: 'details',
+        tagNames: new Set(['DETAILS']),
         preserveIdentity: true,
         source: readDetailsSource,
       },
@@ -147,7 +158,9 @@
         name: 'expanded-row',
         selector: '.tool-call-row[data-expanded]',
         preserveIdentity: false,
-        source(node) { return readIdentity(node); },
+        // A row re-rendered under another transcript view (answers | thinking
+        // | everything) is a different source: its new default wins.
+        source(node) { return `${readIdentity(node)}${node.getAttribute('data-transcript-view') || ''}`; },
         capture(node) { return node.getAttribute('data-expanded') === 'true'; },
         restore(node, expanded) {
           // A replacement row rendered collapsed and lazy (details not
@@ -157,10 +170,20 @@
           // the user's, whose toggle the renderer already honours.
           if (expanded && node.getAttribute('data-tool-details-materialized') === 'false') return;
           node.setAttribute('data-expanded', expanded ? 'true' : 'false');
-          for (const toggle of queryAllSafe(node, '[aria-expanded]:not(.tool-call-row-body *)')) {
+          // One walk for both sets (timeline-perf 2026-10-04: this restore runs
+          // for every tool row of the active turn root on every event, and the
+          // `[aria-expanded]:not(.tool-call-row-body *)` selector was its cost).
+          // Same members, same document order, same writes as the two queries.
+          const toggles = [];
+          const bodies = [];
+          for (const element of queryAllSafe(node, '[aria-expanded], .tool-call-row-body')) {
+            if (element.hasAttribute('aria-expanded') && !element.parentElement?.closest('.tool-call-row-body')) toggles.push(element);
+            if (element.classList.contains('tool-call-row-body')) bodies.push(element);
+          }
+          for (const toggle of toggles) {
             toggle.setAttribute('aria-expanded', expanded ? 'true' : 'false');
           }
-          for (const body of queryAllSafe(node, '.tool-call-row-body')) {
+          for (const body of bodies) {
             if (expanded) body.removeAttribute('inert');
             else body.setAttribute('inert', '');
           }
@@ -197,9 +220,17 @@
     return `component:${definition.name}:${hashText(source)}`;
   }
 
+  // `tagNames` (optional per definition, upper-case): the element tag names
+  // the selector can match. Checked before `matches`, because getNodeKey runs
+  // for every element a keyed morph visits (~5 selector matches per node,
+  // 18% of the renderer's time on a 119-row turn, timeline-perf 2026-09-30).
+  // A definition without `tagNames` keeps the full `matches` path; order is
+  // unchanged, so the first matching definition still wins.
   function findDefinition(definitions, node, identityOnly) {
+    const tagName = String(node?.tagName || '');
     for (const definition of definitions) {
       if (identityOnly && definition.preserveIdentity !== true) continue;
+      if (definition.tagNames && !definition.tagNames.has(tagName)) continue;
       if (matchesSafe(node, definition.selector)) return definition;
     }
     return null;

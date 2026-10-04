@@ -5,10 +5,7 @@ const {
   buildTerminalRepairOverlayMessage,
   overlayPendingTerminalRepairs,
 } = require('./terminal-repair-overlay');
-
-function normalizeId(value) {
-  return typeof value === 'string' ? value.trim() : '';
-}
+const { normalizeId } = require('../shared/normalize');
 
 function messageIntentMatches(canonical, intended) {
   if (!canonical || !intended || normalizeId(canonical.id) !== normalizeId(intended.id)) {

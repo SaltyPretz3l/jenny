@@ -14,7 +14,17 @@ const { projectTurnTree } = require('../../renderer/chat/renderer-turn-tree-proj
 const { buildMessageIndex, buildPersistedTurnEvent } = require('./canonical-turn-event-collector-normalize');
 const { normalizeId } = require('./canonical-turn-event-normalization');
 
+const {
+  CANCEL_REASON_USER,
+  buildTerminalErrorPayload,
+  createCancellationError,
+  enrichTerminalErrorPayloadForEmit,
+} = require('./chat-stream-terminal-utils');
+
 const TOOL_EXECUTION_KINDS = new Set(['tool_executing', 'tool_result']);
+// Stop on the paused stream and Discard from the queue strip. A session being
+// cancelled or deleted has no live presentation left to end.
+const USER_CANCEL_REASONS = new Set(['user', CANCEL_REASON_USER]);
 
 function isCancelledPausedWork(work) {
   return work?.status === 'cancelled' && Boolean(work.checkpoint_ref)
@@ -48,6 +58,27 @@ function backfillCancelledPausedTurnEvents(conversationStore, work) {
   return Number(commit?.appended) || 0;
 }
 
+// A paused leg gets no terminal event of its own, so when the user stops or
+// discards it the chat kept the stream live (Stop shown, "Still at it…")
+// until reload (dogfood HB-034). One cancelled terminal for the paused stream
+// ends that presentation through the renderer's ordinary terminal path. Work
+// paused by an earlier process has no live stream, so only this incarnation's
+// attempts emit.
+function emitCancelledPausedTurnTerminal(service, work, incarnation) {
+  if (!isCancelledPausedWork(work) || !USER_CANCEL_REASONS.has(String(work.transition?.reason || ''))) return false;
+  const sessionId = normalizeId(work.session_id);
+  const streamId = normalizeId(work.attempt?.stream_id);
+  if (!sessionId || !streamId || !incarnation || work.attempt?.incarnation !== incarnation
+    || typeof service?.emit !== 'function') return false;
+  service.emit('chat-stream', {
+    type: 'error',
+    ...enrichTerminalErrorPayloadForEmit(buildTerminalErrorPayload(createCancellationError(CANCEL_REASON_USER))),
+    streamId, sessionId, requestId: streamId, turnId: normalizeId(work.turn_id),
+    traceId: streamId, trace_id: streamId,
+  });
+  return true;
+}
+
 // Turns cancelled while paused before this backfill existed stay orphaned
 // until repaired. Every cancelled row is checked (a fixed window would starve
 // older turns forever); the pass is idempotent, since a repaired turn has no
@@ -66,4 +97,5 @@ function repairCancelledPausedTurns(runtimeStore, conversationStore) {
   return { appended, failed };
 }
 
-module.exports = { backfillCancelledPausedTurnEvents, isCancelledPausedWork, repairCancelledPausedTurns };
+module.exports = { backfillCancelledPausedTurnEvents, emitCancelledPausedTurnTerminal, isCancelledPausedWork,
+  repairCancelledPausedTurns };

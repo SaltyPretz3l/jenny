@@ -56,7 +56,8 @@ test('request events refresh list, compact strip and tabs through waiting, resum
     assert.ok(row, 'session row exists');
     assert.ok(tab, 'session tab exists');
     for (const node of [row, tab, currentChip]) assert.equal(node.dataset.sessionDominantState, kind);
-    assert.equal(tab.querySelector('.workspace-rail-indicator').textContent, label);
+    assert.equal(tab.querySelector('.workspace-rail-state-dot').dataset.sessionDominantState, kind);
+    assert.equal(tab.querySelector('.workspace-rail-tab-button').title, label ? `${label} · ${id}` : id);
     for (const node of [row.querySelector('[data-session-open]'), tab.querySelector('.workspace-rail-tab-button'), currentChip]) {
       if (label) assert.ok(node.getAttribute('aria-label').includes(label), node.getAttribute('aria-label'));
       if (['approval', 'plan_review', 'input_needed'].includes(kind)) assert.ok(!node.getAttribute('aria-label').includes('Streaming'));
@@ -77,7 +78,7 @@ test('request events refresh list, compact strip and tabs through waiting, resum
     check(kind, label);
     check('streaming', 'Streaming', 'background-session');
     assert.equal(window.rendererMultiStreamController.isSessionSendBusy(sessionId), true);
-    assert.equal(doc.querySelector(`[data-workspace-close="${sessionId}"]`).disabled, true);
+    assert.equal(doc.querySelector(`[data-workspace-close="${sessionId}"]`), null, 'a busy tab renders no close button');
     doc.querySelector(`[data-strip-session-id="${sessionId}"]`).focus();
     await waitForUi(window, 20);
     assert.equal(doc.getElementById('chatsStripPeekState').textContent, label);
@@ -128,11 +129,11 @@ test('attention follows resolution, stale questions and terminal cleanup without
 });
 
 test('all waiting indicators select amber rules and only streaming selects pulse rules', (t) => {
-  const dom = new JSDOM('<div class="session-row"><span class="session-row__dot"></span></div><div class="workspace-rail-tab"><span class="workspace-rail-indicator"></span></div><button class="chats-strip__chip"></button>');
+  const dom = new JSDOM('<div class="session-row"><span class="session-row__dot"></span></div><div class="workspace-rail-tab"><span class="workspace-rail-state-dot"></span></div><button class="chats-strip__chip"></button>');
   t.after(() => dom.window.close());
   for (const [file, selector, property] of [
     ['chats-panel.css', '.session-row', 'background'],
-    ['workspace-rail.css', '.workspace-rail-tab', 'color'],
+    ['workspace-rail.css', '.workspace-rail-tab', 'background'],
     ['chats-panel-collapsed.css', '.chats-strip__chip', 'background'],
   ]) {
     const css = readFileSync(require.resolve(`../styles/${file}`), 'utf8');
@@ -140,7 +141,7 @@ test('all waiting indicators select amber rules and only streaming selects pulse
     for (const kind of ['approval', 'plan_review', 'input_needed']) {
       node.dataset.sessionDominantState = kind;
       const amberRules = [...css.matchAll(/([^{}]+)\{([^{}]+)\}/g)].filter((match) => match[2].includes(`${property}: var(--sidebar-state-approval-color)`));
-      assert.ok(amberRules.some((match) => node.matches(match[1].trim().replace(/::after| \.session-row__dot| \.workspace-rail-indicator/g, ''))), `${file}: ${kind}`);
+      assert.ok(amberRules.some((match) => node.matches(match[1].trim().replace(/::after| \.session-row__dot| \.workspace-rail-state-dot/g, ''))), `${file}: ${kind}`);
     }
     assert.ok(!/\[data-session-dominant-state="(?:approval|plan_review|input_needed)"\][^{]*\{[^}]*animation\s*:/s.test(css));
   }

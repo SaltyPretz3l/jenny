@@ -1,13 +1,13 @@
 ---
 kind: process-doc
-last_reviewed: 2026-09-07
+last_reviewed: 2026-10-03
 ---
 
 # Jenny i18n string ledger
 
 The string ledger is the migration boundary for Jenny's English user-interface copy. It records each literal at each display sink as a separate occurrence, so migrating or deleting one site removes exactly one baseline allowance. The Python policy wrapper runs the Node scanner and is registered in the repository policy sequence.
 
-The scanner covers static root HTML, renderer JavaScript, and the native-dialog and renderer-bound message shapes in Electron services, while model-facing results under `services/tools/` are recorded as `excluded:model`. Python sidecar text is intentionally outside this migration. JavaScript is parsed with Espree rather than regular expressions, allowing template literals, conditionals, concatenations, arrays, and one-hop identifier resolution to retain their source roles.
+The scanner covers the root HTML files enumerated in `scripts/i18n/ledger.js`, renderer JavaScript, `main.js`, and the native-dialog and renderer-bound message shapes in Electron services, while model-facing results under `services/tools/` are recorded as `excluded:model`. Python sidecar text is intentionally outside this migration. JavaScript is parsed with Espree rather than regular expressions, allowing template literals, conditionals, concatenations, arrays, and one-hop identifier resolution to retain their source roles.
 
 ## Commands
 
@@ -41,7 +41,8 @@ After migration:
 
 1. Run `node scripts/i18n/ledger.js scan`.
 2. Remove the stale migrated occurrence ID reported by `check` from `string_ledger_baseline.json`; do not regenerate the whole baseline merely to hide unexplained growth.
-3. Run `node scripts/i18n/ledger.js check` and the focused tests.
+3. Translate new or changed English key families in every shipped `locales/<tag>.json`; remove keys that no longer exist.
+4. Run `node scripts/i18n/build-catalogs.js`, then `node scripts/i18n/ledger.js check`, `python scripts/checks/check_i18n_catalogs.py`, and the focused tests. The catalog policy wrapper verifies generated scripts and runs strict validation.
 
 The English catalog is derived from defaults at translation calls and current English content at marked HTML sites. Conflicting defaults for the same key are scanner errors. The pseudolocale accents text, adds expansion padding, and leaves `{param}` tokens unchanged.
 
@@ -83,13 +84,13 @@ Named remainders live in `scripts/i18n/remainders.json` and match occurrences by
 
 ## Translations
 
-The shipped languages are the tags listed in `services/shell-config-normalizers.js` (`en` plus 18 others); the first-run default comes from the operating-system locale mapped onto that set in `renderer/shared/i18n-utils.js`, and Settings > Appearance > Language overrides it. The bootstrap sets `<html lang dir>` once at boot (`ar` is right-to-left), and Settings only saves the choice, so a language change takes effect after a restart.
+The shipped languages are the tags listed in `services/shell-config-normalizers.js` (`en` plus 18 others); the first-run default is seeded from `app.getLocale()` by `services/main/runtime-service-composition.js` through `mapAppLocaleToUiLanguage` in `services/i18n-main.js`. Settings > Appearance > Language persists the `chatUi.uiLanguage` choice and its renderer cache (`jenny.ui.language`). `services/main/main-window-composition.js` projects the saved tag as `jennyUiLanguage` into the desktop window URL; `renderer/shared/i18n-bootstrap.js` gives that projection precedence over the cache and loads `<tag>.catalog.js` before static-node localization. It sets `<html lang dir>` at boot (`ar` is right-to-left), so the current renderer needs a restart to switch. Main-process translation is updated when the saved language changes.
 
-The non-English catalogs in `locales/` are machine-drafted for 1.0.1: each language was authored in one Codex session from `locales/en.json`, sentence by sentence, with a residual-English audit and the mechanical validator as the floor. They have not been reviewed by native speakers. Treat wording reports as ordinary bugs: fix the value in `locales/<tag>.json`, run `node scripts/i18n/build-catalogs.js`, and commit both files. A dictionary or word-substitution generator is not an acceptable way to produce or repair a catalog; the first 1.0.1 drafts made that way were discarded.
+The original non-English catalogs in `locales/` were machine-drafted for 1.0.1: each language was authored in one Codex session from `locales/en.json`, sentence by sentence, with a residual-English audit and the mechanical validator as the floor. That provenance does not establish native-speaker review of the current catalogs. Treat wording reports as ordinary bugs: fix the value in `locales/<tag>.json`, run `node scripts/i18n/build-catalogs.js`, and commit both files. A dictionary or word-substitution generator is not an acceptable way to produce or repair a catalog; the first 1.0.1 drafts made that way were discarded.
 
 `validate-catalogs.js` fails on unknown keys, placeholder or plural mismatches, markup, carriage returns, and excessive expansion. The policy wrapper `check_i18n_catalogs.py` always uses `--strict`: every shipped language must cover every English key family in the same change. Use `node scripts/i18n/validate-catalogs.js --strict --only <tag>` while drafting a language. The standalone validator's non-strict mode still supports incomplete drafts with warnings and a 90% floor; it is not the shipping gate. The ledger rejects CSP values in translation calls; security policies remain code constants.
 
-The hosted browser also loads the shared runtime and catalogs. It uses the saved
+`renderer/browser/browser-i18n.js` loads the shared runtime and catalogs for the hosted browser. It uses the saved
 `jenny.ui.language` preference, otherwise the browser language, before the first
 render. Catalog failure falls back to English. Hosted catalogs are immutable build
 assets served at fixed `/locales/<tag>.json` routes, including before login.

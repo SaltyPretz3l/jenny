@@ -63,7 +63,7 @@ def test_wrapper_pipe_capture_rejects_output_over_budget(
             return 0
 
     with pytest.raises(RuntimeError, match="output exceeded"):
-        sandbox_module._capture_wrapper_output(  # noqa: SLF001
+        sandbox_module._capture_wrapper_output(
             _FakeProcess(),  # type: ignore[arg-type]
             timeout_seconds=1,
         )
@@ -167,8 +167,8 @@ def _write_fresh_marker(venv_dir: Path, config: dict[str, str]) -> None:
             {
                 "schema_version": interpreter_module.RUNTIME_MARKER_SCHEMA_VERSION,
                 "interpreter_identity": "3.12.4",
-                "requirements_fingerprint": interpreter_module._runtime_requirements_fingerprint(config),  # noqa: SLF001
-                "validated_imports": list(interpreter_module._REQUIRED_IMPORT_NAMES),  # noqa: SLF001
+                "requirements_fingerprint": interpreter_module._runtime_requirements_fingerprint(config),
+                "validated_imports": list(interpreter_module._REQUIRED_IMPORT_NAMES),
                 "created_at": time.time(),
             }
         ),
@@ -235,7 +235,7 @@ def test_install_runtime_packages_prefers_configured_offline_wheelhouse(
 
     monkeypatch.setattr(interpreter_module.bootstrap_subprocess, "run", fake_run)
 
-    interpreter_module._install_runtime_packages(  # noqa: SLF001
+    interpreter_module._install_runtime_packages(
         venv_python,
         {"tools_python_runtime_wheelhouse_dir": str(wheelhouse)},
     )
@@ -343,7 +343,7 @@ def test_validation_failure_retains_installed_staging_tree(
     assert staging_dir.is_dir()
     assert sentinel.is_file()
     assert json.loads(sentinel.read_text(encoding="utf-8"))["requirements_fingerprint"] == (
-        interpreter_module._runtime_requirements_fingerprint(config)  # noqa: SLF001
+        interpreter_module._runtime_requirements_fingerprint(config)
     )
     assert not (staging_dir / interpreter_module.RUNTIME_READY_MARKER).exists()
     assert not (venv_root / "venv").exists()
@@ -365,7 +365,7 @@ def test_sentinel_staging_revalidates_and_publishes_without_reinstall(
     (staging_dir / interpreter_module.RUNTIME_INSTALL_SENTINEL).write_text(
         json.dumps(
             {
-                "requirements_fingerprint": interpreter_module._runtime_requirements_fingerprint(  # noqa: SLF001
+                "requirements_fingerprint": interpreter_module._runtime_requirements_fingerprint(
                     config
                 ),
                 "base_interpreter": str(base_python),
@@ -423,7 +423,7 @@ def test_marker_write_failure_leaves_staging_resumable_without_reinstall(
     base_python.write_text("", encoding="utf-8")
     install_calls: list[Path] = []
     marker_calls = 0
-    original_write_marker = interpreter_module._write_runtime_marker  # noqa: SLF001
+    original_write_marker = interpreter_module._write_runtime_marker
 
     def fake_run(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
         if command[1:3] == ["-m", "venv"]:
@@ -516,23 +516,23 @@ def test_sentinel_staging_tree_never_satisfies_ready_gate(
         lambda *_args, **_kwargs: pytest.fail("unmarked staging must not be validated as ready"),
     )
 
-    assert interpreter_module._venv_is_ready(staging_dir) is None  # noqa: SLF001
+    assert interpreter_module._venv_is_ready(staging_dir) is None
 
 
 def test_marker_matches_expected_rejects_corrupted_json(tmp_path: Path) -> None:
     marker_path = tmp_path / ".jenny-ready"
     marker_path.write_text("{not valid json", encoding="utf-8")
 
-    marker = interpreter_module._read_runtime_marker(marker_path)  # noqa: SLF001
+    marker = interpreter_module._read_runtime_marker(marker_path)
 
     assert marker is None
-    assert interpreter_module._marker_matches_expected(marker) is False  # noqa: SLF001
+    assert interpreter_module._marker_matches_expected(marker) is False
 
 
 def test_marker_matches_expected_rejects_missing_fields() -> None:
     incomplete = {"schema_version": interpreter_module.RUNTIME_MARKER_SCHEMA_VERSION}
 
-    assert interpreter_module._marker_matches_expected(incomplete) is False  # noqa: SLF001
+    assert interpreter_module._marker_matches_expected(incomplete) is False
 
 
 def test_marker_matches_expected_rejects_stale_requirements_fingerprint() -> None:
@@ -540,42 +540,42 @@ def test_marker_matches_expected_rejects_stale_requirements_fingerprint() -> Non
         "schema_version": interpreter_module.RUNTIME_MARKER_SCHEMA_VERSION,
         "interpreter_identity": "3.12.4",
         "requirements_fingerprint": "stale-fingerprint-from-an-old-lock",
-        "validated_imports": list(interpreter_module._REQUIRED_IMPORT_NAMES),  # noqa: SLF001
+        "validated_imports": list(interpreter_module._REQUIRED_IMPORT_NAMES),
     }
 
-    assert interpreter_module._marker_matches_expected(marker) is False  # noqa: SLF001
+    assert interpreter_module._marker_matches_expected(marker) is False
 
 
 def test_marker_matches_expected_rejects_incomplete_validated_imports() -> None:
     marker = {
         "schema_version": interpreter_module.RUNTIME_MARKER_SCHEMA_VERSION,
         "interpreter_identity": "3.12.4",
-        "requirements_fingerprint": interpreter_module._requirements_fingerprint(),  # noqa: SLF001
+        "requirements_fingerprint": interpreter_module._requirements_fingerprint(),
         "validated_imports": ["pandas"],
     }
 
-    assert interpreter_module._marker_matches_expected(marker) is False  # noqa: SLF001
+    assert interpreter_module._marker_matches_expected(marker) is False
 
 
 def test_marker_matches_expected_accepts_a_fresh_marker() -> None:
     marker = {
         "schema_version": interpreter_module.RUNTIME_MARKER_SCHEMA_VERSION,
         "interpreter_identity": "3.12.4",
-        "requirements_fingerprint": interpreter_module._requirements_fingerprint(),  # noqa: SLF001
-        "validated_imports": list(interpreter_module._REQUIRED_IMPORT_NAMES),  # noqa: SLF001
+        "requirements_fingerprint": interpreter_module._requirements_fingerprint(),
+        "validated_imports": list(interpreter_module._REQUIRED_IMPORT_NAMES),
     }
 
-    assert interpreter_module._marker_matches_expected(marker) is True  # noqa: SLF001
+    assert interpreter_module._marker_matches_expected(marker) is True
 
 
 def test_venv_is_ready_returns_none_for_corrupted_marker(tmp_path: Path) -> None:
     venv_dir = tmp_path / "venv"
-    python_path = interpreter_module._venv_python(venv_dir)  # noqa: SLF001
+    python_path = interpreter_module._venv_python(venv_dir)
     python_path.parent.mkdir(parents=True)
     python_path.write_text("", encoding="utf-8")
     (venv_dir / interpreter_module.RUNTIME_READY_MARKER).write_text("{corrupted", encoding="utf-8")
 
-    assert interpreter_module._venv_is_ready(venv_dir) is None  # noqa: SLF001
+    assert interpreter_module._venv_is_ready(venv_dir) is None
 
 
 @windows_only
@@ -595,7 +595,7 @@ def test_ensure_runtime_venv_rebuilds_when_marker_fingerprint_is_stale(
                 "schema_version": interpreter_module.RUNTIME_MARKER_SCHEMA_VERSION,
                 "interpreter_identity": "3.12.4",
                 "requirements_fingerprint": "stale-fingerprint-from-an-old-lock",
-                "validated_imports": list(interpreter_module._REQUIRED_IMPORT_NAMES),  # noqa: SLF001
+                "validated_imports": list(interpreter_module._REQUIRED_IMPORT_NAMES),
             }
         ),
         encoding="utf-8",
@@ -628,7 +628,7 @@ def test_ensure_runtime_venv_rebuilds_when_marker_fingerprint_is_stale(
     marker = json.loads((venv_dir / interpreter_module.RUNTIME_READY_MARKER).read_text(encoding="utf-8"))
     # The rebuild stamps the fingerprint production validates against: the
     # top-level pins hashed together with the vendored wheelhouse's lock.
-    expected_fingerprint = interpreter_module._runtime_requirements_fingerprint(config)  # noqa: SLF001
+    expected_fingerprint = interpreter_module._runtime_requirements_fingerprint(config)
     assert marker["requirements_fingerprint"] == expected_fingerprint
 
 
@@ -773,7 +773,7 @@ def test_configured_missing_wheelhouse_reports_actionable_fail_closed_error(
     wheelhouse = tmp_path / "missing-wheelhouse"
 
     with pytest.raises(FileNotFoundError) as caught:
-        interpreter_module._runtime_wheelhouse(  # noqa: SLF001
+        interpreter_module._runtime_wheelhouse(
             {"tools_python_runtime_wheelhouse_dir": str(wheelhouse)}
         )
 
@@ -812,7 +812,7 @@ def test_install_runtime_packages_fails_closed_on_wheelhouse_checksum_mismatch(
     )
 
     with pytest.raises(interpreter_module.PythonRuntimeWheelhouseIntegrityError):
-        interpreter_module._install_runtime_packages(  # noqa: SLF001
+        interpreter_module._install_runtime_packages(
             venv_python, {"tools_python_runtime_wheelhouse_dir": str(wheelhouse)}
         )
 
@@ -837,7 +837,7 @@ def test_install_runtime_packages_fails_closed_on_missing_wheelhouse_manifest(
     )
 
     with pytest.raises(interpreter_module.PythonRuntimeWheelhouseIntegrityError):
-        interpreter_module._install_runtime_packages(  # noqa: SLF001
+        interpreter_module._install_runtime_packages(
             venv_python, {"tools_python_runtime_wheelhouse_dir": str(wheelhouse)}
         )
 
@@ -857,7 +857,7 @@ def test_install_runtime_packages_fails_closed_on_unexpected_extra_wheel(
     (wheelhouse / "unexpected_pkg-9.9-py3-none-any.whl").write_bytes(b"planted")
 
     with pytest.raises(interpreter_module.PythonRuntimeWheelhouseIntegrityError):
-        interpreter_module._install_runtime_packages(venv_python, {  # noqa: SLF001
+        interpreter_module._install_runtime_packages(venv_python, {
             "tools_python_runtime_wheelhouse_dir": str(wheelhouse)
         })
 
@@ -881,7 +881,7 @@ def test_install_runtime_packages_raises_typed_error_when_offline_install_fails(
     monkeypatch.setattr(interpreter_module.bootstrap_subprocess, "run", fake_run)
 
     with pytest.raises(interpreter_module.PythonRuntimeOfflineInstallError):
-        interpreter_module._install_runtime_packages(venv_python, {})  # noqa: SLF001
+        interpreter_module._install_runtime_packages(venv_python, {})
 
 
 def test_configured_python_runtime_limits_are_clamped() -> None:
@@ -1056,7 +1056,7 @@ def test_python_exec_wrapper_safe_json_dumps_replaces_lone_surrogates(
         "sidecar.ai.tools.builtins.python_runtime._exec_wrapper"
     )
 
-    serialized = exec_wrapper_module._safe_json_dumps({"stdout": "bad\udc8fvalue"})  # noqa: SLF001
+    serialized = exec_wrapper_module._safe_json_dumps({"stdout": "bad\udc8fvalue"})
 
     assert "\udc8f" not in serialized
     assert json.loads(serialized) == {"stdout": "bad\ufffdvalue"}
@@ -1202,7 +1202,7 @@ def test_validate_runtime_imports_captures_subprocess_failure_detail(
     )
     details: list[str] = []
 
-    result = interpreter_module._validate_runtime_imports(  # noqa: SLF001
+    result = interpreter_module._validate_runtime_imports(
         Path("python.exe"), detail_sink=details
     )
 
@@ -1399,7 +1399,7 @@ def test_python_result_reader_refuses_oversize_before_json_decode(
     monkeypatch.setattr(sandbox_module, "MAX_RESULT_JSON_BYTES", 8)
 
     with pytest.raises(RuntimeError, match="byte limit"):
-        sandbox_module._read_result_payload(result_path)  # noqa: SLF001
+        sandbox_module._read_result_payload(result_path)
 
 
 @windows_only
@@ -1763,7 +1763,7 @@ def test_bootstrap_lock_treats_transient_read_permission_error_as_live_owner(
         lambda self, *args, **kwargs: (_ for _ in ()).throw(PermissionError(13, "denied")),
     )
 
-    assert bootstrap_lock_module._should_recover_bootstrap_lock(lock_path) is False  # noqa: SLF001
+    assert bootstrap_lock_module._should_recover_bootstrap_lock(lock_path) is False
 
 
 # ── POSIX rlimit preexec_fn ──────────────────────────────────────────
@@ -1832,7 +1832,7 @@ def test_probe_pip_distinguishes_its_failure_modes(monkeypatch: pytest.MonkeyPat
     python = Path("python.exe")
 
     def raising(exc):
-        def _run(*args, **kwargs):  # noqa: ANN002, ANN003
+        def _run(*args, **kwargs):
             raise exc
         return _run
 

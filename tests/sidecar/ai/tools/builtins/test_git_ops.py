@@ -121,7 +121,7 @@ def test_git_diff_builds_staged_command(monkeypatch: pytest.MonkeyPatch, tmp_pat
     _init_minimal_repo(repo)
     captured: dict[str, object] = {}
 
-    def fake_run(command, **kwargs):  # noqa: ANN001
+    def fake_run(command, **kwargs):
         captured["command"] = command
         captured["cwd"] = kwargs["cwd"]
         return SimpleNamespace(returncode=0, stdout="diff output", stderr="")
@@ -151,7 +151,7 @@ def test_git_log_disables_signature_display(
     _init_minimal_repo(repo)
     captured: dict[str, object] = {}
 
-    def fake_run(command, **_kwargs):  # noqa: ANN001
+    def fake_run(command, **_kwargs):
         captured["command"] = command
         return SimpleNamespace(returncode=0, stdout="log output", stderr="")
 
@@ -180,7 +180,7 @@ def test_git_diff_builds_ref_and_path_command(
     subdir.mkdir(parents=True)
     captured: dict[str, object] = {}
 
-    def fake_run(command, **kwargs):  # noqa: ANN001
+    def fake_run(command, **kwargs):
         captured["command"] = command
         return SimpleNamespace(returncode=0, stdout="diff output", stderr="")
 
@@ -226,7 +226,7 @@ def test_git_show_defaults_to_head(monkeypatch: pytest.MonkeyPatch, tmp_path: Pa
     _init_minimal_repo(repo)
     captured: dict[str, object] = {}
 
-    def fake_run(command, **kwargs):  # noqa: ANN001
+    def fake_run(command, **kwargs):
         captured["command"] = command
         return SimpleNamespace(returncode=0, stdout="commit output", stderr="")
 
@@ -420,7 +420,7 @@ def test_git_diff_returns_summary_for_oversized_change_set(
     _init_minimal_repo(repo)
     calls: list[list[str]] = []
 
-    def fake_run(command, **kwargs):  # noqa: ANN001
+    def fake_run(command, **kwargs):
         calls.append(command)
         if "--shortstat" in command:
             return SimpleNamespace(
@@ -447,7 +447,7 @@ def test_git_show_returns_summary_for_oversized_commit(
     _init_minimal_repo(repo)
     calls: list[list[str]] = []
 
-    def fake_run(command, **kwargs):  # noqa: ANN001
+    def fake_run(command, **kwargs):
         calls.append(command)
         if "--shortstat" in command:
             assert "--no-patch" not in command
@@ -517,7 +517,7 @@ def test_git_timeout_can_be_configured_with_bounds(
     repo.mkdir()
     captured_timeouts: list[float] = []
 
-    def fake_run(*_args, **kwargs):  # noqa: ANN001
+    def fake_run(*_args, **kwargs):
         captured_timeouts.append(kwargs["timeout"])
         return SimpleNamespace(returncode=0, stdout="", stderr="")
 
@@ -554,7 +554,7 @@ def test_git_status_omitted_cwd_defaults_to_workspace_root(
     (tmp_path / ".git").mkdir()
     captured: dict[str, object] = {}
 
-    def fake_run(command, **kwargs):  # noqa: ANN001
+    def fake_run(command, **kwargs):
         captured["cwd"] = kwargs["cwd"]
         return SimpleNamespace(returncode=0, stdout="", stderr="")
 
@@ -573,7 +573,7 @@ def test_git_status_blank_cwd_behaves_like_omitted(
     (tmp_path / ".git").mkdir()
     captured: dict[str, object] = {}
 
-    def fake_run(command, **kwargs):  # noqa: ANN001
+    def fake_run(command, **kwargs):
         captured["cwd"] = kwargs["cwd"]
         return SimpleNamespace(returncode=0, stdout="", stderr="")
 

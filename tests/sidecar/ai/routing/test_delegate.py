@@ -922,3 +922,55 @@ def test_delegate_emits_running_transitions_with_monotonic_progress(
             "completed",
         ]
     assert [item["percent"] for item in progress] == sorted(item["percent"] for item in progress)
+
+
+@pytest.mark.parametrize("tasks", [["one"], ["one", "two"]])
+def test_sequential_capacity_refusal_never_reports_started(tasks: list[str]) -> None:
+    runtime = _runtime(capacity=1)
+    allocator = runtime.sub_agent_slot_allocator
+    assert allocator is not None
+    held = allocator.acquire(parent_agent_id="competing", agent_id="occupied")
+    started: list[int] = []
+    try:
+        schedule = schedule_delegate_tasks(
+            router=SimpleNamespace(_config=parse_runtime_config({"engine_type": "mock"})),
+            parent_context=_context(), runtime=runtime,
+            request=validate_delegate_arguments({"tasks": tasks}),
+            parent_request_id="parent-request", call_id="capacity", parent_agent_id="main@parent-request",
+            on_task_started=lambda task, _identity: started.append(task.ordinal),
+        )
+        assert started == []
+        assert all(not item.started for item in schedule.invocations)
+        assert all(item.result.completion_reason == "capacity_unavailable" for item in schedule.invocations)
+        assert allocator.snapshot()["active_sub_agents"] == 1
+    finally:
+        held.release()
+
+
+def test_missing_slot_allocator_is_runtime_unavailable_not_retryable_capacity() -> None:
+    runtime = _runtime()
+    runtime.sub_agent_slot_allocator = None
+    schedule = schedule_delegate_tasks(
+        router=SimpleNamespace(_config=parse_runtime_config({"engine_type": "mock"})),
+        parent_context=_context(), runtime=runtime,
+        request=validate_delegate_arguments({"tasks": ["one"]}),
+        parent_request_id="parent-request", call_id="no-allocator", parent_agent_id="main@parent-request",
+    )
+    [item] = schedule.invocations
+    assert item.result.error_message == "Sub-agent runtime is unavailable."
+    assert item.result.error_retryable is False
+    assert item.result.completion_reason != "capacity_unavailable"
+
+
+def test_compact_evidence_omits_overlong_and_rewritten_path_identifiers() -> None:
+    paths = ["src/" + "x" * 301, "src/\u202efile.py", " file.py "]
+    settlement = build_compact_delegate_settlement(
+        execution="single",
+        task_reports=[{"ordinal": 1, "status": "completed", "answer": "Answer", "evidence": [
+            {"source_tool": "read_file", "provenance": "tool_observed", "relative_path": path, "fact": "Observed"}
+            for path in paths
+        ]}],
+    )
+    evidence = settlement.report["results"][0]["evidence"]
+    assert all("relative_path" not in record for record in evidence[:2])
+    assert evidence[2]["relative_path"] == " file.py "

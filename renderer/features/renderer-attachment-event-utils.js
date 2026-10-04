@@ -1,5 +1,10 @@
 /* global document, window */
-/* renderer/features/renderer-attachment-event-utils.js - Attachment tray, paste/capture, and drag/drop bindings. */
+/* renderer/features/renderer-attachment-event-utils.js - Attachment tray, paste/capture, and drag/drop bindings.
+ * Split view W2-2b: an optional `sessionContext` ({ paneId, getSessionId }) makes one instance pane-scoped.
+ * Without it (pane 0) every callback is called exactly as before. With it, the queue callbacks
+ * (beginAttachmentToken, removeQueuedAttachment, resetAttachmentQueue) also get the pane's session id,
+ * and a pane that is not pane 0 binds only its own nodes: the document/window listeners (popover
+ * dismissal, resize, drop-navigation suppression, the document paste fallback) stay pane 0's, bound once. */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) {
     let composerFlowUtils = {};
@@ -11,11 +16,12 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (composerFlowUtils) {
   const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   function createAttachmentEventBindings(deps) {
-    const { state } = deps;
+    const { state, sessionContext = null } = deps;
+    const documentLevel = !sessionContext || (sessionContext.paneId ?? 0) === 0;
+    const sessionArgs = () => (sessionContext ? [sessionContext.getSessionId()] : []);
     const {
       attachmentTray,
-      composerSettingsPopover,
-      composerSettingsButton,
+      composerAttachMenu,
       composerCommandPopover,
       composerTerminalShortcut,
       composerAttachShortcut,
@@ -35,9 +41,9 @@
       getDroppedFilePaths,
       renderComposerPopover,
       renderCommandPopover,
-      syncComposerModelSelectWidth,
       updateComposerSafeOffset,
       closeComposerPopover,
+      openComposerPopover,
       closeCommandPopover,
       queueInlineImageAttachment,
       handleAttachmentPicker,
@@ -57,7 +63,9 @@
     let disposed = false;
 
     function beginTrackedAttachmentToken() {
-      const token = beginAttachmentToken();
+      // A pane showing no session has no queue: its op settles as discarded (never pane 0's live queue).
+      if (sessionContext && !sessionContext.getSessionId()) { return null; }
+      const token = beginAttachmentToken(...sessionArgs());
       if (token) { attachmentTokens.add(token); }
       return token;
     }
@@ -214,13 +222,13 @@
     function handleAttachmentTrayClick(event) {
       const removeButton = event.target.closest('[data-attachment-remove]');
       if (removeButton) {
-        removeQueuedAttachment(removeButton.dataset.attachmentRemove);
+        removeQueuedAttachment(removeButton.dataset.attachmentRemove, ...sessionArgs());
         return;
       }
 
       const clearButton = event.target.closest('[data-attachment-clear]');
       if (clearButton) {
-        resetAttachmentQueue();
+        resetAttachmentQueue(...sessionArgs());
         renderAttachmentTray();
       }
     }
@@ -237,10 +245,10 @@
     function handleDocumentMouseDown(event) {
       const target = event?.target || null;
       const hasComposerPopoverTargets =
-        composerSettingsPopover
-        && composerSettingsButton
-        && typeof composerSettingsPopover.contains === 'function'
-        && typeof composerSettingsButton.contains === 'function';
+        composerAttachMenu
+        && composerAttachShortcut
+        && typeof composerAttachMenu.contains === 'function'
+        && typeof composerAttachShortcut.contains === 'function';
       const hasCommandPopoverTargets =
         composerCommandPopover
         && composerTerminalShortcut
@@ -250,8 +258,8 @@
         if (!hasComposerPopoverTargets) {
           closeComposerPopover();
         } else if (
-          !composerSettingsPopover.contains(target) &&
-          !composerSettingsButton.contains(target)
+          !composerAttachMenu.contains(target) &&
+          !composerAttachShortcut.contains(target)
         ) {
           closeComposerPopover();
         }
@@ -268,23 +276,19 @@
       }
     }
 
-    function trapTabInPopover(event, container) {
-      if (!container || typeof container.querySelectorAll !== 'function') {
-        return;
-      }
-      const focusable = container.querySelectorAll(
-        'button:not([disabled]), select:not([disabled]), input:not([disabled]), [tabindex]:not([tabindex="-1"])'
-      );
-      if (focusable.length === 0) return;
-      const first = focusable[0];
-      const last = focusable[focusable.length - 1];
-      if (event.shiftKey && document.activeElement === first) {
-        event.preventDefault();
-        last.focus();
-      } else if (!event.shiftKey && document.activeElement === last) {
-        event.preventDefault();
-        first.focus();
-      }
+    function handleAttachMenuKeydown(event) {
+      if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return;
+      const items = [...composerAttachMenu.querySelectorAll('[role="menuitem"]')].filter((item) => (
+        !item.disabled && item.getAttribute('aria-disabled') !== 'true'
+        && !item.closest('[hidden], .hidden')
+        && window.getComputedStyle(item).display !== 'none' && window.getComputedStyle(item).visibility !== 'hidden'
+      ));
+      if (!items.length) return;
+      const at = items.indexOf(document.activeElement);
+      const index = event.key === 'Home' ? 0 : event.key === 'End' ? items.length - 1
+        : (at + (event.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length;
+      event.preventDefault();
+      items[index].focus();
     }
 
     function getCommandMenuItems() {
@@ -370,9 +374,10 @@
         return;
       }
       if (event.key === 'Tab' && state.ui.composerPopoverOpen) {
-        trapTabInPopover(event, composerSettingsPopover);
+        closeComposerPopover();
         return;
       }
+      if (state.ui.composerPopoverOpen) handleAttachMenuKeydown(event);
     }
 
     function handleWindowResize() {
@@ -382,7 +387,6 @@
       if (state.ui.commandPopoverOpen) {
         renderCommandPopover({ positionOnly: true });
       }
-      syncComposerModelSelectWidth();
       updateComposerSafeOffset({
         force: true,
         syncViewport: true,
@@ -396,7 +400,7 @@
 
     function handleChatDragLeave(event) {
       suppressFileDropNavigation(event);
-      if (!chatView.contains(event.relatedTarget)) {
+      if (!(chatView.querySelector?.(':scope > .chat-pane[data-pane-id="0"]') || chatView).contains(event.relatedTarget)) { // W3 gate D11: pane 0's own root
         setDropActive(false);
       }
     }
@@ -405,7 +409,8 @@
       suppressFileDropNavigation(event);
       setDropActive(false);
       const token = beginTrackedAttachmentToken();
-      prepareDroppedAttachments(getDroppedFilePaths(event), token).then(
+      const files = event.dataTransfer?.files ? [...event.dataTransfer.files] : []; // the preload resolves Files
+      prepareDroppedAttachments(files.length ? files : getDroppedFilePaths(event), token).then(
         () => settleAttachmentToken(token),
         (error) => {
           settleAttachmentToken(token, true);
@@ -557,6 +562,14 @@
       bound = true;
       registerListener(attachmentTray, 'click', handleAttachmentTrayClick);
       registerListener(attachmentTray, 'keydown', handleAttachmentTrayKeydown);
+      if (!documentLevel) {
+        chatDropEnterEvents.forEach((eventName) => registerListener(chatView, eventName, handleChatDragEnter));
+        registerListener(chatView, 'dragleave', handleChatDragLeave);
+        registerListener(chatView, 'drop', handleChatDrop);
+        registerListener(chatInput, 'paste', handleChatPaste);
+        registerListener(composerAttachShortcut, 'click', handleAttachFilesClick);
+        return;
+      }
       registerListener(document, 'mousedown', handleDocumentMouseDown);
       registerListener(document, 'keydown', handleDocumentKeydown);
       registerListener(window, 'resize', handleWindowResize);
@@ -571,7 +584,14 @@
       registerListener(chatInput, 'paste', handleChatPaste);
       registerListener(document, 'paste', handleDocumentPaste);
       registerListener(attachFilesButton, 'click', handleAttachFilesClick);
-      registerListener(composerAttachShortcut, 'click', handleAttachFilesClick);
+      registerListener(composerAttachShortcut, 'click', () => {
+        if (composerAttachShortcut.disabled || composerAttachShortcut.getAttribute('aria-disabled') === 'true') return;
+        if (state.ui.composerPopoverOpen) closeComposerPopover({ restoreFocus: true });
+        else openComposerPopover();
+      });
+      registerListener(composerAttachMenu, 'click', (event) => {
+        if (event.target.closest?.('[role="menuitem"]')) closeComposerPopover();
+      });
       registerListener(captureScreenButton, 'click', handleCaptureScreenClick);
     }
 

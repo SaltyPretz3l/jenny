@@ -30,16 +30,6 @@
     return `trace_${Date.now()}_${Math.random().toString(16).slice(2, 14)}`;
   }
 
-  function rejectBusyPluginCommand({ invocation, sessionId, setNotice, render, log }) {
-    if (!invocation) return null;
-      setNotice?.(jt('chat.send.waitForPluginCommand', 'Wait for the active response to finish before running a plugin command.'), {
-      owner: 'send:plugin_command_busy', tone: 'warning',
-    });
-    render?.();
-    log?.('INFO', 'plugin.command_busy_rejected', { sessionId });
-    return { rejected: true, reason: 'session_busy', sessionId };
-  }
-
   function cloneJsonLike(value, seen = new WeakSet()) {
     if (!value || typeof value !== 'object') return value;
     if (seen.has(value)) return null;
@@ -336,8 +326,10 @@
       if (!queuedSend) {
         return null;
       }
+      // W2-2b: the session's own queue (pane 0's live array, or another pane's record).
+      const sessionQueue = globalThis.rendererComposerSessionState || require('./renderer-composer-session-state');
       const hasNewerComposerWork = Boolean(String(chatInput?.value || '').trim())
-        || Boolean(Array.isArray(state.attachments?.queued) && state.attachments.queued.length);
+        || sessionQueue.getQueuedAttachments(state, sessionId).length > 0;
       if (hasNewerComposerWork) {
         getOrCreateSendOutbox(state).replace(queuedSend, { status: 'needs_review' });
         renderComposerState();
@@ -345,7 +337,7 @@
         return null;
       }
       chatInput.value = String(queuedSend.prompt || '');
-      state.attachments.queued = cloneQueuedAttachments(queuedSend.attachments);
+      sessionQueue.setQueuedAttachments(state, sessionId, cloneQueuedAttachments(queuedSend.attachments));
       clearQueuedSendInState(state, sessionId, queuedSend);
       // UIUX-006: a queued-send restore writes straight to the live
       // composer/queue, bypassing the normal capture-on-input path — sync the
@@ -450,7 +442,6 @@
     getQueuedSendFromState,
     getOrCreateSendOutbox,
     reconcileAcceptedRegenerate,
-    rejectBusyPluginCommand,
     resolveMessageCopyText,
     stashQueuedSendInState,
     summarizeDurableFailurePreview,

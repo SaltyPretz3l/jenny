@@ -18,7 +18,6 @@ function createHarness(markup) {
   global.document = dom.window.document;
   global.AbortController = dom.window.AbortController;
   global.window.jennyShell = {
-    comet: {},
     models: {},
   };
   return {
@@ -183,6 +182,8 @@ function createToolConfigToggleHarness({ availabilityEnabled } = {}) {
     callbacks: {
       async refreshFeatureState(patch) {
         patches.push(patch);
+        features.tools = { ...features.tools, ...patch.tools };
+        return features;
       },
       renderSettings() {
         renderSettingsCalls += 1;
@@ -293,125 +294,104 @@ test('settings event bindings let native Control Tower buttons own keyboard acti
   }
 });
 
-test('settings event bindings update palette without deriving a user motion preference', () => {
-  const harness = createHarness('<select id="palette"><option value="ocean">Ocean</option></select>');
+// The Appearance card delegates its mounted selects and switches to the shared
+// binding; these harnesses carry the card with static controls of the same ids.
+function createAppearanceHarness(markup, callbacks) {
+  const harness = createHarness(`<section class="settings-card" data-settings-section="appearance">${markup}</section>`);
   const appliedPreferences = [];
+  const controller = createSettingsEventBindings(createBaseDeps({
+    dom: { appearanceSettingsSection: harness.document.querySelector('section') },
+    callbacks: {
+      applyAppearancePreferences(prefs) {
+        appliedPreferences.push(prefs);
+        return prefs;
+      },
+      ...callbacks,
+    },
+  }));
+  return { harness, controller, appliedPreferences };
+}
+
+test('settings event bindings update palette without deriving a user motion preference', async () => {
+  const { harness, controller, appliedPreferences } = createAppearanceHarness(
+    '<select id="appearancePaletteSelect"><option value="midnight">Midnight</option><option value="signal">Signal</option></select>'
+  );
 
   try {
-    const paletteSelect = harness.document.getElementById('palette');
-    const controller = createSettingsEventBindings(createBaseDeps({
-      dom: {
-        appearancePaletteSelect: paletteSelect,
-      },
-      callbacks: {
-        applyAppearancePreferences(prefs) {
-          appliedPreferences.push(prefs);
-        },
-      },
-    }));
-
     controller.bind();
-    paletteSelect.value = 'ocean';
+    const paletteSelect = harness.document.getElementById('appearancePaletteSelect');
+    paletteSelect.value = 'signal';
     paletteSelect.dispatchEvent(new harness.window.Event('change', { bubbles: true }));
+    await new Promise((resolve) => setTimeout(resolve, 0));
 
     assert.equal(appliedPreferences.length, 1);
-    assert.equal(appliedPreferences[0].paletteId, 'ocean');
-    assert.equal(appliedPreferences[0].motionId, 'soft');
-    assert.equal(appliedPreferences[0].explicitMotion, false);
+    assert.equal(appliedPreferences[0].paletteId, 'signal');
+    // Retired motion axes are never derived into the stored preferences.
+    assert.equal('motionId' in appliedPreferences[0], false);
+    assert.equal('explicitMotion' in appliedPreferences[0], false);
   } finally {
+    controller.dispose();
     harness.cleanup();
   }
 });
 
-test('settings event bindings persist only the Composer typing-border preference', () => {
-  const harness = createHarness('<div id="holoList"></div>');
-  const appliedPreferences = [];
+test('settings event bindings persist only the Composer typing-border preference', async () => {
+  const { harness, controller, appliedPreferences } = createAppearanceHarness('<div id="appearanceHoloList"></div>');
 
   try {
-    const holoList = harness.document.getElementById('holoList');
-    const controller = createSettingsEventBindings(createBaseDeps({
-      dom: {
-        appearanceHoloList: holoList,
-      },
-      callbacks: {
-        applyAppearancePreferences(prefs) {
-          appliedPreferences.push(prefs);
-        },
-      },
-    }));
-
     controller.bind();
+    const holoList = harness.document.getElementById('appearanceHoloList');
     const fireHolo = (id, checked) => holoList.dispatchEvent(new harness.window.CustomEvent('inv-toggle-change', {
       bubbles: true, detail: { id, checked },
     }));
     fireHolo('appearanceComposerHoloToggle', false);
     fireHolo('appearanceSpriteHoloToggle', false);
+    await new Promise((resolve) => setTimeout(resolve, 0));
 
     assert.equal(appliedPreferences.length, 1);
     assert.equal(appliedPreferences[0].composerHoloId, 'off');
-    assert.equal(appliedPreferences[0].spriteHoloId, 'balanced');
+    assert.equal('spriteHoloId' in appliedPreferences[0], false, 'the retired sprite holo axis is not written');
 
-    // The handler guards ids outside HOLO_PREFERENCE_KEYS; an unknown id must
-    // not write a preference (kills a guard-removal mutation).
+    // An id without a descriptor never writes a preference.
     fireHolo('unknownHoloToggle', true);
+    await new Promise((resolve) => setTimeout(resolve, 0));
     assert.equal(appliedPreferences.length, 1, 'retired or unknown holo ids must not write a preference');
   } finally {
+    controller.dispose();
     harness.cleanup();
   }
 });
 
-test('settings event bindings apply theme bundle mappings and reactivate the bundle surface effect', () => {
-  const harness = createHarness('<select id="bundle"><option value="lexicon">Lexicon</option></select>');
-  const appliedPreferences = [];
+test('settings event bindings apply theme bundle mappings and reactivate the bundle surface effect', async () => {
   const activatedEffects = [];
   let applySurfaceEffectCalls = 0;
+  const { harness, controller, appliedPreferences } = createAppearanceHarness(
+    '<select id="appearanceThemeBundleSelect"><option value="custom">Custom</option><option value="lexicon">Lexicon</option></select>',
+    {
+      applySurfaceEffect() {
+        applySurfaceEffectCalls += 1;
+      },
+      activateSurfaceEffect(effectId) {
+        activatedEffects.push(effectId);
+      },
+    }
+  );
 
   try {
-    const bundleSelect = harness.document.getElementById('bundle');
-    const controller = createSettingsEventBindings(createBaseDeps({
-      dom: {
-        appearanceThemeBundleSelect: bundleSelect,
-      },
-      callbacks: {
-        appearanceUtils: {
-          resolveThemeBundle(bundleId) {
-            if (bundleId !== 'lexicon') {
-              return null;
-            }
-            return {
-              id: 'lexicon',
-              preferences: {
-                paletteId: 'lexicon',
-                typographyId: 'editorial',
-                surfaceEffectId: 'none',
-                composerHoloId: 'on',
-              },
-            };
-          },
-        },
-        applyAppearancePreferences(prefs) {
-          appliedPreferences.push(prefs);
-          return prefs;
-        },
-        applySurfaceEffect() {
-          applySurfaceEffectCalls += 1;
-        },
-        activateSurfaceEffect(effectId) {
-          activatedEffects.push(effectId);
-        },
-      },
-    }));
-
     controller.bind();
+    const bundleSelect = harness.document.getElementById('appearanceThemeBundleSelect');
     bundleSelect.value = 'lexicon';
     bundleSelect.dispatchEvent(new harness.window.Event('change', { bubbles: true }));
+    await new Promise((resolve) => setTimeout(resolve, 0));
 
     assert.equal(appliedPreferences.length, 1);
     assert.equal(appliedPreferences[0].paletteId, 'lexicon');
+    assert.equal(appliedPreferences[0].typographyId, 'editorial');
     assert.equal(appliedPreferences[0].surfaceEffectId, 'none');
     assert.equal(applySurfaceEffectCalls, 1);
     assert.deepEqual(activatedEffects, ['none']);
   } finally {
+    controller.dispose();
     harness.cleanup();
   }
 });
@@ -434,6 +414,7 @@ test('settings event bindings save manifest-backed tool toggles through feature 
 
     assert.deepEqual(fixture.patches, [{ tools: { futureTool: true } }]);
     assert.equal(fixture.getRenderSettingsCalls(), 1);
+    assert.equal(fixture.toggle.getAttribute('aria-checked'), 'true', 'a manifest field without a descriptor still saves and syncs');
   } finally {
     fixture.harness.cleanup();
   }
@@ -457,6 +438,7 @@ test('settings event bindings ignore blocked manifest-backed tool toggles', asyn
 
     assert.deepEqual(fixture.patches, []);
     assert.equal(fixture.getRenderSettingsCalls(), 1);
+    assert.equal(fixture.toggle.getAttribute('aria-checked'), 'false');
   } finally {
     fixture.harness.cleanup();
   }
@@ -490,11 +472,53 @@ test('settings web provider connection test reports bounded harness probe result
   }
 });
 
+test('settings event bindings save the web search provider through the features adapter and hydrate key status', async () => {
+  const harness = createHarness(
+    '<div id="toolsConfigFieldList">'
+      + '<select id="webSearchProviderSelect" data-web-search-field="provider"><option value="duckduckgo">DuckDuckGo</option><option value="brave">Brave</option></select>'
+      + '</div>'
+  );
+  const patches = [];
+  let statusReads = 0;
+  harness.window.jennyShell.features = { async getWebSearchSecretStatus() { statusReads += 1; return { configured: {} }; } };
+  const features = { featureFlags: {}, webSearch: { provider: 'duckduckgo', searxngUrl: '' } };
+  const controller = createSettingsEventBindings(createBaseDeps({
+    state: { features },
+    dom: { toolsConfigFieldList: harness.document.getElementById('toolsConfigFieldList') },
+    callbacks: {
+      async refreshFeatureState(patch) {
+        patches.push(patch);
+        features.webSearch = { ...features.webSearch, ...patch.webSearch };
+        return features;
+      },
+    },
+  }));
+
+  try {
+    controller.bind();
+    const select = harness.document.getElementById('webSearchProviderSelect');
+    select.value = 'brave';
+    select.dispatchEvent(new harness.window.Event('change', { bubbles: true }));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    assert.deepEqual(patches, [{ webSearch: { provider: 'brave' } }]);
+    assert.equal(statusReads, 1, 'a confirmed provider change hydrates the configured-key hints once');
+    // Retired private routing: a change on an unbound element never writes.
+    select.removeAttribute('id');
+    select.dispatchEvent(new harness.window.Event('change', { bubbles: true }));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.equal(patches.length, 1);
+  } finally {
+    controller.dispose();
+    harness.cleanup();
+  }
+});
+
 test('settings event bindings route context runtime feature toggles through feature settings', async () => {
   const harness = createHarness(
     '<div id="contextSourcesList"></div>'
       + '<div id="contextRuntimeList">'
-      + '<button type="button" role="switch" aria-checked="false" data-inv-toggle="contextTokenBudgetToggle"></button>'
+      + '<button type="button" role="switch" aria-checked="false" data-inv-toggle="contextCompactionToggle"></button>'
       + '</div>'
   );
   const patches = [];
@@ -515,15 +539,93 @@ test('settings event bindings route context runtime feature toggles through feat
     harness.document.getElementById('contextRuntimeList').dispatchEvent(
       new harness.window.CustomEvent('inv-toggle-change', {
         bubbles: true,
-        detail: { id: 'contextTokenBudgetToggle', checked: true },
+        detail: { id: 'contextCompactionToggle', checked: true },
       })
     );
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     // The runtime switch routes through applyFeatureSettings -> refreshFeatureState
     // as a featureOverrides patch, identical to the pre-switch checkbox handler.
-    assert.deepEqual(patches, [{ featureOverrides: { token_budget: true } }]);
+    assert.deepEqual(patches, [{ featureOverrides: { context_compaction: true } }]);
   } finally {
+    harness.cleanup();
+  }
+});
+
+test('settings event bindings pass "section shown" through to the Runtime limits poller', async () => {
+  const harness = createHarness('<div id="settingsView"><div id="advancedTuningFields"></div></div>');
+  const { snapshot } = require('./helpers/runs-orchestration-harness');
+  let reads = 0;
+  try {
+    Object.assign(harness.window, {
+      rendererRunsView: require('../renderer/shell/renderer-runs-view.js'),
+      rendererRuntimeLimitsView: require('../renderer/shell/renderer-runtime-limits-view.js'),
+      rendererOrchestrationController: require('../renderer/shell/renderer-orchestration-controller.js'),
+    });
+    harness.window.jennyShell.sessionRuntime = {
+      async getSnapshot() { reads += 1; return snapshot([]); },
+    };
+    const controller = createSettingsEventBindings(createBaseDeps({
+      state: { ui: { activeView: 'settings', activeSettingsSection: 'advanced' }, sessions: [] },
+      dom: { settingsView: harness.document.getElementById('settingsView') },
+    }));
+    controller.bind();
+    controller.ensureSectionBindings('runtimeLimits');
+    for (let i = 0; i < 4; i += 1) await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(reads, 1, 'the section binds and reads once');
+    controller.sectionShown('runtimeLimits');
+    for (let i = 0; i < 4; i += 1) await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(reads, 2, 'shown again: a read now, not after the pending tick');
+    controller.dispose();
+  } finally {
+    harness.cleanup();
+  }
+});
+
+test('history scope and the context switches share one runtimePreferences write path', async () => {
+  const harness = createHarness(
+    '<div data-settings-section="context">'
+      + '<div role="radiogroup" data-inv-segmented="contextHistoryScopeSelect"></div>'
+      + '<div id="contextSourcesList">'
+      + '<button type="button" role="switch" aria-checked="true" data-inv-toggle="contextIncludePersonalityToggle"></button>'
+      + '</div></div>'
+  );
+  const preferences = { contextPreferences: { historyScope: 'session', includePersonality: true, includeMemory: true } };
+  const writes = [];
+  const controller = createSettingsEventBindings(createBaseDeps({
+    dom: {
+      contextSettingsSection: harness.document.querySelector('[data-settings-section="context"]'),
+      contextSourcesList: harness.document.getElementById('contextSourcesList'),
+    },
+    callbacks: {
+      getCurrentRuntimePreferences() { return preferences; },
+      runRuntimePreferenceActivity({ patch }) {
+        return new Promise((resolve) => {
+          writes.push({ patch, settle: () => { preferences.contextPreferences = { ...patch.contextPreferences }; resolve(); } });
+        });
+      },
+    },
+  }));
+  try {
+    controller.bind();
+    harness.document.getElementById('contextSourcesList').dispatchEvent(
+      new harness.window.CustomEvent('inv-toggle-change', { bubbles: true, detail: { id: 'contextIncludePersonalityToggle', checked: false } })
+    );
+    harness.document.querySelector('[data-inv-segmented="contextHistoryScopeSelect"]').dispatchEvent(
+      new harness.window.CustomEvent('inv-segmented-change', { bubbles: true, detail: { id: 'contextHistoryScopeSelect', value: 'recent' } })
+    );
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.equal(writes.length, 1, 'the scope change queues behind the switch write instead of racing it');
+    writes[0].settle();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.equal(writes.length, 2);
+    // The queued write composes on the acknowledged baseline: neither change is lost.
+    assert.deepEqual(writes[1].patch.contextPreferences, { historyScope: 'recent', includePersonality: false, includeMemory: true });
+    writes[1].settle();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.deepEqual(preferences.contextPreferences, { historyScope: 'recent', includePersonality: false, includeMemory: true });
+  } finally {
+    controller.dispose();
     harness.cleanup();
   }
 });

@@ -365,3 +365,18 @@ class TestHealTelemetryAccumulator:
         for _ in range(10_005):
             record_repair(("trailing_comma",))
         assert drain_heal_telemetry()["repair_used"] == 10_000
+
+
+@pytest.mark.parametrize("content", ["don\u2019t", "\u201cquoted\u201d", "<tool_call>literal</tool_call>", 'say "hi"'])
+def test_repair_preserves_valid_string_contents(content):
+    import json
+
+    raw = json.dumps({"content": content}, ensure_ascii=False)[:-1] + ",}"
+    result = repair_json_payload(raw)
+    assert result.value == {"content": content}
+
+
+def test_repair_envelope_preserves_literal_tags_and_quotes():
+    raw = '<tool_call>{"content":"\u201cdon\u2019t\u201d <tool_call>literal</tool_call>",}</tool_call>'
+    result = repair_json_payload(raw)
+    assert result.value == {"content": "\u201cdon\u2019t\u201d <tool_call>literal</tool_call>"}

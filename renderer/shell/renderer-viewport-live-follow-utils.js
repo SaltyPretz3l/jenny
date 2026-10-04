@@ -14,6 +14,14 @@
   function createViewportLiveFollowUtils(deps) {
     const settings = deps || {};
     const state = settings.state || { ui: {} };
+    // Split view: each pane owns its follow intent and shows its own session; the
+    // defaults are the single-pane backing (state.ui.followLatest / currentSessionId).
+    const followState = settings.followState || {
+      get: () => state.ui.followLatest,
+      set: (value) => { state.ui.followLatest = value; },
+    };
+    const getSessionId = typeof settings.getSessionId === 'function'
+      ? settings.getSessionId : () => state.currentSessionId;
     const chatThreadScroll = settings.chatThreadScroll || null;
     const noteProgrammaticWrite = typeof settings.noteProgrammaticWrite === 'function'
       ? settings.noteProgrammaticWrite : null;
@@ -90,13 +98,13 @@
       liveFollowRuntime.targetScrollTop = 0;
       liveFollowRuntime.lastTimestamp = 0;
       liveFollowRuntime.baselineRetained = true;
-      liveFollowRuntime.baselineSessionId = String(state.currentSessionId || '');
+      liveFollowRuntime.baselineSessionId = String(getSessionId() || '');
       stopLiveStreamingFollowFrame();
     }
 
     function hasFollowBaseline() {
       return liveFollowRuntime.active || (liveFollowRuntime.baselineRetained
-        && liveFollowRuntime.baselineSessionId === String(state.currentSessionId || ''));
+        && liveFollowRuntime.baselineSessionId === String(getSessionId() || ''));
     }
 
     // Reader input since the animator's last write, and the viewport now sits
@@ -128,14 +136,14 @@
     // away position and reproducing the latch bug one call later.
     function releaseFollowForUserScrollAway() {
       cancelLiveStreamingFollow();
-      state.ui.followLatest = false;
-      liveFollowRuntime.releasedSessionId = String(state.currentSessionId || '');
+      followState.set(false);
+      liveFollowRuntime.releasedSessionId = String(getSessionId() || '');
     }
 
     function isReaderReleaseHeld() {
-      return state.ui.followLatest === false
+      return followState.get() === false
         && Boolean(liveFollowRuntime.releasedSessionId)
-        && liveFollowRuntime.releasedSessionId === String(state.currentSessionId || '');
+        && liveFollowRuntime.releasedSessionId === String(getSessionId() || '');
     }
 
     function clearReaderRelease() {
@@ -181,7 +189,7 @@
     }
 
     function stepLiveStreamingFollow(timestamp) {
-      if (!liveFollowRuntime.active || !chatThreadScroll || state.ui.followLatest === false) {
+      if (!liveFollowRuntime.active || !chatThreadScroll || followState.get() === false) {
         cancelLiveStreamingFollow();
         return;
       }

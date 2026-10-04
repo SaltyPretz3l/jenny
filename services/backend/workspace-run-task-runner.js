@@ -1,14 +1,14 @@
 'use strict';
 // UIUX-014: the headless spawn primitive for the Workspace IDE "Run scripts"
 // feature. Own isolated process per task (NOT the shared interactive
-// workspace-terminal session): main observes the real child-process 'close'
+// workspace terminal session): main observes the real child-process 'close'
 // event for completion, so there is no textual completion marker for a
 // pathological script to spoof by printing it to stdout. Modeled on
 // services/backend/workspace-test-runner-runner.js's runTestCommand, but
 // (a) streams output live via onData instead of only a post-hoc tail and
-// (b) spawns an explicit shell (matching workspace-terminal-service.js's
-// PowerShell/bash choice) with the composed command as ONE argument, so the
-// caller's existing single-quote injection-safe quoting (renderer-ide-run-
+// (b) spawns an explicit shell (PowerShell on win32, bash elsewhere, the
+// family the IDE terminal uses) with the composed command as ONE argument, so
+// the caller's existing single-quote injection-safe quoting (renderer-ide-run-
 // scripts.js quoteArg) keeps working unchanged — no shell:true re-wrapping.
 
 const { spawn: defaultSpawn } = require('node:child_process');
@@ -43,6 +43,8 @@ function startRunTask({
 } = {}) {
   let settled = false;
   let terminationPending = false;
+  let terminationConfirmed = false;
+  let killAttempt = null;
   let resolveDone;
   const done = new Promise((resolve) => { resolveDone = resolve; });
 
@@ -109,23 +111,48 @@ function startRunTask({
     finish({ status: 'exited', exitCode: code, signal: exitSignal || null });
   });
 
-  async function kill() {
-    if (settled) {
-      return { terminated: true };
-    }
-    if (terminationPending) {
-      await done;
-      return { terminated: true };
-    }
-    terminationPending = true;
+  // Once the shell has exited, Windows can hand its pid to an unrelated process:
+  // `taskkill /T /F` would take that tree down and never confirm, leaving the
+  // task owned for good. A POSIX group id stays reserved while the group has
+  // members, so the group kill there still reaches only this task.
+  const shellExited = () => typeof child.exitCode === 'number' || Boolean(child.signalCode);
+
+  async function runTerminationAttempt() {
     let confirmed = false;
-    try {
-      confirmed = (await terminateTree(child))?.terminated === true;
-    } catch (_error) {
-      /* confirmed stays false */
+    if (platform === 'win32' && shellExited()) {
+      confirmed = true;
+    } else {
+      try {
+        confirmed = (await terminateTree(child))?.terminated === true;
+      } catch (_error) {
+        /* confirmed stays false */
+      }
     }
+    terminationConfirmed = confirmed;
+    // Only the first attempt settles `done`; a retry just reports its outcome.
     finish({ status: 'killed', exitCode: null, signal: 'SIGTERM', terminationConfirmed: confirmed });
     return { terminated: confirmed };
+  }
+
+  // Every caller gets the REAL outcome: concurrent callers share the in-flight
+  // attempt, and after an unconfirmed attempt the next call retries the tree
+  // kill instead of reporting a success nobody observed.
+  function kill() {
+    if (terminationConfirmed || (settled && !terminationPending)) {
+      return Promise.resolve({ terminated: true });
+    }
+    if (killAttempt) {
+      return killAttempt;
+    }
+    terminationPending = true;
+    const attempt = runTerminationAttempt();
+    killAttempt = attempt;
+    void attempt.then(() => {
+      if (killAttempt === attempt) {
+        killAttempt = null;
+      }
+    });
+    return attempt;
   }
 
   return { done, kill };

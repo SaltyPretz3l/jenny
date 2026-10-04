@@ -28,7 +28,6 @@
 // inspecting require.cache.
 
 const { getBridgeChannel, registerIpcInvokeHandlers } = require('../ipc-contract');
-const { t } = require('../i18n-main');
 const { PLUGIN_ERROR_CODES } = require('../backend/error-codes');
 const { waitForRuntimeSidecar, createStartupSafeRuntimeCoordinator } = require('./plugins-startup-runtime');
 const {
@@ -43,7 +42,6 @@ const {
 const PLUGIN_INVOKE_METHODS = Object.freeze({
   'plugins.getState': 'getState',
   'plugins.getDetails': 'getDetails',
-  'plugins.getPolicyStatus': 'getPolicyStatus',
   'plugins.getOperation': 'getOperation',
   'plugins.installLocalPackage': 'installLocalPackage',
   'plugins.enable': 'enable',
@@ -55,21 +53,8 @@ const PLUGIN_INVOKE_METHODS = Object.freeze({
 });
 
 const PLUGIN_STAGE5_INVOKE_METHODS = Object.freeze({
-  'plugins.getCatalogState': 'getCatalogState',
-  'plugins.refreshCatalogs': 'refreshCatalogs',
-  'plugins.installFromCatalog': 'installFromCatalog',
-  'plugins.updateFromCatalog': 'updateFromCatalog',
-  'plugins.listRollbackCandidates': 'listRollbackCandidates',
-  'plugins.rollback': 'rollback',
-  'plugins.retryRecovery': 'retryRecovery',
   'plugins.getDistributionState': 'getDistributionState',
-  'plugins.selectOfflineMirror': 'selectOfflineMirror',
-  'plugins.startDistributionOperation': 'startDistributionOperation',
   'plugins.installLocalPackageFromPath': 'installPackageFromPath',
-  'plugins.cancelOperation': 'cancelOperation',
-  'plugins.setNetworkConsent': 'setNetworkConsent',
-  'plugins.beginRemoteMcpAuthorization': 'beginRemoteMcpAuthorization',
-  'plugins.revokeRemoteMcpAuthorization': 'revokeRemoteMcpAuthorization',
 });
 
 const PLUGIN_STAGE7_INVOKE_METHODS = Object.freeze({
@@ -99,12 +84,7 @@ const MIGRATION_SERIALIZED_METHODS = new Set([
   'plugins.setContributionEnabled',
   'plugins.updateSettings',
   'plugins.uninstall',
-  'plugins.startDistributionOperation',
   'plugins.installLocalPackageFromPath',
-  'plugins.installFromCatalog',
-  'plugins.updateFromCatalog',
-  'plugins.rollback',
-  'plugins.retryRecovery',
 ]);
 function createStartupSafeRuntimeApply(backendService, { signal = null } = {}) {
   return async function requestRuntimeApply(envelope) {
@@ -157,23 +137,6 @@ async function runAfterStartupMigration(methodPath, migrationReady, task, isDisp
   return task();
 }
 
-function refreshManagedConfigAfterProviderChange(
-  backendService,
-  buildOptions = () => ({}),
-  change = {}
-) {
-  // Initial engine setup can precede provider rehydration. Retry the saved
-  // selection once the plugin is applied, rather than initializing its fallback.
-  const restoreChatgpt = backendService?._providerRuntimeApplyPending?.('chatgpt') === true
-    && backendService?._lastEngineFallback?.requested_engine === 'chatgpt'
-    && backendService?.currentEngineType === 'mock'
-    && backendService?.configService?.getState?.()?.preferredEngineType === 'chatgpt';
-  return backendService?.refreshManagedConfig?.(
-    change.reason || 'plugin_provider_changed',
-    buildOptions(restoreChatgpt ? 'chatgpt' : '')
-  );
-}
-
 /**
  * @param {object} ipcMainLike an ipcMain-like object with handle()
  * @param {object} deps
@@ -184,6 +147,8 @@ function refreshManagedConfigAfterProviderChange(
  * @param {function} [deps.getMainLifecycle] shutdown-task registrar
  * @param {function} [deps.log] house logger
  * @param {function} [deps.sendBridgeEvent] renderer event pump
+ * @param {function} [deps.setChatgptModelsEnabled] Settings > Models switch
+ *   owner, given the retired ChatGPT plugin's on/off choice once
  * @returns {{service:object,channels:string[],dispose:function}|null} null when
  *   the flag is off -- and in that case nothing above has been required, built,
  *   registered, or read.
@@ -192,13 +157,12 @@ function registerPluginsRuntime(ipcMainLike, {
   backendService,
   app,
   dialog = null,
-  shell = null,
   processRef = process,
   getMainWindow = () => null,
   getMainLifecycle = () => null,
   log = () => {},
   sendBridgeEvent = () => {},
-  showItemInFolderImpl = null,
+  setChatgptModelsEnabled = async () => {},
 } = {}) {
   if (backendService?.featureFlags?.plugins !== true) {
     return null;
@@ -211,9 +175,6 @@ function registerPluginsRuntime(ipcMainLike, {
     resolvePluginStoreRoot,
   } = require('../../services/plugins/plugin-control-plane-service');
   const { createNodeFsFacade } = require('../../services/plugins/store/node-fs-facade');
-  const { createPluginManagedPolicySource } = require('./plugin-managed-policy-source');
-  const { createManagedPolicyService } = require('../../services/plugins/policy/managed-policy-service');
-  const managedPolicyDefaults = require('../../config/plugins/managed-policy-defaults.json');
   const { resolvePluginsSafeMode } = require('../../services/plugins/safe-mode');
   const { createPluginLocalPackageSource } = require('./plugin-local-package-source');
   const { createDeveloperProfileSeams } = require('./plugins-developer-profile');
@@ -222,38 +183,16 @@ function registerPluginsRuntime(ipcMainLike, {
   const { verifyLocalPackage } = require('../../services/plugins/package/local-package-intake');
   const { DEVELOPER_UNSIGNED_KEY_ID, verifyDistributionPackage } = require('../../services/plugins/package/distribution-package-intake');
   const { createRuntimeApplyCoordinator } = require('../../services/plugins/runtime/runtime-apply-coordinator');
-  const { createStage6ControlPlane } = require('../../services/plugins/stage6-control-plane');
-  const { resolveRestrictedHostRuntime } = require('../../services/plugins/restricted-host/runtime-resolver');
-  const {
-    RESTRICTED_ABI_DIGEST,
-    RESTRICTED_PROTOCOL_DIGEST,
-  } = require('../../services/plugins/runtime/declarative-compiler');
   const { attachManagedPluginRuntime } = require('../backend/managed-plugin-runtime');
-  const { createNetworkBroker } = require('../../services/plugins/network/network-broker');
-  const { CredentialBroker } = require('../../services/plugins/auth/credential-broker');
-  const { OAuthFlowService } = require('../../services/plugins/auth/oauth-flow-service');
-  const { createLoopbackAuthorization } = require('../../services/plugins/auth/loopback-authorization');
-  const { RemoteMcpService } = require('../../services/plugins/remote-mcp/remote-mcp-service');
-  const { RemoteMcpRuntimeAuthority } = require('../../services/plugins/remote-mcp/runtime-authority');
   const { DistributionController } = require('../../services/plugins/distribution/distribution-controller');
-  const { PluginCatalogService } = require('../../services/plugins/catalog/plugin-catalog-service');
-  const { activateChatgptProvider, providerReconfigureOptions } = require('../../services/plugins/provider/provider-activation-service');
   const { createProductionDistributionContextFactory,
     digest: digestDistributionValue } = require('../../services/plugins/distribution/production-context');
   const { createStage5ControlPlane,
     operationId } = require('../../services/plugins/stage5-control-plane');
-  const { AttachmentTicketBroker } = require('../../services/plugins/view/attachment-ticket-broker');
-  const { SessionProviderInvocationBroker } = require('../../services/plugins/session-provider/invocation-broker');
-  const {
-    drainActiveChatStreams,
-    verifyGpuEvictedForEngine,
-  } = require('../../services/backend/exclusive-gpu-preflight');
-  const {
-    createChatGptAuthServiceDefault,
-    ensureChatgptAuthService,
-  } = require('../provider-auth-runtime');
+  const { reconcileStartupCleanup } = require('../../services/plugins/lifecycle/startup-cleanup-reconciler');
+  const { retirePrivilegedTierState } = require('../../services/plugins/lifecycle/privileged-tier-retirement');
+  const { createChatgptRetiredChoiceCarrier } = require('../backend/chatgpt-models-enabled');
   const contractLockV5 = require('../../config/plugins/contract-lock-v5.json');
-  const trustedCatalogs = require('../../config/plugins/trusted-catalogs.json');
   const nodeFs = require('node:fs');
   const nodePath = require('node:path');
 
@@ -267,58 +206,12 @@ function registerPluginsRuntime(ipcMainLike, {
     env: processRef?.env || {},
   });
   let disposing = false;
-  let providerApplySettled = false;
-  const rearmDefaultModelLoad = () => {
-    // One-shot: onProviderChanged is also wired as onAuthChanged, and a later
-    // sign-in/out must not re-run the default-model load or resurface the
-    // launch WARN on a user gesture.
-    if (providerApplySettled) return;
-    providerApplySettled = true;
-    if (disposing) return;
-    try { backendService._autoLoadDefaultModel?.(); } catch (_error) { /* fail open */ }
-  };
-  const providerRuntimeApplyPending = (engineType) => (
-    !providerApplySettled && engineType === 'chatgpt');
-  if (!safeMode.active) {
-    backendService._providerRuntimeApplyPending = providerRuntimeApplyPending;
-  }
-  // Plugin IPC is composed before the general auxiliary handlers. Stage 7
-  // therefore owns creation of its auth dependency here instead of capturing
-  // a null backend field and hoping a later registrar repairs the reference.
-  // The auxiliary composition calls the same idempotent helper afterwards.
-  const chatgptAuthService = ensureChatgptAuthService({
-    backendService,
-    log,
-    createAuthService: createChatGptAuthServiceDefault,
-    env: processRef?.env || process.env,
-  });
-
   // The facade is rooted at `<userData>/plugins`, so the real-disk adapter
   // physically cannot reach anything else under userData, and the store's own
   // baseDir is that root. The root segment is spelled once, by the control
   // plane itself (resolvePluginStoreRoot) -- never re-derived here.
   const rootDir = resolvePluginStoreRoot(app.getPath('userData'));
   const facade = createNodeFsFacade({ rootDir, log });
-  const managedPolicy = createManagedPolicyService({
-    facade,
-    baseDir: PLUGIN_STORE_BASE_DIR,
-    source: createPluginManagedPolicySource({
-      platform: processRef?.platform || process.platform,
-      windowsKey: managedPolicyDefaults.windows.registry_key,
-      windowsValue: managedPolicyDefaults.windows.value_name,
-      macosDomain: managedPolicyDefaults.macos.managed_preferences_domain,
-      macosKey: managedPolicyDefaults.macos.key,
-      linuxFile: managedPolicyDefaults.linux.policy_file,
-    }),
-    pollIntervalMs: managedPolicyDefaults.poll_interval_ms,
-    log: (level, event, data) => log(level, event, data),
-  });
-  let managedPolicyInitialized = false;
-  const managedPolicyReady = safeMode.active
-    ? Promise.resolve({ ok: false, reason: 'plugins_safe_mode_active' })
-    : managedPolicy.initialize().finally(() => {
-      managedPolicyInitialized = true;
-    });
   const pickerDialog = dialog || require('electron').dialog;
   const readPackageBytes = createPluginLocalPackageSource({ dialog: pickerDialog });
   const appRoot = typeof app.getAppPath === 'function' ? app.getAppPath() : process.cwd();
@@ -373,77 +266,11 @@ function registerPluginsRuntime(ipcMainLike, {
   }), { signal: startupAbortController.signal });
   const resourcesRoot = app.isPackaged
     ? processRef.resourcesPath : nodePath.join(appRoot, 'build');
-  const restrictedHostRoot = nodePath.join(resourcesRoot, 'restricted-host');
-  const sidecarManifestPath = nodePath.join(resourcesRoot, 'sidecar', 'manifest.json');
-  const resolveRuntime = async () => {
-    let sidecarManifest;
-    try { sidecarManifest = JSON.parse(await nodeFs.promises.readFile(sidecarManifestPath, 'utf8')); }
-    catch (_error) { return { ok: false, reason: 'restricted_host_build_identity_unavailable' }; }
-    const expectedCommit = String(sidecarManifest?.git_commit || '');
-    if (!/^[0-9a-f]{40}$/.test(expectedCommit)) {
-      return { ok: false, reason: 'restricted_host_build_identity_invalid' };
-    }
-    return resolveRestrictedHostRuntime({
-      fs: nodeFs.promises,
-      rootDir: restrictedHostRoot,
-      expectedCommit,
-      expectedAbiDigest: RESTRICTED_ABI_DIGEST,
-      expectedProtocolDigest: RESTRICTED_PROTOCOL_DIGEST,
-    });
-  };
-  const networkBroker = createNetworkBroker({
-    isSessionLockedDown: (sessionId) => {
-      if (backendService.featureFlags?.session_offline_lockdown !== true) return false;
-      const session = backendService.sessionStore?.getSession?.(sessionId);
-      return !session || session.lockdown === true;
-    },
-  });
   let service = null;
-  const stage6Service = createStage6ControlPlane({
-    runtimeCoordinator: sidecarRuntimeCoordinator,
-    resolveRuntime,
-    log,
-    facade,
-    baseDir: PLUGIN_STORE_BASE_DIR,
-    networkBroker,
-    onQuarantine: (identity) => service?.quarantineRestrictedRuntime?.({
-      publisher_id: identity.publisher_id,
-      plugin_id: identity.plugin_id,
-    }),
-  });
-  let runtimeCoordinator = stage6Service.runtimeCoordinator;
 
-  const credentialBroker = new CredentialBroker({
-    secureStore: backendService.secureStore,
-    facade,
-    baseDir: PLUGIN_STORE_BASE_DIR,
-  });
-  const remoteMcpService = new RemoteMcpService({
-    networkBroker,
-    credentialBroker,
-    facade,
-    baseDir: PLUGIN_STORE_BASE_DIR,
-  });
-  const remoteMcpRuntime = new RemoteMcpRuntimeAuthority({
-    facade,
-    baseDir: PLUGIN_STORE_BASE_DIR,
-    remoteMcpService,
-    credentialBroker,
-    verifyPackage,
-    log,
-  });
-  const { BrowserWindow, WebContentsView, session: electronSession } = require('electron');
+  const { WebContentsView, session: electronSession } = require('electron');
   const { PluginViewController } = require('../../services/main/plugin-view-controller');
   const { createStage7ControlPlane } = require('../../services/plugins/stage7-control-plane');
-  let sessionProviderBroker = null;
-  const attachmentTicketBroker = backendService.sessionStore && backendService.attachmentAssetStore
-    ? new AttachmentTicketBroker({
-      sessionStore: backendService.sessionStore,
-      attachmentAssetStore: backendService.attachmentAssetStore,
-      revealPath: showItemInFolderImpl || shell?.showItemInFolder?.bind(shell) || (async () => false),
-      log: (event, data) => log('WARN', event, data),
-    })
-    : null;
   const viewHost = typeof WebContentsView === 'function' && electronSession?.fromPartition
     ? new PluginViewController({
       WebContentsView,
@@ -452,8 +279,6 @@ function registerPluginsRuntime(ipcMainLike, {
       getMainWindow,
       log: (event, data) => log('INFO', event, data),
       onQuarantine: (identity) => service?.quarantineRestrictedRuntime?.(identity),
-      resolveAttachmentTicket: attachmentTicketBroker
-        ? (request) => attachmentTicketBroker.resolve(request) : null,
     })
     : {
       active: null,
@@ -472,111 +297,12 @@ function registerPluginsRuntime(ipcMainLike, {
     updateSettings: (payload) => service?.updateSettings(payload) || { ok: false, reason: 'plugin_service_unavailable' },
   };
   const stage7Service = createStage7ControlPlane({
-    runtimeCoordinator,
+    runtimeCoordinator: sidecarRuntimeCoordinator,
     viewHost,
     pluginService: pluginServiceProxy,
-    chatgptAuthService,
-    onProviderChanged: async (change = {}) => {
-      // finally: a rejected refresh must still settle the predicate, or the
-      // launch fallback stays 'deferred' (INFO) for the process lifetime and
-      // the honest WARN never fires.
-      try {
-        await refreshManagedConfigAfterProviderChange(
-          backendService, providerReconfigureOptions, change);
-      } finally {
-        rearmDefaultModelLoad();
-      }
-    },
-    activateProvider: (providerId) => activateChatgptProvider(backendService, providerId),
-    sessionProviderCall: (call, context) => sessionProviderBroker
-      ? sessionProviderBroker.handleViewCall(call, context)
-      : { ok: false, reason: 'session_provider_unavailable' },
-    authorizeSessionView: (sessionId, descriptor) => sessionProviderBroker
-      ? sessionProviderBroker.authorizeViewOpen(sessionId, descriptor)
-      : { ok: false, reason: 'session_provider_unavailable' },
-    onSessionViewDestroyed: async (context, reason) => {
-      attachmentTicketBroker?.revokeView?.(context.viewInstanceId);
-      if (context.sessionId && reason !== 'view_crash_restart') {
-        return sessionProviderBroker
-          ? sessionProviderBroker.cancelSessionAndWait(context.sessionId, reason)
-          : { ok: false, reason: 'session_provider_unavailable' };
-      }
-      return { ok: true };
-    },
     log: (event, data) => log('INFO', event, data),
-    providerAuthLog: (event, data) => log('WARN', event, data),
   });
-  runtimeCoordinator = stage7Service.runtimeCoordinator;
-  const privilegedEnabled = backendService?.featureFlags?.privileged_plugins === true
-    && safeMode.active !== true;
-  const stage8Registration = require('./plugin-stage8-registration').createPluginStage8Registration({
-      enabled: privilegedEnabled,
-      runtimeCoordinator,
-      backendService,
-      facade,
-      baseDir: PLUGIN_STORE_BASE_DIR,
-      rootDir,
-      appRoot,
-      resourcesRoot,
-      isPackaged: app.isPackaged === true,
-      ipcMain: ipcMainLike,
-      BrowserWindow,
-      session: electronSession,
-      managedPolicy,
-      recoverPersistentState: !safeMode.active,
-      log: (level, event, data) => log(level, event, data),
-    });
-  runtimeCoordinator = stage8Registration.runtimeCoordinator;
-  if (attachmentTicketBroker && backendService.exclusiveGpuCoordinator) {
-    const privilegedRuntime = stage8Registration.service;
-    sessionProviderBroker = new SessionProviderInvocationBroker({
-      sessionStore: backendService.sessionStore,
-      runtime: {
-        currentAuthority: () => privilegedRuntime.currentAuthority(),
-        resolveProvider: (authority, identity) => (
-          privilegedRuntime.resolveSessionProvider(authority, identity)
-        ),
-        providerStatus: (authority, identity) => (
-          privilegedRuntime.resolveSessionProviderStatus(authority, identity)
-        ),
-        acquireHost: (request) => privilegedRuntime.acquireHost(request),
-        terminateHost: (request) => privilegedRuntime.releaseHost(request),
-      },
-      ticketBroker: attachmentTicketBroker,
-      attachmentAssetStore: backendService.attachmentAssetStore,
-      exclusiveGpuCoordinator: backendService.exclusiveGpuCoordinator,
-      scratchRoot: nodePath.join(app.getPath('userData'), 'plugins', 'session-provider-staging'),
-      getChatEngineType: () => backendService.currentEngineType
-        || backendService.configService?.getState?.()?.preferredEngineType || '',
-      drainChat: () => drainActiveChatStreams({ activeStreams: backendService.activeStreams,
-        cancelStream: (streamId) => backendService.cancelChatStream?.(streamId),
-        // Resolved per drain, NOT captured at registration: the actor registry is
-        // built in initializeConversationStorage during backend construction, but
-        // binding it once here would silently degrade to the activeStreams-only
-        // drain -- the exact double-admission hole this barrier source closes --
-        // if that ordering ever changed.
-        getPendingLeaseSettlementBarriers: () => {
-          const registry = backendService.sessionTurnActorRegistry
-            || backendService.sessionTurnActors;
-          // No registry at all means no chat turn can be in flight, so an empty
-          // barrier set is the truth. A registry that EXISTS but has lost the
-          // method is a wiring defect rather than an empty set: return null so
-          // the drain fails closed on chat_drain_unverified instead of letting a
-          // privileged workload load the GPU on an unverified claim.
-          if (!registry) {
-            return [];
-          }
-          if (typeof registry.pendingUnattachedLeaseSettlementBarriers !== 'function') {
-            return null;
-          }
-          return registry.pendingUnattachedLeaseSettlementBarriers();
-        } }),
-      unloadChatModel: () => backendService.unloadModel?.(),
-      verifyGpuFree: ({ engineType }) => verifyGpuEvictedForEngine({ engineType }),
-      log: (event, data) => log('WARN', event, data),
-    });
-    sessionProviderBroker.reconcileInterruptedOperations();
-  }
+  const runtimeCoordinator = stage7Service.runtimeCoordinator;
   service = createPluginControlPlaneService({
     facade,
     baseDir: PLUGIN_STORE_BASE_DIR,
@@ -585,36 +311,14 @@ function registerPluginsRuntime(ipcMainLike, {
     readPackageBytes,
     verifyPackage,
     runtimeCoordinator,
-    remoteMcpRuntime,
-    privilegedRuntime: stage8Registration.service,
-    managedPolicy,
     log,
   });
   const distributionController = new DistributionController({
     facade, baseDir: PLUGIN_STORE_BASE_DIR,
-    networkBroker,
     mintOperationId: () => operationId('distribution'),
     realpath: nodeFs.promises.realpath,
     onCommitted: () => sendBridgeEvent('plugins.onChanged', {}),
   });
-  const selectOfflineRoot = async () => {
-    let selection;
-    try {
-      selection = await pickerDialog.showOpenDialog({
-        title: t('main.dialog.plugins.selectOfflineMirror', 'Select an offline Jenny plugin mirror'),
-        properties: ['openDirectory', 'dontAddToRecent'],
-      });
-    } catch (_error) {
-      return { ok: false, reason: 'offline_mirror_picker_failed' };
-    }
-    if (!selection || selection.canceled === true || selection.filePaths?.length === 0) {
-      return { ok: true, canceled: true };
-    }
-    if (!Array.isArray(selection.filePaths) || selection.filePaths.length !== 1) {
-      return { ok: false, reason: 'offline_mirror_selection_invalid' };
-    }
-    return { ok: true, canceled: false, rootPath: selection.filePaths[0] };
-  };
   const createDistributionContextBase = createProductionDistributionContextFactory({
     facade,
     baseDir: PLUGIN_STORE_BASE_DIR,
@@ -622,7 +326,6 @@ function registerPluginsRuntime(ipcMainLike, {
     readLocalPackage: readPackageBytes,
     contractLockDigest: digestDistributionValue(contractLockV5),
     verifyPackage,
-    managedPolicy,
     developerProfileEnabled: backendService.featureFlags.plugin_developer_profile === true,
   });
   const createDistributionContext = async (request, internal = {}) => {
@@ -640,50 +343,16 @@ function registerPluginsRuntime(ipcMainLike, {
       ? { ok: true, value: { ...context.value, participantPrepare: participant.participantPrepare } }
       : context;
   };
-  const oauthFlowService = new OAuthFlowService({ networkBroker, credentialBroker });
-  const loopbackAuthorization = createLoopbackAuthorization({
-    oauthFlowService,
-    openExternal: (url) => (shell || require('electron').shell).openExternal(url),
-  });
   const stage5Service = createStage5ControlPlane({
     facade,
     baseDir: PLUGIN_STORE_BASE_DIR,
     distributionController,
-    remoteMcpRuntime,
-    oauthFlowService,
-    credentialBroker,
-    loopbackAuthorization,
     verifyPackage,
     selectLocalPackage: readPackageBytes,
     readPackageAtPath: developerProfile.readPackageAtPath,
     inspectLocalPackage: developerProfile.inspectLocalPackage,
-    selectOfflineRoot,
     createDistributionContext,
     safeMode,
-    log,
-  });
-  const catalogService = new PluginCatalogService({
-    facade,
-    baseDir: PLUGIN_STORE_BASE_DIR,
-    cacheRoot: nodePath.join(rootDir, 'catalog-cache'),
-    distributionController,
-    createDistributionContext,
-    networkBroker,
-    configuredSources: Array.isArray(trustedCatalogs.catalogs) ? trustedCatalogs.catalogs : [],
-    realpath: nodeFs.promises.realpath,
-    confirmOfflineTrust: async (identity) => {
-      const result = await pickerDialog.showMessageBox(getMainWindow?.() || undefined, {
-        type: 'warning',
-        buttons: [t('main.dialog.plugins.trustMirror', 'Trust mirror'), t('common.cancel', 'Cancel')],
-        defaultId: 1,
-        cancelId: 1,
-        noLink: true,
-        title: t('main.dialog.plugins.trustOfflineMirrorTitle', 'Trust offline plugin mirror?'),
-        message: t('main.dialog.plugins.trustCatalog', 'Trust “{name}” as a plugin catalog?', { name: identity.display_name }),
-        detail: t('main.dialog.plugins.pinnedRootDetail', 'Pinned root fingerprint:\n{fingerprint}\n\nOnly signed targets accepted by this root can be installed.', { fingerprint: identity.root_fingerprint }),
-      });
-      return result?.response === 0;
-    },
     log,
   });
   const { createBundledInstallWiring } = require('./plugins-bundled-install-wiring');
@@ -692,31 +361,23 @@ function registerPluginsRuntime(ipcMainLike, {
     facade,
     baseDir: PLUGIN_STORE_BASE_DIR,
     stage5Service,
-    chatgptAuthService,
-    preferredEngineType: () => backendService.configService?.getState?.()?.preferredEngineType || '',
     enablePlugin: (identity) => service.enable(identity),
+    uninstallPlugin: (identity) => service.uninstall(identity),
+    // null when the plugin state cannot be read: unknown is not "off".
+    readDesiredState: async (identity) => {
+      const state = await service.getState();
+      if (state?.ok !== true || !Array.isArray(state.plugins)) return null;
+      return state.plugins.find((plugin) => plugin?.publisher_id === identity.publisher_id
+        && plugin?.plugin_id === identity.plugin_id)?.desired_state || '';
+    },
+    carryRetiredChoice: createChatgptRetiredChoiceCarrier({
+      configService: backendService.configService, setChatgptModelsEnabled,
+    }),
     resourcesRoot,
     appRoot,
     isPackaged: app.isPackaged === true,
     readFile: nodeFs.promises.readFile,
     log,
-  });
-  const unsubscribeManagedPolicy = managedPolicy.subscribe((status) => {
-    if (!managedPolicyInitialized) return;
-    sendBridgeEvent('plugins.onChanged', {
-      reason: 'managed_policy_changed',
-      policy_revision: status.revision,
-      policy_status: status.status,
-    });
-    void stage8Registration.service?.applyManagedPolicy?.().then(async (revoked) => {
-      if (managedPolicyInitialized && revoked?.ok !== false && !disposing) {
-        await service.rehydrateManagedPolicyChange();
-      }
-    }).catch(() => {
-      log('WARN', 'plugins.managed_policy.revocation_failed', {
-        reason_code: 'managed_policy_revocation_exception',
-      });
-    });
   });
   const startupCleanupReady = Promise.resolve().then(async () => {
     if (startupAbortController.signal.aborted) {
@@ -733,35 +394,19 @@ function registerPluginsRuntime(ipcMainLike, {
       return { ok: false, reason: state?.reason || 'plugin_store_not_writable',
         settled: 0, deferred: 0 };
     }
-    return stage8Registration.runStartupCleanup();
+    // The privileged tier is retired: drop its leftover state once, then settle
+    // pending per-plugin data cleanup (no native process receipts to wait on).
+    await retirePrivilegedTierState({ facade, baseDir: PLUGIN_STORE_BASE_DIR, safeMode, log });
+    return reconcileStartupCleanup({ facade, baseDir: PLUGIN_STORE_BASE_DIR, log });
   }).catch(() => {
     log('WARN', 'plugins.cleanup.startup_deferred', { reason_code: 'startup_recovery_failed' });
     return { ok: false, reason: 'startup_recovery_failed', settled: 0, deferred: 0 };
   });
-  let chatgptMigrationReady = startupCleanupReady.then(() => (
+  let startupMigrationReady = startupCleanupReady.then(() => (
     { ok: true, migrated: false, reason: 'startup_cleanup_settled' }
   ));
-  const previousStage5Service = backendService._pluginStage5ControlPlane;
-  const previousStage6Service = backendService._pluginStage6ControlPlane;
   const previousStage7Service = backendService._pluginStage7ControlPlane;
-  const previousStage8Service = backendService._pluginStage8ControlPlane;
-  const previousStage8Lifecycle = backendService._pluginStage8Lifecycle;
-  const agentMode = /^(1|true|yes|on)$/i.test(String(process.env.JENNY_AGENT_DEV || '').trim());
-  const previousStage8OwnerDrill = globalThis.__jennyStage8OwnerDrill;
-  backendService._pluginStage5ControlPlane = stage5Service;
-  backendService._pluginStage6ControlPlane = stage6Service;
   backendService._pluginStage7ControlPlane = stage7Service;
-  if (stage8Registration.service) backendService._pluginStage8ControlPlane = stage8Registration.service;
-  backendService._pluginStage8Lifecycle = Object.freeze({
-    beginBackendShutdown: stage8Registration.beginBackendShutdown,
-    reopenAfterBackendStart: stage8Registration.reopenAfterBackendStart,
-  });
-  if (sessionProviderBroker) backendService._pluginSessionProviderBroker = sessionProviderBroker;
-  if (agentMode) {
-    globalThis.__jennyStage8OwnerDrill = Object.freeze({
-      runSyntheticSecretDelivery: stage8Registration.runSyntheticSecretDeliveryDrill,
-    });
-  }
 
   // Every plugins.* channel sits behind the same trusted-sender authorizer as
   // the rest of the mutating surface: these handlers can request an authority
@@ -786,7 +431,7 @@ function registerPluginsRuntime(ipcMainLike, {
             retryable: false,
           };
         }
-        return runAfterStartupMigration(methodPath, chatgptMigrationReady, () => (
+        return runAfterStartupMigration(methodPath, startupMigrationReady, () => (
           stage5Service.startDistributionOperation({
             client_request_id: envelope.clientRequestId || operationId('install'),
           })
@@ -794,7 +439,7 @@ function registerPluginsRuntime(ipcMainLike, {
       };
     } else if (methodPath === 'plugins.uninstall') {
       handlers[methodPath] = async (_event, payload) => {
-        const result = await runAfterStartupMigration(methodPath, chatgptMigrationReady, () => (
+        const result = await runAfterStartupMigration(methodPath, startupMigrationReady, () => (
           service[methodName](payload || {})
         ), () => disposing);
         if (result?.ok) await bundledInstall.markRemoved(payload);
@@ -802,26 +447,14 @@ function registerPluginsRuntime(ipcMainLike, {
       };
     } else {
       handlers[methodPath] = (_event, payload) => runAfterStartupMigration(
-        methodPath, chatgptMigrationReady, () => service[methodName](payload || {}),
+        methodPath, startupMigrationReady, () => service[methodName](payload || {}),
         () => disposing
       );
     }
   }
   for (const [methodPath, methodName] of Object.entries(PLUGIN_STAGE5_INVOKE_METHODS)) {
     handlers[methodPath] = (_event, payload = {}) => runAfterStartupMigration(
-      methodPath, chatgptMigrationReady, async () => {
-        if (methodPath === 'plugins.selectOfflineMirror') {
-          const selected = await selectOfflineRoot();
-          if (!selected?.ok || selected.canceled === true) return selected;
-          return catalogService.trustOfflineMirror({
-            source_id: payload.source_id,
-            display_name: payload.display_name,
-            root_path: selected.rootPath,
-          });
-        }
-        if (typeof catalogService[methodName] === 'function') {
-          return catalogService[methodName](payload || {});
-        }
+      methodPath, startupMigrationReady, async () => {
         return stage5Service[methodName](payload || {});
       },
       () => disposing
@@ -832,7 +465,6 @@ function registerPluginsRuntime(ipcMainLike, {
       if (methodName === 'openViewContribution') {
         return stage7Service.openViewContribution(payload, { bounds: payload.bounds,
           lifecycleEpoch: payload.lifecycle_epoch || 0,
-          sessionId: String(payload.sessionId || '').trim(),
         });
       }
       if (methodName === 'setBounds') return stage7Service.setBounds(payload.bounds || payload);
@@ -853,8 +485,6 @@ function registerPluginsRuntime(ipcMainLike, {
   const dispose = () => {
     if (disposePromise) return disposePromise;
     disposing = true;
-    if (backendService._providerRuntimeApplyPending === providerRuntimeApplyPending) backendService._providerRuntimeApplyPending = null;
-    unsubscribeManagedPolicy();
     startupAbortController.abort();
     for (const unsubscribe of unsubscribes) {
       try {
@@ -864,47 +494,15 @@ function registerPluginsRuntime(ipcMainLike, {
       }
     }
     ipcMainLike.removeHandler?.(viewBridgeChannel);
-    if (backendService._pluginStage5ControlPlane === stage5Service) {
-      if (previousStage5Service === undefined) delete backendService._pluginStage5ControlPlane;
-      else backendService._pluginStage5ControlPlane = previousStage5Service;
-    }
-    if (backendService._pluginStage6ControlPlane === stage6Service) {
-      if (previousStage6Service === undefined) delete backendService._pluginStage6ControlPlane;
-      else backendService._pluginStage6ControlPlane = previousStage6Service;
-    }
     if (backendService._pluginStage7ControlPlane === stage7Service) {
       if (previousStage7Service === undefined) delete backendService._pluginStage7ControlPlane;
       else backendService._pluginStage7ControlPlane = previousStage7Service;
     }
-    if (backendService._pluginStage8ControlPlane === stage8Registration.service) {
-      if (previousStage8Service === undefined) delete backendService._pluginStage8ControlPlane;
-      else backendService._pluginStage8ControlPlane = previousStage8Service;
-    }
-    if (backendService._pluginStage8Lifecycle?.beginBackendShutdown
-      === stage8Registration.beginBackendShutdown) {
-      if (previousStage8Lifecycle === undefined) delete backendService._pluginStage8Lifecycle;
-      else backendService._pluginStage8Lifecycle = previousStage8Lifecycle;
-    }
-    if (backendService._pluginSessionProviderBroker === sessionProviderBroker) {
-      delete backendService._pluginSessionProviderBroker;
-    }
-    if (agentMode && globalThis.__jennyStage8OwnerDrill?.runSyntheticSecretDelivery
-      === stage8Registration.runSyntheticSecretDeliveryDrill) {
-      if (previousStage8OwnerDrill === undefined) delete globalThis.__jennyStage8OwnerDrill;
-      else globalThis.__jennyStage8OwnerDrill = previousStage8OwnerDrill;
-    }
-    disposePromise = Promise.resolve(chatgptMigrationReady).catch(() => null).then(async () => {
-      await managedPolicyReady.catch(() => null);
+    disposePromise = Promise.resolve(startupMigrationReady).catch(() => null).then(async () => {
       const stage5Dispose = Promise.resolve(stage5Service.dispose());
-      const stage6Dispose = Promise.resolve(stage6Service.dispose());
       const stage7Dispose = Promise.resolve(stage7Service.dispose());
-      const stage8Dispose = Promise.resolve(stage8Registration.dispose());
-      const sessionProviderDispose = Promise.resolve(sessionProviderBroker?.dispose?.());
-      remoteMcpService.dispose();
       service.dispose();
-      managedPolicy.dispose();
-      await Promise.all([stage5Dispose, stage6Dispose, stage7Dispose, stage8Dispose,
-        sessionProviderDispose]);
+      await Promise.all([stage5Dispose, stage7Dispose]);
     });
     return disposePromise;
   };
@@ -929,30 +527,26 @@ function registerPluginsRuntime(ipcMainLike, {
         signal: startupAbortController.signal,
       })
       : true));
-    chatgptMigrationReady = runtimeReady.then((ready) => (
+    startupMigrationReady = runtimeReady.then((ready) => (
       ready ? bundledInstall.run() : { ok: false, migrated: false,
         reason: startupAbortController.signal.aborted
           ? 'startup_disposed' : 'runtime_sidecar_unavailable' }
     )).then((result) => {
-      log(result.ok ? 'INFO' : 'WARN', 'plugins.chatgpt_migration', {
-        status: result.ok ? (result.migrated ? 'migrated' : 'skipped') : 'failed',
+      log(result.ok ? 'INFO' : 'WARN', 'plugins.startup_migration', {
+        status: result.ok ? 'done' : 'failed',
         reason_code: result.reason || 'none',
       });
       return result;
     }).catch(() => {
-      log('WARN', 'plugins.chatgpt_migration', {
+      log('WARN', 'plugins.startup_migration', {
         status: 'failed', reason_code: 'migration_internal_error',
       });
       return { ok: false, reason: 'migration_internal_error' };
-    }).then((result) => {
-      if (result.ok !== true || result.available !== true) rearmDefaultModelLoad();
-      return result;
     });
   }
 
-  return { service, catalogService, stage5Service, stage6Service, stage7Service,
-    stage8Service: stage8Registration.service, sessionProviderBroker, channels, facade, safeMode,
-    startupReady: chatgptMigrationReady, dispose };
+  return { service, stage5Service, stage7Service, channels, facade, safeMode,
+    startupReady: startupMigrationReady, dispose };
 }
 
 module.exports = {
@@ -964,5 +558,4 @@ module.exports = {
   waitForRuntimeSidecar,
   createStartupSafeRuntimeApply,
   runAfterStartupMigration,
-  refreshManagedConfigAfterProviderChange,
 };

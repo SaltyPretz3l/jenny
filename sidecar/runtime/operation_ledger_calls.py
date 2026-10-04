@@ -45,7 +45,7 @@ class OperationLedgerCall:
             now_iso = operation_timestamp()
             self.ledger.settle(operation_id=self.key, status="indeterminate", now_iso=now_iso)
 
-    def settle_result(  # noqa: PLR0913
+    def settle_result(
         self, *, tool_name: str, success: bool, output_text: str,
         metadata: dict[str, object],
         generated_artifacts: tuple[dict[str, object], ...],
@@ -119,6 +119,12 @@ def inject_idempotency_key(
         canonical, _ = canonicalize_tool_arguments(
             tool_name=call.tool_id, arguments=call.arguments
         )
+        session_id = str(getattr(runtime, "session_id", "") or "").strip()
+        # The ledger records the owning session so the interruption overlay
+        # never presents another chat's pending operation (a transport key:
+        # stripped before schema validation, excluded from the fingerprint).
+        if session_id and "_jenny_session_id" not in tool_arguments:
+            tool_arguments["_jenny_session_id"] = session_id
         tool_arguments["_jenny_idempotency_key"] = derive_idempotency_key(
             session_id=str(getattr(runtime, "session_id", "") or ""),
             request_id=str(getattr(runtime, "request_id", "") or ""),
@@ -126,7 +132,7 @@ def inject_idempotency_key(
             tool_id=str(call.tool_id or ""),
             canonical_arguments=canonical,
         )
-    except Exception:
+    except Exception:  # noqa: BLE001  # telemetry
         pass
     return tool_arguments
 
@@ -149,7 +155,9 @@ def recorded_operation_outcome(
             f"Operation has recorded terminal status {status}; it was not re-executed.",
             {"recorded_status": status, "effects": effects},
         )
-    text = "Operation already committed; receipt replayed. Evidence: " + json.dumps(
+    # "completed", not "committed": the model reads the latter as a git commit
+    # (dogfood TR-019). The receipt status itself stays "committed".
+    text = "Operation already completed; receipt replayed. Evidence: " + json.dumps(
         evidence, ensure_ascii=False, sort_keys=True
     )
     metadata: dict[str, object] = {"effects": "committed", "evidence": evidence}

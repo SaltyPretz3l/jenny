@@ -4,9 +4,8 @@
  *
  * Contract (Quiet & Typographic overhaul, 2026-07-05):
  *  - Every timeline font-size resolves through a --tl-font-* token.
- *  - Chat type scales on --chat-zoom-factor ONLY. It deliberately does NOT
- *    compound with the global --font-scale axis (see the hero-avatar comment
- *    in chat-thread.css for the original decision).
+ *  - Chat type aliases the app-wide role tokens, so the single Text size
+ *    setting (--font-scale) governs the timeline like every other surface.
  *  - Font weights in the timeline: 400 body / 500 UI labels / 600 emphasis.
  *  - Radii: --tl-radius-panel (8px) for panels+cards, --tl-radius-control
  *    (6px) for small controls, --tl-radius-chip (pill) for chips. No others.
@@ -19,13 +18,12 @@
  * ========================================================================= */
 
 :root {
-  /* --- Type scale (zoom-only; base px chosen to match the pre-overhaul
-   *     dominant sizes so unmigrated call sites converge, not jump) --- */
-  --tl-font-prose: calc(15px * var(--chat-zoom-factor, 1));
-  --tl-font-detail: calc(13px * var(--chat-zoom-factor, 1)); /* expanded machinery panels */
-  --tl-font-ui: calc(12px * var(--chat-zoom-factor, 1));
-  --tl-font-meta: calc(11px * var(--chat-zoom-factor, 1));
-  --tl-font-code: calc(12px * var(--chat-zoom-factor, 1));
+  /* --- Type scale: aliases of the role tokens in foundation.css --- */
+  --tl-font-prose: var(--font-size-prose);
+  --tl-font-detail: var(--font-size-footnote); /* expanded machinery panels */
+  --tl-font-ui: var(--font-size-footnote);
+  --tl-font-meta: var(--font-size-caption);
+  --tl-font-code: var(--font-size-code);
 
   --tl-weight-body: 400;
   --tl-weight-label: 500;
@@ -35,6 +33,7 @@
   --tl-radius-panel: var(--radius-base);
   --tl-radius-control: var(--radius-sm);
   --tl-radius-chip: var(--radius-pill);
+  --tl-radius-bubble: var(--radius-md); /* user bubble and recap card */
 
   /* --- Surfaces (palette-safe: text/bg mixes, no literals) --- */
   --tl-row-hover: color-mix(in srgb, var(--text-primary) 5%, transparent);

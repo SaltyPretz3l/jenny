@@ -180,9 +180,11 @@ test('disposeActivePulls drains every in-flight pull and reports unconfirmed chi
 
   assert.equal(reaped, 2, 'both in-flight pulls must be reaped');
   assert.deepEqual(kills.sort(), [1, 2], 'each pull child must be killed');
-  assert.equal(service.pullService.activeByModel.size, 0);
-  assert.equal(service.pullService.activeByRequestId.size, 0);
+  // Unconfirmed exits keep ownership of the surviving children (MEM-003).
+  assert.equal(service.pullService.activeByModel.size, 2);
+  assert.equal(service.pullService.activeByRequestId.size, 2);
   const failed = events.filter((p) => p.status === 'failed');
   assert.equal(failed.length, 2, 'unconfirmed exits must remain visible as failures');
-  assert.equal(await service.disposeActivePulls(), 0, 'a second reap is a no-op');
+  assert.equal(await service.disposeActivePulls(), 2, 'a second reap retries the surviving children');
+  assert.equal(events.filter((p) => p.status === 'failed').length, 2, 'a retry emits no second failure');
 });

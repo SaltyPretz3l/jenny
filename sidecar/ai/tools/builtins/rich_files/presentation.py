@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import io
 import posixpath
 import zipfile
 from typing import Any
@@ -12,6 +13,7 @@ from sidecar.ai.tools.builtins.rich_files.base import (
     RichInspectResult,
     build_dependency_missing_result,
     build_unsupported_result,
+    read_bounded_file_bytes,
     rich_inspect_result_to_tool_result,
     string_argument,
     validate_rich_file_source,
@@ -74,8 +76,16 @@ def presentation_inspect_tool(
             )
         )
 
+    raw_presentation = read_bounded_file_bytes(
+        source.absolute_path,
+        max_bytes=filesystem_content.MAX_MEDIA_FILE_BYTES,
+        authorized_root=workspace.require_root(),
+        message="presentation source changed beyond rich-file size limit",
+    )
     try:
-        result = _inspect_presentation(source=source, caps=caps, element_tree=element_tree)
+        result = _inspect_presentation(
+            source=source, raw_presentation=raw_presentation, caps=caps, element_tree=element_tree
+        )
     except Exception:  # noqa: BLE001
         return rich_inspect_result_to_tool_result(
             build_unsupported_result(
@@ -90,10 +100,11 @@ def presentation_inspect_tool(
 def _inspect_presentation(
     *,
     source: RichFileSource,
+    raw_presentation: bytes,
     caps: dict[str, int],
     element_tree: Any,
 ) -> RichInspectResult:
-    with zipfile.ZipFile(source.absolute_path) as archive:
+    with zipfile.ZipFile(io.BytesIO(raw_presentation)) as archive:
         part_names = preflight_ooxml_archive(archive)
         lower_part_names = {name.lower() for name in part_names}
         fallback_slide_parts = sorted_numbered_parts(

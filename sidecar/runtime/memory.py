@@ -29,6 +29,7 @@ from sidecar.ai.memory.service import (
     pending_memory_api,
 )
 from sidecar.ai.memory.store import ApprovedMemory, MemoryStore
+from sidecar.ai.memory.store_project_move import validate_move_scopes
 from sidecar.exceptions import MemoryStoreError
 from sidecar.runtime.memory_text import (
     _build_fingerprint,
@@ -316,6 +317,18 @@ def delete_memory(
 ) -> bool:
     return approved_memory_api(memory_store).delete_memory(
         _parse_memory_id(memory_id), project_id=project_id
+    )
+
+
+def move_project_memories(
+    *,
+    source_project_id: Any,
+    target_project_id: Any,
+    memory_store: MemoryStore | MemoryService,
+) -> dict[str, int]:
+    source, target = validate_move_scopes(source_project_id, target_project_id)
+    return memory_store.move_project_memories(
+        source_project_id=source, target_project_id=target
     )
 
 

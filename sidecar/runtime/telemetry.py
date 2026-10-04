@@ -148,7 +148,7 @@ def _teardown() -> None:
 
 def _before_send(
     event: dict[str, Any],
-    hint: dict[str, Any],  # noqa: ARG001
+    hint: dict[str, Any],
 ) -> dict[str, Any] | None:
     """Redact secrets from Sentry event payloads before transmission."""
     event.pop("user", None)

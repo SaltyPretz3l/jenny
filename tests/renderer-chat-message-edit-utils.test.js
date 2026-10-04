@@ -644,6 +644,51 @@ test('syncFromState finds and wires the textarea when the message id contains a 
   assert.equal(h.state.ui.editingDraftText, 'changed via input');
 });
 
+test('split view: an editor a second pane renders on a microtask is still wired and focused', async () => {
+  // Pane 1 renders its transcript from a microtask after renderAll, so the
+  // editor textarea does not exist yet when enterEdit syncs synchronously.
+  const dom = new JSDOM('<!doctype html><html><body></body></html>');
+  const doc = dom.window.document;
+  const state = { currentSessionId: 'sess_B', ui: {}, turnEventsBySession: new Map(), messagesBySession: new Map() };
+  const messages = [{ id: 'msg_user_1', role: 'user', content: 'original prompt' }];
+  const entry = doc.createElement('div');
+  entry.className = 'chat-entry';
+  entry.setAttribute('data-message-id', 'msg_user_1');
+  entry.setAttribute('data-message-role', 'user');
+  doc.body.appendChild(entry);
+  const renderAllImpl = () => {
+    if (!state.ui.editingMessageId || doc.querySelector('textarea')) return;
+    queueMicrotask(() => {
+      const ta = doc.createElement('textarea');
+      ta.setAttribute('data-edit-target-message-id', state.ui.editingMessageId);
+      ta.value = state.ui.editingDraftText || '';
+      doc.body.appendChild(ta);
+    });
+  };
+  const controller = createMessageEditController({
+    state,
+    document: doc,
+    windowRef: dom.window,
+    jennyShellSessions: { editAndTruncate: async () => ({}) },
+    getCurrentSessionMessages: () => messages,
+    getCurrentSessionId: () => state.currentSessionId,
+    renderAll: renderAllImpl,
+    appendClientLog: () => {},
+    showComposerActionError: () => {},
+    resolveFollowUpActionBlock: () => ({ blocked: false }),
+  });
+
+  assert.equal(controller.enterEdit('msg_user_1'), true);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  const textarea = doc.querySelector('textarea[data-edit-target-message-id="msg_user_1"]');
+  assert.ok(textarea);
+  assert.equal(doc.activeElement, textarea, 'the late editor takes focus');
+  textarea.value = 'changed in pane 1';
+  textarea.dispatchEvent(new dom.window.Event('input', { bubbles: true }));
+  assert.equal(state.ui.editingDraftText, 'changed in pane 1', 'the late editor is wired, so Save sees the change');
+});
+
 test('enterEdit does not throw when the message id contains a newline', () => {
   // An unescaped (or quote-only-escaped) newline inside a CSS attribute
   // selector string is invalid and throws a SyntaxError from querySelector.
@@ -830,4 +875,16 @@ test('edit-utils exposes the stream-busy + empty-content + text-attachment notic
   for (const value of [EDIT_STREAM_BUSY_REASON, EDIT_EMPTY_CONTENT_REASON, EDIT_TEXT_ATTACHMENT_NOTICE]) {
     assert.ok(value.length > 0);
   }
+});
+
+test('a throwing renderAll is contained but logged at debug level (catch pruning, 2026-09-25)', () => {
+  const h = createControllerHarness({ renderAll: () => { throw new Error('render exploded'); } });
+  assert.equal(h.controller.enterEdit('msg_user_1'), true);
+  assert.equal(h.state.ui.editingMessageId, 'msg_user_1');
+  assert.equal(h.controller.cancelEdit(), true);
+  const ignored = h.logs.filter((l) => l.event === 'chat.edit_ignored_error');
+  assert.deepEqual(ignored.map((l) => [l.level, l.details.site, l.details.error]), [
+    ['DEBUG', 'render_enter', 'render exploded'],
+    ['DEBUG', 'render', 'render exploded'],
+  ]);
 });

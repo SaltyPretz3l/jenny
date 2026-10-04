@@ -9,6 +9,12 @@ import re
 import unicodedata
 from dataclasses import dataclass
 
+from sidecar.ai.tools.error_paths import (  # noqa: F401 - HB-017 re-export for existing callers.
+    PATH_PLACEHOLDER,
+    PathKeeper,
+    error_path_keeper,
+    redact_error_paths,
+)
 from sidecar.ai.tools.prompt_marker_guard import neutralize_prompt_markers
 
 _ANSI_ESCAPE_RE = re.compile(r"\x1B\[[0-?]*[ -/]*[@-~]")

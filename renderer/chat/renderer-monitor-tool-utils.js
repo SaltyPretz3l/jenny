@@ -44,7 +44,9 @@
       persistent: monitor.persistent === true,
       timeoutMs: Number.isFinite(Number(monitor.timeout_ms)) ? Number(monitor.timeout_ms) : 0,
       eventCount: Number.isFinite(Number(monitor.event_count)) ? Number(monitor.event_count) : events.length,
-      droppedEventCount: Number.isFinite(Number(monitor.dropped_event_count)) ? Number(monitor.dropped_event_count) : 0,
+      // Producer drops plus lines Electron trimmed for retention (MON-13): both are missing from the card.
+      droppedEventCount: [monitor.dropped_event_count, monitor.display_dropped_event_count]
+        .reduce((total, value) => total + (Number.isFinite(Number(value)) ? Number(value) : 0), 0),
       terminalReason: normalizeString(monitor.terminal_reason),
       exitCode: monitor.exit_code != null && Number.isFinite(Number(monitor.exit_code)) ? Number(monitor.exit_code) : null,
       events,

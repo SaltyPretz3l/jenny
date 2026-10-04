@@ -27,15 +27,22 @@ function createWorkspaceShell() {
 // Build a coordinator wired to a real workspace state controller. Returns the
 // coordinator, the controller, and recorders for the renderer callbacks the
 // Ctrl+Tab handler drives (openSession / renderAll).
-function createHarness({ getOpenSessionsInNewTab, openSession: openSessionImpl } = {}) {
-  const wsc = createWorkspaceStateController({ jennyShell: createWorkspaceShell() });
+function createHarness({
+  getOpenSessionsInNewTab, openSession: openSessionImpl, isSessionBusy, chrome = null,
+  workspaceRailShell = null, windowRef = globalThis, sessions = [], chatsPanel = null, paneModel,
+} = {}) {
+  const wsc = createWorkspaceStateController({ jennyShell: createWorkspaceShell(), isSessionBusy, paneModel });
+  const toasts = [];
+  const errors = [];
+  const patches = [];
+  const chromeRenders = [];
   const openSessionCalls = [];
   const openSessionOptions = [];
   let renderAllCount = 0;
   const state = {
     workspace: { activeSessionId: '', openSessionIds: [] },
     currentSessionId: '',
-    sessions: [],
+    sessions,
     pendingToolApprovals: new Map(),
     activeStreamSessionId: '',
     ui: { activeView: 'chat' },
@@ -43,7 +50,7 @@ function createHarness({ getOpenSessionsInNewTab, openSession: openSessionImpl }
   const coordinator = createWorkspaceSessionCoordinator({
     state,
     constants: { TOAST_SOURCE: {} },
-    dom: { workspaceRailShell: null },
+    dom: { workspaceRailShell },
     callbacks: {
       openSession: async (sessionId, options) => {
         openSessionCalls.push(sessionId);
@@ -55,17 +62,28 @@ function createHarness({ getOpenSessionsInNewTab, openSession: openSessionImpl }
       renderAll: () => { renderAllCount += 1; },
       renderSessions: () => {},
       renderSettings: () => {},
-      showToastMessage: () => {},
-      showSessionActionError: () => {},
-      patchSessionSummary: () => {},
+      renderWorkspaceChrome: (options) => { chromeRenders.push(options || {}); },
+      showToastMessage: (message, options) => { toasts.push({ message, ...options }); },
+      showSessionActionError: (error, title) => { errors.push({ error, title }); },
+      patchSessionSummary: (sessionId, patch) => {
+        patches.push([sessionId, patch]);
+        const summary = state.sessions.find((entry) => entry.id === sessionId);
+        if (summary) Object.assign(summary, patch);
+      },
       ...(getOpenSessionsInNewTab ? { getOpenSessionsInNewTab } : {}),
     },
     controllers: {
-      getMultiStreamController: () => null,
+      // The app hands the state controller the coordinator's own busy
+      // predicate; mirror that so both sides agree on which tabs are busy.
+      getMultiStreamController: () => (isSessionBusy ? {
+        getStreamingSessionIds: () => wsc.getState().openSessionIds.filter((id) => isSessionBusy(id)),
+        getApprovalPendingSessionIds: () => [],
+      } : null),
       getWorkspaceStateController: () => wsc,
-      getWorkspaceChromeController: () => null,
+      getWorkspaceChromeController: () => chrome,
+      getChatsPanelController: () => chatsPanel,
     },
-    windowRef: globalThis,
+    windowRef,
   });
   // Mirror the controller's current snapshot into state.workspace, the way the
   // app does on init, so the handler has a correct previous-active to diff.
@@ -76,6 +94,10 @@ function createHarness({ getOpenSessionsInNewTab, openSession: openSessionImpl }
     state,
     openSessionCalls,
     openSessionOptions,
+    toasts,
+    errors,
+    patches,
+    chromeRenders,
     getRenderAllCount: () => renderAllCount,
   };
 }
@@ -147,15 +169,23 @@ test('Ctrl+Shift+Tab walks backward through the frozen snapshot', async () => {
   assert.deepEqual(openSessionCalls, ['s3', 's2']);
 });
 
-test('shortcut handler ignores Ctrl+Tab while focused in a text input', async () => {
+test('Ctrl+Tab cycles while focus is in a text input; Ctrl+W stays suppressed there', async () => {
   const { wsc, coordinator, state, openSessionCalls } = createHarness();
   await seedThreeTabs(wsc, coordinator, state);
 
+  // Focus usually lives in the composer: tab switching must work from there.
   const target = { closest: (sel) => (sel.includes('textarea') ? {} : null), isContentEditable: false };
   await coordinator.handleWorkspaceShortcut({ type: 'keydown', key: 'Tab', ctrlKey: true, altKey: false, metaKey: false, shiftKey: false, target, preventDefault() {} });
+  assert.deepEqual(openSessionCalls, ['s2']);
+  assert.equal(state.workspace.activeSessionId, 's2');
 
-  assert.deepEqual(openSessionCalls, []);
-  assert.equal(state.workspace.activeSessionId, 's1');
+  await coordinator.handleWorkspaceShortcut({ type: 'keydown', key: 'Tab', ctrlKey: true, altKey: false, metaKey: false, shiftKey: true, target, preventDefault() {} });
+  assert.equal(state.workspace.activeSessionId, 's1', 'Ctrl+Shift+Tab also works from a text input');
+
+  let prevented = false;
+  await coordinator.handleWorkspaceShortcut({ type: 'keydown', key: 'w', ctrlKey: true, altKey: false, metaKey: false, shiftKey: false, target, preventDefault() { prevented = true; } });
+  assert.equal(prevented, false, 'Ctrl+W is left to the text input');
+  assert.deepEqual(state.workspace.openSessionIds.slice().sort(), ['s1', 's2', 's3']);
 });
 
 test('committing with no cycle in flight is a harmless no-op', async () => {
@@ -316,4 +346,202 @@ test('activateWorkspaceSession drops a stale background navigation before applyi
   assert.equal(state.currentSessionId, 'newer-user-choice');
   assert.deepEqual(state.workspace, { activeSessionId: 'parent', openSessionIds: ['parent'] });
   assert.deepEqual(openSessionCalls, []);
+});
+
+test('a restore before sign-in is deferred: the stored tabs survive and the signed-in load restores them from storage', async () => {
+  let stored = { activeSessionId: 's2', openSessionIds: ['s1', 's2'] };
+  const writes = [];
+  const wsc = createWorkspaceStateController({ jennyShell: { workspace: {
+    async getState() { return { ...stored, openSessionIds: stored.openSessionIds.slice() }; },
+    async updateState(patch) { writes.push(patch); stored = { ...stored, ...patch }; return stored; },
+  } } });
+  let restoredHooks = 0;
+  const state = {
+    auth: { authenticated: false }, workspace: { activeSessionId: '', openSessionIds: [] },
+    currentSessionId: '', sessions: [], pendingToolApprovals: new Map(), activeStreamSessionId: '',
+    ui: { activeView: 'chat' }, messagesBySession: new Map(),
+  };
+  const coordinator = createWorkspaceSessionCoordinator({
+    state, constants: { TOAST_SOURCE: {} }, dom: { workspaceRailShell: null },
+    callbacks: {
+      openSession: async (id) => { state.currentSessionId = id; state.messagesBySession.set(id, []); },
+      renderAll() {}, renderSessions() {}, renderSettings() {}, showToastMessage() {},
+      showSessionActionError() {}, patchSessionSummary() {},
+      onWorkspaceRestored: () => { restoredHooks += 1; },
+    },
+    controllers: { getMultiStreamController: () => null, getWorkspaceStateController: () => wsc,
+      getWorkspaceChromeController: () => null },
+    windowRef: globalThis,
+  });
+
+  // Cold boot: the backend has not signed in, so the session list is empty.
+  await coordinator.syncWorkspaceFromStore();
+  assert.equal(state.workspaceRestoreDeferred, true);
+  assert.deepEqual(writes, [], 'no empty rail is persisted over the stored tabs');
+  assert.equal(restoredHooks, 0, 'the stored second pane is not hydrated from an empty restore');
+
+  // Signed in before the list arrives (agent mode's boot order): still deferred.
+  state.auth = { authenticated: true };
+  await coordinator.syncWorkspaceFromStore();
+  assert.equal(state.workspaceRestoreDeferred, true);
+  assert.deepEqual(writes, [], 'a signed-in boot with no session list yet persists nothing');
+
+  // The list lands and the first currentSessionId is sessions[0];
+  // even a preserve-current refresh must read storage, not the empty rail.
+  state.sessionListLoaded = true;
+  state.sessions = [{ id: 's3' }, { id: 's1' }, { id: 's2' }];
+  state.currentSessionId = 's3';
+  const restored = await coordinator.syncWorkspaceFromStore({ preserveCurrentSession: true });
+  assert.deepEqual(restored.openSessionIds, ['s1', 's2']);
+  assert.equal(restored.activeSessionId, 's2');
+  assert.equal(state.currentSessionId, 's2');
+  assert.equal(state.workspaceRestoreDeferred, false);
+  assert.equal(restoredHooks, 1);
+  assert.deepEqual(stored.openSessionIds, ['s1', 's2']);
+});
+
+// ---- Chat tab rail program (shell-chrome area 2) ----
+
+async function fillRail(wsc, coordinator, count = 8) {
+  for (let index = 1; index <= count; index += 1) await wsc.openSession(`s${index}`);
+  coordinator.applyWorkspaceSnapshot(wsc.getState());
+}
+
+test('opening a ninth tab says which idle tab closed and offers to show it in Chats', async () => {
+  const focused = [];
+  const row = {
+    dataset: { sessionId: 's1' },
+    querySelector: () => ({ focus() { focused.push('s1'); }, scrollIntoView() {} }),
+  };
+  const workspaceRailShell = {
+    ownerDocument: { querySelectorAll: (selector) => (selector.includes('#conversationGroups') ? [row] : []) },
+    classList: { toggle() {} },
+    hidden: false,
+  };
+  const sessions = Array.from({ length: 9 }, (_v, index) => ({ id: `s${index + 1}`, title: index === 0 ? 'Quick harness check' : `Chat ${index + 1}` }));
+  const { wsc, coordinator, state, toasts } = createHarness({ getOpenSessionsInNewTab: () => true, workspaceRailShell, sessions });
+  await fillRail(wsc, coordinator);
+
+  await coordinator.activateWorkspaceSession('s9');
+  assert.equal(state.workspace.openSessionIds.includes('s1'), false);
+  assert.equal(toasts.length, 1);
+  const [toast] = toasts;
+  assert.equal(toast.title, 'Tab closed to make room');
+  assert.equal(toast.message, '\u201cQuick harness check\u201d is still in Chats.');
+  assert.equal(toast.tone, 'info');
+  assert.equal(toast.durationMs, 6000);
+  assert.notEqual(toast.sticky, true);
+  assert.equal(toast.actions.length, 1);
+  assert.equal(toast.actions[0].label, 'Show in Chats');
+  toast.actions[0].onClick();
+  assert.deepEqual(focused, ['s1'], 'the action focuses the evicted chat in the sidebar');
+});
+
+test('Show in Chats widens a filtered or paged sidebar until the evicted row is mounted', async () => {
+  const focused = [];
+  const calls = [];
+  const row = {
+    dataset: { sessionId: 's1' },
+    querySelector: () => ({ focus() { focused.push('s1'); }, scrollIntoView() {} }),
+  };
+  // The row is filtered out (a search, a project, the archived scope) and sits
+  // one page down: it mounts only after the filters clear and a page loads.
+  let mounted = false;
+  let pages = 0;
+  const search = { value: 'harness' };
+  const chatsPanel = {
+    getScope: () => 'archived',
+    setScope: (scope) => calls.push(['setScope', scope]),
+    getProjectFilter: () => 'proj-1',
+    setProjectFilter: (id) => calls.push(['setProjectFilter', id]),
+    resetQuery: () => calls.push(['resetQuery']),
+    renderNow: () => { calls.push(['renderNow']); mounted = pages >= 1; },
+    loadMore: () => { pages += 1; calls.push(['loadMore']); },
+  };
+  const workspaceRailShell = {
+    ownerDocument: {
+      querySelectorAll: (selector) => (mounted && selector.includes('#conversationGroups') ? [row] : []),
+      getElementById: (id) => (id === 'conversationSearch' ? search : null),
+    },
+    classList: { toggle() {} },
+    hidden: false,
+  };
+  const sessions = Array.from({ length: 9 }, (_v, index) => ({ id: `s${index + 1}`, title: `Chat ${index + 1}` }));
+  const { wsc, coordinator, toasts } = createHarness({ getOpenSessionsInNewTab: () => true, workspaceRailShell, sessions, chatsPanel });
+  await fillRail(wsc, coordinator);
+  await coordinator.activateWorkspaceSession('s9');
+  toasts[0].actions[0].onClick();
+
+  assert.equal(search.value, '', 'the search box is cleared');
+  assert.deepEqual(calls.slice(0, 4), [['setScope', 'recent'], ['setProjectFilter', ''], ['resetQuery'], ['renderNow']]);
+  assert.equal(pages, 1, 'one more page was enough');
+  assert.deepEqual(focused, ['s1']);
+});
+
+test('Show in Chats gives up after a bounded number of pages when the session is gone', async () => {
+  let pages = 0;
+  const chatsPanel = { renderNow() {}, loadMore: () => { pages += 1; } };
+  const workspaceRailShell = {
+    ownerDocument: { querySelectorAll: () => [], getElementById: () => null },
+    classList: { toggle() {} },
+    hidden: false,
+  };
+  const sessions = Array.from({ length: 9 }, (_v, index) => ({ id: `s${index + 1}`, title: `Chat ${index + 1}` }));
+  const { wsc, coordinator, toasts } = createHarness({ getOpenSessionsInNewTab: () => true, workspaceRailShell, sessions, chatsPanel });
+  await fillRail(wsc, coordinator);
+  await coordinator.activateWorkspaceSession('s9');
+  assert.doesNotThrow(() => toasts[0].actions[0].onClick());
+  assert.equal(pages, 20);
+});
+
+test('a full rail of busy tabs names the cap in sentence case', async () => {
+  const { wsc, coordinator, toasts } = createHarness({ getOpenSessionsInNewTab: () => true, isSessionBusy: () => true });
+  await fillRail(wsc, coordinator);
+  await coordinator.activateWorkspaceSession('s9');
+  assert.equal(toasts.length, 1);
+  assert.equal(toasts[0].title, 'All 8 tabs are busy');
+  assert.equal(toasts[0].message, 'Close or finish a busy session before opening another tab.');
+});
+
+test('a full rail whose only idle tab is shown in the other pane says so instead of "all busy"', async () => {
+  const paneModel = require('../renderer/shell/renderer-pane-model');
+  const { wsc, coordinator, toasts } = createHarness({
+    getOpenSessionsInNewTab: () => true, paneModel, isSessionBusy: (id) => id !== 's8' && id !== 's3',
+  });
+  await fillRail(wsc, coordinator);
+  coordinator.applyWorkspaceSnapshot(wsc.getState());
+  wsc.persistPaneLayout({ panes: ['s8', 's3'], focusedPaneId: 0 });
+  await coordinator.activateWorkspaceSession('s9');
+  assert.equal(toasts.length, 1);
+  assert.equal(toasts[0].title, '6 of 8 tabs are busy');
+  assert.equal(toasts[0].message, 'A tab shown in a pane stays open. Close a tab before opening another.');
+});
+
+test('a full rail where only the current tab is idle counts the busy tabs', async () => {
+  const { wsc, coordinator, toasts } = createHarness({ getOpenSessionsInNewTab: () => true, isSessionBusy: (id) => id !== 's8' });
+  await fillRail(wsc, coordinator);
+  await coordinator.activateWorkspaceSession('s9');
+  assert.equal(toasts[0].title, '7 of 8 tabs are busy');
+  assert.equal(toasts[0].message, 'Close or finish a busy session before opening another tab.');
+});
+
+test('a sessions render retitles the rail tabs', async () => {
+  const calls = [];
+  const chrome = {
+    syncTabTitles() { calls.push('syncTabTitles'); },
+    renderSidebarBadges() { calls.push('renderSidebarBadges'); },
+  };
+  const { coordinator } = createHarness({ chrome });
+  coordinator.renderWorkspaceSidebarBadges([], []);
+  assert.deepEqual(calls, ['renderSidebarBadges', 'syncTabTitles']);
+});
+
+test('a chrome pass outside the chat view keeps a row-anchored link popover open', async () => {
+  const hides = [];
+  const chrome = { renderSidebarBadges() {}, hideLinkedSessionPopover: (options) => hides.push(options) };
+  const workspaceRailShell = { ownerDocument: { querySelectorAll: () => [] }, classList: { toggle() {} }, hidden: false };
+  const { coordinator, state } = createHarness({ chrome, workspaceRailShell });
+  state.ui.activeView = 'plugin';
+  coordinator.renderWorkspaceChrome();
+  assert.deepEqual(hides, [{ keepRowAnchored: true }]);
 });

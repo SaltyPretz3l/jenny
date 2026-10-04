@@ -21,9 +21,11 @@ function isMissingFileError(error) {
   return String(error && error.code || '').trim().toUpperCase() === 'ENOENT';
 }
 
+const LEVEL_ORDER = ['DEBUG', 'INFO', 'WARN', 'ERROR'];
+
 function normalizeLevel(entry) {
   const level = String(entry && entry.level || 'INFO').trim().toUpperCase();
-  return ['DEBUG', 'INFO', 'WARN', 'ERROR'].includes(level) ? level : 'INFO';
+  return LEVEL_ORDER.includes(level) ? level : 'INFO';
 }
 
 function isSevereLevel(level) {
@@ -43,6 +45,7 @@ class ProcessLogWriter {
     maxPendingEntries,
     maxPendingBytes,
     severeReserve,
+    fileMinLevel = 'DEBUG',
   } = {}) {
     this.stream = stream === undefined ? process.stdout : stream;
     this.disabled = false;
@@ -66,6 +69,9 @@ class ProcessLogWriter {
     this.severeReserve = Number.isFinite(severeReserve) && severeReserve >= 0
       ? Math.min(Math.floor(severeReserve), this.maxPendingEntries)
       : Math.min(DEFAULT_SEVERE_RESERVE, this.maxPendingEntries);
+    // The file sink can skip DEBUG so a normal install does not wear the disk
+    // with chatter nobody reads; the stream (stdout) still carries everything.
+    this.fileMinRank = Math.max(0, LEVEL_ORDER.indexOf(String(fileMinLevel || '').toUpperCase()));
     this.pending = [];
     this.pendingBytes = 0;
     this.drainTimer = null;
@@ -168,11 +174,14 @@ class ProcessLogWriter {
     if (items.length === 0) return false;
 
     const streamWrote = this._writeStream(items.map((item) => item.line).join(''));
+    const fileItems = this.fileMinRank > 0
+      ? items.filter((item) => LEVEL_ORDER.indexOf(item.level) >= this.fileMinRank)
+      : items;
     let fileAccepted = false;
     if (this.durable) {
-      for (const item of items) fileAccepted = this._writeFileSyncItems([item]) || fileAccepted;
+      for (const item of fileItems) fileAccepted = this._writeFileSyncItems([item]) || fileAccepted;
     } else {
-      for (const item of items) fileAccepted = this._enqueue(item) || fileAccepted;
+      for (const item of fileItems) fileAccepted = this._enqueue(item) || fileAccepted;
       if (fileAccepted) this._scheduleDrain();
     }
     return streamWrote || fileAccepted;
@@ -363,6 +372,8 @@ class ProcessLogWriter {
     const droppedCount = Object.values(this.stats.droppedByLevel).reduce((sum, count) => sum + count, 0);
     return {
       flushed: !timedOut,
+      // A drain can complete after the file sink was disabled; that persisted nothing.
+      persisted: !this.fileDisabled,
       flushedCount: this.stats.flushedCount,
       timedOutCount: this.stats.timedOutCount,
       droppedCount,

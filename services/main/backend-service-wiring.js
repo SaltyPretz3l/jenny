@@ -11,18 +11,19 @@ const { CalendarService } = require('../calendar-service');
 const { createBackgroundJobTracker } = require('./background-job-tracker');
 const { resolveChromiumSandboxStatus } = require('./chromium-sandbox-status');
 const { BACKEND_UP_PHASES } = require('./packaged-smoke');
+const { shouldBroadcastFeatureState } = require('./main-process-policy');
 const { createChatStreamBridge } = require('../chat-stream-bridge');
+const { isAwaitedFeatureSettingsCommit } = require('../feature-settings-service');
 const { CompanionService } = require('../companion-service');
 const { HomeAssistantService } = require('../home-assistant-service');
 const { LinkStatusService } = require('../link-status-service');
 const { OfflineIntelligenceService } = require('../offline-intelligence-service');
 const { ModelCatalogService } = require('../model-catalog-service');
 const { ModelFitObservationStore } = require('../model-fit-observation-store');
+const { ModelLoadDurationStore } = require('../model-load-duration-store');
 const { createModelFitObserver } = require('../model-fit-observer');
 const { formatDateKey } = require('../personality-workspace-service');
 const { SchedulerService } = require('../scheduler-service');
-const { TipsService } = require('../tips-service');
-const { WeatherService } = require('../weather-service');
 
 function createBackendServiceWithDeps({
   app,
@@ -55,7 +56,6 @@ function createBackendServiceWithDeps({
   refreshGpuMemorySample = async () => null,
   getRefreshElectronToolRegistry = () => () => {},
   shouldRefreshManagedConfigForShellConfigReason = () => false,
-  closeCometOverlayIfDisabled = () => {},
   sendBridgeEvent = () => {},
   log = () => {},
   showSidecarCrashDialog = async () => null,
@@ -131,6 +131,10 @@ function createBackendServiceWithDeps({
     },
     logger: log,
   });
+  const { ImageEngineService } = require('../image-engine-service');
+  const imageEngine = new ImageEngineService({
+    userDataPath: app.getPath('userData'), platform: processRef.platform, logger: log,
+  });
   const backendService = new BackendService({
     appVersion: app.getVersion(),
     // Source setup forwards this process-only choice through start.js.
@@ -169,7 +173,6 @@ function createBackendServiceWithDeps({
     knowledgeService,
     mcpDiscoveryService,
     setupService,
-    tipsService: null,
     usageHistory,
     shellLogStore: logStore,
     systemStatsProvider: getSystemStatsPayload,
@@ -181,6 +184,21 @@ function createBackendServiceWithDeps({
   backendService.pdfAddon = pdfAddon;
   pdfAddon.on('changed', (state) => sendBridgeEvent('pdfAddon.onChanged', state));
   void pdfAddon.start().catch(() => {});
+  const { ExclusiveGpuCoordinator } = require('../backend/exclusive-gpu-coordinator');
+  const { createChatGpuHandoff } = require('../backend/chat-gpu-handoff');
+  const { reconcileRenderRecord, killRenderRecordSync } = require('../image-engine-pidfile');
+  backendService.imageEngine = imageEngine;
+  imageEngine.on('changed', (state) => sendBridgeEvent('imageEngine.onChanged', state));
+  imageEngine.start();
+  backendService.exclusiveGpuCoordinator = backendService.exclusiveGpuCoordinator || new ExclusiveGpuCoordinator({ logger: log });
+  backendService.chatGpuHandoff = createChatGpuHandoff({
+    backendService, coordinator: backendService.exclusiveGpuCoordinator, getLlamaServerManager,
+    reconcileRenderProcesses: () => reconcileRenderRecord({ userDataPath: app.getPath('userData'), log }),
+    log,
+  });
+  backendService.imageEngineRuntime = {
+    killRenderSync: () => killRenderRecordSync({ userDataPath: app.getPath('userData'), log }),
+  };
   const { DesktopSandboxService } = require('../execution/desktop-sandbox-service');
   backendService.commandSandbox = new DesktopSandboxService({
     userDataPath: app.getPath('userData'),
@@ -249,13 +267,20 @@ function createBackendServiceWithDeps({
   // context-length apply for the active model should re-observe under the
   // new context, rather than waiting for the next natural reload.
   backendService.modelFitObserver = modelFitObserver;
+  // Per-model last-load memory read by local-engine-status.js at the
+  // loading -> ready transition and surfaced as model_acquisition.last_load_ms
+  // for the health popover's "Last time" line. Bounded (20 pairs), never throws.
+  backendService.modelLoadDurationStore = new ModelLoadDurationStore({
+    filePath: path.join(app.getPath('userData'), 'model-load-durations.json'),
+    logger: log,
+  });
   const companionService = new CompanionService({
     configService: shellConfigService,
     personalityWorkspace,
     listSessionSummaries: () =>
       backendService && backendService.sessionStore
         ? backendService.sessionStore.listSessions()
-        : [],
+        : null,
     listSessionRecords: () =>
       backendService && backendService.sessionStore
         && typeof backendService.sessionStore.listSessionRecords === 'function'
@@ -267,14 +292,6 @@ function createBackendServiceWithDeps({
     taskBoardEnabled: () => buildEffectiveFeatureFlags().tools_task_board_enabled === true,
   });
   backendService.offlineIntelligenceService = offlineIntelligenceService;
-  const tipsService = new TipsService({
-    configService: shellConfigService,
-    skillsService,
-    offlineIntelligenceService,
-    featureEnabled: true,
-    logger: log,
-  });
-  backendService.tipsService = tipsService;
   backendService.setFeatureFlags(initialFeatureFlags);
   skillsService.on('changed', (state) => {
     sendBridgeEvent('skills.onChanged', state);
@@ -284,27 +301,13 @@ function createBackendServiceWithDeps({
       sendBridgeEvent('knowledge.onChanged', snapshot);
     });
   }
-  tipsService.on('changed', (state) => {
-    sendBridgeEvent('tips.onChanged', state);
-  });
   schedulerService.on('changed', (snapshot) => {
     sendBridgeEvent('scheduler.onChanged', snapshot);
   });
-  // Home dashboard weather (open-meteo, keyless). Zero network traffic until
-  // a location is configured under shell-config `home.weather`; refreshes
-  // immediately on `home_config_updated`. Timer is unref'd, so no explicit
-  // shutdown threading is required (no locks, watchers, or pending writes).
-  const weatherService = new WeatherService({
-    configService: shellConfigService,
-    logger: log,
-  });
-  weatherService.on('changed', (state) => {
-    sendBridgeEvent('weather.onChanged', state);
-  });
-  weatherService.start({ deferInitialRefresh: true });
   // Home dashboard link-tile status dots. Polls only explicit `siteMonitor`
-  // URLs (never tile hrefs), so no traffic until a tile opts in; same unref'd
-  // timer rationale as the weather service — no shutdown threading needed.
+  // URLs (never tile hrefs), so no traffic until a tile opts in. The timer is
+  // unref'd, so no explicit shutdown threading is required (no locks,
+  // watchers, or pending writes).
   const linkStatusService = new LinkStatusService({
     configService: shellConfigService,
     logger: log,
@@ -315,8 +318,8 @@ function createBackendServiceWithDeps({
   linkStatusService.start({ deferInitialRefresh: true });
   // Home dashboard calendar: local events in <userData>/home-calendar.json
   // plus read-only ICS feed polling (config `home.calendar.feeds`, refreshed
-  // on `home_config_updated`). Same unref'd-timer rationale as weather and
-  // link-status; event mutations write-immediate, so no shutdown threading.
+  // on `home_config_updated`). Same unref'd-timer rationale as link-status;
+  // event mutations write-immediate, so no shutdown threading.
   const calendarService = new CalendarService({
     userDataPath: app.getPath('userData'),
     configService: shellConfigService,
@@ -340,13 +343,10 @@ function createBackendServiceWithDeps({
   homeAssistantService.on('changed', (payload) => {
     sendBridgeEvent('home.onAiChanged', payload);
   });
-  // Published on the backend service (the tipsService / offlineIntelligenceService
+  // Published on the backend service (the offlineIntelligenceService
   // precedent above) so main.js needs no module-level slot: the tool executor's
   // live getter and the IPC handler deps both reach it through getBackendService.
   backendService.homeAssistantService = homeAssistantService;
-  if (tipsService.featureEnabled) {
-    tipsService.initializeSession();
-  }
   const chatStreamBridge = createChatStreamBridge({
     sendBridgeEvent,
     log,
@@ -390,8 +390,9 @@ function createBackendServiceWithDeps({
   // status.json and pushes chip snapshots over the bridge-event bus (the
   // chat stream is turn-scoped and cannot carry a job that outlives its
   // call). Poll timer is unref'd — no shutdown threading needed.
+  // Each job carries its turn's execution root from registration; there is
+  // no global-root fallback (a project-bound job would be polled elsewhere).
   const backgroundJobTracker = createBackgroundJobTracker({
-    getWorkspaceRoot: () => String(shellConfigService.getToolsWorkspaceRoot?.() || '').trim(),
     sendBridgeEvent,
     log,
   });
@@ -443,9 +444,13 @@ function createBackendServiceWithDeps({
     ) {
       getRefreshElectronToolRegistry()?.();
     }
-    sendBridgeEvent('features.onChanged', buildFeatureStatePayload());
-    closeCometOverlayIfDisabled();
-    if (!shouldRefreshManagedConfigForShellConfigReason(context.reason)) {
+    if (shouldBroadcastFeatureState(context.reason, context.reasons)) {
+      sendBridgeEvent('features.onChanged', buildFeatureStatePayload());
+    }
+    if (
+      isAwaitedFeatureSettingsCommit(shellConfigService)
+      || !shouldRefreshManagedConfigForShellConfigReason(context.reason, context.reasons)
+    ) {
       return;
     }
     try {
@@ -463,7 +468,6 @@ function createBackendServiceWithDeps({
     deferredBackgroundRefreshesStarted = true;
     const refreshes = [
       ['model_catalog', () => modelCatalogService.refresh()],
-      ['weather', () => weatherService.refresh()],
       ['link_status', () => linkStatusService.refresh()],
       ['calendar', () => calendarService.refreshFeeds()],
     ];
@@ -496,8 +500,6 @@ function createBackendServiceWithDeps({
     linkStatusService,
     schedulerService,
     startDeferredBackgroundRefreshes,
-    tipsService,
-    weatherService,
   };
 }
 

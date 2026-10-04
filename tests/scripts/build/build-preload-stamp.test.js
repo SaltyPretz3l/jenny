@@ -11,7 +11,6 @@ const ENTRYPOINTS = [
   'preload.js',
   'uninstall-preload.js',
   'plugin-view-preload.js',
-  'plugin-consent-preload.js',
 ];
 
 test.after(cleanupTrackedResources);
@@ -150,7 +149,7 @@ test('preload stamp skips unchanged work and rebuilds for stale or corrupt state
   buildPreloadBundle({ root });
   assert.equal(buildCount, 4, 'an unreadable stamp rebuilds');
 
-  fs.rmSync(path.join(root, 'plugin-consent-preload.bundle.js'));
+  fs.rmSync(path.join(root, 'uninstall-preload.bundle.js'));
   failAfterWrite = true;
   assert.throws(() => buildPreloadBundle({ root }), /simulated esbuild failure/);
   assert.equal(fs.existsSync(path.join(root, '.preload-build-stamp.json')), false);

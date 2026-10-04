@@ -23,14 +23,27 @@
     return 'all';
   }
 
-  function prettyPrintJson(text) {
+  // Two-space pretty print of JSON text, else the trimmed text. `report`, when
+  // given, learns whether the text was a JSON document (an object or array),
+  // so a caller never parses the same text a second time to ask.
+  function prettyPrintJson(text, report) {
     const trimmed = String(text || '').trim();
+    if (report && typeof report === 'object') report.json = false;
     if (!trimmed) return '';
     try {
-      return JSON.stringify(JSON.parse(trimmed), null, 2);
+      const parsed = JSON.parse(trimmed);
+      if (report && typeof report === 'object') report.json = parsed !== null && typeof parsed === 'object';
+      return JSON.stringify(parsed, null, 2);
     } catch (_) {
       return trimmed;
     }
+  }
+
+  // The one JSON-document detector for callers that do not print (Download's format).
+  function isJsonDocument(text) {
+    const report = {};
+    prettyPrintJson(text, report);
+    return report.json;
   }
 
   function inferGeneratedArtifactLanguage(entry) {
@@ -500,6 +513,7 @@
     isImageArtifact,
     normalizeArtifactFilter,
     prettyPrintJson,
+    isJsonDocument,
     inferGeneratedArtifactLanguage,
     isMarkdownGeneratedArtifact,
     isMermaidGeneratedArtifact,

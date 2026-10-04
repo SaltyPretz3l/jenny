@@ -119,14 +119,6 @@
     surface.detailNote.classList.toggle('detail-note-error', Boolean(isError));
   }
 
-  function renderMermaidModeButton(mode, active, label, disabled, escapeHtml) {
-    return `<button class="artifact-preview-mermaid-toggle${active ? ' active' : ''}" type="button" data-artifact-mermaid-mode="${escapeHtml(mode)}"${disabled ? ' disabled' : ''}>${escapeHtml(label)}</button>`;
-  }
-
-  function renderArtifactViewModeButton(kind, mode, active, label, disabled, escapeHtml) {
-    return `<button class="artifact-preview-mermaid-toggle${active ? ' active' : ''}" type="button" data-artifact-view-kind="${escapeHtml(kind)}" data-artifact-view-mode="${escapeHtml(mode)}"${disabled ? ' disabled' : ''}>${escapeHtml(label)}</button>`;
-  }
-
   function renderMermaidGeneratedArtifact(surface, artifact, file, editable, deps) {
     const {
       state,
@@ -140,13 +132,9 @@
     const sourceHtml = mermaidSource
       ? `<pre class="artifact-preview-pre artifact-preview-mermaid-source">${escapeHtml(mermaidSource)}</pre>`
       : '';
+    // The Canvas chrome owns the preview/code view control, so the body
+    // carries no in-content mode toolbar.
     const editMode = state.artifacts.mermaidViewMode === 'edit';
-    const toolbar = state.features?.featureFlags?.artifact_panel_v3 === true ? '' : (
-      '<div class="artifact-preview-mermaid-toolbar">'
-      + renderMermaidModeButton('preview', !editMode, 'Preview', state.artifacts.loading, escapeHtml)
-      + renderMermaidModeButton('edit', editMode, editable ? jt('artifacts.document.editSource', 'Edit Source') : jt('artifacts.document.viewSource', 'View Source'), state.artifacts.loading, escapeHtml)
-      + '</div>'
-    );
     if (state.artifacts.lastError) {
       setDetailNoteImpl(surface, state.artifacts.lastError, true);
     } else if (state.artifacts.loading) {
@@ -164,7 +152,7 @@
 
     surface.previewContent.classList.remove('hidden');
     if (editMode) {
-      surface.previewContent.innerHTML = toolbar + '<div class="artifacts-empty">' + jt('artifacts.mermaid.editingSource', 'Editing Mermaid source below. Switch back to Preview to re-render the diagram.') + '</div>';
+      surface.previewContent.innerHTML = '<div class="artifacts-empty">' + jt('artifacts.mermaid.editingSource', 'Editing Mermaid source below. Switch back to Preview to re-render the diagram.') + '</div>';
       surface.editorShell.classList.remove('hidden');
       ensureEditor(surface.key)?.setDocument({
         value: mermaidSource,
@@ -176,13 +164,13 @@
 
     surface.editorShell.classList.add('hidden');
     if (!mermaidSource.trim()) {
-      surface.previewContent.innerHTML = toolbar + '<div class="artifacts-empty">' + jt('artifacts.mermaid.emptySource', 'Preview unavailable. Mermaid source is empty.') + '</div>';
+      surface.previewContent.innerHTML = '<div class="artifacts-empty">' + jt('artifacts.mermaid.emptySource', 'Preview unavailable. Mermaid source is empty.') + '</div>';
       return;
     }
 
     const hostId = `${surface.key}-generated-mermaid-preview-${String(artifact.id || 'preview').replace(/[^a-z0-9_-]+/gi, '-').toLowerCase()}`;
     surface.previewContent.innerHTML = (
-      toolbar + '<div class="artifact-preview-mermaid-shell">'
+      '<div class="artifact-preview-mermaid-shell">'
       + `<div class="artifact-preview-mermaid-host" id="${escapeHtml(hostId)}">`
       + '<div class="artifacts-empty">' + jt('artifacts.mermaid.renderingPreview', 'Rendering Mermaid preview...') + '</div>'
       + '</div>'
@@ -196,7 +184,7 @@
       `artifact-mermaid-svg-${String(hostId || '').replace(/[^a-z0-9_-]+/gi, '-').toLowerCase() || 'preview'}`
     );
     if (!previewStarted) {
-      surface.previewContent.innerHTML = toolbar + '<div class="artifacts-empty">' + jt('artifacts.mermaid.previewUnavailable', 'Preview unavailable. Mermaid source is shown below.') + '</div>'
+      surface.previewContent.innerHTML = '<div class="artifacts-empty">' + jt('artifacts.mermaid.previewUnavailable', 'Preview unavailable. Mermaid source is shown below.') + '</div>'
         + sourceHtml;
     }
   }
@@ -381,8 +369,6 @@
     readArtifactDocumentCodeBlockText,
     setActiveOutlineItem,
     renderMermaidGeneratedArtifact,
-    renderMermaidModeButton,
-    renderArtifactViewModeButton,
     renderCatalogEntry,
     renderArtifactCard,
   };

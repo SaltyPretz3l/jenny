@@ -18,7 +18,8 @@ Exits 0 on agreement, 1 with a human-readable diff on drift.
 from __future__ import annotations
 
 import ast
-import re
+import json
+import subprocess
 import sys
 from pathlib import Path
 
@@ -30,6 +31,46 @@ ROOT = Path(__file__).resolve().parents[2]
 JS_COLLECTOR_PATH = ROOT / "services" / "backend" / "canonical-turn-event-collector-normalize.js"
 PY_FIXTURE_FORMAT_PATH = ROOT / "tests" / "sidecar" / "replay" / "fixture_format.py"
 PY_PROTOCOL_PATH = ROOT / "sidecar" / "protocol.py"
+ACORN_PATH = ROOT / "node_modules" / "acorn"
+SET_PROBE = r"""
+const fs = require('node:fs');
+const acorn = require(process.argv[1]);
+const { source, name } = JSON.parse(fs.readFileSync(0, 'utf8'));
+const tree = acorn.parse(source, { ecmaVersion: 'latest', sourceType: 'module' });
+const declarations = new Map();
+for (const statement of tree.body) {
+  const node = statement.type === 'ExportNamedDeclaration' ? statement.declaration : statement;
+  if (node && node.type === 'VariableDeclaration') {
+    for (const declaration of node.declarations) {
+      if (declaration.id.type === 'Identifier') {
+        declarations.set(declaration.id.name, declaration.init);
+      }
+    }
+  }
+}
+function entries(name, active = new Set()) {
+  if (active.has(name)) throw new Error('cyclic Set spread: ' + name);
+  const value = declarations.get(name);
+  if (!value || value.type !== 'NewExpression' || value.callee.name !== 'Set'
+      || value.arguments.length !== 1 || value.arguments[0].type !== 'ArrayExpression') {
+    throw new Error('could not resolve Set literal: ' + name);
+  }
+  const next = new Set([...active, name]);
+  const result = [];
+  for (const element of value.arguments[0].elements) {
+    if (element && element.type === 'Literal' && typeof element.value === 'string') {
+      result.push(element.value);
+    } else if (element && element.type === 'SpreadElement'
+        && element.argument.type === 'Identifier') {
+      result.push(...entries(element.argument.name, next));
+    } else {
+      throw new Error('unresolved member in Set: ' + name);
+    }
+  }
+  return result;
+}
+process.stdout.write(JSON.stringify(entries(name)));
+"""
 
 # Notification methods that the Electron collector turns into live-captured
 # turn-event kinds. The mapping mirrors `chat-stream-tool-handling.js` and
@@ -43,40 +84,18 @@ NOTIFICATION_METHOD_TO_LIVE_KIND: dict[str, str] = {
 
 
 def _extract_js_set_entries(source: str, set_name: str) -> set[str]:
-    """Parse a `const NAME = new Set([...])` literal from the JS collector.
-
-    The collector also has `LIVE_CAPTURED_KINDS = new Set([...TOOL_RELATED_KINDS, 'reasoning_phase', 'plan_object'])`
-    so we resolve `...TOOL_RELATED_KINDS` by recursing once.
-    """
-    pattern = re.compile(
-        rf"const\s+{re.escape(set_name)}\s*=\s*new\s+Set\(\s*\[(?P<body>[^\]]*?)\]\s*\)\s*;",
-        re.DOTALL,
-    )
-    match = pattern.search(source)
-    if not match:
-        raise ValueError(f"could not locate `{set_name}` Set literal in JS source")
-    body = match.group("body")
-
-    entries: set[str] = set()
-    for raw in body.split(","):
-        token = raw.strip()
-        if not token:
-            continue
-        if token.startswith("//"):
-            continue
-        spread_match = re.match(r"\.\.\.([A-Za-z_][A-Za-z0-9_]*)", token)
-        if spread_match:
-            referenced = spread_match.group(1)
-            entries.update(_extract_js_set_entries(source, referenced))
-            continue
-        literal_match = re.match(r"['\"]([^'\"]+)['\"]", token)
-        if literal_match:
-            entries.add(literal_match.group(1))
-            continue
-        # Skip inline comments embedded mid-array (handled by the leading // check
-        # for line-style comments; `/* */` block comments would need a stripping
-        # pass, but the collector does not use them today).
-    return entries
+    """Parse strings and Set spreads without executing the collector's source."""
+    try:
+        result = subprocess.run(
+            ["node", "-e", SET_PROBE, str(ACORN_PATH)],
+            input=json.dumps({"source": source, "name": set_name}),
+            capture_output=True, text=True, encoding="utf-8", check=False, timeout=30,
+        )
+    except (OSError, subprocess.TimeoutExpired) as error:
+        raise ValueError(f"JS Set probe failed: {error}") from error
+    if result.returncode:
+        raise ValueError(f"JS Set probe failed: {result.stderr.strip()}")
+    return set(json.loads(result.stdout))
 
 
 def _extract_python_frozenset_entries(path: Path, name: str) -> set[str]:

@@ -8,6 +8,20 @@ const { readSetup, saveSetup } = require('../../services/host/setup-config');
 const { writeJson } = require('../../services/host/durable-json');
 const { loadHostConfig, SETUP_PENDING_FILE } = require('../../server/config');
 
+test('an invalid saved secret is a repairable setup state and is preserved until replacement', (t) => {
+  const { source, configPath } = setupFixture(t);
+  source.model_endpoint.engine = 'openai-compatible';
+  saveSetup(configPath, source, 'old-key');
+  const secretPath = path.join(source.secrets_dir, 'model-api-key');
+  fs.writeFileSync(secretPath, 'bad\nkey');
+  const previous = readSetup(configPath);
+  assert.equal(previous.credentialUnavailable, true);
+  assert.equal(previous.apiKey, null);
+  assert.equal(fs.readFileSync(secretPath, 'utf8'), 'bad\nkey');
+  saveSetup(configPath, source, 'replacement-key');
+  assert.equal(readSetup(configPath).apiKey, 'replacement-key');
+});
+
 test('setup saves a readable canonical config with a separate private raw key', (t) => {
   const fixture = setupFixture(t);
   fixture.source.model_endpoint.engine = 'openai-compatible';

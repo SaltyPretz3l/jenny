@@ -72,48 +72,15 @@ test('managed dispatch: returns MANAGED_STREAM and invokes _startManagedSidecarC
   assert.equal(calls.length, 1);
 });
 
-test('managed dispatch: validates and forwards a bounded plugin command invocation', async () => {
+test('managed dispatch: retired plugin command invocations are neither validated nor forwarded', async () => {
   const { service, calls } = makeManagedService();
-  const pluginCommandInvocation = {
-    invocation_schema_version: 2,
-    publisher_id: 'jenny-official',
-    plugin_id: 'starter',
-    command_id: 'command-main',
-    observed_generation_id: 'gen-1',
-    observed_registry_revision: 1,
-    inputs: [{ type: 'string', key: 'topic', value: 'Jenny' }],
-  };
 
-  await startLocalEngineChatStream(service, baseParams({ pluginCommandInvocation }));
-
-  assert.deepEqual(calls[0].pluginCommandInvocation, pluginCommandInvocation);
-});
-
-test('managed dispatch: rejects malformed plugin command input before the sidecar call', async () => {
-  const { service, calls } = makeManagedService();
-  const inputs = Array.from({ length: 17 }, (_entry, index) => ({
-    type: 'integer',
-    key: `input-${index}`,
-    value: index,
+  await startLocalEngineChatStream(service, baseParams({
+    pluginCommandInvocation: { arbitrary: true },
   }));
 
-  await assert.rejects(
-    () => startLocalEngineChatStream(service, baseParams({
-      pluginCommandInvocation: {
-        invocation_schema_version: 2,
-        publisher_id: 'jenny-official',
-        plugin_id: 'starter',
-        command_id: 'command-main',
-        observed_generation_id: 'gen-1',
-        observed_registry_revision: 1,
-        inputs,
-      },
-    })),
-    (error) => error?.code === 'CMP-PLUGIN-0015'
-      && error?.reason === 'plugin_command_invocation_invalid'
-      && error?.retryable === false
-  );
-  assert.equal(calls.length, 0);
+  assert.equal(calls.length, 1);
+  assert.equal('pluginCommandInvocation' in calls[0], false);
 });
 
 function skillState({ featureEnabled = true, scopeEnabled = true, entryEnabled = true } = {}) {
@@ -328,6 +295,46 @@ test('forced local inference rejects stale readiness when the current local cata
     /Local model catalog is unavailable/
   );
   assert.equal(dispatchCount, 0);
+});
+
+test('a turn outside force-local mode never probes the offline model catalog', async () => {
+  // getState() runs a sidecar models.list round trip (P3-PERF-A: ~400 ms of
+  // every warm Ollama turn). Only force-local needs it, so the mode read gates it.
+  let stateCalls = 0;
+  const calls = [];
+  const service = withActorHarness({
+    isManagedSidecarMode: true,
+    sessionStore: { getSession: () => ({}) },
+    offlineIntelligenceService: {
+      getMode: () => 'off',
+      getState: async () => { stateCalls += 1; return { mode: 'off' }; },
+    },
+    _startManagedSidecarChatStream: (args) => { calls.push(args); return 'MANAGED_STREAM'; },
+  });
+
+  const result = await startLocalEngineChatStream(service, baseParams({ attachments: [] }));
+  assert.equal(result, 'MANAGED_STREAM');
+  assert.equal(stateCalls, 0);
+  assert.equal(calls[0].runtimePreferredEngineType, '');
+});
+
+test('force-local mode still verifies the catalog through getState', async () => {
+  let stateCalls = 0;
+  const service = withActorHarness({
+    isManagedSidecarMode: true,
+    sessionStore: { getSession: () => ({}) },
+    offlineIntelligenceService: {
+      getMode: () => 'local_only',
+      getState: async () => { stateCalls += 1; return { mode: 'local_only', preferredLocalModel: '' }; },
+    },
+    _startManagedSidecarChatStream: () => 'SHOULD_NOT_REACH',
+  });
+
+  await assert.rejects(
+    () => startLocalEngineChatStream(service, baseParams({ attachments: [] })),
+    /model selected in Model Library/
+  );
+  assert.equal(stateCalls, 1);
 });
 
 test('forced local inference carries verified engine provenance into managed model resolution', async () => {

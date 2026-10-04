@@ -32,6 +32,7 @@ from sidecar.ai.engines.openai_compatible import (
 from sidecar.ai.engines.provider_http import ProviderHttpService
 from sidecar.ai.engines.vision_input import VisionImage
 from sidecar.ai.engines.vllm_engine import VLLMEngine
+from sidecar.runtime.vllm_engine_support import EngineConnectionError
 
 
 @pytest.fixture(autouse=True)
@@ -148,9 +149,9 @@ class TestDefaults:
             )
 
         engine = OpenAICompatibleEngine(api_key=api_key)
-        client_headers = dict(engine._service._client.headers)  # noqa: SLF001
-        engine._service._client.close()  # noqa: SLF001
-        engine._service._client = httpx.Client(  # noqa: SLF001
+        client_headers = dict(engine._service._client.headers)
+        engine._service._client.close()
+        engine._service._client = httpx.Client(
             base_url=engine._base_url,
             headers=client_headers,
             transport=httpx.MockTransport(handler),
@@ -230,6 +231,40 @@ class TestLoadModel:
         message = str(excinfo.value)
         assert "vLLM" not in message
         assert "Qwen/Qwen3.6-35B-A3B" in message
+
+
+class TestProbeReachable:
+    """A no-model init still proves the endpoint answers (dead-port honesty)."""
+
+    def test_probe_raises_connection_error_on_a_dead_port(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        timeouts: list[Any] = []
+
+        def _fail(*_a: Any, **kw: Any) -> None:
+            timeouts.append(kw.get("timeout"))
+            raise httpx.ConnectError("refused")
+
+        _patch_models_probe(monkeypatch, _fail)
+        engine = OpenAICompatibleEngine()
+        with pytest.raises(EngineConnectionError) as excinfo:
+            engine.probe_reachable()
+        assert "is not reachable" in str(excinfo.value)
+        assert timeouts and all(t is not None and t <= 3.0 for t in timeouts)
+        assert engine.model_name is None
+
+    def test_probe_passes_against_a_live_server_without_loading_a_model(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        _patch_models_probe(
+            monkeypatch,
+            lambda *_a, **_kw: _make_models_response("Qwen/Qwen3.6-35B-A3B"),
+        )
+        engine = OpenAICompatibleEngine()
+        engine.probe_reachable()
+        assert engine.model_name is None
 
 
 def test_context_window_hint_uses_props_without_configured_or_native_window(

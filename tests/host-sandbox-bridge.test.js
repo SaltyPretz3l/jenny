@@ -2,16 +2,42 @@
 
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
 
 const {
   executeElectronToolRequest,
 } = require('../services/backend/electron-tool-bridge');
 const { drainHostedExecution, settleHostedExecution } = require('../services/backend/hosted-execution-settlement');
+const { SessionExecutionAuthority } = require('../services/backend/session-execution-authority');
+
+const SCRATCH = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-bridge-'));
+const WORKSPACE = path.join(SCRATCH, 'workspace');
+const STAGING = path.join(SCRATCH, 'staging');
+fs.mkdirSync(path.join(WORKSPACE, 'projects', 'alpha'), { recursive: true });
+fs.mkdirSync(STAGING, { recursive: true });
+process.on('exit', () => { try { fs.rmSync(SCRATCH, { recursive: true, force: true }); } catch { /* best effort */ } });
+
+// The hosted bridge derives the worker's input root from the request's captured
+// project root, so a command needs a real execution binding.
+function hostedBinding(rootPath) {
+  const authority = Object.freeze({ project_id: 'project_test', root_path: rootPath,
+    root_id: 'root_test', root_revision: 1, device_id: null, inode: null });
+  const executionAuthority = new SessionExecutionAuthority({
+    projectAuthority: { captureSession: () => authority, requireCurrent: () => authority },
+    permissionStore: { getSnapshot: () => ({ version: 3, legacy_policies: { run_command: 'auto' }, rules: [] }) },
+    knowledgeService: { getSidecarConfig: () => ({ knowledge_roots: [] }) },
+    resolveProjectWorkspaceServices: () => ({}),
+  });
+  return executionAuthority.captureSession('session-1', { requestId: 'stream-1' });
+}
 
 function hostedService(broker) {
   return {
     hostMode: 'server',
-    options: { hostExecutionPolicyVersion: 2, hostExecutionBroker: broker },
+    options: { hostExecutionPolicyVersion: 2, hostExecutionBroker: broker, hostExecutionStagingRoot: STAGING },
+    configService: { getToolsWorkspaceRoot: () => WORKSPACE },
     toolExecutor: {
       async executePreApproved() {
         throw new Error('hosted run_command must not use the sidecar tool executor');
@@ -46,12 +72,15 @@ test('hosted run_command uses the injected worker broker and foreground contract
     },
     sessionId: 'session-1',
     streamId: 'stream-1',
+    executionAuthority: hostedBinding(path.join(WORKSPACE, 'projects', 'alpha')),
   });
 
   assert.equal(result.success, true);
   assert.equal(result.output, 'ok');
+  assert.match(observed.input.inputRoot, /^[a-f0-9-]{36}$/u);
   assert.deepEqual(observed.input, {
     command: 'printf ok', cwd: 'src', timeoutSeconds: 5, expectedExitCodes: [0],
+    inputRoot: observed.input.inputRoot,
   });
   assert.equal(typeof observed.context.beforeAdmission, 'function');
   assert.deepEqual(observed.context, {

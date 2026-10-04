@@ -476,6 +476,14 @@ test('a reader-anchor restore that writes attributes the next frame as anchor_re
   snapshot = frames.shift()(clock);
   assert.equal(snapshot.programmaticReason, 'anchor_restore', 'a writing restore is a programmatic frame');
 
+  // HB-005: a delta below the anchor leaves it in place; the registry writes
+  // nothing, so the frame must not be attributed to a restore either.
+  assert.equal(coordinator.restoreReaderAnchor(), 'logical');
+  coordinator.scheduleFrame();
+  clock += 16;
+  snapshot = frames.shift()(clock);
+  assert.equal(snapshot.programmaticReason, null, 'a restore that did not move the anchor arms no marker');
+
   state.ui.followLatest = true;
   assert.equal(coordinator.restoreReaderAnchor(), 'skipped');
   coordinator.scheduleFrame();

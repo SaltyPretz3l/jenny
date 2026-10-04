@@ -1,7 +1,7 @@
 'use strict';
 
 const controls = require('./application-controls');
-const { projectWorkCoordination, projectCanonicalResult } = require('./work-details');
+const { projectWorkCoordination, projectCanonicalResult, projectRunItems } = require('./work-details');
 
 const { normalizeSubmission, normalizeStartSubmission, normalizeResumeRequest } = require('./submission-contract');
 const { RUNTIME_ERROR_CODES } = require('../backend/error-codes');
@@ -41,9 +41,13 @@ const PASSTHROUGH_SUBMISSION_REASONS = new Set([
   'pending_input_capacity',
   'runtime_transcript_cache_pressure',
   'session_busy',
+  // chat-turn-admission.js: an image render holds the GPU lease.
+  'gpu_busy_plugin',
 ]);
 
 function submissionRefusalReason(error) {
+  /* The invoked skill is not in this chat's catalog (local-engine-requests). */
+  if (error?.code === 'SKILL_NOT_AVAILABLE') return 'skill_not_available';
   /* `_assertSubmissionOpen` throws plain Errors whose MESSAGE is the code. */
   for (const value of [error?.code, error?.message]) {
     if (typeof value === 'string' && PASSTHROUGH_SUBMISSION_REASONS.has(value)) return value;
@@ -74,6 +78,15 @@ function caughtSnapshotFailure(error) {
   }
   return unavailable(error instanceof RuntimeProjectionError
     ? 'runtime_projection_unavailable' : undefined);
+}
+
+function withAdmissionWait(runtime, summary) {
+  let admissionWait = null;
+  if (summary.status === 'pending' && typeof runtime.scheduler?.admissionWait === 'function') {
+    try { admissionWait = runtime.scheduler.admissionWait(summary.work_id) ?? null; }
+    catch (_error) { admissionWait = null; }
+  }
+  return { ...summary, admission_wait: admissionWait };
 }
 
 class RuntimeApplicationService {
@@ -174,10 +187,18 @@ class RuntimeApplicationService {
     const runtime = runtimeOwner(this.getRuntime, 'snapshot');
     if (!runtime) return unavailable('runtime_unavailable');
     try {
-      const page = runtime.store.listSummaries(request);
+      const runs = request.view === 'runs' && typeof runtime.store.listRunSummaries === 'function'
+        ? runtime.store.listRunSummaries({ limit: request.limit, projectId: request.projectId,
+          finishedSince: request.finishedSince }) : null;
+      if (request.view === 'runs' && !runs) return unavailable('runtime_runs_view_unavailable');
+      const listed = runs ? null : runtime.store.listSummaries(request);
+      const page = listed ? { ...listed,
+        items: listed.items.map(summary => withAdmissionWait(runtime, summary)) } : null;
       return projectRuntimeSnapshot({
         runtime,
         page,
+        runs: runs ? { ...runs, items: projectRunItems(runtime,
+          runs.items.map(summary => withAdmissionWait(runtime, summary))) } : null,
         storeStatus: runtime.store.getStatus(),
         laneSnapshot: runtime.lanes.snapshot(),
         resourceSnapshot: runtime.resourceBroker.snapshot(),
@@ -195,7 +216,7 @@ class RuntimeApplicationService {
     try {
       const work = runtime.store.get(request.workId);
       if (!work) return failure(RUNTIME_ERROR_CODES.NOT_FOUND, 'runtime_work_not_found');
-      const projected = projectWorkRecord(work);
+      const projected = projectWorkRecord(withAdmissionWait(runtime, work));
       return { ...projected, coordination: projectWorkCoordination(runtime, work, request) };
     } catch (error) {
       return unavailable(error instanceof RuntimeProjectionError

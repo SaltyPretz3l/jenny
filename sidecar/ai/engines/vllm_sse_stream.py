@@ -87,11 +87,51 @@ def _decode_sse_chunk(line: str) -> dict[str, Any] | None:
     return value if isinstance(value, dict) else None
 
 
+def provider_timings(body: Any) -> tuple[float, float, int]:
+    """Return ``(prompt_ms, predicted_ms, predicted_n)`` from a llama-server body.
+
+    llama-server reports prefill/decode timing in a top-level ``timings``
+    object beside ``usage`` (on the final include_usage stream chunk and on a
+    non-streaming completion), never inside ``usage``. vLLM sends no timing,
+    so every value is ``0`` there and callers keep their other sources.
+    """
+    timings = body.get("timings") if isinstance(body, dict) else None
+    if not isinstance(timings, dict):
+        return 0, 0, 0
+    return (
+        coerce_positive_finite_float(timings.get("prompt_ms")),
+        coerce_positive_finite_float(timings.get("predicted_ms")),
+        coerce_non_negative_int(timings.get("predicted_n")),
+    )
+
+
+def provider_prompt_cache_counts(body: Any) -> tuple[int | None, int | None]:
+    """Return llama-server's ``(prompt_n, cache_n)`` prefill split, or ``None`` each.
+
+    ``timings.prompt_n`` counts the prompt tokens the server evaluated and
+    ``timings.cache_n`` the prefix tokens it reused from the slot's KV cache
+    (llama.cpp builds from mid-2025 on). ``None`` means the server did not
+    report the field, which is different from a reported zero.
+    """
+    timings = body.get("timings") if isinstance(body, dict) else None
+    if not isinstance(timings, dict):
+        return None, None
+
+    def count(key: str) -> int | None:
+        value = timings.get(key)
+        if value is None or isinstance(value, bool):
+            return None
+        return coerce_non_negative_int(value)
+
+    return count("prompt_n"), count("cache_n")
+
+
 def _parse_usage(
     body: dict[str, Any],
     *,
     model_name: str | None,
     provider: str = "vllm",
+    time_to_first_token_ms: float = 0,
 ) -> GenerationUsage | None:
     usage = body.get("usage")
     if not isinstance(usage, dict):
@@ -117,6 +157,13 @@ def _parse_usage(
             "time_to_first_token_ms",
         }
     }
+    prompt_ms, predicted_ms, predicted_n = provider_timings(body)
+    generation_tokens = output_tokens
+    generation_duration_ms = positive_number("generation_duration_ms")
+    if generation_duration_ms <= 0 and predicted_ms > 0:
+        # Pair the duration with the token count it was measured over.
+        generation_duration_ms = predicted_ms
+        generation_tokens = predicted_n or output_tokens
     return GenerationUsage(
         input_tokens=input_tokens,
         output_tokens=output_tokens,
@@ -125,11 +172,14 @@ def _parse_usage(
         model=str(model_name or ""),
         raw_usage=raw_usage,
         last_request_input_tokens=input_tokens,
-        generation_tokens=output_tokens,
-        generation_duration_ms=positive_number("generation_duration_ms"),
-        prompt_eval_duration_ms=positive_number("prompt_eval_duration_ms"),
+        generation_tokens=generation_tokens,
+        generation_duration_ms=generation_duration_ms,
+        prompt_eval_duration_ms=positive_number("prompt_eval_duration_ms") or prompt_ms,
         load_duration_ms=positive_number("load_duration_ms"),
-        time_to_first_token_ms=positive_number("time_to_first_token_ms"),
+        time_to_first_token_ms=(
+            positive_number("time_to_first_token_ms")
+            or coerce_positive_finite_float(time_to_first_token_ms)
+        ),
     )
 
 

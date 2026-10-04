@@ -133,6 +133,42 @@
       });
     }
 
+    // Identity of a just-pasted destination, so undo can tell the item it made
+    // from a newer one at the same path. null = unavailable (no stat, failure,
+    // missing): undo then behaves as before. Known limit: a directory's identity
+    // does not see edits deep inside it.
+    async function captureIdentity(path) {
+      const api = getApi();
+      if (typeof api?.stat !== 'function') return null;
+      try {
+        const info = await api.stat({ path });
+        if (info?.exists !== true) return null;
+        const { kind, dev, ino, size, mtimeMs } = info;
+        return { kind, dev, ino, size, mtimeMs };
+      } catch (_error) {
+        return null;
+      }
+    }
+
+    // True when an identity was captured and the item at `path` no longer
+    // matches it on `fields` (or cannot be re-checked): undo must leave it alone.
+    async function identityChanged(path, identity, fields) {
+      if (!identity) return false;
+      let current = null;
+      try {
+        current = await getApi()?.stat?.({ path });
+      } catch (_error) {
+        current = null;
+      }
+      return current?.exists !== true || fields.some((field) => current[field] !== identity[field]);
+    }
+
+    function reportUndoSkipped(path) {
+      showError(jt('ide.clipboard.undoSkippedChanged', '{name} changed after the paste, so it was left in place.', { name: nameOf(path) }), {
+        title: jt('ide.explorer.workspace', 'Workspace'), dedupeKey: `ide:tree:undo-skipped:${path}`,
+      });
+    }
+
     function undoIsStale(context) {
       return disposed || context.generation !== operationGeneration
         || context.rootEpoch !== getRootEpoch();
@@ -144,6 +180,13 @@
       for (const move of [...moves].reverse()) {
         if (undoIsStale(context)) return;
         try {
+          // The same item (even edited) is moved back; a replacement is not.
+          const changed = await identityChanged(move.to, move.identity, ['kind', 'dev', 'ino']);
+          if (undoIsStale(context)) return;
+          if (changed) {
+            reportUndoSkipped(move.to);
+            continue;
+          }
           const didMove = await moveEntry(move.to, move.from, move.kind);
           if (undoIsStale(context)) return;
           if (didMove !== false) restored += 1;
@@ -164,6 +207,13 @@
       for (const copy of [...copies].reverse()) {
         if (undoIsStale(context)) return;
         try {
+          // An edited or replaced copy is never trashed.
+          const changed = await identityChanged(copy.to, copy.identity, ['kind', 'dev', 'ino', 'size', 'mtimeMs']);
+          if (undoIsStale(context)) return;
+          if (changed) {
+            reportUndoSkipped(copy.to);
+            continue;
+          }
           const didDelete = await deleteEntry(copy.to, copy.kind, { skipConfirm: true });
           if (undoIsStale(context)) return;
           if (didDelete !== false) restored += 1;
@@ -201,11 +251,13 @@
           if (active.mode === 'cut') {
             const kind = kinds.get(path) || 'file';
             const didMove = await moveEntry(path, to, kind);
-            if (didMove !== false) succeeded.push({ from: path, to, kind });
+            if (didMove !== false) succeeded.push({ from: path, to, kind, identity: await captureIdentity(to) });
           } else {
             const result = await copyEntry(path, to);
             if (typeof result?.to === 'string' && result.to) {
-              succeeded.push({ from: path, to: result.to, kind: result.kind || kinds.get(path) || 'file' });
+              succeeded.push({
+                from: path, to: result.to, kind: result.kind || kinds.get(path) || 'file', identity: await captureIdentity(result.to),
+              });
             }
           }
         } catch (error) {
@@ -249,7 +301,7 @@
         try {
           const result = await copyEntry(path, path);
           if (typeof result?.to === 'string' && result.to) {
-            succeeded.push({ from: path, to: result.to, kind: result.kind || 'file' });
+            succeeded.push({ from: path, to: result.to, kind: result.kind || 'file', identity: await captureIdentity(result.to) });
           }
         } catch (error) {
           reportFailure(error, path, parent);

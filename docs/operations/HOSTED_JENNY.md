@@ -6,8 +6,8 @@ multi-device acceptance gates below must pass before release.
 
 This host serves one owner's conversations from one canonical profile. Browsers
 are interchangeable clients. Electron remains the desktop host; running Electron
-inside Docker is not the browser architecture. Desktop Remote Control is a
-separate integration and is not a build dependency.
+inside Docker is not the browser architecture. Desktop Remote Control was
+removed on 2026-10-02; it never shared code with this host.
 
 For a new installation, use the [guided Docker quick start](HOSTED_QUICKSTART.md).
 It needs no host Node/Python installation. The manual bind-mount procedure below
@@ -171,7 +171,7 @@ under its still-valid login, then restores the session list and snapshot.
 
 ## Persistence, import, backup and upgrades
 
-Named `jenny_profile` and `jenny_workspace` volumes are independent. The
+Named `jenny_profile` and `jenny_workspace` volumes are independent. The separate ephemeral `jenny_staging` volume supplies only the approved per-command project copy to the sandbox; the durable workspace is never mounted there. The
 `jenny_control` volume contains the private worker controller key and bounded
 last admission/result metadata. Preserve it with the profile admission receipt;
 neither receipt is a conversation store. Never delete either in isolation to
@@ -182,7 +182,7 @@ profile/workspace and protect credentials separately. A version-1
 `.setup-pending.json` in the config volume blocks startup after an interrupted
 configuration/key update. Stop Jenny and rerun the wizard; never delete the
 marker to bypass revalidation. Profile
-contents include canonical split sessions (schema 20), journal, shadow/repair,
+contents include canonical split sessions (schema 22; `STORE_SCHEMA_VERSION` in `services/backend/session-store-migrations.js` owns the current value), journal, shadow/repair,
 attachment bytes, auth/receipt metadata, shell configuration and the bounded
 sidecar-owned memory database. The latter is not conversation history. Browser
 history/cache and Python request state are not backups. Optional config-v1
@@ -242,8 +242,7 @@ read-only rootfs, UID/GID 10001, all capabilities dropped and no-new-privileges.
 The sandbox separately has 2 CPUs, 2 GiB RAM without swap, 128 PIDs, no external
 network and bounded disposable tmpfs mounts. It runs a trusted PID-1 supervisor
 with only SETUID/SETGID before dropping job privileges; see HOSTED_EXECUTION.md.
-Compose precreates it even with execution disabled; cgroup v2 is therefore a
-prerequisite for both profiles. The app mounts worker control read-only. The
+The manual Compose topology retains the sandbox dependency even when execution is disabled. Guided launchers remove that dependency for saved policy 1; policy 2 retains the worker health gate and requires cgroup v2. The app mounts worker control read-only. The
 30-second app stop grace allows the broker to cancel and confirm namespace
 recycling before profile release; ambiguous shutdown retains its admission.
 Compose probes readiness with `node server/healthcheck.js --config
@@ -255,7 +254,7 @@ Service and deploy PID limits both specify 256, as required by the
 [Compose consistency contract](https://docs.docker.com/reference/compose-file/services/#pids_limit)
 (checked 2026-09-08).
 New sessions/sends/edits and uploads fail admission below a 256 MiB filesystem
-reserve; history, cancellation and decisions remain routed. This is a reserve,
+reserve; history, cancellation and decisions remain routed. Session deletion uses its smaller 8 MiB reserve plus receipt-rewrite headroom so cleanup can continue under growth pressure; a degraded delete reports bounded `cleanup_status`/`cleanup_errors` rather than a full-cleanup claim. This is a reserve,
 not a volume quota: enforce disk quotas at the host and monitor free space.
 Docker stdout logs rotate at 3 x 10 MiB. Existing sidecar diagnostics retain their
 canonical rolling budgets (5 MiB segments, 50 MiB/layer, 200 MiB global, 14 days);

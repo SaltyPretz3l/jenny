@@ -11,8 +11,8 @@ from sidecar.runtime.process_job import WindowsJobObject
 
 def _job_with_query(query, *, last_error: int) -> WindowsJobObject:
     job = object.__new__(WindowsJobObject)
-    job._handle = 1  # noqa: SLF001
-    job._kernel32 = SimpleNamespace(  # noqa: SLF001
+    job._handle = 1
+    job._kernel32 = SimpleNamespace(
         QueryInformationJobObject=query,
         GetLastError=lambda: last_error,
     )
@@ -33,6 +33,6 @@ def test_assigned_process_ids_capacity_exhaustion_keeps_containment_nonempty(
     monkeypatch.setattr(process_job_module, "_PROCESS_ID_LIST_MAX_CAPACITY", 2)
     job = _job_with_query(lambda *args: 0, last_error=234)
     containment = WindowsJobContainment(job)
-    containment._pid = 4242  # noqa: SLF001
+    containment._pid = 4242
 
     assert containment.is_empty() is False

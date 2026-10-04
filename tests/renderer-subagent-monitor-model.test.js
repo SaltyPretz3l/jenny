@@ -147,5 +147,98 @@ test('message reconciliation associates live and terminal state by tool call id'
   assert.equal(result.authoritative, true);
   assert.equal(result.childCount, 1);
   assert.equal(result.selected.summary, 'Done.');
-  assert.equal(result.parentState, 'Responding');
+  assert.equal(result.parentStateKey, 'done', 'a settled answer after the report: the delegation is done');
+  assert.equal(result.parentState, 'Completed');
+});
+
+test('the report maps a bounded step log, the full answer and a step count that survives unrecorded steps', () => {
+  const steps = Array.from({ length: 45 }, (_, index) => ({
+    tool: 'read_file', display: `Read ${index}`, ok: index !== 3, target: `src/file-${index}.js`,
+    ...(index === 3 ? { error_code: 'CMP-TOOL-0001', detail: 'File not found' } : {}),
+    secret: 'dropped',
+  }));
+  const child = model.buildMonitorViewModel({
+    terminal: { kind: 'single', report: {
+      task_id: 'child-1', status: 'completed', summary: 'Short.', answer: 'A'.repeat(4_500), steps,
+      budget: { tool_results_used: 50, elapsed_ms: 41_000 },
+      usage: { total_tokens: 2_400, model: 'qwen-test' },
+    } },
+  }).selected;
+  assert.equal(child.steps.length, 40, 'steps are capped at 40');
+  assert.equal(child.answer.length, 4_000, 'the answer is capped at 4000');
+  assert.equal(child.stepCount, 50, 'the step count is the larger of the log and tool_results_used');
+  assert.equal(child.steps[3].ok, false);
+  assert.equal(child.steps[3].detail, 'File not found');
+  assert.equal(Object.hasOwn(child.steps[3], 'errorCode'), false, 'a step-level code is not surfaced');
+  assert.equal(Object.hasOwn(child.steps[0], 'secret'), false, 'unknown step keys are dropped');
+  assert.equal(child.model, 'qwen-test');
+  assert.equal(child.elapsedMs, 41_000);
+});
+
+test('an old report without steps or an answer still maps', () => {
+  const child = model.buildMonitorViewModel({
+    terminal: { kind: 'single', report: { task_id: 'child-1', status: 'completed', summary: 'Done.', tools_used: ['grep'] } },
+  }).selected;
+  assert.deepEqual(child.steps, []);
+  assert.equal(child.answer, '');
+  assert.equal(child.stepCount, 0);
+});
+
+test('the parent state is i18n copy with a stable key, and tokens read "Tokens not reported"', () => {
+  const responding = model.buildMonitorViewModel({
+    terminal: { kind: 'single', report: { task_id: 'c', status: 'completed', summary: 'Done.' } },
+    parentResponding: true,
+  });
+  assert.equal(responding.parentState, 'Responding');
+  assert.equal(responding.parentStateKey, 'responding');
+  const waiting = model.buildMonitorViewModel({ steps: [liveStep(), liveStep({ childTaskId: 'child-2', childOrdinal: 2, status: 'completed', childTerminal: true })] });
+  assert.equal(waiting.parentStateKey, 'waiting');
+  assert.equal(waiting.runningCount, 1);
+  assert.equal(model.formatTokens(undefined), 'Tokens not reported');
+  assert.equal(model.formatTokens(2_400), '2.4k');
+});
+
+test('live children carry their own elapsed time; the totals sum steps and tokens', () => {
+  const live = model.buildMonitorViewModel({ now: 5_000, steps: [liveStep({ startedAt: 2_000 })] });
+  assert.equal(live.children[0].elapsedMs, 3_000);
+  const batch = model.buildMonitorViewModel({ terminal: { kind: 'batch', report: { status: 'completed', tasks: [
+    { task_id: 'a', status: 'completed', summary: 'A', budget: { tool_results_used: 7 }, usage: { total_tokens: 100 } },
+    { task_id: 'b', status: 'completed', summary: 'B', budget: { tool_results_used: 5 }, usage: { total_tokens: 300 } },
+  ] } } });
+  assert.equal(batch.totalSteps, 12);
+  assert.equal(batch.totalTokens, 400);
+  assert.equal(batch.children[0].statusLabel, 'Completed');
+});
+
+test('terminalCopy is the status word unless the report names a reason', () => {
+  assert.equal(model.terminalCopy('', 'failed'), 'Failed');
+  assert.equal(model.terminalCopy('deadline_exceeded', 'failed'), 'Ran out of time');
+  assert.equal(model.terminalCopy('', 'running'), 'Running');
+  assert.equal(model.terminalCopy(undefined, 'partial'), 'Partially completed');
+});
+
+test('HB-019: the parent reads Responding only while its answer streams, then the status copy', () => {
+  const report = { subagent_batch_report: { status: 'completed', tasks: [
+    { task_id: 'a', status: 'completed', summary: 'A' },
+    { task_id: 'b', status: 'completed', summary: 'B' },
+  ] } };
+  const toolRow = { role: 'assistant', tool_result: { call_id: 'call-1', metadata: report } };
+  const streaming = model.buildMonitorFromMessages([toolRow, { role: 'assistant', content: 'Both lists', status: 'streaming' }], 'call-1');
+  assert.equal(streaming.parentStateKey, 'responding');
+  assert.equal(streaming.parentState, 'Responding');
+  const settled = model.buildMonitorFromMessages([toolRow, { role: 'assistant', content: 'Both lists' }], 'call-1');
+  assert.equal(settled.parentStateKey, 'done');
+  assert.equal(settled.parentState, 'Completed');
+  const noAnswerYet = model.buildMonitorFromMessages([toolRow], 'call-1');
+  assert.equal(noAnswerYet.parentStateKey, 'synthesizing');
+});
+
+test('settled advisory child duration freezes while another child continues', () => {
+  const steps = [liveStep({ status: 'completed', childTerminal: true, updatedAt: 2_000 }),
+    liveStep({ childTaskId: 'child-2', childOrdinal: 2, updatedAt: 3_000 })];
+  const first = model.buildMonitorViewModel({ steps, now: 5_000, selectedKey: 'child-1' });
+  const later = model.buildMonitorViewModel({ steps, now: 9_000, selectedKey: 'child-1' });
+  assert.equal(first.children[0].elapsedMs, 1_000);
+  assert.equal(later.children[0].elapsedMs, 1_000);
+  assert.equal(later.children[1].elapsedMs, 8_000);
 });

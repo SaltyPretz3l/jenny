@@ -1,47 +1,21 @@
 'use strict';
 
 const assert = require('node:assert/strict');
-const http = require('node:http');
 const test = require('node:test');
 
 const { createMemoryFsFacade } = require('../../services/plugins/store/fs-facade');
-const { createLoopbackAuthorization } = require('../../services/plugins/auth/loopback-authorization');
-const { createProductionDistributionContextFactory,
-  distributionConsent } = require('../../services/plugins/distribution/production-context');
+const { createProductionDistributionContextFactory } = require('../../services/plugins/distribution/production-context');
 const { isV3PluginEntry,
   promotionPreservesAuthority } = require('../../services/plugins/distribution/distribution-controller');
 const { runCommitSequence } = require('../../services/plugins/lifecycle/commit-sequence');
-const { authProfileRef,
-  readInvocationAdvisoryPolicy } = require('../../services/plugins/remote-mcp/runtime-authority');
 const { createStage5ControlPlane,
   selectedPackageRequest } = require('../../services/plugins/stage5-control-plane');
 const { putContent } = require('../../services/plugins/store/content-store');
 const { getDataSnapshot } = require('../../services/plugins/store/data-snapshot-store');
-const { getEvidence,
-  putEvidence } = require('../../services/plugins/store/distribution-evidence-store');
+const { getEvidence } = require('../../services/plugins/store/distribution-evidence-store');
 const { writePackageRecord } = require('../../services/plugins/store/package-record-store');
-const { brokerConsentFor, readNetworkConsent,
-  setPluginNetworkConsent } = require('../../services/plugins/store/network-consent-store');
 
-test('network consent records plugin intent without minting system network authority', async () => {
-  const facade = createMemoryFsFacade();
-  const result = await setPluginNetworkConsent(facade, 'store', {
-    publisherId: 'acme-labs', pluginId: 'remote-tools', enabled: true,
-    scopes: ['internet'], destinations: ['https://mcp.example'],
-  });
-  assert.equal(result.ok, false);
-  assert.equal(result.reason, 'system_network_authorization_required');
-  const stored = await readNetworkConsent(facade, 'store');
-  assert.equal(stored.ok, true);
-  assert.equal(stored.document.system_authorized, false);
-  assert.equal(stored.document.plugin_consents[0].enabled, true);
-  assert.equal(brokerConsentFor(stored.document, {
-    publisherId: 'acme-labs', pluginId: 'remote-tools',
-    destination: 'https://mcp.example', scope: 'internet',
-  }).granted, false);
-});
-
-test('production distribution context stays local when the system ceiling is absent', async () => {
+test('production distribution context only admits local packages', async () => {
   const facade = createMemoryFsFacade();
   const roots = { ok: true, value: { trust_roots_schema_version: 1, publishers: [] },
     publishers: new Map() };
@@ -57,10 +31,12 @@ test('production distribution context stays local when the system ceiling is abs
   assert.equal((await local.value.readLocalPackage()).sourcePathDigest, 'b'.repeat(64));
   const remote = await factory({ operation: { source_kind: 'https_url' } });
   assert.equal(remote.ok, false);
-  assert.equal(remote.reason, 'system_network_authorization_required');
-  assert.deepEqual(distributionConsent({ system_authorized: false }), {
-    granted: false, allowed_scopes: [],
-  });
+  assert.equal(remote.reason, 'distribution_source_retired');
+  for (const retired of ['signed_catalog', 'offline_mirror']) {
+    const refused = await factory({ operation: { source_kind: retired } });
+    assert.equal(refused.ok, false);
+    assert.equal(refused.reason, 'distribution_source_retired');
+  }
 });
 
 test('production distribution promotes a preserved V2 plugin into immutable V3 evidence', async () => {
@@ -207,98 +183,14 @@ test('local package selection routes a newer installed identity through update a
   }).reason, 'selected_package_downgrade_requires_consent');
 });
 
-test('loopback authorization opens only after flow creation and closes on callback', async (t) => {
-  let redirectUri = '';
-  let completed = null;
-  const oauthFlowService = {
-    async beginAuthorization(input) {
-      redirectUri = input.redirect_uri;
-      return { ok: true, flow_id: 'oauth-flow',
-        authorization_url: 'https://auth.example/authorize', expires_at: '2026-08-05T01:00:00Z' };
-    },
-    async completeAuthorization(input) {
-      completed = input;
-      return { ok: true };
-    },
-  };
-  let opened = '';
-  const loopback = createLoopbackAuthorization({
-    oauthFlowService,
-    openExternal: async (url) => { opened = url; },
+test('Stage 5 control plane exposes no plugin MCP or OAuth surface', () => {
+  const service = createStage5ControlPlane({
+    facade: createMemoryFsFacade(),
+    distributionController: { async dispose() {} },
   });
-  // begin() opens a real listening socket. dispose() is the only thing that
-  // closes it, so register the teardown at construction: an assertion below
-  // used to skip the dispose on the last line and leave a TCPServerWrap live.
-  t.after(() => loopback.dispose());
-  const begun = await loopback.begin({ binding: {} });
-  assert.equal(begun.ok, true);
-  assert.equal(begun.browser_opened, true);
-  assert.equal('authorization_url' in begun, false);
-  assert.equal(opened, 'https://auth.example/authorize');
-  // Assert AFTER the promise settles: a throw inside the http callback never
-  // resolves or rejects it, so the test would hang instead of failing.
-  let otherStatus = 0;
-  await new Promise((resolve, reject) => {
-    http.get(`${redirectUri}-other?state=ok&code=ok`, (response) => {
-      otherStatus = response.statusCode;
-      response.resume();
-      response.on('end', resolve);
-    }).on('error', reject);
-  });
-  assert.equal(otherStatus, 404);
-  assert.equal(completed, null);
-  await new Promise((resolve, reject) => {
-    http.get(`${redirectUri}?state=ok&code=ok`, (response) => {
-      response.resume();
-      response.on('end', resolve);
-    }).on('error', reject);
-  });
-  assert.equal(completed.flow_id, 'oauth-flow');
-  assert.ok(completed.callback_url.startsWith(redirectUri));
-});
-
-test('loopback authorization rejects a non-HTTPS browser destination', async (t) => {
-  let opened = false;
-  const loopback = createLoopbackAuthorization({
-    oauthFlowService: {
-      async beginAuthorization() {
-        return { ok: true, flow_id: 'oauth-flow',
-          authorization_url: 'http://auth.example/authorize' };
-      },
-    },
-    openExternal: async () => { opened = true; },
-  });
-  t.after(() => loopback.dispose());
-  const result = await loopback.begin({ binding: {} });
-  assert.equal(result.reason, 'oauth_authorization_url_invalid');
-  assert.equal(opened, false);
-});
-
-test('remote invocation reloads current advisory evidence and revocations', async () => {
-  const facade = createMemoryFsFacade();
-  const artifactDigest = 'a'.repeat(64);
-  const advisory = await putEvidence(facade, 'store', 'advisory', {
-    revision: 2, advisories: [], revoked_artifacts: [artifactDigest], revoked_keys: [],
-  });
-  const policy = await readInvocationAdvisoryPolicy({
-    facade, baseDir: 'store', entry: {
-      publisher_id: 'acme-labs', plugin_id: 'remote-tools', resolved_version: '1.0.0',
-      artifact_digest: artifactDigest, publisher_key_id: 'b'.repeat(64),
-      advisory_snapshot_digest: advisory.digest,
-    },
-  });
-  assert.equal(policy.ok, true);
-  assert.equal(policy.advisory_status, 'quarantine');
-  assert.equal(policy.revoked_artifact_digests.has(artifactDigest), true);
-  assert.equal((await readInvocationAdvisoryPolicy({
-    facade, baseDir: 'store', entry: { advisory_snapshot_digest: 'c'.repeat(64) },
-  })).reason, 'evidence_not_found');
-});
-
-test('Stage 5 helpers keep bounded deterministic identities', () => {
-  const fields = {
-    publisherId: 'acme-labs', pluginId: 'remote-tools', contributionId: 'remote-main',
-    descriptorDigest: 'd'.repeat(64), endpointOriginDigest: 'e'.repeat(64),
-  };
-  assert.equal(authProfileRef(fields), authProfileRef(fields));
+  for (const retired of ['setNetworkConsent', 'beginRemoteMcpAuthorization',
+    'revokeRemoteMcpAuthorization', 'executeRemoteTool']) {
+    assert.equal(retired in service, false, retired);
+  }
+  service.dispose();
 });

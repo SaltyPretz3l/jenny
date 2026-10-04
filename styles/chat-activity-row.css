@@ -1,0 +1,187 @@
+/* styles/chat-activity-row.css — extracted from chat-machinery.css (file-size ceiling, FG-006). */
+
+/* Phantom activity row: ephemeral tail row for silent arg-generation phases
+   (renderer-stream-activity-row.js). Wears the machinery one-liner grammar so
+   typed events update it in place until authoritative content takes over. */
+.turn-activity-row {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-height: var(--tl-row-h);
+  column-gap: var(--space-3);
+  margin: 0;
+  padding: var(--space-1) var(--space-3);
+  color: var(--text-secondary);
+  line-height: 1.3;
+}
+.turn-activity-row > .status-dot {
+  flex: none;
+  width: var(--tl-dot-size);
+  height: var(--tl-dot-size);
+  animation: tool-call-running-breathe var(--motion-duration-pulse) var(--motion-ease-standard) infinite alternate;
+}
+.turn-activity-row[data-turn-activity-kind="compaction"] > .status-dot {
+  position: relative;
+  /* The trailing fold dot sits 1.6 dots past this one; reserve that space so
+     it never paints over the label. */
+  margin-inline-end: calc(var(--tl-dot-size) * 1.6);
+  background: var(--tl-status-active);
+  animation: none;
+}
+.turn-activity-row[data-turn-activity-kind="compaction"] > .status-dot::before,
+.turn-activity-row[data-turn-activity-kind="compaction"] > .status-dot::after {
+  content: "";
+  position: absolute;
+  inset-block-start: 0;
+  width: var(--tl-dot-size);
+  height: var(--tl-dot-size);
+  border-radius: 50%;
+  background: var(--tl-status-active);
+}
+.turn-activity-row[data-turn-activity-kind="compaction"] > .status-dot::before {
+  inset-inline-start: calc(var(--tl-dot-size) * -1.6);
+  animation: turn-activity-fold-left var(--motion-duration-pulse-slow) var(--motion-ease-standard) infinite;
+}
+.turn-activity-row[data-turn-activity-kind="compaction"] > .status-dot::after {
+  inset-inline-start: calc(var(--tl-dot-size) * 1.6);
+  animation: turn-activity-fold-right var(--motion-duration-pulse-slow) var(--motion-ease-standard) infinite;
+}
+[dir="rtl"] .turn-activity-row[data-turn-activity-kind="compaction"] > .status-dot::before {
+  animation-name: turn-activity-fold-right;
+}
+[dir="rtl"] .turn-activity-row[data-turn-activity-kind="compaction"] > .status-dot::after {
+  animation-name: turn-activity-fold-left;
+}
+/* Checklist throbber (todo_write / task_board composing, FG-006): three
+   box-and-line rows whose lines draw in turn, in place of the dot. */
+.turn-activity-glyph { display: none; }
+.turn-activity-row[data-turn-activity-kind="checklist"] > .status-dot { display: none; }
+.turn-activity-row[data-turn-activity-kind="checklist"] > .turn-activity-glyph {
+  flex: none;
+  display: inline-flex;
+  flex-direction: column;
+  justify-content: space-between;
+  width: 12px;
+  height: 11px;
+  color: var(--tl-status-active);
+}
+.turn-activity-glyph-row {
+  display: flex;
+  align-items: center;
+  column-gap: 2px;
+  height: 3px;
+}
+.turn-activity-glyph-row::before {
+  content: "";
+  flex: none;
+  box-sizing: border-box;
+  width: 3px;
+  height: 3px;
+  border: 1px solid currentColor;
+  border-radius: 0.5px;
+}
+.turn-activity-glyph-row::after {
+  content: "";
+  flex: 1 1 auto;
+  height: 1.3px;
+  border-radius: 1px;
+  background: currentColor;
+  transform-origin: left center; /* rtl:physical */
+  animation: turn-activity-checklist-draw var(--motion-duration-pulse-slow) var(--motion-ease-standard) infinite backwards;
+}
+.turn-activity-glyph-row:nth-child(2)::after { animation-delay: calc(var(--motion-duration-pulse-slow) * 0.14); }
+.turn-activity-glyph-row:nth-child(3)::after { animation-delay: calc(var(--motion-duration-pulse-slow) * 0.28); }
+[dir="rtl"] .turn-activity-glyph-row::after { transform-origin: right center; }
+.turn-activity-name {
+  flex: none;
+  font-size: var(--tl-font-ui);
+  font-weight: var(--tl-weight-label);
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+.turn-activity-name[hidden] { display: none; }
+.turn-activity-label {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--tl-font-ui);
+  font-weight: var(--tl-weight-body);
+  color: var(--text-muted);
+  animation: shimmer-text var(--motion-duration-sheen) var(--motion-ease-standard) infinite;
+}
+.turn-activity-label--path { font-family: var(--font-family-mono); }
+.turn-activity-elapsed {
+  flex: none;
+  margin-inline-start: auto;
+  font-size: var(--tl-font-meta);
+  font-weight: var(--tl-weight-body);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  color: var(--tl-status-active);
+}
+/* A reply waiting by itself behind another chat (HB-034 F5): a calm sentence,
+   not a busy indicator. No dot and no sheen; the sentence may wrap. Stuck (the
+   wait cannot end by itself) is the only variant that takes the warning tone. */
+.turn-activity-row[data-turn-activity-kind^="waiting"] { align-items: baseline; }
+.turn-activity-row[data-turn-activity-kind^="waiting"] > .status-dot { display: none; }
+.turn-activity-row[data-turn-activity-kind^="waiting"] .turn-activity-label {
+  overflow: visible;
+  white-space: normal;
+  animation: none;
+}
+.turn-activity-wait-why { color: var(--text-primary); }
+.turn-activity-wait-sub { color: var(--text-muted); }
+.turn-activity-row[data-turn-activity-kind="waiting-stuck"] .turn-activity-wait-why { color: var(--tl-status-warn); }
+.turn-activity-wait-link,
+.turn-activity-wait-action {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 2px;
+  background: none;
+  color: var(--text-primary);
+  font: inherit;
+  text-decoration: underline;
+  text-decoration-color: var(--border-default);
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+.turn-activity-wait-link:hover,
+.turn-activity-wait-action:hover { text-decoration-color: currentColor; }
+.turn-activity-wait-link:focus-visible,
+.turn-activity-wait-action:focus-visible {
+  outline: 2px solid var(--accent-primary, #a9baff);
+  outline-offset: 2px;
+}
+/* Rare mount fallback: directly on the timeline (no live article to join). */
+.chat-timeline > .turn-activity-row {
+  max-width: var(--content-column-width);
+  margin-inline: auto;
+}
+@media (prefers-reduced-motion: reduce) {
+  .turn-activity-row > .status-dot,
+  .turn-activity-row[data-turn-activity-kind="compaction"] > .status-dot::before,
+  .turn-activity-row[data-turn-activity-kind="compaction"] > .status-dot::after,
+  .turn-activity-glyph-row::after,
+  .turn-activity-label {
+    animation: none;
+  }
+}
+
+@keyframes turn-activity-fold-left {
+  0%, 15%, 100% { transform: translateX(0); opacity: 0.9; }
+  55%, 70% { transform: translateX(calc(var(--tl-dot-size) * 1.6)); opacity: 0.25; }
+}
+
+@keyframes turn-activity-fold-right {
+  0%, 15%, 100% { transform: translateX(0); opacity: 0.9; }
+  55%, 70% { transform: translateX(calc(var(--tl-dot-size) * -1.6)); opacity: 0.25; }
+}
+
+@keyframes turn-activity-checklist-draw {
+  0%, 10% { transform: scaleX(0); opacity: 1; }
+  45%, 80% { transform: scaleX(1); opacity: 1; }
+  100% { transform: scaleX(1); opacity: 0.4; }
+}

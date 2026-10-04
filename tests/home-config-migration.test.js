@@ -16,10 +16,9 @@ const {
 test('v23 migration seeds the home key with defaults on older payloads', () => {
   const state = normalizeState({ version: 22 });
 
-  assert.equal(CONFIG_VERSION, 55);
+  assert.equal(CONFIG_VERSION, 59);
   assert.deepEqual(state.home, {
     links: [],
-    weather: { lat: null, lon: null, units: 'metric' },
     widgets: { order: [], hidden: [] },
     scratchpad: {
       notes: [{ id: 'note-1', title: 'Note 1', text: '', updatedAt: '', appendLog: false }],
@@ -62,7 +61,6 @@ test('home migration is idempotent across repeated normalize passes', () => {
           ],
         },
       ],
-      weather: { lat: 40.7, lon: -74.0, units: 'imperial' },
     },
   };
   const once = normalizeState(input);
@@ -131,19 +129,23 @@ test('home config derives stable unique slugs for ids', () => {
   assert.ok(ids[2]);
 });
 
-test('home weather collapses half-configured locations and bad units', () => {
-  assert.deepEqual(
-    normalizeHomeConfig({ weather: { lat: 40.7, units: 'kelvin' } }).weather,
-    { lat: null, lon: null, units: 'metric' }
-  );
-  assert.deepEqual(
-    normalizeHomeConfig({ weather: { lat: 91, lon: 10 } }).weather,
-    { lat: null, lon: null, units: 'metric' }
-  );
-  assert.deepEqual(
-    normalizeHomeConfig({ weather: { lat: '40.7', lon: '-74', units: 'imperial' } }).weather,
-    { lat: 40.7, lon: -74, units: 'imperial' }
-  );
+test('v59 forgets a saved Home weather location and keeps the rest of Home', () => {
+  // Home weather was retired on the owner's decision (DPR-010, 2026-10-02).
+  const state = normalizeState({
+    version: 58,
+    home: {
+      links: [{ name: 'Lab', tiles: [{ name: 'Pi', href: 'https://pi.example' }] }],
+      weather: { lat: 40.7, lon: -74, units: 'imperial' },
+      focusMode: true,
+    },
+  });
+
+  assert.equal(state.version, 59);
+  assert.equal(Object.hasOwn(state.home, 'weather'), false);
+  assert.equal(Object.hasOwn(serializeState(state).home, 'weather'), false);
+  assert.equal(state.home.links[0].name, 'Lab');
+  assert.equal(state.home.focusMode, true);
+  assert.equal(Object.hasOwn(normalizeHomeConfig({ weather: { lat: 1, lon: 2 } }), 'weather'), false);
 });
 
 test('listHomeSiteMonitorTargets only surfaces explicit siteMonitor URLs', () => {
@@ -344,7 +346,6 @@ test('serializeState round-trips the home key', () => {
   const state = normalizeState({
     home: {
       links: [{ name: 'Lab', tiles: [{ name: 'Pi', href: 'https://pi.example' }] }],
-      weather: { lat: 1, lon: 2, units: 'metric' },
     },
   });
   const serialized = serializeState(state);

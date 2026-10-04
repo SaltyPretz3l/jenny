@@ -1,9 +1,9 @@
 'use strict';
 
-// Artifact Panel V2 chrome (ARTIFACT_PANEL_V2_SPEC.md, artifact_panel_v2).
-// Covers the spec's acceptance list: flag-off byte-identical, no nested
-// border/gradient chain reachable, version stepper, save/revert visibility,
-// provenance popover, footer meta, empty state, and code-review-mode parity.
+// Artifact panel chrome (ARTIFACT_PANEL_V2_SPEC.md; the Canvas chrome is
+// unconditional since the post-1.2.0 flag collapse). Covers: install, no
+// nested border/gradient chain reachable, version stepper, save/revert
+// visibility, provenance popover, empty state, and code-review-mode parity.
 
 const { test, describe } = require('node:test');
 const assert = require('node:assert/strict');
@@ -29,8 +29,7 @@ const escapeHtml = (value) => String(value ?? '')
   .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
 // Static shell fragment mirroring index.html's #artifactReviewPanel markup
-// (legacy, pre-V2). Used to build the flag-off baseline and as the install
-// target for flag-on tests.
+// (legacy, pre-V2). Used as the install target.
 function legacyPanelInnerHtml() {
   return `
     <div class="artifact-review-header">
@@ -94,14 +93,14 @@ function legacyPanelInnerHtml() {
   `;
 }
 
-function makeHarness(t, { flagOn = true } = {}) {
+function makeHarness(t) {
   const dom = new JSDOM('<body><aside class="artifact-review-panel hidden" id="artifactReviewPanel" aria-label="Artifact review"></aside></body>');
   t.after(() => { app.dispose?.(); });
   const doc = dom.window.document;
   const panelEl = doc.getElementById('artifactReviewPanel');
   panelEl.innerHTML = legacyPanelInnerHtml();
   const state = {
-    features: { featureFlags: { artifact_panel_v2: flagOn } },
+    features: { featureFlags: {} },
     artifacts: {
       loadedArtifactId: '',
       loadedArtifactContent: '',
@@ -116,24 +115,8 @@ function makeHarness(t, { flagOn = true } = {}) {
 }
 
 describe('artifact panel v2 install gating', () => {
-  test('flag-off: module does not touch the panel, no artifact-panel-v2 class', () => {
-    const { doc, panelEl, state, appendClientLog } = makeHarness({ after() {} }, { flagOn: false });
-    const before = panelEl.innerHTML;
-    const v2 = createArtifactPanelV2({
-      panelEl,
-      state,
-      windowRef: doc.defaultView,
-      escapeHtml,
-      appendClientLog,
-    });
-    const installed = v2.installed();
-    assert.equal(installed, false, 'flag-off must not install V2 markup');
-    assert.equal(panelEl.innerHTML, before, 'flag-off panel markup must stay byte-identical');
-    assert.equal(panelEl.classList.contains('artifact-panel-v2'), false);
-  });
-
-  test('flag-on: installs V2 markup and tags the panel with artifact-panel-v2', () => {
-    const { panelEl, state, doc, appendClientLog } = makeHarness({ after() {} }, { flagOn: true });
+  test('installs the Canvas chrome and tags the panel with artifact-panel-v2 and -v3', () => {
+    const { panelEl, state, doc, appendClientLog } = makeHarness({ after() {} });
     const v2 = createArtifactPanelV2({
       panelEl,
       state,
@@ -143,12 +126,13 @@ describe('artifact panel v2 install gating', () => {
     });
     assert.equal(v2.installed(), true);
     assert.equal(panelEl.classList.contains('artifact-panel-v2'), true);
+    assert.equal(panelEl.classList.contains('artifact-panel-v3'), true);
   });
 });
 
 describe('artifact panel v2 id/class reuse contract', () => {
   function installed(t) {
-    const h = makeHarness(t, { flagOn: true });
+    const h = makeHarness(t);
     const v2 = createArtifactPanelV2({
       panelEl: h.panelEl,
       state: h.state,
@@ -165,7 +149,7 @@ describe('artifact panel v2 id/class reuse contract', () => {
     // W1-5: artifactReviewOpenFullButton dropped — the studio ("full view")
     // is gone, so V2 no longer renders the control.
     const ids = [
-      'artifactReviewStatus', 'artifactReviewCollapseButton',
+      'artifactReviewCollapseButton',
       'artifactReviewDetailEmpty', 'artifactReviewDetailPanel', 'artifactReviewDetailKicker',
       'artifactReviewDetailPath', 'artifactReviewDetailStatus', 'artifactReviewDetailMeta',
       'artifactReviewDetailTitle', 'artifactReviewDirtyBadge', 'artifactReviewPreviewShell',
@@ -186,10 +170,10 @@ describe('artifact panel v2 id/class reuse contract', () => {
     assert.equal(detailPanel.classList.contains('artifacts-detail-panel'), false);
   });
 
-  test('hidden-but-present nodes: status/kicker/path/detailStatus/detailMeta/detailNote/dirtyBadge/openExternal', (t) => {
+  test('hidden-but-present nodes: kicker/path/detailStatus/detailMeta/detailNote/dirtyBadge/openExternal', (t) => {
     const { panelEl } = installed(t);
     for (const id of [
-      'artifactReviewStatus', 'artifactReviewDetailKicker', 'artifactReviewDetailPath',
+      'artifactReviewDetailKicker', 'artifactReviewDetailPath',
       'artifactReviewDetailStatus', 'artifactReviewDetailMeta', 'artifactReviewDetailNote',
       'artifactReviewDirtyBadge', 'artifactReviewOpenExternalButton',
     ]) {
@@ -214,19 +198,6 @@ describe('artifact panel v2 id/class reuse contract', () => {
 });
 
 describe('artifact panel v2 gradient/border unreachability', () => {
-  test('V2 header/toolbar/footer use V2-specific classes, not legacy gradient-bearing classes', (t) => {
-    const { panelEl } = (function install() {
-      const h = makeHarness(t, { flagOn: true });
-      createArtifactPanelV2({
-        panelEl: h.panelEl, state: h.state, windowRef: h.doc.defaultView, escapeHtml, appendClientLog: h.appendClientLog,
-      }).installed();
-      return h;
-    })();
-    const header = panelEl.querySelector('.artifact-panel-v2-header');
-    assert.ok(header, 'V2 header should use a V2-specific class');
-    assert.equal(header.classList.contains('artifact-review-header'), false, 'legacy gradient-bearing header class must be unreachable');
-  });
-
   test('V2 CSS section contains no gradient token', () => {
     const css = readRepoFile('styles/artifact-panel.css');
     const marker = css.indexOf('Artifact Panel V2');
@@ -306,7 +277,7 @@ describe('artifact panel v2 gradient/border unreachability', () => {
 describe('artifact panel v2 version stepper', () => {
   function buildState(messages) {
     return {
-      features: { featureFlags: { artifact_panel_v2: true } },
+      features: { featureFlags: {} },
       artifacts: { loadedArtifactId: '', loadedArtifactContent: '', dirtyContent: '' },
       messagesBySession: new Map([['s1', messages]]),
     };
@@ -347,7 +318,7 @@ describe('artifact panel v2 version stepper', () => {
   }
 
   test('1 version: no stepper markup at all', (t) => {
-    const h = makeHarness(t, { flagOn: true });
+    const h = makeHarness(t);
     h.state.messagesBySession = new Map([['s1', [toolMessage('a1', 'chart.html', '2026-01-01T00:00:00.000Z')]]]);
     const v2 = createArtifactPanelV2({
       panelEl: h.panelEl, state: h.state, windowRef: h.doc.defaultView, escapeHtml, appendClientLog: h.appendClientLog,
@@ -358,7 +329,7 @@ describe('artifact panel v2 version stepper', () => {
   });
 
   test('3 versions: shows v2/3, ends disabled, prev/next re-select the neighbor', (t) => {
-    const h = makeHarness(t, { flagOn: true });
+    const h = makeHarness(t);
     h.state.messagesBySession = new Map([['s1', [
       toolMessage('a1', 'chart.html', '2026-01-01T00:00:00.000Z'),
       toolMessage('a2', 'chart.html', '2026-01-02T00:00:00.000Z'),
@@ -386,7 +357,7 @@ describe('artifact panel v2 version stepper', () => {
   });
 
   test('at k=1 back is disabled, at k=n forward is disabled', (t) => {
-    const h = makeHarness(t, { flagOn: true });
+    const h = makeHarness(t);
     h.state.messagesBySession = new Map([['s1', [
       toolMessage('a1', 'chart.html', '2026-01-01T00:00:00.000Z'),
       toolMessage('a2', 'chart.html', '2026-01-02T00:00:00.000Z'),
@@ -411,7 +382,7 @@ describe('artifact panel v2 version stepper', () => {
 
 describe('artifact panel v2 save/revert visibility', () => {
   test('absent (hidden) when clean, visible when dirty, hidden again after revert', (t) => {
-    const h = makeHarness(t, { flagOn: true });
+    const h = makeHarness(t);
     const v2 = createArtifactPanelV2({
       panelEl: h.panelEl, state: h.state, windowRef: h.doc.defaultView, escapeHtml, appendClientLog: h.appendClientLog,
     });
@@ -441,73 +412,9 @@ describe('artifact panel v2 save/revert visibility', () => {
   });
 });
 
-describe('artifact panel v2 Edit toggle gating (Finding 2)', () => {
-  test('markdown generated artifact: Edit visible, toggles pressed state via the existing seam', (t) => {
-    const h = makeHarness(t, { flagOn: true });
-    const v2 = createArtifactPanelV2({
-      panelEl: h.panelEl, state: h.state, windowRef: h.doc.defaultView, escapeHtml, appendClientLog: h.appendClientLog,
-    });
-    v2.installed();
-    v2.bind();
-    let mode = 'read';
-    v2.connect({
-      isSelectedArtifactMarkdownGenerated: () => true,
-      getArtifactDocumentViewMode: () => mode,
-      setArtifactDocumentViewMode: (_surfaceKey, nextMode) => { mode = nextMode; },
-    });
-    const artifact = {
-      id: 'a1', sessionId: 's1', artifactType: 'generated_file',
-      generatedFile: { artifactId: 'a1', fileName: 'n.md', editable: true, status: 'available' },
-    };
-    v2.afterRender(artifact);
-    const editBtn = h.panelEl.querySelector('[data-artifact-panel-v2-edit]');
-    assert.ok(editBtn, 'Edit button should exist in markup');
-    assert.equal(editBtn.classList.contains('hidden'), false, 'markdown artifact: Edit must be visible');
-    assert.equal(editBtn.disabled, false, 'markdown artifact: Edit must be enabled');
-    assert.equal(editBtn.getAttribute('aria-pressed'), 'false', 'starts unpressed (read mode)');
-
-    editBtn.dispatchEvent(new h.doc.defaultView.Event('click', { bubbles: true }));
-    v2.afterRender(artifact);
-    assert.equal(editBtn.getAttribute('aria-pressed'), 'true', 'toggles to pressed (source mode) after click');
-  });
-
-  test('html/code generated artifact: Edit button hidden (toggle is a no-op for code kinds)', (t) => {
-    const h = makeHarness(t, { flagOn: true });
-    const v2 = createArtifactPanelV2({
-      panelEl: h.panelEl, state: h.state, windowRef: h.doc.defaultView, escapeHtml, appendClientLog: h.appendClientLog,
-    });
-    v2.installed();
-    v2.connect({ isSelectedArtifactMarkdownGenerated: () => false });
-    const artifact = {
-      id: 'a1', sessionId: 's1', artifactType: 'generated_file',
-      generatedFile: { artifactId: 'a1', fileName: 'page.html', editable: true, status: 'available' },
-    };
-    v2.afterRender(artifact);
-    const editBtn = h.panelEl.querySelector('[data-artifact-panel-v2-edit]');
-    assert.equal(editBtn.classList.contains('hidden'), true, 'html/code artifact: Edit must be hidden');
-    assert.equal(editBtn.disabled, true, 'hidden Edit must also be disabled (defense in depth)');
-  });
-
-  test('image artifact: Edit button hidden', (t) => {
-    const h = makeHarness(t, { flagOn: true });
-    const v2 = createArtifactPanelV2({
-      panelEl: h.panelEl, state: h.state, windowRef: h.doc.defaultView, escapeHtml, appendClientLog: h.appendClientLog,
-    });
-    v2.installed();
-    v2.connect({ isSelectedArtifactMarkdownGenerated: () => false });
-    const artifact = {
-      id: 'img-1', sessionId: 's1', artifactType: 'image',
-      image: { id: 'img-1', assetPath: 'C:/ws/pic.png' },
-    };
-    v2.afterRender(artifact);
-    const editBtn = h.panelEl.querySelector('[data-artifact-panel-v2-edit]');
-    assert.equal(editBtn.classList.contains('hidden'), true, 'image artifact: Edit must be hidden');
-  });
-});
-
 describe('artifact panel v2 Copy button gating (Finding 1)', () => {
   test('image artifact: Copy is disabled (no source text exists)', (t) => {
-    const h = makeHarness(t, { flagOn: true });
+    const h = makeHarness(t);
     const v2 = createArtifactPanelV2({
       panelEl: h.panelEl, state: h.state, windowRef: h.doc.defaultView, escapeHtml, appendClientLog: h.appendClientLog,
     });
@@ -523,7 +430,7 @@ describe('artifact panel v2 Copy button gating (Finding 1)', () => {
   });
 
   test('generated file: Copy is enabled', (t) => {
-    const h = makeHarness(t, { flagOn: true });
+    const h = makeHarness(t);
     const v2 = createArtifactPanelV2({
       panelEl: h.panelEl, state: h.state, windowRef: h.doc.defaultView, escapeHtml, appendClientLog: h.appendClientLog,
     });
@@ -543,7 +450,7 @@ describe('artifact panel v2 Copy button gating (Finding 1)', () => {
 
 describe('artifact panel v2 provenance popover', () => {
   test('opens from footer glyph, closes on Escape/outside click, entries only inside popover', (t) => {
-    const h = makeHarness(t, { flagOn: true });
+    const h = makeHarness(t);
     const v2 = createArtifactPanelV2({
       panelEl: h.panelEl, state: h.state, windowRef: h.doc.defaultView, escapeHtml, appendClientLog: h.appendClientLog,
     });
@@ -580,30 +487,9 @@ describe('artifact panel v2 provenance popover', () => {
   });
 });
 
-describe('artifact panel v2 footer meta', () => {
-  test('shows kind + time for a generated file, omits unknown segments (no orphan dots)', (t) => {
-    const h = makeHarness(t, { flagOn: true });
-    const v2 = createArtifactPanelV2({
-      panelEl: h.panelEl, state: h.state, windowRef: h.doc.defaultView, escapeHtml, appendClientLog: h.appendClientLog,
-    });
-    v2.installed();
-    const artifact = {
-      id: 'a1', sessionId: 's1', artifactType: 'generated_file', timestamp: '2026-01-01T00:00:00.000Z',
-      generatedFile: { artifactId: 'a1', fileName: 'x.html', artifactKind: 'document', editable: true, status: 'available' },
-    };
-    v2.afterRender(artifact);
-    const footerMeta = h.panelEl.querySelector('.artifact-panel-v2-footer-meta');
-    assert.ok(footerMeta);
-    const text = footerMeta.textContent.trim();
-    assert.notEqual(text, '', 'footer meta should not be empty for a known artifact');
-    assert.doesNotMatch(text, /·\s*·/, 'no orphan separators from omitted segments');
-    assert.doesNotMatch(text, /^\s*·|·\s*$/, 'no leading/trailing separator');
-  });
-});
-
 describe('artifact panel v2 empty state', () => {
   test('no selection: single "Select an artifact" line, no card markup', (t) => {
-    const h = makeHarness(t, { flagOn: true });
+    const h = makeHarness(t);
     const v2 = createArtifactPanelV2({
       panelEl: h.panelEl, state: h.state, windowRef: h.doc.defaultView, escapeHtml, appendClientLog: h.appendClientLog,
     });

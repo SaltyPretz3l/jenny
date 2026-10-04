@@ -174,7 +174,7 @@
         markHiddenRenderableEvent(payload, 'agent_status');
       }
       if (updated && isVisibleChatSession(payload.sessionId)) {
-        queueRender({ messages: true });
+        queueRender({ messages: true }, { sessionId: payload.sessionId });
       } else {
         queueRender({ chrome: true });
       }
@@ -211,6 +211,8 @@
         nextAssistantMessageId,
       });
       streamPhaseState.delete(normalizeId(payload.streamId));
+      // The discarded segment's prose or reasoning no longer describes the stream.
+      state.streamDeltaKindByStream?.delete(normalizeId(payload.streamId));
       clearStreamThinkingStatus(payload.streamId);
       if (segState) {
         segState.segmentIndex = identity ? identity.segmentIndex : localSegmentIndex + 1;
@@ -250,7 +252,7 @@
         }
       }
       if (isVisibleChatSession(payload.sessionId)) {
-        queueRender({ messages: true });
+        queueRender({ messages: true }, { sessionId: payload.sessionId });
       }
       return { buffered: false, terminal: false };
     }
@@ -281,6 +283,7 @@
         inputComplete: payload.inputComplete !== false,
         droppedMessages: Math.max(0, Number(payload.droppedMessages || 0) || 0),
         droppedBytes: Math.max(0, Number(payload.droppedBytes || 0) || 0),
+        summarySourceDroppedMessages: Math.max(0, Number(payload.summarySourceDroppedMessages || 0) || 0),
         summaryPersisted: payload.summaryPersisted === true,
         historyScopeFallback: String(payload.historyScopeFallback || ''),
         summaryExcerpt: String(payload.summaryExcerpt || '').slice(0, 1200),
@@ -292,8 +295,15 @@
         status: MESSAGE_STATUS.STREAMING,
         finalizedAt: null,
       });
+      if (updated) {
+        // The row-model timeline paints from the live reducer, not the message,
+        // so the hairline needs its own event there (HB-007). No-op off row model.
+        applyLiveTurnPayload({ ...payload, contextCompacted }, {
+          primaryAssistantMessageId: updated.activeMessages?.[updated.index]?.id,
+        });
+      }
       if (updated && isVisibleChatSession(payload.sessionId)) {
-        queueRender({ messages: true });
+        queueRender({ messages: true }, { sessionId: payload.sessionId });
       } else {
         queueRender({ chrome: true });
       }
@@ -367,12 +377,13 @@
       }
       if (regressed) {
         if (hasProviderReasoningDelta) {
+          state.streamDeltaKindByStream?.set(normalizeId(payload.streamId), 'reasoning');
           flushPendingStreamCommit(payload.streamId);
           const updatedReasoning = updatePendingMessage(payload, {
             reasoning: reasoningStreamMerger.merge(payload.streamId, message, payload.reasoning),
           });
           if (updatedReasoning && isVisibleChatSession(payload.sessionId)) {
-            queueRender({ messages: true });
+            queueRender({ messages: true }, { sessionId: payload.sessionId });
           } else if (updatedReasoning && isCurrentSession(payload.sessionId)) {
             queueRender({ chrome: true });
           } else if (updatedReasoning) {
@@ -381,6 +392,9 @@
         }
         return { buffered: false, terminal: false };
       }
+      // Latest accepted delta kind for the activity sprite; prose wins a mixed payload.
+      const acceptedDeltaKind = String(payload.content || '').trim() ? 'prose' : (hasReasoningDelta ? 'reasoning' : '');
+      if (acceptedDeltaKind) state.streamDeltaKindByStream?.set(normalizeId(payload.streamId), acceptedDeltaKind);
       applyLiveTurnPayload(payload, {
         primaryAssistantMessageId: buildAssistantShellMessageId(payload.streamId, segState.segmentIndex),
         segmentText: segmentContent,

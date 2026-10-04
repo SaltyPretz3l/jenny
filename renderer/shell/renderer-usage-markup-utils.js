@@ -16,14 +16,8 @@
     'generation_duration_ms', 'ttft_ms', 'estimated', 'cost_source', 'cost_usd',
   ]);
 
-  function escapeHtml(value) {
-    return String(value == null ? '' : value)
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;')
-      .replace(/'/g, '&#39;');
-  }
+  const escapeHtml = ((typeof globalThis !== 'undefined' && globalThis.stringUtils)
+    || (typeof require === 'function' ? require('../shared/string-utils') : null)).escapeHtml;
 
   function finiteNumber(value) {
     const number = Number(value);
@@ -183,8 +177,8 @@
       actions.push(actionButton(inventory, {
         label: jt('usage.chatAction', 'chat'), variant: 'ghost', size: 'sm', className: 'usage-link',
         dataset: { 'usage-action': 'chat', 'session-id': String(row.session_id) },
-        ariaLabel: jt('usage.openTurnInChatLabel', 'Open turn in chat'),
-        title: jt('usage.openTurnInChatTitle', 'Open this turn in chat'),
+        ariaLabel: jt('usage.openChatLabel', 'Open chat'),
+        title: jt('usage.openChatTitle', 'Open this chat'),
       }));
     }
     if (row.stream_id) {

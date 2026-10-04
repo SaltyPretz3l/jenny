@@ -332,68 +332,6 @@
     });
   }
 
-  function resolveChatZoomUtils(deps) {
-    return (deps && deps.chatZoomUtils)
-      || (root && root.chatZoomUtils)
-      || (typeof require === 'function' ? require('../chat/chat-zoom-utils') : null)
-      || null;
-  }
-
-  /**
-   * Proof adapter #2: chat zoom percent. Mirrors the optimistic+rollback
-   * precedent in applyChatZoomPercent()
-   * (renderer/shell/renderer-lifecycle-appearance-utils.js:100-129): apply
-   * the new value immediately, persist via IPC, reconcile to whatever
-   * zoomPercent the persisted response carries, and roll back to the
-   * previous value on failure. The clamp bounds are the real
-   * normalizeChatZoomPercent from renderer/chat/chat-zoom-utils.js (85-135,
-   * step 5, default 100) -- not reinvented here.
-   *
-   * @param {object} deps
-   * @param {function} deps.updateSettings - ({ zoomPercent }) =>
-   *   Promise<{ zoomPercent }> | { zoomPercent } | undefined. The IPC call
-   *   (e.g. windowObject.jennyShell.chatUi.updateSettings).
-   * @param {function} deps.getCurrent - () => current zoom percent.
-   * @param {function} [deps.applyZoom] - (percent) => void, optimistic
-   *   DOM/state apply hook (e.g. applyChatZoomToDocument).
-   * @param {function} [deps.log]
-   * @param {object} [deps.chatZoomUtils] - test seam; defaults to the shared
-   *   chat-zoom-utils module (via globalThis or require()).
-   */
-  function createZoomAdapter(deps) {
-    const settings = deps || {};
-    const chatZoomUtils = resolveChatZoomUtils(settings);
-    if (!chatZoomUtils) {
-      throw new TypeError('createZoomAdapter(deps): chat-zoom-utils module could not be resolved');
-    }
-    if (typeof settings.updateSettings !== 'function') {
-      throw new TypeError('createZoomAdapter(deps): deps.updateSettings must be a function');
-    }
-    if (typeof settings.getCurrent !== 'function') {
-      throw new TypeError('createZoomAdapter(deps): deps.getCurrent must be a function');
-    }
-
-    const normalizeZoom = chatZoomUtils.normalizeChatZoomPercent;
-    const getDefaultZoom = chatZoomUtils.getDefaultChatZoomPercent;
-
-    return createSettingsAdapter({
-      id: 'chatZoom',
-      read: () => settings.getCurrent(),
-      normalize: (raw) => normalizeZoom(raw),
-      write: (value) => Promise.resolve(settings.updateSettings({ zoomPercent: value }))
-        .then((response) => {
-          const persisted = response && response.zoomPercent !== undefined
-            ? response.zoomPercent
-            : value;
-          return normalizeZoom(persisted);
-        }),
-      getDefault: () => normalizeZoom(getDefaultZoom()),
-      redact: identity,
-      apply: typeof settings.applyZoom === 'function' ? settings.applyZoom : undefined,
-      log: settings.log,
-    });
-  }
-
   // Legal offline-intelligence mode values (services/shell-config-state.js
   // DEFAULT_OFFLINE_INTELLIGENCE + normalizeOfflineMode, :70-73/:123-127):
   // 'local_only' or 'disabled' (anything else coerces to 'disabled'). Kept as
@@ -464,7 +402,6 @@
     createSettingsAdapter: createSettingsAdapter,
     createWriteGroup: createWriteGroup,
     createAppearanceAdapter: createAppearanceAdapter,
-    createZoomAdapter: createZoomAdapter,
     createOfflineAdapter: createOfflineAdapter,
   };
 });

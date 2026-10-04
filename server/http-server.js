@@ -7,7 +7,10 @@ const { randomUUID } = require('node:crypto');
 const { createRequestSecurity } = require('./request-security');
 const { ERROR_CODES, hostFailure } = require('./api-contract');
 const { DEFAULT_RESOURCE_LIMITS } = require('./config');
+const { requireBoundedInteger } = require('./resource-limits');
 const { SUPPORTED_TAGS } = require('../renderer/shared/i18n-utils');
+
+const RESPONSE_WRITE_TIMEOUT_MS = 60_000;
 
 const STATIC_FILES = Object.freeze({
   '/': ['index.html', 'text/html; charset=utf-8'],
@@ -38,8 +41,18 @@ const STATUS_BY_CODE = Object.fromEntries(Object.entries(ERROR_CODES)
   .map(([kind, code]) => [code, HTTP_STATUS[kind]]));
 
 function failure(response, kind, reason, requestId) {
-  const status = HTTP_STATUS[kind] || 503;
-  json(response, status, hostFailure(kind, reason, requestId));
+  sendHostFailure(response, hostFailure(kind, reason, requestId), requestId);
+}
+
+function sendHostFailure(response, result, requestId) {
+  const error = result?.error || {};
+  const kind = Object.keys(ERROR_CODES).find((key) => ERROR_CODES[key] === error.code) || 'unavailable';
+  const envelope = hostFailure(kind, error.reason || 'host_unavailable', requestId, error.retryable === true);
+  if (Number.isSafeInteger(error.limit_bytes) && Number.isSafeInteger(error.actual_bytes)) {
+    envelope.error.limit_bytes = error.limit_bytes;
+    envelope.error.actual_bytes = error.actual_bytes;
+  }
+  json(response, HTTP_STATUS[kind] || 503, envelope);
 }
 
 function authFailure(response, result, requestId) {
@@ -105,11 +118,54 @@ function readStaticAssets(staticRoot) {
   return assets;
 }
 
+function retainResponseAdmission(response, release, writeTimeoutMs) {
+  // Admission is released once, after BOTH the handler returned and the response
+  // settled: a client disconnect must not admit new work while a handler runs.
+  let responseSettled = false;
+  let dispatchDone = false;
+  let released = false;
+  let deadline;
+  const maybeRelease = () => {
+    if (released || !responseSettled || !dispatchDone) return;
+    released = true;
+    release();
+  };
+  const settle = () => {
+    if (responseSettled) return;
+    responseSettled = true;
+    clearTimeout(deadline);
+    response.off('finish', settle);
+    response.off('close', settle);
+    maybeRelease();
+  };
+  response.once('finish', settle);
+  response.once('close', settle);
+  return () => {
+    dispatchDone = true;
+    // Admitted SSE retains its existing independent subscriber lifecycle.
+    if (response.getHeader('Content-Type') === 'text/event-stream') { settle(); maybeRelease(); return; }
+    if (responseSettled) { maybeRelease(); return; }
+    // An idle deadline: a slow client that keeps draining bytes is not cut off.
+    let written = response.socket?.bytesWritten ?? 0;
+    const check = () => {
+      const now = response.socket?.bytesWritten ?? 0;
+      if (now === written) { response.destroy(); return; }
+      written = now;
+      deadline = setTimeout(check, writeTimeoutMs);
+      deadline.unref();
+    };
+    deadline = setTimeout(check, writeTimeoutMs);
+    deadline.unref();
+  };
+}
+
 function createHttpServer({ canonicalOrigin, staticRoot, auth, clients, events, router,
   bootEpoch, isReady = () => true, logger = () => {}, assetRoutes = null,
   resourceLimits = DEFAULT_RESOURCE_LIMITS, browserAccessMode = 'private_https',
   executionStatus = () => false }) {
   const limits = { ...DEFAULT_RESOURCE_LIMITS, ...resourceLimits };
+  const writeTimeoutMs = requireBoundedInteger(limits.responseWriteTimeoutMs ?? RESPONSE_WRITE_TIMEOUT_MS,
+    RESPONSE_WRITE_TIMEOUT_MS);
   const security = createRequestSecurity({ canonicalOrigin, browserAccessMode,
     maxBodyBytes: limits.maxBodyBytes });
   const assets = readStaticAssets(staticRoot);
@@ -126,6 +182,7 @@ function createHttpServer({ canonicalOrigin, staticRoot, auth, clients, events, 
     headers(response, requestId);
     if (disposed || active >= limits.maxConcurrentRequests) { failure(response, 'limit', 'request_capacity', requestId); return; }
     active += 1;
+    const dispatchReturned = retainResponseAdmission(response, () => { active -= 1; }, writeTimeoutMs);
     try {
       const checked = security.validateHostAndOrigin(request.headers, request);
       if (!checked.ok) { authFailure(response, checked, requestId); return; }
@@ -243,7 +300,7 @@ function createHttpServer({ canonicalOrigin, staticRoot, auth, clients, events, 
       if (response.headersSent) response.destroy();
       else failure(response, ['json_required', 'invalid_json', 'body_limit', 'unexpected_body'].includes(error.message)
         ? 'invalid' : 'unavailable', 'request_failed', requestId);
-    } finally { active -= 1; }
+    } finally { dispatchReturned(); }
   }
 
   const server = http.createServer({ maxHeaderSize: limits.maxHeaderBytes, requestTimeout: limits.requestTimeoutMs,
@@ -268,4 +325,4 @@ function createHttpServer({ canonicalOrigin, staticRoot, auth, clients, events, 
   return { server, close };
 }
 
-module.exports = { createHttpServer, readJson, json, requireBodyless };
+module.exports = { createHttpServer, readJson, json, requireBodyless, sendHostFailure };

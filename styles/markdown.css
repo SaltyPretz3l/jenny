@@ -53,7 +53,7 @@
 .chat-bubble-markdown h6 {
   margin: var(--markdown-heading-margin-top) 0 var(--markdown-heading-margin-bottom);
   font-family: var(--font-family-body);
-  font-weight: 600;
+  font-weight: 500;
   line-height: 1.22;
   color: var(--text-primary);
 }
@@ -65,6 +65,21 @@
 .chat-bubble-markdown h5:first-child,
 .chat-bubble-markdown h6:first-child {
   margin-top: 0;
+}
+
+/* Streaming wraps each markdown chunk in a stream unit; a chunk's edge block is
+ * not the body's edge block, so restore the flow spacing the settled (flat) body
+ * gives it. Only the body's real first/last unit keeps the edge reset. */
+.chat-bubble-markdown > :is(.chat-stream-unit, .reasoning-stream-unit):not(:last-child) > p:last-child {
+  margin-bottom: var(--markdown-flow-gap);
+}
+
+.chat-bubble-markdown > :is(.chat-stream-unit, .reasoning-stream-unit):not(:last-child) > pre:last-child {
+  margin-bottom: var(--markdown-block-gap);
+}
+
+.chat-bubble-markdown > :is(.chat-stream-unit, .reasoning-stream-unit):not(:first-child) > :is(h1, h2, h3, h4, h5, h6):first-child {
+  margin-top: var(--markdown-heading-margin-top);
 }
 
 .chat-bubble-markdown h1 { font-size: var(--markdown-h1-size); }
@@ -562,7 +577,7 @@
   gap: 10px;
   padding: 14px;
   color: var(--text-secondary);
-  font-size: calc(13px * var(--chat-zoom-factor, 1));
+  font-size: var(--font-size-footnote);
   line-height: 1.6;
 }
 
@@ -609,7 +624,7 @@
   height: auto !important;
   width: auto !important;
   display: block;
-  font-size: calc(13px * var(--chat-zoom-factor, 1));
+  font-size: var(--font-size-footnote);
 }
 
 :is(.chat-bubble-markdown, .tool-result-body) .mermaid-controls,
@@ -641,7 +656,7 @@
   background: transparent;
   border: none;
   color: color-mix(in srgb, var(--text-secondary) 86%, var(--text-primary));
-  font-size: calc(15px * var(--chat-zoom-factor, 1));
+  font-size: var(--font-size-body);
   line-height: 1;
   width: 26px;
   height: 26px;
@@ -662,7 +677,7 @@
 
 :is(.chat-bubble-markdown, .tool-result-body) .mermaid-zoom-label,
 .mermaid-fullscreen-shell .mermaid-zoom-label {
-  font-size: calc(11px * var(--chat-zoom-factor, 1));
+  font-size: var(--font-size-caption);
   color: color-mix(in srgb, var(--text-secondary) 90%, transparent);
   min-width: 36px;
   text-align: center;
@@ -694,7 +709,7 @@
   width: 100%;
   padding: 7px 12px;
   cursor: pointer;
-  font-size: calc(12px * var(--chat-zoom-factor, 1));
+  font-size: var(--font-size-caption);
   color: var(--text-secondary);
   border: 0;
   border-bottom: 1px solid var(--markdown-code-block-border);
@@ -717,7 +732,7 @@
 /* Outer toggle chevron icon */
 :is(.chat-bubble-markdown, .tool-result-body) .markdown-mermaid-toggle-icon::before {
   content: '▼';
-  font-size: calc(9px * var(--chat-zoom-factor, 1));
+  font-size: var(--font-size-caption);
   display: inline-block;
   transition: transform var(--transition-fast);
 }
@@ -741,7 +756,7 @@
 /* Override mono/uppercase code-language styling for the mermaid source header */
 :is(.chat-bubble-markdown, .tool-result-body) .markdown-mermaid-source .markdown-code-language {
   font-family: inherit;
-  font-size: calc(12px * var(--chat-zoom-factor, 1));
+  font-size: var(--font-size-caption);
   font-weight: 400;
   letter-spacing: normal;
   text-transform: none;
@@ -775,7 +790,7 @@
    not as a separate flex item that justify-content: space-between would push apart */
 :is(.chat-bubble-markdown, .tool-result-body) .markdown-mermaid-source .markdown-code-language::before {
   content: '▶';
-  font-size: calc(9px * var(--chat-zoom-factor, 1));
+  font-size: var(--font-size-caption);
   display: inline-block;
   margin-inline-end: 6px;
   transition: transform var(--transition-fast);

@@ -29,3 +29,22 @@
     transform: none;
   }
 }
+
+/* Setup-incomplete hero: Resume setup action and footnote. */
+.hero-setup-incomplete .hero-title {
+  font-size: var(--font-size-heading);
+  line-height: 1.3;
+}
+
+.hero-resume-setup {
+  pointer-events: auto;
+  font-size: var(--font-size-body);
+  white-space: nowrap;
+}
+
+.hero-setup-footnote {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--font-size-footnote);
+  line-height: 1.5;
+}

@@ -1,6 +1,6 @@
 ---
 kind: operations-doc
-last_reviewed: 2026-09-07
+last_reviewed: 2026-10-03
 status: active
 ---
 
@@ -39,13 +39,13 @@ or outbound calls are involved — everything stays on `127.0.0.1`.
 From a terminal, start the server pointing at your downloaded GGUF:
 
 ```powershell
-.\llama-server.exe ^
-  -m C:\path\to\Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf ^
-  --host 127.0.0.1 ^
-  --port 8033 ^
-  --ctx-size 131072 ^
-  --n-gpu-layers 99 ^
-  --jinja ^
+.\llama-server.exe `
+  -m C:\path\to\Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf `
+  --host 127.0.0.1 `
+  --port 8033 `
+  --ctx-size 131072 `
+  --n-gpu-layers 99 `
+  --jinja `
   --reasoning-format deepseek
 ```
 
@@ -91,7 +91,7 @@ Jenny picks up the OpenAI-compatible engine whenever
 wiring lives in:
 
 - `sidecar/ai/engines/openai_compatible.py` — the engine class.
-- `services/backend/managed-sidecar-lifecycle.js` — forwards
+- `services/backend/managed-sidecar-config.js` — forwards
   `config.api_url` for `openai-compatible` from persisted settings.
 - `services/shell-config-state.js` — persists `localEngines.openaiCompatible`.
 - `services/shell-config-service.js` — exposes
@@ -232,12 +232,12 @@ manual tuning on your own hardware:
 
 ## Why unmanaged
 
-Jenny does not launch or supervise `llama-server` in Slice B —
-managed llama.cpp lifecycle is Task 7. The app's default startup posture
-therefore treats `llama-server` autostart as opt-in through
-`JENNY_LLAMA_SERVER_AUTOSTART=true`, and the normal recipe is to launch
-and supervise the process yourself. Keeping the runtime "unmanaged"
-means:
+This recipe selects the external OpenAI-compatible endpoint and leaves its process
+under your control. Jenny also has a managed llama-server path today, owned by
+`services/main/llama-server-manager.js` and `services/llama-server-lifecycle.js`;
+see [llama-server acceleration](LLAMA_SERVER_ACCELERATION.md). For the unmanaged
+recipe, leave `JENNY_LLAMA_SERVER_AUTOSTART` unset and launch the server yourself.
+Keeping this path unmanaged means:
 
 - The user controls memory budget, quant selection, GPU layers, and
   restart policy.
@@ -246,5 +246,5 @@ means:
   not unload the weights, and crashing `llama-server` does not kill
   Jenny.
 
-When Task 7 lands, a managed runtime will sit alongside this path; the
-unmanaged engine stays available for users who want direct control.
+The managed and unmanaged paths coexist; select the path that matches how you
+intend to install, configure and supervise the server.

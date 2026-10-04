@@ -6,6 +6,7 @@ import hashlib
 import json
 import logging
 import math
+import os
 import re
 import sys
 import threading
@@ -17,8 +18,8 @@ from datetime import UTC, datetime, timedelta
 from itertools import islice
 from logging.handlers import QueueHandler
 from pathlib import Path
-from time import perf_counter
-from typing import Any, Iterator, TextIO
+from time import monotonic, perf_counter
+from typing import Any, Callable, Iterator, TextIO
 
 from sidecar.ai.config import read_environment_value
 from sidecar.runtime.diagnostics_queue import (
@@ -33,6 +34,11 @@ from sidecar.runtime.diagnostics_stream import (
 
 SCHEMA_VERSION = 1
 SEGMENT_MAX_BYTES = 5 * 1024 * 1024
+ROTATION_RETRY_BYTES = 256 * 1024
+ROTATION_RETRY_SECONDS = 5.0
+# While rotation is blocked the active segment may overrun up to this many
+# segment sizes; past that, records are dropped until rotation succeeds.
+BLOCKED_ROTATION_SEGMENT_MULTIPLE = 4
 PER_LAYER_CAP_BYTES = 50 * 1024 * 1024
 GLOBAL_CAP_BYTES = 200 * 1024 * 1024
 GLOBAL_PRUNE_TARGET_BYTES = 150 * 1024 * 1024
@@ -68,11 +74,12 @@ _SENSITIVE_COMPACT_KEYS = {
     "accesstoken",
     "refreshtoken",
     "clientsecret",
+    "authtoken",
     "setcookie",
 }
 _SENSITIVE_ASSIGNMENT_KEY_PATTERN = (
     r"authorization|(?:[a-z0-9]+[_-])?api[_-]?key|access[_-]?token|refresh[_-]?token|"
-    r"client[_-]?secret|password|passwd|secret|token|cookie|set-cookie"
+    r"client[_-]?secret|auth[_-]?token|id[_-]?token|password|passwd|secret|token|cookie|set-cookie|dsn"
 )
 _SENSITIVE_ASSIGNMENT_RE = re.compile(
     rf"(?i)\b(?P<key>{_SENSITIVE_ASSIGNMENT_KEY_PATTERN})"
@@ -88,40 +95,45 @@ _AUTHORIZATION_HEADER_RE = re.compile(
 )
 _BEARER_RE = re.compile(r"(?i)\bbearer\s+[A-Za-z0-9._~+/=-]+")
 _DATA_URL_RE = re.compile(r"(?i)data:[^\s,;]+(?:;[^\s,;]+)*;base64,[A-Za-z0-9+/=]{16,}")
-_REDACTION_SENTINELS = (
-    "access",
-    "api",
-    "authorization",
-    "bearer",
-    "client",
-    "cookie",
-    "data:",
-    "password",
-    "passwd",
-    "refresh",
-    "secret",
-    "token",
+_SECRET_SHAPE_RE = re.compile(
+    r"\b(?:sk-[A-Za-z0-9_-]{8,}|(?:sk|pk|tok|gh[pousr])_[A-Za-z0-9_-]{8,}|"
+    r"github_pat_[A-Za-z0-9_]{20,}|xox[baprs][-_][A-Za-z0-9-]{10,}|"
+    r"AKIA[0-9A-Z]{16}|hf_[A-Za-z0-9]{8,}|"
+    r"eyJ[A-Za-z0-9_=-]+\.eyJ[A-Za-z0-9_=-]+\.[A-Za-z0-9_.+/=-]{8,})\b"
 )
-_NUMERIC_LOG_ROTATION_RE = re.compile(r"\.log\.[0-9]+\Z")
+_CREDENTIAL_URL_RE = re.compile(
+    r"(?i)\b(?:(?:postgres(?:ql)?|mysql|mongodb(?:\+srv)?|redis|amqp)://[^\s'\"<>]+|"
+    r"https?://[^:\s'\"<>/]+:[^@\s'\"<>/]+@[^\s'\"<>]+)"
+)
+# Hide space-bearing path tails conservatively; stop before diagnostic fields.
+_PATH_BODY = (
+    r"[^\r\n\t'\"`<>|]+?(?=  |\s+[\w-]+[:=]|"
+    r"\s+(?:is|was|does|failed|exited)\b|$|['\"`<>|\r\n\t])"
+)
+_PRIVATE_PATH_RE = re.compile(
+    r"(?:\b[A-Za-z]:[\\/]|\\\\[A-Za-z0-9._$-]+\\|"
+    r"(?<![^\s(\"':=,])/+(?:Users|home|var|tmp|etc|opt|srv|root|private|workspace|mnt|Volumes)/)"
+    + _PATH_BODY
+)
+# Numbered segments plus a segment staged mid-rotation (``.rotating-<pid>``),
+# which a crash or a failed shift can strand; retention must still see it.
+_NUMERIC_LOG_ROTATION_RE = re.compile(r"\.log\.(?:rotating-)?[0-9]+\Z")
+_STAGED_SEGMENT_INDEX = 1_000_000
 
 
 def _redact_key_value(match: re.Match[str]) -> str:
     return f"{match.group('key')}{match.group('sep')}[redacted]"
 
 
-def _needs_text_redaction(value: str) -> bool:
-    lowered = value.lower()
-    return any(sentinel in lowered for sentinel in _REDACTION_SENTINELS)
-
-
 def _sanitize_text(value: str, *, limit: int = 512) -> str:
-    sanitized = value
-    if _needs_text_redaction(value):
-        sanitized = _DATA_URL_RE.sub("data:[redacted]", sanitized)
-        sanitized = _COOKIE_HEADER_RE.sub(_redact_key_value, sanitized)
-        sanitized = _AUTHORIZATION_HEADER_RE.sub(_redact_key_value, sanitized)
-        sanitized = _BEARER_RE.sub("bearer [redacted]", sanitized)
-        sanitized = _SENSITIVE_ASSIGNMENT_RE.sub(_redact_key_value, sanitized)
+    sanitized = _PRIVATE_PATH_RE.sub("[redacted:path]", value)
+    sanitized = _CREDENTIAL_URL_RE.sub("[redacted:dsn]", sanitized)
+    sanitized = _DATA_URL_RE.sub("data:[redacted]", sanitized)
+    sanitized = _COOKIE_HEADER_RE.sub(_redact_key_value, sanitized)
+    sanitized = _AUTHORIZATION_HEADER_RE.sub(_redact_key_value, sanitized)
+    sanitized = _BEARER_RE.sub("bearer [redacted]", sanitized)
+    sanitized = _SENSITIVE_ASSIGNMENT_RE.sub(_redact_key_value, sanitized)
+    sanitized = _SECRET_SHAPE_RE.sub("[redacted]", sanitized)
     normalized = " ".join(sanitized.split())
     if len(normalized) <= limit:
         return normalized
@@ -129,7 +141,8 @@ def _sanitize_text(value: str, *, limit: int = 512) -> str:
 
 
 def _hash_text(value: str) -> str:
-    return hashlib.sha256(value.encode("utf-8")).hexdigest()[:16]
+    # surrogatepass: JSON can carry lone surrogates; hashing must never raise into a tool reply.
+    return hashlib.sha256(value.encode("utf-8", "surrogatepass")).hexdigest()[:16]
 
 
 def _is_sensitive_key(key: Any) -> bool:
@@ -137,7 +150,11 @@ def _is_sensitive_key(key: Any) -> bool:
     if not raw:
         return False
     compact = re.sub(r"[^a-z0-9]+", "", raw)
-    if compact in _SENSITIVE_COMPACT_KEYS:
+    if (
+        compact in _SENSITIVE_COMPACT_KEYS
+        or compact in {"contentpreview", "email"}
+        or compact.endswith(("token", "secret", "password", "dsn", "email", "credential"))
+    ):
         return True
     parts = [part for part in re.split(r"[^a-z0-9]+", raw) if part]
     if any(part in _SENSITIVE_KEY_PARTS for part in parts):
@@ -145,8 +162,20 @@ def _is_sensitive_key(key: Any) -> bool:
     return any(pair in _SENSITIVE_KEY_PAIRS for pair in zip(parts, parts[1:], strict=False))
 
 
+_MEASUREMENT_UNITS = {"ms", "count", "chars", "bytes"}
+
+
+def _is_numeric_measurement(key: str | None, value: Any) -> bool:
+    # time_to_first_token_ms or token_count name a measurement, not a credential; only a
+    # number under a unit-suffixed key passes, so a secret string there is still redacted.
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return False
+    parts = [part for part in re.split(r"[^a-z0-9]+", str(key or "").lower()) if part]
+    return bool(parts) and parts[-1] in _MEASUREMENT_UNITS
+
+
 def _sanitize_value(value: Any, *, key: str | None = None, depth: int = 0) -> Any:
-    if _is_sensitive_key(key):
+    if _is_sensitive_key(key) and not _is_numeric_measurement(key, value):
         return "[redacted]"
     if value is None or isinstance(value, (int, bool)):
         return value
@@ -211,15 +240,27 @@ def _safe_data(record: logging.LogRecord) -> dict[str, Any]:
     return data
 
 
+# Mirrors Electron ingress (renderer/shared/log-contract-utils.js): an identifier or status
+# that is not a plain token, or that the secret redactor would change, never reaches a sink.
+_IDENTIFIER_RE = re.compile(r"[A-Za-z0-9._:/@-]{1,160}")
+_STATUS_RE = re.compile(r"[a-z][a-z0-9_]{0,39}")
+
+
+def _plain_token(value: str, pattern: re.Pattern[str]) -> bool:
+    return pattern.fullmatch(value) is not None and _sanitize_text(value, limit=256) == value
+
+
 def _coerce_status(value: Any) -> str | None:
-    if isinstance(value, str) and value.strip():
-        return value.strip()
-    return None
+    if not isinstance(value, str) or not value.strip():
+        return None
+    status = value.strip()
+    return status if _plain_token(status, _STATUS_RE) else "unknown"
 
 
 def _coerce_str(value: Any) -> str | None:
     if isinstance(value, str) and value.strip():
-        return value.strip()
+        identifier = value.strip()
+        return identifier if _plain_token(identifier, _IDENTIFIER_RE) else None
     return None
 
 
@@ -296,23 +337,36 @@ class ContextQueueHandler(QueueHandler):
         admission = self._diagnostics_queue.enqueue(record)
         if admission != DIRECT_WRITE:
             return
-        try:
-            self._direct_sink.handle(record)
-        except Exception:  # noqa: BLE001
-            self._diagnostics_queue.record_external_drop(record)
+        self._diagnostics_queue.record_external_drop(record)
+
+    def handleError(self, record: logging.LogRecord) -> None:
+        # QueueHandler.emit calls this for preparation/admission failures.
+        # Never give stdlib the original diagnostic record for stderr output.
+        self._diagnostics_queue.record_external_drop(record)
 
 
 class NdjsonRollingFileHandler(logging.Handler):
-    def __init__(self, path: Path) -> None:
+    def __init__(self, path: Path, *, clock: Callable[[], float] = monotonic) -> None:
         super().__init__()
         self._path = path
         self._lock = threading.Lock()
         self._stream: TextIO | None = None
         self._formatter = StructuredLogFormatter()
         self._bytes_since_prune = 0
+        self._rotation_retry_bytes = 0
+        self._clock = clock
+        self._last_rotation_failure: float | None = None
+        self._failure_count = 0
+        self._rotation_blocked_over_ceiling = False
         self._prune_failure_count = 0
         self._prune_failure_streak = 0
         self._closed = False
+
+    @property
+    def failure_count(self) -> int:
+        """Accepted records that could not be persisted, including ceiling drops."""
+        with self._lock:
+            return self._failure_count
 
     @property
     def prune_failure_count(self) -> int:
@@ -329,6 +383,11 @@ class NdjsonRollingFileHandler(logging.Handler):
                     return
                 self._path.parent.mkdir(parents=True, exist_ok=True)
                 rotated = self._rotate_if_needed(len(encoded))
+                if self._rotation_blocked_over_ceiling:
+                    # Retention never trims the active segment, so a rotation
+                    # blocked for good must not let it grow without bound.
+                    self._failure_count += 1
+                    return
                 stream = self._ensure_stream()
                 stream.write(line)
                 stream.flush()
@@ -336,8 +395,9 @@ class NdjsonRollingFileHandler(logging.Handler):
                 if rotated or self._bytes_since_prune >= 1_048_576:
                     self._attempt_prune_locked(context="rotation" if rotated else "size")
                     self._bytes_since_prune = 0
-        except Exception:  # noqa: BLE001
-            self.handleError(record)
+        except Exception:  # noqa: BLE001 - never expose a failed record via stderr.
+            with self._lock:
+                self._failure_count += 1
 
     def close(self) -> None:
         with self._lock:
@@ -354,22 +414,66 @@ class NdjsonRollingFileHandler(logging.Handler):
         return self._stream
 
     def _rotate_if_needed(self, incoming_bytes: int) -> bool:
-        current_size = self._path.stat().st_size if self._path.exists() else 0
+        try:
+            active = self._path.stat()
+        except FileNotFoundError:
+            active = None
+        self._drop_stream_if_replaced(active)
+        current_size = active.st_size if active is not None else 0
+        self._rotation_blocked_over_ceiling = False
         if current_size + incoming_bytes <= SEGMENT_MAX_BYTES:
+            return False
+        retry_due = (
+            self._last_rotation_failure is not None
+            and self._clock() - self._last_rotation_failure >= ROTATION_RETRY_SECONDS
+        )
+        if self._rotation_retry_bytes > incoming_bytes and not retry_due:
+            self._note_blocked_rotation(current_size + incoming_bytes)
+            self._rotation_retry_bytes -= incoming_bytes
             return False
         if self._stream is not None:
             self._stream.close()
             self._stream = None
-        for index in range(32, 0, -1):
-            source = (
-                self._path if index == 1 else self._path.with_name(f"{self._path.name}.{index - 1}")
-            )
+        # Claim the active segment before shifting anything. The main sidecar
+        # and background workers share this file; on Windows another holder's
+        # open handle makes the rename fail, and shifting first used to delete
+        # one old segment and drop the record on every blocked attempt.
+        # Retry after bounded growth or time, even if ceiling drops stop growth.
+        staged = self._path.with_name(f"{self._path.name}.rotating-{os.getpid()}")
+        try:
+            self._path.rename(staged)
+        except OSError:
+            self._last_rotation_failure = self._clock()
+            self._rotation_retry_bytes = ROTATION_RETRY_BYTES
+            self._note_blocked_rotation(current_size + incoming_bytes)
+            return False
+        self._rotation_retry_bytes = 0
+        self._last_rotation_failure = None
+        for index in range(32, 1, -1):
+            source = self._path.with_name(f"{self._path.name}.{index - 1}")
             target = self._path.with_name(f"{self._path.name}.{index}")
             if target.exists():
                 target.unlink(missing_ok=True)
             if source.exists():
                 source.rename(target)
+        staged.rename(self._path.with_name(f"{self._path.name}.1"))
         return True
+
+    def _note_blocked_rotation(self, projected_size: int) -> None:
+        self._rotation_blocked_over_ceiling = (
+            projected_size > SEGMENT_MAX_BYTES * BLOCKED_ROTATION_SEGMENT_MULTIPLE
+        )
+
+    def _drop_stream_if_replaced(self, active: os.stat_result | None) -> None:
+        # Another process rotated the segment out from under this handle
+        # (possible where renaming an open file succeeds): reopen, or every
+        # later record lands in a rotated segment that is eventually deleted.
+        if self._stream is None or self._stream.closed:
+            return
+        held = os.fstat(self._stream.fileno())
+        if active is None or (active.st_dev, active.st_ino) != (held.st_dev, held.st_ino):
+            self._stream.close()
+            self._stream = None
 
     def _list_layer_files(self) -> list[Path]:
         if not self._path.parent.exists():
@@ -385,6 +489,10 @@ class NdjsonRollingFileHandler(logging.Handler):
             if not entry.name.startswith(prefix):
                 continue
             suffix = entry.name[len(prefix) :]
+            if re.fullmatch(r"rotating-[0-9]+", suffix):
+                # Stranded mid-rotation: sort as the oldest so caps trim it first.
+                indexed.append((_STAGED_SEGMENT_INDEX, entry))
+                continue
             if not re.fullmatch(r"[0-9]+", suffix):
                 continue
             indexed.append((int(suffix), entry))
@@ -509,6 +617,7 @@ class NdjsonRollingFileHandler(logging.Handler):
             stream.write(line)
             stream.flush()
         except Exception:  # noqa: BLE001 - count remains observable in memory.
+            self._failure_count += 1
             try:
                 sys.stderr.write(line)
                 sys.stderr.flush()
@@ -765,6 +874,32 @@ def emit_startup_audit_mark(
     )
 
 
+def _tool_argument_projection(arguments: dict[str, Any] | None) -> dict[str, Any]:
+    projection: dict[str, Any] = {}
+    # Match the formatter's mapping bound; never traverse nested arguments.
+    for key, value in islice((arguments or {}).items(), 20):
+        safe_key = _sanitize_text(str(key), limit=64)
+        if not safe_key or _is_sensitive_key(key):
+            continue
+        if isinstance(value, str):
+            metadata = {"type": "string", "size": len(value), "hash": _hash_text(value)}
+        elif isinstance(value, (dict, list)):
+            metadata = {
+                "type": "object" if isinstance(value, dict) else "array", "size": len(value)
+            }
+        elif value is None:
+            metadata = {"type": "null"}
+        elif isinstance(value, bool):
+            metadata = {"type": "boolean"}
+        elif isinstance(value, (int, float)):
+            metadata = {"type": "number"}
+        else:
+            # Non-JSON inputs carry no content or user-defined type names.
+            metadata = {"type": "unknown"}
+        projection[safe_key] = metadata
+    return projection
+
+
 def log_tool_execution(
     logger: logging.Logger,
     *,
@@ -790,11 +925,9 @@ def log_tool_execution(
     if not logger.isEnabledFor(level):
         return
 
-    sanitized_args = _sanitize_value(arguments) if arguments else {}
-
     data: dict[str, Any] = {
         "tool_name": tool_name,
-        "arguments": sanitized_args,
+        "arguments": _tool_argument_projection(arguments),
         "success": success,
         "cancelled": cancelled,
     }

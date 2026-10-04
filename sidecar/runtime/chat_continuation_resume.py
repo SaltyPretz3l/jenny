@@ -11,6 +11,7 @@ from typing import Any, Callable, Mapping, NoReturn
 from sidecar.ai.feature_flags import is_resource_discipline_enabled
 from sidecar.ai.routing import loop_event_emit, mutation_change_set_lifecycle, plan_mode_transition
 from sidecar.ai.routing import tool_loop as _tool_loop
+from sidecar.ai.routing.iteration_limits import resume_iteration_ceiling as _resume_cap
 from sidecar.ai.routing.quota_runtime import restore_runtime_quota
 from sidecar.ai.routing.tool_call_execution import execute_tool_calls_sequentially
 from sidecar.ai.routing.tool_execution_snapshots import split_visible_execution_arguments
@@ -359,10 +360,10 @@ def _bind_fresh_request(
     return checkpoint
 
 
-def _restore_runtime_position(runtime: Any, checkpoint: dict[str, Any]) -> None:
+def _restore_runtime_position(runtime: Any, checkpoint: dict[str, Any], ceiling: int) -> None:
     position = checkpoint["position"]
     remaining_iterations = position["remaining_iterations"]
-    if remaining_iterations > int(getattr(runtime, "max_iterations", 0) or 0):
+    if remaining_iterations > ceiling:
         _attention("iteration_budget_changed")
     saved_budget = position["active_budget_ms_remaining"]
     now = float(runtime.clock())
@@ -464,7 +465,7 @@ def _terminal_loop_result(decision: Any, outcomes: list[Any]) -> _tool_loop.Tool
     )
 
 
-def resume_before_tool_dispatch(  # noqa: C901, PLR0913, PLR0915
+def resume_before_tool_dispatch(  # noqa: PLR0913
     *,
     hydrated: HydratedBeforeToolDispatchResume,
     runtime: Any,
@@ -505,13 +506,13 @@ def resume_before_tool_dispatch(  # noqa: C901, PLR0913, PLR0915
         hydrated, runtime=runtime, request_context=request_context,
         request_id=request_id, session_id=session_id,
     )
-    _restore_runtime_position(runtime, checkpoint)
     config = getattr(kernel, "_config", None)
+    _restore_runtime_position(runtime, checkpoint, _resume_cap(runtime, config, request_context))
     if "quota_state" in checkpoint:
         restore_runtime_quota(runtime, config, checkpoint["quota_state"])
     elif is_resource_discipline_enabled(getattr(config, "feature_flags", None)):
         _fail("continuation_quota_state_unavailable")
-    from sidecar.runtime.mutation_continuation import claim_mutation_checkpoint  # noqa: PLC0415
+    from sidecar.runtime.mutation_continuation import claim_mutation_checkpoint
     change_set_id = claim_mutation_checkpoint(
         checkpoint, config=getattr(kernel, "_config", None), request_context=request_context
     )
@@ -543,7 +544,7 @@ def resume_before_tool_dispatch(  # noqa: C901, PLR0913, PLR0915
             restored = build_restored_approval_result(run, hydrated=hydrated, checkpoint=checkpoint,
                                                      result=result, approval=approvals[0])
             return run._finish(restored, reason="continuation_approval_wait")
-        from sidecar.ai.routing.tool_resource_progress import (  # noqa: PLC0415
+        from sidecar.ai.routing.tool_resource_progress import (
             resource_deferral_callback,
         )
         iteration_calls: list[Any] = []

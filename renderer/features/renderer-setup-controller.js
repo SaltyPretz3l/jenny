@@ -621,6 +621,10 @@
         appendClientLog('WARN', 'setup.first_run_persist_failed', {
           message: error && error.message ? error.message : String(error),
         });
+        showShellErrorToast(
+          jt('setup.controller.finishLaterSaveFailed', "Couldn't save your setup choice. Setup may open again the next time you start Jenny."),
+          { title: jt('setup.controller.updateFailedTitle', 'Setup Update Failed') }
+        );
       }
       // UIUX-005: setupComplete only becomes true when every REQUIRED step
       // (workspaceRoot + model access) is actually 'done' -- completeSetup()

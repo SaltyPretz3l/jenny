@@ -30,6 +30,33 @@ test('AttachmentAssetStore leaves an empty root unconfigured instead of resolvin
   );
 });
 
+test('image intake stores signature MIME for a PNG named jpg', () => {
+  const rootDir = createTrackedTempDir('jenny-attachment-mime-');
+  const file = path.join(rootDir, 'photo.jpg');
+  const bytes = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a9ZkAAAAASUVORK5CYII=', 'base64');
+  fs.writeFileSync(file, bytes);
+  const store = new AttachmentAssetStore({ rootDir, nativeImage: { createFromBuffer: () => ({
+    isEmpty: () => false, getSize: () => ({ width: 1, height: 1 }),
+  }) } });
+  const saved = store.saveImportedImage(file, { mimeType: 'image/jpeg' });
+  assert.equal(saved.mimeType, 'image/png');
+  assert.equal(path.extname(saved.assetPath), '.png');
+  assert.deepEqual(fs.readFileSync(saved.assetPath), bytes);
+});
+
+test('image import rejects growth without an unbounded read', (t) => {
+  const rootDir = createTrackedTempDir('jenny-attachment-read-cap-');
+  const file = path.join(rootDir, 'large.png');
+  fs.writeFileSync(file, Buffer.alloc(MAX_IMAGE_SIZE_BYTES + 1));
+  const store = new AttachmentAssetStore({ rootDir });
+  const realRead = fs.readFileSync;
+  t.mock.method(fs, 'readFileSync', (target, ...args) => {
+    if (target === file) throw new Error('unbounded image read');
+    return realRead(target, ...args);
+  });
+  assert.throws(() => store.saveImportedImage(file), /exceeds/);
+});
+
 test('AttachmentAssetStore writes managed audio assets under the configured root', () => {
   const rootDir = createTrackedTempDir('jenny-attachment-assets-');
   const store = new AttachmentAssetStore({ rootDir });
@@ -58,7 +85,7 @@ test('AttachmentAssetStore writes image assets after native image validation', (
     },
   });
 
-  const saved = store.saveImageBufferSync(Buffer.from('image-bytes'), {
+  const saved = store.saveImageBufferSync(Buffer.from('89504e470d0a1a0a', 'hex'), {
     displayName: 'Capture.png',
     mimeType: 'image/png',
   });
@@ -122,6 +149,34 @@ test('AttachmentAssetStore deleteAssets ignores paths outside the managed root',
   assert.equal(result.deletedCount, 1);
   assert.equal(fs.existsSync(saved.assetPath), false);
   assert.equal(fs.existsSync(outsidePath), true);
+});
+
+test('AttachmentAssetStore deleteAssets separates removed, already-absent and failed paths', (t) => {
+  const rootDir = createTrackedTempDir('jenny-attachment-assets-delete-outcomes-');
+  const store = new AttachmentAssetStore({ rootDir });
+  const imageDir = store.ensureKindDir('image');
+  const existing = path.join(imageDir, 'existing.png');
+  const missing = path.join(imageDir, 'missing.png');
+  const denied = path.join(imageDir, 'denied.png');
+  fs.writeFileSync(existing, 'a');
+  fs.writeFileSync(denied, 'b');
+  const realUnlink = fs.unlinkSync;
+  fs.unlinkSync = (target, ...rest) => {
+    if (path.resolve(String(target)) === denied) {
+      throw Object.assign(new Error('access denied'), { code: 'EACCES' });
+    }
+    return realUnlink.call(fs, target, ...rest);
+  };
+  t.after(() => { fs.unlinkSync = realUnlink; });
+
+  const result = store.deleteAssets([existing, missing, denied]);
+
+  assert.equal(result.deletedCount, 1);
+  assert.deepEqual(result.deletedPaths, [existing]);
+  assert.equal(result.failedCount, 1);
+  assert.deepEqual(result.failedCodes, ['EACCES']);
+  assert.equal(fs.existsSync(existing), false);
+  assert.equal(fs.existsSync(denied), true);
 });
 
 test('AttachmentAssetStore prunes unreferenced managed assets from disk', () => {

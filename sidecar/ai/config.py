@@ -46,6 +46,7 @@ from sidecar.ai.config_parsing import (
     _parse_fallback_models,
     _parse_mcp_servers,
     codex_cli_unavailable_reason,  # noqa: F401  (re-exported for backward-compat imports)
+    normalize_chatgpt_model_catalog,
 )
 from sidecar.ai.execution_policy import (
     desktop_policy_from_config,
@@ -67,7 +68,11 @@ _DEFAULT_MAX_OUTPUT_TOKENS = 16384
 # tolerated-but-unknown extra: we log a single WARN per load so drift is
 # visible without rejecting forward-compatible payloads.
 # See docs/operations/versioning-and-migration.md for the schema policy.
-_KNOWN_TOP_LEVEL_KEYS: frozenset[str] = frozenset(
+# Retired keys: no longer read, but older configs and the current Electron
+# payload still carry them, so they load silently instead of tripping the
+# unknown-key WARN on every config load. Drop an entry once nothing sends it.
+_RETIRED_TOP_LEVEL_KEYS: frozenset[str] = frozenset({"tools_subagent_batch_enabled"})
+_KNOWN_TOP_LEVEL_KEYS: frozenset[str] = _RETIRED_TOP_LEVEL_KEYS | frozenset(
     f.name for f in fields(RuntimeConfig) if not f.name.startswith("resolved_app_profile_")
 )
 
@@ -124,7 +129,7 @@ def parse_runtime_config(raw_config: Any) -> RuntimeConfig:  # noqa: PLR0915
         if isinstance(key, str) and key not in _KNOWN_TOP_LEVEL_KEYS
     )
     if unknown_keys:
-        from sidecar.runtime.diagnostics import log_event  # noqa: PLC0415
+        from sidecar.runtime.diagnostics import log_event
 
         log_event(
             logger,
@@ -161,7 +166,6 @@ def parse_runtime_config(raw_config: Any) -> RuntimeConfig:  # noqa: PLR0915
         "vllm",
         "codex-cli",
         "chatgpt",
-        "plugin_host",
     }:
         model = ""
     if engine_type == "chatgpt" and normalized_model is None:
@@ -223,6 +227,7 @@ def parse_runtime_config(raw_config: Any) -> RuntimeConfig:  # noqa: PLR0915
         raw_config.get("openai_compatible_api_key")
     )
     chatgpt_account_id = _as_nullable_string(raw_config.get("chatgpt_account_id"))
+    chatgpt_model_catalog = normalize_chatgpt_model_catalog(raw_config.get("chatgpt_model_catalog"))
     chatgpt_base_url = _as_nullable_string(raw_config.get("chatgpt_base_url"))
     tools_execution_timeout_seconds = _as_bounded_float(
         raw_config.get("tools_execution_timeout_seconds"),
@@ -232,11 +237,11 @@ def parse_runtime_config(raw_config: Any) -> RuntimeConfig:  # noqa: PLR0915
     )
     max_loop_wall_seconds = _as_bounded_float(
         raw_config.get("max_loop_wall_seconds"),
-        # 2026-08-30: local working-time default raised to 1800s (ceiling 3600s)
-        # in lockstep with renderer/shared/engine-tuning-schema.js.
-        default=1800.0,
+        # Lockstep with renderer/shared/engine-tuning-schema.js, config_models.py
+        # and iteration_limits.effective_max_loop_wall_seconds.
+        default=3600.0,
         min_value=30.0,
-        max_value=3600.0,
+        max_value=7200.0,
     )
     max_loop_iterations = _as_bounded_int(
         raw_config.get("max_loop_iterations"),
@@ -358,6 +363,8 @@ def parse_runtime_config(raw_config: Any) -> RuntimeConfig:  # noqa: PLR0915
         raw_config.get("generation_profiles_by_model")
     )
     reasoning_effort = _normalize_reasoning_effort(raw_config.get("reasoning_effort"), default="")
+    if engine_type == "chatgpt" and raw_config.get("reasoning_effort") == "max":
+        reasoning_effort = "max"
     session_start_date = _normalize_session_start_date(raw_config.get("session_start_date"))
     safety_mode = _normalize_safety_mode(raw_config.get("safety_mode"))
     tool_search_mode = _normalize_tool_search_mode(raw_config.get("tool_search_mode"))
@@ -384,9 +391,12 @@ def parse_runtime_config(raw_config: Any) -> RuntimeConfig:  # noqa: PLR0915
     )
     max_tool_calls_per_session = _as_bounded_int(
         raw_config.get("max_tool_calls_per_session"),
-        default=200,
+        # TR-008 (owner 2026-09-28): the local per-chat budget matches the
+        # cloud profile. Kept in lockstep with _MAX_SESSION_TOOL_CALL_CEILING in
+        # tool_quotas.py and the engine-tuning schema; only lowering is possible.
+        default=2_000,
         min_value=1,
-        max_value=1000,
+        max_value=2_000,
     )
     # Cloud-engine loop profile. Deliberately parsed with WIDER bounds than the
     # local keys above: the whole point of the profile is limits a local engine
@@ -489,9 +499,6 @@ def parse_runtime_config(raw_config: Any) -> RuntimeConfig:  # noqa: PLR0915
     )
     tools_worktree_enabled = _as_bool(raw_config.get("tools_worktree_enabled"), default=False)
     tools_subagents_enabled = _as_bool(raw_config.get("tools_subagents_enabled"), default=True)
-    tools_subagent_batch_enabled = tools_subagents_enabled and _as_bool(
-        raw_config.get("tools_subagent_batch_enabled"), default=False
-    )
     tools_mcp_resources_enabled = _as_bool(
         raw_config.get("tools_mcp_resources_enabled"),
         default=False,
@@ -510,6 +517,10 @@ def parse_runtime_config(raw_config: Any) -> RuntimeConfig:  # noqa: PLR0915
     )
     tools_verify_enabled = _as_bool(
         raw_config.get("tools_verify_enabled"),
+        default=False,
+    )
+    tools_image_generate_enabled = _as_bool(
+        raw_config.get("tools_image_generate_enabled"),
         default=False,
     )
     tools_home_enabled = _as_bool(
@@ -687,6 +698,7 @@ def parse_runtime_config(raw_config: Any) -> RuntimeConfig:  # noqa: PLR0915
         feature_flags["auto_checkpoint"] = False
         feature_flags["verification_gate"] = False
         tools_verify_enabled = False
+        tools_image_generate_enabled = False
     if desktop_execution_policy.enforced:
         # The sandbox keeps managed/local inference alive while closing every
         # sidecar-owned execution path.  The command descriptor is advertised
@@ -697,9 +709,9 @@ def parse_runtime_config(raw_config: Any) -> RuntimeConfig:  # noqa: PLR0915
         feature_flags["git_tracking"] = False
         repo_delta_resume_enabled = False
         tools_verify_enabled = False
+        tools_image_generate_enabled = False
         tools_worktree_enabled = False
         tools_subagents_enabled = False
-        tools_subagent_batch_enabled = False
         tools_python_runtime_enabled = False
         tools_lsp_enabled = False
         tools_automations_enabled = False
@@ -735,6 +747,7 @@ def parse_runtime_config(raw_config: Any) -> RuntimeConfig:  # noqa: PLR0915
         chatgpt_access_token=chatgpt_access_token,
         openai_compatible_api_key=openai_compatible_api_key,
         chatgpt_account_id=chatgpt_account_id,
+        chatgpt_model_catalog=chatgpt_model_catalog,
         chatgpt_base_url=chatgpt_base_url,
         tools_execution_timeout_seconds=tools_execution_timeout_seconds,
         max_loop_wall_seconds=max_loop_wall_seconds,
@@ -797,12 +810,12 @@ def parse_runtime_config(raw_config: Any) -> RuntimeConfig:  # noqa: PLR0915
         electron_tool_bridge_enabled=electron_tool_bridge_enabled,
         tools_worktree_enabled=tools_worktree_enabled,
         tools_subagents_enabled=tools_subagents_enabled,
-        tools_subagent_batch_enabled=tools_subagent_batch_enabled,
         tools_mcp_resources_enabled=tools_mcp_resources_enabled,
         tools_automations_enabled=tools_automations_enabled,
         tools_workspace_present_enabled=tools_workspace_present_enabled,
         tools_preview_test_enabled=tools_preview_test_enabled,
         tools_verify_enabled=tools_verify_enabled,
+        tools_image_generate_enabled=tools_image_generate_enabled,
         tools_home_enabled=tools_home_enabled,
         tools_task_board_enabled=tools_task_board_enabled,
         tools_rich_files_enabled=tools_rich_files_enabled,
@@ -889,4 +902,11 @@ def resolve_operation_ledger_root(config: RuntimeConfig | None = None) -> Path:
         return Path(env_override).expanduser()
     if config is not None and config.operation_ledger_root:
         return Path(config.operation_ledger_root).expanduser()
+    # Desktop default: the app profile (Electron userData, sent as
+    # electron_state_root), so one profile never reads another profile's or a
+    # test run's receipts. The machine-global legacy dir is only the fallback
+    # for a sidecar launched without a profile; it is ignored, never migrated.
+    state_root = str(getattr(config, "electron_state_root", "") or "").strip()
+    if state_root:
+        return Path(state_root).expanduser() / "operation-ledger"
     return Path.home() / ".companion" / "operation-ledger"

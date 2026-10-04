@@ -21,8 +21,6 @@
 .cal-agenda__day-label {
   font-size: var(--font-size-xs);
   font-weight: 500;
-  letter-spacing: var(--tracking-kicker-sm);
-  text-transform: uppercase;
 }
 
 .cal-agenda__day--today .cal-agenda__day-label {
@@ -30,7 +28,7 @@
 }
 
 .cal-agenda__day--selected .cal-agenda__day-label {
-  font-weight: 700;
+  font-weight: 500;
 }
 
 .cal-agenda__day-rule {
@@ -126,7 +124,7 @@
   inset-inline-start: -72px;
   width: 54px;
   color: var(--text-muted);
-  font-size: var(--font-size-base);
+  font-size: var(--font-size-footnote);
   font-variant-numeric: tabular-nums;
   text-align: end;
 }
@@ -144,8 +142,8 @@
 .cal-agenda__title {
   min-width: 0;
   overflow: hidden;
-  font-size: var(--font-size-md);
-  font-weight: 600;
+  font-size: var(--font-size-body);
+  font-weight: 500;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -173,8 +171,6 @@
 .cal-agenda__badge {
   color: var(--text-secondary);
   font-size: var(--font-size-xs);
-  letter-spacing: var(--tracking-kicker-sm);
-  text-transform: uppercase;
 }
 
 .cal-agenda__item--next::before {
@@ -182,7 +178,7 @@
 }
 
 .cal-agenda__item--next .cal-agenda__title {
-  font-weight: 700;
+  font-weight: 500;
 }
 
 .cal-agenda__item--next .cal-agenda__time {
@@ -216,6 +212,7 @@
  * usable slots rather than seven thin labels. */
 .cal-agenda__item--open {
   min-height: 34px;
+  overflow: visible;
   color: var(--text-muted);
 }
 
@@ -303,20 +300,18 @@
 
 .cal-week-strip__letter {
   font-size: var(--font-size-xs);
-  letter-spacing: var(--tracking-kicker-sm);
-  text-transform: uppercase;
 }
 
 .cal-week-strip__num {
   color: var(--text-primary);
   font-size: var(--font-size-md);
   font-variant-numeric: tabular-nums;
-  font-weight: 600;
+  font-weight: 500;
 }
 
 .cal-week-strip__day--today .cal-week-strip__num {
   color: color-mix(in srgb, var(--home-live-accent) 80%, var(--text-primary));
-  font-weight: 700;
+  font-weight: 500;
 }
 
 .cal-week-strip__day--selected {
@@ -386,8 +381,6 @@
 
 .cal-agenda__standing-label {
   font-size: var(--font-size-xs);
-  letter-spacing: var(--tracking-kicker-sm);
-  text-transform: uppercase;
 }
 
 .cal-agenda__standing-row {
@@ -420,7 +413,7 @@
   background: color-mix(in srgb, var(--accent-strong) 14%, transparent);
   color: color-mix(in srgb, var(--accent-strong) 45%, var(--text-primary));
   font-size: var(--font-size-xs);
-  letter-spacing: var(--tracking-kicker-sm);
+  font-weight: 500;
 }
 
 /* Undo is a recovery affordance, not a primary one: it reveals on hover/focus

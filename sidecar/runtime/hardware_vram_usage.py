@@ -83,7 +83,7 @@ def _probe_nvidia_smi() -> dict[str, Any]:
             timeout=_VRAM_PROBE_TIMEOUT_SECONDS,
             check=False,
         )
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001  # probe
         # Expected when nvidia-smi is absent (non-NVIDIA / no driver); DEBUG so it
         # is diagnosable without spamming CPU/AMD machines. Still returns unavailable.
         _LOGGER.debug("nvidia-smi VRAM probe failed (%s): %s", type(exc).__name__, exc)
@@ -176,7 +176,7 @@ def get_gpu_static_info() -> dict[str, Any]:
             timeout=_VRAM_PROBE_TIMEOUT_SECONDS,
             check=False,
         )
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001  # probe
         # Expected when nvidia-smi is absent (non-NVIDIA / no driver); DEBUG so it
         # is diagnosable without spamming CPU/AMD machines. Still returns unavailable.
         _LOGGER.debug("nvidia-smi static probe failed (%s): %s", type(exc).__name__, exc)

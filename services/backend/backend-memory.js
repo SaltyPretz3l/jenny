@@ -394,7 +394,45 @@ async function recallRecentApprovedMemories(
   };
 }
 
+// Project delete (PO review 2026-09-27, D10): the sidecar moves every memory
+// row of `fromProjectId` to `toProjectId` in one SQLite transaction (a memory
+// General already holds merges into General's copy). `moved` counts approved
+// memories now living in the target, merged ones included.
+//
+// The caller (project-delete-operation.js) must tell "nothing committed" from
+// "unknown": a returned `ok: false` is definite (no request was sent, or the
+// sidecar answered with an error, which means its transaction rolled back); a
+// throw means the request went out and no answer came back (timeout, pipe
+// drop, restart), so the move may have committed.
+async function moveProjectMemories(service, fromProjectId, toProjectId) {
+  const from = normalizeProjectId(fromProjectId);
+  const to = normalizeProjectId(toProjectId);
+  if (!from || !to || from === to || from === GENERAL_PROJECT_ID) {
+    throw new Error('projectId is invalid');
+  }
+  if (!service.sidecarClient || service.sidecarClient.connected === false) {
+    return { ok: false, reason: 'sidecar_unavailable' };
+  }
+  let payload;
+  try {
+    payload = await requestMemoryRpc(service, 'memory.move_project', {
+      project_id: from,
+      target_project_id: to,
+    });
+  } catch (error) {
+    // `rpc` is set only for an error response the sidecar sent.
+    if (!error?.rpc) throw error;
+    return { ok: false, reason: String(error.error_code || 'memory_move_refused').slice(0, 120) };
+  }
+  const count = (value) => (Number.isSafeInteger(value) && value > 0 ? value : 0);
+  service._emitServiceLog?.('INFO', 'memory.project_moved', {
+    moved: count(payload?.moved), merged: count(payload?.merged), pendingMoved: count(payload?.pending_moved),
+  });
+  return { ok: true, moved: count(payload?.moved) + count(payload?.merged) };
+}
+
 module.exports = {
+  moveProjectMemories,
   getMemoryStatus,
   dismissMemorySuggestion,
   isMemorySuggestionDismissed,

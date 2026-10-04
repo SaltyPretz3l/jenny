@@ -109,9 +109,9 @@ def test_builtin_dispatch_reads_from_per_call_workspace(tmp_path: Path) -> None:
         **carrier,
     }
 
-    response = builtin_server._handle_tools_call(  # noqa: SLF001
+    response = builtin_server._handle_tools_call(
         "call-scoped-read",
-        builtin_server._default_tools(),  # noqa: SLF001
+        builtin_server._default_tools(),
         WorkspaceGuard(str(legacy_root.resolve())),
         {"name": "read_file", "arguments": arguments},
         {"host_mode": "desktop"},
@@ -137,7 +137,7 @@ def test_rootless_todo_dispatch_never_uses_the_legacy_workspace(
         name="todo_read", description="Read todos", side_effecting=False,
         input_schema={"type": "object", "properties": {}}, handler=todo_read_tool,
     )
-    response = builtin_server._handle_tools_call(  # noqa: SLF001
+    response = builtin_server._handle_tools_call(
         "rootless-todo", {"todo_read": tool}, WorkspaceGuard(str(tmp_path)),
         {"name": "todo_read", "arguments": carrier}, {"host_mode": "desktop"},
     )
@@ -155,7 +155,7 @@ def test_builtin_validation_failure_proves_no_handler_started(tmp_path: Path) ->
         name="read_file", description="Read", side_effecting=False,
         input_schema={"type": "object", "required": ["path"]}, handler=unexpected_handler,
     )
-    response = builtin_server._handle_tools_call(  # noqa: SLF001
+    response = builtin_server._handle_tools_call(
         "invalid-read", {"read_file": tool}, WorkspaceGuard(str(tmp_path)),
         {"name": "read_file", "arguments": {}}, {"host_mode": "desktop"},
     )
@@ -173,7 +173,7 @@ def test_handler_failure_does_not_claim_execution_never_started(tmp_path: Path) 
         name="read_file", description="Read", side_effecting=False,
         input_schema={"type": "object"}, handler=failed_handler,
     )
-    response = builtin_server._handle_tools_call(  # noqa: SLF001
+    response = builtin_server._handle_tools_call(
         "failed-read", {"read_file": tool}, WorkspaceGuard(str(tmp_path)),
         {"name": "read_file", "arguments": {}}, {"host_mode": "desktop"},
     )
@@ -189,13 +189,13 @@ def test_replaced_captured_root_is_rejected_before_handler_io(tmp_path: Path) ->
     captured_root.mkdir()
     (captured_root / "note.txt").write_text("replacement", encoding="utf-8")
     invoked: list[bool] = []
-    tools = builtin_server._default_tools()  # noqa: SLF001
+    tools = builtin_server._default_tools()
     tools["read_file"] = replace(
         tools["read_file"],
         handler=lambda _arguments, _workspace: invoked.append(True),
     )
 
-    response = builtin_server._handle_tools_call(  # noqa: SLF001
+    response = builtin_server._handle_tools_call(
         "call-replaced-root",
         tools,
         WorkspaceGuard(str(captured_root.resolve())),

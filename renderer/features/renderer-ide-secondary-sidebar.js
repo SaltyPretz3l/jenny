@@ -79,6 +79,17 @@
     return Math.min(MAX_SECONDARY_WIDTH, Math.max(MIN_SECONDARY_WIDTH, Math.trunc(width)));
   }
 
+  // Tab-strip arrow step (mirrors the rail's): the header is horizontal, so
+  // ArrowRight/Left move next/previous (mirrored under dir=rtl); Down/Up remain.
+  function tabArrowStep(event) {
+    const key = event?.key;
+    if (key === 'ArrowDown') return 1;
+    if (key === 'ArrowUp') return -1;
+    if (key !== 'ArrowRight' && key !== 'ArrowLeft') return 0;
+    const rtl = event.target?.ownerDocument?.documentElement?.dir === 'rtl';
+    return (key === 'ArrowRight') !== rtl ? 1 : -1;
+  }
+
   function createIdeSecondarySidebar(deps) {
     const getDom = typeof deps?.getDom === 'function' ? deps.getDom : () => ({});
     const getIde = typeof deps?.getIde === 'function' ? deps.getIde : () => ({});
@@ -89,6 +100,10 @@
     const onMovePanel = typeof deps?.onMovePanel === 'function' ? deps.onMovePanel : null;
     // Viewport-aware ceiling (renderer-ide-layout.js budget); default = none.
     const getMaxWidth = typeof deps?.getMaxWidth === 'function' ? deps.getMaxWidth : () => Infinity;
+    // Optional: focus the code editor, true only if focus got there (the bottom
+    // panel's collapse hook). Closing must not strand focus on a hidden element:
+    // the IDE shortcuts (Ctrl+Shift+F, ...) listen on #ideView, not document.
+    const focusEditor = typeof deps?.focusEditor === 'function' ? deps.focusEditor : null;
     const actionButton = resolveActionButton();
 
     function clampWidthForViewport(value) {
@@ -98,6 +113,20 @@
         ? Math.max(MIN_SECONDARY_WIDTH, Math.min(bounded, Math.trunc(dynamicMax)))
         : bounded;
     }
+
+    // The width a drag or keyboard step SAVES (the rail's rule): a request past
+    // the viewport ceiling keeps the saved preference (or raises it to the
+    // ceiling) instead of overwriting it with the clamp.
+    function resolveSavedWidth(requested) {
+      const bounded = clampWidth(requested);
+      const shown = clampWidthForViewport(bounded);
+      // At the ceiling (past it, or exactly on it) the saved preference is kept.
+      const ceiling = clampWidthForViewport(Number.MAX_SAFE_INTEGER);
+      return shown >= ceiling ? Math.max(clampWidth(getIde().secondaryWidth), shown) : shown;
+    }
+    // The rail and the chat dock are budgeted against this sidebar's width
+    // (renderer-ide-layout.js): a sidebar gesture re-applies theirs.
+    const onWidthApplied = typeof deps?.onWidthApplied === 'function' ? deps.onWidthApplied : null;
     const contextMenu = resolveContextMenu();
     const windowRef = globalRef.window || globalRef;
 
@@ -179,6 +208,8 @@
         role: 'tab',
         ariaSelected: panel.id === active,
         tabIndex: index === focusIndex ? 0 : -1,
+        domId: `ideSecondaryTab-${panel.id}`,
+        ariaControls: 'ideSecondarySidebarPanel',
         label: panel.label || panel.id,
         title: panel.label || panel.id,
         dataset: { 'ide-secondary-panel': panel.id },
@@ -186,7 +217,7 @@
       // Only role=tab children may live in a tablist, so the panel tabs sit in an
       // inner role="tablist" wrapper (display:contents keeps the header's flex
       // layout) while the collapse button stays a sibling in the role="toolbar".
-      const tablist = `<div class="ide-tablist-group" role="tablist" aria-label="${(actionButton.escapeHtml || String)(jt('ide.secondarySidebar.panelsLabel', 'Secondary sidebar panels'))}">${tabs.join('')}</div>`;
+      const tablist = `<div class="ide-tablist-group" role="tablist" aria-orientation="horizontal" aria-label="${(actionButton.escapeHtml || String)(jt('ide.secondarySidebar.panelsLabel', 'Secondary sidebar panels'))}">${tabs.join('')}</div>`;
       const collapse = actionButton({
         plain: true,
         className: 'ide-secondary-sidebar-collapse',
@@ -207,6 +238,18 @@
       if (header.__jennyIdeSecondaryHeader !== markup) {
         header.innerHTML = markup;
         header.__jennyIdeSecondaryHeader = markup;
+      }
+      // The panel host is the tabpanel every header tab controls, labelled by
+      // the ACTIVE tab.
+      const host = getDom().ideSecondarySidebarPanel || null;
+      if (host) {
+        host.setAttribute('role', 'tabpanel');
+        const activeId = activePanelId();
+        if (activeId) {
+          host.setAttribute('aria-labelledby', `ideSecondaryTab-${activeId}`);
+        } else {
+          host.removeAttribute('aria-labelledby');
+        }
       }
     }
 
@@ -231,10 +274,33 @@
       requestRender();
     }
 
+    // True when focus sits inside the sidebar (about to be hidden) or nowhere.
+    function focusWillStrand() {
+      const aside = getDom().ideSecondarySidebar || null;
+      const doc = aside?.ownerDocument || null;
+      const active = doc?.activeElement || null;
+      return Boolean(doc) && (!active || active === doc.body || aside.contains(active));
+    }
+
+    // Editor first, then the rail's active activity-bar tab (both inside #ideView).
+    function moveFocusOutOfSidebar() {
+      try {
+        if (focusEditor?.() === true) {
+          return;
+        }
+      } catch (_error) { /* fall through to the rail tab */ }
+      const bar = getDom().ideActivityBar || null;
+      (bar?.querySelector?.('[aria-selected="true"]') || bar?.querySelector?.('[tabindex="0"]'))?.focus?.();
+    }
+
     function close() {
+      const strand = focusWillStrand();
       getIde().secondaryPanelOpen = false;
       schedulePersist();
       requestRender();
+      if (strand) {
+        moveFocusOutOfSidebar();
+      }
     }
 
     function toggle() {
@@ -300,8 +366,9 @@
       });
     }
 
-    // Roving arrow-key focus across the panel tabs (vertical header, so
-    // ArrowUp/Down + Home/End), with automatic activation. render() rebuilds the
+    // Roving arrow-key focus across the panel tabs (the header lays out
+    // horizontally: ArrowLeft/Right, mirrored under dir=rtl, plus the legacy
+    // ArrowUp/Down and Home/End), with automatic activation. render() rebuilds the
     // header synchronously, so we re-query the new active tab and restore focus to
     // it. The collapse button is NOT a tab, so arrows pressed on it are ignored.
     function handleHeaderKeydown(event) {
@@ -309,7 +376,7 @@
       if (!fromTab) {
         return;
       }
-      const step = event.key === 'ArrowDown' ? 1 : event.key === 'ArrowUp' ? -1 : 0;
+      const step = tabArrowStep(event);
       if (step === 0 && event.key !== 'Home' && event.key !== 'End') {
         return;
       }
@@ -343,8 +410,9 @@
       const delta = isOnLeft() !== rtl
         ? event.clientX - dragState.startX
         : dragState.startX - event.clientX;
-      getIde().secondaryWidth = clampWidthForViewport(dragState.startWidth + delta);
+      getIde().secondaryWidth = resolveSavedWidth(dragState.startWidth + delta);
       applyWidthVar();
+      onWidthApplied?.();
     }
 
     function endDrag() {
@@ -362,7 +430,9 @@
       if (typeof event.button === 'number' && event.button !== 0) {
         return;
       }
-      dragState = { startX: event.clientX, startWidth: clampWidth(getIde().secondaryWidth) };
+      // Start from the SHOWN (viewport-clamped) width, not the saved one, so a
+      // narrow window has no dead zone (the chat dock's effectiveWidth precedent).
+      dragState = { startX: event.clientX, startWidth: clampWidthForViewport(getIde().secondaryWidth) };
       try {
         boundResizer?.setPointerCapture?.(event.pointerId);
       } catch (_error) {
@@ -384,8 +454,10 @@
       // grab edge on the left -> ArrowLeft grows.
       const growKey = isOnLeft() ? 'ArrowRight' : 'ArrowLeft';
       const step = event.key === growKey ? KEYBOARD_RESIZE_STEP : -KEYBOARD_RESIZE_STEP;
-      getIde().secondaryWidth = clampWidthForViewport((Number(getIde().secondaryWidth) || MIN_SECONDARY_WIDTH) + step);
+      // Step from the shown (viewport-clamped) width, like the pointer drag.
+      getIde().secondaryWidth = resolveSavedWidth(clampWidthForViewport(getIde().secondaryWidth) + step);
       applyWidthVar();
+      onWidthApplied?.();
       schedulePersist();
       event.preventDefault();
     }
@@ -427,6 +499,8 @@
       open,
       render,
       setPanel,
+      // Re-apply the shown width through the live clamp (another column moved).
+      syncWidth: applyWidthVar,
       toggle,
     };
   }

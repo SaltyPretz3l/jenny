@@ -39,8 +39,15 @@ test('a tool result carrying metadata.background_job_id emits background-job-sta
       toolCallId: 'call-1',
       toolName: 'run_command',
       pid: 777,
+      workspaceRoot: '',
     },
   }]);
+});
+
+test('MON-05: the turn execution root rides the registration event', () => {
+  const service = makeService();
+  noteBackgroundJobFromToolResult(service, CTX, backgroundResult(), 'project-root');
+  assert.equal(service.events[0].payload.workspaceRoot, 'project-root');
 });
 
 test('a missing or malformed background_job_pid forwards as null, never a guess', () => {

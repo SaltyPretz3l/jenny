@@ -199,7 +199,8 @@ test('backend tool boundaries keep live DOM rows in order before settlement', as
   render();
   const snapshot = () => [...dom.window.document.querySelectorAll('.chat-row')]
     .filter((row) => row.dataset.rowKind === 'assistant_text' || row.dataset.toolCallId)
-    .map((row) => row.dataset.toolCallId || row.textContent.trim());
+    // Bubble text only: the SR-only commentary kicker is not row content.
+    .map((row) => row.dataset.toolCallId || (row.querySelector('.chat-bubble') || row).textContent.trim());
   assert.deepEqual(snapshot(), ['call-1', 'AFTER_FIRST_TOOL', 'call-2', 'AFTER_SECOND_TOOL']);
   const live = rig.state.ui.chatTimelineLiveStateBySession.get('session-1').turns_by_id['stream-1'];
   assert.deepEqual(live.rows.filter((row) => row.kind === 'assistant_text').map((row) => row.primary_message_id), ['assistant_stream-1_seg0', 'assistant_stream-1_seg1']);

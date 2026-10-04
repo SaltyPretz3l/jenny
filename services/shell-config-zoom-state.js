@@ -1,15 +1,20 @@
 // UI zoom/scaling normalizers and bounds.
 
+const { normalizeNotificationSettings } = require('./shell-config-notifications-schema');
+
 const CHAT_UI_ZOOM_DEFAULT = 100;
 const CHAT_UI_ZOOM_MIN = 85;
 const CHAT_UI_ZOOM_MAX = 135;
 const CHAT_UI_ZOOM_STEP = 5;
 // Overall app zoom (Electron webContents.setZoomFactor). Distinct from chat
 // zoom: this magnifies the entire renderer frame uniformly (fonts + surfaces).
-const APP_ZOOM_DEFAULT = 100;
+const APP_ZOOM_DEFAULT = 110;
 const APP_ZOOM_MIN = 80;
 const APP_ZOOM_MAX = 150;
 const APP_ZOOM_STEP = 5;
+// Chat transcript view default (mirrors renderer/chat/renderer-transcript-view-utils.js).
+const TRANSCRIPT_VIEWS = Object.freeze(['answers', 'thinking', 'everything']);
+const TRANSCRIPT_VIEW_DEFAULT = 'thinking';
 
 function clampSteppedPercent(value, { min, max, step, fallback }) {
   const parsed = Number(value);
@@ -30,6 +35,11 @@ function normalizeChatUiZoomPercent(value) {
   });
 }
 
+function normalizeTranscriptViewDefault(value) {
+  const token = typeof value === 'string' ? value.trim().toLowerCase() : '';
+  return TRANSCRIPT_VIEWS.includes(token) ? token : TRANSCRIPT_VIEW_DEFAULT;
+}
+
 function normalizeChatUiSettings(value = {}, legacyState = {}) {
   const source = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
   return {
@@ -39,6 +49,7 @@ function normalizeChatUiSettings(value = {}, legacyState = {}) {
       ?? legacyState.chatZoomPercent
       ?? legacyState.chat_zoom_percent
     ),
+    transcriptViewDefault: normalizeTranscriptViewDefault(source.transcriptViewDefault ?? source.transcript_view_default),
   };
 }
 
@@ -59,6 +70,7 @@ function normalizeWindowUiSettings(value = {}, legacyState = {}) {
       ?? source.app_zoom_percent
       ?? legacyState.appZoomPercent
     ),
+    notifications: normalizeNotificationSettings(source.notifications),
   };
 }
 

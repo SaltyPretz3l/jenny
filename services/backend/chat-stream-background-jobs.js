@@ -13,7 +13,7 @@
 // Mirrors shell_background.py's canonical job-id format (uuid4().hex[:12]).
 const BACKGROUND_JOB_ID_PATTERN = /^[0-9a-f]{12}$/;
 
-function noteBackgroundJobFromToolResult(service, ctx, params) {
+function noteBackgroundJobFromToolResult(service, ctx, params, workspaceRoot = '') {
   if (!service || typeof service.emit !== 'function') {
     return false;
   }
@@ -52,6 +52,9 @@ function noteBackgroundJobFromToolResult(service, ctx, params) {
     toolCallId: String(params.tool_call_id || '').trim(),
     toolName: String(params.tool_name || '').trim(),
     pid,
+    // The turn's session execution root, not the global tools root: a
+    // project-bound job writes its status.json under the project.
+    workspaceRoot: String(workspaceRoot || '').trim(),
   });
   return true;
 }

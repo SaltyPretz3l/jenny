@@ -39,6 +39,10 @@ Checks run in this fixed order:
 Folder-only and archive-only checks are reported as `skip`, so a clean
 authored folder can pass without a signature bundle while a completed archive
 must include one. Archive intake uses the production developer-profile path.
+This validates package bytes, not the running app's developer-profile flag,
+retired-kind admission or activation eligibility. Check the runtime admission
+list and compiler rules separately; a third-party V1 fixture can pass this
+command and remain ineligible to enable.
 
 Exit code `0` means no check failed, `1` means at least one validation check
 failed, and `2` means the target could not be used (missing, unreadable, the
@@ -60,12 +64,20 @@ npm run plugin:validate -- C:\path\to\plugin-or-theme --write-digests
 
 ## Budgets and boundaries
 
-Package, view, and host budgets are enforced by `scripts/checks/check_plugin_stage5_budgets.py` through `scripts/checks/check_plugin_stage8_budgets.py` and `scripts/measure_plugin_budgets.py`. Exceeding a budget is a hard reject at intake, so measure before you sign.
+Package limits are enforced at intake from `config/plugins/budgets.json` and
+view limits from `config/plugins/stage7-budgets.json`. The retained checks are
+`scripts/checks/check_plugin_stage5_budgets.py` (local distribution/solver ledger),
+`check_plugin_stage7_budgets.py` (view ledger) and
+`scripts/measure_plugin_budgets.py --check` (V1/V2 structural ledger).
+`check_plugin_boundary.py` checks ownership and file-size boundaries. Executable
+host budgets do not make retired Wasm/native tiers available. Validate the
+actual archive before signing; static ledger checks do not measure an author's
+running panel or establish application performance.
 
 ## Conformance kits
 
-- Stage 8 full-host conformance: `scripts/plugins/build-stage8-conformance-kit.mjs`, then `scripts/plugins/verify-stage8-conformance-package.mjs`. Real-app intake lives in `tests/helpers/plugins/stage8-signed-package-smoke.js`.
-- The public repository does not include an official plugin source tree or a generic third-party source-check template; add focused tests for your own content, view, and host code.
+- Stage 8 full-host conformance was retired 2026-10-02 (plugin platform retirement stage 4): the conformance kit scripts, `plugin:stage8:*` npm scripts and the signed-package smoke helper are deleted.
+- The current checkout contains no official plugin source tree or generic third-party source-check template; add focused tests for authored content and view code.
 
 ## Error codes
 
@@ -73,4 +85,8 @@ Every rejection is a `CMP-PLUGIN-*` code from `services/backend/error-codes.js`,
 
 ## Owner-run gates
 
-Real-app GUI smoke, clean-profile install, consent screens, uninstall and data-removal flows, and full-host tree-empty proofs are owner-run gates. Unit tests and synthetic host bytes do not substitute for them.
+GUI smoke requires explicit owner permission in the current task. Clean-profile
+install, activation, view interaction, disable, uninstall/data removal and restart
+recovery are application gates; unit tests and synthetic fixtures do not substitute
+for them. The privileged consent window is retired. Consult `NEXT_STEPS.md` row 27
+for remaining retirement qualification rather than reusing original program passes.

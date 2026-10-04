@@ -8,8 +8,8 @@ from sidecar.ai.error_codes import CMP_LOOP_REPEATED_OBSERVATIONS
 from sidecar.ai.routing.loop_events import (
     ApprovalRequestedEvent,
     ApprovalResolvedEvent,
-    ContextCompactionStartedEvent,
     ContextCompactedEvent,
+    ContextCompactionStartedEvent,
     ContextUsageEvent,
     HeartbeatEvent,
     PhaseCompletedEvent,
@@ -208,10 +208,9 @@ def test_serialize_turn_event_emits_ephemeral_tool_input_delta() -> None:
     assert event["durability"] == "ephemeral"
     assert event["tool_call_id"] == "call-1"
     assert event["payload"]["tool_name"] == "read_file"
-    # arguments_delta propagates verbatim except the Windows path is redacted by
-    # the canonical turn-event sanitizer — assert the exact post-sanitize value.
-    assert event["payload"]["arguments_delta"] == '{"path":"[redacted:path]/private.txt"}'
-    assert "C:/Users/example/private.txt" not in str(event["payload"])
+    # arguments_delta propagates verbatim: the canonical sanitizer keeps real
+    # paths (HB-012); only a transcript export anonymises them.
+    assert event["payload"]["arguments_delta"] == '{"path":"C:/Users/example/private.txt"}'
 
 
 def test_serialize_turn_event_emits_durable_tool_call_requested() -> None:
@@ -766,6 +765,31 @@ def test_serialize_loop_event_context_compacted_emits_correct_fields() -> None:
     assert params["request_id"] == "req-compact"
 
 
+def test_serialize_loop_event_context_compacted_emits_summary_source_dropped_messages() -> None:
+    payload = _serialize_loop_event(
+        ContextCompactedEvent(
+            strategy="full",
+            tokens_before=8000,
+            tokens_after=2500,
+            summary_source_dropped_messages=7,
+        ),
+        "req-compact-source-dropped",
+        trace_id=None,
+        session_id=None,
+    )
+    default_payload = _serialize_loop_event(
+        ContextCompactedEvent(strategy="full", tokens_before=8000, tokens_after=2500),
+        "req-compact-source-default",
+        trace_id=None,
+        session_id=None,
+    )
+
+    assert payload is not None
+    assert payload["params"]["summary_source_dropped_messages"] == 7
+    assert default_payload is not None
+    assert default_payload["params"]["summary_source_dropped_messages"] == 0
+
+
 def test_serialize_loop_event_context_compacted_emits_covered_through_tool_call_id() -> None:
     covered_through = "call_" + ("7" * 200)
     payload = _serialize_loop_event(
@@ -798,6 +822,25 @@ def test_serialize_loop_event_context_compacted_omits_covered_through_when_absen
 
     assert payload is not None
     assert "covered_through_tool_call_id" not in payload["params"]
+    assert "window_shape" not in payload["params"]
+
+
+def test_serialize_loop_event_context_compacted_emits_window_shape_when_present() -> None:
+    shape = [
+        {"role": "system", "kind": "summary", "chars": 7350},
+        {"role": "tool", "kind": "tool_result", "chars": 900, "tool_name": "read_file"},
+    ]
+    payload = _serialize_loop_event(
+        ContextCompactedEvent(
+            strategy="full", tokens_before=8000, tokens_after=2500, window_shape=shape,
+        ),
+        "req-compact-window-shape",
+        trace_id=None,
+        session_id=None,
+    )
+
+    assert payload is not None
+    assert payload["params"]["window_shape"] == shape
 
 
 def test_serialize_loop_event_context_compacted_preserves_not_applicable() -> None:
@@ -1141,6 +1184,7 @@ def test_serialize_turn_event_context_compacted_still_omits_covered_through() ->
             tokens_before=5000,
             tokens_after=1500,
             covered_through_tool_call_id="call_7",
+            window_shape=[{"role": "system", "kind": "summary", "chars": 10}],
         ),
         "req-turn-compact-covered-through",
         trace_id=None,
@@ -1150,6 +1194,7 @@ def test_serialize_turn_event_context_compacted_still_omits_covered_through() ->
 
     assert payload is not None
     assert "covered_through_tool_call_id" not in payload["params"]["payload"]
+    assert "window_shape" not in payload["params"]["payload"]
 
 
 # ---------------------------------------------------------------------------
@@ -1215,10 +1260,8 @@ def test_serialize_turn_event_tool_result_success_with_all_optional_fields() -> 
     assert p["success"] is True
     assert p["tool_output_summary"] == "3 results"
     assert p["ui_payload"] == {"type": "search", "hits": 3}
-    # Structure rides through intact; the path value is redacted by the
-    # canonical contract's path rules (turn_event_contract._sanitize_string),
-    # which keep the final segment so tool rows stay readable.
-    assert p["generated_artifacts"] == [{"kind": "report", "path": "[redacted:path]/r.txt"}]
+    # Structure rides through intact, real path included (HB-012).
+    assert p["generated_artifacts"] == [{"kind": "report", "path": "/tmp/r.txt"}]
     assert p["metadata"] == {"latency": 50}
     assert p["duration_ms"] == 75.0
     assert "error_code" not in p
@@ -1301,9 +1344,8 @@ def test_serialize_turn_event_approval_requested_with_optional_fields() -> None:
     p = event["payload"]
     assert p["approval_state"] == "pending"
     assert p["tool_name"] == "delete_file"
-    # Summary rides through with its path argument redacted — see the note in
-    # test_serialize_turn_event_tool_result_success_with_all_optional_fields.
-    assert p["summary"] == "Delete [redacted:path]/hosts"
+    # Summary rides through with its real path argument (HB-012).
+    assert p["summary"] == "Delete /etc/hosts"
     assert p["approval_plan_hash"] == "abc123"
 
 

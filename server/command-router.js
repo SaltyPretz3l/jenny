@@ -56,6 +56,15 @@ function safeSession(value) {
   return result;
 }
 
+function cleanupOutcome(value) {
+  const errors = isRecord(value) && Array.isArray(value.cleanup_errors) ? value.cleanup_errors : [];
+  return {
+    cleanup_status: isRecord(value) && value.cleanup_status === 'degraded' ? 'degraded' : 'complete',
+    cleanup_errors: errors.filter(isRecord).slice(0, 16)
+      .map((entry) => ({ step: text(entry.step, 32), code: text(entry.code, 32) })),
+  };
+}
+
 function safeBackendError(error, requestId) {
   const code = text(error?.code || error?.reason, 80).toLowerCase();
   if (code.includes('persist') || code.includes('storage') || code === 'cmp-host-0006') {
@@ -74,6 +83,7 @@ function createCommandRouter({
   eventStream,
   resolveAttachments,
   canAdmit = () => true,
+  canAdmitDeletion = () => true,
 } = {}) {
   if (!isRecord(backend)) throw new TypeError('Command router requires backend.');
   if (!isRecord(clients) || typeof clients.authorize !== 'function') {
@@ -387,7 +397,7 @@ function createCommandRouter({
       if (!deleted) return hostFailure('persistence', 'session_delete_failed', command.request_id);
       revisions.delete(command.session_id);
       publish('session_changed', { session_id: command.session_id, state: 'deleted' });
-      return { ok: true, session_id: command.session_id, deleted: true };
+      return { ok: true, session_id: command.session_id, deleted: true, ...cleanupOutcome(value) };
     });
   }
 
@@ -398,7 +408,12 @@ function createCommandRouter({
       reasoningEffort: text(session.reasoning_effort, 80),
       planMode: session.plan_mode === true,
       contextPreferences: isRecord(session.context_preferences) ? structuredClone(session.context_preferences) : undefined,
-      toolPreferences: isRecord(session.tool_category_overrides) ? structuredClone(session.tool_category_overrides) : undefined,
+      ...(isRecord(session.tool_category_overrides) || isRecord(session.tool_connection_overrides) ? {
+        toolPreferences: {
+          ...(isRecord(session.tool_category_overrides) ? { families: structuredClone(session.tool_category_overrides) } : {}),
+          ...(isRecord(session.tool_connection_overrides) ? { connections: structuredClone(session.tool_connection_overrides) } : {}),
+        },
+      } : {}),
       approvalMode: 'prompt',
     };
   }
@@ -518,11 +533,14 @@ function createCommandRouter({
         const previous = receipts.lookup(command, context.deviceId);
         if (previous.found) return previous.result;
       }
-      if (['sessions.create', 'sessions.rename', 'sessions.delete', 'chat.send',
+      if (['sessions.create', 'sessions.rename', 'chat.send',
         'projects.create', 'projects.rename', 'projects.bindRoot',
         'projects.assignSession', 'permissionReview.resolve', 'sessionRuntime.start',
         'sessionRuntime.updatePending', 'sessionRuntime.updateLimits'].includes(command.operation)
         && !canAdmit()) return hostFailure('unavailable', 'disk_pressure', command.request_id, true);
+      if (command.operation === 'sessions.delete' && !canAdmitDeletion()) {
+        return hostFailure('unavailable', 'disk_pressure', command.request_id, true);
+      }
       if (RUNTIME_OPERATIONS.has(command.operation)) return runtimeDispatcher.dispatch(command, context);
       if (PROJECT_OPERATIONS.has(command.operation)) return projectDispatcher.dispatch(command, context);
       switch (command.operation) {

@@ -50,7 +50,10 @@
     const fontStyle = cs.fontStyle || 'normal';
     const fontVariant = cs.fontVariant || 'normal';
     const fontWeight = cs.fontWeight || '400';
-    const fontSize = cs.getPropertyValue('--font-size-lg').trim() || cs.fontSize || '15px';
+    // Custom properties resolve to their calc() text, which is not a valid
+    // canvas font size; multiply the body role by --font-scale here instead.
+    const scale = parseFloat(cs.getPropertyValue('--font-scale')) || 1;
+    const fontSize = (Math.round(14 * scale * 100) / 100) + 'px';
     const fontFamily = cs.getPropertyValue('--font-family-body').trim() || cs.fontFamily || 'sans-serif';
     return fontStyle + ' ' + fontVariant + ' ' + fontWeight + ' ' + fontSize + ' ' + fontFamily;
   }
@@ -136,6 +139,105 @@
     }
   }
 
+  // timeline-perf 2026-10-04: the text of a turn row list (the markup the
+  // turn height prediction measures), reusing each unchanged row's text.
+  // extractHtmlText re-parsed a long live turn's whole row list on every
+  // event. The list body is cut before every `<div class="chat-row" ` (the
+  // row wrapper's opening; a divider stays with the row before it) and each
+  // piece is parsed alone inside the list's own wrapper tag. The text is the
+  // same string as the whole-list extraction because stripping distributes
+  // over pieces that start with '<' and end with '>', and a piece that closes
+  // everything it opens parses as it does in sequence: a sentinel appended
+  // after it must land as the wrapper's last child (an unclosed element, a
+  // stray close tag, leftover formatting, an open comment or raw-text element
+  // all move or swallow it). Any doubt -- a <form>, a selector that reads
+  // sibling position, a piece that fails the sentinel -- returns null and the
+  // caller extracts the whole list as before. Cached per turn (cacheKey),
+  // wrapper tag and selector (a live turn alternates between a few wrapper
+  // phases), then row id; a hit needs identical piece markup; at most
+  // ROW_TEXT_ENTRY_CAP lists are kept.
+  const ROW_TEXT_ENTRY_CAP = 8;
+  const ROW_TEXT_SENTINEL = '<span data-pretext-row-sentinel="1"></span>';
+  const ROW_TEXT_SPLIT_RE = /(?=<div class="chat-row" )/;
+  const POSITIONAL_SELECTOR_RE = /[+~]|:(?:nth|first|last|only|has|empty)/;
+  const rowListTextCache = new Map();
+
+  function stripHtmlPiece(html) {
+    return decodeHtmlEntities(html).replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ');
+  }
+
+  function readRowTextKey(piece, index) {
+    const openTag = piece.slice(0, piece.indexOf('>') + 1);
+    const match = /\bdata-row-id="([^"]*)"/.exec(openTag);
+    return match ? `row:${match[1]}` : `piece:${index}`;
+  }
+
+  function extractRowListText(cacheKey, html, options) {
+    const source = String(html || '');
+    const excludeSelector = String(options?.excludeSelector || '').trim();
+    const documentRef = _g.document;
+    const close = '</div>';
+    const openEnd = source.indexOf('>') + 1;
+    const open = source.slice(0, openEnd);
+    if (!cacheKey || !excludeSelector || !open.startsWith('<div') || !open.includes('data-turn-row-list')
+      || !source.endsWith(close) || source.length < open.length + close.length
+      || POSITIONAL_SELECTOR_RE.test(excludeSelector) || !documentRef || typeof documentRef.createElement !== 'function') {
+      return null;
+    }
+    const pieces = source.slice(openEnd, -close.length).split(ROW_TEXT_SPLIT_RE).filter(Boolean);
+    if (!pieces.length) return null;
+    const entryKey = `${cacheKey}\u0000${open}\u0000${excludeSelector}`;
+    const reusable = rowListTextCache.get(entryKey) || null;
+    try {
+      const template = documentRef.createElement('template');
+      const parseInWrapper = (inner) => {
+        template.innerHTML = open + inner + close;
+        const contentRoot = template.content || template;
+        const wrapper = contentRoot.childNodes.length === 1 ? contentRoot.firstChild : null;
+        return wrapper && wrapper.nodeType === 1 && !wrapper.matches(excludeSelector) ? { contentRoot, wrapper } : null;
+      };
+      let openText = reusable ? reusable.openText : null;
+      if (openText == null) {
+        const parsed = parseInWrapper('');
+        const serialized = parsed ? parsed.wrapper.outerHTML : '';
+        if (!serialized.endsWith(close)) return null;
+        openText = stripHtmlPiece(serialized.slice(0, -close.length));
+      }
+      const rows = new Map();
+      const texts = [openText];
+      let usable = true;
+      for (let index = 0; index < pieces.length; index += 1) {
+        const markup = pieces[index];
+        const rowKey = readRowTextKey(markup, index);
+        const cached = reusable ? reusable.rows.get(rowKey) : null;
+        let text = cached && cached.markup === markup ? cached.text : null;
+        if (text == null) {
+          const parsed = /<form[\s>/]/i.test(markup) ? null : parseInWrapper(markup + ROW_TEXT_SENTINEL);
+          const sentinel = parsed ? parsed.wrapper.lastChild : null;
+          if (!sentinel || sentinel.nodeType !== 1 || !sentinel.hasAttribute('data-pretext-row-sentinel')) {
+            usable = false;
+            break;
+          }
+          parsed.wrapper.removeChild(sentinel);
+          parsed.contentRoot.querySelectorAll(excludeSelector).forEach((node) => {
+            if (node && node.parentNode) node.parentNode.removeChild(node);
+          });
+          text = stripHtmlPiece(parsed.wrapper.innerHTML);
+        }
+        rows.set(rowKey, { markup, text });
+        texts.push(text);
+      }
+      // A piece's text stands on its own, so the pieces read so far are kept
+      // even when a later one sends this call back to the whole list.
+      rowListTextCache.delete(entryKey);
+      rowListTextCache.set(entryKey, { openText, rows });
+      while (rowListTextCache.size > ROW_TEXT_ENTRY_CAP) rowListTextCache.delete(rowListTextCache.keys().next().value);
+      return usable ? `${texts.join('')} `.replace(/\s+/g, ' ').trim() : null;
+    } catch (_err) {
+      return null;
+    }
+  }
+
   const MAX_CACHE_SIZE = 1500;
   const prepareCache = new Map();
 
@@ -214,7 +316,9 @@
   }
 
   function predictHtmlContentHeight(cacheKey, htmlString, font, maxWidth, lineHeight, options) {
-    const text = extractHtmlText(htmlString, options);
+    // A turn row list reuses its unchanged rows' text (extractRowListText).
+    const rowListText = extractRowListText(cacheKey, htmlString, options);
+    const text = rowListText == null ? extractHtmlText(htmlString, options) : rowListText;
     if (!text) {
       return null;
     }
@@ -244,6 +348,7 @@
 
   function invalidateAll() {
     prepareCache.clear();
+    rowListTextCache.clear();
     defaultFontCache.clear();
     const pretext = lib();
     if (pretext && typeof pretext.clearCache === 'function') {
@@ -259,6 +364,11 @@
     Array.from(prepareCache.keys()).forEach(function maybeEvict(cacheKey) {
       if (String(cacheKey || '').startsWith(normalizedPrefix)) {
         prepareCache.delete(cacheKey);
+      }
+    });
+    Array.from(rowListTextCache.keys()).forEach(function maybeEvictRowText(cacheKey) {
+      if (String(cacheKey || '').startsWith(normalizedPrefix)) {
+        rowListTextCache.delete(cacheKey);
       }
     });
   }

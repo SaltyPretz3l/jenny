@@ -98,6 +98,9 @@
       port: Number.isInteger(port) && port >= 0 ? port : 0,
       accelerationMode: String(source.accelerationMode || '').trim().toLowerCase(),
       reused: source.reused === true,
+      // Stopped with its identity kept for an exact relaunch: only the chat GPU
+      // handoff parks it this way, while an image render holds the GPU.
+      identityRetained: source.identityRetained === true,
     };
   }
 
@@ -351,8 +354,13 @@
           llamaServerStatus = normalizeLlamaServer(llamaServerResult.value);
         }
 
+        // Read before the sidecar attached: no verdict, the caller re-reads.
+        var hardwarePending = diagnosticsResult.ok && !diagnostics.hardwareProfile
+          && objectOrEmpty(diagnostics.managedSidecar).ready === false;
         return {
           generation: loadGeneration,
+          backendPending: Boolean(unavailable.installed) || hardwarePending,
+          hardwarePending: hardwarePending,
           installed: installed,
           ollamaTags: ollamaTags,
           recommendations: Array.isArray(diagnostics.modelRecommendations)
@@ -581,6 +589,7 @@
   return {
     createModelLibrarySource: createModelLibrarySource,
     createPullController: createPullController,
+    normalizeLlamaServer: normalizeLlamaServer,
     libraryTagFromPath: libraryTagFromPath,
     isLibraryTag: isLibraryTag,
     isAuxiliaryGguf: isAuxiliaryGguf,

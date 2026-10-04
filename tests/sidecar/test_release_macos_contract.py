@@ -4,7 +4,6 @@ import base64
 import copy
 import hashlib
 import importlib.util
-import json
 import sys
 import zipfile
 from pathlib import Path
@@ -45,7 +44,6 @@ def test_public_workflow_is_build_only_for_dispatch_and_verifies_before_upload()
 
 @pytest.mark.parametrize('mutation', [
     'unguarded', 'missing-verifier', 'ignored-verifier', 'early-publish',
-    'missing-native-host', 'late-native-host', 'ignored-native-host',
 ])
 def test_release_policy_rejects_publication_regressions(mutation):
     data = copy.deepcopy(workflow())
@@ -58,14 +56,6 @@ def test_release_policy_rejects_publication_regressions(mutation):
         steps.remove(verifier)
     elif mutation == 'ignored-verifier':
         verifier['continue-on-error'] = True
-    elif mutation.endswith('native-host'):
-        host = next(step for step in steps if 'build:restricted-host:release' in step.get('run', ''))
-        if mutation == 'missing-native-host':
-            steps.remove(host)
-        elif mutation == 'late-native-host':
-            steps.append(steps.pop(steps.index(host)))
-        else:
-            host['continue-on-error'] = True
     else:
         steps.insert(0, steps.pop(steps.index(upload)))
     policy = load_script('scripts/checks/check_release_version_policy.py')
@@ -74,8 +64,6 @@ def test_release_policy_rejects_publication_regressions(mutation):
 
 @pytest.mark.parametrize('changed', [
     'Contents/Resources/sidecar/sidecar',
-    'Contents/Resources/restricted-host/jenny-plugin-host',
-    'Contents/Resources/native/plugin-full-host-supervisor',
 ])
 def test_zip_verification_rejects_a_different_runtime(tmp_path, changed):
     verifier = load_script('scripts/packaging/verify_macos_release.py')
@@ -94,49 +82,13 @@ def test_zip_verification_rejects_a_different_runtime(tmp_path, changed):
         verifier.verify_zip(archive, app)
 
 
-@pytest.mark.parametrize('host', ['restricted-host', 'native'])
-@pytest.mark.parametrize('mutation', ['missing', 'digest', 'target', 'dirty', 'ineligible'])
-def test_native_host_verification_rejects_incomplete_or_stale_packages(tmp_path, monkeypatch, host, mutation):
+def test_no_native_plugin_host_is_required_or_verified():
     verifier = load_script('scripts/packaging/verify_macos_release.py')
-    monkeypatch.setattr(verifier.smoke, '_current_git_commit', lambda: 'current')
-    digest = verifier.smoke._sha256
-    manifests = {}
-    for directory, binary_name, manifest_name in (
-        ('restricted-host', 'jenny-plugin-host', 'jenny-plugin-host.manifest.json'),
-        ('native', 'plugin-full-host-supervisor', 'manifest.json'),
-    ):
-        folder = tmp_path / directory
-        folder.mkdir()
-        binary = folder / binary_name
-        binary.write_bytes(b'native binary')
-        data = {
-            'target': 'aarch64-apple-darwin', 'source_state': 'clean', 'release_eligible': True,
-            'binary_filename': binary_name, 'binary_sha256': digest(binary),
-            'api_version': 1, 'commit': 'current', 'source_commit': 'current',
-            'source_tree_digest': 'a' * 64, 'authenticated_private_pipe': True,
-            'contract_lock_v6_sha256': digest(ROOT / 'config/plugins/contract-lock-v6.json'),
-            'abi_sha256': digest(ROOT / 'config/plugins/capability-abi/v1/jenny-restricted-host.wit'),
-            'protocol_sha256': digest(ROOT / 'config/plugins/contract-lock-v4.json'),
-            'sbom_filename': 'jenny-plugin-host.sbom.json',
-        }
-        (folder / data['sbom_filename']).write_text('{}')
-        manifest = folder / manifest_name
-        manifest.write_text(json.dumps(data))
-        manifests[directory] = (manifest, data, binary)
-    assert len(verifier.verify_native_hosts(tmp_path, tmp_path / 'verification.log')) == 2
-    manifest, data, binary = manifests[host]
-    if mutation == 'missing':
-        binary.unlink()
-    elif mutation == 'digest':
-        binary.write_bytes(b'another build')
-    else:
-        key, value = {'target': ('target', 'x86_64-apple-darwin'),
-                      'dirty': ('source_state', 'dirty'),
-                      'ineligible': ('release_eligible', False)}[mutation]
-        data[key] = value
-        manifest.write_text(json.dumps(data))
-    with pytest.raises(RuntimeError):
-        verifier.verify_native_hosts(tmp_path, tmp_path / 'verification.log')
+    assert not hasattr(verifier, 'verify_native_hosts')
+    assert not any('native/' in relative for relative in verifier.VERIFIED_APP_FILES)
+    runs = '\n'.join(step.get('run', '') for step in workflow()['jobs']['build']['steps'])
+    assert 'full-host-supervisor' not in runs
+    assert 'rustup' not in runs
 
 
 def test_verification_fails_closed_on_foreign_host(monkeypatch):
@@ -233,7 +185,6 @@ def test_linux_publication_cannot_bypass_verification_or_push_guard(mutation):
 
 @pytest.mark.parametrize('job_name,marker', [
     ('build', 'verify_macos_release.py'),
-    ('build', 'build:restricted-host:release'),
     ('build-linux', 'smoke_packaged_flow.py'),
 ])
 @pytest.mark.parametrize('mutation', ['renamed-missing', 'same-step-late'])
@@ -249,3 +200,25 @@ def test_upload_checks_survive_job_rename_and_same_step_reordering(job_name, mar
         upload['run'] += '\n' + verification['run']
     policy = load_script('scripts/checks/check_release_version_policy.py')
     assert policy._validate_public_release_safety(data)
+
+
+def test_lipo_arch_check_names_the_binary_before_the_operation(tmp_path, monkeypatch):
+    # Xcode 16 lipo rejects `lipo -verify_arch arm64 <file>`; the input file comes first.
+    verifier = load_script('scripts/packaging/verify_macos_release.py')
+    monkeypatch.setattr(verifier.sys, 'platform', 'darwin')
+    monkeypatch.setattr(verifier.platform, 'machine', lambda: 'arm64')
+    sidecar = tmp_path / 'sidecar'
+    monkeypatch.setattr(verifier, 'require_file', lambda path: None)
+    monkeypatch.setattr(verifier.smoke, '_validate_packaged_artifact',
+                        lambda resources, log_path: (sidecar, None))
+    monkeypatch.setattr(verifier.smoke, '_run_packaged_launch_probe', lambda *a, **k: None)
+    monkeypatch.setattr(verifier.smoke, '_run_packaged_sidecar_initialize_probe', lambda *a, **k: None)
+    monkeypatch.setattr(verifier, 'verify_zip', lambda archive, app: None)
+    monkeypatch.setattr(verifier, 'verify_update_metadata', lambda dist: None)
+    calls = []
+    monkeypatch.setattr(verifier.subprocess, 'run', lambda argv, **kwargs: calls.append(argv))
+    verifier.verify_release(tmp_path)
+    app_binary = tmp_path / 'dist/mac-arm64/Jenny.app/Contents/MacOS/Jenny'
+    lipo = [argv for argv in calls if argv[0] == 'lipo']
+    assert lipo == [['lipo', str(binary), '-verify_arch', 'arm64']
+                    for binary in [app_binary, sidecar]]

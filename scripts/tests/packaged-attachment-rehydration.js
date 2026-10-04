@@ -38,9 +38,9 @@ function runPackagedAttachmentRehydration({ outputPath = '', tempRoot = '' } = {
   const ownsRoot = !tempRoot;
   const rootDir = tempRoot
     ? path.resolve(tempRoot)
-    : fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-w1a-packaged-rehydrate-'));
+    : fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-service-rehydrate-'));
   const profileDir = path.join(rootDir, 'profile');
-  const importDir = path.join(rootDir, 'composer-import');
+  const importDir = path.join(rootDir, 'service-import');
   const sessionsPath = path.join(profileDir, 'sessions.json');
   const managedRoot = path.join(profileDir, 'attachments');
   fs.mkdirSync(importDir, { recursive: true });
@@ -59,20 +59,20 @@ function runPackagedAttachmentRehydration({ outputPath = '', tempRoot = '' } = {
       assetStore,
     });
     if (imported.accepted.length !== 1 || imported.rejected.length !== 0) {
-      throw new Error('composer import did not produce one managed image attachment');
+      throw new Error('attachment service import did not produce one managed image attachment');
     }
     const attachment = imported.accepted[0];
     if (!assetStore.isManagedAssetPath(attachment.assetPath)) {
-      throw new Error('composer import did not move the image into managed storage');
+      throw new Error('attachment service import did not move the image into managed storage');
     }
     if (!fs.existsSync(attachment.assetPath)) {
       throw new Error('managed image asset is missing after import');
     }
 
     firstStore = new ElectronSessionStore(sessionsPath);
-    const sessionId = 'session_w1a_packaged_rehydration';
+    const sessionId = 'session_service_rehydration';
     const created = firstStore.createSessionWithId(sessionId, {
-      title: 'W1-A packaged rehydration',
+      title: 'Service attachment rehydration',
       preferences: { preferred_model: 'vision-target' },
     });
     if (!created) throw new Error('failed to create the Electron-owned session');
@@ -88,7 +88,7 @@ function runPackagedAttachmentRehydration({ outputPath = '', tempRoot = '' } = {
     firstStore.dispose();
     firstStore = null;
 
-    // A restart must rehydrate from the managed copy, not the original picker path.
+    // A same-process store reopen must rehydrate from the managed copy, not the original picker path.
     fs.unlinkSync(sourcePath);
     restartedStore = new ElectronSessionStore(sessionsPath);
     const messages = restartedStore.getSessionMessages(sessionId);
@@ -99,19 +99,21 @@ function runPackagedAttachmentRehydration({ outputPath = '', tempRoot = '' } = {
       && fs.existsSync(rehydrated.assetPath)
     );
     if (messages.length !== 1 || !rehydratedManaged) {
-      throw new Error('restart did not rehydrate the persisted managed image message');
+      throw new Error('store reopen did not rehydrate the persisted managed image message');
     }
 
     const evidence = {
       schema_version: 1,
-      gate: 'packaged_attachment_rehydration',
+      gate: 'service_attachment_rehydration',
       status: 'passed',
-      composer_import: true,
+      attachment_service_import: true,
+      image_decoder: 'fixture',
+      same_process_store_reopen: true,
       managed_attachment_storage: true,
-      source_removed_before_restart: true,
-      session_message_count_after_restart: messages.length,
-      attachment_count_after_restart: messages[0].attachments.length,
-      attachment_exists_after_restart: true,
+      source_removed_before_reopen: true,
+      session_message_count_after_reopen: messages.length,
+      attachment_count_after_reopen: messages[0].attachments.length,
+      attachment_exists_after_reopen: true,
       raw_paths_omitted: true,
       prompts_and_model_output_omitted: true,
     };

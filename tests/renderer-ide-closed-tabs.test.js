@@ -66,6 +66,35 @@ test('closed-tabs stack ignores blank pushes', () => {
   assert.equal(stack.pop(), null);
 });
 
+test('closed-tabs stack peek returns the top entry without mutating', () => {
+  const stack = createIdeClosedTabsStack();
+  assert.equal(stack.peek(), null);
+  stack.push({ path: 'a.js', viewState: { v: 1 } });
+  stack.push({ path: 'b.js', viewState: { v: 2 } });
+  assert.deepEqual(stack.peek(), { path: 'b.js', viewState: { v: 2 } });
+  assert.deepEqual(stack.peek(), { path: 'b.js', viewState: { v: 2 } });
+  assert.deepEqual(stack.pop(), { path: 'b.js', viewState: { v: 2 } });
+  assert.deepEqual(stack.pop(), { path: 'a.js', viewState: { v: 1 } });
+  assert.equal(stack.peek(), null);
+});
+
+test('closed-tabs stack treats whitespace in a path as identity (round trip, dropPath, dropUnder)', () => {
+  const stack = createIdeClosedTabsStack();
+  stack.push({ path: ' target.txt' });
+  stack.push({ path: 'target.txt' });
+  stack.dropPath('target.txt');
+  assert.deepEqual(stack.pop(), { path: ' target.txt', viewState: null }, 'the padded sibling is untouched');
+
+  stack.push({ path: ' dir /a.txt' });
+  stack.push({ path: 'dir/a.txt' });
+  stack.dropUnder(' dir ');
+  assert.deepEqual(stack.pop(), { path: 'dir/a.txt', viewState: null });
+  assert.equal(stack.pop(), null);
+
+  stack.push({ path: '   ' });
+  assert.equal(stack.pop(), null, 'a whitespace-only path is still empty');
+});
+
 // ── Controller integration (jsdom; Monaco stubbed -> fallback path) ──────────
 
 test('Ctrl+Shift+T reopens closed tabs most-recent first', async (t) => {

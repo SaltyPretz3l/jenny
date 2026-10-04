@@ -1,8 +1,7 @@
 /* renderer/features/renderer-ide-map-activity-bus.js — the File Map's
  * "watch Jenny work" state machine. Ingests stream payloads (tool_use /
  * tool_approval_needed / tool_result / complete / error) fanned out by the
- * chat dispatch seam (handleWorkspaceActivityStreamEvent — same pattern as
- * Comet presence) and maintains, PER SESSION, the live turn state the map
+ * chat dispatch seam (handleWorkspaceActivityStreamEvent) and maintains, PER SESSION, the live turn state the map
  * paints: heat (which files Jenny touched, how recently, read vs edit), the
  * numbered per-turn trail, edited-file badges, and turn lifecycle.
  *

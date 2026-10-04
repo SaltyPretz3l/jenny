@@ -68,7 +68,10 @@ function tempDir(prefix) {
 
 // The only fs calls main makes on these paths. Reading any other member
 // (fs.promises included) is recorded, so a new call cannot slip past the check.
-const CHECKED_FS_CALLS = new Set(['lstatSync', 'readdirSync', 'statSync']);
+// openSync is the GGUF header read that keeps diffusion models out of the chat
+// list (services/gguf-header.js): its path is checked here like a stat, and the
+// fstat/read/close that follow take the descriptor, never a path.
+const CHECKED_FS_CALLS = new Set(['lstatSync', 'readdirSync', 'statSync', 'openSync', 'fstatSync', 'readSync', 'closeSync']);
 
 function networkFsSpy() {
   const touched = [];

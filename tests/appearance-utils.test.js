@@ -6,12 +6,12 @@ const path = require('node:path');
 const {
   STORAGE_KEY,
   LEGACY_STORAGE_KEY,
+  TYPE_SCALE_VERSION,
   applyAppearanceToDocument,
   getDefaultAppearancePreferences,
   getPalettePresets,
   getSurfaceEffectPresets,
   getThemeBundles,
-  getTimelineStylePresets,
   getTypographyPresets,
   getFontScalePresets,
   loadAppearancePreferences,
@@ -20,6 +20,16 @@ const {
   resolveThemeBundle,
   saveAppearancePreferences,
 } = require('../renderer/shared/appearance-utils');
+
+// The non-theme appearance axes at their defaults: every expected record
+// below ends with them.
+const DEFAULT_TAIL = {
+  fontScaleId: 'default',
+  chatWidthId: 'standard',
+  startupAnimation: true,
+  titlebarLoad: false,
+  artifactAutoOpen: false,
+};
 
 function createStorage(initialValue) {
   const values = new Map();
@@ -78,9 +88,6 @@ test('appearance presets expose the expected curated options', () => {
     false,
     'Circuit Trace v3 should stay internally gated, not become a separate picker option'
   );
-  // explorer-minimal retired 2026-07-05 (quiet-timeline overhaul): the default
-  // one-liner timeline superseded its coalesced-run presentation.
-  assert.deepEqual(getTimelineStylePresets().map((preset) => preset.id), ['default']);
 });
 
 test('retired motion, sprite, and thread preferences are omitted from v2', () => {
@@ -96,11 +103,11 @@ test('retired motion, sprite, and thread preferences are omitted from v2', () =>
   assert.equal(Object.hasOwn(normalized, 'threadStyleId'), false);
 });
 
-test('a persisted explorer-minimal timelineStyleId (retired) normalizes to the default preset', () => {
-  // explorer-minimal retired 2026-07-05 (quiet-timeline overhaul): stored prefs
-  // must degrade to the default flat timeline, not a broken/unknown id.
+test('a persisted timelineStyleId (retired preset) is dropped by normalization', () => {
+  // The timeline-style preset (last value 'default'; 'explorer-minimal' retired
+  // 2026-07-05) is gone: stored prefs still carrying it must normalize without it.
   const normalized = normalizeAppearancePreferences({ timelineStyleId: 'explorer-minimal' });
-  assert.equal(normalized.timelineStyleId, 'default');
+  assert.equal(Object.hasOwn(normalized, 'timelineStyleId'), false);
 });
 
 test('light appearance palettes are exactly those whose CSS declares color-scheme: light', () => {
@@ -136,9 +143,7 @@ test('theme bundles expose the curated default and lexicon bundle mappings', () 
       typographyId: 'editorial',
       surfaceEffectId: 'none',
       composerHoloId: 'on',
-      timelineStyleId: 'default',
-      fontScaleId: 'default',
-      chatWidthId: 'default',
+      ...DEFAULT_TAIL,
     },
   });
   assert.deepEqual(resolveThemeBundle('rocko'), {
@@ -150,9 +155,7 @@ test('theme bundles expose the curated default and lexicon bundle mappings', () 
       typographyId: 'system',
       surfaceEffectId: 'none',
       composerHoloId: 'on',
-      timelineStyleId: 'default',
-      fontScaleId: 'default',
-      chatWidthId: 'default',
+      ...DEFAULT_TAIL,
     },
   });
   assert.deepEqual(resolveThemeBundle('slate'), {
@@ -164,9 +167,7 @@ test('theme bundles expose the curated default and lexicon bundle mappings', () 
       typographyId: 'system',
       surfaceEffectId: 'none',
       composerHoloId: 'on',
-      timelineStyleId: 'default',
-      fontScaleId: 'default',
-      chatWidthId: 'default',
+      ...DEFAULT_TAIL,
     },
   });
 });
@@ -204,9 +205,7 @@ test('normalizeAppearancePreferences falls back to defaults for unknown values',
       typographyId: 'system',
       surfaceEffectId: 'none',
       composerHoloId: 'on',
-      timelineStyleId: 'default',
-      fontScaleId: 'default',
-      chatWidthId: 'default',
+      ...DEFAULT_TAIL,
     }
   );
 });
@@ -303,7 +302,7 @@ test('v1 appearance storage migrates once to v2 and drops retired preferences', 
   const migrated = loadAppearancePreferences(storage);
   assert.equal(migrated.paletteId, 'paper');
   assert.equal(Object.hasOwn(migrated, 'motionId'), false);
-  assert.deepEqual(JSON.parse(values.get(STORAGE_KEY)), migrated);
+  assert.deepEqual(JSON.parse(values.get(STORAGE_KEY)), { ...migrated, typeScaleVersion: TYPE_SCALE_VERSION });
   assert.equal(values.has(LEGACY_STORAGE_KEY), false);
 });
 
@@ -320,11 +319,13 @@ test('failed v1 migration retains legacy storage while returning bounded normali
   assert.equal(Object.hasOwn(migrated, 'motionId'), false);
 });
 
-test('fresh-install default is the Slate + Technical + Extra Large ship look (owner review 2026-08-19)', () => {
+test('fresh-install default is Slate + Technical at the rebased Default text size (owner review 2026-09-28)', () => {
   const fresh = getDefaultAppearancePreferences();
   assert.equal(fresh.paletteId, 'slate');
   assert.equal(fresh.typographyId, 'technical');
-  assert.equal(fresh.fontScaleId, 'xlarge');
+  // The 2026-09-28 role-scale rebase made Default ~17-20% larger, retiring the
+  // Extra Large fresh-install workaround.
+  assert.equal(fresh.fontScaleId, 'default');
   assert.equal(fresh.surfaceEffectId, 'none');
   // A brand-new profile should read as the named "Jenny Default" bundle,
   // not "Custom", so Settings shows a recognizable selection.
@@ -349,9 +350,7 @@ test('loadAppearancePreferences preserves stored legacy surface effects', () => 
     typographyId: 'system',
     surfaceEffectId: 'reactive-grid',
     composerHoloId: 'on',
-    timelineStyleId: 'default',
-    fontScaleId: 'default',
-    chatWidthId: 'default',
+    ...DEFAULT_TAIL,
   });
 });
 
@@ -369,9 +368,7 @@ test('saveAppearancePreferences stores normalized preferences and round-trips th
     typographyId: 'technical',
     surfaceEffectId: 'none',
     composerHoloId: 'on',
-    timelineStyleId: 'default',
-    fontScaleId: 'default',
-    chatWidthId: 'default',
+    ...DEFAULT_TAIL,
   });
   assert.deepEqual(loadAppearancePreferences(storage), saved);
 });
@@ -387,7 +384,7 @@ test('saveAppearancePreferences keeps the committed v2 value when legacy cleanup
   const saved = saveAppearancePreferences(storage, { paletteId: 'signal' });
 
   assert.equal(saved.paletteId, 'signal');
-  assert.deepEqual(JSON.parse(values.get(STORAGE_KEY)), saved);
+  assert.deepEqual(JSON.parse(values.get(STORAGE_KEY)), { ...saved, typeScaleVersion: TYPE_SCALE_VERSION });
   assert.deepEqual(loadAppearancePreferences(storage), saved);
 });
 
@@ -420,9 +417,7 @@ test('applyAppearanceToDocument writes appearance ids onto the root dataset', ()
     typographyId: 'editorial',
     surfaceEffectId: 'none',
     composerHoloId: 'off',
-    timelineStyleId: 'default',
-    fontScaleId: 'default',
-    chatWidthId: 'default',
+    ...DEFAULT_TAIL,
   });
   assert.deepEqual(root.dataset, {
     palette: 'paper',
@@ -430,17 +425,19 @@ test('applyAppearanceToDocument writes appearance ids onto the root dataset', ()
     motion: 'standard',
     surfaceEffect: 'none',
     composerHolo: 'off',
-    spriteHolo: 'off',
     threadStyle: 'subtle',
-    timelineStyle: 'default',
     fontScale: 'default',
-    chatWidth: 'default',
+    chatWidth: 'standard',
+    startupAnimation: 'on',
+    titlebarLoad: 'off',
+    artifactAutoOpen: 'off',
   });
-  assert.equal(appliedStyle.get('--font-scale'), '1');
+  assert.equal(root.dataset.timelineStyle, undefined);
+  assert.equal(appliedStyle.get('--font-scale'), '1.2');
   assert.equal(appliedStyle.get('--composer-holo-draw-enabled'), '0');
   assert.equal(appliedStyle.get('--composer-holo-shell-ring-strength'), '0%');
   assert.equal(appliedStyle.get('--composer-holo-shell-glow-strength'), '0%');
-  assert.equal(appliedStyle.get('--sprite-holo-draw-enabled'), '0');
+  assert.equal([...appliedStyle.keys()].some((name) => name.startsWith('--sprite-holo')), false);
   assert.equal(appliedStyle.has('--thread-dot-size'), false);
   assert.equal(appliedStyle.has('--thread-dot-hit-size'), false);
   assert.equal(removedStyle.has('--thread-rail-opacity'), true);
@@ -448,28 +445,7 @@ test('applyAppearanceToDocument writes appearance ids onto the root dataset', ()
   assert.equal(appliedStyle.get('--thread-holo-scale'), '0.42');
 });
 
-test('stale sprite preferences cannot enable the retired sprite ring outside palette-owned behavior', () => {
-  const appliedStyle = new Map();
-  const root = {
-    dataset: {},
-    style: {
-      setProperty(name, value) {
-        appliedStyle.set(name, value);
-      },
-    },
-  };
-
-  applyAppearanceToDocument(root, {
-    spriteHoloId: 'on',
-  });
-
-  assert.equal(root.dataset.spriteHolo, 'off');
-  assert.equal(appliedStyle.get('--sprite-holo-draw-enabled'), '0');
-  assert.equal(appliedStyle.get('--sprite-holo-draw-stroke-scale'), '0');
-  assert.equal(appliedStyle.get('--sprite-holo-border-width'), '0px');
-});
-
-test('Slate enables its palette-owned sprite holo and clears prior disabled overrides', () => {
+test('applying appearance never writes the retired sprite holo attribute or variables', () => {
   const appliedStyle = new Map();
   const removedStyle = new Set();
   const root = {
@@ -485,22 +461,25 @@ test('Slate enables its palette-owned sprite holo and clears prior disabled over
     },
   };
 
-  applyAppearanceToDocument(root, { paletteId: 'paper' });
-  assert.equal(appliedStyle.get('--sprite-holo-draw-enabled'), '0');
+  ['paper', 'slate', 'midnight'].forEach((paletteId) => {
+    const result = applyAppearanceToDocument(root, { paletteId, spriteHoloId: 'on' });
+    assert.equal(Object.hasOwn(result, 'spriteHoloId'), false);
+    assert.equal(Object.hasOwn(root.dataset, 'spriteHolo'), false);
+    assert.equal([...appliedStyle.keys()].some((name) => name.startsWith('--sprite-holo')), false);
+    assert.equal([...removedStyle].some((name) => name.startsWith('--sprite-holo')), false);
+  });
+});
 
-  applyAppearanceToDocument(root, { paletteId: 'slate' });
-
-  assert.equal(root.dataset.spriteHolo, 'on');
-  assert.equal(appliedStyle.has('--sprite-holo-draw-enabled'), false);
-  assert.equal(appliedStyle.has('--sprite-holo-border-width'), false);
-  assert.equal(removedStyle.has('--sprite-holo-draw-enabled'), true);
-  assert.equal(removedStyle.has('--sprite-holo-border-width'), true);
-
-  applyAppearanceToDocument(root, { paletteId: 'paper' });
-
-  assert.equal(root.dataset.spriteHolo, 'off');
-  assert.equal(appliedStyle.get('--sprite-holo-draw-enabled'), '0');
-  assert.equal(appliedStyle.get('--sprite-holo-border-width'), '0px');
+test('stored preferences carrying spriteHoloId load without error and without effect', () => {
+  const stored = { paletteId: 'slate', composerHoloId: 'off', spriteHoloId: 'on' };
+  const loaded = loadAppearancePreferences(createStorage(JSON.stringify(stored)));
+  assert.equal(loaded.paletteId, 'slate');
+  assert.equal(loaded.composerHoloId, 'off');
+  assert.equal(Object.hasOwn(loaded, 'spriteHoloId'), false);
+  assert.deepEqual(
+    normalizeAppearancePreferences(stored),
+    normalizeAppearancePreferences({ paletteId: 'slate', composerHoloId: 'off' })
+  );
 });
 
 test('command palette focus states expose a visible tokenized keyboard focus affordance', () => {
@@ -810,9 +789,8 @@ test('shared palette semantics keep the Home orbit-field and Settings shell wire
     /\b\d+ms\b/,
     'reasoning row styling should not hardcode motion durations in transition/animation usages'
   );
-  // 2026-07 open-sections polish: the nav rail is a flush column (no panel
-  // surface); its remaining theme wiring is the active-item surface token and
-  // the header hairline.
+  // The nav rail is a flush column (no panel surface); its theme wiring is the
+  // active-item surface token and the shared rail divider between groups.
   assert.match(
     settingsCss,
     /\.settings-nav-item\.active\s*\{[\s\S]*?background:\s*[^;]*var\(--settings-shell-nav-item-active-bg\)[^;]*;/,
@@ -820,20 +798,8 @@ test('shared palette semantics keep the Home orbit-field and Settings shell wire
   );
   assert.match(
     settingsCss,
-    /\.settings-nav-header\s*\{[\s\S]*?border-bottom:\s*[^;]*var\(--settings-shell-muted-border\)[^;]*;/,
-    'settings nav header should consume the shared settings shell border token'
-  );
-  // 2026-07 redesign: the content header is a flush strip (no masthead card
-  // surface); its remaining theme wiring is the hairline separator token.
-  assert.match(
-    settingsCss,
-    /\.settings-content-header\s*\{[\s\S]*?border-bottom:\s*[^;]*var\(--settings-shell-muted-border\)[^;]*;/,
-    'settings content header should consume the shared settings shell border token'
-  );
-  assert.match(
-    settingsCss,
-    /\.settings-appearance-proof\s*\{[\s\S]*?var\(--settings-shell-chip-border\)[\s\S]*?var\(--settings-shell-chip-bg\)/,
-    'the appearance proof chip should consume the shared settings chip tokens (the retired overview chip family is gone — hyg-W5-09-F18)'
+    /\.settings-nav-group \+ \.settings-nav-group\s*\{[^}]*border-top:\s*[^;]*var\(--rail-divider\)[^;]*;/,
+    'settings nav groups should be separated by the shared rail divider token'
   );
   // 2026-07 open-sections polish: section cards are flush (no panel surface);
   // theme wiring is the header hairline plus the data-surface-state tints.
@@ -854,21 +820,22 @@ test('font scale presets expose the curated text-size ladder', () => {
     'small',
     'default',
     'large',
-    'xlarge',
   ]);
   // Each preset carries the numeric multiplier the apply step writes to
-  // --font-scale.
+  // --font-scale. Default is the old Extra Large (1.2) with one 0.1 step
+  // either side (owner, 2026-09-29).
   const byId = Object.fromEntries(getFontScalePresets().map((p) => [p.id, p.value]));
-  assert.equal(byId.default, 1);
-  assert.equal(byId.small, 0.85);
-  assert.equal(byId.large, 1.15);
-  assert.equal(byId.xlarge, 1.3);
+  assert.equal(byId.default, 1.2);
+  assert.equal(byId.small, 1.1);
+  assert.equal(byId.large, 1.3);
+  assert.equal(byId.xlarge, undefined, 'xlarge is retired');
 });
 
 test('normalizeAppearancePreferences defaults and coerces fontScaleId', () => {
   assert.equal(normalizeAppearancePreferences({}).fontScaleId, 'default');
   assert.equal(normalizeAppearancePreferences({ fontScaleId: 'LARGE' }).fontScaleId, 'large');
   assert.equal(normalizeAppearancePreferences({ fontScaleId: 'bogus' }).fontScaleId, 'default');
+  assert.equal(normalizeAppearancePreferences({ fontScaleId: 'xlarge' }).fontScaleId, 'default', 'a live retired id falls back');
 });
 
 test('applyAppearanceToDocument writes the resolved --font-scale multiplier and dataset id', () => {
@@ -884,29 +851,37 @@ test('applyAppearanceToDocument writes the resolved --font-scale multiplier and 
 
   applyAppearanceToDocument(root, { fontScaleId: 'large' });
   assert.equal(root.dataset.fontScale, 'large');
-  assert.equal(appliedStyle.get('--font-scale'), '1.15');
+  assert.equal(appliedStyle.get('--font-scale'), '1.3');
 
   applyAppearanceToDocument(root, {});
   assert.equal(root.dataset.fontScale, 'default');
-  assert.equal(appliedStyle.get('--font-scale'), '1');
+  assert.equal(appliedStyle.get('--font-scale'), '1.2');
 });
 
-test('font scale axis is wired through foundation tokens and isolated from chat zoom', () => {
+test('one text-size axis: role tokens multiply --font-scale and the chat timeline aliases them', () => {
   const foundationCss = readStyleFile('foundation.css');
-  // The font-size tokens multiply by --font-scale.
-  assert.match(foundationCss, /--font-size-base:\s*calc\(12px \* var\(--font-scale, 1\)\);/);
-  assert.match(foundationCss, /--font-scale:\s*1;/);
+  // The role tokens multiply by --font-scale at Claude Code parity sizes.
+  for (const [role, px] of [['caption', 12], ['footnote', 13], ['code', 13], ['body', 14], ['prose', 16], ['heading', 16], ['title', 20]]) {
+    assert.ok(foundationCss.includes(`--font-size-${role}: calc(${px}px * var(--font-scale, 1));`), role);
+  }
+  // Legacy t-shirt tokens alias the roles rather than carrying their own px.
+  assert.match(foundationCss, /--font-size-xs:\s*var\(--font-size-caption\);/);
+  assert.match(foundationCss, /--font-size-base:\s*var\(--font-size-footnote\);/);
+  const timelineCss = readStyleFile('chat-timeline-tokens.css');
+  assert.match(timelineCss, /--tl-font-prose:\s*var\(--font-size-prose\);/);
+  assert.match(timelineCss, /--tl-font-meta:\s*var\(--font-size-caption\);/);
+  // The stylesheet seeds the Default preset's multiplier so the pre-script
+  // paint is the same size as the applied one.
+  assert.match(foundationCss, /--font-scale:\s*1\.2;/);
   // The clamp-based display alias distributes the factor across the vw arm too.
   assert.match(foundationCss, /--font-size-display-1:\s*clamp\(calc\(76px \* var\(--font-scale, 1\)\), calc\(8\.8vw \* var\(--font-scale, 1\)\), calc\(126px \* var\(--font-scale, 1\)\)\);/);
   // --font-scale must NOT touch the spacing scale (overall app zoom owns that).
   assert.doesNotMatch(foundationCss, /--space-4:[^;]*var\(--font-scale/);
 
-  // The chat hero avatar rules no longer multiply a --font-size-* token by the
-  // chat zoom factor, so font-scale and chat-zoom never compound there.
-  const chatThreadCss = readStyleFile('chat-thread.css');
-  const chatMediaCss = readStyleFile('chat-media-queries.css');
-  assert.doesNotMatch(chatThreadCss, /var\(--font-size-[a-z0-9]+\)\s*\*\s*var\(--chat-zoom-factor/);
-  assert.doesNotMatch(chatMediaCss, /var\(--font-size-[a-z0-9]+\)\s*\*\s*var\(--chat-zoom-factor/);
+  // The retired chat zoom factor no longer reaches any stylesheet.
+  for (const file of fs.readdirSync(path.join(__dirname, '..', 'styles')).filter((name) => name.endsWith('.css'))) {
+    assert.doesNotMatch(readStyleFile(file), /var\(--chat-zoom-factor/, `${file} still reads --chat-zoom-factor`);
+  }
 });
 
 test('Chats and Settings share a flat rail visual contract without reviving active-rail clutter', () => {
@@ -946,8 +921,8 @@ test('Chats and Settings share a flat rail visual contract without reviving acti
   assert.match(selectedRule, /background:\s*var\(--session-row-selected-bg\)/);
   assert.doesNotMatch(selectedRule, /border-left|box-shadow|glow|sidebar-active-rail/);
   assert.doesNotMatch(chatsCss, /--sidebar-active-rail|\.conversation-state-badge/);
-  assert.match(foundationCss, /--font-size-2xl:\s*calc\(18px \* var\(--font-scale, 1\)\);/);
-  assert.match(chatsCss, /\.sidebar-title\s*\{[\s\S]*?font-size:\s*var\(--font-size-2xl\)/);
+  assert.match(foundationCss, /--font-size-2xl:\s*var\(--font-size-title\);/);
+  assert.match(chatsCss, /\.sidebar-title\s*\{[\s\S]*?font-size:\s*var\(--font-size-heading\)/);
   assert.match(chatsCss, /\.session-row\s*\{[\s\S]*?grid-template-columns:\s*minmax\(0, 1fr\) 32px/);
   assert.match(chatsCss, /\.session-row__menu\s*\{[\s\S]*?width:\s*32px;[\s\S]*?height:\s*32px;/);
   assert.match(

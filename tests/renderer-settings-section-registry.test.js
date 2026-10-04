@@ -15,9 +15,9 @@ const {
 
 const listSectionIds = () => getSettingsSections().map((section) => section.id);
 
-test('settings section registry preserves stable ordering and defaults', () => {
+test('settings section registry preserves ids and defaults', () => {
   assert.equal(DEFAULT_SETTINGS_SECTION, 'models');
-  assert.deepEqual(listSectionIds(), [
+  assert.deepEqual(listSectionIds().sort(), [
     'readiness',
     'models',
     'context',
@@ -28,75 +28,83 @@ test('settings section registry preserves stable ordering and defaults', () => {
     'memories',
     'editor',
     'home',
+    'notifications',
     'offline',
     'usage',
     'runtime',
     'plugins',
-    'remote',
     'account',
     'dataPrivacy',
     'aboutUpdates',
     'advanced',
     'runtimeLimits',
-  ]);
+  ].sort());
   assert.equal(normalizeSettingsSectionId('not-a-section'), 'models');
   assert.equal(normalizeSettingsSectionId(' tools '), 'tools');
   assert.equal(normalizeSettingsSectionId('cost'), 'usage');
   assert.equal(normalizeSettingsSectionId('modelLibrary'), 'models');
 });
 
-test('settings section registry classifies lazy and advanced sections', () => {
-  assert.deepEqual(getSettingsSections().filter((section) => section.lazy).map((section) => section.id), [
+test('settings section registry classifies lazy sections', () => {
+  assert.deepEqual(getSettingsSections().filter((section) => section.lazy).map((section) => section.id).sort(), [
     'skills',
     'personality',
     'memories',
     'offline',
     'usage',
     'runtime',
-    'remote',
     'advanced',
     'runtimeLimits',
-  ]);
-  assert.deepEqual(getSettingsSections().filter((section) => section.advanced).map((section) => section.id), ['advanced', 'runtimeLimits']);
+  ].sort());
   assert.equal(getSettingsSectionDefinition('diagnostics'), null);
   assert.equal(getSettingsSectionDefinition('harness'), null);
   assert.equal(getSettingsSectionDefinition('dev_diagnostics'), null);
   assert.equal(getSettingsSectionDefinition('tools').lazy, false);
 });
 
-test('settings section registry exposes the Developer group as a disclosure', () => {
-  // The group was defined but empty for a long time, and getGroups() filters out
-  // groups with no visible sections - so registering Advanced is what makes the
-  // chevron appear at all.
+test('Runs lives in Diagnostics, not Settings (owner, 2026-10-03)', () => {
+  assert.equal(getSettingsSectionDefinition('runs'), null);
+  // A stored or deep-linked `runs` section opens the default section.
+  assert.equal(normalizeSettingsSectionId('runs'), 'models');
+  const work = getSettingsGroups().find((group) => group.id === 'work').sections.map((section) => section.id);
+  assert.deepEqual(work, ['runtime', 'usage']);
+  // Search no longer finds a Runs page in Settings.
+  for (const section of getSettingsSections()) {
+    assert.equal((section.keywords || []).some((keyword) => /^(runs|orchestration|subagents)$/i.test(String(keyword))), false, section.id);
+  }
+  // Deep links keep resolving: the Developer limits page and Projects keep their ids.
+  assert.equal(getSettingsSectionDefinition('runtimeLimits').label, 'Runtime limits');
+  assert.equal(getSettingsSectionDefinition('runtimeLimits').group, 'developer');
+  assert.equal(normalizeSettingsSectionId('runtime'), 'runtime');
+});
+
+test('settings section registry exposes six uniform ordered groups', () => {
   const groups = getSettingsGroups();
-  assert.deepEqual(groups.map((group) => group.id), ['session', 'companion', 'app', 'developer']);
-  assert.deepEqual(
-    groups.map((group) => group.label),
-    ['Session', 'Companion', 'App', 'Developer']
-  );
-  assert.deepEqual(groups.map((group) => group.disclosure), [false, false, false, true]);
-  // The nav-facing group view excludes hidden (merged-away) sections; every other
-  // section lands in exactly one group and they concatenate to the visible id list.
-  const navIds = groups.flatMap((group) => group.sections.map((section) => section.id));
-  assert.ok(!navIds.includes('skills'), 'skills is merged into tools, not a nav item');
-  assert.ok(!navIds.includes('tips'), 'tips has no Settings section');
-  assert.deepEqual(
-    navIds,
-    listSectionIds().filter((id) => getSettingsSectionDefinition(id).hidden !== true)
-  );
-  assert.deepEqual(groups.find((group) => group.id === 'session').sections.map((s) => s.id),
-    ['readiness', 'models', 'context', 'tools']);
-  assert.deepEqual(groups.find((group) => group.id === 'companion').sections.map((s) => s.id),
-    ['personality', 'appearance', 'memories']);
-  // `plugins` sits before the always-visible trailing app sections: nav-utils derives its
-  // keyboard boundary (LAST_NONADVANCED_SECTION) from this order at module
-  // load and cannot see that `plugins` is hidden while its flag is off.
-  assert.deepEqual(groups.find((group) => group.id === 'app').sections.map((s) => s.id),
-    ['editor', 'home', 'offline', 'usage', 'runtime', 'plugins', 'remote', 'account', 'dataPrivacy', 'aboutUpdates']);
-  const memories = getSettingsSectionDefinition('memories');
-  assert.equal(memories.label, 'Memory');
-  assert.equal(memories.lazy, true);
-  assert.equal(memories.advanced, false);
+  assert.deepEqual(groups.map(group => [group.id, group.label, group.sections.map(section => section.id)]), [
+    ['modelTools', 'Model & tools', ['readiness', 'models', 'offline', 'tools']],
+    ['work', 'Work', ['runtime', 'usage']],
+    ['context', 'Context & memory', ['context', 'memories', 'personality']],
+    ['app', 'App', ['appearance', 'editor', 'home', 'notifications']],
+    ['system', 'System', ['plugins', 'account']],
+    ['developer', 'Developer', ['advanced']],
+  ]);
+  assert.ok(groups.every(group => !group.disclosure));
+  assert.equal(getSettingsSectionDefinition('account').label, 'Profile, data & updates');
+  assert.equal(getSettingsSectionDefinition('advanced').label, 'Limits & budgets');
+  assert.equal(getSettingsSectionDefinition('runtime').label, 'Projects');
+  assert.equal(getSettingsSectionDefinition('memories').lazy, true);
+});
+
+test('merged pages normalize to hosts and retain companion lifecycle metadata', () => {
+  for (const [id, host] of [['dataPrivacy', 'account'], ['aboutUpdates', 'account'], ['runtimeLimits', 'advanced']]) {
+    assert.equal(normalizeSettingsSectionId(id), host);
+    assert.equal(getSettingsSectionDefinition(id).hidden, true);
+    assert.equal(getSettingsSectionDefinition(id).mergedInto, host);
+  }
+  assert.deepEqual(getSettingsCompanionSectionIds('account'), ['dataPrivacy', 'aboutUpdates']);
+  assert.deepEqual(getSettingsCompanionSectionIds('advanced'), ['runtimeLimits']);
+  assert.equal(getSettingsSectionDefinition('advanced').lazy, true);
+  assert.equal(getSettingsSectionDefinition('runtimeLimits').lazy, true);
 });
 
 test('settings section registry merges skills into plugins and retires tips/proactive sections', () => {
@@ -127,35 +135,16 @@ test('settings section registry registers Home so it no longer redirects to mode
   assert.equal(home.label, 'Home');
 });
 
-test('settings section registry registers the flag-gated Plugins section in the app group', () => {
+test('settings section registry registers the flag-gated Plugins section in the System group', () => {
   // Stage 3B Plugin Manager (owner-approved 2026-07-31): registry-static like
   // every section — flag gating (featureFlags.plugins) happens at runtime via
   // the sibling controller's data-feature-gated stamp, not in the registry.
   assert.equal(normalizeSettingsSectionId('plugins'), 'plugins');
   const plugins = getSettingsSectionDefinition('plugins');
-  assert.equal(plugins.group, 'app');
+  assert.equal(plugins.group, 'system');
   assert.equal(plugins.label, 'Plugins & Extensions');
   assert.equal(plugins.lazy, false);
   assert.equal(plugins.hidden, false);
-});
-
-test('no runtime-hidden section may be the last non-advanced section', () => {
-  // renderer-settings-nav-utils derives LAST_NONADVANCED_SECTION from this
-  // registry ONCE at module load, and that derivation cannot see runtime
-  // hiding. If a feature-gated section (Plugins, hidden while its flag is off
-  // — the default) took the last slot, ArrowDown from the last VISIBLE nav
-  // item would no longer jump to the Developer disclosure. Keep the terminal
-  // non-advanced section one that is always present.
-  const ids = listSectionIds().filter((id) => {
-    const def = getSettingsSectionDefinition(id);
-    return !def.advanced && !def.hidden;
-  });
-  const RUNTIME_HIDDEN_SECTIONS = new Set(['plugins']);
-  assert.ok(
-    !RUNTIME_HIDDEN_SECTIONS.has(ids[ids.length - 1]),
-    `the last non-advanced section is "${ids[ids.length - 1]}", which is hidden at runtime`
-  );
-  assert.equal(ids[ids.length - 1], 'aboutUpdates');
 });
 
 test('settings section registry preserves special nav-item ids for show/hide consumers', () => {
@@ -189,13 +178,12 @@ test('settings section registry rejects duplicate ids', () => {
 test('custom settings section registry falls back to its default section', () => {
   const registry = createSettingsSectionRegistry([
     { id: 'alpha', label: 'Alpha', default: true },
-    { id: 'beta', label: 'Beta', advanced: true, lazy: true },
+    { id: 'beta', label: 'Beta', lazy: true },
   ]);
 
   assert.equal(registry.defaultSectionId, 'alpha');
   const sections = registry.getSections();
   assert.deepEqual(sections.map((section) => section.id), ['alpha', 'beta']);
-  assert.deepEqual(sections.filter((section) => section.advanced).map((section) => section.id), ['beta']);
   assert.deepEqual(sections.filter((section) => section.lazy).map((section) => section.id), ['beta']);
   assert.equal(registry.normalizeSectionId('missing'), 'alpha');
 });

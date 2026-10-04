@@ -98,12 +98,11 @@ function createBridgeStub({
   git = null,
 } = {}) {
   const calls = {
-    listDirectory: [], listAllFiles: [], readDocument: [], readImage: [], readFileBase64: [],
+    listDirectory: [], listAllFiles: [], readDocument: [], readImage: [],
     createFile: [], createDirectory: [], rename: [], delete: [], readFile: [], readText: [],
     writeDocument: [], writeFile: [], writeText: [], updateSettings: [], updateState: [],
     searchInFiles: [], watchStart: [], watchStop: [], readPreChange: [], revealInFolder: [],
-    openInDefaultApp: [], clipboardWriteText: [], chooseRoot: [], terminalStart: [],
-    terminalWrite: [], terminalSignal: [], terminalKill: [], gitGetStatus: [], gitStage: [],
+    openInDefaultApp: [], clipboardWriteText: [], chooseRoot: [], gitGetStatus: [], gitStage: [],
     gitUnstage: [], gitCommit: [], gitDiscard: [], gitFileAtHead: [],
   };
   // snapshots: beforeHash -> pre-change content (the W5 snapshot store fake).
@@ -159,10 +158,6 @@ function createBridgeStub({
   }
   const changeListeners = [];
   const watchLifecycleListeners = [];
-  const terminalDataListeners = [];
-  const terminalExitListeners = [];
-  let terminalSessionCounter = 0;
-  let terminalRunning = '';
   let mtimeCounter = 1000;
   let fileVersionCounter = 0;
   const fileVersions = new Map(Object.keys(state.files).map((filePath) => [filePath, `vf2_${++fileVersionCounter}`]));
@@ -290,20 +285,6 @@ function createBridgeStub({
     get watchLifecycleListenerCount() {
       return watchLifecycleListeners.length;
     },
-    emitTerminalData(payload) {
-      for (const listener of [...terminalDataListeners]) {
-        listener(payload);
-      }
-    },
-    emitTerminalExit(payload) {
-      terminalRunning = '';
-      for (const listener of [...terminalExitListeners]) {
-        listener(payload);
-      }
-    },
-    get terminalSessionId() {
-      return terminalRunning;
-    },
     jennyShell: {
       workspaceRoot: {
         async captureContext() {
@@ -380,25 +361,6 @@ function createBridgeStub({
         },
         async stat(payload) {
           return { path: payload.path, exists: payload.path in state.files, kind: 'file', size: 0, mtimeMs: 0 };
-        },
-        async readFileBase64(payload) {
-          calls.readFileBase64.push(payload);
-          if (!(payload.path in state.files)) {
-            const error = new Error('File not found in the workspace.');
-            error.code = 'CMP-WORKSPACEFS-0004';
-            throw error;
-          }
-          const content = String(state.files[payload.path]);
-          const extension = (payload.path.split('/').pop() || '').split('.').pop().toLowerCase();
-          const mime = { png: 'image/png', svg: 'image/svg+xml', jpg: 'image/jpeg' }[extension]
-            || 'application/octet-stream';
-          return {
-            path: payload.path,
-            base64: Buffer.from(content, 'utf8').toString('base64'),
-            mime,
-            size: content.length,
-            mtimeMs: (mtimeCounter += 10),
-          };
         },
         async readImage(payload) {
           calls.readImage.push(payload);
@@ -632,52 +594,6 @@ function createBridgeStub({
       clipboard: {
         async writeText(text) {
           calls.clipboardWriteText.push(String(text));
-        },
-      },
-      workspaceTerminal: {
-        async start() {
-          calls.terminalStart.push({});
-          if (!state.rootPath) {
-            const error = new Error('No workspace root is configured; choose a workspace folder first.');
-            error.code = 'CMP-TERMINAL-0002';
-            throw error;
-          }
-          if (!terminalRunning) {
-            terminalSessionCounter += 1;
-            terminalRunning = `term-${terminalSessionCounter}`;
-          }
-          return { sessionId: terminalRunning, shell: 'powershell.exe', cwd: state.rootPath };
-        },
-        async write(payload) {
-          calls.terminalWrite.push(payload);
-          return { written: String(payload?.data || '').length };
-        },
-        async signal(payload) {
-          calls.terminalSignal.push(payload);
-          return { signaled: true };
-        },
-        async kill(payload) {
-          calls.terminalKill.push(payload);
-          terminalRunning = '';
-          return { killed: true };
-        },
-        onData(listener) {
-          terminalDataListeners.push(listener);
-          return () => {
-            const index = terminalDataListeners.indexOf(listener);
-            if (index !== -1) {
-              terminalDataListeners.splice(index, 1);
-            }
-          };
-        },
-        onExit(listener) {
-          terminalExitListeners.push(listener);
-          return () => {
-            const index = terminalExitListeners.indexOf(listener);
-            if (index !== -1) {
-              terminalExitListeners.splice(index, 1);
-            }
-          };
         },
       },
       workspaceIde: {

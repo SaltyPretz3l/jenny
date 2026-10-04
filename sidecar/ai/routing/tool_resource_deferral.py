@@ -470,7 +470,7 @@ def first_batch_deferral_eligible_for_loop(
 
 
 def _freeze_loop_quota(loop: Any) -> bytes | None:
-    from sidecar.ai.routing.quota_runtime import freeze_runtime_quota  # noqa: PLC0415
+    from sidecar.ai.routing.quota_runtime import freeze_runtime_quota
     return freeze_runtime_quota(loop.runtime, loop.kernel._config,
                                outcomes=loop.outcomes, tool_contract=loop.tool_contract)
 

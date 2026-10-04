@@ -26,6 +26,8 @@ function makeLifecycle({
   saveHygiene = null,
   platform = 'linux',
   canonicalPaths = {},
+  readHook = null,
+  writeHook = null,
 } = {}) {
   const ide = ideState.createIdeUiState();
 
@@ -51,7 +53,11 @@ function makeLifecycle({
     getValue: (path) => docs.get(path)?.value,
     getAltVersionId: (path) => docs.get(path)?.altVersion ?? 1,
     getMtime: (path) => docs.get(path)?.mtime,
-    markSaved(path, opts) { this.markSavedCalls.push({ path, opts }); },
+    isDirty: (path) => docs.get(path)?.dirty === true,
+    markSaved(path, opts) {
+      this.markSavedCalls.push({ path, opts });
+      if (docs.has(path)) docs.get(path).dirty = false;
+    },
     getViewState: () => ({ cursor: 1 }),
     applyViewState() { this.applyViewStateCount += 1; },
   };
@@ -64,6 +70,7 @@ function makeLifecycle({
   const api = {
     readText: async ({ path }) => {
       readTextCalls.push(path);
+      if (readHook) await readHook(path, readTextCalls.length);
       if (readFailure) return readFailure;
       const canonicalPath = canonicalPathFor(path);
       if (!files.has(canonicalPath)) {
@@ -91,6 +98,7 @@ function makeLifecycle({
     },
     writeText: async (payload) => {
       writeFileCalls.push(payload);
+      if (writeHook) await writeHook(payload);
       if (writeError) {
         throw writeError;
       }
@@ -110,6 +118,7 @@ function makeLifecycle({
     dropUnderCalls: [],
     push(entry) { this.pushCount += 1; return realStack.push(entry); },
     pop() { return realStack.pop(); },
+    peek() { return realStack.peek(); },
     dropPath(path) { this.dropPathCalls.push(path); return realStack.dropPath(path); },
     dropUnder(path) { this.dropUnderCalls.push(path); return realStack.dropUnder(path); },
     clear() { return realStack.clear(); },
@@ -626,4 +635,234 @@ test('Windows casing aliases reopen, activate, and close one canonical document 
   assert.deepEqual(ctx.ide.openTabs, []);
   assert.equal(ctx.docs.size, 0);
   assert.equal(ctx.lifecycle.getDocumentToken('src/File.js'), null);
+});
+
+/* ── IDE-001: tree delete / rename must not discard edits typed after the confirmation ── */
+
+async function openDirtyTabs(ctx, dirtyPaths) {
+  for (const path of ctx.files) assert.equal(await ctx.lifecycle.openFile(path), true);
+  for (const path of dirtyPaths) {
+    ctx.docs.get(path).dirty = true;
+    ctx.docs.get(path).value = `newer unsaved text in ${path}`;
+  }
+}
+
+test('a dirty preserved tab survives a tree delete: stale, buffer intact, one toast', async () => {
+  const ctx = makeLifecycle({ files: new Set(['a.js', 'b.js']) });
+  await openDirtyTabs(ctx, ['a.js']);
+
+  ctx.lifecycle.handleTreeEntryDeleted('a.js', 'file', { preservedPaths: ['a.js'] });
+
+  assert.ok(ctx.ide.openTabs.some((tab) => tab.path === 'a.js'), 'the tab stays open');
+  assert.equal(ctx.docs.has('a.js'), true, 'the document stays open');
+  assert.equal(ctx.docs.get('a.js').value, 'newer unsaved text in a.js', 'the buffer content is intact');
+  assert.equal(ctx.ide.staleByPath['a.js'], true, 'the tab is marked stale');
+  assert.equal(ctx.notices.length, 1);
+  assert.equal(
+    ctx.notices[0].message,
+    'a.js was deleted on disk. Its unsaved editor remains open so you can copy the changes.'
+  );
+  assert.ok(ctx.closedTabs.dropUnderCalls.includes('a.js'), 'the reopen stack is still purged');
+  assert.equal(ctx.closedTabs.pushCount, 0);
+});
+
+test('a clean preserved tab and a non-preserved dirty tab still close on delete', async () => {
+  const ctx = makeLifecycle({ files: new Set(['clean.js', 'dirty.js', 'kept.js']) });
+  await openDirtyTabs(ctx, ['dirty.js', 'kept.js']);
+
+  ctx.lifecycle.handleTreeEntryDeleted('clean.js', 'file', { preservedPaths: ['clean.js'] });
+  ctx.lifecycle.handleTreeEntryDeleted('dirty.js', 'file', { preservedPaths: [] });
+  ctx.lifecycle.handleTreeEntryDeleted('kept.js', 'file');
+
+  assert.deepEqual(ctx.ide.openTabs, [], 'every non-preserved or clean tab closes as before');
+  assert.equal(ctx.docs.size, 0);
+  assert.equal(ctx.notices.length, 0);
+});
+
+test('a directory delete keeps only the preserved dirty descendant', async () => {
+  const ctx = makeLifecycle({ files: new Set(['src/a.js', 'src/b.js', 'other.js']) });
+  await openDirtyTabs(ctx, ['src/a.js', 'src/b.js']);
+
+  ctx.lifecycle.handleTreeEntryDeleted('src', 'directory', { preservedPaths: ['src/a.js'] });
+
+  assert.deepEqual(ctx.ide.openTabs.map((tab) => tab.path).sort(), ['other.js', 'src/a.js']);
+  assert.equal(ctx.ide.staleByPath['src/a.js'], true);
+  assert.equal(ctx.notices.length, 1);
+});
+
+test('a dirty preserved tab survives a rename with the rename copy while the new path opens', async () => {
+  const ctx = makeLifecycle({ files: new Set(['a.js', 'renamed.js']) });
+  await openDirtyTabs(ctx, ['a.js']);
+  ctx.lifecycle.closeTab('renamed.js');
+
+  await ctx.lifecycle.handleTreeEntryRenamed('a.js', 'renamed.js', 'file', { wasOpen: true, preservedPaths: ['a.js'] });
+
+  assert.deepEqual(ctx.ide.openTabs.map((tab) => tab.path).sort(), ['a.js', 'renamed.js']);
+  assert.equal(ctx.docs.get('a.js').value, 'newer unsaved text in a.js');
+  assert.equal(ctx.ide.staleByPath['a.js'], true);
+  assert.equal(ctx.notices.length, 1);
+  assert.equal(
+    ctx.notices[0].message,
+    'a.js was renamed on disk. Its unsaved editor remains open under the old name so you can copy the changes.'
+  );
+});
+
+/* ── IDE-005: an old-root open failure must not remove a new-root tab ── */
+
+test('a failed open from an old root leaves the same path open in the new root, silently', async () => {
+  let rejectOldRead;
+  const ctx = makeLifecycle({
+    files: new Set(['same.js']),
+    readHook: (path, callNumber) => (callNumber === 1
+      ? new Promise((resolve, reject) => { rejectOldRead = () => reject(new Error('old root read failed')); })
+      : undefined),
+  });
+
+  const oldOpen = ctx.lifecycle.openFile('same.js');
+  await tick();
+  ctx.lifecycle.resetForRoot(null);
+  assert.equal(await ctx.lifecycle.openFile('same.js'), true, 'the new root opens the same relative path');
+  assert.ok(ctx.ide.openTabs.some((tab) => tab.path === 'same.js'));
+  const closedBefore = ctx.closedTabs.dropPathCalls.length;
+
+  rejectOldRead();
+
+  assert.equal(await oldOpen, false);
+  assert.ok(ctx.ide.openTabs.some((tab) => tab.path === 'same.js'), 'the new-root tab is still open');
+  assert.equal(ctx.docs.has('same.js'), true);
+  assert.equal(ctx.toasts.length, 0, 'no "Could Not Open" toast for the stale open');
+  assert.equal(ctx.logs.some((entry) => entry.event === 'ide.open_file_failed'), false, 'no WARN either');
+  assert.equal(ctx.closedTabs.dropPathCalls.length, closedBefore, 'the new root history is not purged');
+});
+
+test('a same-root failed open still closes its vanished tab', async () => {
+  const ctx = makeLifecycle({ files: new Set(['gone.js']) });
+  ideState.openTab(ctx.ide, 'gone.js');
+  ctx.files.delete('gone.js');
+
+  assert.equal(await ctx.lifecycle.openFile('gone.js'), false);
+  assert.equal(ctx.ide.openTabs.some((tab) => tab.path === 'gone.js'), false);
+  assert.equal(ctx.toasts.length, 1);
+});
+
+/* ── IDE-013: a failed Reopen Closed Tab must not consume its history entry ── */
+
+async function openAndCloseOne(ctx, path) {
+  assert.equal(await ctx.lifecycle.openFile(path), true);
+  ctx.lifecycle.closeTab(path);
+  assert.equal(ctx.closedTabs.size(), 1, 'precondition: one closed-tab entry');
+}
+
+test('a tab-cap refusal keeps the closed-tab entry until a slot is free', async () => {
+  const ctx = makeLifecycle({ files: new Set(['back.js']) });
+  await openAndCloseOne(ctx, 'back.js');
+  for (let i = 0; i < ideState.MAX_OPEN_TABS; i += 1) ideState.openTab(ctx.ide, `filler-${i}.js`);
+
+  await ctx.lifecycle.reopenClosedTab();
+  assert.equal(ctx.closedTabs.size(), 1, 'the entry survives the refusal');
+  assert.equal(ctx.toasts.at(-1).opts.title, 'Tab Limit');
+  assert.equal(ctx.ide.openTabs.some((tab) => tab.path === 'back.js'), false);
+
+  ideState.closeTab(ctx.ide, 'filler-0.js');
+  await ctx.lifecycle.reopenClosedTab();
+  assert.ok(ctx.ide.openTabs.some((tab) => tab.path === 'back.js'), 'a later reopen succeeds');
+  assert.equal(ctx.closedTabs.size(), 0);
+});
+
+test('a transient read error keeps the closed-tab entry', async () => {
+  let failRead = false;
+  const ctx = makeLifecycle({
+    files: new Set(['busy.js']),
+    readHook: () => {
+      if (failRead) throw Object.assign(new Error('resource busy'), { code: 'EBUSY' });
+    },
+  });
+  await openAndCloseOne(ctx, 'busy.js');
+
+  failRead = true;
+  await ctx.lifecycle.reopenClosedTab();
+  assert.equal(ctx.closedTabs.size(), 1, 'the entry is put back');
+
+  failRead = false;
+  await ctx.lifecycle.reopenClosedTab();
+  assert.ok(ctx.ide.openTabs.some((tab) => tab.path === 'busy.js'));
+  assert.equal(ctx.closedTabs.size(), 0);
+});
+
+test('a file that keeps failing to open is dropped after one retry and frees the older entries', async () => {
+  let blockHuge = false;
+  const ctx = makeLifecycle({
+    files: new Set(['older.js', 'huge.js']),
+    readHook: (path) => {
+      if (path === 'huge.js' && blockHuge) throw Object.assign(new Error('too large'), { code: 'CMP-WORKSPACEFS-0005' });
+    },
+  });
+  await openAndCloseOne(ctx, 'older.js');
+  await ctx.lifecycle.openFile('huge.js');
+  ctx.lifecycle.closeTab('huge.js');
+  assert.equal(ctx.closedTabs.size(), 2, 'precondition: huge.js on top of older.js');
+
+  blockHuge = true;
+  await ctx.lifecycle.reopenClosedTab();
+  assert.equal(ctx.closedTabs.size(), 2, 'the first failure keeps the entry for one retry');
+  await ctx.lifecycle.reopenClosedTab();
+  assert.equal(ctx.closedTabs.size(), 1, 'the second failure drops it');
+  await ctx.lifecycle.reopenClosedTab();
+  assert.ok(ctx.ide.openTabs.some((tab) => tab.path === 'older.js'), 'the older entry is reachable again');
+});
+
+test('a not-found read drops the closed-tab entry', async () => {
+  const ctx = makeLifecycle({ files: new Set(['gone.js']) });
+  await openAndCloseOne(ctx, 'gone.js');
+  ctx.files.delete('gone.js');
+
+  await ctx.lifecycle.reopenClosedTab();
+
+  assert.equal(ctx.closedTabs.size(), 0, 'a vanished file is not kept for reopen');
+});
+
+test('saveForLaunch waits out an in-flight save instead of reporting a failed save', async () => {
+  let releaseWrite;
+  const writeGate = new Promise((resolve) => { releaseWrite = resolve; });
+  const ctx = makeLifecycle({ files: new Set(['app.js']), writeHook: () => writeGate });
+  await ctx.lifecycle.openFile('app.js');
+  ctx.docs.get('app.js').dirty = true;
+
+  const autoSave = ctx.lifecycle.saveFile('app.js', { unattended: true });
+  assert.equal(await ctx.lifecycle.saveFile('app.js'), false, 'a plain save still answers false while one is in flight');
+  const launchSave = ctx.lifecycle.saveForLaunch('app.js');
+  releaseWrite();
+
+  assert.equal(await autoSave, true);
+  assert.equal(await launchSave, true, 'the launch sees the buffer on disk once the in-flight save lands');
+  assert.equal(ctx.writeFileCalls.length, 1, 'no second write: the in-flight save already covered the buffer');
+});
+
+test('saveForLaunch saves a buffer that is still dirty and reports a real failure', async () => {
+  const ctx = makeLifecycle({ files: new Set(['app.js']) });
+  await ctx.lifecycle.openFile('app.js');
+  ctx.docs.get('app.js').dirty = true;
+  assert.equal(await ctx.lifecycle.saveForLaunch('app.js'), true);
+  assert.equal(ctx.writeFileCalls.length, 1);
+
+  const failing = makeLifecycle({ files: new Set(['app.js']), writeError: new Error('disk full') });
+  await failing.lifecycle.openFile('app.js');
+  failing.docs.get('app.js').dirty = true;
+  assert.equal(await failing.lifecycle.saveForLaunch('app.js'), false);
+});
+
+test('a rename whose close plan left tabs behind marks the unsaved one stale and closes the clean one', async () => {
+  const ctx = makeLifecycle({ files: new Set(['dir/dirty.js', 'dir/clean.js']) });
+  await ctx.lifecycle.openFile('dir/dirty.js');
+  await ctx.lifecycle.openFile('dir/clean.js');
+  ctx.docs.get('dir/dirty.js').dirty = true;
+
+  // wasOpen with no preserved paths: the close commit failed for a reason other
+  // than a late edit, so both tabs are still on the old path.
+  await ctx.lifecycle.handleTreeEntryRenamed('dir', 'moved', 'directory', { wasOpen: true, preservedPaths: [] });
+
+  assert.ok(ctx.ide.openTabs.some((tab) => tab.path === 'dir/dirty.js'), 'the unsaved tab is kept');
+  assert.equal(ctx.ide.staleByPath['dir/dirty.js'], true, 'and marked stale');
+  assert.equal(ctx.ide.openTabs.some((tab) => tab.path === 'dir/clean.js'), false, 'the clean tab on the vanished path is closed');
+  assert.equal(ctx.notices.length, 1, 'the user is told why the tab stayed open');
 });

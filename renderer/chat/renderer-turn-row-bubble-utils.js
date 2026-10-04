@@ -56,36 +56,22 @@
     function buildStreamUnitsMarkup(streamUnits) {
       const units = Array.isArray(streamUnits) ? streamUnits : [];
       return units.map(function renderUnit(unit, index) {
-        const revealed = unit && unit.revealed ? ' is-revealed' : '';
-        return `<div class="chat-stream-unit${revealed}" data-stream-unit-index="${index}">${String(unit && unit.html || '')}</div>`;
+        return `<div class="chat-stream-unit" data-stream-unit-index="${index}">${String(unit && unit.html || '')}</div>`;
       }).join('');
     }
 
     function buildStreamingBubbleHtml(text, options) {
       const renderOptions = options || {};
-      const reducedMotion = renderOptions.reducedMotion === true;
       if (Array.isArray(renderOptions.streamUnits) && renderOptions.streamUnits.length) {
         return buildStreamUnitsMarkup(renderOptions.streamUnits);
       }
-      const renderModel = renderStreamingMarkdownUnits(String(text || ''), {
+      const renderModel = renderStreamingMarkdownUnits(stripCitationMarkersForDisplay(String(text || ''), { streaming: true }), {
         previousFingerprints: Array.isArray(renderOptions.previousFingerprints)
           ? renderOptions.previousFingerprints
           : [],
       });
-      const changedStart = renderOptions.streamChangedStart != null
-        ? Number(renderOptions.streamChangedStart)
-        : Number(renderModel && renderModel.changedStartIndex);
       if (Array.isArray(renderModel?.units) && renderModel.units.length) {
-        return buildStreamUnitsMarkup(renderModel.units.map(function normalizeUnit(unit, index) {
-          return {
-            html: String(unit && unit.html || ''),
-            revealed: reducedMotion
-              ? false
-              : Number.isFinite(changedStart) && changedStart >= 0
-              ? index >= changedStart
-              : Boolean(unit && unit.revealed),
-          };
-        }));
+        return buildStreamUnitsMarkup(renderModel.units);
       }
       return String(renderModel && renderModel.html || '');
     }
@@ -169,7 +155,7 @@
         const failureChip = buildSendFailureChipMarkup(sourceMessage);
         const sendStateAttr = failureChip ? ' data-send-state="failed"' : '';
         bubbleMarkup = text.trim()
-          ? `<div class="chat-bubble chat-bubble-markdown" data-pin-fade-trigger="user"${sendStateAttr}>${renderMarkdown(text, { breaks: true })}${failureChip}</div>`
+          ? `<div class="chat-bubble chat-bubble-markdown" dir="auto" data-pin-fade-trigger="user"${sendStateAttr}>${renderMarkdown(text, { breaks: true })}${failureChip}</div>`
           : '';
       }
       const attachmentsMarkup = shouldRenderMessageAttachments(row, options)
@@ -202,7 +188,7 @@
       // markup. Render-path tests load the inventory module before this.
       const id = String(messageId || '');
       const draft = String(draftText == null ? '' : draftText);
-      return `<div class="chat-bubble chat-bubble-editing" data-message-id="${escapeHtml(id)}" data-pin-fade-trigger="user">${escapeHtml(draft)}</div>`;
+      return `<div class="chat-bubble chat-bubble-editing" dir="auto" data-message-id="${escapeHtml(id)}" data-pin-fade-trigger="user">${escapeHtml(draft)}</div>`;
     }
 
     /* EH-W5: rows the reducer marked truncated (stream_reset discarded
@@ -227,19 +213,14 @@
     // source_citations) makes those markers redundant noise once it exists,
     // so strip them from the settled bubble text — flag-gated so a flag-off
     // relaunch renders the marker exactly as before (parity with the
-    // collector/row derive gate). Streaming text is left untouched: a marker
-    // can arrive split across chunks mid-stream, and the settled re-render
-    // (this function, isStreaming false) cleans it up once the message
-    // finalizes.
-    function stripCitationMarkersForDisplay(text) {
-      if (getFeatureFlags()?.source_citations !== true) {
-        return text;
-      }
+    // collector/row derive gate). Streaming text uses the streaming variant,
+    // which also holds back a marker still arriving split across chunks, so
+    // the live bubble never shows a marker that vanishes at settle.
+    function stripCitationMarkersForDisplay(text, options) {
       const chipsModule = resolveTurnRowModule('rendererCitationChipsUtils', './renderer-citation-chips-utils');
-      if (!chipsModule || typeof chipsModule.stripCitationMarkers !== 'function') {
-        return text;
-      }
-      return chipsModule.stripCitationMarkers(text);
+      return typeof chipsModule?.stripCitationMarkersForFlags === 'function'
+        ? chipsModule.stripCitationMarkersForFlags(text, getFeatureFlags(), options)
+        : text;
     }
 
     return {

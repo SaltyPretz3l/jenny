@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { createHash } = require('node:crypto');
 const { stableJson } = require('./contracts');
-const { createRuntimeStoreIO } = require('./store');
+const { createRuntimeStoreIO } = require('./store-io');
 
 const SCHEMA_VERSION = 1;
 const MAX_ROOT_RECORDS = 4096;
@@ -176,31 +176,6 @@ function validatePortableBudgetSnapshot(value) {
   return frozen({ schema_version: SCHEMA_VERSION, records });
 }
 
-function readStableJsonFile(filePath) {
-  let descriptor;
-  try {
-    descriptor = fs.openSync(filePath, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0));
-    const before = fs.fstatSync(descriptor);
-    if (!before.isFile() || before.nlink !== 1 || before.size > MAX_DOCUMENT_BYTES) {
-      throw fail('budget_record_unreadable');
-    }
-    const bytes = Buffer.allocUnsafe(before.size);
-    let offset = 0;
-    while (offset < bytes.length) {
-      const count = fs.readSync(descriptor, bytes, offset, bytes.length - offset, offset);
-      if (!count) break;
-      offset += count;
-    }
-    const after = fs.fstatSync(descriptor);
-    if (offset !== before.size || after.size !== before.size || after.mtimeMs !== before.mtimeMs
-      || after.ctimeMs !== before.ctimeMs
-      || String(after.dev) !== String(before.dev) || String(after.ino) !== String(before.ino)) {
-      throw fail('budget_record_unreadable');
-    }
-    return JSON.parse(bytes.toString('utf8'));
-  } finally { if (descriptor !== undefined) fs.closeSync(descriptor); }
-}
-
 function readPortableBudgetSnapshot(root) {
   const resolvedRoot = path.resolve(root);
   const io = createRuntimeStoreIO();
@@ -221,10 +196,13 @@ function readPortableBudgetSnapshot(root) {
       io.sweepStaleTemp(directory);
       const lexical = fs.lstatSync(directory);
       if (!lexical.isDirectory() || lexical.isSymbolicLink()
-        || fs.realpathSync.native(directory) !== path.join(realRoot, entry.name)
-        || fs.readdirSync(directory).join(',') !== 'record.json') throw fail('budget_entry_unresolved');
+        || fs.realpathSync.native(directory) !== path.join(realRoot, entry.name)) throw fail('budget_entry_unresolved');
+      if (fs.readdirSync(directory).length === 0) return null;
+      if (fs.readdirSync(directory).join(',') !== 'record.json') throw fail('budget_entry_unresolved');
       const before = fs.statSync(directory);
-      const document = validateRecord(readStableJsonFile(path.join(directory, 'record.json')));
+      const read = io.readJson(path.join(directory, 'record.json'), { maxBytes: MAX_DOCUMENT_BYTES });
+      if (read.status !== 'ok') throw fail('budget_record_unreadable', read.error);
+      const document = validateRecord(read.value);
       if (createHash('sha256').update(document.root_run_id).digest('hex') !== entry.name) {
         throw fail('budget_root_id_conflict');
       }
@@ -233,7 +211,7 @@ function readPortableBudgetSnapshot(root) {
         throw fail('budget_entry_unresolved');
       }
       return { root_run_id: document.root_run_id, document };
-    });
+    }).filter(record => record !== null);
     const finalRoot = fs.statSync(resolvedRoot);
     if (fs.realpathSync.native(resolvedRoot) !== realRoot
       || String(finalRoot.dev) !== String(rootStat.dev) || String(finalRoot.ino) !== String(rootStat.ino)
@@ -286,6 +264,7 @@ class RootRunBudgetStore {
       fs.mkdirSync(this.root, { recursive: true, mode: 0o700 });
       this.resolvedRoot = fs.realpathSync.native(this.root);
       this._assertRoot();
+      const leftovers = [];
       const directory = fs.opendirSync(this.root);
       try {
         let entry;
@@ -295,12 +274,16 @@ class RootRunBudgetStore {
             throw fail('budget_entry_unresolved');
           }
           const ownerDirectory = path.join(this.root, entry.name);
+          this._assertDirectory(ownerDirectory, { allowEmpty: true });
+          if (fs.readdirSync(ownerDirectory).length === 0) { leftovers.push(ownerDirectory); continue; }
           const record = this._readDirectory(ownerDirectory);
           if (this._directory(record.root_run_id) !== ownerDirectory
             || this.rootIds.has(record.root_run_id)) throw fail('budget_root_id_conflict');
           this.rootIds.add(record.root_run_id);
         }
       } finally { directory.closeSync(); }
+      this._assertRoot();
+      for (const leftover of leftovers) fs.rmdirSync(leftover);
     } catch (error) { this._block(error); }
   }
 
@@ -311,6 +294,12 @@ class RootRunBudgetStore {
   }
 
   exportPortableSnapshot() {
+    if (this.readOnly) throw fail(this.reason || 'budget_store_read_only');
+    // An absent root holds no budgets, like the offline reader; registered records without it fail closed.
+    if (this._rootMissing()) {
+      if (this.rootIds.size > 0) throw fail('budget_root_changed');
+      return validatePortableBudgetSnapshot({ schema_version: SCHEMA_VERSION, records: [] });
+    }
     this._assertAvailable();
     const records = [...this.rootIds].sort().map(rootRunId => ({
       root_run_id: rootRunId, document: this._read(rootRunId),
@@ -557,6 +546,16 @@ class RootRunBudgetStore {
     const stat = fs.lstatSync(this.root);
     if (!stat.isDirectory() || stat.isSymbolicLink()
       || fs.realpathSync.native(this.root) !== this.resolvedRoot) throw fail('budget_root_changed');
+  }
+
+  _rootMissing() {
+    try {
+      fs.lstatSync(this.root);
+      return false;
+    } catch (error) {
+      if (error?.code === 'ENOENT') return true;
+      throw error;
+    }
   }
 
   _assertAvailable() {

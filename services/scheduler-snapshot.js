@@ -1,6 +1,6 @@
 'use strict';
 
-const { normalizeString } = require('../renderer/shared/string-utils');
+const { normalizeString } = require('./shared/normalize');
 const { hasActiveAutomationRun } = require('./scheduler-automation-runtime');
 const { parseIsoMs } = require('./scheduler-tasks-store');
 

@@ -23,11 +23,6 @@ VERIFIED_APP_FILES = (
     "Contents/Resources/app.asar",
     "Contents/Resources/sidecar/sidecar",
     "Contents/Resources/sidecar/manifest.json",
-    "Contents/Resources/restricted-host/jenny-plugin-host",
-    "Contents/Resources/restricted-host/jenny-plugin-host.manifest.json",
-    "Contents/Resources/restricted-host/jenny-plugin-host.sbom.json",
-    "Contents/Resources/native/plugin-full-host-supervisor",
-    "Contents/Resources/native/manifest.json",
 )
 
 
@@ -47,32 +42,6 @@ def verify_zip(archive: Path, app: Path) -> None:
                 if (hashlib.file_digest(source, "sha256").digest()
                         != hashlib.file_digest(built, "sha256").digest()):
                     raise RuntimeError(f"Mac ZIP differs from verified app: {relative}")
-
-
-def verify_native_hosts(resources: Path, log_path: Path) -> list[Path]:
-    hosts = (
-        ("restricted-host", "jenny-plugin-host.manifest.json", "jenny-plugin-host",
-         smoke._validate_packaged_restricted_host),
-        ("native", "manifest.json", "plugin-full-host-supervisor",
-         smoke._validate_packaged_full_host_supervisor),
-    )
-    binaries = []
-    for directory, manifest_name, binary_name, validate in hosts:
-        manifest_path = resources / directory / manifest_name
-        require_file(manifest_path)
-        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-        if (not isinstance(manifest, dict)
-                or manifest.get("binary_filename") != binary_name
-                or manifest.get("target") != "aarch64-apple-darwin"
-                or manifest.get("source_state") != "clean"
-                or manifest.get("release_eligible") is not True):
-            raise RuntimeError(f"Mac {directory} is not a clean ARM64 release artifact")
-        if (directory == "restricted-host"
-                and manifest.get("sbom_filename") != "jenny-plugin-host.sbom.json"):
-            raise RuntimeError("Mac restricted-host SBOM filename is invalid")
-        binary, _ = validate(resources, log_path=log_path, allow_stale_source=False)
-        binaries.append(binary)
-    return binaries
 
 
 def verify_update_metadata(dist: Path) -> None:
@@ -108,9 +77,8 @@ def verify_release(root: Path = ROOT) -> None:
     for path in [*archives, resources / "app.asar", app / "Contents/MacOS/Jenny"]:
         require_file(path)
     artifact, _ = smoke._validate_packaged_artifact(resources, log_path=log_path)
-    native_hosts = verify_native_hosts(resources, log_path)
-    for binary in [app / "Contents/MacOS/Jenny", artifact, *native_hosts]:
-        subprocess.run(["lipo", "-verify_arch", "arm64", str(binary)], check=True, timeout=30)
+    for binary in [app / "Contents/MacOS/Jenny", artifact]:
+        subprocess.run(["lipo", str(binary), "-verify_arch", "arm64"], check=True, timeout=30)
     subprocess.run([
         "node", "-e",
         "const a=require('@electron/asar'); for(const p of ['preload.bundle.js','index.html']) "

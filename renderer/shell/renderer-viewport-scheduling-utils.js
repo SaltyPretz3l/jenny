@@ -11,7 +11,9 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   function createViewportSchedulingUtils(deps) {
     const { state, readerAwayPauseReason } = deps;
-    const { chatTimeline, chatThreadScroll } = deps.dom || {};
+    // The pane's own follow intent; default is the single-pane state.ui.followLatest.
+    const followState = deps.followState || { get: () => state.ui.followLatest };
+    const { chatTimeline, chatThreadScroll, composerWrap } = deps.dom || {};
     const {
       thinkingController,
       reducedMotionQuery,
@@ -44,11 +46,33 @@
     const transientViewportFrames = new Set();
     const transientViewportTimers = new Set();
 
+    // The scroll container runs behind the floating composer (the thread pads
+    // its tail by --composer-safe-offset), so the reader-visible band ends at
+    // the composer's top edge, not at the container's bottom.
+    function readReaderVisibleBottom(scrollRect) {
+      let composerRect;
+      try { composerRect = composerWrap?.getBoundingClientRect?.() || null; } catch (_error) { composerRect = null; }
+      const composerTop = Number(composerRect?.top);
+      if (!composerRect || !(Number(composerRect.height) > 0) || !Number.isFinite(composerTop)) {
+        return scrollRect.bottom;
+      }
+      return Math.max(scrollRect.top, Math.min(scrollRect.bottom, composerTop));
+    }
+
+    // The element whose bottom edge carries a pending decision's actions. A plan
+    // proposal's approval row is a 1px marker at the TOP of its card, so the
+    // card's actions host (Build it / Keep planning) stands in for it.
+    const PENDING_DECISION_EDGE_SELECTOR = '.approval-gap-row[data-approval-status="pending"]:not([data-approval-resolved="true"]):not([data-approval-variant="plan"]), '
+      + '[data-plan-document][data-plan-state="pending"]:not([data-plan-submitting="true"]) [data-plan-actions]';
+
+    // Brake only while a pending prompt's bottom edge (where its Allow/Deny
+    // actions sit) is on screen. A prompt that has only peeked in, or sits under
+    // the composer, must keep follow running so it scrolls into view.
     function hasPendingApprovalGapInViewport(scrollContainer) {
       if (!scrollContainer || typeof scrollContainer.querySelectorAll !== 'function') {
         return false;
       }
-      const rows = scrollContainer.querySelectorAll('.approval-gap-row[data-approval-status="pending"]:not([data-approval-resolved="true"])');
+      const rows = scrollContainer.querySelectorAll(PENDING_DECISION_EDGE_SELECTOR);
       if (!rows || rows.length === 0) return false;
       let scrollRect;
       try {
@@ -56,13 +80,12 @@
       } catch (_error) {
         return false;
       }
+      const visibleBottom = readReaderVisibleBottom(scrollRect);
       for (const row of rows) {
         let rowRect;
         try { rowRect = row.getBoundingClientRect(); } catch (_error) { continue; }
         if (!rowRect) continue;
-        const visibleTop = Math.max(rowRect.top, scrollRect.top);
-        const visibleBottom = Math.min(rowRect.bottom, scrollRect.bottom);
-        if (visibleBottom > visibleTop) return true;
+        if (rowRect.bottom > scrollRect.top && rowRect.bottom <= visibleBottom) return true;
       }
       return false;
     }
@@ -123,12 +146,12 @@
               preserveSurfaceEffectWidths: nextOptions.preserveSurfaceEffectWidths === true,
             });
           }
-          if (state.ui.followLatest === false) {
+          if (followState.get() === false) {
             getScrollCoordinator()?.restoreReaderAnchor?.();
           }
           if (shouldAutoScrollThread({
             forceBottom: nextOptions.forceBottom,
-            followLatest: state.ui.followLatest,
+            followLatest: followState.get(),
             thinkingAutoScroll: thinkingController.shouldAutoScroll(),
           })) {
             const pendingApprovalInView = !nextOptions.forceBottom
@@ -160,11 +183,11 @@
               ...getScrollMetrics(),
               userInitiated: false,
             });
-          } else if (state.ui.followLatest !== false) {
+          } else if (followState.get() !== false) {
             thinkingController.resumeAutoScroll(readerAwayPauseReason);
           }
           syncRenderedThinkingPanels(nextOptions.patchedRoot || chatTimeline);
-          if (state.ui.followLatest === false) {
+          if (followState.get() === false) {
             getScrollCoordinator()?.restoreReaderAnchor?.();
           }
           updateAssistantSpritePosition(nextMessages);

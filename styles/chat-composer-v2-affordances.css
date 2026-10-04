@@ -15,7 +15,7 @@
   background: color-mix(in srgb, var(--state-danger) 14%, var(--surface-input-background, transparent));
   border: 1px solid color-mix(in srgb, var(--state-danger) 48%, transparent);
   color: var(--text-primary);
-  font-size: 13px;
+  font-size: var(--font-size-footnote);
   line-height: 1.4;
   box-shadow: var(--shadow-elevation-1);
 }
@@ -41,8 +41,7 @@
   background: color-mix(in srgb, var(--text-primary) 8%, transparent);
   border: 1px solid color-mix(in srgb, var(--text-primary) 22%, transparent);
   color: var(--text-primary);
-  font-size: 12px;
-  letter-spacing: 0.02em;
+  font-size: var(--font-size-footnote);
   cursor: pointer;
   transition: var(--composer-control-transition);
 }
@@ -87,10 +86,8 @@
 .chat-bubble-send-status {
   display: block;
   margin-top: var(--space-2);
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
+  font-size: var(--font-size-caption);
+  font-weight: 500;
   color: color-mix(in srgb, var(--state-warning, var(--accent-amber, #f3b537)) 78%, var(--text-primary));
 }
 
@@ -110,20 +107,29 @@
   background: color-mix(in srgb, var(--accent, var(--text-primary)) 14%, var(--composer-secondary-control-bg));
   border: 1px solid color-mix(in srgb, var(--accent, var(--text-primary)) 38%, var(--composer-secondary-control-border));
   color: var(--text-primary);
-  font-size: 11px;
-  letter-spacing: 0.03em;
+  font-size: var(--font-size-caption);
   box-shadow: var(--composer-secondary-control-shadow);
 }
 
 /* ── Composer V2 — meta row below the card ── */
-/* Composer meta row below the card: the run-mode hint lives here now;
- * the turn timer joins this row later. */
+/* Composer meta row below the card: the model-loading line and the turn
+ * timer. Without either it takes no height (the live announcer inside stays
+ * in the tree, so it is collapsed by margin, not display: none). */
 .composer-mode-chips {
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-3);
   justify-content: space-between;
   margin: var(--space-2) 0 0;
+}
+
+.composer-mode-chips:not(:has(.composer-loading-line, .composer-turn-timer:not(:empty))) {
+  margin: 0;
+}
+
+.composer-loading-line {
+  color: var(--text-muted);
+  font-size: var(--font-size-caption);
 }
 
 .composer-mode-chips[data-composer-meta-align="right"] {

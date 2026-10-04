@@ -21,19 +21,10 @@ const { getBridgeChannel } = require('../services/ipc-contract');
 const { MAIN_DOCUMENT_PATH } = require('../services/main/ipc-sender-authorization');
 const {
   registerPluginsRuntime,
-  refreshManagedConfigAfterProviderChange,
   runAfterStartupMigration,
 } = require('../services/main/plugins-ipc-registration');
-const {
-  activateChatgptProvider,
-  providerReconfigureOptions,
-} = require('../services/plugins/provider/provider-activation-service');
+const { primeChatgptCatalogForRestore } = require('../services/backend/chatgpt-model-catalog-service');
 const { PLUGIN_ERROR_CODES } = require('../services/backend/error-codes');
-const {
-  resolvePluginStoreRoot,
-} = require('../services/plugins/plugin-control-plane-service');
-const { createNodeFsFacade } = require('../services/plugins/store/node-fs-facade');
-const { readCommittedState } = require('../services/plugins/lifecycle/commit-sequence');
 const {
   REQUIRED_RESOURCE_KINDS,
 } = require('../services/plugins/runtime/runtime-apply-coordinator');
@@ -62,95 +53,9 @@ test('startup migration serializes graph mutations without blocking reads', asyn
   assert.deepEqual(calls, ['read', 'mutation']);
 });
 
-test('provider activation persists the preferred engine and rolls it back on reinit failure', async () => {
-  let preferredEngineType = 'ollama';
-  const refreshCalls = [];
-  const configService = { getState: () => ({ preferredEngineType }),
-    updatePreferredEngineType: (value) => { preferredEngineType = value; } };
-  const activated = await activateChatgptProvider({ configService,
-    refreshManagedConfig: async (...args) => { refreshCalls.push(args); return { ok: true }; } }, 'chatgpt');
-  assert.equal(activated.ok, true);
-  assert.equal(preferredEngineType, 'chatgpt');
-  assert.deepEqual(refreshCalls, [['plugin_provider_activated', {
-    requestedEngineType: 'chatgpt', inactivityTimeoutMs: 8000, absoluteTimeoutMs: 8000,
-  }]]);
-
-  preferredEngineType = 'ollama';
-  const failed = await activateChatgptProvider({ configService,
-    refreshManagedConfig: async () => null }, 'chatgpt');
-  assert.deepEqual(failed, { ok: false, reason: 'provider_activation_failed' });
-  assert.equal(preferredEngineType, 'ollama');
-});
-
-test('generic provider refreshes retain the selected engine while explicit ChatGPT activation retargets it', () => {
-  const boundedRefresh = {
-    requestedEngineType: undefined,
-    inactivityTimeoutMs: 8000,
-    absoluteTimeoutMs: 8000,
-  };
-
-  assert.deepEqual(providerReconfigureOptions(), boundedRefresh);
-  assert.deepEqual(providerReconfigureOptions(''), boundedRefresh);
-  assert.deepEqual(providerReconfigureOptions('ollama'), boundedRefresh);
-  assert.deepEqual(providerReconfigureOptions('chatgpt'), {
-    ...boundedRefresh,
-    requestedEngineType: 'chatgpt',
-  });
-});
-
-test('provider graph and auth changes refresh managed config without selecting an engine', async () => {
-  const refreshCalls = [];
-  const backendService = {
-    refreshManagedConfig: async (...args) => { refreshCalls.push(args); return { ok: true }; },
-  };
-
-  for (const change of [
-    { providers: ['chatgpt'] },
-    { provider_id: 'chatgpt', reason: 'provider_auth_started' },
-    { provider_id: 'chatgpt', reason: 'provider_auth_signed_out' },
-  ]) {
-    await refreshManagedConfigAfterProviderChange(
-      backendService,
-      providerReconfigureOptions,
-      change
-    );
-  }
-
-  const boundedRefresh = {
-    requestedEngineType: undefined,
-    inactivityTimeoutMs: 8000,
-    absoluteTimeoutMs: 8000,
-  };
-  assert.deepEqual(refreshCalls, [
-    ['plugin_provider_changed', boundedRefresh],
-    ['provider_auth_started', boundedRefresh],
-    ['provider_auth_signed_out', boundedRefresh],
-  ]);
-});
-
 after(() => {
   for (const root of createdRoots) {
     fs.rmSync(root, { recursive: true, force: true });
-  }
-});
-
-test('startup recovery does not retarget an intentional engine selection or ordinary provider refresh', async () => {
-  for (const overrides of [
-    { configService: { getState: () => ({ preferredEngineType: 'ollama' }) } },
-    { currentEngineType: 'ollama' },
-    { _lastEngineFallback: { requested_engine: 'ollama' } },
-    { _providerRuntimeApplyPending: () => false },
-  ]) {
-    let options;
-    await refreshManagedConfigAfterProviderChange({
-      currentEngineType: 'mock',
-      configService: { getState: () => ({ preferredEngineType: 'chatgpt' }) },
-      _lastEngineFallback: { requested_engine: 'chatgpt' },
-      _providerRuntimeApplyPending: () => true,
-      ...overrides,
-      refreshManagedConfig: async (_reason, value) => { options = value; },
-    }, providerReconfigureOptions);
-    assert.equal(options.requestedEngineType, undefined);
   }
 });
 
@@ -394,7 +299,7 @@ describe('plugins.* IPC handlers never throw across the seam', () => {
     assert.equal(fs.existsSync(path.join(userData, 'plugins', 'packages', packageDirs[0], 'record.json')), true);
   });
 
-  test('trusted V4 native selection preserves restricted-module evidence in the committed generation', async () => {
+  test('trusted V4 native selection of a retired restricted-module package is refused', async () => {
     const trusted = createTrustedSender();
     const fixture = buildRestrictedFixture();
     const appRoot = makeUserData();
@@ -416,21 +321,16 @@ describe('plugins.* IPC handlers never throw across the seam', () => {
       JSON.stringify(installed),
     );
     const operationHandler = ipcMain.invoke.get(getBridgeChannel('plugins.getOperation', 'invoke'));
-    await assertCommittedOperation(
-      operationHandler,
-      trusted.event,
-      installed.operation_id,
-      (operationId) => handle.stage5Service.waitForDistributionOperation(operationId),
+    await handle.stage5Service.waitForDistributionOperation(installed.operation_id);
+    const status = await operationHandler(trusted.event, { operation_id: installed.operation_id });
+    assert.deepEqual(
+      { classification: status.classification, receiptStatus: status.receipt?.status },
+      { classification: 'terminal', receiptStatus: 'failed' },
+      JSON.stringify(status),
     );
     const stateHandler = ipcMain.invoke.get(getBridgeChannel('plugins.getState', 'invoke'));
-    await waitForInstalledPlugin(stateHandler, trusted.event);
-
-    const facade = createNodeFsFacade({ rootDir: resolvePluginStoreRoot(userData) });
-    const committed = await readCommittedState(facade, '');
-    assert.equal(committed.generation.generation_schema_version, 4);
-    assert.deepEqual(committed.generation.plugins[0].restricted_module_digests, [
-      fixture.manifest.contributions[0].component_sha256,
-    ]);
+    assert.equal((await stateHandler(trusted.event, {})).installed_count, 0);
+    assert.equal(fs.existsSync(path.join(userData, 'plugins', 'packages')) ? fs.readdirSync(path.join(userData, 'plugins', 'packages')).length : 0, 0);
   });
 
   test('a missing handler payload is defaulted rather than crashing the handler', async () => {
@@ -441,4 +341,41 @@ describe('plugins.* IPC handlers never throw across the seam', () => {
     assert.equal(result.ok, false);
     assert.equal(result.reason, 'invalid_operation_id');
   });
+});
+
+// B13: the startup config is built before anything filled the catalog, so
+// without this fetch the saved model could never be listed.
+test('the startup ChatGPT restore fetches the catalog first when a last model is saved', async () => {
+  const order = [];
+  const backend = (state) => ({
+    configService: { getState: () => state },
+  });
+  const catalog = { refresh: async () => { order.push('catalog'); return { models: [] }; } };
+  const saved = { preferredEngineType: 'chatgpt', lastChatgptModel: 'gpt-6-luna' };
+
+  assert.equal(await primeChatgptCatalogForRestore(backend(saved), catalog), true);
+  assert.deepEqual(order, ['catalog']);
+
+  // Nothing to restore: no saved model or another engine.
+  order.length = 0;
+  assert.equal(await primeChatgptCatalogForRestore(
+    backend({ preferredEngineType: 'chatgpt', lastChatgptModel: '' }), catalog), false);
+  assert.equal(await primeChatgptCatalogForRestore(
+    backend({ preferredEngineType: 'ollama', lastChatgptModel: 'gpt-6-luna' }), catalog), false);
+  assert.equal(await primeChatgptCatalogForRestore(backend(saved), null), false);
+  assert.deepEqual(order, []);
+});
+
+test('a slow or failing catalog fetch never blocks or fails the ChatGPT restore', async () => {
+  const backendService = {
+    configService: { getState: () => ({ preferredEngineType: 'chatgpt', lastChatgptModel: 'gpt-6-luna' }) },
+  };
+  const startedAt = Date.now();
+  assert.equal(await primeChatgptCatalogForRestore(
+    backendService, { refresh: () => new Promise(() => {}) }, { timeoutMs: 20 }), true);
+  assert.ok(Date.now() - startedAt < 2000);
+  assert.equal(await primeChatgptCatalogForRestore(
+    backendService, { refresh: async () => { throw new Error('offline'); } }), true);
+  assert.equal(await primeChatgptCatalogForRestore(
+    backendService, { refresh: () => { throw new Error('sync failure'); } }), true);
 });

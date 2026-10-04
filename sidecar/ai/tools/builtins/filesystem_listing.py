@@ -9,11 +9,13 @@ from __future__ import annotations
 
 import os
 from itertools import islice
+from pathlib import Path
 from typing import NamedTuple
 
 from sidecar.ai.error_codes import CMP_TOOL_INVALID_PATH, CMP_TOOL_IO_FAILED
 from sidecar.ai.tools.builtins.filesystem import _as_path_argument, workspace_relative_path
 from sidecar.ai.tools.contracts import ToolExecutionFailure, ToolHandlerResult
+from sidecar.ai.tools.hosted_file_io import hosted_file_io_enabled, open_hosted_directory
 from sidecar.ai.tools.workspace import WorkspaceGuard
 
 MAX_LIST_ENTRIES = 500
@@ -41,14 +43,14 @@ def format_entry_size(size_bytes: int) -> str:
     per listed file against ``MAX_LIST_OUTPUT_CHARS``.
     """
     size_bytes = max(int(size_bytes), 0)
-    if size_bytes < 1024:
+    if size_bytes < 1024:  # noqa: PLR2004  # units
         return f"{size_bytes}B"
     value = float(size_bytes)
     for suffix in ("K", "M", "G"):
         value /= 1024.0
         # Compare the ROUNDED value: 1024**2-1 is 1023.99K, which would render
         # as "1024.0K" rather than promoting to "1.0M".
-        if round(value, 1) < 1024.0:
+        if round(value, 1) < 1024.0:  # noqa: PLR2004  # units
             return f"{value:.1f}{suffix}"
     return f"{value / 1024.0:.1f}T"
 
@@ -74,21 +76,16 @@ def format_list_entry(entry: os.DirEntry[str]) -> ListedEntry | None:
     return ListedEntry(f"[F] {entry.name}  {format_entry_size(size)}", size, size_unknown=False)
 
 
-def list_dir_tool(
-    arguments: dict[str, object], workspace: WorkspaceGuard
-) -> ToolHandlerResult:
-    path = _as_path_argument(arguments, allow_empty=True)
-    resolved = workspace.resolve_list_path(path.strip() or ".")
+def _scan_directory(resolved: Path) -> list[os.DirEntry[str]]:
     if not resolved.is_dir():
         raise ToolExecutionFailure(
             code=CMP_TOOL_INVALID_PATH,
             message="path must point to a directory",
             retryable=False,
         )
-
     try:
         with os.scandir(resolved) as iterator:
-            scanned = list(islice(iterator, MAX_LIST_SCAN_ENTRIES + 1))
+            return list(islice(iterator, MAX_LIST_SCAN_ENTRIES + 1))
     except OSError as error:
         raise ToolExecutionFailure(
             code=CMP_TOOL_IO_FAILED,
@@ -96,21 +93,48 @@ def list_dir_tool(
             retryable=True,
         ) from error
 
+
+def _render_retained(scanned: list[os.DirEntry[str]]) -> list[ListedEntry | None]:
+    retained = sorted(scanned[:MAX_LIST_SCAN_ENTRIES], key=lambda entry: entry.name.lower())
+    return [format_list_entry(entry) for entry in retained[:MAX_LIST_ENTRIES]]
+
+
+def list_dir_tool(
+    arguments: dict[str, object], workspace: WorkspaceGuard
+) -> ToolHandlerResult:
+    path = _as_path_argument(arguments, allow_empty=True)
+    resolved = workspace.resolve_list_path(path.strip() or ".")
+    if hosted_file_io_enabled():
+        # Enumerate through the pinned root descriptor so a concurrent
+        # directory->symlink swap cannot redirect the scan outside the root.
+        try:
+            with open_hosted_directory(resolved) as dir_fd, os.scandir(dir_fd) as iterator:
+                scanned = list(islice(iterator, MAX_LIST_SCAN_ENTRIES + 1))
+                # fd-based DirEntry.stat() uses dir_fd: render before it closes.
+                rendered_entries = _render_retained(scanned)
+        except ToolExecutionFailure:
+            raise
+        except OSError as error:
+            raise ToolExecutionFailure(
+                code=CMP_TOOL_IO_FAILED,
+                message=f"failed to list directory: {error}",
+                retryable=True,
+            ) from error
+    else:
+        scanned = _scan_directory(resolved)
+        rendered_entries = _render_retained(scanned)
+
     scan_complete = len(scanned) <= MAX_LIST_SCAN_ENTRIES
-    retained = sorted(scanned[:MAX_LIST_SCAN_ENTRIES], key=lambda entry: entry.name.lower())[
-        :MAX_LIST_ENTRIES
-    ]
     formatted: list[str] = []
     failed_entries = 0
     omitted_output_entries = 0
     output_chars = 0
     total_size_bytes = 0
     size_unknown_entries = 0
-    for entry in retained:
+    for rendered in rendered_entries:
         # A single entry's is_dir() can fail (permission error, a link that broke
         # between scandir and here, etc.). One bad entry must not fail the whole
         # listing — isolate the failure and keep listing the rest.
-        rendered = format_list_entry(entry)
         if rendered is None:
             failed_entries += 1
             continue

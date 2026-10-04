@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import ssl
+
+import certifi
 import httpx
 import pytest
 
@@ -286,8 +289,8 @@ def test_provider_transport_rejects_oversized_declared_response() -> None:
         base_url="https://example.test",
         headers={},
     )
-    service._client.close()  # noqa: SLF001
-    service._client = httpx.Client(  # noqa: SLF001
+    service._client.close()
+    service._client = httpx.Client(
         base_url="https://example.test",
         transport=httpx.MockTransport(handler),
     )
@@ -329,8 +332,8 @@ def test_provider_transport_closes_stream_and_propagates_terminal_cancellation()
         base_url="https://example.test",
         headers={},
     )
-    service._client.close()  # noqa: SLF001
-    service._client = httpx.Client(  # noqa: SLF001
+    service._client.close()
+    service._client = httpx.Client(
         base_url="https://example.test",
         transport=httpx.MockTransport(handler),
     )
@@ -344,3 +347,50 @@ def test_provider_transport_closes_stream_and_propagates_terminal_cancellation()
         assert stream.closed is True
     finally:
         service.close()
+
+
+def _client_ssl_context(service: ProviderHttpService) -> ssl.SSLContext:
+    return service._client._transport._pool._ssl_context
+
+
+def test_services_share_one_verified_ssl_context(monkeypatch: pytest.MonkeyPatch) -> None:
+    # P3-PERF-A: each httpx.Client built its own certifi SSL context (~160 ms on
+    # Windows), and the per-turn Ollama catalog probe built two plain-http
+    # clients. One verified context now serves every provider client.
+    built: list[ssl.SSLContext] = []
+    original = ssl.create_default_context
+
+    def counting(*args: object, **kwargs: object) -> ssl.SSLContext:
+        context = original(*args, **kwargs)
+        built.append(context)
+        return context
+
+    monkeypatch.setattr(ssl, "create_default_context", counting)
+    services = [
+        ProviderHttpService(provider="ollama", base_url="http://127.0.0.1:11434", headers={})
+        for _ in range(3)
+    ]
+    try:
+        contexts = {id(_client_ssl_context(service)) for service in services}
+        assert len(built) <= 1
+        assert len(contexts) == 1
+        context = _client_ssl_context(services[0])
+        assert context.verify_mode == ssl.CERT_REQUIRED
+        assert context.check_hostname is True
+    finally:
+        for service in services:
+            service.close()
+
+
+def test_ssl_cert_file_override_gets_its_own_context(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("SSL_CERT_FILE", raising=False)
+    monkeypatch.delenv("SSL_CERT_DIR", raising=False)
+    default = ProviderHttpService(provider="openai", base_url="https://example.test", headers={})
+    monkeypatch.setenv("SSL_CERT_FILE", certifi.where())
+    overridden = ProviderHttpService(provider="openai", base_url="https://example.test", headers={})
+    try:
+        assert _client_ssl_context(default) is not _client_ssl_context(overridden)
+        assert _client_ssl_context(overridden).verify_mode == ssl.CERT_REQUIRED
+    finally:
+        default.close()
+        overridden.close()

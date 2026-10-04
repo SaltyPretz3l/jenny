@@ -1,6 +1,6 @@
 /* Home dashboard orchestrator (parallel to the companion manager). Owns the
  * #homeDashboardGrid widget registry, seeds the dashboard state slices
- * (scheduler / weather / homeConfig), primes them over the shell
+ * (scheduler / homeConfig), primes them over the shell
  * bridge on the first render, and repaints on the bridge change events.
  * render() is cheap and idempotent — the
  * lifecycle activates Home twice (sync paint + post-refresh) by design.
@@ -14,7 +14,7 @@
   root.rendererDashboardUtils = factory(root.rendererAsyncFence);
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (asyncFence) {
   const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
-  function escapeHtml(value) { return String(value || '').replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;').replaceAll("'", '&#39;'); }
+  const escapeHtml = ((typeof globalThis !== 'undefined' && globalThis.stringUtils) || (typeof require === 'function' ? require('../shared/string-utils') : null)).escapeHtml;
   const windowRef = typeof globalThis !== 'undefined' ? globalThis : {};
   const registryModuleFallback = typeof windowRef.rendererDashboardRegistry !== 'undefined'
     ? windowRef.rendererDashboardRegistry
@@ -365,26 +365,9 @@
       if (!asObject(state.scheduler)) {
         state.scheduler = { upcoming: [], running: [], generatedAt: '', relevant: false, lifecycle: null };
       }
-      if (!asObject(state.weather)) {
-        state.weather = {
-          available: false,
-          configured: false,
-          tempC: null,
-          tempF: null,
-          code: null,
-          description: '',
-          isDay: null,
-          lat: null,
-          lon: null,
-          units: 'metric',
-          fetchedAt: '',
-          error: '',
-        };
-      }
       if (!asObject(state.homeConfig)) {
         state.homeConfig = {
           links: [],
-          weather: { lat: null, lon: null, units: 'metric' },
           widgets: { order: [], hidden: [] },
           scratchpad: {
             notes: [{ id: 'note-1', title: jt('dashboard.scratchpad.actions.noteOne', 'Note 1'), text: '', updatedAt: '', appendLog: false }],
@@ -430,15 +413,6 @@
       return state.scheduler;
     }
 
-    function applyWeatherPayload(payload) {
-      const source = asObject(payload);
-      if (!source) {
-        return state.weather;
-      }
-      state.weather = { ...state.weather, ...source };
-      return state.weather;
-    }
-
     function applyCalendarPayload(payload) {
       const source = asObject(payload);
       if (!source) {
@@ -462,7 +436,6 @@
       if (
         !source
         || !Array.isArray(source.links)
-        || !asObject(source.weather)
         || !asObject(source.widgets)
         || !scratchpad
         || !Array.isArray(scratchpad.notes)
@@ -477,7 +450,6 @@
       }
       state.homeConfig = {
         links: source.links,
-        weather: source.weather,
         widgets: source.widgets,
         // Daybook rail width. Passed through (not part of the required shape
         // above) so an older service payload cannot reject the whole config —
@@ -650,7 +622,6 @@
       if (fence.isDisposed()) return state;
       const sources = [
         ['scheduler', () => shell?.scheduler?.getState?.(), applySchedulerPayload],
-        ['weather', () => shell?.weather?.getState?.(), applyWeatherPayload],
         ['home_config', () => shell?.home?.getConfig?.(), applyHomeConfigPayload],
         ['reminders', () => shell?.proactive?.getState?.(), applyProactivePayload],
         ['calendar', () => shell?.calendar?.getState?.(), applyCalendarPayload],
@@ -908,10 +879,6 @@
       }
       track(shell?.scheduler?.onChanged?.((payload) => {
         applySchedulerPayload(payload);
-        repaintIfHomeActive();
-      }));
-      track(shell?.weather?.onChanged?.((payload) => {
-        applyWeatherPayload(payload);
         repaintIfHomeActive();
       }));
       track(shell?.calendar?.onChanged?.((payload) => {

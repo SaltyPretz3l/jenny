@@ -100,7 +100,7 @@
   background: transparent;
   text-align: start;
   font: inherit;
-  font-size: clamp(9px, calc(12px / var(--atlas-zoom, 1)), 64px);
+  font-size: clamp(calc(9px * var(--font-scale, 1)), calc(12px * var(--font-scale, 1) / var(--atlas-zoom, 1)), 64px);
 }
 
 .ide-atlas-district-header:focus-visible {
@@ -112,7 +112,6 @@
   color: var(--text-secondary);
   font-family: var(--font-family-mono, ui-monospace, monospace);
   font-size: 1em;
-  letter-spacing: 0.02em;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -120,18 +119,18 @@
 
 .ide-atlas-district--d1 > .ide-atlas-district-header .ide-atlas-district-name {
   color: var(--text-primary);
-  font-weight: 600;
+  font-weight: 500;
 }
 
 .ide-atlas-district-flat {
   color: var(--text-muted);
-  font-size: 0.9em;
+  font-size: 1em;
 }
 
 .ide-atlas-district-count {
   flex: none;
   color: var(--text-muted);
-  font-size: 0.85em;
+  font-size: 1em;
   line-height: 1.6;
 }
 
@@ -228,7 +227,7 @@
   background: var(--bg-surface);
   color: var(--text-primary);
   font-family: var(--font-family-mono, ui-monospace, monospace);
-  font-size: 11px;
+  font-size: var(--font-size-caption);
   line-height: 1.2;
   white-space: nowrap;
   cursor: pointer;
@@ -393,8 +392,8 @@
   background: var(--state-warning);
   color: var(--bg-base);
   font-family: var(--font-family-mono, ui-monospace, monospace);
-  font-size: 10px;
-  font-weight: 700;
+  font-size: var(--font-size-caption);
+  font-weight: 500;
   opacity: 0.95;
   transition: opacity var(--motion-duration-emphasis) var(--motion-ease-standard);
 }
@@ -431,8 +430,8 @@
   padding-bottom: 8px;
   border-bottom: 1px solid var(--line);
   color: var(--text-primary);
-  font-size: 12px;
-  font-weight: 600;
+  font-size: var(--font-size-caption);
+  font-weight: 500;
 }
 
 .ide-map-activity-rail-live {
@@ -467,7 +466,7 @@
   background: transparent;
   color: var(--text-secondary);
   font-family: var(--font-family-mono, ui-monospace, monospace);
-  font-size: 11px;
+  font-size: var(--font-size-footnote);
   text-align: start;
   cursor: pointer;
 }
@@ -490,12 +489,12 @@
   white-space: nowrap;
 }
 
-.ide-map-activity-row-verb { flex: none; color: var(--text-muted); font-size: 10px; }
+.ide-map-activity-row-verb { flex: none; color: var(--text-muted); font-size: var(--font-size-caption); }
 .ide-map-activity-rail-foot {
   padding-top: 8px;
   border-top: 1px solid var(--line);
   color: var(--text-muted);
-  font-size: 11px;
+  font-size: var(--font-size-caption);
 }
 
 /* ---- Bucket strip (ignored dirs as chrome, bottom-right) ----------------- */
@@ -525,7 +524,7 @@
   background: transparent;
   color: var(--text-secondary);
   font-family: var(--font-family-mono, ui-monospace, monospace);
-  font-size: 10px;
+  font-size: var(--font-size-caption);
   white-space: nowrap;
   transition: color var(--transition-fast);
 }
@@ -581,7 +580,7 @@
 .ide-map-status-slot:empty { display: none; }
 
 .ide-map-status {
-  font-size: 11px;
+  font-size: var(--font-size-footnote);
   color: var(--text-secondary);
   white-space: nowrap;
 }
@@ -637,7 +636,7 @@
   justify-content: space-between;
   gap: 8px;
   color: var(--text-primary);
-  font-weight: 600;
+  font-weight: 500;
 }
 
 .ide-map-overview-section {
@@ -648,9 +647,7 @@
 
 .ide-map-overview-heading {
   color: var(--text-muted);
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
+  font-size: var(--font-size-caption);
 }
 
 .ide-map-overview-row {
@@ -659,7 +656,7 @@
   justify-content: space-between;
   gap: 10px;
   color: var(--text-secondary);
-  font-size: 12px;
+  font-size: var(--font-size-body);
 }
 
 .ide-map-overview-row .ide-map-overview-path {
@@ -673,7 +670,7 @@
 .ide-map-overview-count {
   flex: none;
   color: var(--text-muted);
-  font-size: 11px;
+  font-size: var(--font-size-caption);
 }
 
 .ide-map-overview-chips {
@@ -696,7 +693,7 @@
   align-items: center;
   gap: 6px;
   color: var(--text-secondary);
-  font-size: 11px;
+  font-size: var(--font-size-caption);
 }
 
 .ide-map-overview-legend-swatch {

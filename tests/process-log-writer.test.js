@@ -44,6 +44,29 @@ test('write delegates to ordered writeBatch and produces one stream write', () =
   assert.ok(writes[1].indexOf('second') < writes[1].indexOf('third'));
 });
 
+test('fileMinLevel keeps DEBUG off disk but still on the stream', async () => {
+  const appends = [];
+  const streamWrites = [];
+  const writer = new ProcessLogWriter({
+    stream: { write: (chunk) => streamWrites.push(chunk) },
+    filePath: 'G:\\logs\\shell.log',
+    fileMinLevel: 'INFO',
+    fsImpl: makeFsDouble({ appendFile(_path, payload, _encoding, done) { appends.push(payload); done(); } }),
+  });
+
+  writer.writeBatch([
+    { level: 'DEBUG', event: 'chatter' },
+    { level: 'INFO', event: 'kept' },
+  ]);
+  writer.write({ level: 'DEBUG', event: 'only-debug' });
+  await writer.flush();
+
+  const onDisk = appends.join('');
+  assert.doesNotMatch(onDisk, /chatter|only-debug/);
+  assert.match(onDisk, /"event":"kept"/);
+  assert.match(streamWrites.join(''), /chatter/);
+});
+
 test('writeBatch coalesces one renderer batch into one file append', async () => {
   const appends = [];
   const writer = new ProcessLogWriter({

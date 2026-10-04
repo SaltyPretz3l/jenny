@@ -11,12 +11,19 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
+from sidecar.ai.engines.vllm_sse_stream import provider_prompt_cache_counts, provider_timings
+from sidecar.runtime.diagnostics import log_event
 from sidecar.runtime.local_engine.request_context import (
     consume_provider_call_purpose,
     current_diagnostics_store,
+    current_time_to_first_visible_token_ms,
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _ms_to_ns(value_ms: float) -> int | None:
+    return int(value_ms * 1_000_000) if value_ms > 0 else None
 
 
 class _VLLMTelemetryMixin:
@@ -32,7 +39,7 @@ class _VLLMTelemetryMixin:
 
         def _current_request_context(self) -> dict[str, Any] | None: ...
 
-    def _record_provider_request(
+    def _record_provider_request(  # noqa: PLR0913  # telemetry
         self,
         *,
         think_enabled: bool,
@@ -43,6 +50,8 @@ class _VLLMTelemetryMixin:
         tool_capable: bool,
         tool_payload_bytes: int = 0,
         provider_sampler: dict[str, Any] | None = None,
+        final_output_tokens: int | None = None,
+        thinking_headroom_tokens: int = 0,
     ) -> None:
         # Consumed before the guard: the tag is for THIS call whether or
         # not it is recorded, never for the next one.
@@ -58,12 +67,14 @@ class _VLLMTelemetryMixin:
         # the first-chunk latch is per CALL so each one gets its own timing.
         if isinstance(context, dict):
             context["first_chunk_logged"] = False
-        logger.info(
-            "%s request started.",
-            self._DISPLAY_NAME,
-            extra={
-                "request_id": request_id,
-                "trace_id": trace_id or request_id,
+        log_event(
+            logger, logging.INFO,
+            component="ai.engines.vllm",
+            event="ai.engines.vllm.request_started",
+            message=f"{self._DISPLAY_NAME} request started.",
+            request_id=request_id,
+            trace_id=trace_id or request_id,
+            data={
                 "model": self.model_name,
                 "think_enabled": think_enabled,
                 "num_predict": num_predict,
@@ -89,6 +100,8 @@ class _VLLMTelemetryMixin:
             tool_payload_bytes=tool_payload_bytes,
             provider_sampler=provider_sampler,
             purpose=purpose,
+            final_output_tokens=final_output_tokens,
+            thinking_headroom_tokens=thinking_headroom_tokens,
         )
 
     def _record_first_chunk(self) -> None:
@@ -139,17 +152,37 @@ class _VLLMTelemetryMixin:
         cached_tokens: Any = None
         if isinstance(details, dict):
             cached_tokens = details.get("cached_tokens")
+        # llama-server's ``timings`` splits the prefill into evaluated
+        # (``prompt_n``) and reused (``cache_n``) tokens: the prefix-cache meter.
+        prompt_n, cache_n = provider_prompt_cache_counts(body)
+        if cached_tokens is None:
+            cached_tokens = cache_n
+        # llama-server's ``timings`` gives the dump provider_tokens_per_second
+        # and prefill time; vLLM sends none and these stay unset.
+        prompt_ms, predicted_ms, predicted_n = provider_timings(body)
         store.record_provider_usage(
             request_id=request_id,
             prompt_eval_count=usage.get("prompt_tokens"),
-            eval_count=usage.get("completion_tokens"),
+            eval_count=predicted_n
+            if predicted_ms > 0 and predicted_n > 0
+            else usage.get("completion_tokens"),
             cached_tokens=cached_tokens,
+            prompt_tokens_evaluated=prompt_n,
+            prompt_eval_duration_ns=_ms_to_ns(prompt_ms),
+            eval_duration_ns=_ms_to_ns(predicted_ms),
             provider_label=self._PROVIDER_LABEL,
         )
 
-    def _complete_provider_request(self, *, outcome: str = "completed") -> None:
+    def _current_time_to_first_token_ms(self) -> float:
+        return current_time_to_first_visible_token_ms(self)
+
+    def _complete_provider_request(
+        self, *, outcome: str = "completed", finish_reason: str | None = None
+    ) -> None:
         request_id = self._request_id()
         store = current_diagnostics_store(self)
         if store is None or not request_id or not hasattr(store, "complete_provider_request"):
             return
-        store.complete_provider_request(request_id=request_id, outcome=outcome)
+        store.complete_provider_request(
+            request_id=request_id, outcome=outcome, finish_reason=finish_reason
+        )

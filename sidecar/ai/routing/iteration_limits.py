@@ -13,13 +13,12 @@ profile. Never resolve the profile from the *requested* engine.
 from __future__ import annotations
 
 import math
+import statistics
+from dataclasses import dataclass, field
 from typing import Any
 
 from sidecar.ai.engines.response_format import ResponseFormat
-from sidecar.ai.feature_flags import (
-    is_cloud_loop_profile_enabled,
-    is_resource_discipline_enabled,
-)
+from sidecar.ai.feature_flags import is_resource_discipline_enabled
 from sidecar.ai.host_policy import HOST_EXECUTION_POLICY_VERSION
 from sidecar.ai.routing import subagent_finalization as _subagent_finalization
 from sidecar.runtime.chat_models import TerminalChatStateError
@@ -32,6 +31,10 @@ SUB_AGENT_REPORT_MODE_STRUCTURED = _subagent_finalization.SUB_AGENT_REPORT_MODE_
 parse_sub_agent_report_object = _subagent_finalization.parse_structured_report
 _append_sub_agent_finalization_message = _subagent_finalization.append_finalization_message
 _sub_agent_response_format = _subagent_finalization.response_format
+
+# Render budget from which the Electron tool derives its deadline.
+# The tool reserves the last 160 s for the chat-engine restore.
+IMAGE_GENERATE_TIMEOUT_SECONDS = 900.0
 
 LOOP_PROFILE_CLOUD = "cloud"
 LOOP_PROFILE_LOCAL = "local"
@@ -118,7 +121,7 @@ def effective_max_loop_wall_seconds(config: Any) -> float:
         cloud_attr="cloud_max_loop_wall_seconds",
         local_attr="max_loop_wall_seconds",
         cloud_default=28_800.0,
-        local_default=1_800.0,
+        local_default=3_600.0,
     )
 
 
@@ -167,7 +170,7 @@ def effective_max_tool_calls_per_session(config: Any) -> int:
         cloud_attr="cloud_max_tool_calls_per_session",
         local_attr="max_tool_calls_per_session",
         cloud_default=2_000,
-        local_default=200,
+        local_default=2_000,
     )
 
 
@@ -244,10 +247,7 @@ def _resource_discipline_enabled(config: Any) -> bool:
 
 def _is_cloud_profile_active(config: Any) -> bool:
     engine_type = str(getattr(config, "engine_type", "") or "").strip().lower()
-    if engine_type not in _CLOUD_ENGINE_TYPES:
-        return False
-    flags = getattr(config, "feature_flags", {}) if config is not None else {}
-    return is_cloud_loop_profile_enabled(flags)
+    return engine_type in _CLOUD_ENGINE_TYPES
 
 
 def _profiled_int(
@@ -320,6 +320,8 @@ def tool_timeout_for_runtime(config: Any, runtime: Any | None, call: Any | None)
                 configured_timeout,
                 min(requested_limit, float(requested)) + settle_margin,
             )
+    if call is not None and call.tool_id == "image_generate":
+        configured_timeout = max(configured_timeout, IMAGE_GENERATE_TIMEOUT_SECONDS)
     if runtime is None:
         return configured_timeout
     remaining = runtime.remaining_wall_clock_seconds()
@@ -332,3 +334,139 @@ def tool_timeout_for_runtime(config: Any, runtime: Any | None, call: Any | None)
     if call is not None and call.tool_id == "ask_user" and remaining is not None:
         return remaining
     return runtime.tool_timeout_seconds(configured_timeout)
+
+
+# -- Speed-scaled local task step limit (TR-005 follow-up, owner decision 2026-09-28)
+#
+# A slow local thinker (Bonsai 2 27B: ~60-230 s of reasoning per step) spends the
+# local task cap of 30 steps long before the turn's working-time limit, so the
+# turn ends on the step count while most of its time budget is unused. When the
+# local task cap is left at its default, reaching it therefore re-evaluates the
+# cap from the measured model-generation wall time of this run:
+#
+#     mean >= 30 s  ->  cap = min(4 x base, base x ceil(mean / 30))
+#
+# re-evaluated each time an extended cap is reached. The mean, not the median
+# (TR-013): Bonsai 2 answers most tool steps in ~5 s and spends its time in a few
+# multi-minute thinks, which a median hides. The working-time limit stays
+# the hard bound; an explicit user value, a cloud engine, chat mode, sub-agents
+# and the legacy (resource discipline off) path never scale.
+#
+# "Left at default" is the configured value equal to the schema default: the
+# Settings store never persists a value equal to the default as an override
+# (renderer/shared/engine-tuning-schema.js ``normalizeEngineTuningValue``), so an
+# override of exactly the default cannot exist.
+
+DEFAULT_LOCAL_TASK_LOOP_ITERATIONS = 30
+SLOW_STEP_SECONDS = 30.0
+MAX_SCALE_FACTOR = 4
+
+
+def scalable_task_loop_base(
+    config: Any,
+    *,
+    mode: str | None,
+    agent_surface: str | None,
+) -> int | None:
+    """Return the base cap when this run's step limit may scale, else ``None``."""
+
+    eligible = (
+        loop_profile_name(config) == LOOP_PROFILE_LOCAL
+        # Resource discipline off selects the legacy single cap.
+        and _resource_discipline_enabled(config)
+        and str(agent_surface or "").strip().lower() != AGENT_SURFACE_SUB_AGENT
+        and str(mode or "").strip().lower() != "chat"
+    )
+    if not eligible:
+        return None
+    try:
+        value = int(getattr(config, "max_task_loop_iterations", None))  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+    return value if value == DEFAULT_LOCAL_TASK_LOOP_ITERATIONS else None
+
+
+def resume_iteration_ceiling(runtime: Any, config: Any, request_context: Any) -> int:
+    """Most steps a paused turn may have left when it resumes.
+
+    The fresh runtime carries the configured cap, but a slow local model at the
+    default task cap may have earned an extension (``LoopCapScaler``) before it
+    paused, so its checkpoint can hold more remaining steps than the base cap
+    (Fable B2 review). Anything above the scaler's ceiling still means the
+    budget changed.
+    """
+
+    ceiling = int(getattr(runtime, "max_iterations", 0) or 0)
+    base = scalable_task_loop_base(
+        config,
+        mode=getattr(request_context, "mode", None),
+        agent_surface=getattr(request_context, "agent_surface", None),
+    )
+    return ceiling if base is None else max(ceiling, base * MAX_SCALE_FACTOR)
+
+
+def scaled_cap(base: int, mean_seconds: float) -> int:
+    """Step cap for a measured mean generation time (never below ``base``)."""
+
+    if mean_seconds < SLOW_STEP_SECONDS:
+        return base
+    factor = min(MAX_SCALE_FACTOR, math.ceil(mean_seconds / SLOW_STEP_SECONDS))
+    return base * max(1, factor)
+
+
+@dataclass
+class LoopCapScaler:
+    """Per-run state: generation timings and the step cap granted so far.
+
+    ``allowed_total`` is the turn-absolute step cap this run may reach: for a
+    fresh run the base cap, for an approval-resumed run the previous leg's
+    total (``iteration_base + remaining``), which already includes any
+    extension that leg granted. After a plan approval the build leg resumes
+    with at least a full task cap remaining (TR-013), so its total starts from
+    that fresh budget. It deliberately ignores the uncounted
+    checkpoint/gate grants, which widen the loop's own counters separately.
+    """
+
+    base: int | None
+    allowed_total: int
+    durations: list[float] = field(default_factory=list)
+
+    @classmethod
+    def for_run(
+        cls,
+        config: Any,
+        *,
+        request_context: Any | None,
+        iteration_base: int,
+        max_iterations: int,
+    ) -> LoopCapScaler:
+        base = scalable_task_loop_base(
+            config,
+            mode=getattr(request_context, "mode", None),
+            agent_surface=getattr(request_context, "agent_surface", None),
+        )
+        return cls(base=base, allowed_total=int(iteration_base) + int(max_iterations))
+
+    def record_generation(self, seconds: float) -> None:
+        if self.base is not None and seconds >= 0:
+            self.durations.append(float(seconds))
+
+    def mean_seconds(self) -> float | None:
+        return statistics.fmean(self.durations) if self.durations else None
+
+    def pending_extension(self) -> int:
+        """Steps the current timings would add to ``allowed_total`` (never negative)."""
+
+        mean = self.mean_seconds()
+        # A fast model never extends, even when this run's own cap sits below
+        # the base (a caller-supplied runtime budget).
+        if self.base is None or mean is None or mean < SLOW_STEP_SECONDS:
+            return 0
+        return max(0, scaled_cap(self.base, mean) - self.allowed_total)
+
+    def claim_extension(self) -> int:
+        """Grant the pending extension; returns the number of steps added."""
+
+        delta = self.pending_extension()
+        self.allowed_total += delta
+        return delta

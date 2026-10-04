@@ -41,6 +41,31 @@ test('normal shutdown latches session runtime before awaiting cleanup stages', a
   assert.ok(order.indexOf('backend:stop') > order.indexOf('setup:drain'));
 });
 
+test('emergency shutdown logs work parked for the next start as information', async () => {
+  const logs = [];
+  const service = {
+    sessionRuntime: {
+      beginShutdown: () => ({ requested: true, completion: Promise.resolve({
+        ok: false, reason: 'runtime_cleanup_awaits_backend_restart',
+      }) }),
+    },
+    sessionStore: { dispose() {} },
+  };
+  const controller = createRuntimeShutdownController({
+    app: { getPath: () => '' },
+    getBackendService: () => service,
+    llamaServerManager: { stopSync() {} },
+    log: (level, event, fields) => logs.push({ level, event, fields }),
+    ...shutdownFakes(),
+  });
+
+  controller.runEmergencyRuntimeShutdownSync();
+  await new Promise(resolve => setImmediate(resolve));
+
+  assert.ok(logs.some(entry => entry.level === 'INFO' && entry.event === 'session_runtime.shutdown_awaits_restart'));
+  assert.equal(logs.some(entry => entry.event === 'session_runtime.shutdown_unconfirmed'), false);
+});
+
 test('emergency shutdown closes runtime before store drain without claiming cleanup', async () => {
   const order = [];
   const logs = [];

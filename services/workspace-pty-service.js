@@ -1,20 +1,17 @@
 /* services/workspace-pty-service.js - real ConPTY terminal for the Workspace
- * IDE terminal rail, behind the default-ON `workspace_pty_terminal` flag
- * (env `JENNY_ENABLE_WORKSPACE_PTY_TERMINAL=0` rolls back to the legacy line
- * terminal).
- * Unlike the piped WorkspaceTerminalService sibling, this drives an actual
- * pseudo-terminal via @lydell/node-pty (zero-toolchain prebuilds), so
+ * IDE terminal rail (the only IDE terminal since the post-1.2.0 sweep retired
+ * the piped line terminal and its workspace_pty_terminal flag). This drives
+ * an actual pseudo-terminal via @lydell/node-pty (zero-toolchain prebuilds), so
  * interactive TUIs, colors, and line editing work. Single session, cwd pinned
  * to the tools workspace root, env scrubbed (credentials + JENNY_* feature
  * vars), byte-capped output forwarded over the bridge as workspacePty.onData /
  * onExit events.
  *
- * Flag posture: every public method short-circuits to {available:false} when
- * the flag is off, and - pinned invariant - the native module loader is NEVER
- * invoked while gated OR before the workspace root is confirmed, so a disabled
- * or rootless install never loads native code. Public methods return plain
- * structured results and never throw across the IPC seam; the loader failing
- * (missing prebuild / ABI mismatch) fails soft to MODULE_LOAD_FAILED.
+ * Pinned invariant: the native module loader is NEVER invoked before the
+ * workspace root is confirmed, so a rootless install never loads native
+ * code. Public methods return plain structured results and never throw
+ * across the IPC seam; the loader failing (missing prebuild / ABI mismatch)
+ * fails soft to MODULE_LOAD_FAILED.
  *
  * node-pty quirk: this package reports pid === 0; the IPty handle itself is
  * held in the registry and pid is never fed to any kill-tree helper. */
@@ -26,7 +23,7 @@ const { TERMINAL_ERROR_CODES } = require('./backend/error-codes');
 const { t } = require('./i18n-main');
 const { createTerminalOutputQueue } = require('./workspace-terminal-output-queue');
 
-const MAX_CHUNK_BYTES = 64 * 1024; // per onData event (matches piped sibling)
+const MAX_CHUNK_BYTES = 64 * 1024; // per onData event (matches the run-task service)
 const MAX_WRITE_BYTES = 16 * 1024; // per write() call
 const COLS_MIN = 2;
 const COLS_MAX = 500;
@@ -60,7 +57,6 @@ function truncateUtf8(value, maxBytes) {
 class WorkspacePtyService {
   constructor({
     configService,
-    featureFlagProvider,
     sendBridgeEvent,
     ptyModuleLoader = () => require('@lydell/node-pty'),
     env = process.env,
@@ -75,7 +71,6 @@ class WorkspacePtyService {
       throw new TypeError('WorkspacePtyService requires configService');
     }
     this._configService = configService;
-    this._featureFlagProvider = typeof featureFlagProvider === 'function' ? featureFlagProvider : null;
     this._sendBridgeEvent = typeof sendBridgeEvent === 'function' ? sendBridgeEvent : () => {};
     this._ptyModuleLoader = typeof ptyModuleLoader === 'function' ? ptyModuleLoader : () => require('@lydell/node-pty');
     this._env = env;
@@ -100,10 +95,6 @@ class WorkspacePtyService {
         /* logging must never break the terminal */
       }
     }
-  }
-
-  _enabled() {
-    return this._featureFlagProvider?.()?.workspace_pty_terminal === true;
   }
 
   _requireRoot() {
@@ -201,16 +192,12 @@ class WorkspacePtyService {
     if (this._disposed) {
       return {
         ok: false,
-        available: this._enabled(),
+        available: true,
         code: TERMINAL_ERROR_CODES.NO_SESSION,
         reason: 'disposed',
       };
     }
-    // 1. Flag check FIRST - never touch the loader while gated.
-    if (!this._enabled()) {
-      return { available: false };
-    }
-    // 2. Root check BEFORE lazy load - a rootless spawn must not load native code.
+    // 1. Root check BEFORE lazy load - a rootless spawn must not load native code.
     const cwd = this._requireRoot();
     if (!cwd) {
       return {
@@ -220,16 +207,18 @@ class WorkspacePtyService {
         message: t('main.workspacePty.workspaceRootRequired', 'No workspace root is configured; choose a workspace folder first.'),
       };
     }
-    // 3. Single-session policy.
+    // 2. Single-session policy.
     if (this._session) {
       return {
         ok: true,
         available: true,
         alreadyRunning: true,
         sessionId: this._session.id,
+        shell: this._session.shell,
+        cwd: this._session.cwd,
       };
     }
-    // 4. Lazy-load the native module - fail soft.
+    // 3. Lazy-load the native module - fail soft.
     let ptyModule;
     try {
       ptyModule = this._loadPtyModule();
@@ -250,7 +239,7 @@ class WorkspacePtyService {
     const spawnEnv = sanitizeSpawnEnv(this._env, { extraDeny: [/^JENNY_/i] });
     const opts = { cols: safeCols, rows: safeRows, cwd, env: spawnEnv };
 
-    // 5. Shell candidates: win32 powershell -> cmd fallback; posix bash (-i).
+    // 4. Shell candidates: win32 powershell -> cmd fallback; posix bash (-i).
     const candidates = process.platform === 'win32'
       ? [{ shell: 'powershell.exe', args: ['-NoProfile', '-NoLogo'] }, { shell: 'cmd.exe', args: [] }]
       : [{ shell: 'bash', args: ['-i'] }];
@@ -279,18 +268,19 @@ class WorkspacePtyService {
       };
     }
 
-    // 6. Session id + registry (HOLD the IPty handle, never pty.pid).
+    // 5. Session id + registry (HOLD the IPty handle, never pty.pid).
     this._sessionCounter += 1;
     const id = `pty-${this._sessionCounter}`;
     let resolveExit;
     const exitPromise = new Promise((resolve) => { resolveExit = resolve; });
     const session = {
       id, pty, shell: chosen, cwd, settled: false, resolveExit, exitPromise,
+      cols: safeCols, rows: safeRows, // last applied size; resize() skips a no-op
       outputQueue: this._createOutputQueue(id),
       terminationPromise: null,
     };
     this._session = session;
-    // 7. Wire data/exit forwarding.
+    // 6. Wire data/exit forwarding.
     try {
       this._wire(session);
     } catch (error) {
@@ -329,7 +319,6 @@ class WorkspacePtyService {
   async write({ sessionId, data } = {}) {
     const session = this._sessionFor(sessionId);
     if (!session) {
-      if (!this._enabled()) return { available: false };
       return { ok: false, code: TERMINAL_ERROR_CODES.NO_SESSION };
     }
     const { text, bytes } = truncateUtf8(data, MAX_WRITE_BYTES);
@@ -345,13 +334,17 @@ class WorkspacePtyService {
   async resize({ sessionId, cols, rows } = {}) {
     const session = this._sessionFor(sessionId);
     if (!session) {
-      if (!this._enabled()) return { available: false };
       return { ok: false, code: TERMINAL_ERROR_CODES.NO_SESSION };
     }
     const safeCols = clampInt(cols, COLS_MIN, COLS_MAX, DEFAULT_COLS);
     const safeRows = clampInt(rows, ROWS_MIN, ROWS_MAX, DEFAULT_ROWS);
+    if (session.cols === safeCols && session.rows === safeRows) {
+      return { ok: true, unchanged: true }; // same size: no ConPTY resize
+    }
     try {
       session.pty.resize(safeCols, safeRows);
+      session.cols = safeCols;
+      session.rows = safeRows;
     } catch (error) {
       return {
         ok: false,
@@ -365,7 +358,6 @@ class WorkspacePtyService {
   async kill({ sessionId } = {}) {
     const session = this._sessionFor(sessionId);
     if (!session) {
-      if (!this._enabled()) return { available: false };
       return { ok: true, killed: false };
     }
     const terminationConfirmed = await this._terminateSession(session);
@@ -416,5 +408,6 @@ class WorkspacePtyService {
 }
 
 module.exports = {
+  MAX_WRITE_BYTES,
   WorkspacePtyService,
 };

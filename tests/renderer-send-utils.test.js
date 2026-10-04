@@ -323,27 +323,7 @@ test('startPromptSend snapshots a queued follow-up and clears the live composer 
   assert.equal(queuedSend.runtimePreferences.conversationMode, 'chat');
   assert.equal(harness.chatInput.value, '');
   assert.deepEqual(harness.state.attachments.queued, []);
-  assert.equal(harness.calls.cometUserSendStarted.length, 0);
-});
-
-test('a plugin command is refused while busy and is never written to the send queue', async (t) => {
-  const harness = createControllerHarness([], { chatInputValue: 'Run summary' });
-  harness.multiStreamController.registerStream('session-1', 'stream-active');
-  t.after(() => harness.restore());
-  const invocation = {
-    invocation_schema_version: 2,
-    publisher_id: 'jenny-official', plugin_id: 'starter', command_id: 'command-main',
-    observed_generation_id: 'gen-7', observed_registry_revision: 7, inputs: [],
-  };
-
-  const result = await harness.controller.startPromptSend('Run summary', {
-    pluginCommandInvocation: invocation,
-  });
-
-  assert.deepEqual(result, { rejected: true, reason: 'session_busy', sessionId: 'session-1' });
-  assert.equal(harness.calls.startStream.length, 0);
-  assert.equal(harness.state.queuedSendBySession.has('session-1'), false);
-  assert.match(harness.calls.composerNotices.at(-1).message, /active response/i);
+  assert.equal(harness.calls.userSendStarted.length, 0);
 });
 
 test('startPromptSend queues a follow-up sent during the terminal post-work window', async (t) => {
@@ -597,8 +577,8 @@ test('startPromptSend allows concurrent sends for a different session', async (t
   assert.equal(typeof harness.calls.startStream[0].clientTiming?.send_started_at_ms, 'number');
   assert.equal(typeof harness.calls.startStream[0].clientTiming?.optimistic_rendered_at_ms, 'number');
   assert.equal(typeof harness.calls.startStream[0].clientTiming?.local_render_latency_ms, 'number');
-  assert.equal(harness.calls.cometUserSendStarted.length, 1);
-  assert.deepEqual(harness.calls.cometUserSendStarted[0], {
+  assert.equal(harness.calls.userSendStarted.length, 1);
+  assert.deepEqual(harness.calls.userSendStarted[0], {
     sessionId: 'session-1',
     prompt: 'Send here',
     attachmentCount: 0,

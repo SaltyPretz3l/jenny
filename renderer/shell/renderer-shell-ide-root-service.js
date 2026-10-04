@@ -120,9 +120,14 @@
     const registerCleanup = typeof options.registerCleanup === 'function'
       ? options.registerCleanup
       : noop;
-    const ideControllerUtils = options.ideControllerUtils || {};
-    const ideSendUtils = options.ideSendUtils
-      || resolveModule('rendererIdeSendUtils', '../features/renderer-ide-send-utils');
+    const getIdeControllerUtils = options.getIdeControllerUtils
+      || (() => options.ideControllerUtils || windowRef.rendererIdeController || {});
+    const ideScripts = windowRef.rendererIdeScriptManifest
+      || resolveModule('rendererIdeScriptManifest', './renderer-ide-script-manifest');
+    // An injected controller factory supplies its own complete graph; production
+    // passes getIdeControllerUtils and loads the manifest group on first use.
+    let ideLoaded = typeof options.ideControllerUtils?.createIdeController === 'function';
+    let ideLoad = null;
     const transitionUtils = options.transitionUtils
       || resolveModule('rendererWorkspaceRootTransition', './renderer-workspace-root-transition');
 
@@ -170,6 +175,8 @@
         }
         return;
       }
+      // The project switcher shows its own "Locate folder" toast for this one.
+      if (String(outcome?.code || '') === 'workspace_folder_missing') return;
       const blocked = outcome?.blocked === true;
       try {
         showShellErrorToast(
@@ -200,7 +207,45 @@
       }
     }
 
+    function ensureIdeLoaded() {
+      if (facadeDisposed) return Promise.resolve(false);
+      if (ideLoaded) return Promise.resolve(true);
+      if (ideLoad) return ideLoad;
+      const scripts = Array.isArray(ideScripts) ? ideScripts : [];
+      // Start the whole batch synchronously: async=false preserves document order.
+      // A missing predecessor invalidates later evaluation-time captures too.
+      const loads = scripts.map(([src, name], index) => {
+        const isReady = () => scripts.slice(0, index + 1).every(([, globalName]) => Boolean(windowRef[globalName]));
+        try {
+          return Promise.resolve(windowRef.scriptLoaderUtils?.ensureScript?.({ src, isReady }))
+            .then((loaded) => loaded === true, () => false);
+        } catch (_error) {
+          return Promise.resolve(false);
+        }
+      });
+      ideLoad = Promise.all(loads).then((results) => {
+        if (facadeDisposed) return false;
+        const failed = scripts.findIndex(([, name], index) => !results[index] || !windowRef[name]);
+        if (failed >= 0 || !scripts.length) {
+          appendLog('WARN', 'workspace.ide_load_failed', { src: scripts[failed]?.[0] || '' });
+          // Only entries that resolved false lost their ensureScript cache; a cached
+          // success must keep its global or a retry can never re-inject it.
+          scripts.forEach(([, name], index) => { if (!results[index]) delete windowRef[name]; });
+          return false;
+        }
+        ideLoaded = true;
+        return true;
+      }).finally(() => { ideLoad = null; });
+      return ideLoad;
+    }
+
     function ensureIdeController() {
+      if (facadeDisposed) return null;
+      if (!ideLoaded) return ensureIdeLoaded().then((loaded) => loaded ? ensureIdeController() : null);
+      const ideControllerUtils = getIdeControllerUtils();
+      const ideSendUtils = options.ideSendUtils
+        || windowRef.rendererIdeSendUtils
+        || resolveModule('rendererIdeSendUtils', '../features/renderer-ide-send-utils');
       if (ideController) {
         return ideController;
       }
@@ -308,7 +353,7 @@
     async function run(mode, request) {
       let controller;
       try {
-        controller = ensureTransitionController();
+        controller = await ensureIdeLoaded() ? ensureTransitionController() : null;
       } catch (error) {
         const outcome = {
           ...unavailableOutcome(mode),
@@ -387,14 +432,14 @@
         projectSwitcher = windowRef.rendererProjectSwitcher.createProjectSwitcher({
           state, windowRef, workspaceRootService,
           openSettingsSection: (...args) => callbacks.openSettingsSection?.(...args),
-          showToast: (message) => callbacks.showToastMessage?.(message, { title: jt('ide.root.workspaceTitle', 'Workspace'), tone: 'info', dedupeKey: 'projects:created' }),
+          showToast: (message, options) => callbacks.showToastMessage?.(message, { title: jt('ide.root.workspaceTitle', 'Workspace'), tone: 'info', dedupeKey: 'projects:created', ...(options || {}) }),
           showError: (message) => callbacks.showShellErrorToast?.(message, { title: jt('ide.root.workspaceTitle', 'Workspace'), dedupeKey: 'projects:move-failed' }),
           appendClientLog: (...args) => appendLog(...args),
           refreshSessions: (...args) => callbacks.refreshSessions?.(...args),
           // Chat follow goes through workspace-tab authority (tab state,
           // navigation guards, rollback), never the raw conversation loader.
           openSession: (...args) => callbacks.activateWorkspaceSession?.(...args),
-          newChat: () => callbacks.handleCreateSession?.(),
+          newChat: (...args) => callbacks.handleCreateSession?.(...args),
         });
         if (facadeDisposed) {
           projectSwitcher.dispose();
@@ -438,7 +483,7 @@
       }
       let outcome;
       try {
-        const controller = ensureTransitionController();
+        const controller = await ensureIdeLoaded() ? ensureTransitionController() : null;
         if (typeof controller?.external !== 'function') {
           outcome = unavailableOutcome('external');
         } else {
@@ -482,9 +527,10 @@
     }
 
     bindExternalTransitionRequests();
+    if (state.ui?.activeView === 'ide') ensureIdeLoaded();
 
     return {
-      ensureIdeController,
+      ensureIdeController, ensureIdeLoaded,
       workspaceRootService,
     };
   }

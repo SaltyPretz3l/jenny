@@ -137,6 +137,98 @@ function operation(overrides = {}) {
   };
 }
 
+test('live tool disables grow only for open bindings of the selected session', () => {
+  const authority = new SessionExecutionAuthority({
+    projectAuthority: { captureSession: () => ROOT_A, requireCurrent: () => ROOT_A },
+    permissionStore: { getSnapshot: () => ({ version: 3,
+      legacy_policies: { read_file: 'auto', jenny_status: 'auto' }, rules: [] }) },
+    knowledgeService: { getSidecarConfig: () => ({ knowledge_roots: [] }) },
+    resolveProjectWorkspaceServices: () => ({}),
+    randomUUID: () => operation().authority_revision,
+  });
+  const bind = sessionId => authority.captureSession(sessionId, { requestId: 'request-alpha' });
+  const first = bind('session-alpha');
+  const second = bind('session-alpha');
+  const closed = bind('session-alpha');
+  const other = bind('session-other');
+  authority.close(closed);
+  assert.equal(authority.checkRuntimeOperation(first, operation()).status, 'granted');
+  assert.equal(authority.disableToolsForSession('unknown', ['read_file']), 0);
+  assert.equal(authority.disableToolsForSession('session-alpha', [null, 42, {}, '']), 0);
+  assert.equal(authority.disableToolsForSession('session-alpha', ['read_file', 'jenny_status']), 2);
+  for (const binding of [first, second]) {
+    const denied = authority.checkRuntimeOperation(binding, operation());
+    assert.equal(denied.status, 'rejected');
+    assert.equal(denied.error.reason, 'tool_disabled');
+    assert.equal(denied.error.message, 'The tool is disabled for this request.');
+    assert.equal(authority.checkRuntimeOperation(binding,
+      operation({ tool_name: 'jenny_status', arguments: {} })).status, 'granted');
+  }
+  assert.equal(authority.checkRuntimeOperation(other,
+    operation({ session_id: 'session-other' })).status, 'granted');
+  assert.equal(authority.disableToolsForSession('session-alpha', []), 0);
+  assert.equal(authority.disableToolsForSession('session-alpha', ['read_file']), 0);
+  authority.noteApproved(first, { operationId: 'tool-call-1', toolName: 'read_file',
+    arguments: operation().arguments });
+  assert.equal(authority.checkRuntimeOperation(first, operation()).error.reason, 'tool_disabled');
+  const next = bind('session-alpha');
+  assert.equal(authority.checkRuntimeOperation(next, operation()).status, 'granted');
+  for (const binding of [first, second, next]) authority.close(binding);
+  assert.equal(authority.disableToolsForSession('session-alpha', ['write_file']), 0);
+  authority.close(other);
+});
+
+test('a binding captured later in the turn starts from the chat\'s current tool switches', () => {
+  let stored = [];
+  let fail = false;
+  const authority = new SessionExecutionAuthority({
+    projectAuthority: { captureSession: () => ROOT_A, requireCurrent: () => ROOT_A },
+    permissionStore: { getSnapshot: () => ({ version: 3,
+      legacy_policies: { read_file: 'auto', jenny_status: 'auto' }, rules: [] }) },
+    knowledgeService: { getSidecarConfig: () => ({ knowledge_roots: [] }) },
+    resolveProjectWorkspaceServices: () => ({}),
+    resolveSessionDisabledTools: (sessionId) => {
+      assert.equal(sessionId, 'session-alpha');
+      if (fail) throw new Error('session store unavailable');
+      return stored;
+    },
+    randomUUID: () => operation().authority_revision,
+  });
+  const capture = () => authority.captureSession('session-alpha', { requestId: 'request-alpha' });
+  const first = capture();
+  assert.equal(authority.checkRuntimeOperation(first, operation()).status, 'granted');
+
+  // The user switches Files off mid-turn; the turn pauses and resumes on a new binding.
+  stored = ['read_file', 'jenny_status'];
+  authority.close(first);
+  const resumed = capture();
+  assert.equal(authority.checkRuntimeOperation(resumed, operation()).error.reason, 'tool_disabled');
+  assert.equal(authority.checkRuntimeOperation(resumed,
+    operation({ tool_name: 'jenny_status', arguments: {} })).status, 'granted', 'always-on tools stay on');
+  const availability = getTrustedExecutionBinding(resumed).describeToolAvailability({
+    read_file: { available: true }, jenny_status: { available: true },
+  });
+  assert.equal(availability.tools_status.read_file.available, false);
+  assert.equal(availability.tools_status.read_file.reason, 'disabled for this request');
+  assert.equal(availability.tools_status.jenny_status.available, true);
+  authority.close(resumed);
+
+  // A failing lookup never blocks the capture; the request's own preferences still apply.
+  fail = true;
+  const fallback = capture();
+  assert.equal(authority.checkRuntimeOperation(fallback, operation()).status, 'granted');
+  authority.close(fallback);
+});
+
+test('live tool disables retain at most 512 names per binding', () => {
+  const { authorityService: authority, binding } = createHarness();
+  const names = Array.from({ length: 512 }, (_, i) => `unknown_${i}`);
+  assert.equal(authority.disableToolsForSession('session-alpha', names), 1);
+  assert.equal(authority.disableToolsForSession('session-alpha', ['read_file']), 0);
+  assert.equal(authority.checkRuntimeOperation(binding, operation()).status, 'granted');
+  authority.close(binding);
+});
+
 test('captures an immutable closed execution context with scoped knowledge and skills', () => {
   const { authorityService, binding } = createHarness();
   const context = authorityService.toExecutionContext(binding);
@@ -575,7 +667,7 @@ test('ToolExecutor selects branded scoped services and ignores forged authority 
   assert.equal(observed.artifactService, harness.scopedArtifact);
 });
 
-test('ToolExecutor cannot fall back to globals when approval settlement closes its binding', async () => {
+test('ToolExecutor cannot fall back to globals after its execution binding is closed', async () => {
   const harness = createHarness({ decision: 'ask' });
   let executions = 0;
   const executor = new ToolExecutor({
@@ -588,16 +680,11 @@ test('ToolExecutor cannot fall back to globals when approval settlement closes i
       legacy_policies: { write_file: 'ask' }, rules: [] }) },
     logger: () => {},
   });
-  const pending = executor.execute({
+  harness.authorityService.close(harness.binding);
+  const result = await executor.executePreApproved({
     callId: 'write-after-close', toolName: 'write_file', input: { path: 'README.md' },
   }, { executionAuthority: harness.binding, streamId: 'request-alpha' });
-  await new Promise((resolve) => setImmediate(resolve));
-
-  assert.equal(executor.approve('write-after-close'), true);
-  harness.authorityService.close(harness.binding);
-  const result = await pending;
   assert.equal(result.isError, true);
-  assert.equal(result.approvalState, 'cancelled');
   assert.equal(executions, 0);
 });
 

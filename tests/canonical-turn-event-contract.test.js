@@ -171,7 +171,7 @@ test('validateTurnEvent caps payload fields and reports truncation', () => {
   assert.equal(result.diagnostics.some((entry) => entry.code === 'payload_truncated'), true);
 });
 
-test('approval presentation fields are independently capped and redacted', () => {
+test('approval presentation fields are independently capped and secret-redacted', () => {
   const result = validateTurnEvent({
     v: 1,
     turn_id: 'turn_approval_policy',
@@ -187,7 +187,8 @@ test('approval presentation fields are independently capped and redacted', () =>
 
   assert.equal(result.status, 'accepted');
   assert.equal(Buffer.byteLength(result.event.payload.policy_scope, 'utf8') <= 120, true);
-  assert.equal(result.event.payload.policy_consequence.includes('C:/Users/example/private.txt'), false);
+  // HB-012: paths are presented in the app; only the export boundary anonymises them.
+  assert.equal(result.event.payload.policy_consequence.includes('C:/Users/example/private.txt'), true);
   assert.equal(result.event.payload.policy_consequence.includes('sk-abcdefghijklmnop'), false);
   assert.equal(Buffer.byteLength(result.event.payload.reason, 'utf8') <= EVENT_CAPS.approval_reason, true);
   assert.equal(result.event.payload.reason.includes('sk-abcdefghijklmnop'), false);
@@ -224,7 +225,7 @@ test('validateTurnEvent uses UTF-8 caps and contains structural bombs', () => {
   assert.equal(bomb.diagnostics.some((entry) => entry.code === 'structure_budget_exceeded'), true);
 });
 
-test('validateTurnEvent redacts durable prompt paths data URIs and provider maps', () => {
+test('validateTurnEvent redacts durable prompts, data URIs and provider maps but keeps paths', () => {
   const result = validateTurnEvent({
     v: 1,
     turn_id: 'turn_redact',
@@ -244,9 +245,9 @@ test('validateTurnEvent redacts durable prompt paths data URIs and provider maps
   const serialized = JSON.stringify(result.event);
   assert.equal(serialized.includes('private prompt text'), false);
   assert.equal(serialized.includes('private diagnostics'), false);
-  assert.equal(serialized.includes('C:/Users/example/private.txt'), false);
+  assert.equal(serialized.includes('C:/Users/example/private.txt'), true);
   assert.equal(serialized.includes('data:image/png'), false);
-  assert.equal(serialized.includes('[redacted:path]'), true);
+  assert.equal(serialized.includes('[redacted:path]'), false);
   assert.equal(serialized.includes('[redacted:data-uri]'), true);
 });
 

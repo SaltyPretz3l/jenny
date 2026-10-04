@@ -18,6 +18,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { loadRendererApp, waitForUi } = require('./helpers/renderer-shell-harness');
 const { buildFeatureFlags } = require('../services/feature-flags');
+const { waitForUiState } = require('./helpers/wait-for-ui-state');
 
 const REASON_1 = 'ReasonBlockOne unique marker';
 const STATEMENT = 'StatementText I will start the task now unique marker.';
@@ -102,7 +103,9 @@ test('multi-segment turn keeps earlier segments visible while a later segment st
     reasoning: { source: 'provider', entriesDelta: [{ id: 'r1', text: REASON_1 }] },
   });
   await emit({ type: 'delta', content: `${STATEMENT} `, aggregate: `${STATEMENT} ` });
-  await waitForUi(window, 300);
+  await waitForUiState(window, () => timelineHtml().includes(STATEMENT), {
+    timeoutMs: 5000, message: 'segment-0 text never streamed into the timeline.',
+  });
   assert.equal(timelineHtml().includes(STATEMENT), true, 'segment-0 text must stream in');
 
   // Auto tool + the backend's tool-continuation reset (aggregate restarts).
@@ -130,7 +133,9 @@ test('multi-segment turn keeps earlier segments visible while a later segment st
     aggregate: '',
     reasoning: { source: 'provider', entriesDelta: [{ id: 'r2', text: REASON_2 }] },
   });
-  await waitForUi(window, 300);
+  await waitForUiState(window, () => timelineHtml().includes(REASON_2), {
+    timeoutMs: 5000, message: 'segment-1 reasoning never rendered after the tool continuation.',
+  });
   {
     const html = timelineHtml();
     assert.equal(html.includes(STATEMENT), true, 'segment-0 text must survive the tool continuation');
@@ -153,7 +158,9 @@ test('multi-segment turn keeps earlier segments visible while a later segment st
     toolName: 'write_file',
     input: { path: 'notes/narrative-demo.md' },
   });
-  await waitForUi(window, 500);
+  await waitForUiState(window, () => doc.getElementById('chatTimeline').querySelector('.tool-approve-btn'), {
+    timeoutMs: 5000, message: 'approval block never rendered an Allow button.',
+  });
   const allowBtn = doc.getElementById('chatTimeline').querySelector('.tool-approve-btn');
   assert.ok(allowBtn, 'approval block must render');
   allowBtn.dispatchEvent(new window.MouseEvent('click', { bubbles: true, cancelable: true }));
@@ -184,13 +191,17 @@ test('multi-segment turn keeps earlier segments visible while a later segment st
     aggregate: '',
     reasoning: { source: 'provider', entriesDelta: [{ id: 'r3', text: REASON_3 }] },
   });
-  await waitForUi(window, 300);
+  await waitForUiState(window, () => timelineHtml().includes(REASON_3), {
+    timeoutMs: 5000, message: 'segment-2 reasoning never rendered after the post-approval continuation.',
+  });
   assert.equal(timelineHtml().includes(STATEMENT), true, 'segment-0 text must survive the post-approval continuation');
 
   // The owner-visible failure: while the FINAL segment streams its text, the
   // earlier segment's text vanished and the streaming content multiplied.
   await emit({ type: 'delta', content: FINAL, aggregate: FINAL });
-  await waitForUi(window, 400);
+  await waitForUiState(window, () => timelineHtml().includes(FINAL), {
+    timeoutMs: 5000, message: 'the streaming final segment never rendered.',
+  });
   {
     const html = timelineHtml();
     assert.equal(

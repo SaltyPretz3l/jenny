@@ -376,4 +376,6 @@ test('toast store dismissBySource with a session scope keeps other sessions\' to
 
   store.dismissBySource('chat-stream');
   assert.deepEqual(store.getSnapshot().map((toast) => toast.message), ['Other source'], 'unscoped keeps clearing the whole source');
+  // Drop the remaining toast so its armed dismiss timer does not hold the process open.
+  store.dismissAll();
 });

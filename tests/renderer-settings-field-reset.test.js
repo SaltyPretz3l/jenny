@@ -5,7 +5,6 @@ const test = require('node:test');
 const { JSDOM } = require('jsdom');
 
 const { createSettingsFieldReset } = require('../renderer/shell/renderer-settings-field-reset.js');
-const { createSettingsAdapter } = require('../renderer/shell/renderer-settings-persistence-adapters.js');
 const actionButton = require('../renderer/inventory/action-button.js');
 
 function buildDom() {
@@ -40,33 +39,6 @@ function buildDom() {
   return { dom, documentRef: dom.window.document };
 }
 
-const DEFAULTS = { paletteId: 'midnight', surfaceEffectId: 'none' };
-
-function createFakeAppearanceAdapter(overrides) {
-  let current = { paletteId: 'obsidian', surfaceEffectId: 'none' };
-  const writes = [];
-  const spec = Object.assign(
-    {
-      id: 'appearance',
-      read: () => current,
-      write: (value) => {
-        writes.push(value);
-        current = value;
-        return value;
-      },
-      getDefault: () => Object.assign({}, DEFAULTS),
-    },
-    overrides
-  );
-  const adapter = createSettingsAdapter(spec);
-  return {
-    adapter,
-    writes,
-    getCurrent: () => current,
-    setCurrent: (v) => { current = v; },
-  };
-}
-
 function createFakeTimers() {
   let idCounter = 0;
   const pending = new Map();
@@ -88,7 +60,6 @@ function createFakeTimers() {
 
 function createHarness(dom, documentRef, options) {
   const opts = options || {};
-  const { adapter, writes, getCurrent, setCurrent } = createFakeAppearanceAdapter(opts.adapterOverrides);
   const onAfterResetCalls = [];
   const logs = [];
   const timers = createFakeTimers();
@@ -102,7 +73,6 @@ function createHarness(dom, documentRef, options) {
   );
   const fieldReset = createSettingsFieldReset({
     documentRef,
-    adapters: { appearance: adapter },
     actionButton,
     onAfterReset: () => onAfterResetCalls.push(true),
     log: (message) => logs.push(message),
@@ -112,7 +82,7 @@ function createHarness(dom, documentRef, options) {
     clearTimeoutFn: timers.clearTimeoutFn,
   });
   return {
-    fieldReset, adapter, writes, getCurrent, setCurrent, onAfterResetCalls, logs, timers, resetActionCalls,
+    fieldReset, onAfterResetCalls, logs, timers, resetActionCalls,
   };
 }
 
@@ -120,131 +90,16 @@ function flushAsync() {
   return new Promise((resolve) => setTimeout(resolve, 0));
 }
 
-function fieldButton(documentRef, selectId) {
-  return documentRef.querySelector('[data-action="' + selectId + 'Reset"]');
-}
+// ── per-field Revert belongs to the shared binding ─────────────────────
 
-// ── per-field reset: visibility ────────────────────────────────────────
-
-test('per-field reset button is hidden when the field is already at its default, shown when it differs', () => {
+test("mount() adds no per-field reset affordance: Revert is the shared binding's", () => {
   const { dom, documentRef } = buildDom();
   const harness = createHarness(dom, documentRef);
   harness.fieldReset.mount();
 
-  // paletteId 'obsidian' != default 'midnight' -> visible.
-  assert.equal(fieldButton(documentRef, 'appearancePaletteSelect').hidden, false);
-  assert.equal(fieldButton(documentRef, 'appearanceSurfaceEffectSelect').hidden, true);
-
-  dom.window.close();
-});
-
-test('per-field reset mounts on the title line of the row text column, right after the label, not beside the select', () => {
-  const dom = new JSDOM(
-    `<!doctype html><html><body>
-      <section class="settings-card" data-settings-section="appearance">
-        <div class="settings-field-row">
-          <div class="settings-field-row-text">
-            <label class="settings-field-label" for="appearancePaletteSelect">Palette</label>
-            <p class="settings-field-description">The color scheme.</p>
-          </div>
-          <label class="select-shell"><select id="appearancePaletteSelect"><option value="midnight">Midnight</option><option value="obsidian" selected>Obsidian</option></select></label>
-        </div>
-        <div class="settings-actions"><button id="appearanceResetButton" type="button">Reset Appearance</button></div>
-      </section>
-    </body></html>`,
-    { pretendToBeVisual: true, url: 'http://localhost/' }
-  );
-  const documentRef = dom.window.document;
-  const harness = createHarness(dom, documentRef);
-  harness.fieldReset.mount();
-  const button = fieldButton(documentRef, 'appearancePaletteSelect');
-  assert.ok(button);
-  const textColumn = documentRef.querySelector('.settings-field-row-text');
-  assert.equal(button.parentElement, textColumn, 'lives in the text column');
-  assert.equal(textColumn.children[0].className, 'settings-field-label');
-  assert.equal(textColumn.children[1], button, 'immediately after the label');
-  assert.equal(textColumn.children[2].className, 'settings-field-description', 'description still follows');
-  assert.equal(documentRef.querySelector('.select-shell + .settings-field-reset'), null, 'not beside the select');
-  assert.match(button.textContent, /Reset/);
-  assert.ok(button.classList.contains('settings-field-reset'));
-  dom.window.close();
-});
-
-test('per-field reset buttons carry an accessible label naming the field', () => {
-  const { dom, documentRef } = buildDom();
-  const harness = createHarness(dom, documentRef);
-  harness.fieldReset.mount();
-
-  const btn = fieldButton(documentRef, 'appearancePaletteSelect');
-  assert.match(btn.getAttribute('aria-label'), /Palette/);
-  assert.equal(btn.tagName, 'BUTTON');
-
-  dom.window.close();
-});
-
-// ── per-field reset: click writes {key: default} + calls onAfterReset ──
-
-test('clicking a per-field reset button writes {...current, [key]: default} through the appearance adapter and calls onAfterReset', async () => {
-  const { dom, documentRef } = buildDom();
-  const harness = createHarness(dom, documentRef);
-  harness.fieldReset.mount();
-
-  fieldButton(documentRef, 'appearancePaletteSelect').click();
-  await flushAsync();
-
-  assert.deepEqual(harness.writes, [{ paletteId: 'midnight', surfaceEffectId: 'none' }]);
-  assert.equal(harness.onAfterResetCalls.length, 1);
-  // Now at default -> button hides itself.
-  assert.equal(fieldButton(documentRef, 'appearancePaletteSelect').hidden, true);
-
-  dom.window.close();
-});
-
-test('a per-field reset write failure logs and does not call onAfterReset', async () => {
-  const { dom, documentRef } = buildDom();
-  const harness = createHarness(dom, documentRef, {
-    adapterOverrides: { write: () => Promise.reject(new Error('disk full')) },
-  });
-  harness.fieldReset.mount();
-
-  fieldButton(documentRef, 'appearancePaletteSelect').click();
-  await flushAsync();
-
-  assert.equal(harness.onAfterResetCalls.length, 0);
-  assert.equal(harness.logs.length, 1);
-  assert.match(harness.logs[0], /disk full/);
-
-  dom.window.close();
-});
-
-// ── per-field reset: syncVisibility ─────────────────────────────────────
-
-test('syncVisibility() re-evaluates every field button against a value changed externally (not via this module)', () => {
-  const { dom, documentRef } = buildDom();
-  const harness = createHarness(dom, documentRef);
-  harness.fieldReset.mount();
-
-  assert.equal(fieldButton(documentRef, 'appearanceSurfaceEffectSelect').hidden, true);
-  harness.setCurrent({ paletteId: 'obsidian', surfaceEffectId: 'circuit-trace' });
-  // Not yet re-synced.
-  assert.equal(fieldButton(documentRef, 'appearanceSurfaceEffectSelect').hidden, true);
-
-  harness.fieldReset.syncVisibility();
-  assert.equal(fieldButton(documentRef, 'appearanceSurfaceEffectSelect').hidden, false);
-
-  dom.window.close();
-});
-
-test('a native "change" event on a watched select re-syncs that field\'s visibility automatically', () => {
-  const { dom, documentRef } = buildDom();
-  const harness = createHarness(dom, documentRef);
-  harness.fieldReset.mount();
-
-  harness.setCurrent({ paletteId: 'obsidian', surfaceEffectId: 'circuit-trace' });
-  const select = documentRef.getElementById('appearanceSurfaceEffectSelect');
-  select.dispatchEvent(new documentRef.defaultView.Event('change', { bubbles: true }));
-
-  assert.equal(fieldButton(documentRef, 'appearanceSurfaceEffectSelect').hidden, false);
+  assert.equal(documentRef.querySelector('[data-action$="SelectReset"]'), null);
+  assert.equal(documentRef.querySelectorAll('.settings-field-reset').length, 0);
+  assert.equal(harness.fieldReset.getSectionEntries().length, 1, 'only the section reset mounts');
 
   dom.window.close();
 });
@@ -430,7 +285,6 @@ test('when the actionButton builder is unavailable, a section-reset click falls 
   const resetActionCalls = { appearance: 0 };
   const fieldReset = createSettingsFieldReset({
     documentRef,
-    adapters: { appearance: createFakeAppearanceAdapter().adapter },
     actionButton: null, // explicit override: builder unavailable
     resetActions: {
       appearance: () => { resetActionCalls.appearance += 1; return Promise.resolve(); },
@@ -448,47 +302,5 @@ test('when the actionButton builder is unavailable, a section-reset click falls 
   assert.equal(container.getAttribute('data-armed'), null, 'never armed');
 
   fieldReset.dispose();
-  dom.window.close();
-});
-
-test('Chat width is per-field resettable: the button appears on Wide and writes chatWidthId back to default', async () => {
-  const dom = new JSDOM(
-    `<!doctype html><html><body>
-      <section class="settings-card" data-settings-section="appearance">
-        <div class="settings-field-row">
-          <div class="settings-field-row-text"><label for="appearanceChatWidthSelect">Chat width</label></div>
-          <label class="select-shell">
-            <select id="appearanceChatWidthSelect">
-              <option value="default">Default</option>
-              <option value="wide" selected>Wide</option>
-            </select>
-          </label>
-        </div>
-        <div class="settings-actions">
-          <button id="appearanceResetButton" class="settings-secondary" type="button">Reset Appearance</button>
-        </div>
-      </section>
-    </body></html>`,
-    { pretendToBeVisual: true, url: 'http://localhost/' }
-  );
-  const documentRef = dom.window.document;
-  const harness = createHarness(dom, documentRef, {
-    adapterOverrides: {
-      read: () => ({ paletteId: 'midnight', chatWidthId: 'wide' }),
-      getDefault: () => ({ paletteId: 'midnight', chatWidthId: 'default' }),
-    },
-  });
-  harness.fieldReset.mount();
-
-  const button = fieldButton(documentRef, 'appearanceChatWidthSelect');
-  assert.ok(button, 'Chat width is registered in APPEARANCE_FIELD_MAP');
-  assert.equal(button.hidden, false, 'Wide differs from the default, so reset is offered');
-
-  button.click();
-  await flushAsync();
-
-  assert.deepEqual(harness.writes, [{ paletteId: 'midnight', chatWidthId: 'default' }]);
-  assert.equal(harness.onAfterResetCalls.length, 1);
-
   dom.window.close();
 });

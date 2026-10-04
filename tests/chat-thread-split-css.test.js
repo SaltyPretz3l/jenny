@@ -42,7 +42,7 @@ test('chat thread rail selectors live in their focused stylesheet', () => {
   const threadCss = readRepoFile('styles/chat-thread.css');
 
   for (const selector of [
-    '.chat-thread-toggle,',
+    '.chat-thread-toggle {',
     '.chat-row-node-dot {',
     '.chat-thread-children {',
   ]) {

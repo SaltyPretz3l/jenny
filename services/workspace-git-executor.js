@@ -22,6 +22,13 @@ const MAX_PATHSPEC_BYTES = 1024 * 1024;
 const MAX_COMMIT_MESSAGE_CHARS = 10_000;
 const MAX_STASH_MESSAGE_CHARS = 1000;
 
+// A selected path is an exact name, never a glob or other `:(magic)` pathspec.
+// Per-path magic, not the global --literal-pathspecs option: that one is
+// exported to hooks as GIT_LITERAL_PATHSPECS and would silence their globs.
+function literalPathspec(path) {
+  return `:(literal)${path}`;
+}
+
 function buildPathspecCommand(args, paths) {
   const list = Array.isArray(paths) ? paths : [];
   if (list.length > MAX_PATHSPEC_COUNT) {
@@ -41,7 +48,7 @@ function buildPathspecCommand(args, paths) {
     if (inputBytes > MAX_PATHSPEC_BYTES) {
       throw workspaceGitError(WORKSPACE_GIT_ERROR_CODES.PATH_INVALID, 'The selected Git paths are too large.');
     }
-    chunks.push(value);
+    chunks.push(literalPathspec(value));
   }
   return {
     args: [...args, '--pathspec-from-file=-', '--pathspec-file-nul'],
@@ -96,5 +103,6 @@ module.exports = {
   MAX_COMMIT_MESSAGE_CHARS,
   MAX_STASH_MESSAGE_CHARS,
   buildPathspecCommand,
+  literalPathspec,
   classifyExpectedOutcome,
 };

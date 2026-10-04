@@ -69,16 +69,23 @@ class _DeadlinePlan:
     wall_clock_deadline: float | None
 
 
+@dataclass(frozen=True)
+class _StepBudgetPlan:
+    remaining_iterations: int
+    completed_iterations: int
+    wall_clock_deadline: float | None = 1_010.0
+
+
 def test_approval_wait_timeout_is_independent_of_model_work_deadline() -> None:
 
-    assert request_dispatch_chat._effective_approval_wait_timeout(  # noqa: SLF001
+    assert request_dispatch_chat._effective_approval_wait_timeout(
         SimpleNamespace(wall_clock_deadline=103.5),
         configured_timeout_seconds=600.0,
     ) == 600.0
 
 
 def test_approval_wait_timeout_preserves_legacy_plan_timeout() -> None:
-    assert request_dispatch_chat._effective_approval_wait_timeout(  # noqa: SLF001
+    assert request_dispatch_chat._effective_approval_wait_timeout(
         SimpleNamespace(wall_clock_deadline=None),
         configured_timeout_seconds=600.0,
     ) == 600.0
@@ -88,7 +95,7 @@ def test_approval_wait_timeout_extends_unattended_pause() -> None:
     state = LiveRunModeState(approval_mode="prompt", paused_unattended=True)
 
     with bind_live_run_mode_state(state):
-        assert request_dispatch_chat._effective_approval_wait_timeout(  # noqa: SLF001
+        assert request_dispatch_chat._effective_approval_wait_timeout(
             SimpleNamespace(wall_clock_deadline=None),
             configured_timeout_seconds=600.0,
         ) == 4 * 60 * 60.0
@@ -98,7 +105,7 @@ def test_approval_wait_timeout_preserves_prompt_timeout() -> None:
     state = LiveRunModeState(approval_mode="prompt")
 
     with bind_live_run_mode_state(state):
-        assert request_dispatch_chat._effective_approval_wait_timeout(  # noqa: SLF001
+        assert request_dispatch_chat._effective_approval_wait_timeout(
             SimpleNamespace(wall_clock_deadline=None),
             configured_timeout_seconds=600.0,
         ) == 600.0
@@ -206,11 +213,11 @@ def test_approval_wait_extends_when_unattended_pause_arrives_after_timeout(
 
 
 def test_each_approval_round_credits_only_its_own_wait_time() -> None:
-    first = request_dispatch_chat._credit_approval_wait(  # noqa: SLF001
+    first = request_dispatch_chat._credit_approval_wait(
         _DeadlinePlan(wall_clock_deadline=100.0),
         10.0,
     )
-    second = request_dispatch_chat._credit_approval_wait(first, 20.0)  # noqa: SLF001
+    second = request_dispatch_chat._credit_approval_wait(first, 20.0)
 
     assert first.wall_clock_deadline == 110.0
     assert second.wall_clock_deadline == 130.0
@@ -220,8 +227,169 @@ def test_approval_wait_credit_preserves_missing_or_malformed_deadlines() -> None
     no_deadline = _DeadlinePlan(wall_clock_deadline=None)
     malformed = _DeadlinePlan(wall_clock_deadline="bad")  # type: ignore[arg-type]
 
-    assert request_dispatch_chat._credit_approval_wait(no_deadline, 10.0) is no_deadline  # noqa: SLF001
-    assert request_dispatch_chat._credit_approval_wait(malformed, 10.0) is malformed  # noqa: SLF001
+    assert request_dispatch_chat._credit_approval_wait(no_deadline, 10.0) is no_deadline
+    assert request_dispatch_chat._credit_approval_wait(malformed, 10.0) is malformed
+
+
+def test_plan_build_budget_resets_to_a_full_window_and_never_shortens(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(request_dispatch_chat, "monotonic", lambda: 1_000.0)
+    spent = request_dispatch_chat._fresh_build_budget(
+        _StepBudgetPlan(30, 0, wall_clock_deadline=1_010.0), 1_800.0, 30
+    )
+    later = request_dispatch_chat._fresh_build_budget(
+        _StepBudgetPlan(30, 0, wall_clock_deadline=9_000.0), 1_800.0, 30
+    )
+    no_deadline = _StepBudgetPlan(30, 0, wall_clock_deadline=None)
+
+    assert spent.wall_clock_deadline == 2_800.0
+    assert later.wall_clock_deadline == 9_000.0
+    assert request_dispatch_chat._fresh_build_budget(no_deadline, 1_800.0, 30) is no_deadline
+
+
+@pytest.mark.parametrize(
+    ("remaining", "expected"),
+    # Planning used 15 of 30 -> the build starts with the full 30; a plan leg
+    # that earned a speed-scaled extension keeps its larger remainder.
+    [(15, 30), (0, 30), (30, 30), (75, 75)],
+)
+def test_plan_build_step_budget_resets_to_the_task_cap_and_never_shortens(
+    monkeypatch: pytest.MonkeyPatch, remaining: int, expected: int
+) -> None:
+    """TR-013: planning steps are not charged against the approved build."""
+    monkeypatch.setattr(request_dispatch_chat, "monotonic", lambda: 1_000.0)
+    plan = _StepBudgetPlan(remaining_iterations=remaining, completed_iterations=15)
+
+    fresh = request_dispatch_chat._fresh_build_budget(plan, 1_800.0, 30)
+
+    assert fresh.remaining_iterations == expected
+    # Iteration numbering continues: the build leg still starts after step 15.
+    assert fresh.completed_iterations == 15
+
+
+def test_plan_build_step_budget_applies_without_a_working_time_deadline() -> None:
+    plan = _StepBudgetPlan(
+        remaining_iterations=15, completed_iterations=15, wall_clock_deadline=None
+    )
+
+    fresh = request_dispatch_chat._fresh_build_budget(plan, 1_800.0, 30)
+
+    assert fresh.remaining_iterations == 30
+    assert fresh.wall_clock_deadline is None
+
+
+@pytest.mark.parametrize(
+    ("decision", "expected_deadline", "expected_remaining"),
+    [
+        ("approved", 2_800.0, 30),
+        ("approved_auto", 2_800.0, 30),
+        # "Keep planning" keeps the planning budget: time and steps.
+        ("rejected", 1_010.0, 15),
+    ],
+)
+def test_build_it_gives_the_build_a_fresh_working_time_budget(
+    monkeypatch: pytest.MonkeyPatch,
+    decision: str,
+    expected_deadline: float,
+    expected_remaining: int,
+) -> None:
+    """TR-004 / TR-013: planning time and steps are not charged against the build."""
+    from sidecar.runtime.chat_models import ChatRequestContext
+
+    @dataclass(frozen=True)
+    class _PlanApprovalPlan:
+        request_context: Any
+        request_id: str = "rq-plan-build"
+        session_id: str = "session-plan-build"
+        call_id: str = "call-plan-build"
+        wall_clock_deadline: float | None = 1_010.0
+        # Planning used 15 of the 30-step local task cap.
+        remaining_iterations: int = 15
+        completed_iterations: int = 15
+
+    plan = _PlanApprovalPlan(
+        request_context=ChatRequestContext(
+            request_id="rq-plan-build",
+            trace_id="trace-plan-build",
+            session_id="session-plan-build",
+            mode="assist",
+            approvals_pre_granted=False,
+            plan_mode=True,
+        )
+    )
+    resumed_plans: list[Any] = []
+
+    class _ApprovalPlanCache:
+        def put(self, cached_plan: Any, *, ttl_seconds: float) -> Any:
+            return cached_plan
+
+        def consume(self, _request_id: str, _call_id: str) -> Any:
+            return plan
+
+        def evict(self, _request_id: str, _call_id: str) -> None:
+            pass
+
+    def _fake_build_chat_response(*, approval_plan: Any | None = None, **_kwargs: Any) -> Any:
+        if approval_plan is not None:
+            resumed_plans.append(approval_plan)
+            return SimpleNamespace(
+                result={"status": "completed", "request_id": "rq-plan-build"},
+                notifications=[],
+                approval_request=None,
+                approval_plan=None,
+                request_id="rq-plan-build",
+                post_settlement_callback=None,
+            )
+        return SimpleNamespace(
+            result={"status": "awaiting_approval", "request_id": "rq-plan-build"},
+            notifications=[],
+            approval_request={
+                "tool_call_id": "call-plan-build",
+                "tool_name": "exit_plan_mode",
+                "reason": "plan ready",
+            },
+            approval_plan=plan,
+            request_id="rq-plan-build",
+            post_settlement_callback=None,
+        )
+
+    def _fake_request_tool_approval(*_args: Any, **_kwargs: Any) -> ApprovalResolution:
+        # "Keep planning" is an approved resolution carrying decision=rejected.
+        return ApprovalResolution(approved=True, status="approved", decision=decision)
+
+    config = SimpleNamespace(
+        tools_workspace_root="/ws",
+        agent_workspace_root=None,
+        tools_enabled=True,
+        feature_flags={},
+        max_loop_wall_seconds=1_800.0,
+        engine_type="llama-server",
+        max_task_loop_iterations=30,
+    )
+    brain = _make_brain_with_request_boundary(config=config)
+    monkeypatch.setattr(rd, "_APPROVAL_PLAN_CACHE", _ApprovalPlanCache())
+    monkeypatch.setattr(rd, "_build_chat_response", _fake_build_chat_response)
+    monkeypatch.setattr(rd, "request_tool_approval", _fake_request_tool_approval)
+    # The approval wait itself is credited separately; pin it to zero here.
+    monkeypatch.setattr(request_dispatch_chat, "monotonic", lambda: 1_000.0)
+
+    rd.process_chat_send_request(
+        message_id=103,
+        params={"accept_version": API_VERSION, "request_id": "rq-plan-build"},
+        initialized=True,
+        interactive_approval=True,
+        brain_container=brain,  # type: ignore[arg-type]
+        logger=LOGGER,
+        write_message=_null_writer,
+        read_message=_null_reader,
+        approval_timeout_seconds=30.0,
+    )
+
+    # "Keep planning" (rejected) resumes planning inside the same budget.
+    assert [p.wall_clock_deadline for p in resumed_plans] == [expected_deadline]
+    assert [p.remaining_iterations for p in resumed_plans] == [expected_remaining]
+    assert [p.completed_iterations for p in resumed_plans] == [15]
 
 
 # ---------------------------------------------------------------------------
@@ -689,7 +857,7 @@ def _drive_approval_terminal_outcome(
         "reason": "needs approval",
     }
 
-    def _fake_build(message_id, params, **kwargs):  # noqa: ANN001, ANN002, ANN003
+    def _fake_build(message_id, params, **kwargs):
         return SimpleNamespace(
             result={"status": "completed", "request_id": "rq-appr"},
             notifications=[],
@@ -856,7 +1024,7 @@ def test_build_chat_response_bare_exception_after_approval_produces_failure_outc
             feature_flags={},
         )
         brain = _make_brain_with_request_boundary(config=config)
-        outcome = rd.process_chat_send_request(
+        rd.process_chat_send_request(
             message_id=1,
             params={"accept_version": API_VERSION, "request_id": "rq-bare-exc"},
             initialized=True,
@@ -1289,13 +1457,6 @@ def test_process_message_hardware_profile_success_returns_profile_result(
     fake_hw_mod.get_hardware_profile = _fake_get_hardware_profile  # type: ignore[attr-defined]
     monkeypatch.setitem(sys.modules, "sidecar.runtime.hardware_profile", fake_hw_mod)
 
-    config = SimpleNamespace(
-        tools_workspace_root=None,
-        agent_workspace_root=None,
-        tools_enabled=True,
-        feature_flags={},
-        api_url="http://localhost:11434",
-    )
     brain = _make_minimal_brain(config_extras={"api_url": "http://localhost:11434"})
 
     outcome = rd.process_message(
@@ -1508,3 +1669,42 @@ def test_process_message_unknown_method_with_message_id_returns_method_not_found
     err = outcome.response["error"]
     assert err["code"] == rd.METHOD_NOT_FOUND_CODE
     assert "no.such.method" in err["message"]
+
+
+# Gate F28: on the managed llama-server the config api_url is that server, and
+# hardware.profile probed its /api/version without a key ("Invalid API Key").
+@pytest.mark.parametrize(
+    ("engine_type", "api_url", "expected_host"),
+    [
+        ("openai-compatible", "http://127.0.0.1:8033/v1", None),
+        ("ollama", "http://127.0.0.1:11500", "http://127.0.0.1:11500"),
+    ],
+)
+def test_hardware_profile_probes_ollama_only_at_the_ollama_engine_url(
+    monkeypatch, engine_type: str, api_url: str, expected_host: Any
+) -> None:
+    _patch_sub_dispatchers(monkeypatch)
+    hosts: list = []
+
+    def _fake_get_hardware_profile(*, ollama_host: Any, model_catalog: Any) -> Any:
+        hosts.append(ollama_host)
+        return SimpleNamespace(to_dict=lambda: {})
+
+    import sys
+    import types
+
+    fake_hw_mod = types.ModuleType("sidecar.runtime.hardware_profile")
+    fake_hw_mod.get_hardware_profile = _fake_get_hardware_profile  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "sidecar.runtime.hardware_profile", fake_hw_mod)
+    brain = _make_minimal_brain(config_extras={"engine_type": engine_type, "api_url": api_url})
+
+    rd.process_message(
+        {"method": HARDWARE_PROFILE_METHOD, "id": 41, "params": {"accept_version": API_VERSION}},
+        True,
+        brain_container=brain,  # type: ignore[arg-type]
+        logger=LOGGER,
+        write_message=_null_writer,
+        read_message=_null_reader,
+    )
+
+    assert hosts == [expected_host]

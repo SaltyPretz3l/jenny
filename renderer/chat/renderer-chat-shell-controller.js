@@ -1,14 +1,27 @@
 /* renderer/chat/renderer-chat-shell-controller.js - Internal chat-surface composition. */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) {
-    module.exports = factory(require('../shell/renderer-slash-command-registry'));
+    module.exports = factory(require('../shell/renderer-slash-command-registry'), require('./renderer-pane-session-context'));
     return;
   }
-  root.rendererChatShellControllerUtils = factory(root.rendererSlashCommandRegistryUtils || {});
-})(typeof globalThis !== 'undefined' ? globalThis : this, function (slashCommandUtils) {
+  root.rendererChatShellControllerUtils = factory(root.rendererSlashCommandRegistryUtils || {}, root.rendererPaneSessionContext);
+})(typeof globalThis !== 'undefined' ? globalThis : this, function (slashCommandUtils, paneSessionContextUtils) {
   const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
+  // Split view W1-4b: the ONE pane session context every surface below acts on (renderer-pane-session-context.js).
+  // W1-4c injects a pane-bound one; `paneId` alone builds that pane's default, built inline until the module is tagged.
+  function resolvePaneSessionContext({ state, sessionContext: injected, paneId }) {
+    if (injected && ['getSessionId', 'setSessionId', 'isCurrent'].every((key) => typeof injected[key] === 'function')) return injected;
+    if (injected) throw new TypeError('createChatShellController: sessionContext needs getSessionId, setSessionId and isCurrent.');
+    const owner = paneSessionContextUtils || globalThis.rendererPaneSessionContext;
+    if (typeof owner?.createPaneSessionContext === 'function') return owner.createPaneSessionContext({ state, paneId });
+    const pane = paneId ?? 0, norm = (id) => String(id || '').trim();
+    if (!Number.isInteger(pane) || pane < 0) throw new TypeError('createChatShellController: paneId must be a non-negative integer.');
+    const read = () => globalThis.rendererPaneVisibilityUtils?.resolvePaneSessionId?.(state, pane) ?? (pane === 0 ? norm(state?.currentSessionId) : '');
+    return Object.freeze({ paneId: pane, getSessionId: read, setSessionId: (id) => { if (pane === 0) state.currentSessionId = norm(id); }, isCurrent: (id) => read() === norm(id) });
+  }
   function createChatShellController(deps) {
     const { state, slashDependencies, compactionCoordinator } = deps;
+    const sessionContext = resolvePaneSessionContext(deps);
     const dom = deps.dom || {};
     const callbacks = deps.callbacks || {};
     const constants = deps.constants || {};
@@ -113,7 +126,7 @@
       return callbacks.onUserSendStarted(...args);
     }
     const sendController = sendUtils.createSendController?.({
-      state,
+      state, sessionContext,
       dom: { chatInput: dom.chatInput },
       slashCommandRegistry,
       multiStreamController: controllers.multiStreamController,
@@ -135,7 +148,7 @@
         getInteractiveSequenceState: (...args) => callbacks.getInteractiveSequenceState(...args),
         clearInteractiveDraft: (...args) => callbacks.clearInteractiveDraft(...args),
         patchSessionSummary: (...args) => callbacks.patchSessionSummary(...args),
-        getCurrentRuntimePreferences: (...args) => callbacks.getCurrentRuntimePreferences(...args),
+        getCurrentRuntimePreferences: (...args) => callbacks.getCurrentRuntimePreferences(...args), getRuntimePreferencesFromSession: callbacks.getRuntimePreferencesFromSession,
         getCurrentVisibleMessages: (...args) => callbacks.getCurrentVisibleMessages(...args),
         getCurrentSessionMessages: (...args) => callbacks.getCurrentSessionMessages(...args), getSessionTurnEventState: (...args) => callbacks.getSessionTurnEventState?.(...args),
         getSessionMessages: (...args) => callbacks.getSessionMessages(...args),
@@ -147,9 +160,6 @@
         showToastMessage: (...args) => callbacks.showToastMessage(...args),
         setComposerStatusNotice: (...args) => callbacks.setComposerStatusNotice(...args),
         clearComposerStatusNotice: (...args) => callbacks.clearComposerStatusNotice(...args),
-        setTurnStatusPill: (...args) => callbacks.setTurnStatusPill?.(...args),
-        clearTurnStatusPill: (...args) => callbacks.clearTurnStatusPill?.(...args),
-        clearTurnStatusPillSources: (...args) => callbacks.clearTurnStatusPillSources?.(...args),
         isSendPreflightPending: (...args) => callbacks.isSendPreflightPending(...args),
         showComposerActionError: (...args) => callbacks.showComposerActionError(...args),
         renderComposerState: (...args) => callbacks.renderComposerState(...args),
@@ -254,10 +264,10 @@
         scopeRoot: dom.chatTimeline,
         chatInput: dom.chatInput,
         startPromptSend: (...args) => startPromptSend(...args),
-        getCurrentSessionId: () => state && state.currentSessionId,
+        getCurrentSessionId: () => sessionContext.getSessionId(),
         isSessionSendBusy: controllers.multiStreamController?.isSessionSendBusy?.bind(controllers.multiStreamController),
-        hasComposerDraftAttachments: () => Boolean(
-          Array.isArray(state.attachments?.queued) && state.attachments.queued.length
+        hasComposerDraftAttachments: () => Boolean( // W2-2b: this pane's session's queue
+          (globalThis.rendererComposerSessionState?.getQueuedAttachments?.(state, sessionContext.getSessionId()) ?? state.attachments?.queued)?.length
         ),
         appendClientLog: callbacks.appendClientLog,
         showComposerActionError: callbacks.showComposerActionError,
@@ -281,13 +291,7 @@
           document: typeof document !== 'undefined' ? document : (windowRef && windowRef.document) || null,
           jennyShellSessions: (windowRef && windowRef.jennyShell && windowRef.jennyShell.sessions) || null,
           getCurrentSessionMessages: (...args) => callbacks.getCurrentSessionMessages(...args),
-          getCurrentSessionId: () => {
-            // The send-controller closure-private getCurrentSessionId() isn't
-            // exposed; mirror the same source: state.currentSessionId.
-            return state && typeof state.currentSessionId === 'string'
-              ? state.currentSessionId
-              : '';
-          },
+          getCurrentSessionId: () => sessionContext.getSessionId(),
           startPromptSend: (...args) => startPromptSend(...args),
           renderAll: (...args) => callbacks.renderAll(...args),
           appendClientLog: (...args) => callbacks.appendClientLog(...args),
@@ -296,9 +300,7 @@
             // Reuse the same busy gate the send controller publishes. The
             // controller itself does not export resolveFollowUpActionBlock,
             // so duplicate the boolean shape here.
-            const currentSessionId = state && typeof state.currentSessionId === 'string'
-              ? state.currentSessionId
-              : '';
+            const currentSessionId = sessionContext.getSessionId();
             const isBusy = typeof callbacks.isSessionStreaming === 'function'
               && callbacks.isSessionStreaming(currentSessionId);
             const hasApproval = typeof callbacks.hasPendingToolApprovalForSession === 'function'
@@ -368,12 +370,10 @@
     if (messageBranchUtilsApi && typeof messageBranchUtilsApi.createMessageBranchController === 'function') {
       try {
         messageBranchController = messageBranchUtilsApi.createMessageBranchController({
-          state: state,
+          state: state, sessionContext,
           jennyShellSessions: (windowRef && windowRef.jennyShell && windowRef.jennyShell.sessions) || null,
           getCurrentSessionMessages: (...args) => callbacks.getCurrentSessionMessages(...args),
-          getCurrentSessionId: () => state && typeof state.currentSessionId === 'string'
-            ? state.currentSessionId
-            : '',
+          getCurrentSessionId: () => sessionContext.getSessionId(),
           loadSessions: (...args) => callbacks.loadSessions(...args),
           activateWorkspaceSession,
           upsertSessionSummary: (...args) => callbacks.upsertSessionSummary(...args),
@@ -397,7 +397,7 @@
     }
 
     // F4/F5/F6: selection controller + bulk-actions controller. The selection
-    // controller owns state.ui.selectionMode + per-session selected sets +
+    // controller owns state.ui.selectionModePaneId + per-session selected sets +
     // Esc-to-exit. The bulk-actions controller wraps the format builders +
     // jennyShell.dialog.saveFile + jennyShell.clipboard.writeText + the
     // existing F2 truncate path (sessions.editAndTruncate with empty patch).
@@ -440,9 +440,7 @@
           state: state,
           document: typeof document !== 'undefined' ? document : (windowRef && windowRef.document) || null,
           getCurrentSessionMessages: (...args) => callbacks.getCurrentSessionMessages(...args),
-          getCurrentSessionId: () => state && typeof state.currentSessionId === 'string'
-            ? state.currentSessionId
-            : '',
+          getCurrentSessionId: () => sessionContext.getSessionId(), paneId: sessionContext.paneId,
           renderAll: (...args) => callbacks.renderAll(...args),
           appendClientLog: (...args) => callbacks.appendClientLog(...args),
           focusEntryByMessageId: (...args) => {
@@ -473,9 +471,7 @@
           jennyShellSessions: (windowRef && windowRef.jennyShell && windowRef.jennyShell.sessions) || null,
           jennyShellDialog: (windowRef && windowRef.jennyShell && windowRef.jennyShell.dialog) || null,
           jennyShellClipboard: (windowRef && windowRef.jennyShell && windowRef.jennyShell.clipboard) || null,
-          getCurrentSessionId: () => state && typeof state.currentSessionId === 'string'
-            ? state.currentSessionId
-            : '',
+          getCurrentSessionId: () => sessionContext.getSessionId(),
           getCurrentSessionMessages: (...args) => callbacks.getCurrentSessionMessages(...args),
           getCurrentSessionTurnEvents: (...args) => {
             const fn = callbacks.getCurrentSessionTurnEvents;
@@ -531,9 +527,7 @@
           document: typeof document !== 'undefined' ? document : (windowRef && windowRef.document) || null,
           chatTimeline: dom.chatTimeline,
           chatThreadScroll: dom.chatThreadScroll,
-          getCurrentSessionId: () => state && typeof state.currentSessionId === 'string'
-            ? state.currentSessionId
-            : '',
+          getCurrentSessionId: () => sessionContext.getSessionId(),
           getCurrentSessionMessages: (...args) => callbacks.getCurrentSessionMessages(...args),
           getScrollMetrics: (...args) => {
             const fn = callbacks.getScrollMetrics;
@@ -602,7 +596,7 @@
       openSetupTile: (...args) => (typeof callbacks.openSetupTile === 'function' ? callbacks.openSetupTile(...args) : null),
       startPromptSend,
       syncComposerInputHeight: (...args) => callbacks.syncComposerInputHeight(...args),
-      state,
+      state, sessionContext,
       windowRef,
       appendClientLog: (...args) => callbacks.appendClientLog(...args),
     });
@@ -654,8 +648,9 @@
       callbacks: {
         getActiveSendPreflight: (...args) => callbacks.getActiveSendPreflight(...args),
         renderComposerState: (...args) => callbacks.renderComposerState(...args),
-        renderMessages: (...args) => callbacks.renderMessages(...args),
+        renderMessages: (...args) => callbacks.renderMessages(...args), renderSessionPane: callbacks.renderSessionPane,
         syncTurnElapsedClock,
+        scheduleMessageViewportSync: (...args) => callbacks.scheduleMessageViewportSync?.(...args),
         renderHeader: (...args) => callbacks.renderHeader(...args),
         renderAll: (...args) => callbacks.renderAll(...args),
         renderComposerStatusNotice: (...args) => callbacks.renderComposerStatusNotice(...args),
@@ -669,9 +664,6 @@
         createNormalizedMessage: (...args) => callbacks.createNormalizedMessage(...args),
         setComposerStatusNotice: (...args) => callbacks.setComposerStatusNotice(...args),
         clearComposerStatusNotice: (...args) => callbacks.clearComposerStatusNotice(...args),
-        setTurnStatusPill: (...args) => callbacks.setTurnStatusPill?.(...args),
-        clearTurnStatusPill: (...args) => callbacks.clearTurnStatusPill?.(...args),
-        clearTurnStatusPillSources: (...args) => callbacks.clearTurnStatusPillSources?.(...args),
         handlePresenceStreamEvent: (...args) => callbacks.handlePresenceStreamEvent?.(...args),
         handleWorkspaceActivityStreamEvent: (...args) => callbacks.handleWorkspaceActivityStreamEvent?.(...args),
         normalizePendingQuestionBatch: (...args) => callbacks.normalizePendingQuestionBatch(...args),
@@ -728,7 +720,7 @@
 
     const chatEventBindings = (typeof chatEventUtils.createChatEventBindings === 'function'
       ? chatEventUtils.createChatEventBindings : () => ({ bind() {}, dispose() {} }))({
-      state,
+      state, sessionContext,
       constants: {
         TOAST_SOURCE: constants.TOAST_SOURCE,
         ACTIVITY_SCOPE: constants.ACTIVITY_SCOPE,
@@ -763,10 +755,8 @@
         toastViewport: dom.toastViewport,
         composerModelSelect: dom.composerModelSelect,
         composerEffortSelect: dom.composerEffortSelect,
-        composerSettingsButton: dom.composerSettingsButton,
-        openComposerSettingsViewButton: dom.openComposerSettingsViewButton,
-        composerCommandPopover: dom.composerCommandPopover,
-        artifactReviewPanel: dom.artifactReviewPanel,
+        composerCommandPopover: dom.composerCommandPopover, composerRunModeSlot: dom.composerRunModeSlot, // W2-2a: a pane's own rail slot
+        artifactReviewPanel: dom.artifactReviewPanel, chatSelectionOverlayHost: dom.chatSelectionOverlayHost, // W2-3: a pane's own host
       },
       callbacks: {
         setActivityChangeListener: (...args) => callbacks.setActivityChangeListener(...args),
@@ -784,11 +774,11 @@
         loadSessions: (...args) => callbacks.loadSessions(...args),
         refreshSnapshots: (...args) => callbacks.refreshSnapshots(...args),
         refreshApprovedMemories: (...args) => callbacks.refreshApprovedMemories(...args),
-        resetArtifactsState: (...args) => callbacks.resetArtifactsState(...args),
+        refreshComposerToolToggles: (...args) => callbacks.refreshComposerToolToggles?.(...args),
+        resetArtifactsState: (...args) => callbacks.resetArtifactsState(...args), resetPanes: (...args) => callbacks.resetPanes?.(...args),
         resetMemorySuggestionState: (...args) => callbacks.resetMemorySuggestionState(...args),
         resetAttachmentQueue: (...args) => callbacks.resetAttachmentQueue(...args),
         closeComposerPopover: (...args) => callbacks.closeComposerPopover(...args),
-        openComposerPopover: (...args) => callbacks.openComposerPopover(...args),
         closeCommandPopover: (...args) => callbacks.closeCommandPopover(...args),
         openCommandPopover: (...args) => callbacks.openCommandPopover(...args),
         handleSlashCommandSelection: selectSlashCommand,
@@ -851,7 +841,6 @@
         },
         handleFollowUpMessage: (...args) => callbacks.handleFollowUpMessage(...args),
         setReasoningPhaseExpandedPreference: (...args) => callbacks.setReasoningPhaseExpandedPreference?.(...args),
-        setReasoningPhaseExpandedPreferences: (...args) => callbacks.setReasoningPhaseExpandedPreferences?.(...args),
         syncThinkingBlockNode: (...args) => callbacks.syncThinkingBlockNode(...args),
         dismissToast: (...args) => callbacks.dismissToast(...args),
         showShellErrorToast: (...args) => callbacks.showShellErrorToast(...args),
@@ -870,7 +859,7 @@
         failActivity: (...args) => callbacks.failActivity(...args),
         getRuntimePreferenceSnapshot: (...args) => callbacks.getRuntimePreferenceSnapshot(...args),
         runRuntimePreferenceActivity: (...args) => callbacks.runRuntimePreferenceActivity(...args),
-        getCurrentRuntimePreferences: (...args) => callbacks.getCurrentRuntimePreferences(...args),
+        getCurrentRuntimePreferences: (...args) => callbacks.getCurrentRuntimePreferences(...args), getRuntimePreferencesFromSession: callbacks.getRuntimePreferencesFromSession,
         handleSaveProactiveSuggestionMessage: (...args) => callbacks.handleSaveProactiveSuggestionMessage(...args),
         handleLaterProactiveSuggestionMessage: (...args) => callbacks.handleLaterProactiveSuggestionMessage(...args),
         handleUseProactiveSuggestionMessage: (...args) => callbacks.handleUseProactiveSuggestionMessage(...args),
@@ -917,7 +906,7 @@
       addCleanup(() => selectionController?.dispose?.());
       addCleanup(() => bulkActionsController?.dispose?.());
       addCleanup(() => bulkDeleteConfirmDialog?.dispose?.());
-      addCleanup(() => {
+      if (sessionContext.paneId === 0) addCleanup(() => { // W1-4c: #sendOutbox is pane 0's view
         const outboxElement = (dom.chatInput?.ownerDocument || windowRef?.document)?.getElementById?.('sendOutbox');
         globalThis.rendererSendOutboxRender?.disposeSendOutboxRender?.(outboxElement);
       });
@@ -975,7 +964,8 @@
     }
 
     return {
-      sendOutboxActions: controllers.sendOutboxActions,
+      sendOutboxActions: controllers.sendOutboxActions, streamHandler,
+      onPaneSessionChanged: (sessionId) => selectionController?.onSessionSwitch?.(sessionId), // P2: the pane composition, on a layout session change
       bind,
       resyncStreamSubscriptionMode,
       dispose,

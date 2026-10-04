@@ -1,8 +1,8 @@
 'use strict';
 
-// Builds diagnostics.modelFitEstimates: a pure-estimator fit for every
-// installed local (Ollama) model, catalog-matched or not, so a model with no
-// config/model-recommendation-catalog.json entry still gets a fit reading.
+// Builds diagnostics.modelFitEstimates: observed, catalog, or estimated fit
+// for every installed local (Ollama) model, with provenance for the chosen
+// values. Models outside the catalog still get an estimated fit reading.
 // Kept out of offline-intelligence-service.js to hold that file under the
 // 600-line soft cap. Never throws — every failure degrades to [].
 const { buildFeatureFlags } = require('./feature-flags');
@@ -179,16 +179,16 @@ async function buildModelFitEstimates({
 
       results.push({
         ...estimate,
-        ...(observation ? resolved : {}),
+        ...resolved,
         // An observation's contextLength can be 0 (never recorded pre-Wave-4,
         // or genuinely unknown at record time) — never let that clobber the
         // estimate's real contextLength.
-        contextLength: observation ? (observation.contextLength || estimate.contextLength) : estimate.contextLength,
+        contextLength: resolved.contextLength || estimate.contextLength,
         sizeBytes: Number(entry.size) || 0,
         modelId,
         catalogMatched,
-        fitSource: resolved.fitSource,
-        fitConfidence: resolved.fitConfidence,
+        source: resolved.fitSource,
+        confidence: resolved.fitConfidence,
       });
     }
     return results;

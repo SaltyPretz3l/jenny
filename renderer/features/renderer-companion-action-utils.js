@@ -9,11 +9,27 @@
   const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   const windowRefDefault = typeof globalThis !== 'undefined' ? globalThis : {};
   const documentRefDefault = windowRefDefault.document || null;
-  const DEFAULT_DEFER_PRESETS = Object.freeze([
-    { preset: 'later_today', label: jt('companion.defer.laterToday', 'Later today'), deferredUntil: '' },
-    { preset: 'tomorrow', label: jt('companion.defer.tomorrow', 'Tomorrow'), deferredUntil: '' },
-    { preset: 'next_week', label: jt('companion.defer.nextWeek', 'Next week'), deferredUntil: '' },
-  ]);
+  const openLoopRow = windowRefDefault.rendererOpenLoopRow
+    || (typeof require === 'function' ? require('./renderer-open-loop-row') : null);
+  const openLoopForm = windowRefDefault.rendererOpenLoopForm
+    || (typeof require === 'function' ? require('./renderer-open-loop-form') : null);
+  const companionStateUtils = windowRefDefault.rendererCompanionStateUtils
+    || (typeof require === 'function' ? require('./renderer-companion-state-utils') : null);
+  const taskBriefUtils = windowRefDefault.rendererTaskBriefUtils
+    || (typeof require === 'function' ? require('../shared/task-brief-utils') : null);
+  if (!openLoopRow || !openLoopForm || !companionStateUtils || !taskBriefUtils) {
+    throw new Error('rendererCompanionActionUtils: open-loop row/form, companion state utils and task-brief utils must load first');
+  }
+  const { getAllLoops } = companionStateUtils;
+  const { deferPresetLabel, getAvailableDeferPresets } = openLoopForm;
+  const actionLabel = openLoopRow.openLoopActionLabel;
+
+  const LOOP_UNDO_WINDOW_MS = 6000;
+  /* The main process refuses a mutation on a loop that no longer exists
+   * (0002) or whose state no longer allows it (0003); IPC keeps only the
+   * message text, which starts with the code. */
+  const STALE_LOOP_CODES = Object.freeze(['CMP-COMPANION-0002', 'CMP-COMPANION-0003']);
+  const CODED_ERROR_PATTERN = /\b(CMP-[A-Z]+-\d{4}):\s*/;
 
   function noop() {}
   function noopObj() { return {}; }
@@ -45,12 +61,6 @@
       : [];
   }
 
-  function getLoopActions(section) {
-    return Array.isArray(section)
-      ? section.flatMap((loop) => Array.isArray(loop.actions) ? loop.actions : [])
-      : [];
-  }
-
   function uniqueActions(actions) {
     const seenActionIds = new Set();
     const actionList = [];
@@ -71,18 +81,13 @@
       ...(Array.isArray(companionState?.suggestedActions) ? companionState.suggestedActions : []),
       ...getTodayCardActions(companionState),
       ...getReminderActions(companionState),
-      ...getLoopActions(companionState?.openLoopsBoard?.active),
-      ...getLoopActions(companionState?.openLoopsBoard?.deferred),
-      ...getLoopActions(companionState?.openLoopsBoard?.recentResolved),
-      ...getLoopActions(companionState?.openLoopsBoard?.archived),
+      ...getAllLoops(companionState?.openLoopsBoard).flatMap((loop) => (Array.isArray(loop?.actions) ? loop.actions : [])),
     ]);
   }
 
-  function getAvailableDeferPresets(companionState) {
-    const presets = Array.isArray(companionState?.availableDeferPresets)
-      ? companionState.availableDeferPresets
-      : [];
-    return presets.length ? presets : DEFAULT_DEFER_PRESETS.slice();
+  function isStaleLoopError(error) {
+    const match = CODED_ERROR_PATTERN.exec(String(error?.message || error || ''));
+    return Boolean(match) && STALE_LOOP_CODES.includes(match[1]);
   }
 
   function formatCompanionOriginLabel(action) {
@@ -118,11 +123,13 @@
       homeOpenLoopSaveButton = null,
       homeOpenLoopCancelButton = null,
       homeOpenLoopList = null,
+      homeView = null,
       chatInput = null,
     } = dom;
     const {
       getCompanionState = noopObj,
       applyCompanionPayload = noopObj,
+      refreshCompanionState = noopAsync,
       renderHomePanel = noop,
       renderAll = noop,
       renderComposerState = noop,
@@ -137,98 +144,95 @@
       showSetupHelp = noop,
       showToastMessage = noop,
       showShellErrorToast = noop,
+      dismissToast = noop,
       toErrorMessage = noopString,
       toggleArchivedSection = noop,
+      toggleResolvedSection = noop,
+      toggleLoopHistory = noop,
+      toggleLoopBody = noop,
+      forgetLoop = noop,
     } = callbacks;
 
-    let addFormOpen = false;
-    let formState = {
-      mode: 'add',
-      followUpId: '',
-      loopStatus: 'active',
-      title: '',
-      body: '',
-      timing: '',
-    };
+    let taskSessionStarting = false;
+    let disposed = false;
+    /* The loop whose overflow menu is open; a re-render swaps its trigger. */
+    let openOverflowFollowUpId = '';
+    /* followUpId -> { timer, toastId, committing }. Deletes wait out the undo
+     * window before the IPC call; rows in this map are hidden from every render. */
+    const pendingDeletes = new Map();
+
+    const form = openLoopForm.createOpenLoopFormController({
+      state,
+      windowRef,
+      documentRef,
+      dom: {
+        homeOpenLoopAddButton,
+        homeOpenLoopForm,
+        homeOpenLoopFormHeading,
+        homeOpenLoopFormNote,
+        homeOpenLoopTitleInput,
+        homeOpenLoopNotesInput,
+        homeOpenLoopDeferSelect,
+        homeOpenLoopSaveButton,
+        homeOpenLoopCancelButton,
+      },
+      getCompanionState,
+      applyCompanionPayload,
+      renderHomePanel,
+      renderAll,
+      loopToast,
+      findOverflowTrigger,
+    });
+
+    function loopToast(message, { tone = 'success', dedupeKey, ...extra } = {}) {
+      return showToastMessage(message, {
+        title: jt('companion.openLoops.title', 'Open Loops'),
+        tone,
+        source: 'shell.companion',
+        dedupeKey,
+        ...extra,
+      });
+    }
+
+    /* A coded backend error shows its localized sentence, never the raw
+     * "Error invoking remote method … CMP-…" text. */
+    function describeError(error, fallback) {
+      const raw = String(error?.message || error || '');
+      const match = CODED_ERROR_PATTERN.exec(raw);
+      if (!match) {
+        return toErrorMessage(error, fallback);
+      }
+      const backendText = raw.slice(match.index + match[0].length).trim() || String(fallback || '');
+      const translate = windowRef.jennyBackendStrings?.errorText;
+      return (typeof translate === 'function' && translate(match[1], backendText)) || backendText;
+    }
+
+    function loopErrorToast(error, fallback, dedupeKey) {
+      showShellErrorToast(describeError(error, fallback), {
+        title: jt('companion.titles.openLoopFailed', 'Open Loop Failed'),
+        dedupeKey,
+        source: 'shell.companion',
+      });
+    }
 
     function findLoopByFollowUpId(followUpId) {
       const normalizedFollowUpId = String(followUpId || '').trim();
       if (!normalizedFollowUpId) {
         return null;
       }
-      const companionState = getCompanionState();
-      const sections = [
-        companionState.openLoopsBoard?.active,
-        companionState.openLoopsBoard?.deferred,
-        companionState.openLoopsBoard?.recentResolved,
-        companionState.openLoopsBoard?.archived,
-      ];
-      for (const section of sections) {
-        const loop = Array.isArray(section)
-          ? section.find((entry) => String(entry?.followUpId || '').trim() === normalizedFollowUpId)
-          : null;
-        if (loop) {
-          return loop;
-        }
-      }
-      return null;
+      return getAllLoops(getCompanionState().openLoopsBoard)
+        .find((entry) => String(entry?.followUpId || '').trim() === normalizedFollowUpId) || null;
     }
 
-    function renderManualAddForm(companionState) {
-      if (!homeOpenLoopForm) {
-        return;
-      }
-      homeOpenLoopForm.hidden = !addFormOpen;
-      homeOpenLoopForm.setAttribute('aria-hidden', addFormOpen ? 'false' : 'true');
-      if (homeOpenLoopAddButton) {
-        homeOpenLoopAddButton.hidden = addFormOpen;
-      }
-      const isEditing = formState.mode === 'edit';
-      const isResolvedOnly = formState.loopStatus === 'resolved' || formState.loopStatus === 'archived';
-      if (homeOpenLoopFormHeading) {
-        homeOpenLoopFormHeading.textContent = isEditing ? jt('companion.openLoops.editHeading', 'Edit Open Loop') : jt('companion.openLoops.addHeading', 'Add Open Loop');
-      }
-      if (homeOpenLoopFormNote) {
-        homeOpenLoopFormNote.textContent = isEditing
-          ? isResolvedOnly
-            ? jt('companion.openLoops.editResolvedDescription', 'Edit the title or notes. Archived and completed loops keep their current status.')
-            : jt('companion.openLoops.editDescription', 'Adjust details or timing without leaving Home.')
-          : jt('companion.openLoops.addDescription', 'Create an active loop now or defer it to a later preset.');
-      }
-      if (!homeOpenLoopDeferSelect) {
-        return;
-      }
-      const previousValue = String(formState.timing || homeOpenLoopDeferSelect.value || '').trim();
-      const presets = getAvailableDeferPresets(companionState);
-      homeOpenLoopDeferSelect.textContent = '';
-      const nowOption = documentRef.createElement('option');
-      nowOption.value = '';
-      nowOption.textContent = jt('companion.openLoops.activeNow', 'Active now');
-      homeOpenLoopDeferSelect.append(nowOption);
-      presets.forEach((preset) => {
-        const option = documentRef.createElement('option');
-        option.value = preset.preset;
-        option.textContent = preset.label;
-        homeOpenLoopDeferSelect.append(option);
-      });
-      if ([...homeOpenLoopDeferSelect.options].some((option) => option.value === previousValue)) {
-        homeOpenLoopDeferSelect.value = previousValue;
-      } else {
-        homeOpenLoopDeferSelect.value = '';
-      }
-      homeOpenLoopDeferSelect.disabled = isResolvedOnly;
-      if (homeOpenLoopTitleInput) {
-        homeOpenLoopTitleInput.value = String(formState.title || '');
-      }
-      if (homeOpenLoopNotesInput) {
-        homeOpenLoopNotesInput.value = String(formState.body || '');
-      }
-      if (homeOpenLoopSaveButton) {
-        homeOpenLoopSaveButton.disabled = !companionState.loaded;
-        homeOpenLoopSaveButton.textContent = isEditing ? jt('companion.openLoops.saveChanges', 'Save Changes') : jt('companion.openLoops.save', 'Save Open Loop');
-      }
-      if (homeOpenLoopCancelButton) {
-        homeOpenLoopCancelButton.textContent = isEditing ? jt('companion.openLoops.cancelEdit', 'Cancel Edit') : jt('common.cancel', 'Cancel');
+    function isLoopPendingDelete(followUpId) {
+      return pendingDeletes.has(String(followUpId || ''));
+    }
+
+    /* Other surfaces (the task rail) read the pending ids from shared UI
+     * state so a row being deleted disappears everywhere at once. */
+    function publishPendingDeletes() {
+      if (state.ui && typeof state.ui === 'object') {
+        state.ui.pendingLoopDeleteIds = [...pendingDeletes.keys()];
       }
     }
 
@@ -237,21 +241,6 @@
       const normalizedActionId = String(actionId || '').trim();
       return getResolvableActions(companionState)
         .find((action) => String(action?.id || '').trim() === normalizedActionId) || null;
-    }
-
-    async function runFollowUpMutation(promiseFactory, successMessage, dedupeKey) {
-      const payload = await promiseFactory();
-      applyCompanionPayload(payload);
-      if (successMessage) {
-        showToastMessage(successMessage, {
-          title: jt('companion.openLoops.title', 'Open Loops'),
-          tone: 'success',
-          source: 'shell.companion',
-          dedupeKey,
-        });
-      }
-      renderAll();
-      return payload;
     }
 
     function prefersReducedMotion() {
@@ -264,8 +253,6 @@
         return false;
       }
     }
-
-    const LOOP_UNDO_WINDOW_MS = 6000;
 
     let cachedEmphasisFallbackMs = null;
     function getAnimationFallbackMs() {
@@ -292,11 +279,11 @@
     }
 
     function findLoopCardNode(followUpId) {
-      if (!followUpId || !homeOpenLoopList || typeof homeOpenLoopList.querySelector !== 'function') {
+      const host = homeView || homeOpenLoopList;
+      if (!followUpId || !host || typeof host.querySelector !== 'function') {
         return null;
       }
-      const selector = `.memory-commitment-item[data-follow-up-id="${String(followUpId).replace(/"/g, '\\"')}"]`;
-      return homeOpenLoopList.querySelector(selector);
+      return host.querySelector(openLoopRow.loopRowSelector(followUpId));
     }
 
     function animateLoopResolve(node) {
@@ -341,74 +328,150 @@
       });
     }
 
-    async function runFollowUpMutationWithUndo({
-      followUpId,
-      mutate,
-      toastMessage,
-      dedupeKey,
-    }) {
-      if (!followUpId || typeof mutate !== 'function') {
-        return null;
+    /* One mutation path: optional fade-out first, then the IPC call, the
+     * state swap, the toast (with Undo when undoFollowUpId is set) and a
+     * render. */
+    async function runFollowUpMutation(promiseFactory, successMessage, dedupeKey, { undoFollowUpId = '' } = {}) {
+      const fadingNode = undoFollowUpId ? findLoopCardNode(undoFollowUpId) : null;
+      if (fadingNode) {
+        await animateLoopResolve(fadingNode);
       }
-      const resolvingNode = findLoopCardNode(followUpId);
-      await animateLoopResolve(resolvingNode);
       let payload;
       try {
-        payload = await mutate();
+        payload = await promiseFactory();
       } catch (error) {
-        resolvingNode?.removeAttribute?.('data-loop-resolving');
+        fadingNode?.removeAttribute?.('data-loop-resolving');
         throw error;
       }
       applyCompanionPayload(payload);
-      if (toastMessage) {
-        showToastMessage(toastMessage, {
-          title: jt('companion.openLoops.title', 'Open Loops'),
-          tone: 'info',
-          source: 'shell.companion',
-          dedupeKey,
-          durationMs: LOOP_UNDO_WINDOW_MS,
-          actions: [
-            {
-              id: 'undo',
-              label: jt('companion.actions.undo', 'Undo'),
-              kind: 'primary',
-              onClick: async () => {
-                try {
-                  const restored = await windowRef.jennyShell.companion.activateFollowUp(followUpId);
-                  applyCompanionPayload(restored);
-                  renderAll();
-                } catch (error) {
-                  showShellErrorToast(
-                    toErrorMessage(error, jt('companion.errors.restoreOpenLoop', 'Could not restore that open loop.')),
-                    {
-                      title: jt('companion.titles.undoFailed', 'Undo Failed'),
-                      source: 'shell.companion',
-                      dedupeKey: `shell.companion:undo:${followUpId}`,
-                    }
-                  );
-                }
-              },
-            },
-          ],
-        });
+      if (successMessage) {
+        loopToast(successMessage, undoFollowUpId
+          ? {
+              tone: 'info',
+              dedupeKey,
+              durationMs: LOOP_UNDO_WINDOW_MS,
+              actions: [{
+                id: 'undo',
+                label: jt('companion.actions.undo', 'Undo'),
+                kind: 'primary',
+                onClick: async () => {
+                  try {
+                    const restored = await windowRef.jennyShell.companion.activateFollowUp(undoFollowUpId);
+                    applyCompanionPayload(restored);
+                    renderAll();
+                  } catch (error) {
+                    showShellErrorToast(
+                      describeError(error, jt('companion.errors.restoreOpenLoop', 'Could not restore that open loop.')),
+                      {
+                        title: jt('companion.titles.undoFailed', 'Undo Failed'),
+                        source: 'shell.companion',
+                        dedupeKey: `shell.companion:undo:${undoFollowUpId}`,
+                      }
+                    );
+                  }
+                },
+              }],
+            }
+          : { dedupeKey });
       }
       renderAll();
       return payload;
+    }
+
+    async function commitLoopDelete(followUpId) {
+      const pending = pendingDeletes.get(followUpId);
+      if (!pending || pending.committing) {
+        return;
+      }
+      pending.committing = true;
+      // The toast pauses while hovered, but this clock does not: once the
+      // delete is committed, Undo must not stay on screen.
+      if (pending.toastId) {
+        dismissToast(pending.toastId);
+      }
+      try {
+        const payload = await windowRef.jennyShell.companion.deleteFollowUp(followUpId);
+        pendingDeletes.delete(followUpId);
+        publishPendingDeletes();
+        if (disposed) {
+          return;
+        }
+        applyCompanionPayload(payload);
+        forgetLoop(followUpId);
+      } catch (error) {
+        pendingDeletes.delete(followUpId);
+        publishPendingDeletes();
+        if (disposed) {
+          return;
+        }
+        loopErrorToast(error, jt('companion.errors.deleteOpenLoop', 'Could not delete that open loop.'), `shell.companion:delete:error:${followUpId}`);
+      }
+      renderAll();
+    }
+
+    /* Delete is permanent on the main side, so the renderer holds it for the
+     * undo window: the row hides now, the IPC call runs when the window
+     * closes, and Undo simply cancels the timer. */
+    async function scheduleLoopDelete(followUpId) {
+      if (!followUpId || pendingDeletes.has(followUpId)) {
+        return;
+      }
+      await animateLoopResolve(findLoopCardNode(followUpId));
+      if (disposed || pendingDeletes.has(followUpId)) {
+        return;
+      }
+      const pending = {
+        timer: setTimeout(() => { void commitLoopDelete(followUpId); }, LOOP_UNDO_WINDOW_MS),
+        toastId: '',
+        committing: false,
+      };
+      pendingDeletes.set(followUpId, pending);
+      publishPendingDeletes();
+      /* An edit of the loop being deleted would be lost at commit. */
+      form.closeIfEditing(followUpId);
+      pending.toastId = loopToast(jt('companion.toasts.loopDeleted', 'Loop deleted.'), {
+        tone: 'info',
+        dedupeKey: `shell.companion:delete:${followUpId}`,
+        durationMs: LOOP_UNDO_WINDOW_MS,
+        actions: [{
+          id: 'undo',
+          label: jt('companion.actions.undo', 'Undo'),
+          kind: 'primary',
+          onClick: () => {
+            const pending = pendingDeletes.get(followUpId);
+            if (!pending || pending.committing) {
+              return;
+            }
+            clearTimeout(pending.timer);
+            pendingDeletes.delete(followUpId);
+            publishPendingDeletes();
+            dismissToast(pending.toastId);
+            renderAll();
+          },
+        }],
+      });
+      renderAll();
+    }
+
+    function findLoopDeferredUntil(followUpId) {
+      const parsed = new Date(findLoopByFollowUpId(followUpId)?.deferredUntil || '');
+      return Number.isNaN(parsed.valueOf()) ? null : parsed;
     }
 
     async function showDeferPresetPicker(action) {
       const companionState = getCompanionState();
       const presets = getAvailableDeferPresets(companionState);
       if (!presets.length) {
-        showToastMessage(jt('companion.toasts.noDeferPresets', 'No defer presets are available right now.'), {
-          title: jt('companion.openLoops.title', 'Open Loops'),
+        loopToast(jt('companion.toasts.noDeferPresets', 'No defer presets are available right now.'), {
           tone: 'warning',
-          source: 'shell.companion',
           dedupeKey: 'shell.companion:defer:none',
         });
         return;
       }
-      showToastMessage(jt('companion.toasts.chooseResurfaceTime', 'Choose when this should resurface.'), {
+      /* Sticky, and toast actions do not dismiss it: the picker closes itself
+       * once the defer lands or the loop turns out to be stale. */
+      let pickerToastId = '';
+      pickerToastId = showToastMessage(jt('companion.toasts.chooseResurfaceTime', 'Choose when this should resurface.'), {
         title: jt('companion.titles.deferOpenLoop', 'Defer Open Loop'),
         tone: 'info',
         sticky: true,
@@ -416,21 +479,25 @@
         dedupeKey: `shell.companion:defer:${action.followUpId}`,
         actions: presets.map((preset, index) => ({
           id: `defer:${action.followUpId}:${preset.preset}`,
-          label: preset.label,
+          label: deferPresetLabel(preset),
           kind: index === 0 ? 'primary' : 'secondary',
           onClick: async () => {
             try {
-              await runFollowUpMutation(
-                () => windowRef.jennyShell.companion.deferFollowUp(action.followUpId, preset.preset),
-                jt('companion.followUps.deferredUntilPreset', 'Deferred until {when}.', { when: preset.label.toLowerCase() }),
-                `shell.companion:defer:saved:${action.followUpId}:${preset.preset}`
-              );
-            } catch (error) {
-              showShellErrorToast(toErrorMessage(error, jt('companion.errors.deferOpenLoop', 'Could not defer that open loop.')), {
-                 title: jt('companion.titles.openLoopFailed', 'Open Loop Failed'),
-                dedupeKey: `shell.companion:defer:error:${action.followUpId}:${preset.preset}`,
-                source: 'shell.companion',
+              const payload = await windowRef.jennyShell.companion.deferFollowUp(action.followUpId, preset.preset);
+              dismissToast(pickerToastId);
+              applyCompanionPayload(payload);
+              const until = findLoopDeferredUntil(action.followUpId);
+              loopToast(until && openLoopRow
+                ? openLoopRow.formatDeferredUntil(until)
+                : jt('companion.toasts.deferredOpenLoop', 'Deferred open loop.'), {
+                dedupeKey: `shell.companion:defer:saved:${action.followUpId}:${preset.preset}`,
               });
+              renderAll();
+            } catch (error) {
+              if (isStaleLoopError(error)) {
+                dismissToast(pickerToastId);
+              }
+              await handleMutationError(error, jt('companion.errors.deferOpenLoop', 'Could not defer that open loop.'), `shell.companion:defer:error:${action.followUpId}:${preset.preset}`);
             }
           },
         })),
@@ -467,14 +534,57 @@
       );
     }
 
+    async function startTaskSession(action) {
+      if (taskSessionStarting) {
+        return;
+      }
+      const loop = findLoopByFollowUpId(action.followUpId);
+      const start = windowRef.rendererTaskSessionActions?.start;
+      if (!loop || typeof start !== 'function') {
+        loopErrorToast(null, jt('companion.errors.taskSessionUnavailable', 'Could not start a session for that task.'), `shell.companion:task-session:${action.followUpId}`);
+        return;
+      }
+      taskSessionStarting = true;
+      clearPendingOrigin();
+      try {
+        await start({
+          title: loop.title,
+          initialPrompt: taskBriefUtils.buildTaskBrief(loop, { linkedTaskId: loop.followUpId }),
+          linkedTaskId: loop.followUpId,
+        });
+      } finally {
+        taskSessionStarting = false;
+      }
+    }
+
+    /* Plain loop mutations: one IPC call and a toast. Activate words its
+     * toast from the loop's status, not from the (translatable) label. */
+    const LOOP_MUTATIONS = Object.freeze({
+      archive_follow_up: {
+        method: 'archiveFollowUp',
+        dedupe: 'archive',
+        message: () => jt('companion.toasts.archivedOpenLoop', 'Archived open loop.'),
+      },
+      unarchive_follow_up: {
+        method: 'unarchiveFollowUp',
+        dedupe: 'unarchive',
+        message: () => jt('companion.toasts.restoredOpenLoop', 'Restored open loop.'),
+      },
+      activate_follow_up: {
+        method: 'activateFollowUp',
+        dedupe: 'activate',
+        message: (loop) => (loop?.status === 'resolved'
+          ? jt('companion.toasts.reopenedOpenLoop', 'Reopened open loop.')
+          : jt('companion.toasts.movedOpenLoopActive', 'Moved open loop back to active.')),
+      },
+    });
+
     async function handleCompanionAction(action) {
       if (!action) {
         return;
       }
       if (action.type === 'prefill_chat') {
-        if (typeof setPendingOrigin === 'function') {
-          setPendingOrigin(formatCompanionOriginLabel(action));
-        }
+        setPendingOrigin(formatCompanionOriginLabel(action));
         chatInput.value = action.prompt || '';
         syncComposerInputHeight();
         setActiveView('chat');
@@ -484,90 +594,66 @@
         return;
       }
       if (action.type === 'open_settings') {
-        if (typeof clearPendingOrigin === 'function') {
-          clearPendingOrigin();
-        }
+        clearPendingOrigin();
         openSettingsSection(action.section || 'models');
         return;
       }
       if (action.type === 'open_setup_help') {
-        if (typeof clearPendingOrigin === 'function') {
-          clearPendingOrigin();
-        }
+        clearPendingOrigin();
         showSetupHelp();
         return;
       }
       if (action.type === 'open_view' && action.viewId) {
-        if (typeof clearPendingOrigin === 'function') {
-          clearPendingOrigin();
-        }
+        clearPendingOrigin();
         setActiveView(action.viewId);
         renderAll();
         return;
       }
       if (action.type === 'continue_session' && action.sessionId) {
-        if (typeof clearPendingOrigin === 'function') {
-          clearPendingOrigin();
-        }
-        await activateWorkspaceSession(action.sessionId);
-        setActiveView('chat');
-        renderAll();
-        return;
-      }
-      if (action.type === 'new_session') {
-        if (typeof clearPendingOrigin === 'function') {
-          clearPendingOrigin();
-        }
-        const createdSessionId = String(await handleCreateSession() || '').trim();
-        if (createdSessionId && typeof setSessionOrigin === 'function') {
-          setSessionOrigin(createdSessionId, formatCompanionOriginLabel(action));
-        }
-        if (createdSessionId) {
+        clearPendingOrigin();
+        const workspace = await activateWorkspaceSession(action.sessionId);
+        /* Activation can refuse (session rail full) and says so in its own
+         * toast; only a confirmed switch to this session leaves Home. */
+        if (String(workspace?.activeSessionId || '').trim() === action.sessionId) {
           setActiveView('chat');
         }
         renderAll();
         return;
       }
-      if (action.type === 'resolve_follow_up' && action.followUpId) {
-        await runFollowUpMutationWithUndo({
-          followUpId: action.followUpId,
-          mutate: () => windowRef.jennyShell.companion.resolveFollowUp(action.followUpId),
-          toastMessage: jt('companion.toasts.loopClosed', 'Loop closed.'),
-          dedupeKey: `shell.companion:resolve:${action.followUpId}`,
-        });
+      if (action.type === 'new_session') {
+        clearPendingOrigin();
+        const createdSessionId = String(await handleCreateSession() || '').trim();
+        if (createdSessionId) {
+          setSessionOrigin(createdSessionId, formatCompanionOriginLabel(action));
+          setActiveView('chat');
+        }
+        renderAll();
         return;
       }
-      if (action.type === 'archive_follow_up' && action.followUpId) {
+      if (action.type === 'start_task_session' && action.followUpId) {
+        await startTaskSession(action);
+        return;
+      }
+      if (action.type === 'resolve_follow_up' && action.followUpId) {
         await runFollowUpMutation(
-          () => windowRef.jennyShell.companion.archiveFollowUp(action.followUpId),
-          jt('companion.toasts.archivedOpenLoop', 'Archived open loop.'),
-          `shell.companion:archive:${action.followUpId}`
+          () => windowRef.jennyShell.companion.resolveFollowUp(action.followUpId),
+          jt('companion.toasts.loopClosed', 'Loop closed.'),
+          `shell.companion:resolve:${action.followUpId}`,
+          { undoFollowUpId: action.followUpId }
         );
         return;
       }
       if (action.type === 'delete_follow_up' && action.followUpId) {
-        await runFollowUpMutation(
-          () => windowRef.jennyShell.companion.deleteFollowUp(action.followUpId),
-          jt('companion.toasts.loopDeleted', 'Loop deleted.'),
-          `shell.companion:delete:${action.followUpId}`
-        );
+        await scheduleLoopDelete(action.followUpId);
         return;
       }
-      if (action.type === 'unarchive_follow_up' && action.followUpId) {
+      const mutation = LOOP_MUTATIONS[action.type];
+      if (mutation && action.followUpId) {
+        const loop = findLoopByFollowUpId(action.followUpId);
         await runFollowUpMutation(
-          () => windowRef.jennyShell.companion.unarchiveFollowUp(action.followUpId),
-          jt('companion.toasts.restoredOpenLoop', 'Restored open loop.'),
-          `shell.companion:unarchive:${action.followUpId}`
-        );
-        return;
-      }
-      if (action.type === 'activate_follow_up' && action.followUpId) {
-        await runFollowUpMutation(
-          () => windowRef.jennyShell.companion.activateFollowUp(action.followUpId),
-          /^reopen$/i.test(String(action.label || '').trim())
-            ? jt('companion.toasts.reopenedOpenLoop', 'Reopened open loop.')
-            : jt('companion.toasts.movedOpenLoopActive', 'Moved open loop back to active.'),
-          `shell.companion:activate:${action.followUpId}`
+          () => windowRef.jennyShell.companion[mutation.method](action.followUpId),
+          mutation.message(loop),
+          `shell.companion:${mutation.dedupe}:${action.followUpId}`
         );
         return;
       }
@@ -582,157 +668,45 @@
       if (action.type === 'edit_follow_up' && action.followUpId) {
         const loop = findLoopByFollowUpId(action.followUpId);
         if (loop) {
-          openManualAddForm(loop);
+          form.open(loop);
         }
       }
     }
 
-    function resetManualAddForm() {
-      formState = {
-        mode: 'add',
-        followUpId: '',
-        loopStatus: 'active',
-        title: '',
-        body: '',
-        timing: '',
-      };
-      if (homeOpenLoopTitleInput) {
-        homeOpenLoopTitleInput.value = '';
-      }
-      if (homeOpenLoopNotesInput) {
-        homeOpenLoopNotesInput.value = '';
-      }
-      if (homeOpenLoopDeferSelect) {
-        homeOpenLoopDeferSelect.value = '';
-      }
-    }
-
-    function openManualAddForm(loop = null) {
-      const resolvedLoop = loop && typeof loop === 'object' ? loop : null;
-      formState = {
-        mode: resolvedLoop ? 'edit' : 'add',
-        followUpId: String(resolvedLoop?.followUpId || '').trim(),
-        loopStatus: String(resolvedLoop?.status || 'active').trim() || 'active',
-        title: String(resolvedLoop?.title || '').trim(),
-        body: String(resolvedLoop?.body || '').trim(),
-        timing: resolvedLoop?.status === 'deferred'
-          ? String(resolvedLoop?.deferPreset || '').trim()
-          : '',
-      };
-      addFormOpen = true;
-      renderHomePanel();
-      homeOpenLoopTitleInput?.focus();
-    }
-
-    function closeManualAddForm() {
-      addFormOpen = false;
-      resetManualAddForm();
-      renderHomePanel();
-    }
-
-    async function handleManualAddSubmit() {
-      const title = String(homeOpenLoopTitleInput?.value || '').trim();
-      const body = String(homeOpenLoopNotesInput?.value || '').trim();
-      const deferPreset = String(homeOpenLoopDeferSelect?.value || '').trim();
-      const editingFollowUpId = String(formState.followUpId || '').trim();
-      if (!title) {
-        showToastMessage(jt('companion.toasts.titleRequired', 'Add a title before saving this open loop.'), {
-          title: jt('companion.openLoops.title', 'Open Loops'),
-          tone: 'warning',
-          source: 'shell.companion',
-          dedupeKey: 'shell.companion:add:title-required',
-        });
-        homeOpenLoopTitleInput?.focus();
+    /* A loop deleted or changed elsewhere (another window, an agent task) is
+     * refused by the main process: resync the board, drop a stale edit form,
+     * and say what happened instead of a generic failure. */
+    async function handleMutationError(error, fallbackMessage, dedupeKey) {
+      if (!isStaleLoopError(error)) {
+        loopErrorToast(error, fallbackMessage, dedupeKey);
         return;
       }
-      const isEditing = formState.mode === 'edit' && formState.followUpId;
-      const isResolvedOnly = formState.loopStatus === 'resolved' || formState.loopStatus === 'archived';
-      const payload = isEditing
-        ? await windowRef.jennyShell.companion.updateFollowUp(editingFollowUpId, {
-            label: title,
-            body,
-            ...(isResolvedOnly
-              ? {}
-              : {
-                  status: deferPreset ? 'deferred' : 'active',
-                  deferPreset,
-                }),
-          })
-        : await windowRef.jennyShell.companion.addFollowUp({
-            label: title,
-            body,
-            sessionId: String(state.currentSessionId || state.activeSessionId || '').trim(),
-            status: deferPreset ? 'deferred' : 'active',
-            deferPreset,
-            sourceKind: 'manual',
-          });
-      applyCompanionPayload(payload);
-      closeManualAddForm();
-      showToastMessage(
-        isEditing
-          ? jt('companion.toasts.changesSaved', 'Saved open loop changes.')
-          : deferPreset
-            ? jt('companion.toasts.savedDeferred', 'Saved to deferred open loops.')
-            : jt('companion.toasts.saved', 'Saved to open loops.'),
-        {
-          title: jt('companion.openLoops.title', 'Open Loops'),
-          tone: 'success',
-          source: 'shell.companion',
-          dedupeKey: isEditing
-            ? `shell.companion:edit:${editingFollowUpId}`
-            : `shell.companion:add:${deferPreset || 'active'}`,
-        }
-      );
+      try {
+        await refreshCompanionState();
+      } catch (_refreshError) {
+        // The toast below still explains the failure.
+      }
+      const editingId = form.editingFollowUpId();
+      if (editingId && !findLoopByFollowUpId(editingId)) {
+        form.close();
+      }
       renderAll();
+      showShellErrorToast(describeError(error, fallbackMessage), {
+        title: jt('companion.titles.openLoopFailed', 'Open Loop Failed'),
+        dedupeKey: 'shell.companion:loop-stale',
+        source: 'shell.companion',
+      });
     }
 
-    async function handleHomeClick(event) {
-      const addButton = event.target.closest('[data-home-open-loop-add]');
-      if (addButton) {
-        event.preventDefault();
-        openManualAddForm();
-        return;
-      }
-
-      const cancelButton = event.target.closest('[data-home-open-loop-cancel]');
-      if (cancelButton) {
-        event.preventDefault();
-        closeManualAddForm();
-        return;
-      }
-
-      const archivedToggleButton = event.target.closest('[data-home-archived-toggle]');
-      if (archivedToggleButton) {
-        event.preventDefault();
-        toggleArchivedSection();
-        return;
-      }
-
-      const saveButton = event.target.closest('[data-home-open-loop-save]');
-      if (saveButton) {
-        event.preventDefault();
-        try {
-          await handleManualAddSubmit();
-        } catch (error) {
-          showShellErrorToast(toErrorMessage(error, jt('companion.errors.saveOpenLoop', 'Could not save that open loop.')), {
-            title: jt('companion.titles.openLoopFailed', 'Open Loop Failed'),
-            dedupeKey: 'shell.companion:add:error',
-            source: 'shell.companion',
-          });
-        }
-        return;
-      }
-
-      const actionButton = event.target.closest('[data-companion-action-id]');
-      if (!actionButton) {
-        return;
-      }
-      event.preventDefault();
-      const action = resolveAction(actionButton.dataset.companionActionId);
+    async function runActionWithFeedback(action) {
       try {
         await handleCompanionAction(action);
       } catch (error) {
-        showShellErrorToast(toErrorMessage(error, jt('companion.errors.actionFailed', 'Could not complete that companion action.')), {
+        if (isStaleLoopError(error)) {
+          await handleMutationError(error, '', '');
+          return;
+        }
+        showShellErrorToast(describeError(error, jt('companion.errors.actionFailed', 'Could not complete that companion action.')), {
           title: jt('companion.titles.actionFailed', 'Companion Action Failed'),
           dedupeKey: 'shell.companion:action:error',
           source: 'shell.companion',
@@ -740,20 +714,119 @@
       }
     }
 
+    /* Overflow actions live in the shared context menu, which mounts on
+     * <body> outside #homeView, so items dispatch through closures rather
+     * than the delegated click handler. */
+    function openLoopOverflowMenu(trigger) {
+      const loop = findLoopByFollowUpId(trigger.dataset.loopOverflow);
+      const overflow = (Array.isArray(loop?.actions) ? loop.actions : []).filter((action) => action.slot === 'overflow');
+      const contextMenu = windowRef.inventoryContextMenu;
+      if (!overflow.length || typeof contextMenu?.show !== 'function') {
+        return;
+      }
+      const items = [];
+      for (const action of overflow) {
+        const danger = action.type === 'delete_follow_up';
+        if (danger && items.length) {
+          items.push({ separator: true });
+        }
+        items.push({ label: actionLabel(action), danger, action: () => runActionWithFeedback(action) });
+      }
+      const followUpId = String(loop.followUpId || '');
+      trigger.setAttribute('aria-expanded', 'true');
+      contextMenu.show({
+        rootEl: trigger,
+        anchorEl: trigger,
+        restoreFocusTo: trigger,
+        onHide: () => {
+          if (openOverflowFollowUpId === followUpId) {
+            openOverflowFollowUpId = '';
+          }
+          // A re-render while the menu was open replaced the trigger; the
+          // context menu can only restore focus to the one it was given.
+          const current = trigger.isConnected !== false ? trigger : findOverflowTrigger(followUpId);
+          current?.setAttribute?.('aria-expanded', 'false');
+          const active = documentRef?.activeElement;
+          if (current && current !== trigger && (!active || active === documentRef.body)) {
+            current.focus?.({ preventScroll: true });
+          }
+        },
+        items,
+      });
+      openOverflowFollowUpId = followUpId;
+    }
+
+    function findOverflowTrigger(followUpId) {
+      return findLoopCardNode(followUpId)?.querySelector?.('[data-loop-overflow]') || null;
+    }
+
+    /* Called after each board render: the rebuilt trigger of an open menu
+     * must still report it as expanded. */
+    function syncOpenOverflowTrigger() {
+      if (openOverflowFollowUpId) {
+        findOverflowTrigger(openOverflowFollowUpId)?.setAttribute?.('aria-expanded', 'true');
+      }
+    }
+
+    /* Pending deletes are cancelled, not committed: the row returns on the
+     * next board, and nothing irreversible runs after teardown. */
+    function dispose() {
+      disposed = true;
+      for (const pending of pendingDeletes.values()) {
+        if (!pending.committing) {
+          clearTimeout(pending.timer);
+          if (pending.toastId) {
+            dismissToast(pending.toastId);
+          }
+        }
+      }
+      pendingDeletes.clear();
+      publishPendingDeletes();
+      if (openOverflowFollowUpId) {
+        openOverflowFollowUpId = '';
+        windowRef.inventoryContextMenu?.hide?.({ restoreFocus: false });
+      }
+    }
+
+    /* Row-level toggles and the add/cancel buttons; anything else with an
+     * action id dispatches through the resolvable action list. */
+    const CLICK_TOGGLES = Object.freeze([
+      ['[data-home-open-loop-add]', () => form.open()],
+      ['[data-home-open-loop-cancel]', () => form.close()],
+      ['[data-home-archived-toggle]', () => toggleArchivedSection()],
+      ['[data-home-resolved-toggle]', () => toggleResolvedSection()],
+      ['[data-loop-history-toggle]', (node) => toggleLoopHistory(node.dataset.loopHistoryToggle)],
+      ['[data-loop-body-toggle]', (node) => toggleLoopBody(node.dataset.loopBodyToggle)],
+      ['[data-loop-overflow]', (node) => openLoopOverflowMenu(node)],
+    ]);
+
+    async function handleHomeClick(event) {
+      for (const [selector, run] of CLICK_TOGGLES) {
+        const node = event.target.closest(selector);
+        if (node) {
+          event.preventDefault();
+          run(node);
+          return;
+        }
+      }
+      const actionButton = event.target.closest('[data-companion-action-id]');
+      if (!actionButton) {
+        return;
+      }
+      event.preventDefault();
+      await runActionWithFeedback(resolveAction(actionButton.dataset.companionActionId));
+    }
+
+    /* The Save button is type="submit", so this is the only save path. */
     async function handleHomeSubmit(event) {
-      const form = event.target.closest('#homeOpenLoopForm');
-      if (!form) {
+      if (!event.target.closest('#homeOpenLoopForm')) {
         return;
       }
       event.preventDefault();
       try {
-        await handleManualAddSubmit();
+        await form.submit();
       } catch (error) {
-        showShellErrorToast(toErrorMessage(error, jt('companion.errors.saveOpenLoop', 'Could not save that open loop.')), {
-          title: jt('companion.titles.openLoopFailed', 'Open Loop Failed'),
-          dedupeKey: 'shell.companion:add:error',
-          source: 'shell.companion',
-        });
+        await handleMutationError(error, jt('companion.errors.saveOpenLoop', 'Could not save that open loop.'), 'shell.companion:add:error');
       }
     }
 
@@ -761,9 +834,12 @@
       formatCompanionOriginLabel,
       getAvailableDeferPresets,
       getResolvableActions,
-      renderManualAddForm,
+      isLoopPendingDelete,
+      renderManualAddForm: form.render,
+      syncOpenOverflowTrigger,
       handleHomeClick,
       handleHomeSubmit,
+      dispose,
     };
   }
 

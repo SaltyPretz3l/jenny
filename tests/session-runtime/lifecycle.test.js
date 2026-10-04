@@ -19,7 +19,7 @@ function deferred() {
   return { promise, resolve };
 }
 
-function fixture(t, { enabled = true, provePausedCleanup = false } = {}) {
+function fixture(t, { enabled = true, provePausedCleanup = false, timers = null } = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-runtime-lifecycle-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   let sequence = 0;
@@ -55,6 +55,7 @@ function fixture(t, { enabled = true, provePausedCleanup = false } = {}) {
     provePausedCleanup: () => provePausedCleanup,
     validateCheckpoint: () => true,
     onAttention: event => attention.push(event),
+    ...(timers ? { setTimer: (callback, ms) => { timers.push({ callback, ms }); return null; } } : {}),
   });
   const runtime = new SessionRuntimeService({ store, scheduler,
     chatAdapter: { prepareImmediate() {} } });
@@ -199,6 +200,30 @@ test('unconfirmed producer cleanup keeps session cancellation timed out and capa
   assert.equal(h.scheduler.active.size, 1);
   assert.equal(h.lanes.snapshot().quarantined, 1);
   assert.equal(h.runtime.hasSessionWork('session_uncertain'), true);
+});
+
+test('an unproven settlement raises attention only if it is still unconfirmed after the grace (TR-003)', async t => {
+  const timers = [];
+  const h = fixture(t, { timers });
+  const unproven = { status: 'cancelled', producerSettled: false, canonicalSettled: true };
+  const healed = h.submit('session_healed');
+  const healedStart = h.scheduler.tryDispatch(healed.work_id);
+  await Promise.resolve();
+  h.producers[0].waiting.resolve(unproven);
+  assert.equal((await healedStart.completion).status, 'needs_attention');
+  assert.deepEqual(h.attention, [], 'no ERROR while late cleanup may still land');
+  const late = await h.producers[0].confirmLateSettlement({ status: 'cancelled',
+    producerSettled: true, canonicalSettled: true });
+  assert.equal(late.status, 'cancelled');
+
+  const stuck = h.submit('session_stuck');
+  const stuckStart = h.scheduler.tryDispatch(stuck.work_id);
+  await Promise.resolve();
+  h.producers[1].waiting.resolve(unproven);
+  assert.equal((await stuckStart.completion).status, 'needs_attention');
+  assert.deepEqual(timers.map(timer => timer.ms), [5000, 5000]);
+  for (const timer of timers) timer.callback();
+  assert.deepEqual(h.attention, [{ work_id: stuck.work_id, reason: 'runtime_cleanup_quarantined' }]);
 });
 
 test('a terminal record still reports cleanup unconfirmed while its admitted entry owns capacity', async t => {
@@ -350,18 +375,60 @@ test('backend-restart reclaim retires abandoned producers and quarantine so the 
     ok: false, reason: 'runtime_cleanup_unconfirmed',
   });
 
-  const report = h.runtime.reclaimAbandonedAfterBackendRestart({ reason: 'backend_restart' });
+  const report = h.runtime.reclaimAbandonedAfterBackendRestart({ reason: 'backend_restart', cleanupLeases: [lease] });
+  // The stop persisted a cancel intent, so the work keeps needs_attention as a
+  // new process keeps it, for the checkpoint recovery; its capacity is freed.
   assert.deepEqual(report, {
-    reclaimed: [{ work_id: work.work_id, session_id: 'session_abandoned', status: 'cancelled' }],
-    retained: [], resources_confirmed: 1,
+    reclaimed: [{ work_id: work.work_id, session_id: 'session_abandoned', status: 'needs_attention' }],
+    retained: [], leases_confirmed: 0, resources_confirmed: 1,
   });
-  assert.equal(h.store.get(work.work_id).status, 'cancelled');
+  assert.equal(h.store.get(work.work_id).status, 'needs_attention');
   assert.equal(h.scheduler.active.size, 0);
   assert.equal(h.lanes.snapshot().quarantined, 0);
   assert.equal(broker.snapshot().quarantined_count, 0);
   assert.deepEqual(h.runtime.reopenAfterShutdown(), { ok: true });
-  assert.equal(h.runtime.hasSessionWork('session_abandoned'), false);
+  assert.equal(h.runtime.hasSessionWork('session_abandoned'), true);
   assert.equal(h.scheduler.tryDispatch(h.submit('session_next').work_id).status, 'started');
+});
+
+// A backend stop waited its whole drain (4.5 s) on work parked in
+// needs_attention, which only the restart reclaim can prove. The drain still
+// holds for a running producer, and ends as soon as all that is left is parked.
+test('shutdown drains a running producer but not work parked for the restart reclaim', async t => {
+  const h = fixture(t);
+  const work = h.submit('session_parked');
+  const started = h.scheduler.tryDispatch(work.work_id);
+  await Promise.resolve();
+  const startedAt = Date.now();
+  const shutdown = h.runtime.beginShutdown({ timeoutMs: 5_000 });
+  let drained = false;
+  shutdown.completion.then(() => { drained = true; });
+  await new Promise(resolve => setTimeout(resolve, 50));
+  assert.equal(drained, false);
+  h.producers[0].waiting.resolve({ status: 'failed', producerSettled: false, canonicalSettled: true });
+  assert.equal((await started.completion).status, 'needs_attention');
+  assert.deepEqual(await shutdown.completion, {
+    ok: false, reason: 'runtime_cleanup_awaits_backend_restart',
+  });
+  assert.ok(Date.now() - startedAt < 2_000);
+  assert.deepEqual(h.runtime.reopenAfterShutdown(), {
+    ok: false, reason: 'runtime_cleanup_unconfirmed',
+  });
+  assert.equal(h.runtime.reclaimAbandonedAfterBackendRestart().reclaimed.length, 1);
+  assert.deepEqual(h.runtime.reopenAfterShutdown(), { ok: true });
+});
+
+test('shutdown times out on a producer that never settles', async t => {
+  const h = fixture(t);
+  const work = h.submit('session_running');
+  const started = h.scheduler.tryDispatch(work.work_id);
+  await Promise.resolve();
+  assert.deepEqual(await h.runtime.beginShutdown({ timeoutMs: 20 }).completion, {
+    ok: false, reason: 'runtime_cleanup_timeout', timedOut: true,
+  });
+  assert.equal(h.store.get(work.work_id).status, 'running');
+  h.producers[0].waiting.resolve({ status: 'cancelled', producerSettled: true, canonicalSettled: true });
+  assert.equal((await started.completion).status, 'cancelled');
 });
 
 test('active pause persists intent while retaining the lane until proven checkpoint settlement', async t => {
@@ -488,4 +555,21 @@ test('waitForCleanup keeps timers alive when waiters keep handing back rejected 
   });
   assert.deepEqual(result, { ok: true });
   assert.ok(calls < 200, `the loop must yield between polls (polled ${calls} times)`);
+});
+
+test('backend restart releases sidecar-produced leases and preserves the rest without receipts', async t => {
+  const h = fixture(t);
+  const broker = new ResourceBroker();
+  h.runtime.resourceBroker = broker;
+  const sidecar = await broker.acquire({ ownerId: 'sidecar', resources: [capacityResource('tool_operations')] });
+  const external = await broker.acquire({ ownerId: 'docker', resources: [capacityResource('native_processes')] });
+  const produced = broker.tryAcquire({ ownerId: 'sidecar-run', restartReclaimable: true,
+    resources: [capacityResource('tool_operations')] }).lease;
+  for (const lease of [sidecar, external, produced]) broker.release(lease);
+  assert.equal(h.runtime.reclaimAbandonedAfterBackendRestart().resources_confirmed, 1);
+  assert.equal(broker.isHeld(produced), false);
+  assert.equal(broker.snapshot().quarantined_count, 2);
+  assert.equal(h.runtime.reclaimAbandonedAfterBackendRestart({ cleanupLeases: [sidecar] }).resources_confirmed, 1);
+  assert.equal(broker.isHeld(external), true);
+  assert.equal(broker.confirmCleanup(external), true);
 });

@@ -18,7 +18,9 @@ function findDiagnostics(root) {
     for (const entry of fs.existsSync(dir) ? fs.readdirSync(dir, { withFileTypes: true }) : []) {
       const full = path.join(dir, entry.name);
       if (entry.isDirectory()) walk(full);
-      else found.push(full);
+      // The writer lands a `<name>.<pid>.<hex>.tmp` sibling first and renames it
+      // into place: counting that empty file made the read race the rename.
+      else if (!entry.name.endsWith('.tmp')) found.push(full);
     }
   };
   walk(path.join(root, 'diagnostics'));

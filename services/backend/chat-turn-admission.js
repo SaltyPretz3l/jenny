@@ -5,6 +5,7 @@
 const { sessionAllowsChatSend } = require('./session-type');
 const { AI_ERROR_CODES } = require('./error-codes');
 const { isRuntimeRoute } = require('../session-runtime/lanes');
+const { chatgptModelsEnabled } = require('./chatgpt-models-enabled');
 
 // H2a admission: refuse a ChatGPT turn once the credential is revoked, or once
 // the running sidecar is holding a stale credential generation (sign-out landed
@@ -19,6 +20,14 @@ function assertChatgptCredentialAdmissible(service, route = null) {
     : String(service.currentEngineType || '').trim().toLowerCase();
   if (engineType !== 'chatgpt') {
     return;
+  }
+  if (!chatgptModelsEnabled(service.configService)) {
+    const error = new Error('ChatGPT models are turned off. Turn them on in Settings > Models.');
+    error.code = 'chatgpt_models_disabled';
+    error.error_code = AI_ERROR_CODES.ENGINE_CONNECTION;
+    error.category = 'setup';
+    error.retryable = false;
+    throw error;
   }
   const auth = service.chatgptAuthService;
   if (!auth || typeof auth.hasCredential !== 'function') {

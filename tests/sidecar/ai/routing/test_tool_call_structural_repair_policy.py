@@ -7,22 +7,22 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from test_tool_loop import (  # noqa: E402 - shared loop harness.
+from test_tool_loop import (  # shared loop harness.
     _build_router,
     _StubMCPClient,
     _ToolLoopEngine,
     _ToolPlan,
 )
-from test_tool_loop_recovery import (  # noqa: E402 - shared recovery fixtures.
+from test_tool_loop_recovery import (  # shared recovery fixtures.
     _read_file_descriptor,
     _tool_plan,
 )
 
-from sidecar.ai.error_codes import CMP_LOOP_INVALID_TOOL_CALL  # noqa: E402
-from sidecar.ai.mcp.models import MCPToolDescriptor  # noqa: E402
-from sidecar.ai.routing.loop_events import ToolResultEvent  # noqa: E402
-from sidecar.ai.routing.loop_runtime import LoopRuntime  # noqa: E402
-from sidecar.ai.tools.models import GenerationResult, ToolCallRequest  # noqa: E402
+from sidecar.ai.error_codes import CMP_LOOP_INVALID_TOOL_CALL
+from sidecar.ai.mcp.models import MCPToolDescriptor
+from sidecar.ai.routing.loop_events import ToolResultEvent
+from sidecar.ai.routing.loop_runtime import LoopRuntime
+from sidecar.ai.tools.models import GenerationResult, ToolCallRequest
 
 
 def _write_file_descriptor() -> MCPToolDescriptor:

@@ -36,18 +36,11 @@ const schemaDigest = (schema) => createHash('sha256').update(schema).digest('hex
 function dynamicEnvelope() {
   const envelope = activeEnvelope(7);
   const snapshot = envelope.plugin_runtime.snapshot;
+  // The retired plugin remote-MCP tier: a stale binding must grant no tool.
   snapshot.remote_mcp_bindings = [{
     binding_digest: digest('1'), descriptor_digest: digest('2'), artifact_digest: digest('3'),
     endpoint_origin_digest: digest('4'), contributions: [{ kind: 'tool',
       namespaced_name: 'plugin:remote:server:tool:search:abc', schema_digest: digest('5') }],
-  }];
-  snapshot.restricted_contributions = [{
-    namespaced_name: 'plugin:acme-labs:widgets:compute', capabilities: ['network.request'],
-    network_origins: ['https://example.test'], artifact_digest: digest('6'),
-    component_digest: digest('7'), content_digest: digest('8'), generation_id: 'gen-7',
-    commit_epoch: 7, lifecycle_epoch: 2, policy_revision: 3,
-    workspace_incarnation_id: 'workspace-1', abi_digest: digest('9'),
-    protocol_digest: digest('a'),
   }];
   const schema = '{}';
   snapshot.native_mcp_bindings = [
@@ -119,11 +112,7 @@ test('captures bounded policy descriptors only from the committed dynamic runtim
   ]), [
     ['plugin_jenny_native_read', 'plugin_native_mcp', false, true],
     ['plugin_third_party_native_read', 'plugin_native_mcp', true, false],
-    ['plugin:acme-labs:widgets:compute', 'restricted', true, false],
-    ['plugin:remote:server:tool:search:abc', 'mcp', true, false],
   ]);
-  assert.equal(capture.descriptors.find((item) => item.source_kind === 'restricted')
-    .capability_identity.capabilities[0], 'network.request');
   assert.match(capture.descriptor_digest, /^[0-9a-f]{64}$/);
   assert.equal(Object.isFrozen(capture.descriptors), true);
   assert.throws(() => adapter.captureExecutionToolAuthority({
@@ -131,13 +120,13 @@ test('captures bounded policy descriptors only from the committed dynamic runtim
   }), /does not match/);
 });
 
-test('dynamic tool capture rejects cross-runtime name collisions', () => {
+test('dynamic tool capture rejects duplicate tool names', () => {
   const adapter = attachManagedPluginRuntime({}, {
     requestApply: async () => ({ ok: true, attestation: {} }),
   });
   const envelope = dynamicEnvelope();
   envelope.plugin_runtime.snapshot.native_mcp_bindings[0].tools[0].namespaced_name =
-    'plugin:acme-labs:widgets:compute';
+    'plugin_jenny_native_read';
   assert.equal(adapter.commit({ envelope }).ok, true);
   assert.throws(() => adapter.captureExecutionToolAuthority(adapter.getChatAuthority()),
     /duplicate name/);

@@ -5,6 +5,7 @@ const {
   waitForUi,
 } = require('./helpers/renderer-shell-harness');
 const { waitForUiState } = require('./helpers/wait-for-ui-state');
+const { installSmoothScrollModel, stubRect } = require('./helpers/smooth-scroll-model');
 
 function dispatchPastedImage(window, input, name = 'clipboard.png') {
   const pastedBlob = new window.Blob([Uint8Array.from([137, 80, 78, 71])], { type: 'image/png' });
@@ -255,15 +256,12 @@ test('artifact jump failures roll the current session off the live row-model pat
   }
 });
 
-// Skipped pending coalesced-turn refactor: this test expects tool_step rows to
-// render inside the assistant turn article (so .inv-artifact-list is reachable
-// via the assistant article), but tests/renderer-turn-compat.test.js
-// "completed segmented turns render source-owned articles" expects the
-// opposite — tool_use messages own their own article. Routing tool_step rows
-// into the assistant bucket fixes this test but breaks the segmented-turns
-// test, since the same renderer cannot satisfy both contracts. Re-enable when
-// the coalesced/segmented contract is unified.
-test('artifact jumps for compat-only tool nodes highlight the visible coalesced turn article', { skip: 'pending coalesced-turn refactor (contradicts renderer-turn-compat segmented expectation)' }, async (t) => {
+// Hydrated (persisted-history) twin of the live-stream jump test above. The
+// segmented contract settled (tests/renderer-turn-compat.test.js "completed
+// segmented turns render source-owned articles"): the tool_use message owns its
+// own article, so its generated-artifact card and the jump highlight land on
+// that article, not on a coalesced assistant article. Un-skipped 2026-09-25.
+test('artifact jumps for hydrated tool results highlight the source-owned tool article', async (t) => {
   const app = await loadRendererApp();
   t.after(async () => {
     await app.dispose();
@@ -354,9 +352,14 @@ test('artifact jumps for compat-only tool nodes highlight the visible coalesced 
   });
   await waitForUi(window, 80);
 
-  const turnArticle = doc.querySelector('article[data-message-id="assistant_artifact_turn"]');
-  assert.ok(turnArticle?.querySelector('.inv-artifact-list'));
-  assert.ok(turnArticle?.querySelector('[data-inv-artifact-action="panel"][data-artifact-id="artifact_file_session-1_app-js"]'));
+  const toolArticle = doc.querySelector('article[data-message-id="tool_use_artifact_turn"]');
+  assert.ok(toolArticle, 'the tool_use message renders its own article');
+  assert.ok(
+    toolArticle.querySelector('[data-row-kind="tool_call"] [data-inv-artifact-action="panel"][data-artifact-id="artifact_file_session-1_app-js"]'),
+    'the generated-artifact card rides the tool call row'
+  );
+  const assistantArticle = doc.querySelector('article[data-message-id="assistant_artifact_turn"]');
+  assert.equal(assistantArticle?.querySelector('[data-inv-artifact-action]') ?? null, null);
 
   // W1-5: the studio view is gone — open the split review panel instead.
   doc.getElementById('artifactSplitViewToggle').click();
@@ -371,12 +374,79 @@ test('artifact jumps for compat-only tool nodes highlight the visible coalesced 
 
   const chatTab = doc.getElementById('chatTopRailTab');
   assert.equal(chatTab.getAttribute('aria-selected'), 'true');
-  assert.equal(doc.querySelector('article[data-message-id="tool_use_artifact_turn"]'), null);
-  const highlightedShell = doc.querySelector('article[data-message-id="assistant_artifact_turn"].artifact-source-highlight');
-  assert.ok(highlightedShell);
-  assert.equal(
-    doc.querySelector('.thread-compat-anchor[data-message-id="tool_use_artifact_turn"]')?.classList.contains('artifact-source-highlight'),
-    false
-  );
+  const highlighted = Array.from(doc.querySelectorAll('.artifact-source-highlight'));
+  assert.deepEqual(highlighted.map((el) => el.getAttribute('data-message-id')), ['tool_use_artifact_turn']);
+  assert.ok(highlighted[0].classList.contains('message-shell'));
 });
 
+// F5 (2026-09-27 gate): "Jump to message" in the context rail highlighted the
+// source row but never scrolled. Chromium aborts a programmatic smooth scroll
+// on any later scrollTop write, and the jump's own view activation schedules a
+// viewport sync whose reader-anchor restore wrote the pre-jump position back
+// one frame into the animation. The scroll model reproduces those semantics:
+// a smooth scrollIntoView lands two frames later unless scrollTop is written
+// first (tests/helpers/smooth-scroll-model.js), so the test fails exactly
+// when the real app failed to move.
+test('F5: the context rail\'s Jump to message scrolls the transcript to the highlighted source row', async (t) => {
+  const app = await loadRendererApp({
+    shell: {
+      chat: {
+        async startStream(payload, { state }) {
+          const sessionId = 'session-rail-jump';
+          state.sessions = [{
+            id: sessionId,
+            title: 'Rail Jump Session',
+            conversation_mode: payload.conversationMode || 'chat',
+            preferred_model: payload.preferredModel || 'gpt-test',
+            reasoning_effort: 'default',
+            interactive_round_count: 0,
+            interactive_sequence_state: 'idle',
+            pending_question_batch: null,
+            updated_at: new Date().toISOString(),
+          }];
+          state.messagesBySession.set(sessionId, []);
+          return { sessionId, streamId: 'stream-rail-jump' };
+        },
+      },
+    },
+  });
+  t.after(async () => { await app.dispose(); });
+  const { window, shell } = app;
+  const doc = window.document;
+  const input = doc.getElementById('chatInput');
+  input.value = 'Run the read tool';
+  input.dispatchEvent(new window.Event('input', { bubbles: true }));
+  doc.getElementById('sendButton').click();
+  await waitForUi(window, 20);
+  const streamIds = { sessionId: 'session-rail-jump', streamId: 'stream-rail-jump' };
+  await shell.__emitChat({ type: 'tool_use', ...streamIds, callId: 'call-1', toolName: 'Read', summary: 'Read src/app.js', input: { file_path: 'src/app.js' }, status: 'running' });
+  await shell.__emitChat({ type: 'tool_result', ...streamIds, callId: 'call-1', toolName: 'Read', summary: 'Read src/app.js', content: 'export const ready = true;', isError: false, approvalState: 'auto', durationMs: 12 });
+  await shell.__emitChat({ type: 'complete', ...streamIds, content: 'Read it.', interactiveProtocolDrift: false, interactiveProtocolDriftPreview: '' });
+  await waitForUi(window, 60);
+
+  // Real geometry for the composer layout pass (a zero-height stage skips it)
+  // and a long transcript scrolled to the top, as in the gate.
+  stubRect(doc.getElementById('chatView'), { top: 0, bottom: 900, height: 900 });
+  stubRect(doc.getElementById('chatThreadStage'), { top: 0, bottom: 700, height: 700 });
+  stubRect(doc.getElementById('composerWrap'), { top: 720, bottom: 880, height: 160 });
+  const scroller = doc.getElementById('chatThreadScroll');
+  const model = installSmoothScrollModel(window, scroller);
+  window.__rendererState.ui.followLatest = false;
+  scroller.dispatchEvent(new window.Event('scroll'));
+  await waitForUi(window, 40);
+
+  const sourceId = 'tool_use_stream-rail-jump_call-1';
+  const jump = doc.querySelector(`#contextArtifactList .orbit-card-jump[data-artifact-jump="${sourceId}"]`);
+  assert.ok(jump, 'precondition: the context rail lists the artifact with a jump control');
+  jump.click();
+  await model.waitForIdle();
+  await waitForUi(window, 40);
+
+  const highlighted = doc.querySelector('.artifact-source-highlight');
+  assert.ok(highlighted, 'the source row is highlighted');
+  assert.equal(model.calls.length, 1, 'one reveal inside the transcript scroller');
+  assert.ok(model.calls[0].element === highlighted || highlighted.contains(model.calls[0].element) || model.calls[0].element.contains(highlighted),
+    'the reveal targets the highlighted row');
+  assert.deepEqual(model.abortedBy, [], 'nothing writes scrollTop while the smooth reveal is in flight');
+  assert.equal(model.top, 1000, 'the transcript scrolled to the source row');
+});

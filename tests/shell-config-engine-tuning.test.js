@@ -163,6 +163,13 @@ test('resetEngineTuning scoped to a pane spares the other pane', () => {
   assert.equal(next.cloudMaxToolsPerTurn, 150, 'cloud field untouched');
 });
 
+test('resetEngineTuning keeps a value that has no control on any page', () => {
+  const host = createHost({ maxToolsPerTurn: 7, maxBudgetUsd: 5 });
+  assert.deepEqual(host.resetEngineTuning(), { maxBudgetUsd: 5 });
+  assert.deepEqual(host.resetEngineTuning('cloud'), { maxBudgetUsd: 5 }, 'a pane reset keeps it too');
+  assert.deepEqual(host.writes, ['engine_tuning_reset'], 'and a reset with nothing else to clear does not write');
+});
+
 test('resetEngineTuning on an already-clean block does not write', () => {
   const host = createHost();
   host.resetEngineTuning();

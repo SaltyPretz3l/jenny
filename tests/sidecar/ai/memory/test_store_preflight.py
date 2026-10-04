@@ -206,3 +206,70 @@ def test_future_schema_in_committed_wal_is_rejected_without_mutation(tmp_path: P
         } == before
     finally:
         connection.close()
+
+
+def _restarted_wal(db_path: Path, *, journal_size_limit: int | None = None) -> sqlite3.Connection:
+    """Leave a live WAL that SQLite restarted over a longer, older generation."""
+
+    connection = sqlite3.connect(db_path)
+    connection.execute("PRAGMA journal_mode=WAL")
+    connection.execute("PRAGMA wal_autocheckpoint=0")
+    connection.execute("CREATE TABLE sample (payload BLOB)")
+    connection.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
+    connection.commit()
+    for _ in range(12):
+        connection.execute("INSERT INTO sample VALUES (randomblob(3000))")
+        connection.commit()
+    busy, _log_frames, _checkpointed = connection.execute(
+        "PRAGMA wal_checkpoint(PASSIVE)"
+    ).fetchone()
+    assert busy == 0
+    if journal_size_limit is not None:
+        connection.execute(f"PRAGMA journal_size_limit={journal_size_limit}")
+    # First write after a full checkpoint: SQLite rewrites the WAL header with
+    # new salts and starts again at frame 1 without truncating the file.
+    connection.execute("INSERT INTO sample VALUES (1)")
+    connection.commit()
+    return connection
+
+
+def test_restarted_wal_with_stale_older_frames_is_accepted(tmp_path: Path) -> None:
+    db_path = tmp_path / "memory.db"
+    connection = _restarted_wal(db_path)
+    try:
+        wal_path = Path(f"{db_path}-wal")
+        before = wal_path.read_bytes()
+
+        assert _validate_wal_file(wal_path) is None
+        validate_memory_store_files(db_path, schema_version=SCHEMA_VERSION)
+
+        assert wal_path.read_bytes() == before
+    finally:
+        connection.close()
+
+
+def test_wal_cut_mid_frame_by_journal_size_limit_is_accepted(tmp_path: Path) -> None:
+    db_path = tmp_path / "memory.db"
+    page_size = 4096
+    limit = 32 + 3 * (24 + page_size) + 100
+    connection = _restarted_wal(db_path, journal_size_limit=limit)
+    try:
+        wal_path = Path(f"{db_path}-wal")
+        assert wal_path.stat().st_size == limit, "SQLite truncates to the limit"
+
+        validate_memory_store_files(db_path, schema_version=SCHEMA_VERSION)
+    finally:
+        connection.close()
+
+
+def test_stale_older_generation_frames_do_not_count_toward_the_schema_version(
+    tmp_path: Path,
+) -> None:
+    wal_path = tmp_path / "memory.db-wal"
+    current = _wal_bytes(include_frame=True)
+    stale = bytearray(current[32:])
+    stale[8:16] = b"old-salt"
+    stale[24 + 60 : 24 + 64] = (SCHEMA_VERSION + 1).to_bytes(4, "big")
+    wal_path.write_bytes(current + bytes(stale))
+
+    assert _validate_wal_file(wal_path) == SCHEMA_VERSION

@@ -8,7 +8,7 @@ const { resolveLlamaServerOutputLevel } = require('./backend/llama-server-stderr
 const { createEngineActivityForwarder } = require('./backend/engine-activity-lines');
 const { sanitizeSpawnEnv } = require('./backend/sanitize-spawn-env');
 const { forceKillProcessTreeSync, verifyProcessExitedSync } = require('./backend/sidecar-shutdown');
-const { isProcessAlive, wait } = require('./backend/process-utils');
+const { isPortOpen, isProcessAlive, wait } = require('./backend/process-utils');
 const { requestWithTimeout } = require('./http-fetch-util');
 const {
   DEFAULT_EXISTING_PROBE_TIMEOUT_MS,
@@ -32,6 +32,7 @@ const {
   llamaServerIdentityConfirmed,
   readPidFile,
   reapStalePidFile,
+  reconcileRetainedPid,
   shutdownLlamaServerSync,
   writePidFile,
 } = require('./llama-server-pidfile');
@@ -250,9 +251,17 @@ async function startLlamaServer({
   isProcessAliveImpl = isProcessAlive,
   fsImpl = fs,
   fetchImpl = globalThis.fetch,
+  // Identity restore (services/backend/chat-gpu-handoff.js): relaunch with the
+  // key the parked chat turn still sends, and never adopt a server already on
+  // the port, since its key is not the retained one.
+  retainedApiKey = '',
+  adopt = true,
 } = {}) {
   const log = normalizeLogger(logger);
   const baseUrl = `http://${host}:${port}/v1`;
+  if (retainedApiKey && !/^[0-9a-f]{32}$/.test(String(retainedApiKey))) {
+    throw new Error('llama_server_retained_key_invalid');
+  }
   if (abortSignal && abortSignal.aborted) {
     throw new Error('readiness_aborted');
   }
@@ -275,14 +284,22 @@ async function startLlamaServer({
     projectorPath = '';
   }
 
-  let reuseExisting = await probeExistingServer({
-    baseUrl,
-    host,
-    port,
-    expectedModelId: modelAlias,
-    logger: log,
-  });
+  let reuseExisting = false;
   let reuseRejectedNoMmproj = false;
+  if (!adopt) {
+    if (await isPortOpen(port, host)) {
+      log('WARN', 'llama.server.port_busy_no_adopt', { host, port });
+      throw new Error('llama_server_port_busy');
+    }
+  } else {
+    reuseExisting = await probeExistingServer({
+      baseUrl,
+      host,
+      port,
+      expectedModelId: modelAlias,
+      logger: log,
+    });
+  }
   if (reuseExisting && projectorPath
       && !await probeVisionSupport(baseUrl, { fetchImpl })) {
     log('WARN', 'llama.server.reuse_rejected_no_mmproj', { baseUrl });
@@ -329,7 +346,7 @@ async function startLlamaServer({
   // settles (ready, timed out, aborted, exited) and never sits on disk for the
   // server's lifetime. The spawn-failure path below is the only earlier exit.
   const apiKeyPath = path.join(userDataPath, `llama-server-${crypto.randomBytes(4).toString('hex')}.key`);
-  const apiKey = crypto.randomBytes(16).toString('hex');
+  const apiKey = retainedApiKey || crypto.randomBytes(16).toString('hex');
   const removeApiKeyFile = () => {
     try {
       fsImpl.unlinkSync(apiKeyPath);
@@ -451,7 +468,7 @@ async function startLlamaServer({
     removeApiKeyFile();
     const message = String(error && error.message || error);
     log('WARN', 'llama.server.readiness_failed', { message, exit: exitInfo });
-    forceKillAndClearConfirmedPid({
+    const killConfirmed = forceKillAndClearConfirmedPid({
       pid: child.pid,
       pidPath,
       reason: 'readiness_failed',
@@ -461,6 +478,9 @@ async function startLlamaServer({
       isProcessAliveImpl,
       childExitedRef,
     });
+    // The child may still be alive with its PID record retained: the owner must
+    // not treat the failed launch as a clean stop.
+    if (!killConfirmed) error.cleanupUnconfirmed = true;
     if (message === 'child_exited_before_ready') {
       if (!loadFailure) {
         await stderrSettled(child, STDERR_SETTLE_TIMEOUT_MS);
@@ -469,7 +489,9 @@ async function startLlamaServer({
         // Names whose build could not read the file; never the path.
         const blamed = runtimeSource === 'bundled' || (!runtimeSource && !binaryPath) ? 'bundled' : 'custom';
         log('WARN', 'llama.server.model_unsupported', { runtime: runtimeLabel || blamed });
-        throw new Error(`llama_server_${loadFailure}:${blamed}`, { cause: error });
+        const loadError = new Error(`llama_server_${loadFailure}:${blamed}`, { cause: error });
+        if (!killConfirmed) loadError.cleanupUnconfirmed = true;
+        throw loadError;
       }
     }
     throw error;
@@ -481,7 +503,7 @@ async function startLlamaServer({
       baseUrl,
       timeoutMs: readinessTimeoutMs,
     });
-    forceKillAndClearConfirmedPid({
+    const killConfirmed = forceKillAndClearConfirmedPid({
       pid: child.pid,
       pidPath,
       reason: 'readiness_timeout',
@@ -492,7 +514,9 @@ async function startLlamaServer({
       childExitedRef,
     });
     removeApiKeyFile();
-    throw new Error('llama_server_readiness_timeout');
+    const timeoutError = new Error('llama_server_readiness_timeout');
+    if (!killConfirmed) timeoutError.cleanupUnconfirmed = true;
+    throw timeoutError;
   }
 
   removeApiKeyFile();
@@ -586,6 +610,7 @@ module.exports = {
   pipeChildLogs,
   readPidFile,
   reapStalePidFile,
+  reconcileRetainedPid,
   resolveBinaryPath,
   resolveGgufPath,
   resolveProjectorPath,

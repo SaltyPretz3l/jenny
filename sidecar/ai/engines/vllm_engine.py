@@ -1,4 +1,4 @@
-# ruff: noqa: PLC0415, PLR0913
+# ruff: noqa: PLR0913
 """vLLM inference engine using the OpenAI-compatible HTTP API."""
 
 from __future__ import annotations
@@ -65,6 +65,10 @@ from sidecar.runtime.local_engine.request_context import (
 )
 from sidecar.runtime.local_engine.request_context import (
     install_request_context as _install_shared_request_context,
+)
+from sidecar.runtime.provider_capability_profile import (
+    record_capability_probe_failure,
+    record_capability_probe_success,
 )
 from sidecar.runtime.vllm_engine_support import (
     DelimitedReasoningParser,
@@ -236,51 +240,38 @@ class VLLMEngine(_VLLMGenerationMixin, _VLLMTelemetryMixin, BaseEngine):
             raise
         self._record_capability_probe_success(matched)
 
-    def _record_capability_probe_success(self, model_name: str) -> None:
-        store = getattr(self, "_provider_capability_profile_store", None)
-        if store is None:
-            return
-        try:
-            from sidecar.runtime.provider_capability_profile import (
-                PROBE_STATUS_READY,
-                ProviderCapabilityFeatures,
-                ProviderCapabilityObserved,
-                derive_endpoint_id,
-            )
+    def probe_reachable(self) -> None:
+        """Prove the endpoint answers ``/models`` without binding a model.
 
-            store.record_probe_result(
-                endpoint_id=derive_endpoint_id(self._ENGINE_TYPE, self._base_url),
-                model_id=model_name,
-                features=ProviderCapabilityFeatures(
-                    chat_supported=True,
-                    streaming_supported=True,
-                    native_tools_supported=False,
-                    thinking_or_reasoning_supported=bool(self._thinking),
-                ),
-                observed=ProviderCapabilityObserved(
-                    max_context_advertised=self._context_length,
-                ),
-                probe_status=PROBE_STATUS_READY,
-            )
-        except Exception:  # noqa: BLE001
-            pass
+        A no-model init otherwise reported a dead port as a ready runtime. The
+        probe rides ``_HEALTH_TIMEOUT_SECONDS`` (3 s) and raises the same
+        connection error ``load_model`` does, so the factory falls back and
+        Electron reads the engine as unavailable.
+        """
+        if self._query_models() is None:
+            raise EngineConnectionError(self._build_not_reachable_message())
+
+    def _record_capability_probe_success(self, model_name: str) -> None:
+        record_capability_probe_success(
+            getattr(self, "_provider_capability_profile_store", None),
+            engine_type=self._ENGINE_TYPE,
+            base_url=self._base_url,
+            model_id=model_name,
+            native_tools_supported=False,
+            thinking_supported=bool(self._thinking),
+            context_length=self._context_length,
+        )
 
     def _record_capability_probe_failure(
         self, model_name: str, error: BaseException
     ) -> None:
-        store = getattr(self, "_provider_capability_profile_store", None)
-        if store is None:
-            return
-        try:
-            from sidecar.runtime.provider_capability_profile import derive_endpoint_id
-
-            store.mark_failed(
-                endpoint_id=derive_endpoint_id(self._ENGINE_TYPE, self._base_url),
-                model_id=model_name or "unknown",
-                reason=f"{type(error).__name__}: {str(error)[:120]}",
-            )
-        except Exception:  # noqa: BLE001
-            pass
+        record_capability_probe_failure(
+            getattr(self, "_provider_capability_profile_store", None),
+            engine_type=self._ENGINE_TYPE,
+            base_url=self._base_url,
+            model_id=model_name,
+            error=error,
+        )
 
     # -- error message builders (subclasses may override) ------------------
 

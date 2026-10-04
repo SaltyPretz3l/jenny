@@ -1,0 +1,275 @@
+/* Subagent Monitor, page 2 (one child's drill-in): steps, the answer, evidence,
+ * uncertainties and the usage disclosure. Split from chat-subagent-monitor.css
+ * (shell, tree, hosts), which it follows in styles.css. Same rules: no cards,
+ * no side bars, hierarchy from whitespace and type.
+ */
+
+/* ── Page 2: one child ────────────────────────────────────────────────── */
+.subagent-detail-head {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.subagent-detail-title {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: var(--font-size-heading);
+  font-weight: 500;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+}
+
+.subagent-detail-status {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  color: var(--text-muted);
+  font-size: var(--font-size-caption);
+}
+
+.subagent-detail-section {
+  margin-block-start: var(--space-10);
+}
+
+.subagent-section-heading {
+  margin: 0 0 var(--space-4);
+  color: var(--text-muted);
+  font-size: var(--font-size-caption);
+  font-weight: 500;
+}
+
+.subagent-step-list {
+  display: grid;
+  gap: var(--space-3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.subagent-step {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-4);
+  min-width: 0;
+  font-size: var(--font-size-footnote);
+}
+
+.subagent-step .subagent-monitor-dot {
+  align-self: center;
+}
+
+.subagent-step-copy {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 var(--space-4);
+  min-width: 0;
+}
+
+.subagent-step-name {
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
+.subagent-step-target {
+  min-width: 0;
+  color: var(--text-muted);
+  font-family: var(--font-family-mono);
+  overflow-wrap: anywhere;
+}
+
+.subagent-step-detail {
+  flex-basis: 100%;
+  color: var(--state-danger);
+  overflow-wrap: anywhere;
+}
+
+.subagent-step-note {
+  margin: var(--space-4) 0 0;
+  color: var(--text-muted);
+  font-size: var(--font-size-footnote);
+  line-height: 1.5;
+}
+
+.subagent-live-summary {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: var(--font-size-footnote);
+  line-height: 1.5;
+}
+
+/* Disclosure triggers (inventory collapsible: cursor and focus ring come from inventory.css). */
+.subagent-more-trigger,
+.subagent-technical-trigger,
+.subagent-usage-trigger {
+  display: flex;
+  align-items: center;
+  gap: var(--space-6);
+  padding: var(--space-3) 0;
+  font-size: var(--font-size-footnote);
+}
+
+.subagent-technical-trigger,
+.subagent-usage-trigger {
+  justify-content: space-between;
+  color: var(--text-muted);
+}
+
+.subagent-more-trigger {
+  margin-block-start: var(--space-3);
+  color: var(--text-link);
+}
+
+.subagent-technical-trigger {
+  margin-block-start: var(--space-10);
+}
+
+.subagent-more-detail,
+.subagent-technical-detail,
+.subagent-usage-detail {
+  padding: var(--space-3) 0;
+}
+
+.subagent-technical-detail p {
+  margin: 0 0 var(--space-3);
+  color: var(--text-secondary);
+  font-size: var(--font-size-footnote);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+/* The answer: the sanitized markdown pipeline's output, tables kept compact. */
+.subagent-answer {
+  color: var(--text-secondary);
+  font-size: var(--font-size-body);
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+.subagent-answer > :first-child {
+  margin-block-start: 0;
+}
+
+.subagent-answer > :last-child {
+  margin-block-end: 0;
+}
+
+.subagent-answer p,
+.subagent-answer ul,
+.subagent-answer ol,
+.subagent-answer pre,
+.subagent-answer blockquote {
+  margin-block: 0 var(--space-5);
+}
+
+.subagent-answer h1,
+.subagent-answer h2,
+.subagent-answer h3,
+.subagent-answer h4 {
+  margin-block: var(--space-6) var(--space-3);
+  color: var(--text-primary);
+  font-size: var(--font-size-body);
+  font-weight: 500;
+}
+
+.subagent-answer pre {
+  overflow-x: auto;
+  font-size: var(--font-size-code);
+}
+
+.subagent-answer table {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+  border-collapse: collapse;
+  font-size: var(--font-size-footnote);
+}
+
+.subagent-answer th,
+.subagent-answer td {
+  padding: var(--space-2) var(--space-5);
+  border-bottom: 1px solid var(--border-subtle);
+  text-align: start;
+  vertical-align: top;
+}
+
+.subagent-answer th {
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
+.subagent-evidence-list,
+.subagent-uncertainty-list {
+  display: grid;
+  gap: var(--space-4);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.subagent-uncertainty-list li {
+  color: var(--text-secondary);
+  font-size: var(--font-size-footnote);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.subagent-evidence-item {
+  display: grid;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.subagent-evidence-title {
+  color: var(--text-primary);
+  font-size: var(--font-size-footnote);
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+
+.subagent-evidence-link {
+  width: fit-content;
+  max-width: 100%;
+  color: var(--text-link);
+  cursor: pointer;
+}
+
+.subagent-evidence-link:hover {
+  text-decoration: underline;
+}
+
+.subagent-evidence-copy {
+  color: var(--text-muted);
+  font-size: var(--font-size-footnote);
+  line-height: 1.45;
+}
+
+.subagent-disclosure-label,
+.subagent-usage-route {
+  color: var(--text-muted);
+  font-size: var(--font-size-footnote);
+}
+
+.subagent-usage-summary {
+  color: var(--text-secondary);
+}
+
+.subagent-usage-grid {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.subagent-usage-grid > span {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-7);
+  color: var(--text-muted);
+  font-size: var(--font-size-caption);
+}
+
+.subagent-usage-grid strong {
+  color: var(--text-secondary);
+}
+
+.subagent-usage-route {
+  margin-top: var(--space-5);
+}

@@ -5,7 +5,10 @@
   }
   root.rendererStreamRevealUtils = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
-  const turnShellUtils = (typeof globalThis !== 'undefined' && globalThis.rendererTurnShell)
+  // index.html loads renderer-turn-shell.js AFTER this script: read at factory
+  // time the global was always {} in the app, and the live text patches of a
+  // later segment went into its hidden thread-compat anchor (dogfood B15).
+  const resolveTurnShellUtils = () => (typeof globalThis !== 'undefined' && globalThis.rendererTurnShell)
     || (typeof require === 'function' ? require('./renderer-turn-shell') : null)
     || {};
   function resolveStreamRevealModule(globalName, modulePath) {
@@ -21,11 +24,11 @@
   const thinkingPanelSettleUtils = resolveStreamRevealModule('rendererThinkingPanelSettleUtils', '../shell/renderer-thinking-panel-settle-utils');
   const autocollapseUtils = resolveStreamRevealModule('rendererReasoningAutocollapseUtils', './renderer-reasoning-autocollapse-utils');
   const tokenFadeUtils = resolveStreamRevealModule('rendererStreamTokenFadeUtils', './renderer-stream-token-fade-utils');
+  const reasoningPatchUtils = resolveStreamRevealModule('rendererStreamReasoningPatchUtils', './renderer-stream-reasoning-patch-utils');
   const {
     captureCodeBlockScroll,
     describeDomWrite,
-    morphElementChildren,
-    reconcileStreamUnits,
+    applyRowListFallback,
     restoreCodeBlockScroll,
     setChildrenHtmlPreservingKeyedNodes,
     setInnerHtmlPreservingCodeScroll,
@@ -35,6 +38,9 @@
 
   function createStreamRevealController(deps) {
     const settings = deps || {};
+    const readSessionId = () => String(settings.getSessionId?.() ?? settings.state?.currentSessionId ?? '');
+    const settleCleanups = new Set();
+    let disposed = false;
     const windowRef = settings.windowRef || null;
     const chatTimeline = settings.chatTimeline || null;
     const reducedMotionQuery = settings.reducedMotionQuery || { matches: false };
@@ -84,7 +90,8 @@
         ? globalThis.rendererStreamClientMetricsModule.getShared()
         : null);
     const noteHeaderPatch = (kind) =>
-      streamClientMetrics?.noteRenderForSession?.(settings.state?.currentSessionId, kind);
+      streamClientMetrics?.noteRenderForSession?.(readSessionId(), kind);
+    const turnShellUtils = resolveTurnShellUtils();
     const resolveVisibleMessageDomTarget = typeof turnShellUtils.resolveVisibleMessageDomTarget === 'function'
       ? turnShellUtils.resolveVisibleMessageDomTarget
       : function fallbackResolveVisibleMessageDomTarget(container, messageId) {
@@ -107,13 +114,13 @@
       previousUnits: [],
       structureSignature: 0,
       sessionId: '',
-      patchFrame: 0,
-      pendingPatch: null,
       tokenFadeTracker: null,
       previousDomCount: 0,
       previousTailFingerprint: '',
       lastThinkingMarkup: '',
       lastThinkingMarkupKey: '',
+      lastMessageThinkingMarkup: '',
+      lastMessageThinkingMarkupKey: '',
     };
     const streamPatchTargetController = streamPatchTargetUtils.createStreamPatchTargetUtils({
       getRuntime: () => runtime,
@@ -151,17 +158,8 @@
         .join('^');
     }
 
-    function cancelPendingPatch() {
-      if (runtime.patchFrame && windowRef && typeof windowRef.cancelAnimationFrame === 'function') {
-        windowRef.cancelAnimationFrame(runtime.patchFrame);
-      }
-      runtime.patchFrame = 0;
-      runtime.pendingPatch = null;
-    }
-
     function resetState(options) {
       const nextOptions = options || {};
-      cancelPendingPatch();
       reasoningHandoff.clear();
       clearStreamingArticleMarker();
       runtime.streamingMessageId = '';
@@ -181,6 +179,8 @@
       runtime.previousTailFingerprint = '';
       runtime.lastThinkingMarkup = '';
       runtime.lastThinkingMarkupKey = '';
+      runtime.lastMessageThinkingMarkup = '';
+      runtime.lastMessageThinkingMarkupKey = '';
     }
 
     function buildTimelineStructureSignature(messages) {
@@ -231,6 +231,7 @@
     }
 
     function patchBubbleUnits(bubble, patchModel, doc) {
+      streamDomPatchUtils.noteRowSubtreeWrite?.(bubble);
       const units = patchModel.streamUnits;
       const changedStart = patchModel.streamChangedStart;
 
@@ -248,11 +249,6 @@
       if (existingUnits.length > 0 && changedStart > existingUnits.length) {
         setInnerHtmlPreservingCodeScroll(bubble, patchModel.bubbleInnerHtml);
         return;
-      }
-
-      // Clear stale reveal class from unchanged units.
-      for (let i = 0; i < changedStart && i < existingUnits.length; i++) {
-        existingUnits[i].classList.remove('is-revealed');
       }
 
       // Update changed existing units in place.
@@ -274,123 +270,17 @@
         };
         if (i < existingUnits.length) {
           writeUnit(existingUnits[i], () => setInnerHtmlPreservingCodeScroll(existingUnits[i], unitData.html));
-          existingUnits[i].classList.toggle('is-revealed', unitData.revealed);
         } else {
           const el = doc.createElement('div');
-          el.className = 'chat-stream-unit'
-            + (unitData.revealed ? ' is-revealed' : '');
+          el.className = 'chat-stream-unit';
           el.setAttribute('data-stream-unit-index', String(i));
           writeUnit(el, () => { el.innerHTML = unitData.html; });
           bubble.appendChild(el);
         }
       }
-    }
-
-    function parseReasoningStack(markup, doc) {
-      const source = String(markup || '').trim();
-      if (!source || !doc || typeof doc.createElement !== 'function') {
-        return null;
+      for (let i = existingUnits.length - 1; i >= units.length; i--) {
+        existingUnits[i].remove();
       }
-      const template = doc.createElement('template');
-      template.innerHTML = source;
-      return template.content.querySelector('.reasoning-row-stack');
-    }
-
-    function copyElementAttributes(target, source, options = {}) {
-      if (!target || !source) {
-        return;
-      }
-      const preserveStyle = options.preserveStyle === true;
-      Array.from(target.attributes || []).forEach((attribute) => {
-        if (preserveStyle && attribute.name === 'style') {
-          return;
-        }
-        if (!source.hasAttribute(attribute.name)) {
-          target.removeAttribute(attribute.name);
-        }
-      });
-      Array.from(source.attributes || []).forEach((attribute) => {
-        if (preserveStyle && attribute.name === 'style') {
-          return;
-        }
-        target.setAttribute(attribute.name, attribute.value);
-      });
-    }
-
-    function getReasoningBlockKey(block, index) {
-      const key = String(
-        block?.getAttribute?.('data-phase-key')
-        || block?.getAttribute?.('data-thinking-id')
-        || ''
-      ).trim();
-      return key || `index:${index}`;
-    }
-
-    function patchReasoningBlock(existingBlock, nextBlock) {
-      const existingHeader = existingBlock?.querySelector?.('.reasoning-row-header');
-      const nextHeader = nextBlock?.querySelector?.('.reasoning-row-header');
-      const existingPanel = existingBlock?.querySelector?.('.reasoning-row-panel');
-      const nextPanel = nextBlock?.querySelector?.('.reasoning-row-panel');
-      if (!existingHeader || !nextHeader || !existingPanel || !nextPanel) {
-        return false;
-      }
-
-      copyElementAttributes(existingBlock, nextBlock);
-      copyElementAttributes(existingHeader, nextHeader);
-      if (existingHeader.innerHTML !== nextHeader.innerHTML) {
-        const morphed = isStreamPaintV2Enabled()
-          && typeof morphElementChildren === 'function'
-          && morphElementChildren(existingHeader, nextHeader);
-        if (morphed) {
-          noteHeaderPatch('reasoning_header_morph');
-        } else {
-          existingHeader.innerHTML = nextHeader.innerHTML;
-          noteHeaderPatch('reasoning_header_rewrite');
-        }
-      }
-
-      // A panel mid auto-collapse keeps its animation state; a second settled
-      // patch would otherwise strip data-collapsing and re-hide it instantly.
-      const collapsing = autocollapseUtils.isReasoningPanelCollapsing?.(existingPanel) === true;
-      const settledClass = thinkingPanelSettleUtils.SETTLED_CLASS || 'reasoning-row-panel--settled';
-      const wasSettled = existingPanel.classList.contains(settledClass);
-      const wasOpen = !collapsing && existingPanel.classList.contains('expanded') && !existingPanel.hidden;
-      if (!collapsing) {
-        copyElementAttributes(existingPanel, nextPanel, { preserveStyle: true });
-        existingPanel.hidden = nextPanel.hidden;
-        if (wasSettled && existingPanel.classList.contains('expanded') && !existingPanel.hidden) existingPanel.classList.add(settledClass);
-      }
-      const shouldAnimateCollapse = wasOpen && existingPanel.hidden
-        && typeof autocollapseUtils.runReasoningPanelAutoCollapse === 'function';
-
-      const existingBody = existingPanel.querySelector('.reasoning-row-panel-body');
-      const nextBody = nextPanel.querySelector('.reasoning-row-panel-body');
-      if (existingBody && nextBody) {
-        copyElementAttributes(existingBody, nextBody);
-        // Per-unit soft-landing reveal: update changed units in place and reveal
-        // only the trailing <=2 newly appended ones. Settled/flat bodies (no
-        // .reasoning-stream-unit children) fall through to a bulk replace inside
-        // the helper. Guarded so a stubbed dom-patch module still patches.
-        if (typeof reconcileStreamUnits === 'function') {
-          reconcileStreamUnits(existingBody, nextBody, existingBlock.ownerDocument, {
-            unitClassName: 'reasoning-stream-unit',
-            revealCap: 2,
-            staggerMs: 90,
-          });
-        } else if (existingBody.innerHTML !== nextBody.innerHTML) {
-          setInnerHtmlPreservingCodeScroll(existingBody, nextBody.innerHTML);
-        }
-      } else if (!existingBody && nextBody) {
-        existingPanel.appendChild(nextBody.cloneNode(true));
-      } else if (existingBody && !nextBody) {
-        existingBody.remove();
-      }
-      // Runs AFTER the body swap so the collapse starts from the settled
-      // body's height, not the taller live one (no mid-collapse jump).
-      if (shouldAnimateCollapse) {
-        autocollapseUtils.runReasoningPanelAutoCollapse(existingPanel, buildAutoCollapseOptions(existingBlock.ownerDocument));
-      }
-      return true;
     }
 
     function buildAutoCollapseOptions(doc) {
@@ -404,102 +294,36 @@
       chatTimeline, escapeSelectorValue, buildOptions: buildAutoCollapseOptions,
     }) || { remember() {}, rememberById() {}, clear() {}, replay() { return 0; } };
     const replayReasoningHandoff = () => reasoningHandoff.replay();
-
-    function patchReasoningStack(article, patchModel, doc, rowModelList) {
-      const hasThinkingMarkup = Object.prototype.hasOwnProperty.call(patchModel || {}, 'thinkingMarkup');
-      if (!hasThinkingMarkup) {
-        return { patched: false, requiresFullFallback: false, hasThinkingMarkup: false };
-      }
-
-      const incomingMarkup = String(patchModel?.thinkingMarkup || '');
-      const cacheKey = runtime.streamingArticleMessageId || runtime.streamingMessageId || '';
-      if (
-        cacheKey
-        && cacheKey === runtime.lastThinkingMarkupKey
-        && incomingMarkup === runtime.lastThinkingMarkup
-        && article?.querySelector?.('.reasoning-row-stack')
-      ) {
-        return { patched: true, requiresFullFallback: false, hasThinkingMarkup: true };
-      }
-
-      const nextStack = parseReasoningStack(patchModel?.thinkingMarkup, doc);
-      const existingStack = article?.querySelector?.('.reasoning-row-stack');
-      if (!nextStack && !existingStack) {
-        runtime.lastThinkingMarkup = incomingMarkup;
-        runtime.lastThinkingMarkupKey = cacheKey;
-        return { patched: false, requiresFullFallback: false, hasThinkingMarkup: true };
-      }
-      if (nextStack && !existingStack) {
-        const bubble = article?.querySelector?.('[data-streaming-bubble="true"]');
-        if (bubble) {
-          bubble.before(nextStack);
-          return { patched: true, requiresFullFallback: false, hasThinkingMarkup: true };
-        }
-        return { patched: false, requiresFullFallback: true, hasThinkingMarkup: true };
-      }
-      if (!nextStack || !existingStack) {
-        return { patched: false, requiresFullFallback: true, hasThinkingMarkup: true };
-      }
-
-      const existingBlocks = Array.from(existingStack.querySelectorAll('.reasoning-row-block'));
-      const nextBlocks = streamPatchTargetUtils.resolveReasoningPatchBlocks(
-        existingBlocks, nextStack, article, rowModelList, getReasoningBlockKey
-      );
-      if (!nextBlocks || existingBlocks.length !== nextBlocks.length) {
-        return { patched: false, requiresFullFallback: true, hasThinkingMarkup: true };
-      }
-      for (let index = 0; index < existingBlocks.length; index += 1) {
-        if (getReasoningBlockKey(existingBlocks[index], index) !== getReasoningBlockKey(nextBlocks[index], index)) {
-          return { patched: false, requiresFullFallback: true, hasThinkingMarkup: true };
-        }
-      }
-
-      copyElementAttributes(existingStack, nextStack);
-      for (let index = 0; index < existingBlocks.length; index += 1) {
-        if (!patchReasoningBlock(existingBlocks[index], nextBlocks[index])) {
-          return { patched: false, requiresFullFallback: true, hasThinkingMarkup: true };
-        }
-      }
-      runtime.lastThinkingMarkup = incomingMarkup;
-      runtime.lastThinkingMarkupKey = cacheKey;
-      return { patched: true, requiresFullFallback: false, hasThinkingMarkup: true };
-    }
+    const { patchReasoningStack } = reasoningPatchUtils.createReasoningStackPatcher({
+      getRuntime: () => runtime, isStreamPaintV2Enabled, noteHeaderPatch, buildAutoCollapseOptions,
+    });
 
     function buildStreamingBubbleMarkup(message) {
       const messageId = String(message && message.id || '');
-      const currentSessionId = String(settings.state?.currentSessionId || '');
+      const currentSessionId = readSessionId();
       const hasPreviousState = runtime.sessionId === currentSessionId && runtime.streamingMessageId === messageId && runtime.previousUnits.length > 0;
-      const fullContent = String(message && message.content || '');
+      const fullContent = (resolveStreamRevealModule('rendererCitationChipsUtils', './renderer-citation-chips-utils').stripCitationMarkersForFlags || String)(String(message && message.content || ''), settings.state?.features?.featureFlags, { streaming: true });
       // Render the full received aggregate. rAF batching in the commit queue
       // already provides frame-rate smoothing; an extra paced cursor on top
       // only adds visible lag and a snap-in when the bubble flips to complete.
       const renderModel = renderStreamingMarkdownUnits(fullContent, {
         previousUnits: hasPreviousState ? runtime.previousUnits : [],
       });
-      const shouldReveal = !reducedMotionQuery.matches;
       const unitCount = renderModel.units.length;
+      const wrappers = [];
       const streamUnits = unitCount
-        ? renderModel.units.map((unit, index) => ({
-            html: unit.html,
-            revealed: shouldReveal && renderModel.changedStartIndex !== -1 && index >= renderModel.changedStartIndex,
-          }))
+        ? renderModel.units.map((unit, index) => {
+            wrappers.push(`<div class="chat-stream-unit" data-stream-unit-index="${index}">${unit.html}</div>`);
+            return { html: unit.html };
+          })
         : null;
-      const bubbleInnerHtml = streamUnits
-        ? streamUnits
-            .map((unit, index) => {
-              const revealClass = unit.revealed ? ' is-revealed' : '';
-              return `<div class="chat-stream-unit${revealClass}" data-stream-unit-index="${index}">${unit.html}</div>`;
-            })
-            .join('')
-        : renderModel.html;
-      const entryReveal = shouldReveal && !hasPreviousState && Boolean(renderModel.html);
+      const bubbleInnerHtml = streamUnits ? wrappers.join('') : renderModel.html;
 
       runtime.streamingMessageId = messageId;
-      runtime.previousUnits = renderModel.units.map((unit) => ({ ...unit }));
+      runtime.previousUnits = renderModel.units;
 
       return {
         bubbleInnerHtml,
-        entryReveal,
         streamUnits,
         streamChangedStart: renderModel.changedStartIndex,
       };
@@ -562,9 +386,7 @@
       // is at rest; only the flip-from-streaming case (inline 'none') and a
       // never-pinned panel take the pin.
       const inlineMaxHeight = String(panel.style.maxHeight || '');
-      const settled = typeof thinkingPanelSettleUtils.isThinkingPanelSettled === 'function'
-        ? thinkingPanelSettleUtils.isThinkingPanelSettled(panel)
-        : panel.classList.contains('reasoning-row-panel--settled');
+      const settled = panel.classList.contains(thinkingPanelSettleUtils.SETTLED_CLASS || 'reasoning-row-panel--settled');
       if (inlineMaxHeight !== 'none' && (settled || inlineMaxHeight !== '')) return;
       panel.style.maxHeight = `${Math.max(panel.scrollHeight || 0, panel.offsetHeight || 0)}px`;
       // The flip-to-complete pin above is a single scrollHeight snapshot: if
@@ -573,18 +395,21 @@
       // Settle to max-height:none shortly after so late reflow can't clip a
       // resting panel (see renderer-thinking-panel-settle-utils.js).
       const win = (panel.ownerDocument && panel.ownerDocument.defaultView) || windowRef;
-      const setT = win && win.setTimeout ? win.setTimeout.bind(win) : null;
-      if (setT && typeof thinkingPanelSettleUtils.settleThinkingPanelNow === 'function') {
-        setT(() => { thinkingPanelSettleUtils.settleThinkingPanelNow(panel, reducedMotionQuery.matches); }, readSettleDelayMs(win, panel.ownerDocument));
-      }
+      const cleanup = thinkingPanelSettleUtils.armThinkingPanelSettle?.(panel, {
+        transitionMs: readSettleDelayMs(win, panel.ownerDocument),
+        onCleanup: () => settleCleanups.delete(cleanup),
+      });
+      if (cleanup) settleCleanups.add(cleanup);
     }
 
     function commitFullRender(options) {
+      if (disposed) return;
       const nextOptions = options || {};
-      cancelPendingPatch();
       replayReasoningHandoff();
       runtime.lastThinkingMarkup = '';
       runtime.lastThinkingMarkupKey = '';
+      runtime.lastMessageThinkingMarkup = '';
+      runtime.lastMessageThinkingMarkupKey = '';
       runtime.sessionId = String(nextOptions.currentSessionId || '');
       runtime.structureSignature = nextOptions.structureSignature != null ? nextOptions.structureSignature : 0;
       const streamingMessage = nextOptions.streamingMessage !== undefined
@@ -633,241 +458,247 @@
       // of lag — and worse, the deferred patch could be cancelled by a later
       // commitFullRender/resetState before ever painting, which is how the last
       // deltas of a burst stayed invisible until the turn completed.
+      if (disposed) return;
       runtime.streamingRowTarget = normalizeStreamingRowTarget(options?.streamingRowTarget);
-      cancelPendingPatch();
-      {
-        const patchOptions = options;
-        if (!patchOptions) {
-          return;
+      const patchOptions = options;
+      if (!patchOptions) {
+        return;
+      }
+
+      const message = patchOptions.streamingMessage !== undefined
+        ? patchOptions.streamingMessage
+        : getStreamingMessage(patchOptions.messages, patchOptions.latestAssistantMessageId);
+      if (!message || !chatTimeline) {
+        if (typeof patchOptions.onFallback === 'function') {
+          patchOptions.onFallback(message ? 'no_timeline' : 'no_streaming_message');
         }
+        return;
+      }
 
-        const message = patchOptions.streamingMessage !== undefined
-          ? patchOptions.streamingMessage
-          : getStreamingMessage(patchOptions.messages, patchOptions.latestAssistantMessageId);
-        if (!message || !chatTimeline) {
-          if (typeof patchOptions.onFallback === 'function') {
-            patchOptions.onFallback(message ? 'no_timeline' : 'no_streaming_message');
-          }
-          return;
+      const patchTarget = resolveStreamingPatchTarget(runtime, chatTimeline);
+      const article = resolvePatchTargetArticle(patchTarget)
+        || (patchTarget ? resolveStreamingArticlePatchTarget(runtime, chatTimeline) : null);
+      if (!article) {
+        if (typeof patchOptions.onFallback === 'function') {
+          patchOptions.onFallback('no_article');
         }
+        return;
+      }
 
-        const patchTarget = resolveStreamingPatchTarget(runtime, chatTimeline);
-        const article = resolvePatchTargetArticle(patchTarget)
-          || (patchTarget ? resolveStreamingArticlePatchTarget(runtime, chatTimeline) : null);
-        if (!article) {
-          if (typeof patchOptions.onFallback === 'function') {
-            patchOptions.onFallback('no_article');
-          }
-          return;
+      if (
+        patchTarget
+        && patchTarget !== article
+        && typeof patchOptions.buildRowNodeMarkup === 'function'
+      ) {
+        const rowMarkup = String(patchOptions.buildRowNodeMarkup() || '').trim();
+        if (rowMarkup) {
+          setOuterHtmlPreservingCodeScroll(patchTarget, rowMarkup);
         }
+      }
 
-        if (
-          patchTarget
-          && patchTarget !== article
-          && typeof patchOptions.buildRowNodeMarkup === 'function'
-        ) {
-          const rowMarkup = String(patchOptions.buildRowNodeMarkup() || '').trim();
-          if (rowMarkup) {
-            setOuterHtmlPreservingCodeScroll(patchTarget, rowMarkup);
-          }
-        }
+      const patchModel = patchOptions.buildMessageNodeState(message, patchOptions.messages, patchOptions.latestAssistantMessageId);
 
-        const patchModel = patchOptions.buildMessageNodeState(message, patchOptions.messages, patchOptions.latestAssistantMessageId);
-
-        // Pretext streaming height prediction: prepare accumulated text and
-        // store the prediction on the patch model for scroll anchoring.
-        const _pretextUtils = typeof rendererPretextUtils !== 'undefined' ? rendererPretextUtils : null;
-        if (_pretextUtils && _pretextUtils.isEnabled(patchOptions.state || {})) {
-          const content = String(message.content || '');
-          if (content) {
-            const bubble = article.querySelector('[data-streaming-bubble="true"]') || article.querySelector('.chat-bubble');
-            const font = (bubble ? _pretextUtils.resolveFontString(bubble) : null)
-              || _pretextUtils.resolveDefaultFontString('.chat-bubble');
-            if (font) {
-              const messageId = String(message.id || '');
-              _pretextUtils.prepareStreaming(messageId, content, font);
-              const contentColumn = chatTimeline ? chatTimeline.closest('.chat-thread-column') : null;
-              const colWidth = _pretextUtils.resolveElementWidth(contentColumn) || 760;
-              const prediction = _pretextUtils.layoutStreaming(messageId, colWidth, 15 * 1.6);
-              if (prediction) {
-                patchModel.predictedHeight = Math.ceil(prediction.height);
-              }
+      // Pretext streaming height prediction: prepare accumulated text and
+      // store the prediction on the patch model for scroll anchoring.
+      const _pretextUtils = typeof rendererPretextUtils !== 'undefined' ? rendererPretextUtils : null;
+      if (_pretextUtils && _pretextUtils.isEnabled(patchOptions.state || {})) {
+        const content = String(message.content || '');
+        if (content) {
+          const bubble = article.querySelector('[data-streaming-bubble="true"]') || article.querySelector('.chat-bubble');
+          const font = (bubble ? _pretextUtils.resolveFontString(bubble) : null)
+            || _pretextUtils.resolveDefaultFontString('.chat-bubble');
+          if (font) {
+            const messageId = String(message.id || '');
+            _pretextUtils.prepareStreaming(messageId, content, font);
+            const contentColumn = chatTimeline ? chatTimeline.closest('.chat-thread-column') : null;
+            const colWidth = _pretextUtils.resolveElementWidth(contentColumn) || 760;
+            const prediction = _pretextUtils.layoutStreaming(messageId, colWidth, 15 * 1.6);
+            if (prediction) {
+              patchModel.predictedHeight = Math.ceil(prediction.height);
             }
           }
         }
+      }
 
-        // Targeted patch: update only the streaming bubble and thinking body,
-        // preserving the thinking toggle/panel DOM to prevent hover flicker,
-        // click failure, and max-height re-animation.
-        //
-        // A row-model turn-article interleaves EVERY segment's reasoning
-        // stack; the first `.reasoning-row-stack` in the article belongs to
-        // segment 0, so an article-wide first-match anchor mirrors the live
-        // stream into the TOP of the turn on multi-segment turns. Scope the
-        // reasoning patch to the LIVE segment's reasoning row (source-id
-        // match, falling back to the last stack — segments append in order).
-        // Legacy single-message articles keep the article scope unchanged.
-        const rowModelList = article.querySelector('[data-turn-row-list="true"]');
-        const segmentScope = (() => {
-          if (!rowModelList) {
-            return article;
-          }
-          const streamingMessageId = String(message.id || '').trim();
-          if (streamingMessageId) {
-            const rows = rowModelList.querySelectorAll(
-              `.chat-row[data-row-kind="reasoning"][data-source-message-id="${escapeSelectorValue(streamingMessageId)}"]`
-            );
-            if (rows.length) {
-              return rows[rows.length - 1];
-            }
-          }
-          const stacks = rowModelList.querySelectorAll('.reasoning-row-stack');
-          if (stacks.length) {
-            return stacks[stacks.length - 1].closest('.chat-row') || rowModelList;
-          }
-          return rowModelList;
-        })();
-        let patchedSurgically = false;
-        const existingBubble = article.querySelector('[data-streaming-bubble="true"]');
-        const reasoningPatch = patchReasoningStack(segmentScope, patchModel, article.ownerDocument, rowModelList);
-        const needsReasoningOnlyStructuralFallback = reasoningPatch.requiresFullFallback
-          && reasoningPatch.hasThinkingMarkup
-          && !existingBubble
-          && patchModel.bubbleInnerHtml == null
-          && !article.querySelector('.reasoning-row-stack');
-
-        if (existingBubble && patchModel.bubbleInnerHtml != null) {
-          // Case A: bubble exists and has new content — patch at stream-unit
-          // level to avoid destroying and recreating unchanged DOM nodes.
-          patchBubbleUnits(existingBubble, patchModel, article.ownerDocument);
-          patchedSurgically = !reasoningPatch.requiresFullFallback;
-        } else if (
-          needsReasoningOnlyStructuralFallback
-          && typeof patchOptions.onFallback === 'function'
-        ) {
-          patchOptions.onFallback('reasoning_structural');
-          return;
-        } else if (!existingBubble && patchModel.bubbleInnerHtml == null) {
-          // Case B: reasoning-only delta — no bubble expected, none exists.
-          // Only mark as surgical when the reasoning stack actually accepted
-          // the patch; otherwise fall through to the structural fallback.
-          patchedSurgically = reasoningPatch.hasThinkingMarkup
-            ? reasoningPatch.patched && !reasoningPatch.requiresFullFallback
-            : Boolean(article.querySelector('.reasoning-row-stack'));
-        } else if (!existingBubble && patchModel.bubbleInnerHtml != null) {
-          // Case C: content just appeared — insert a streaming bubble after
-          // the LIVE segment's reasoning stack (rows render flat; no
-          // coalesced wrappers).
-          const anchor = segmentScope.querySelector('.reasoning-row-stack');
-          if (anchor && !reasoningPatch.requiresFullFallback) {
-            const newBubble = article.ownerDocument.createElement('div');
-            newBubble.className = 'chat-bubble chat-bubble-markdown chat-bubble-streaming';
-            newBubble.setAttribute('data-streaming-bubble', 'true');
-            newBubble.innerHTML = patchModel.bubbleInnerHtml;
-            anchor.after(newBubble);
-            patchedSurgically = true;
-          }
+      // Targeted patch: update only the streaming bubble and thinking body,
+      // preserving the thinking toggle/panel DOM to prevent hover flicker,
+      // click failure, and max-height re-animation.
+      //
+      // A row-model turn-article interleaves EVERY segment's reasoning
+      // stack; the first `.reasoning-row-stack` in the article belongs to
+      // segment 0, so an article-wide first-match anchor mirrors the live
+      // stream into the TOP of the turn on multi-segment turns. Scope the
+      // reasoning patch to the LIVE segment's reasoning row (source-id or
+      // source-id-list match, falling back to the last stack — segments
+      // append in order). Legacy single-message articles keep the article
+      // scope unchanged.
+      const rowModelList = article.querySelector('[data-turn-row-list="true"]');
+      const segmentScope = rowModelList
+        ? streamPatchTargetUtils.resolveLiveReasoningScope(rowModelList, message.id, escapeSelectorValue)
+        : article;
+      let patchedSurgically = false;
+      const existingBubble = article.querySelector('[data-streaming-bubble="true"]');
+      const hasMessageThinkingMarkup = Object.prototype.hasOwnProperty.call(patchModel, 'thinkingMarkup');
+      // Owner-gated assumption: no row-only state changes while message-level thinking markup is equal.
+      const reuseReasoning = hasMessageThinkingMarkup
+        && runtime.lastMessageThinkingMarkupKey === runtime.streamingMessageId
+        && runtime.lastMessageThinkingMarkup === patchModel.thinkingMarkup
+        && segmentScope.querySelector('.reasoning-row-stack');
+      let reasoningPatch;
+      const liveStackDiagnostics = { reason: '' };
+      if (reuseReasoning) {
+        reasoningPatch = { patched: true, requiresFullFallback: false, hasThinkingMarkup: true, reason: 'message_stack_unchanged' };
+      } else {
+        const rowStackMarkup = streamPatchTargetUtils.buildLiveReasoningRowStackMarkup({
+          scope: segmentScope, rowModelList, messageId: message.id,
+          buildLiveReasoningRowsMarkup: patchOptions.buildLiveReasoningRowsMarkup, doc: article.ownerDocument,
+          diagnostics: liveStackDiagnostics,
+        });
+        reasoningPatch = patchReasoningStack(segmentScope, rowStackMarkup == null
+          ? patchModel : { thinkingMarkup: rowStackMarkup }, article.ownerDocument, rowModelList);
+        if (hasMessageThinkingMarkup && reasoningPatch.patched) {
+          runtime.lastMessageThinkingMarkup = patchModel.thinkingMarkup;
+          runtime.lastMessageThinkingMarkupKey = runtime.streamingMessageId;
         }
+      }
+      const needsReasoningOnlyStructuralFallback = reasoningPatch.requiresFullFallback
+        && reasoningPatch.hasThinkingMarkup
+        && !existingBubble
+        && patchModel.bubbleInnerHtml == null
+        && !article.querySelector('.reasoning-row-stack');
 
-        if (reasoningPatch.patched) {
-          syncExpandedThinkingPanelHeight(segmentScope);
-        }
-
-        // When the article has row-model markup ([data-turn-row-list]) but
-        // queuePatch couldn't patch it surgically (Cases A/B/C all failed),
-        // we must NOT overwrite it with legacy innerHTML. Instead, force the
-        // next render frame to route through patchActiveTurnRoot so it can
-        // rebuild the turn root with current content (e.g. a text row that
-        // just appeared but has no [data-streaming-bubble] yet).
-        //
-        // Implementation: use a flag so the -1 sentinel on
-        // runtime.structureSignature is not overwritten by the unconditional
-        // assignment below, which would make the signal a no-op.
-        let forceActiveTurnRootPatch = false;
+      // The bail-out name for the row-list morph below, prefixed with the
+      // live-stack helper's reason when it declined. client_timing keeps 64
+      // chars per key: the longest composite here is 62.
+      let fallbackReason = 'not_surgical';
+      const nameFallback = (reason) => {
+        fallbackReason = liveStackDiagnostics.reason
+          ? `live:${liveStackDiagnostics.reason}>${reason}`
+          : reason;
+      };
+      if (existingBubble && patchModel.bubbleInnerHtml != null) {
+        // Case A: bubble exists and has new content — patch at stream-unit
+        // level to avoid destroying and recreating unchanged DOM nodes.
+        patchBubbleUnits(existingBubble, patchModel, article.ownerDocument);
+        patchedSurgically = !reasoningPatch.requiresFullFallback;
+        if (!patchedSurgically) nameFallback(`bubble:${reasoningPatch.reason}`);
+      } else if (
+        needsReasoningOnlyStructuralFallback
+        && typeof patchOptions.onFallback === 'function'
+      ) {
+        patchOptions.onFallback('reasoning_structural');
+        return;
+      } else if (!existingBubble && patchModel.bubbleInnerHtml == null) {
+        // Case B: reasoning-only delta — no bubble expected, none exists.
+        // Only mark as surgical when the reasoning stack actually accepted
+        // the patch; otherwise fall through to the structural fallback.
+        patchedSurgically = reasoningPatch.hasThinkingMarkup
+          ? reasoningPatch.patched && !reasoningPatch.requiresFullFallback
+          : Boolean(article.querySelector('.reasoning-row-stack'));
         if (!patchedSurgically) {
-          // A row-model article must NEVER be overwritten with the legacy
-          // single-message innerHtml — that deletes every other segment's
-          // rows (tool cards, settled text) until the next full render.
-          // Render fully NOW via onFallback: deferring to the next frame
-          // silently swallows the delta when it is the turn's last (the
-          // onAfterPatch below would still commit the render signature, so
-          // nothing repaints until settle). Deferral only as a last resort.
-          if (rowModelList) {
-            // Reconcile the row list by key rather than charging a full
-            // transcript render. Rows carry data-row-id, which morphChildren
-            // already keys on, so settled tool cards and earlier segments are
-            // reused in place -- and any work Case A already did on the
-            // streaming bubble is preserved rather than thrown away.
-            //
-            // This is the 2026-08-25 flicker: 526 of one turn's 606 deltas
-            // charged patch_fallback:row_model_not_surgical, and most of them
-            // had ALREADY painted the bubble surgically. The full render was
-            // pure waste on top of a correct paint.
-            const rowListMarkup = typeof patchOptions.buildTurnRowListMarkup === 'function'
-              ? String(patchOptions.buildTurnRowListMarkup() || '').trim()
-              : '';
-            const rowListTelemetryEnabled = isRenderTelemetryEnabled();
-            // 'no_row_list_markup' is the outcome when the morph is never
-            // attempted -- the builder returned nothing. Without it the record
-            // could not tell an inert morph from a failed one, which is the
-            // exact distinction the onFallback reason codes below exist for.
-            let rowListOutcome = 'no_row_list_markup';
-            let rowListStats;
-            const morphed = Boolean(rowListMarkup)
-              && setChildrenHtmlPreservingKeyedNodes(rowModelList, rowListMarkup, {
-                collectStats: rowListTelemetryEnabled,
-                onOutcome(record) {
-                  rowListOutcome = String(record?.outcome || 'morph_unavailable');
-                  rowListStats = record?.stats;
-                },
-              });
-            recordTimelineDomWrite(
-              String(patchOptions.currentSessionId || ''),
-              'turn_row_list',
-              rowListOutcome,
-              rowListStats
-            );
-            if (morphed) replayReasoningHandoff();
-            if (!morphed) {
-              // Name the bail-out. An anonymous fallback hid the flicker this
-              // replaces for months; the reason code is what makes a silently
-              // inert morph (no markup supplied) distinguishable from a real
-              // morph failure in the next turn's full_render_reasons.
-              if (typeof patchOptions.onFallback === 'function') {
-                patchOptions.onFallback(rowListMarkup
-                  ? 'row_model_morph_failed'
-                  : 'row_model_no_row_list_markup');
-                return;
-              }
-              forceActiveTurnRootPatch = true;
-            }
-          } else {
-            setInnerHtmlPreservingCodeScroll(article, patchModel.innerHtml);
-          }
+          nameFallback(reasoningPatch.hasThinkingMarkup ? reasoningPatch.reason : 'no_reasoning_stack');
         }
+      } else if (!existingBubble && patchModel.bubbleInnerHtml != null) {
+        // Case C: content just appeared — insert a streaming bubble after
+        // the reasoning stack, for legacy single-message articles only. A
+        // row-model turn opens the answer as its own assistant_text row:
+        // that is structural, so the keyed row-list morph below builds it.
+        // A bubble inserted here would sit inside the reasoning row and
+        // stream there until the terminal render popped the real row in.
+        const anchor = rowModelList ? null : segmentScope.querySelector('.reasoning-row-stack');
+        if (anchor && !reasoningPatch.requiresFullFallback) {
+          streamDomPatchUtils.noteRowSubtreeWrite?.(anchor);
+          const newBubble = article.ownerDocument.createElement('div');
+          Object.assign(newBubble, { className: 'chat-bubble chat-bubble-markdown chat-bubble-streaming', dir: 'auto' });
+          newBubble.setAttribute('data-streaming-bubble', 'true');
+          newBubble.innerHTML = patchModel.bubbleInnerHtml;
+          anchor.after(newBubble);
+          patchedSurgically = true;
+        } else {
+          nameFallback(rowModelList ? 'answer_row_open' : (anchor ? `anchor:${reasoningPatch.reason}` : 'no_anchor'));
+        }
+      } else {
+        // Case D: reasoning-only delta with a streaming bubble present (think-
+        // answer-think). The bubble is unchanged; the stack decides, as in B.
+        patchedSurgically = reasoningPatch.hasThinkingMarkup
+          ? reasoningPatch.patched && !reasoningPatch.requiresFullFallback
+          : Boolean(article.querySelector('.reasoning-row-stack'));
+        if (!patchedSurgically) {
+          nameFallback(`bubble_idle:${reasoningPatch.hasThinkingMarkup ? reasoningPatch.reason : 'no_reasoning_stack'}`);
+        }
+      }
 
-        article.classList.toggle('pending', Boolean(patchModel.pending));
-        turnShellUtils.syncChatEntryCvExemptAttribute?.(article, { pending: Boolean(patchModel.pending) });
-        article.classList.toggle('stream-reveal-entry', patchModel.entryReveal);
-        article.dataset.messageStatus = patchModel.status;
-        article.dataset.finalizedAt = patchModel.finalizedAt;
-        // Through the single writer: this runs on EVERY delta, so a bare stamp
-        // here would re-create a duplicate marker the moment the resolver
-        // drifted, undoing the sweep commitFullRender had just done.
-        stampStreamingArticleMarker(article, runtime.streamingMessageId, chatTimeline);
-        reasoningHandoff.remember(article);
+      if (reasoningPatch.patched) {
+        syncExpandedThinkingPanelHeight(segmentScope);
+      }
 
-        runtime.sessionId = String(patchOptions.currentSessionId || '');
-        runtime.structureSignature = forceActiveTurnRootPatch
-          ? -1  // canPatch returns false → next frame routes through patchActiveTurnRoot
-          : (patchOptions.structureSignature != null ? patchOptions.structureSignature : 0);
-
-        if (typeof patchOptions.onAfterPatch === 'function') {
-          patchOptions.onAfterPatch(patchOptions.messages, {
-            messageId: String(message.id || ''),
-            predictedHeight: patchModel.predictedHeight,
+      if (!patchedSurgically) {
+        // A row-model article must NEVER be overwritten with the legacy
+        // single-message innerHtml — that deletes every other segment's
+        // rows (tool cards, settled text) until the next full render.
+        // Render fully NOW via onFallback: deferring to the next frame
+        // silently swallows the delta when it is the turn's last (the
+        // onAfterPatch below would still commit the render signature, so
+        // nothing repaints until settle). Deferral only as a last resort.
+        if (rowModelList) {
+          // Reconcile the row list by key (per row when the builder supplies
+          // segments, else the whole-list keyed morph) rather than charging a
+          // full transcript render: settled rows stay in place and Case A's
+          // bubble work is kept. The 2026-08-25 flicker charged 526 of one
+          // turn's 606 deltas a full render on top of a correct paint.
+          // 'no_row_list_markup' means nothing was applied, so an inert morph
+          // stays distinguishable from a failed one in the codes below.
+          const fallback = applyRowListFallback(rowModelList, {
+            segmentsResult: typeof patchOptions.buildTurnRowListSegments === 'function'
+              ? patchOptions.buildTurnRowListSegments()
+              : null,
+            buildMarkup: patchOptions.buildTurnRowListMarkup,
+            collectStats: isRenderTelemetryEnabled(),
           });
+          const { morphed, rowListMarkup } = fallback;
+          recordTimelineDomWrite(String(patchOptions.currentSessionId || ''), 'turn_row_list', fallback.outcome, fallback.stats);
+          // Always-on (flag-free) cost record: which rows this fallback rebuilt.
+          streamClientMetrics?.noteRowListMorph?.(readSessionId(), {
+            reason: fallbackReason,
+            rowsReused: fallback.rowsReused,
+            rowsRebuilt: fallback.rowsRebuilt,
+          });
+          if (morphed) replayReasoningHandoff();
+          if (!morphed) {
+            // Name the bail-out. An anonymous fallback hid the flicker this
+            // replaces for months; the reason code is what makes a silently
+            // inert morph (no markup supplied) distinguishable from a real
+            // morph failure in the next turn's full_render_reasons.
+            if (typeof patchOptions.onFallback === 'function') {
+              patchOptions.onFallback(rowListMarkup
+                ? 'row_model_morph_failed'
+                : 'row_model_no_row_list_markup');
+            }
+            return;
+          }
+        } else {
+          setInnerHtmlPreservingCodeScroll(article, patchModel.innerHtml);
         }
+      }
+
+      article.classList.toggle('pending', Boolean(patchModel.pending));
+      turnShellUtils.syncChatEntryCvExemptAttribute?.(article, { pending: Boolean(patchModel.pending) });
+      article.dataset.messageStatus = patchModel.status;
+      article.dataset.finalizedAt = patchModel.finalizedAt;
+      // Through the single writer: this runs on EVERY delta, so a bare stamp
+      // here would re-create a duplicate marker the moment the resolver
+      // drifted, undoing the sweep commitFullRender had just done.
+      stampStreamingArticleMarker(article, runtime.streamingMessageId, chatTimeline);
+      reasoningHandoff.remember(article);
+
+      runtime.sessionId = String(patchOptions.currentSessionId || '');
+      runtime.structureSignature = patchOptions.structureSignature ?? 0;
+
+      if (typeof patchOptions.onAfterPatch === 'function') {
+        patchOptions.onAfterPatch(patchOptions.messages, {
+          messageId: String(message.id || ''),
+          predictedHeight: patchModel.predictedHeight,
+        });
       }
     }
 
@@ -900,7 +731,6 @@
       }
       const nextTurnStructureHash = Number(nextOptions.turnStructureHash) || 0;
       const nextTurnTailFingerprint = String(nextOptions.turnTailFingerprint || '');
-      cancelPendingPatch();
       if (
         runtime.activeTurnRootMessageId === activeTurnRootMessageId
         && runtime.activeTurnStructureHash === nextTurnStructureHash
@@ -938,11 +768,11 @@
           tail: runtime.activeTurnTailFingerprint,
         }
         : null;
-      const patchResult = setOuterHtmlPreservingCodeScroll(
-        rootNode,
-        nextMarkup,
-        renderTelemetryEnabled ? { collectStats: true } : undefined
-      );
+      // The host article's turn row list (when the builder names one) reconciles per row.
+      const rowList = typeof nextOptions.resolveRowListSegments === 'function' ? nextOptions.resolveRowListSegments() : null;
+      const patchResult = setOuterHtmlPreservingCodeScroll(rootNode, nextMarkup, {
+        collectStats: renderTelemetryEnabled, rowListSegments: rowList?.segments, rowListHostId: rowList?.hostId,
+      });
       replayReasoningHandoff();
       reasoningHandoff.rememberById(runtime.streamingArticleMessageId);
       runtime.sessionId = currentSessionId;
@@ -988,6 +818,13 @@
     }
 
     return {
+      dispose() {
+        disposed = true;
+        for (const cleanup of settleCleanups) cleanup();
+        settleCleanups.clear();
+        reasoningHandoff.dispose?.();
+        resetState();
+      },
       resetState,
       buildTimelineStructureSignature,
       buildStreamingBubbleMarkup,

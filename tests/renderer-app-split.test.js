@@ -7,7 +7,6 @@ const { SCRIPT_ORDER } = require('./helpers/renderer-shell-harness-support');
 
 const ROOT = path.resolve(__dirname, '..');
 const APP_OWNER_MODULES = [
-  'renderer/app/renderer-app-comet-runtime.js',
   'renderer/app/renderer-app-controller-composition.js',
   'renderer/app/renderer-app-lifecycle-preferences.js',
   'renderer/app/renderer-app-open-loop-actions.js',
@@ -100,6 +99,7 @@ test('surface-effect dependency chains match in production and the renderer harn
     [
       'renderer/shell/renderer-surface-effect-runtime.js',
       'renderer/shell/renderer-circuit-trace-core.js',
+      'renderer/shell/renderer-circuit-trace-board.js',
       'renderer/shell/renderer-circuit-trace-gestures.js',
       'renderer/shell/renderer-circuit-trace-utils.js',
     ],

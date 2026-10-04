@@ -133,26 +133,51 @@
     );
   }
 
-  function getPendingSkillInvocation(state) {
+  // Split view W1-4b: a composer bound to a pane keys its pending skill by the
+  // session THAT pane holds (its pane session context); without one, by the
+  // focused pane's `state.currentSessionId`, exactly as before.
+  function boundSessionId(state, sessionContext) {
+    return normalizeSessionId(typeof sessionContext?.getSessionId === 'function'
+      ? sessionContext.getSessionId()
+      : state?.currentSessionId);
+  }
+
+  function getPendingSkillInvocation(state, sessionContext) {
     const composer = ensureComposerV2State(state);
     const pending = normalizeSkillInvocation(composer?.pendingSkillInvocation);
     if (!pending) return null;
     // A pending skill belongs to the session that attached it; switching
     // sessions drops it so another chat's turn is never steered by it.
-    if (String(composer.pendingSkillInvocationSessionId || '') !== normalizeSessionId(state?.currentSessionId)) {
-      composer.pendingSkillInvocation = null;
-      composer.pendingSkillInvocationSessionId = '';
+    // Split view W3-1: while another pane still shows that session the skill
+    // is that pane's (its chip is there), so it is not returned but kept.
+    if (String(composer.pendingSkillInvocationSessionId || '') !== boundSessionId(state, sessionContext)) {
+      const visibility = globalThis.rendererPaneVisibilityUtils;
+      if (visibility?.isSessionVisibleInAnyPane?.(state, composer.pendingSkillInvocationSessionId) !== true) {
+        composer.pendingSkillInvocation = null;
+        composer.pendingSkillInvocationSessionId = '';
+      }
       return null;
     }
     return pending;
   }
 
-  function setPendingSkillInvocation(state, invocation) {
+  // Split view W3-1: the pending skill of `sessionId`, or null, WITHOUT the
+  // drop-on-mismatch above -- a pane renders its chip from this, so pane 0
+  // painting its tray never drops the skill pane 1's session holds.
+  function peekPendingSkillInvocation(state, sessionId) {
+    const composer = ensureComposerV2State(state);
+    const pending = normalizeSkillInvocation(composer?.pendingSkillInvocation);
+    const wanted = normalizeSessionId(sessionId);
+    if (!pending || !wanted) return null;
+    return String(composer.pendingSkillInvocationSessionId || '') === wanted ? pending : null;
+  }
+
+  function setPendingSkillInvocation(state, invocation, sessionContext) {
     const composer = ensureComposerV2State(state);
     const normalized = normalizeSkillInvocation(invocation);
     if (!composer || !normalized) return null;
     composer.pendingSkillInvocation = normalized;
-    composer.pendingSkillInvocationSessionId = normalizeSessionId(state?.currentSessionId);
+    composer.pendingSkillInvocationSessionId = boundSessionId(state, sessionContext);
     return { ...normalized };
   }
 
@@ -247,9 +272,14 @@
   // model/effort, but run mode is session state — spec §4(a): the new mode
   // applies from the next request, so dispatch re-reads it live (from the
   // target session's summary when it exists, else the current preferences).
-  function resolveSendRuntimePreferences({ snapshot, session, current, clone }) {
+  // Split view W2-2a: without a snapshot, the requested session's own record
+  // (`fromSession`, the lifecycle reader) wins over the focused session's.
+  function resolveSendRuntimePreferences({ snapshot, session, current, clone, fromSession }) {
     const frozen = snapshot && typeof snapshot === 'object' ? snapshot : null;
-    const copy = clone(frozen || current());
+    const requested = !frozen && session && typeof session === 'object' && typeof fromSession === 'function'
+      ? fromSession(session)
+      : null;
+    const copy = clone(frozen || requested || current());
     if (frozen) {
       const live = session && typeof session === 'object'
         ? { runMode: session.run_mode, planMode: session.plan_mode === true, prePlanRunMode: session.pre_plan_run_mode }
@@ -271,6 +301,7 @@
     getDraftForSession,
     getLifecycleForSession,
     getPendingSkillInvocation,
+    peekPendingSkillInvocation,
     nextRunMode,
     normalizeDraftEntry,
     normalizeRunMode,

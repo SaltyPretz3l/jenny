@@ -6,6 +6,7 @@ const os = require('os');
 const path = require('path');
 
 const { ElectronSessionStore } = require('../services/backend/electron-session-store');
+const { CONFIG_VERSION } = require('../services/shell-config-state');
 const { createArchive } = require('../services/data-lifecycle/archive-service');
 const {
   finalizeRestoredBoot,
@@ -94,7 +95,7 @@ describe('restore service', () => {
       ));
       assert.equal(preferences.appearance.paletteId, 'luma');
       const shellConfig = JSON.parse(fs.readFileSync(path.join(userDataPath, 'shell-config.json'), 'utf8'));
-      assert.equal(shellConfig.version, 54);
+      assert.equal(shellConfig.version, CONFIG_VERSION);
       assert.equal(shellConfig.session_runtime.local.runnable_turns, 1);
       assert.equal(shellConfig.session_runtime.cloud.runnable_turns, 3);
       assert.equal(shellConfig.session_runtime.cloud.inference_requests, 4);

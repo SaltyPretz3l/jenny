@@ -1,4 +1,9 @@
-"""Validate complexity/method limits are wired in pyproject.toml."""
+"""Validate complexity/method limits are wired in pyproject.toml.
+
+`max-public-methods` feeds ruff's PLR0904, which is preview-only and therefore not
+enforced by the stable `ruff check` gate (run_ci.py `lint_py`); this script only pins
+that the configured limit stays at 15.
+"""
 from __future__ import annotations
 
 import tomllib
@@ -39,7 +44,7 @@ def main() -> int:
             print(f"  - {item}")
         return 1
 
-    print("PASS: complexity contract check")
+    print("NOT ENFORCED: public-method limit (PLR0904); complexity configuration validated")
     return 0
 
 

@@ -72,9 +72,9 @@ function buildHarness(t) {
     rendererChatEventSettingsBindings: bindingStub,
     rendererChatEventInteractiveBindings: bindingStub,
     rendererChatBackendRecoveryUtils: { recoverInflightSendsForUnusableBackend() {} },
-    rendererWindowControlsUtils: { bindWindowControlEvents() {} },
     rendererRenderPipelineThreadStateUtils: { clearThreadBranchCollapseState() {} },
     rendererEnterKeydownUtils: require('../renderer/chat/renderer-enter-keydown-utils'),
+    rendererChatCtrlWheelGate: require('../renderer/chat/renderer-chat-ctrl-wheel-gate'),
   };
   context.globalThis = context;
   const source = fs.readFileSync(
@@ -84,13 +84,14 @@ function buildHarness(t) {
   vm.runInNewContext(source, context, { filename: 'renderer-chat-event-utils.js' });
 
   const load = deferred();
-  const calls = { snapshots: 0, memories: 0, renders: 0 };
+  const calls = { snapshots: 0, memories: 0, renders: 0, toolInventory: 0 };
   const element = dom.window.document.createElement('div');
   const callbackDefaults = new Proxy({
     setActivityChangeListener() {},
     loadSessions: () => load.promise,
     refreshSnapshots: async () => { calls.snapshots += 1; },
     refreshApprovedMemories: async () => { calls.memories += 1; },
+    refreshComposerToolToggles: async () => { calls.toolInventory += 1; },
     renderAll: () => { calls.renders += 1; },
   }, {
     get(target, property) {
@@ -152,4 +153,27 @@ test('dispose invalidates an authenticated refresh that is still awaiting sessio
   assert.equal(harness.calls.snapshots, 0);
   assert.equal(harness.calls.memories, 0);
   assert.equal(harness.calls.renders, 0);
+});
+
+// Live re-check 2026-09-27: after an app restart the composer's Tools row was
+// missing in both panes. The row is built from tools.list, whose composer
+// categories (web, terminal, Python, files) come from the sidecar's
+// tools_status; the only boot read ran before the sidecar was ready, so it saw
+// no category and the row stayed empty until a features change. Every ready
+// status (boot, and each re-initialize after a workspace-root switch) must
+// re-read the tool inventory.
+test('a ready backend status re-reads the composer tool inventory', async (t) => {
+  const harness = buildHarness(t);
+
+  await harness.listeners.backend({ phase: 'sidecar_spawned' });
+  await harness.listeners.backend({ phase: 'model_loading' });
+  assert.equal(harness.calls.toolInventory, 0, 'no tool inventory exists before ready');
+
+  const ready = harness.listeners.backend({ phase: 'ready' });
+  assert.equal(harness.calls.toolInventory, 1, 'ready re-reads the inventory without waiting on sessions');
+  harness.load.resolve();
+  await ready;
+
+  await harness.listeners.backend({ phase: 'ready' });
+  assert.equal(harness.calls.toolInventory, 2, 'a later ready (re-initialize) reads it again');
 });

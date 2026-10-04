@@ -6,6 +6,7 @@ const {
   buildSettingsNavMarkup,
   createSettingsNavController,
   setNavItemBadge,
+  renderSettingsNav,
 } = require('../renderer/shell/renderer-settings-nav-utils.js');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -17,21 +18,8 @@ function setupDom() {
     <html>
       <body>
         <nav class="settings-nav">
-          <button class="settings-nav-item" data-settings-section="models" role="tab" tabindex="0" aria-selected="true">Models</button>
-          <button class="settings-nav-item" data-settings-section="context" role="tab" tabindex="-1" aria-selected="false">Context</button>
-          <button class="settings-nav-item" data-settings-section="tools" role="tab" tabindex="-1" aria-selected="false">Tools</button>
-          <button class="settings-nav-item" data-settings-section="proactive" role="tab" tabindex="-1" aria-selected="false">Proactive</button>
-          <button class="settings-nav-item" id="usageSettingsNavItem" data-settings-section="usage" role="tab" tabindex="-1" aria-selected="false">Usage</button>
-          <button class="settings-nav-item hidden" data-settings-section="plugins" data-feature-gated="plugins" role="tab" tabindex="-1" aria-selected="false" hidden>Plugins</button>
-          <button class="settings-nav-item" data-settings-section="account" role="tab" tabindex="-1" aria-selected="false">Account</button>
-          <button class="settings-nav-item" data-settings-section="dataPrivacy" role="tab" tabindex="-1" aria-selected="false">Data &amp; Privacy</button>
-          <button class="settings-nav-item" data-settings-section="aboutUpdates" role="tab" tabindex="-1" aria-selected="false">About &amp; Updates</button>
-          <button id="settingsAdvancedToggle" type="button" aria-expanded="false">Advanced</button>
-          <div id="settingsAdvancedItems" hidden>
-            <button class="settings-nav-item settings-nav-item-child" data-settings-section="harness" role="tab" tabindex="-1" aria-selected="false">Harness</button>
-            <button class="settings-nav-item settings-nav-item-child" data-settings-section="diagnostics" role="tab" tabindex="-1" aria-selected="false">Runtime Health</button>
-            <button class="settings-nav-item settings-nav-item-child" data-settings-section="dev_diagnostics" role="tab" tabindex="-1" aria-selected="false">Dev Diagnostics</button>
-          </div>
+          <div class="settings-nav-header"></div>
+          <div class="settings-nav-scroll"></div>
         </nav>
         <div id="settingsContentPanel" role="tabpanel" aria-labelledby="settingsNav-models">
         <div class="settings-content-scroll">
@@ -42,8 +30,6 @@ function setupDom() {
           <section class="settings-card" data-settings-section="usage"></section>
           <section class="settings-card" data-settings-section="plugins" hidden></section>
           <section class="settings-card" data-settings-section="account"></section>
-          <section class="settings-card" data-settings-section="dataPrivacy"></section>
-          <section class="settings-card" data-settings-section="aboutUpdates"></section>
           <section class="settings-card" data-settings-section="harness"></section>
           <section class="settings-card" data-settings-section="diagnostics"></section>
           <section class="settings-card" data-settings-section="dev_diagnostics"></section>
@@ -56,6 +42,11 @@ function setupDom() {
     url: 'http://localhost/',
   });
 
+  renderSettingsNav(dom.window.document);
+  const plugins = dom.window.document.querySelector('.settings-nav [data-settings-section="plugins"]');
+  plugins.hidden = true;
+  plugins.setAttribute('data-feature-gated', 'plugins');
+  dom.window.document.querySelector('.settings-nav-scroll').insertAdjacentHTML('beforeend', '<button data-settings-section="dev_diagnostics">Retired</button>');
   const previousWindow = global.window;
   const previousDocument = global.document;
   const previousLocalStorage = global.localStorage;
@@ -88,8 +79,6 @@ test('settings nav restores the cost compatibility alias as Usage and persists t
     controller.restoreActiveSection();
 
     assert.equal(state.ui.activeSettingsSection, 'usage');
-    assert.equal(document.getElementById('settingsAdvancedToggle').getAttribute('aria-expanded'), 'false');
-    assert.equal(document.getElementById('settingsAdvancedItems').hidden, true);
     assert.equal(
       document.querySelector('[data-settings-section="usage"]').getAttribute('aria-selected'),
       'true'
@@ -108,7 +97,7 @@ test('settings nav restores the cost compatibility alias as Usage and persists t
 test('registry nav markup gives tabs stable ownership of the settings panel', () => {
   const markup = buildSettingsNavMarkup([
     { label: 'General', sections: [{ id: 'models', label: 'Models' }] },
-    { label: 'Advanced', disclosure: true, sections: [{ id: 'diagnostics', label: 'Diagnostics', navItemId: 'diagnosticsSettingsNavItem' }] },
+    { label: 'Advanced', sections: [{ id: 'diagnostics', label: 'Diagnostics', navItemId: 'diagnosticsSettingsNavItem' }] },
   ], 'models');
 
   assert.match(markup, /id="settingsNav-models"[^>]+role="tab"[^>]+aria-controls="settingsContentPanel"/);
@@ -161,26 +150,24 @@ test('settings nav falls back to Models for removed Harness and Dev Tools sectio
   }
 });
 
-test('settings nav keyboard navigation skips collapsed advanced items', () => {
+test('keyboard traverses every visible group and wraps', () => {
   const harness = setupDom();
   try {
+    document.querySelector('[data-settings-section="dev_diagnostics"]').remove();
     const state = { ui: { activeSettingsSection: 'models' } };
-    const settingsNav = document.querySelector('.settings-nav');
-    const settingsContentScroll = document.querySelector('.settings-content-scroll');
-    const controller = createSettingsNavController({ state, settingsNav, settingsContentScroll });
+    const controller = createSettingsNavController({ state, settingsNav: document.querySelector('.settings-nav'), settingsContentScroll: document.querySelector('.settings-content-scroll') });
     controller.bind();
-    controller.restoreActiveSection();
-
-    const aboutButton = document.querySelector('[data-settings-section="aboutUpdates"]');
-    aboutButton.focus();
-    aboutButton.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
-
-    assert.equal(state.ui.activeSettingsSection, 'models');
-    assert.equal(document.getElementById('settingsAdvancedToggle').getAttribute('aria-expanded'), 'false');
-    assert.equal(document.activeElement.id, 'settingsAdvancedToggle');
-  } finally {
-    harness.cleanup();
-  }
+    for (const [from, key, to] of [
+      ['advanced', 'ArrowDown', 'readiness'], ['readiness', 'ArrowUp', 'advanced'],
+      ['models', 'ArrowUp', 'readiness'], ['account', 'ArrowDown', 'advanced'],
+      ['models', 'Home', 'readiness'], ['models', 'End', 'advanced'],
+    ]) {
+      const item = document.querySelector('.settings-nav [data-settings-section="' + from + '"]');
+      item.dispatchEvent(new window.KeyboardEvent('keydown', { key, bubbles: true }));
+      assert.equal(state.ui.activeSettingsSection, to);
+      assert.equal(document.activeElement.dataset.settingsSection, to);
+    }
+  } finally { harness.cleanup(); }
 });
 
 test('settings nav falls back to the default section when asked to activate an unknown section', () => {
@@ -337,18 +324,85 @@ test('settings nav logs storage failures without blocking section activation', (
   }
 });
 
-test('production nav markup renders the Developer disclosure around Advanced', () => {
-  // The group existed but was empty for a long time, and getGroups() drops
-  // groups with no visible sections - registering Advanced is what makes the
-  // disclosure appear at all.
-  const markup = buildSettingsNavMarkup(getSettingsGroups(), 'models');
-  assert.match(markup, /settingsAdvancedToggle/);
-  assert.match(markup, />Developer</);
-  assert.match(markup, /data-settings-section="usage"/);
-  assert.match(markup, /data-settings-section="advanced"/);
-  // Advanced is a CHILD of the disclosure, not a peer of the ordinary items.
-  assert.match(markup, /id="settingsAdvancedItems"[^>]*hidden>[^]*data-settings-section="advanced"/);
-  assert.match(markup, /aria-expanded="false"/, 'the disclosure starts collapsed');
+test('production rail renders six uniform groups without disclosure or dividers', () => {
+  const dom = new JSDOM(buildSettingsNavMarkup(getSettingsGroups(), 'models'));
+  const doc = dom.window.document;
+  assert.deepEqual([...doc.querySelectorAll('.settings-nav-group')].map(group => group.dataset.settingsNavGroup), ['modelTools', 'work', 'context', 'app', 'system', 'developer']);
+  assert.equal(doc.querySelectorAll('.settings-nav-group > .settings-nav-label').length, 6);
+  assert.equal(doc.querySelector('#settingsAdvancedToggle, #settingsAdvancedItems, .settings-nav-divider, .settings-nav-item-child'), null);
+  dom.window.close();
+});
+
+test('picker groups visible sections and follows every navigation route and runtime gates', () => {
+  const harness = setupDom();
+  try {
+    const picker = document.getElementById('settingsNavPicker');
+    assert.ok(picker);
+    assert.equal(picker.getAttribute('aria-label'), 'Settings section');
+    assert.deepEqual([...picker.querySelectorAll('optgroup')].map(group => [group.label, [...group.children].map(option => option.value)]), getSettingsGroups().map(group => [group.label, group.sections.map(section => section.id)]));
+    for (const id of ['skills', 'dataPrivacy', 'aboutUpdates', 'runtimeLimits']) assert.equal(picker.querySelector('option[value="' + id + '"]'), null);
+    const state = { ui: { activeSettingsSection: 'models' } };
+    const controller = createSettingsNavController({ state, settingsNav: document.querySelector('.settings-nav'), settingsContentScroll: document.querySelector('.settings-content-scroll') });
+    controller.bind();
+    const pluginOption = picker.querySelector('option[value="plugins"]');
+    assert.equal(pluginOption.hidden, true);
+    assert.equal(pluginOption.disabled, true);
+    picker.value = 'tools';
+    picker.dispatchEvent(new window.Event('change', { bubbles: true }));
+    assert.equal(state.ui.activeSettingsSection, 'tools');
+    document.querySelector('.settings-nav [data-settings-section="context"]').click();
+    assert.equal(picker.value, 'context');
+    document.querySelector('.settings-nav [data-settings-section="models"]').dispatchEvent(new window.KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true }));
+    assert.equal(picker.value, 'readiness');
+    controller.setActiveSection('dataPrivacy');
+    assert.equal(picker.value, 'account');
+    controller.setActiveSection('runtimeLimits');
+    assert.equal(picker.value, 'advanced');
+    for (const [id, host] of [['dataPrivacy', 'account'], ['aboutUpdates', 'account'], ['runtimeLimits', 'advanced']]) {
+      localStorage.setItem('jenny.settings.activeSection', id);
+      controller.restoreActiveSection();
+      assert.equal(state.ui.activeSettingsSection, host);
+      assert.equal(picker.value, host);
+    }
+    const advanced = document.querySelector('.settings-nav [data-settings-section="advanced"]');
+    advanced.dataset.devOnly = 'true';
+    advanced.hidden = true;
+    controller.setActiveSection('models');
+    assert.equal(picker.querySelector('option[value="advanced"]').disabled, true);
+    const plugins = document.querySelector('.settings-nav [data-settings-section="plugins"]');
+    plugins.hidden = false;
+    controller.setActiveSection('plugins');
+    assert.equal(pluginOption.hidden, false);
+    assert.equal(pluginOption.disabled, false);
+    assert.equal(picker.value, 'plugins');
+    picker.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
+    assert.equal(state.ui.activeSettingsSection, 'plugins');
+    // A page gated off while Settings is open leaves the picker as soon as it is opened.
+    controller.setActiveSection('models');
+    plugins.hidden = true;
+    picker.dispatchEvent(new window.Event('focus'));
+    assert.equal(pluginOption.hidden, true);
+    assert.equal(pluginOption.disabled, true);
+  } finally { harness.cleanup(); }
+});
+
+test('stepping the section picker keeps focus on the picker once the page heading frame has run', () => {
+  const harness = setupDom();
+  try {
+    const frames = [];
+    window.requestAnimationFrame = (callback) => frames.push(callback);
+    document.querySelector('.settings-card[data-settings-section="tools"]').innerHTML = '<h3 tabindex="-1">Tools</h3>';
+    const state = { ui: { activeSettingsSection: 'models' } };
+    const controller = createSettingsNavController({ state, settingsNav: document.querySelector('.settings-nav'), settingsContentScroll: document.querySelector('.settings-content-scroll') });
+    controller.bind();
+    const picker = document.getElementById('settingsNavPicker');
+    picker.focus();
+    picker.value = 'tools';
+    picker.dispatchEvent(new window.Event('change', { bubbles: true }));
+    while (frames.length) frames.shift()();
+    assert.equal(state.ui.activeSettingsSection, 'tools');
+    assert.equal(document.activeElement, picker);
+  } finally { harness.cleanup(); }
 });
 
 test('every nav item renders a label span and an empty, fixed badge slot', () => {
@@ -402,13 +456,6 @@ test('the dirty dot is scoped away from Readiness so it never stacks with the co
   }
 });
 
-test('the Advanced child is not reachable as an ordinary nav item while collapsed', () => {
-  // A collapsed disclosure must not leave a focusable tab stop behind it.
-  const markup = buildSettingsNavMarkup(getSettingsGroups(), 'models');
-  const advancedItem = markup.slice(markup.indexOf('data-settings-section="advanced"') - 260);
-  assert.match(advancedItem, /tabindex="-1"/);
-});
-
 test('settings nav leaves the current section active when a dirty-state guard refuses navigation', () => {
   const harness = setupDom();
   try {
@@ -431,4 +478,51 @@ test('settings nav leaves the current section active when a dirty-state guard re
   } finally {
     harness.cleanup();
   }
+});
+
+test('host navigation reveals both Profile companions and readies lazy Developer companions', async () => {
+  const harness = setupDom();
+  try {
+    const { createSettingsShellController } = require('../renderer/shell/renderer-settings-shell-controller');
+    document.querySelector('.settings-content-scroll').insertAdjacentHTML('beforeend', '<section class="settings-card" data-settings-section="advanced"><h3>Limits</h3></section><section class="settings-card" data-settings-section="runtimeLimits"></section>');
+    const state = { ui: { activeView: 'settings', activeSettingsSection: 'models' } };
+    const readied = [];
+    const shown = [];
+    const controller = createSettingsShellController({
+      state, composerLayoutRuntime: {},
+      dom: { settingsView: document.body, getSectionDom() { return {}; } },
+      constants: { ACTIVITY_SCOPE: {}, TOAST_SOURCE: {} },
+      callbacks: {
+        appendClientLog() {}, renderAll() {}, renderSessions() {},
+        getCurrentRuntimePreferences() { return {}; }, getRuntimePreferenceSnapshot() { return {}; },
+        runRuntimePreferenceActivity: async () => {}, listSlashCommands() { return []; },
+      },
+      factories: {
+        settingsRendererUtils: { createSettingsRenderer() { return { renderSettings() {} }; } },
+        settingsEventUtils: { createSettingsEventBindings() { return {
+          bind() {}, dispose() {}, ensureSectionBindings(id) { readied.push(id); return true; }, sectionShown(id) { shown.push(id); },
+        }; } },
+        settingsNavUtils: { createSettingsNavController },
+      },
+    });
+    controller.bind();
+    controller.navigateSettingsSection('dataPrivacy');
+    assert.equal(state.ui.activeSettingsSection, 'account');
+    assert.deepEqual([...document.querySelectorAll('.settings-card.settings-section-active')].map(card => card.dataset.settingsSection), ['account'], 'a folded-in section has no card of its own; its host card is the page');
+    controller.navigateSettingsSection('aboutUpdates');
+    assert.equal(document.getElementById('settingsNavPicker').value, 'account');
+    controller.navigateSettingsSection('runtimeLimits');
+    assert.equal(state.ui.activeSettingsSection, 'advanced');
+    assert.deepEqual(readied, ['advanced', 'runtimeLimits']);
+    // F14: the Limits page (advanced) refreshes on reveal too, so a lock taken
+    // while a reply ran is re-read.
+    assert.deepEqual(shown, ['runtimeLimits', 'advanced']);
+    assert.equal(controller.isSectionInitialized('advanced'), true);
+    assert.equal(controller.isSectionInitialized('runtimeLimits'), true);
+    controller.navigateSettingsSection('models');
+    controller.navigateSettingsSection('advanced');
+    assert.deepEqual(readied, ['advanced', 'runtimeLimits'], 'lazy bindings run once');
+    assert.deepEqual(shown, ['runtimeLimits', 'advanced', 'runtimeLimits', 'advanced'], 'companion refreshes on every reveal');
+    controller.dispose();
+  } finally { harness.cleanup(); }
 });

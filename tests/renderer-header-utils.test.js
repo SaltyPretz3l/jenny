@@ -1,560 +1,256 @@
+'use strict';
+
+/* Top chrome (area 1, 2026-09-29): the title bar's machine-load read-out and
+ * the header's slimmed tick. The read-out is off unless Settings > Appearance
+ * turns it on (appearance.titlebarLoad); it is a non-interactive group of two
+ * fixed slots (GPU or CPU, VRAM or RAM); the 2 s stats push updates only its
+ * text nodes, only while it is shown and the document is visible. The header
+ * owns its stats subscription, so the tick never runs the full renderHeader
+ * (no session scan, no New Chat gating, no token display, no dead
+ * sessionActionButton write). */
+
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { JSDOM } = require('jsdom');
 
 const { createHeaderController } = require('../renderer/shell/renderer-header-utils');
 
-function createInstrumentedElement() {
-  let value = '';
-  let writeCount = 0;
-  return {
-    get innerHTML() { return value; },
-    set innerHTML(next) {
-      value = next;
-      writeCount += 1;
+const GPU_STATS = {
+  cpuPercent: 21.4,
+  ramPercent: 40.2,
+  arch: 'x64',
+  platform: 'win32',
+  gpuMemory: { available: true, usedMb: 13926, totalMb: 16282, utilAvailable: true, utilPercent: 93.2 },
+};
+
+function createShellStub() {
+  const listeners = new Set();
+  const shell = {
+    watches: [],
+    system: {
+      onStats(callback) {
+        listeners.add(callback);
+        return () => listeners.delete(callback);
+      },
+      async setStatsWatch(payload) { shell.watches.push(payload); return { watched: payload.watched }; },
     },
-    getWriteCount() { return writeCount; },
+    push(payload) { for (const listener of [...listeners]) listener(payload); },
+    listenerCount() { return listeners.size; },
   };
+  return shell;
 }
 
-function createInteractiveElement() {
-  let value = '';
-  const attributes = new Map();
-  const listeners = new Map();
-  const classes = new Set();
-  return {
-    get innerHTML() { return value; },
-    set innerHTML(next) { value = next; },
-    classList: {
-      add(name) { classes.add(name); },
-      remove(name) { classes.delete(name); },
-      contains(name) { return classes.has(name); },
-    },
-    setAttribute(name, next) { attributes.set(name, String(next)); },
-    getAttribute(name) { return attributes.has(name) ? attributes.get(name) : null; },
-    removeAttribute(name) { attributes.delete(name); },
-    // Real EventTarget semantics: multiple listeners per type accumulate, so a
-    // double-attach regression is visible to listenerCount (a single-slot Map
-    // fake proved blind to exactly that in mutation testing).
-    addEventListener(type, listener) {
-      if (!listeners.has(type)) listeners.set(type, []);
-      listeners.get(type).push(listener);
-    },
-    removeEventListener(type, listener) {
-      const list = listeners.get(type) || [];
-      const index = list.indexOf(listener);
-      if (index !== -1) list.splice(index, 1);
-      if (list.length === 0) listeners.delete(type);
-    },
-    dispatch(type, event = {}) {
-      for (const listener of [...(listeners.get(type) || [])]) listener(event);
-    },
-    listenerCount(type) { return (listeners.get(type) || []).length; },
-  };
-}
-
-function flushAsync() {
-  return new Promise((resolve) => setImmediate(resolve));
-}
-
-function createHeaderHarness(systemStats, {
-  instrumented = false,
-  interactive = false,
-  telemetryFlagOn = false,
-  refreshSystemStats,
-  refreshTimeoutMs,
+function createHarness(t, {
+  titlebarLoad = false,
+  telemetryFlagOn = true,
+  systemStats = GPU_STATS,
+  callbacks = {},
+  sessionActionButton = null,
 } = {}) {
+  const dom = new JSDOM('<div class="titlebar-status"><div class="metric-list" id="metricList" role="group" aria-label="System load" hidden></div></div>', { pretendToBeVisual: true });
+  const doc = dom.window.document;
+  const metricList = doc.getElementById('metricList');
+  let innerHtmlWrites = 0;
+  const descriptor = Object.getOwnPropertyDescriptor(dom.window.Element.prototype, 'innerHTML');
+  Object.defineProperty(metricList, 'innerHTML', {
+    get() { return descriptor.get.call(this); },
+    set(value) { innerHtmlWrites += 1; descriptor.set.call(this, value); },
+  });
   const state = {
-    ui: { activeView: 'chat' },
+    ui: { activeView: 'chat', appearance: { titlebarLoad } },
     auth: { authenticated: true },
     backend: { phase: 'ready' },
     features: { featureFlags: { titlebar_gpu_telemetry: telemetryFlagOn } },
     currentSessionId: 'session-1',
+    sessions: [],
     systemStats,
   };
-  const dom = {
-    metricList: interactive
-      ? createInteractiveElement()
-      : (instrumented ? createInstrumentedElement() : { innerHTML: '' }),
-    sessionActionButton: null,
-    newChatButton: null,
+  const shell = createShellStub();
+  const controller = createHeaderController({
+    state,
+    dom: { metricList, sessionActionButton, newChatButton: null },
+    callbacks,
+    documentRef: doc,
+    shell,
+  });
+  t.after(() => {
+    controller.dispose();
+    dom.window.close();
+  });
+  const mutations = [];
+  const observer = new dom.window.MutationObserver((records) => mutations.push(...records));
+  return {
+    dom, doc, metricList, state, shell, controller,
+    innerHtmlWrites: () => innerHtmlWrites,
+    observe() {
+      observer.observe(metricList, { attributes: true, childList: true, characterData: true, subtree: true });
+    },
+    takeMutations() { mutations.push(...observer.takeRecords()); return mutations.splice(0); },
+    readout() {
+      return [...metricList.querySelectorAll('.metric-item')].map((item) => item.textContent.replace(/\s+/g, ' ').trim());
+    },
   };
-  const callbacks = refreshSystemStats
-    ? { refreshSystemStats, ...(refreshTimeoutMs !== undefined ? { refreshTimeoutMs } : {}) }
-    : undefined;
-  const controller = createHeaderController({ state, dom, callbacks });
-  controller.renderHeader();
-  return { dom, state, controller };
 }
 
-test('header shows VRAM metric on non-ARM when GPU sample is available', () => {
-  const { dom } = createHeaderHarness({
-    cpuPercent: 22.1,
-    ramPercent: 41.8,
-    battery: 'AC',
-    arch: 'x64',
-    gpuMemory: {
-      available: true,
-      usedMb: 3072,
-      totalMb: 8192,
-      gpuType: 'cuda',
-      source: 'nvidia-smi',
-      sampledAt: '2026-01-01T00:00:00+00:00',
-    },
+test('off by default: no read-out, hidden, empty', (t) => {
+  const h = createHarness(t, { titlebarLoad: false });
+  h.controller.renderHeader();
+  assert.equal(h.metricList.hidden, true);
+  assert.equal(h.metricList.children.length, 0);
+});
+
+test('a stats push with titlebarLoad=false renders no read-out and touches no DOM', (t) => {
+  const h = createHarness(t, { titlebarLoad: false });
+  h.controller.renderHeader();
+  h.observe();
+  h.shell.push({ ...GPU_STATS, cpuPercent: 80 });
+  h.shell.push({ ...GPU_STATS, cpuPercent: 81 });
+  assert.deepEqual(h.takeMutations(), [], 'no DOM mutation at all');
+  assert.equal(h.innerHtmlWrites(), 0);
+  assert.equal(h.state.systemStats.cpuPercent, 81, 'the stats still land in state (the popover reads them)');
+});
+
+test('on: one group with two fixed slots, GPU and VRAM when the sampler has them', (t) => {
+  const h = createHarness(t, { titlebarLoad: true });
+  h.controller.renderHeader();
+  assert.equal(h.metricList.hidden, false);
+  assert.equal(h.metricList.getAttribute('role'), 'group');
+  assert.equal(h.metricList.getAttribute('tabindex'), null, 'not a button, no refresh affordance');
+  assert.deepEqual(h.readout(), ['GPU 93%', 'VRAM 13.6 GB']);
+  const slots = [...h.metricList.querySelectorAll('.metric-item-value')].map((node) => node.dataset.slot);
+  assert.deepEqual(slots, ['percent', 'memory']);
+});
+
+test('the tick updates text nodes only: no innerHTML write, stable nodes', (t) => {
+  const h = createHarness(t, { titlebarLoad: true });
+  h.controller.renderHeader();
+  const writesAfterBuild = h.innerHtmlWrites();
+  const valueNodes = [...h.metricList.querySelectorAll('.metric-item-value')];
+  h.observe();
+  h.shell.push({ ...GPU_STATS, gpuMemory: { ...GPU_STATS.gpuMemory, utilPercent: 41, usedMb: 2048 } });
+  assert.deepEqual(h.readout(), ['GPU 41%', 'VRAM 2.0 GB']);
+  assert.equal(h.innerHtmlWrites(), writesAfterBuild, 'no innerHTML rebuild on the tick');
+  assert.deepEqual([...h.metricList.querySelectorAll('.metric-item-value')], valueNodes, 'same nodes');
+  const kinds = new Set(h.takeMutations().map((record) => record.type));
+  assert.equal(kinds.has('childList') && ![...kinds].includes('attributes'), true, 'only text content changed');
+
+  h.observe();
+  h.shell.push({ ...GPU_STATS, gpuMemory: { ...GPU_STATS.gpuMemory, utilPercent: 41, usedMb: 2048 } });
+  assert.deepEqual(h.takeMutations(), [], 'an unchanged tick writes nothing');
+});
+
+test('fallbacks: CPU without GPU utilization, RAM without a VRAM sample, both on Windows ARM', (t) => {
+  const noUtil = createHarness(t, { titlebarLoad: true, systemStats: { ...GPU_STATS, gpuMemory: { ...GPU_STATS.gpuMemory, utilAvailable: false } } });
+  noUtil.controller.renderHeader();
+  assert.deepEqual(noUtil.readout(), ['CPU 21%', 'VRAM 13.6 GB']);
+
+  const flagOff = createHarness(t, { titlebarLoad: true, telemetryFlagOn: false });
+  flagOff.controller.renderHeader();
+  assert.deepEqual(flagOff.readout(), ['CPU 21%', 'VRAM 13.6 GB'], 'the kill switch drops GPU utilization');
+
+  const noVram = createHarness(t, { titlebarLoad: true, systemStats: { ...GPU_STATS, gpuMemory: { available: false, utilAvailable: true, utilPercent: 55 } } });
+  noVram.controller.renderHeader();
+  assert.deepEqual(noVram.readout(), ['GPU 55%', 'RAM 40%']);
+
+  const winArm = createHarness(t, { titlebarLoad: true, systemStats: { ...GPU_STATS, arch: 'arm64', platform: 'win32' } });
+  winArm.controller.renderHeader();
+  assert.deepEqual(winArm.readout(), ['CPU 21%', 'RAM 40%']);
+
+  const macArm = createHarness(t, { titlebarLoad: true, systemStats: { ...GPU_STATS, arch: 'arm64', platform: 'darwin', gpuMemory: { available: false, utilAvailable: true, utilPercent: 41.2 } } });
+  macArm.controller.renderHeader();
+  assert.deepEqual(macArm.readout(), ['GPU 41%', 'RAM 40%']);
+});
+
+// Renderer feature flags hydrate after controllers are constructed: the flag
+// is read per render, so a construction-time capture cannot pin it off.
+test('the titlebar_gpu_telemetry flag hydrating after construction takes effect on the next tick', (t) => {
+  const h = createHarness(t, { titlebarLoad: true, telemetryFlagOn: false });
+  h.controller.renderHeader();
+  assert.deepEqual(h.readout(), ['CPU 21%', 'VRAM 13.6 GB'], 'pre-hydration: no GPU utilization');
+  h.state.features = { featureFlags: { titlebar_gpu_telemetry: true } };
+  h.shell.push(GPU_STATS);
+  assert.deepEqual(h.readout(), ['GPU 93%', 'VRAM 13.6 GB']);
+  h.state.features = { featureFlags: { titlebar_gpu_telemetry: false } };
+  h.shell.push(GPU_STATS);
+  assert.deepEqual(h.readout(), ['CPU 21%', 'VRAM 13.6 GB'], 'the kill switch applies live too');
+});
+
+test('unknown values read as a dash, never a fabricated 0.0%', (t) => {
+  const h = createHarness(t, { titlebarLoad: true, systemStats: { arch: 'x64' } });
+  h.controller.renderHeader();
+  assert.deepEqual(h.readout(), ['CPU –', 'RAM –']);
+});
+
+test('stale GPU-derived slots dim with a bucketed age; fresh ones clear it', (t) => {
+  const h = createHarness(t, { titlebarLoad: true, systemStats: { ...GPU_STATS, gpuMemory: { ...GPU_STATS.gpuMemory, stale: true, ageMs: 14900 } } });
+  h.controller.renderHeader();
+  const items = [...h.metricList.querySelectorAll('.metric-item')];
+  assert.deepEqual(items.map((item) => item.dataset.stale), ['true', 'true']);
+  assert.equal(items[0].getAttribute('title'), 'GPU sample is 10s old');
+
+  h.shell.push({ ...GPU_STATS, gpuMemory: { ...GPU_STATS.gpuMemory, stale: true, ageMs: 2000 } });
+  assert.equal(items[0].getAttribute('title'), 'GPU sample may be stale', 'no contradictory "0s old"');
+
+  h.shell.push(GPU_STATS);
+  assert.deepEqual(items.map((item) => item.dataset.stale), [undefined, undefined]);
+  assert.equal(items[0].getAttribute('title'), null);
+
+  const ram = createHarness(t, { titlebarLoad: true, systemStats: { ...GPU_STATS, arch: 'arm64', platform: 'win32', gpuMemory: { ...GPU_STATS.gpuMemory, stale: true } } });
+  ram.controller.renderHeader();
+  assert.equal(ram.metricList.querySelector('[data-stale]'), null, 'CPU and RAM are never marked stale');
+});
+
+test('a hidden document skips the update; the next visible tick catches up', (t) => {
+  const h = createHarness(t, { titlebarLoad: true });
+  h.controller.renderHeader();
+  Object.defineProperty(h.doc, 'hidden', { configurable: true, get: () => true });
+  h.observe();
+  h.shell.push({ ...GPU_STATS, gpuMemory: { ...GPU_STATS.gpuMemory, utilPercent: 12 } });
+  assert.deepEqual(h.takeMutations(), []);
+  Object.defineProperty(h.doc, 'hidden', { configurable: true, get: () => false });
+  h.shell.push({ ...GPU_STATS, gpuMemory: { ...GPU_STATS.gpuMemory, utilPercent: 13 } });
+  assert.deepEqual(h.readout(), ['GPU 13%', 'VRAM 13.6 GB']);
+});
+
+test('turning the read-out off hides it once; turning it on again rebuilds it', (t) => {
+  const h = createHarness(t, { titlebarLoad: true });
+  h.controller.renderHeader();
+  h.state.ui.appearance = { titlebarLoad: false };
+  h.controller.renderHeader();
+  assert.equal(h.metricList.hidden, true);
+  h.observe();
+  h.controller.renderHeader();
+  h.shell.push(GPU_STATS);
+  assert.deepEqual(h.takeMutations(), [], 'already hidden: nothing more to write');
+  h.state.ui.appearance = { titlebarLoad: true };
+  h.controller.renderHeader();
+  assert.equal(h.metricList.hidden, false);
+  assert.deepEqual(h.readout(), ['GPU 93%', 'VRAM 13.6 GB']);
+});
+
+test('the tick never writes sessionActionButton and never calls updateTokenDisplay', (t) => {
+  let tokenCalls = 0;
+  const sessionActionButton = { textContent: 'untouched', disabled: false };
+  const h = createHarness(t, {
+    titlebarLoad: true,
+    sessionActionButton,
+    callbacks: { updateTokenDisplay: () => { tokenCalls += 1; } },
   });
-
-  assert.match(dom.metricList.innerHTML, /CPU: 22\.1%/);
-  assert.match(dom.metricList.innerHTML, /VRAM: 3\.0\/8\.0 GB/);
-  assert.doesNotMatch(dom.metricList.innerHTML, />RAM:/);
-  assert.doesNotMatch(dom.metricList.innerHTML, /BAT:/);
+  h.controller.renderHeader();
+  h.shell.push(GPU_STATS);
+  h.shell.push({ ...GPU_STATS, cpuPercent: 3 });
+  assert.equal(tokenCalls, 0, 'the token display runs on its own triggers');
+  assert.equal(sessionActionButton.textContent, 'untouched');
+  assert.equal(sessionActionButton.disabled, false);
 });
 
-test('header keeps RAM metric on ARM even when GPU sample exists', () => {
-  const { dom } = createHeaderHarness({
-    cpuPercent: 5.0,
-    ramPercent: 33.3,
-    battery: 'AC',
-    arch: 'arm64',
-    gpuMemory: {
-      available: true,
-      usedMb: 3072,
-      totalMb: 8192,
-      gpuType: 'cuda',
-      source: 'nvidia-smi',
-      sampledAt: '2026-01-01T00:00:00+00:00',
-    },
-  });
-
-  assert.match(dom.metricList.innerHTML, /RAM: 33\.3%/);
-  assert.doesNotMatch(dom.metricList.innerHTML, /VRAM:/);
-  assert.doesNotMatch(dom.metricList.innerHTML, /BAT:/);
-});
-
-test('header falls back to RAM metric on non-ARM when GPU sample is unavailable', () => {
-  const { dom } = createHeaderHarness({
-    cpuPercent: 18.4,
-    ramPercent: 52.9,
-    battery: 'Battery',
-    arch: 'x64',
-    gpuMemory: {
-      available: false,
-      usedMb: 0,
-      totalMb: 0,
-      gpuType: '',
-      source: 'unavailable',
-      sampledAt: '2026-01-01T00:00:00+00:00',
-    },
-  });
-
-  assert.match(dom.metricList.innerHTML, /RAM: 52\.9%/);
-  assert.doesNotMatch(dom.metricList.innerHTML, /VRAM:/);
-  assert.doesNotMatch(dom.metricList.innerHTML, /BAT:/);
-});
-
-test('renderHeader skips innerHTML writes when state is unchanged across calls', () => {
-  const stats = {
-    cpuPercent: 22.1,
-    ramPercent: 41.8,
-    battery: 'AC',
-    arch: 'x64',
-    gpuMemory: {
-      available: true,
-      usedMb: 3072,
-      totalMb: 8192,
-      gpuType: 'cuda',
-      source: 'nvidia-smi',
-      sampledAt: '2026-01-01T00:00:00+00:00',
-    },
-  };
-  const { dom, controller } = createHeaderHarness(stats, { instrumented: true });
-
-  assert.equal(dom.metricList.getWriteCount(), 1);
-
-  controller.renderHeader();
-  controller.renderHeader();
-
-  assert.equal(dom.metricList.getWriteCount(), 1, 'metric list must not be rebuilt when metrics are unchanged');
-});
-
-test('renderHeader rewrites metric list when CPU/RAM values change', () => {
-  const baseStats = {
-    cpuPercent: 10.0,
-    ramPercent: 40.0,
-    battery: 'AC',
-    arch: 'x64',
-    gpuMemory: { available: false, usedMb: 0, totalMb: 0 },
-  };
-  const { dom, state, controller } = createHeaderHarness(baseStats, { instrumented: true });
-
-  assert.equal(dom.metricList.getWriteCount(), 1);
-
-  state.systemStats = { ...baseStats, cpuPercent: 37.5 };
-  controller.renderHeader();
-
-  assert.equal(dom.metricList.getWriteCount(), 2);
-  assert.match(dom.metricList.innerHTML, /CPU: 37\.5%/);
-});
-
-test('header renders rounded GPU utilization when telemetry is enabled and available', () => {
-  const { dom } = createHeaderHarness({
-    cpuPercent: 12.3,
-    ramPercent: 45.6,
-    arch: 'x64',
-    platform: 'win32',
-    gpuMemory: { available: false, utilAvailable: true, utilPercent: 54.6 },
-  }, { telemetryFlagOn: true });
-
-  assert.match(dom.metricList.innerHTML, /GPU: 55%/);
-  assert.match(dom.metricList.innerHTML, /RAM: 45\.6%/);
-});
-
-test('header hides GPU utilization when the sample is unavailable', () => {
-  const { dom } = createHeaderHarness({
-    cpuPercent: 12.3,
-    ramPercent: 45.6,
-    arch: 'x64',
-    platform: 'win32',
-    gpuMemory: { available: false, utilAvailable: false, utilPercent: 54.6 },
-  }, { telemetryFlagOn: true });
-
-  assert.doesNotMatch(dom.metricList.innerHTML, /GPU:/);
-});
-
-test('darwin ARM renders GPU utilization with the unified-memory RAM fallback', () => {
-  const { dom } = createHeaderHarness({
-    cpuPercent: 5,
-    ramPercent: 33.3,
-    arch: 'arm64',
-    platform: 'darwin',
-    gpuMemory: { available: false, utilAvailable: true, utilPercent: 41.2 },
-  }, { telemetryFlagOn: true });
-
-  assert.match(dom.metricList.innerHTML, /GPU: 41%/);
-  assert.match(dom.metricList.innerHTML, /RAM: 33\.3%/);
-  assert.doesNotMatch(dom.metricList.innerHTML, /VRAM:/);
-});
-
-test('Windows ARM blocks GPU-derived metrics and keeps the RAM fallback', () => {
-  const { dom } = createHeaderHarness({
-    cpuPercent: 5,
-    ramPercent: 33.3,
-    arch: 'arm64',
-    platform: 'win32',
-    gpuMemory: {
-      available: true,
-      usedMb: 3072,
-      totalMb: 8192,
-      utilAvailable: true,
-      utilPercent: 41.2,
-    },
-  }, { telemetryFlagOn: true });
-
-  assert.match(dom.metricList.innerHTML, /RAM: 33\.3%/);
-  assert.doesNotMatch(dom.metricList.innerHTML, /GPU:/);
-  assert.doesNotMatch(dom.metricList.innerHTML, /VRAM:/);
-});
-
-test('stale GPU and VRAM spans carry a bucketed age while CPU stays unmarked', () => {
-  const { dom } = createHeaderHarness({
-    cpuPercent: 22.1,
-    ramPercent: 41.8,
-    arch: 'x64',
-    platform: 'win32',
-    gpuMemory: {
-      available: true,
-      usedMb: 3072,
-      totalMb: 8192,
-      utilAvailable: true,
-      utilPercent: 50,
-      stale: true,
-      ageMs: 14900,
-    },
-  }, { telemetryFlagOn: true });
-
-  assert.match(dom.metricList.innerHTML, /<span class="metric-item">CPU: 22\.1%<\/span>/);
-  assert.match(dom.metricList.innerHTML, /<span class="metric-item" data-stale="true" title="GPU sample is 10s old">GPU: 50%<\/span>/);
-  assert.match(dom.metricList.innerHTML, /<span class="metric-item" data-stale="true" title="GPU sample is 10s old">VRAM: 3\.0\/8\.0 GB<\/span>/);
-});
-
-test('fresh GPU metrics and RAM fallbacks never receive stale attributes', () => {
-  const fresh = createHeaderHarness({
-    cpuPercent: 10,
-    ramPercent: 20,
-    arch: 'x64',
-    platform: 'win32',
-    gpuMemory: { available: false, utilAvailable: true, utilPercent: 30, stale: false, ageMs: 60000 },
-  }, { telemetryFlagOn: true });
-  const staleWithRam = createHeaderHarness({
-    cpuPercent: 10,
-    ramPercent: 20,
-    arch: 'arm64',
-    platform: 'darwin',
-    gpuMemory: { available: false, utilAvailable: true, utilPercent: 30, stale: true, ageMs: 60000 },
-  }, { telemetryFlagOn: true });
-
-  assert.doesNotMatch(fresh.dom.metricList.innerHTML, /data-stale|GPU sample is/);
-  assert.match(staleWithRam.dom.metricList.innerHTML, /<span class="metric-item">CPU: 10\.0%<\/span>/);
-  assert.match(staleWithRam.dom.metricList.innerHTML, /<span class="metric-item">RAM: 20\.0%<\/span>/);
-  assert.doesNotMatch(staleWithRam.dom.metricList.innerHTML, /data-stale="true"[^>]*>RAM:/);
-});
-
-test('click refresh updates system stats and rerenders the metric strip', async () => {
-  const payload = {
-    cpuPercent: 88.8,
-    ramPercent: 44.4,
-    arch: 'x64',
-    platform: 'win32',
-    gpuMemory: { available: false, utilAvailable: true, utilPercent: 70 },
-  };
-  let calls = 0;
-  const { dom, state } = createHeaderHarness({
-    cpuPercent: 1,
-    ramPercent: 2,
-    arch: 'x64',
-    platform: 'win32',
-    gpuMemory: { available: false, utilAvailable: false },
-  }, {
-    interactive: true,
-    telemetryFlagOn: true,
-    refreshSystemStats: async () => { calls += 1; return payload; },
-  });
-
-  dom.metricList.dispatch('click');
-  await flushAsync();
-
-  assert.equal(calls, 1);
-  assert.equal(state.systemStats, payload);
-  assert.match(dom.metricList.innerHTML, /CPU: 88\.8%/);
-  assert.match(dom.metricList.innerHTML, /GPU: 70%/);
-});
-
-test('Enter and Space activate refresh with keyboard parity', async () => {
-  let calls = 0;
-  const { dom } = createHeaderHarness({
-    cpuPercent: 1,
-    ramPercent: 2,
-    arch: 'x64',
-    platform: 'win32',
-    gpuMemory: { available: false, utilAvailable: false },
-  }, {
-    interactive: true,
-    telemetryFlagOn: true,
-    refreshSystemStats: async () => { calls += 1; return null; },
-  });
-  let enterPrevented = false;
-  let spacePrevented = false;
-
-  dom.metricList.dispatch('keydown', { key: 'Enter', preventDefault() { enterPrevented = true; } });
-  await flushAsync();
-  dom.metricList.dispatch('keydown', { key: ' ', preventDefault() { spacePrevented = true; } });
-  await flushAsync();
-
-  assert.equal(calls, 2);
-  assert.equal(enterPrevented, false);
-  assert.equal(spacePrevented, true);
-});
-
-test('refresh is single-flight across repeated activation', async () => {
-  let calls = 0;
-  let resolveRefresh;
-  const refreshPromise = new Promise((resolve) => { resolveRefresh = resolve; });
-  const { dom } = createHeaderHarness({
-    cpuPercent: 1,
-    ramPercent: 2,
-    arch: 'x64',
-    platform: 'win32',
-    gpuMemory: { available: false, utilAvailable: false },
-  }, {
-    interactive: true,
-    telemetryFlagOn: true,
-    refreshSystemStats: () => { calls += 1; return refreshPromise; },
-  });
-
-  dom.metricList.dispatch('click');
-  dom.metricList.dispatch('click');
-
-  assert.equal(calls, 1);
-  assert.equal(dom.metricList.classList.contains('is-refreshing'), true);
-  resolveRefresh(null);
-  await flushAsync();
-  assert.equal(dom.metricList.classList.contains('is-refreshing'), false);
-});
-
-test('a rejected refresh is contained and clears the refreshing state', async () => {
-  const { dom } = createHeaderHarness({
-    cpuPercent: 1,
-    ramPercent: 2,
-    arch: 'x64',
-    platform: 'win32',
-    gpuMemory: { available: false, utilAvailable: false },
-  }, {
-    interactive: true,
-    telemetryFlagOn: true,
-    refreshSystemStats: async () => { throw new Error('probe unavailable'); },
-  });
-
-  assert.doesNotThrow(() => dom.metricList.dispatch('click'));
-  await flushAsync();
-  assert.equal(dom.metricList.classList.contains('is-refreshing'), false);
-});
-
-test('flag-off leaves interaction absent and renders the legacy markup byte-identically', () => {
-  const { dom } = createHeaderHarness({
-    cpuPercent: 22.1,
-    ramPercent: 41.8,
-    arch: 'x64',
-    platform: 'win32',
-    gpuMemory: {
-      available: true,
-      usedMb: 3072,
-      totalMb: 8192,
-      utilAvailable: true,
-      utilPercent: 50,
-      stale: true,
-      ageMs: 60000,
-    },
-  }, { interactive: true, telemetryFlagOn: false });
-  const legacyMarkup = `
-            <span class="metric-item">CPU: 22.1%</span>
-          <span class="stat-divider" aria-hidden="true"></span>
-            <span class="metric-item">VRAM: 3.0/8.0 GB</span>
-          `;
-
-  assert.equal(dom.metricList.innerHTML, legacyMarkup);
-  assert.equal(dom.metricList.getAttribute('role'), null);
-  assert.equal(dom.metricList.getAttribute('tabindex'), null);
-  assert.equal(dom.metricList.listenerCount('click'), 0);
-  assert.equal(dom.metricList.listenerCount('keydown'), 0);
-});
-
-test('dispose removes metric refresh listeners and injected attributes', () => {
-  const { dom, controller } = createHeaderHarness({
-    cpuPercent: 1,
-    ramPercent: 2,
-    arch: 'x64',
-    platform: 'win32',
-    gpuMemory: { available: false, utilAvailable: false },
-  }, { interactive: true, telemetryFlagOn: true });
-
-  assert.equal(dom.metricList.getAttribute('role'), 'button');
-  assert.equal(dom.metricList.getAttribute('tabindex'), '0');
-  // Deliberately no aria-label: it would override name-from-content and hide
-  // the metric values from screen readers.
-  assert.equal(dom.metricList.getAttribute('aria-label'), null);
-  assert.equal(dom.metricList.getAttribute('title'), 'Click to refresh system stats');
-  assert.equal(dom.metricList.listenerCount('click'), 1);
-  assert.equal(dom.metricList.listenerCount('keydown'), 1);
-
-  controller.dispose();
-
-  assert.equal(dom.metricList.getAttribute('role'), null);
-  assert.equal(dom.metricList.getAttribute('tabindex'), null);
-  assert.equal(dom.metricList.getAttribute('aria-label'), null);
-  assert.equal(dom.metricList.getAttribute('title'), null);
-  assert.equal(dom.metricList.listenerCount('click'), 0);
-  assert.equal(dom.metricList.listenerCount('keydown'), 0);
-});
-
-test('flag hydrating after construction attaches interaction and GPU metric on next render', () => {
-  const { dom, state, controller } = createHeaderHarness({
-    cpuPercent: 10,
-    ramPercent: 20,
-    arch: 'x64',
-    platform: 'win32',
-    gpuMemory: {
-      available: true,
-      usedMb: 1024,
-      totalMb: 8192,
-      utilAvailable: true,
-      utilPercent: 77,
-      stale: false,
-      ageMs: 0,
-    },
-  }, { interactive: true, telemetryFlagOn: false });
-
-  assert.equal(dom.metricList.getAttribute('role'), null);
-  assert.equal(dom.metricList.listenerCount('click'), 0);
-  assert.doesNotMatch(dom.metricList.innerHTML, /GPU:/);
-
-  state.features.featureFlags.titlebar_gpu_telemetry = true;
-  controller.renderHeader();
-
-  assert.equal(dom.metricList.getAttribute('role'), 'button');
-  assert.equal(dom.metricList.listenerCount('click'), 1);
-  assert.match(dom.metricList.innerHTML, /GPU: 77%/);
-
-  state.features.featureFlags.titlebar_gpu_telemetry = false;
-  controller.renderHeader();
-
-  assert.equal(dom.metricList.getAttribute('role'), null);
-  assert.equal(dom.metricList.listenerCount('click'), 0);
-  assert.doesNotMatch(dom.metricList.innerHTML, /GPU:/);
-});
-
-test('repeated renders never accumulate duplicate refresh listeners', () => {
-  const { dom, controller } = createHeaderHarness({
-    cpuPercent: 1,
-    ramPercent: 2,
-    arch: 'x64',
-    platform: 'win32',
-    gpuMemory: { available: false, utilAvailable: false },
-  }, { interactive: true, telemetryFlagOn: true });
-
-  for (let i = 0; i < 25; i += 1) controller.renderHeader();
-
-  assert.equal(dom.metricList.listenerCount('click'), 1);
-  assert.equal(dom.metricList.listenerCount('keydown'), 1);
-});
-
-test('a hung refresh invoke times out and re-arms the affordance', async () => {
-  let calls = 0;
-  const { dom, controller } = createHeaderHarness({
-    cpuPercent: 1,
-    ramPercent: 2,
-    arch: 'x64',
-    platform: 'win32',
-    gpuMemory: { available: false, utilAvailable: false },
-  }, {
-    interactive: true,
-    telemetryFlagOn: true,
-    refreshSystemStats: () => {
-      calls += 1;
-      return new Promise(() => {});
-    },
-    refreshTimeoutMs: 5,
-  });
-
-  dom.metricList.dispatch('click');
-  assert.equal(dom.metricList.classList.contains('is-refreshing'), true);
-
-  await new Promise((resolve) => setTimeout(resolve, 25));
-
-  assert.equal(dom.metricList.classList.contains('is-refreshing'), false);
-
-  dom.metricList.dispatch('click');
-  assert.equal(calls, 2);
-
-  controller.dispose();
-});
-
-test('stale-by-failure with a fresh timestamp avoids the contradictory 0s-old copy', () => {
-  const { dom } = createHeaderHarness({
-    cpuPercent: 1,
-    ramPercent: 2,
-    arch: 'x64',
-    platform: 'win32',
-    gpuMemory: {
-      available: true,
-      usedMb: 1024,
-      totalMb: 8192,
-      utilAvailable: true,
-      utilPercent: 40,
-      stale: true,
-      ageMs: 2000,
-    },
-  }, { interactive: true, telemetryFlagOn: true });
-
-  assert.match(dom.metricList.innerHTML, /data-stale="true" title="GPU sample may be stale"/);
-  assert.doesNotMatch(dom.metricList.innerHTML, /0s old/);
+test('the header owns its stats subscription and drops it on dispose', (t) => {
+  const h = createHarness(t, { titlebarLoad: true });
+  assert.equal(h.shell.listenerCount(), 1);
+  h.shell.push({ ...GPU_STATS, cpuPercent: 64 });
+  assert.equal(h.state.systemStats.cpuPercent, 64);
+  h.controller.dispose();
+  assert.equal(h.shell.listenerCount(), 0);
 });
 
 // F37: a plugin/config refresh re-initializes the sidecar (ready ->
@@ -574,7 +270,7 @@ test('New Chat stays usable while the backend re-initializes and locks only when
   const newChatButton = { disabled: false };
   const controller = createHeaderController({
     state,
-    dom: { metricList: { innerHTML: '' }, sessionActionButton: null, newChatButton },
+    dom: { metricList: null, newChatButton },
   });
   for (const phase of ['ready', 'model_unavailable', 'sidecar_spawned', 'model_acquiring', 'model_loading', 'starting', 'retrying']) {
     state.backend = { phase };
@@ -590,4 +286,17 @@ test('New Chat stays usable while the backend re-initializes and locks only when
   state.auth = { authenticated: false };
   controller.renderHeader();
   assert.equal(newChatButton.disabled, true, 'New Chat still requires an authenticated profile');
+});
+
+test('the header tells main whether the read-out is watched, once per change, and releases it on dispose', (t) => {
+  const h = createHarness(t, { titlebarLoad: false });
+  h.controller.renderHeader();
+  h.controller.renderHeader();
+  assert.deepEqual(h.shell.watches, [{ source: 'titlebar', watched: false }], 'off: one idle notice, not one per render');
+  h.state.ui.appearance.titlebarLoad = true;
+  h.controller.renderHeader();
+  h.shell.push({ ...GPU_STATS, cpuPercent: 50 });
+  assert.deepEqual(h.shell.watches.slice(1), [{ source: 'titlebar', watched: true }], 'on: watched, and the tick does not repeat it');
+  h.controller.dispose();
+  assert.deepEqual(h.shell.watches.slice(2), [{ source: 'titlebar', watched: false }], 'dispose releases the watch');
 });

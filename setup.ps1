@@ -97,7 +97,9 @@ if ($SkipModel) { $userForward += '--skip-model' }
 if ($ExistingServer) { $userForward += '--existing-server' }
 if ($NoLaunch) { $userForward += '--no-launch' }
 if ($Rest) { $userForward += $Rest }
-$argCheck = 'const { parseArgs } = require("./scripts/setup/setup"); const parsed = parseArgs(process.argv.slice(1)); if (parsed.errors.length) { console.error(parsed.errors.join(" ")); process.exit(10); }'
+# Single quotes only inside the script: Windows PowerShell 5.1 strips embedded
+# double quotes from native-command arguments, which breaks the JavaScript.
+$argCheck = 'const { parseArgs } = require(''./scripts/setup/setup''); const parsed = parseArgs(process.argv.slice(1)); if (parsed.errors.length) { console.error(parsed.errors.join('' '')); process.exit(10); }'
 node -e $argCheck -- @userForward
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 if ($userForward -contains '--help' -or $userForward -contains '-h') {
@@ -114,6 +116,10 @@ function Test-Python311 {
   }
   if (Test-Have 'python') {
     & python -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)' 2>$null
+    if ($LASTEXITCODE -eq 0) { return $true }
+  }
+  if (Test-Have 'python3') {
+    & python3 -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)' 2>$null
     if ($LASTEXITCODE -eq 0) { return $true }
   }
   return $false

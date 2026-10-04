@@ -437,12 +437,12 @@ def build_approval_plan(
     change_set_id: str = "",
     quota_state_json: bytes | None = None,
 ) -> ApprovalPlan:
-    from sidecar.ai.routing.mutation_change_set_lifecycle import (  # noqa: PLC0415
+    from sidecar.ai.routing.mutation_change_set_lifecycle import (
         freeze_approval_tool_calls,
     )
 
     if quota_state_json is not None:
-        from sidecar.ai.routing.tool_quota_state import decode_quota_state  # noqa: PLC0415
+        from sidecar.ai.routing.tool_quota_state import decode_quota_state
         decode_quota_state(quota_state_json)
     tool_contract_hash = build_tool_contract_hash(tool_contract)
     effective_args_fingerprint = build_effective_args_fingerprint(frozen_inputs)

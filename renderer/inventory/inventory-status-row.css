@@ -37,7 +37,7 @@
 }
 
 .inv-status-row-dot {
-  /* Feeds the shared status-dot-pulse keyframe (styles/chat-animations.css),
+  /* Feeds the shared status-dot-pulse keyframe (styles/motion.css),
      which the workbench health pill's dot drives the same way. */
   --status-dot-accent: var(--inv-status-accent);
   width: 7px;
@@ -63,7 +63,7 @@
 
 .inv-status-row-message {
   min-width: 0;
-  font-size: var(--font-size-sm);
+  font-size: var(--font-size-footnote);
   font-weight: 400;
   line-height: 1.5;
   color: var(--text-secondary);
@@ -78,8 +78,12 @@
   font-weight: 500;
 }
 
+/* The trailing space is its own string: a space after a hex escape only ends
+   the escape, so " \2014 " ran the dash into the text ("Status —Not
+   installed"). white-space: pre keeps both spaces. */
 .inv-status-row-label::after {
-  content: " \2014 ";
+  content: " \2014" " ";
+  white-space: pre;
   color: var(--text-muted);
   font-weight: 400;
 }
@@ -91,7 +95,8 @@
 }
 
 .inv-status-row-badge::before {
-  content: " \00b7 ";
+  content: " \00b7" " ";
+  white-space: pre;
 }
 
 /* ── Progress ── */

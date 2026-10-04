@@ -33,7 +33,7 @@ function makePanelHarness(t, initialArtifacts = []) {
   const dom = new JSDOM('<!doctype html><body><aside id="artifactReviewPanel"></aside></body>', { url: 'https://jenny.test/' });
   const panelEl = dom.window.document.getElementById('artifactReviewPanel');
   const state = {
-    features: { featureFlags: { artifact_panel_v2: true, artifact_panel_v3: true } },
+    features: { featureFlags: {} },
     artifacts: { loadedArtifactId: '', loadedArtifactContent: '', dirtyContent: '', viewModeByKind: {}, mermaidViewMode: 'preview', savePending: false },
     messagesBySession: new Map(),
   };
@@ -106,7 +106,7 @@ describe('Artifact Panel V3 view capabilities and segmented control', () => {
       h.controller.afterRender(single);
       assert.equal(h.panelEl.querySelector('[data-inv-segmented="artifact-view"]'), null, `${kind} must not render the segmented control`);
       if (kind === 'image') {
-        assert.equal(h.panelEl.querySelector('[data-artifact-panel-download]').classList.contains('hidden'), true);
+        assert.equal(h.panelEl.querySelector('[data-artifact-panel-download]'), null, 'Download lives in More');
         assert.equal(h.panelEl.querySelector('[data-artifact-panel-v2-copy]').disabled, true);
       }
     }
@@ -166,7 +166,7 @@ describe('Artifact Panel V3 view capabilities and segmented control', () => {
   test('empty state disables artifact-dependent controls and omits a kind glyph', (t) => {
     const h = makePanelHarness(t, []);
     h.controller.afterRender(null);
-    for (const selector of ['[data-artifact-panel-v2-copy]', '[data-artifact-panel-download]', '[data-artifact-panel-overflow]', '#artifactPanelV2ProvenanceTrigger']) {
+    for (const selector of ['[data-artifact-panel-v2-copy]', '[data-artifact-panel-overflow]', '#artifactPanelV2ProvenanceTrigger']) {
       assert.equal(h.panelEl.querySelector(selector).disabled, true, selector);
     }
     assert.equal(h.panelEl.querySelector('.artifact-panel-kind-glyph'), null);
@@ -190,8 +190,8 @@ test('load errors retain Retry and non-artifact modes cannot expose a dirty arti
     for (const id of ['artifactReviewSaveButton', 'artifactReviewRevertButton']) {
       assert.equal(h.panelEl.querySelector('#' + id).classList.contains('hidden'), true, mode + ':' + id);
     }
-    assert.equal(h.panelEl.querySelector('[data-artifact-panel-download]').disabled, true);
     assert.equal(h.panelEl.querySelector('[data-artifact-panel-v2-copy]').disabled, true);
+    assert.equal(h.panelEl.querySelector('[data-artifact-panel-v2-copy]').classList.contains('hidden'), true, 'artifact actions hide outside artifact mode');
     assert.equal(h.panelEl.querySelector('[data-inv-segmented="artifact-view"]'), null);
     assert.equal(h.panelEl.querySelector('[data-artifact-switcher-trigger]'), null);
   }
@@ -461,14 +461,14 @@ describe('Artifact Panel V3 actions', () => {
     assert.deepEqual(calls, ['delete']);
   });
 
-  test('overflow disables delete for image and tool-output artifacts', (t) => {
+  test('overflow omits delete for image and tool-output artifacts', (t) => {
     for (const current of [artifact('image'), artifact('text')]) {
       const h = makePanelHarness(t, [current]);
       h.controller.afterRender(current);
       h.panelEl.querySelector('[data-artifact-panel-overflow]').click();
       const deleteItem = [...h.dom.window.document.querySelectorAll('.inv-context-menu-item')]
         .find((node) => node.textContent === 'Delete artifact');
-      assert.equal(deleteItem.disabled, true, current.artifactType);
+      assert.equal(deleteItem, undefined, current.artifactType);
     }
   });
 
@@ -491,7 +491,7 @@ describe('Artifact Panel V3 maximized preferences and layout', () => {
   // fill) and the wrapping content padding are gone; only the toolbar's
   // bottom hairline survives.
   test('tool output renders full bleed with the semantic diff token contract', () => {
-    assert.match(ARTIFACT_PANEL_CSS, /\.artifact-output-viewer \{[\s\S]*?grid-template-rows: 32px minmax\(0, 1fr\);[\s\S]*?border: 0;[\s\S]*?border-radius: 0;[\s\S]*?background: transparent;/);
+    assert.match(ARTIFACT_PANEL_CSS, /\.artifact-output-viewer \{[\s\S]*?grid-template-rows: minmax\(0, 1fr\);[\s\S]*?border: 0;[\s\S]*?border-radius: 0;[\s\S]*?background: transparent;/);
     const viewerBlock = ARTIFACT_PANEL_CSS.match(/\.artifact-output-viewer \{[^}]*\}/);
     assert.ok(viewerBlock, 'the viewer rule must exist');
     assert.doesNotMatch(viewerBlock[0], /border-radius: var\(--radius-sm\)|border: 1px|background: color-mix/, 'no frame, no inset fill');
@@ -500,18 +500,14 @@ describe('Artifact Panel V3 maximized preferences and layout', () => {
       /\.artifact-panel-v3 \.artifact-panel-v2-content-host \.artifact-preview-content:has\(\.artifact-output-viewer\) \{[\s\S]*?padding: 0;/,
       'the wrapping content padding is removed for the output viewer case'
     );
-    assert.match(
-      ARTIFACT_PANEL_CSS,
-      /\.artifact-output-toolbar \{[\s\S]*?border-bottom: 1px solid color-mix\(in srgb, var\(--border-default\) 72%, transparent\);/,
-      'the toolbar keeps its bottom hairline'
-    );
+    assert.doesNotMatch(ARTIFACT_PANEL_CSS, /\.artifact-output-toolbar/, 'no fake "Output" toolbar row');
     assert.match(ARTIFACT_PANEL_CSS, /\.artifact-output-body \{[\s\S]*?overflow: auto;/, 'scrolling stays on the body');
     assert.match(ARTIFACT_PANEL_CSS, /\.artifact-output-line--add,[\s\S]*?var\(--widget-tool-success-color\) 9%/);
     assert.match(ARTIFACT_PANEL_CSS, /\.artifact-output-line--remove,[\s\S]*?var\(--widget-tool-error-color\) 9%/);
     assert.match(ARTIFACT_PANEL_CSS, /\.artifact-output-line--hunk,[\s\S]*?var\(--accent-cyan\) 7%/);
     assert.match(ARTIFACT_PANEL_CSS, /\.artifact-output-body \.diff-line-add \.diff-content \{ color: color-mix\(in srgb, var\(--widget-tool-success-color\) 76%/);
     assert.match(ARTIFACT_PANEL_CSS, /\.artifact-output-body \.diff-line-remove \.diff-content \{ color: color-mix\(in srgb, var\(--widget-tool-error-color\) 76%/);
-    assert.match(ARTIFACT_PANEL_CSS, /\.artifact-output-viewer\.is-wrapped \.diff-hunk \{ min-width: 0; \}/);
+    assert.match(ARTIFACT_PANEL_CSS, /\.artifact-review-panel:not\(\.artifact-panel-nowrap\) \.artifact-output-body \.diff-hunk \{ min-width: 0; \}/);
     assert.match(ARTIFACT_PANEL_CSS, /\.artifact-panel-v3 \.artifact-panel-v2-scroll:has\(\.artifact-output-viewer\) \{ overflow: hidden; \}/);
   });
 
@@ -571,21 +567,20 @@ describe('Artifact Panel V3 maximized preferences and layout', () => {
   test('maximized map normalizes, persists, and prunes removed sessions', () => {
     const value = prefs.normalizeArtifactReviewPreferences({ maximizedBySession: { a: true, b: false, '': true } });
     assert.deepEqual(value.maximizedBySession, { a: true });
-    prefs.recordArtifactReviewMaximized(value, 'b', true, { flagOn: true });
-    assert.equal(prefs.resolveArtifactReviewMaximized(value, 'b', { flagOn: true }), true);
+    prefs.recordArtifactReviewMaximized(value, 'b', true);
+    assert.equal(prefs.resolveArtifactReviewMaximized(value, 'b'), true);
     prefs.pruneArtifactReviewSessionPreferences(value, ['b']);
     assert.deepEqual(value.maximizedBySession, { b: true });
-    assert.equal(prefs.resolveArtifactReviewMaximized(value, 'b', { flagOn: false }), false);
   });
 
-  test('maximize stamps the chat view per session, Escape restores, and narrow width stamps is-narrow', (t) => {
+  test('maximize stamps the chat view per session, Escape restores, and narrow width stamps data-panel-narrow', (t) => {
     const dom = new JSDOM('<!doctype html><body><div id="workspace"><section id="chat"><div id="resizer"></div><aside id="panel"></aside></section></div></body>', { url: 'https://jenny.test/' });
     const previousWindow = globalThis.window;
     globalThis.window = dom.window;
     t.after(() => { if (previousWindow === undefined) delete globalThis.window; else globalThis.window = previousWindow; });
     dom.window.localStorage.setItem('jenny.artifactReview.v1', JSON.stringify({ enabled: true, width: 340 }));
     const active = { id: 's1' };
-    const state = { ui: { activeView: 'chat', artifactReview: {} }, artifacts: { autoOpenedSessionIds: [], deletedArtifactIds: [], viewModeByKind: {} }, messagesBySession: new Map(), features: { featureFlags: { artifact_panel_v2: true, artifact_panel_v3: true } } };
+    const state = { ui: { activeView: 'chat', artifactReview: {} }, artifacts: { autoOpenedSessionIds: [], deletedArtifactIds: [], viewModeByKind: {} }, messagesBySession: new Map(), features: { featureFlags: {} } };
     const workspace = dom.window.document.getElementById('workspace');
     workspace.getBoundingClientRect = () => ({ width: 1400 });
     const chatView = dom.window.document.getElementById('chat');
@@ -594,8 +589,8 @@ describe('Artifact Panel V3 maximized preferences and layout', () => {
     const manager = artifactsUtils.createArtifactManager({ state, dom: { workspace, chatView, artifactReviewPanel: panel, artifactReviewResizer: resizer }, callbacks: { getActiveSession: () => ({ id: active.id }), updateComposerSafeOffset: () => {}, renderAll: () => {}, escapeHtml: String, appendClientLog: () => {}, showToastMessage: () => {} } });
     manager.bind();
     t.after(() => manager.dispose());
-    assert.equal(panel.classList.contains('is-narrow'), true);
-    assert.match(ARTIFACT_PANEL_CSS, /\.artifact-review-panel\.is-narrow \.artifact-panel-copy,[\s\S]*?\.artifact-panel-download \{ display: none; \}/);
+    assert.equal(panel.dataset.panelNarrow, 'true');
+    assert.match(ARTIFACT_PANEL_CSS, /\.artifact-review-panel\[data-panel-narrow="true"\] \.artifact-panel-copy \{ display: none; \}/);
     assert.doesNotMatch(ARTIFACT_PANEL_CSS, /\.inv-context-menu-item--danger/);
     assert.match(INVENTORY_CSS, /\.inv-context-menu-item--danger\s*\{/);
     manager.toggleArtifactReviewMaximized(true);
@@ -608,21 +603,60 @@ describe('Artifact Panel V3 maximized preferences and layout', () => {
     assert.equal(chatView.classList.contains('artifact-review-maximized'), true);
     panel.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
     assert.equal(chatView.classList.contains('artifact-review-maximized'), false);
-    state.features.featureFlags.artifact_panel_v3 = false;
-    assert.equal(manager.toggleArtifactReviewMaximized(true), false, 'flag-off calls report the applied state');
-    state.features.featureFlags.artifact_panel_v3 = true;
+    // The header button toggles with no argument (the value is read first).
+    assert.equal(manager.toggleArtifactReviewMaximized(), true);
+    assert.equal(chatView.classList.contains('artifact-review-maximized'), true);
+    assert.equal(manager.toggleArtifactReviewMaximized(), false);
+    assert.equal(chatView.classList.contains('artifact-review-maximized'), false);
     active.id = '';
     assert.equal(manager.toggleArtifactReviewMaximized(true), false, 'missing-session calls cannot report success');
   });
 });
 
-test('artifact_panel_v3 false preserves V2 chrome byte-for-byte', () => {
-  function render(flags) {
-    const dom = new JSDOM('<!doctype html><body><aside id="p"></aside></body>');
-    const panel = dom.window.document.getElementById('p');
-    const controller = createArtifactPanelV2({ panelEl: panel, state: { features: { featureFlags: flags }, artifacts: {}, messagesBySession: new Map() }, windowRef: dom.window });
-    controller.installed();
-    return panel.innerHTML;
+describe('Artifact Panel V3 cohesion pass (shared gutter, flat surface, single header row)', () => {
+  function block(css, selector) {
+    const start = css.indexOf(selector + ' {');
+    assert.notEqual(start, -1, selector + ' rule exists');
+    return css.slice(start, css.indexOf('}', start));
   }
-  assert.equal(render({ artifact_panel_v2: true, artifact_panel_v3: false }), render({ artifact_panel_v2: true }));
+
+  test('header is 36px and header/controls/footer/note/code body all use the shared gutter', () => {
+    assert.match(block(ARTIFACT_PANEL_CSS, '.artifact-panel-header'), /height: 36px;[\s\S]*?padding-inline: var\(--side-panel-gutter\)/);
+    assert.match(block(ARTIFACT_PANEL_CSS, '.artifact-panel-controls'), /padding-inline: var\(--side-panel-gutter\)/);
+    assert.match(block(ARTIFACT_PANEL_CSS, '.artifact-panel-status'), /padding-inline: var\(--side-panel-gutter\)/);
+    assert.match(block(ARTIFACT_PANEL_CSS, '.artifact-output-line'), /padding-inline-start: var\(--side-panel-gutter\)/);
+    assert.match(block(ARTIFACT_PANEL_CSS, '.artifact-panel-v3 #artifactReviewDetailNote'), /padding: var\(--space-4\) var\(--side-panel-gutter\)[\s\S]*?font-size: var\(--font-size-footnote\);[\s\S]*?font-weight: 400;/);
+    assert.match(ARTIFACT_PANEL_CSS, /#artifactReviewDetailNote\.detail-note-error \{ color: var\(--widget-stop-color\); \}/);
+  });
+
+  test('only the header and footer carry hairlines; the controls row has none', () => {
+    assert.match(block(ARTIFACT_PANEL_CSS, '.artifact-panel-header'), /border-bottom: 1px solid var\(--border-default\)/);
+    assert.match(block(ARTIFACT_PANEL_CSS, '.artifact-panel-status'), /border-top: 1px solid var\(--border-default\)/);
+    assert.doesNotMatch(block(ARTIFACT_PANEL_CSS, '.artifact-panel-controls'), /border/);
+  });
+
+  test('the controls row collapses unless it holds a real control', () => {
+    assert.match(
+      ARTIFACT_PANEL_CSS,
+      /\.artifact-panel-controls:not\(:has\(\s*\[data-artifact-panel-view-slot\] > \*,\s*\[data-artifact-panel-v2-stepper-slot\] > \*,\s*\.artifact-panel-text-btn:not\(\.hidden\)\s*\)\) \{ display: none; \}/
+    );
+  });
+
+  test('the kind caption is neutral: muted caption text, no accent tint', () => {
+    const caption = block(ARTIFACT_PANEL_CSS, '.artifact-panel-kind-caption');
+    assert.match(caption, /color: var\(--text-muted\);/);
+    assert.doesNotMatch(caption, /--accent|--holo|text-transform/);
+  });
+
+  test('wrapped output lines hang-indent their continuation rows', () => {
+    assert.match(ARTIFACT_PANEL_CSS, /\.artifact-review-panel:not\(\.artifact-panel-nowrap\) \.artifact-output-line-content \{ padding-inline-start: calc\(4px \+ 2ch\); text-indent: -2ch; \}/);
+  });
+
+  test('legacy V2 header/toolbar/footer rules are gone while the live stepper and footer action stay', () => {
+    for (const dead of ['.artifact-panel-v2-header', '.artifact-panel-v2-title', '.artifact-panel-v2-toolbar', '.artifact-panel-v2-text-btn', '.artifact-panel-v2-footer {', '.artifact-panel-v2-footer-meta', '.artifact-panel-v2-delete-btn']) {
+      assert.equal(ARTIFACT_PANEL_CSS.includes(dead), false, dead);
+    }
+    assert.equal(ARTIFACT_PANEL_CSS.includes('.artifact-panel-v2-footer-action'), true);
+    assert.equal(ARTIFACT_PANEL_CSS.includes('.artifact-panel-v2-stepper'), true);
+  });
 });

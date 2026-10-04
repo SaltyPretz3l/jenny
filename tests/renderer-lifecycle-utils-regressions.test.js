@@ -37,17 +37,19 @@ function createHarness(t, options = {}) {
     runtimeDraft: {},
     features: { featureFlags: {} },
   };
+  const callbacks = { refreshSettingsSection: () => Promise.resolve(null), ...(options.callbacks || {}) };
   const controller = createLifecycleController({
     state,
     constants: { APPEARANCE_STORAGE_KEY: 'appearance', TOAST_SOURCE: {}, INTERACTIVE_SEQUENCE_IDLE: 'idle' },
     dom: {
-      chatInput: element(),
-      composerSettingsPopover: element(),
-      composerSettingsButton: element(),
+      chatInput: options.chatInput || element(),
+      composerAttachMenu: element(),
+      composerAttachShortcut: element(),
       composerTerminalShortcut: element(),
+      ...(options.dom || {}),
     },
-    callbacks: { refreshSettingsSection: () => Promise.resolve(null), ...(options.callbacks || {}) },
-    controllers: {},
+    callbacks,
+    controllers: options.controllers || {},
   });
   t.after(() => {
     controller.disposeLifecycleController();
@@ -58,8 +60,36 @@ function createHarness(t, options = {}) {
     global.rendererPluginSessions = previous.rendererPluginSessions;
     dom.window.close();
   });
-  return { controller, state, dom };
+  return { controller, state, dom, callbacks };
 }
+
+test('the attach menu opens above the paperclip, left aligned and clamped to the viewport', (t) => {
+  const page = new JSDOM('<button id="clip"></button><div class="composer-popover hidden" id="menu"><button role="menuitem">Attach files</button></div>');
+  t.after(() => page.window.close());
+  const clip = page.window.document.getElementById('clip');
+  const menu = page.window.document.getElementById('menu');
+  const h = createHarness(t, { dom: { composerAttachShortcut: clip, composerAttachMenu: menu } });
+  const { createSettingsOverlayRenderer } = require('../renderer/shell/renderer-settings-overlays');
+  const overlay = createSettingsOverlayRenderer({ state: h.state, windowRef: page.window,
+    dom: { composerAttachShortcut: clip, composerAttachMenu: menu } });
+  h.callbacks.renderComposerPopover = overlay.renderComposerPopover;
+  Object.defineProperty(page.window, 'innerWidth', { value: 800 });
+  clip.getBoundingClientRect = () => ({ left: 120, right: 148, top: 524 });
+  menu.getBoundingClientRect = () => ({ width: 200, height: 120 });
+  h.controller.openComposerPopover();
+  assert.equal(h.state.ui.composerPopoverOpen, true);
+  assert.equal(menu.classList.contains('hidden'), false);
+  assert.equal(clip.getAttribute('aria-expanded'), 'true');
+  assert.equal(menu.style.left, '120px');
+  assert.equal(menu.style.top, '394px');
+  h.controller.closeComposerPopover({ restoreFocus: true });
+  assert.equal(menu.classList.contains('hidden'), true);
+  assert.equal(page.window.document.activeElement, clip);
+  clip.getBoundingClientRect = () => ({ left: 790, right: 818, top: 20 });
+  h.controller.openComposerPopover();
+  assert.equal(menu.style.left, '584px');
+  assert.equal(menu.style.top, '16px');
+});
 
 test('chat activation never borrows sprite opacity or creates a timed duplicate', (t) => {
   const frames = [];
@@ -193,3 +223,58 @@ test('deferred plugin-view leave cannot activate a view after lifecycle disposal
   assert.equal(state.ui.activeView, 'plugin');
   assert.equal(renderLayoutCalls, 0, 'the stale leave continuation must not repaint after disposal');
 });
+
+for (const twoPanes of [true, false]) {
+  test(`chat activation with ${twoPanes ? 'two panes focuses the focused pane composer, not pane 0 #chatInput' : 'one pane keeps #chatInput'}`, (t) => {
+    const previousComposition = globalThis.rendererAppPaneComposition;
+    const frames = [];
+    let chatInputFocuses = 0;
+    let composerFocuses = 0;
+    const chatInput = { focus: () => { chatInputFocuses += 1; } };
+    globalThis.rendererAppPaneComposition = {
+      getPaneComposition: () => ({ focusComposer: () => { composerFocuses += 1; return twoPanes; } }),
+    };
+    const h = createHarness(t, { chatInput, requestAnimationFrame: (callback) => frames.push(callback) });
+    t.after(() => { globalThis.rendererAppPaneComposition = previousComposition; });
+    h.controller.setActiveView('chat');
+    while (frames.length) frames.shift()();
+    assert.equal(composerFocuses, 1);
+    assert.equal(chatInputFocuses, twoPanes ? 0 : 1);
+  });
+}
+
+for (const [label, panes, expected] of [
+  ['one pane', undefined, 1],
+  ['two panes, pane 0 focused', { panes: [{ sessionId: 's0' }, { sessionId: 's1' }], focusedPaneId: 0 }, 1],
+  ['two panes, pane 1 focused', { panes: [{ sessionId: 's0' }, { sessionId: 's1' }], focusedPaneId: 1 }, 0],
+]) {
+  test(`creating a chat re-latches pane 0 follow only when the chat lands there (CTR-001): ${label}`, async (t) => {
+    const state = {
+      ui: { activeView: 'chat', activeSettingsSection: 'models', composerPopoverOpen: false, commandPopoverOpen: false },
+      logs: [],
+      sessions: [],
+      currentSessionId: panes ? panes.panes[panes.focusedPaneId].sessionId : 's0',
+      runtimeDraft: { preferredModel: '', reasoningEffort: 'default', runMode: 'ask', planMode: false, contextPreferences: {} },
+      features: { featureFlags: {} },
+      ...(panes ? { panes } : {}),
+    };
+    let follows = 0;
+    let resumes = 0;
+    const { controller } = createHarness(t, {
+      state,
+      jennyShell: { sessions: { create: async () => ({ data: { id: 'sess_new' } }), list: async () => ({ data: [] }) } },
+      controllers: { thinkingController: { resumeAutoScroll: () => { resumes += 1; } } },
+      callbacks: {
+        normalizeReasoningEffort: (value) => value,
+        renderAll: () => {},
+        isAnySendBusy: () => false,
+        clearComposerStatusNotice: () => {},
+        setSessionMessages: () => {},
+        setFollowLatest: (value) => { if (value === true) follows += 1; },
+      },
+    });
+    await controller.handleCreateSession().catch(() => {}); // the session list reload has no bridge here; the re-latch precedes it
+    assert.equal(state.currentSessionId, 'sess_new');
+    assert.deepEqual([follows, resumes], [expected, expected]);
+  });
+}

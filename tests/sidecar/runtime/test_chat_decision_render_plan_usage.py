@@ -23,7 +23,7 @@ from sidecar.runtime.local_engine.request_context import (
     current_request_context,
     install_request_context,
 )
-from tests.sidecar.ai.routing.test_stream_incomplete_surfacing import _Engine, _decision_for
+from tests.sidecar.ai.routing.test_stream_incomplete_surfacing import _decision_for, _Engine
 
 _SNAPSHOT = {
     "schema_version": 1,
@@ -98,7 +98,7 @@ def test_chat_done_usage_carries_plan_usage_when_enabled() -> None:
     with _bound_engine("req_plan_usage_done", snapshot=_SNAPSHOT) as engine:
         response = _render(
             engine=engine,
-            feature_flags={"chatgpt_plan_meter": True},
+            feature_flags={},
             finish_reason="stop",
             request_id="req_plan_usage_done",
         )
@@ -111,7 +111,7 @@ def test_chat_error_terminal_branch_carries_plan_usage_when_enabled() -> None:
     with _bound_engine("req_plan_usage_err", snapshot=_SNAPSHOT) as engine:
         response = _render(
             engine=engine,
-            feature_flags={"chatgpt_plan_meter": True},
+            feature_flags={},
             finish_reason="incomplete",
             request_id="req_plan_usage_err",
         )
@@ -120,33 +120,11 @@ def test_chat_error_terminal_branch_carries_plan_usage_when_enabled() -> None:
     assert error["params"]["plan_usage"] == _SNAPSHOT
 
 
-def test_flag_off_removes_plan_usage_from_both_branches() -> None:
-    with _bound_engine("req_plan_usage_off_done", snapshot=_SNAPSHOT) as engine:
-        done_response = _render(
-            engine=engine,
-            feature_flags={"chatgpt_plan_meter": False},
-            finish_reason="stop",
-            request_id="req_plan_usage_off_done",
-        )
-    done = _find_notification(done_response, CHAT_DONE_METHOD)
-    assert "plan_usage" not in done["params"]["usage"]
-
-    with _bound_engine("req_plan_usage_off_err", snapshot=_SNAPSHOT) as engine:
-        error_response = _render(
-            engine=engine,
-            feature_flags={"chatgpt_plan_meter": False},
-            finish_reason="incomplete",
-            request_id="req_plan_usage_off_err",
-        )
-    error = _find_notification(error_response, CHAT_ERROR_METHOD)
-    assert "plan_usage" not in error["params"]
-
-
 def test_no_snapshot_omits_plan_usage_key_even_when_enabled() -> None:
     with _bound_engine("req_plan_usage_missing", snapshot=None) as engine:
         response = _render(
             engine=engine,
-            feature_flags={"chatgpt_plan_meter": True},
+            feature_flags={},
             finish_reason="stop",
             request_id="req_plan_usage_missing",
         )

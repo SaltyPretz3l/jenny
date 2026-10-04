@@ -9,14 +9,20 @@ boolean to :func:`decide_dispatch_route`.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from typing import Any
 
+import pytest
+
+from sidecar.ai.routing import route_policy_runtime
 from sidecar.ai.routing.route_policy_runtime import (
     _build_tool_schemas_from_payload,
     _resolve_provider_for_roundtrip,
+    attempt_in_band_recovery,
     evaluate_schema_roundtrip,
 )
+from sidecar.ai.tools.models import GenerationResult
 from sidecar.ai.tools.schema_roundtrip import RoundtripResult
 from sidecar.runtime.provider_capability_profile import (
     ROUTE_NATIVE_TOOLS,
@@ -238,7 +244,7 @@ def test_evaluate_swallows_internal_errors_and_returns_true() -> None:
 
     class _Boom:
         @property
-        def _config(self) -> Any:  # noqa: ANN401 — stub raises on access.
+        def _config(self) -> Any:  # stub raises on access.
             raise RuntimeError("boom")
 
     profile = _make_profile()
@@ -247,3 +253,50 @@ def test_evaluate_swallows_internal_errors_and_returns_true() -> None:
         profile=profile,
         tool_payload=_VALID_TOOL_PAYLOAD,
     ) is True
+
+
+def test_evaluate_logs_a_warning_when_the_check_crashes(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A crash still passes (never downgrades a turn) but must not be silent."""
+
+    class _Boom:
+        @property
+        def _config(self) -> Any:  # stub raises on access.
+            raise RuntimeError("boom")
+
+    with caplog.at_level(logging.WARNING, logger=route_policy_runtime.logger.name):
+        passed = evaluate_schema_roundtrip(
+            kernel=_Boom(),
+            profile=_make_profile(),
+            tool_payload=_VALID_TOOL_PAYLOAD,
+        )
+
+    assert passed is True
+    crashes = [r for r in caplog.records if "schema roundtrip check crashed" in r.getMessage()]
+    assert len(crashes) == 1
+    assert crashes[0].exc_info is not None
+
+
+def test_in_band_recovery_logs_a_warning_when_the_parser_crashes(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    def _explode(_text: str, _names: Any) -> Any:
+        raise ValueError("parser exploded")
+
+    monkeypatch.setattr(
+        route_policy_runtime, "known_tool_names_for_kernel", lambda *_a, **_k: {"read_file"}
+    )
+    monkeypatch.setattr(route_policy_runtime, "extract_inband_tool_calls", _explode)
+    result = GenerationResult(
+        content='<tool_call>{"name":"read_file","arguments":{}}</tool_call>',
+        finish_reason="tool_calls",
+    )
+
+    with caplog.at_level(logging.WARNING, logger=route_policy_runtime.logger.name):
+        recovered, ok = attempt_in_band_recovery(result=result, kernel=object())
+
+    assert ok is False
+    assert recovered is result
+    assert any("in-band tool-call recovery failed" in r.getMessage() for r in caplog.records)

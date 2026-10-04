@@ -53,3 +53,23 @@ test('abort signal error reasons preserve timeout cancellation category', () => 
   assert.equal(error.terminal_subcode, 'timeout');
   assert.equal(error.retryable, true);
 });
+
+// Dogfood TR-012: the session runtime cancels an in-flight turn with reason
+// 'app_shutdown' when Jenny closes. It used to normalize to user_cancel, so the
+// card read like the user had pressed Stop.
+test('an app-shutdown cancellation keeps its own reason and counts as expected lifecycle', () => {
+  const {
+    normalizeCancelReason,
+    isExpectedLifecycleCancellation,
+    CANCEL_REASON_USER,
+  } = require('../services/backend/chat-stream-terminal-utils');
+  assert.equal(normalizeCancelReason('app_shutdown', CANCEL_REASON_USER), 'app_shutdown');
+  const error = new Error('Stream cancelled.');
+  error.category = 'cancelled';
+  error.cancel_reason = 'app_shutdown';
+  const payload = buildTerminalErrorPayload(error, 'managed_sidecar');
+  assert.equal(payload.terminal_subcode, 'app_shutdown');
+  assert.equal(payload.cancel_reason, 'app_shutdown');
+  assert.equal(isExpectedLifecycleCancellation(payload), true);
+  assert.equal(isExpectedLifecycleCancellation({ category: 'cancelled', cancel_reason: 'user_cancel' }), false);
+});

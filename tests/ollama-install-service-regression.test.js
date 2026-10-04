@@ -83,3 +83,66 @@ test('cancellation during reprobe does not terminate the exited installer child'
   assert.equal((await installation).status, 'cancelled');
   assert.equal(terminationCalls, 0);
 });
+
+test('swallowed detection and cleanup failures still reach the service logger', async () => {
+  const child = new EventEmitter();
+  child.pid = 4343;
+  child.kill = () => {};
+  const logged = [];
+  let detectCalls = 0;
+  const fsImpl = {
+    mkdtempSync: () => 'C:/temp/jenny-ollama-log-regression',
+    createWriteStream() {
+      const stream = {
+        write() { return true; },
+        on() { return stream; },
+        end(callback) { callback?.(); },
+      };
+      return stream;
+    },
+    rmSync() { throw Object.assign(new Error('EBUSY: resource busy'), { code: 'EBUSY' }); },
+    existsSync: () => false,
+  };
+  const service = new OllamaInstallService({
+    manifest: {
+      url: 'https://example.test/OllamaSetup.exe',
+      version: '1.2.3',
+      minimumSupportedVersion: '1.2.3',
+      sizeBytes: INSTALLER_BYTES.length,
+      sha256: INSTALLER_SHA,
+      manualFallbackUrl: 'https://ollama.com/download/windows',
+    },
+    fetchImpl: async () => ({
+      ok: true,
+      status: 200,
+      headers: { get: () => String(INSTALLER_BYTES.length) },
+      body: (async function* body() { yield INSTALLER_BYTES; })(),
+    }),
+    spawnImpl: () => {
+      setImmediate(() => child.emit('exit', 0));
+      return child;
+    },
+    fsImpl,
+    detectImpl: async () => {
+      detectCalls += 1;
+      if (detectCalls === 1) throw new Error('probe crashed');
+      return { installed: true, running: true, versionSupported: true, version: '1.2.3' };
+    },
+    delayImpl: async () => {},
+    platform: 'win32',
+    requestIdProvider: () => 'log-regression',
+    killProcessTreeImpl: async () => ({ terminated: true }),
+    postInstallReadinessTimeoutMs: 1000,
+    logger: (level, event, data) => logged.push({ level, event, data }),
+  });
+
+  const result = await service.installOllama({ confirmed: true, requestId: 'log-regression' });
+  assert.equal(result.status, 'completed', JSON.stringify(result));
+  const detect = logged.find((entry) => entry.event === 'ollama_install.detect_failed');
+  assert.equal(detect?.level, 'WARN');
+  assert.match(detect.data.reason, /probe crashed/);
+  const cleanup = logged.filter((entry) => entry.event === 'ollama_install.cleanup_failed');
+  assert.ok(cleanup.length >= 1, 'a failed temp cleanup is logged, not silently dropped');
+  assert.equal(cleanup[0].data.requestId, 'log-regression');
+  assert.match(cleanup[0].data.reason, /EBUSY/);
+});

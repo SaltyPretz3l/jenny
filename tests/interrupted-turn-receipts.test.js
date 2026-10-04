@@ -1,8 +1,17 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { startManagedSidecarChatStream } = require('../services/backend/managed-sidecar-chat');
+const { buildManagedChatRequest, createManagedChatServiceStub } = require('./helpers/managed-sidecar-chat-lifecycle-helpers');
+const { cleanupTrackedResources, createTrackedTempDir, trackCloseable } = require('./helpers/resource-cleanup');
+const path = require('node:path');
+const { ElectronSessionStore } = require('../services/backend/electron-session-store');
+const { TurnEventJournal } = require('../services/backend/turn-event-journal');
+
+test.afterEach(async () => cleanupTrackedResources());
 
 const {
   DEFAULT_RECEIPTS_CAP,
+  acknowledgeInterruptedTurnReceipts,
   computeInterruptedTurnReceipts,
   summarizeInterruptedTurnEvents,
 } = require('../services/backend/interrupted-turn-receipts');
@@ -47,6 +56,69 @@ function approvalResolved(callId) {
 function fakeJournal(sessions) {
   return { listSession: (sessionId) => (sessions && sessions[sessionId]) || {} };
 }
+
+test('managed failed and cancelled sends retain receipts for the next send', async () => {
+  for (const outcome of ['failed_response', 'failed', 'cancelled', 'initialization_failed']) {
+    const service = createManagedChatServiceStub();
+    const sessionId = `receipts_${outcome}`;
+    service.sessionStore._backend = durableStore()._backend;
+    let prior = [toolUse('c1', 'read_file')];
+    service.turnEventJournal = {
+      listSession: () => ({ turns: { prior } }),
+      clear: (_sessionId, turnId) => {
+        if (turnId === 'prior') prior = [];
+        return { ok: true, durable: true };
+      },
+    };
+    service.sidecarClient = {
+      async chatSend(_params, options) {
+        if (outcome === 'failed_response') return { status: 'runtime_error', error: 'Send failed' };
+        if (outcome === 'failed') throw new Error('Send failed');
+        service.activeStreams.values().next().value.abort();
+        options.onNotification({ method: 'chat.done', params: { stop_reason: 'stop' } });
+        return { status: 'completed' };
+      },
+    };
+    if (outcome === 'initialization_failed') {
+      const failed = Promise.reject(new Error('Initialization failed'));
+      failed.catch(() => {});
+      service._managedInitializeFlight = { promise: failed };
+    }
+    const stream = await startManagedSidecarChatStream(service, buildManagedChatRequest({ sessionId }));
+    await service.activeStreams.get(stream.streamId)._pendingPromise;
+    assert.equal(prior.length, 1, `${outcome} must retain recovery evidence`);
+    assert.equal(computeInterruptedTurnReceipts({ journal: service.turnEventJournal, sessionId }).turn_id, 'prior');
+  }
+});
+
+test('a send whose terminal fails to settle keeps its receipts', async () => {
+  const service = createManagedChatServiceStub();
+  const sessionId = 'receipts_terminal_failed';
+  service.sessionStore._backend = durableStore()._backend;
+  let prior = [toolUse('c1', 'read_file')];
+  service.turnEventJournal = {
+    listSession: () => ({ turns: { prior } }),
+    clear: () => { prior = []; return { ok: true, durable: true }; },
+  };
+  service.sidecarClient = {
+    async chatSend(_params, options) {
+      // No visible text: the terminal settle rejects the turn after the send.
+      options.onNotification({ method: 'chat.done', params: { stop_reason: 'stop' } });
+      return { status: 'completed' };
+    },
+  };
+  const stream = await startManagedSidecarChatStream(service, buildManagedChatRequest({ sessionId }));
+  await service.activeStreams.get(stream.streamId)._pendingPromise;
+  assert.equal(prior.length, 1, 'a turn that did not commit must not consume the receipts');
+});
+
+test('computing receipts leaves recovery evidence intact until acknowledgement', () => {
+  let clearCalls = 0;
+  const journal = fakeJournal({ s1: { turns: { prior: [toolUse('c1', 'read_file')] } } });
+  journal.clear = () => { clearCalls += 1; return { ok: true, durable: true }; };
+  assert.ok(computeInterruptedTurnReceipts({ journal, sessionId: 's1' }));
+  assert.equal(clearCalls, 0, 'computing is not delivery');
+});
 
 // ===========================================================================
 // summarizeInterruptedTurnEvents (pure core)
@@ -247,7 +319,7 @@ test('compute returns null when a missing journal is supplied', () => {
 // Journal partition clearing (fix packet: receipts must not repeat forever)
 // ===========================================================================
 
-test('compute clears the surviving journal partition after building a summary', () => {
+test('acknowledgement clears the partition with actual store durability epochs', () => {
   const clearCalls = [];
   const journal = fakeJournal({
     s1: {
@@ -264,12 +336,15 @@ test('compute clears the surviving journal partition after building a summary', 
   const receipts = computeInterruptedTurnReceipts({ journal, sessionId: 's1', currentTurnId: 't-current' });
 
   assert.ok(receipts);
+  assert.equal(clearCalls.length, 0);
+  acknowledgeInterruptedTurnReceipts({ journal, result: { status: 'completed' }, store: durableStore(), sessionId: 's1', receipts });
   assert.equal(clearCalls.length, 1);
   assert.equal(clearCalls[0].sessionId, 's1');
   assert.equal(clearCalls[0].turnId, 't-prior');
   assert.equal(clearCalls[0].turnId, receipts.turn_id);
   assert.equal(clearCalls[0].options.commitResult.ok, true);
   assert.equal(clearCalls[0].options.commitResult.durable, true);
+  assert.equal(clearCalls[0].options.commitResult.commitEpoch, 7);
 });
 
 test('compute does not call clear when there is no interrupted partition to report', () => {
@@ -283,7 +358,7 @@ test('compute does not call clear when there is no interrupted partition to repo
   assert.equal(clearCalled, false);
 });
 
-test('compute is fail-soft when the journal clear throws: summary still returned + WARN logged', () => {
+test('acknowledgement is fail-soft when the journal clear throws: summary still returned + WARN logged', () => {
   const logs = [];
   const journal = fakeJournal({
     s1: {
@@ -303,12 +378,14 @@ test('compute is fail-soft when the journal clear throws: summary still returned
 
   assert.ok(receipts);
   assert.equal(receipts.turn_id, 't-prior');
+  acknowledgeInterruptedTurnReceipts({ journal, result: { status: 'completed' }, store: durableStore(), sessionId: 's1', receipts,
+    logger: (level, event, details) => logs.push({ level, event, details }) });
   assert.equal(logs.length, 1);
   assert.equal(logs[0].event, 'chat.interrupted_turn_receipts_clear_failed');
   assert.equal(logs[0].details.errorType, 'Error');
 });
 
-test('compute is fail-soft when the journal clear reports non-durable: summary still returned + WARN logged', () => {
+test('acknowledgement is fail-soft when the journal clear reports non-durable: summary still returned + WARN logged', () => {
   const logs = [];
   const journal = fakeJournal({
     s1: {
@@ -327,6 +404,8 @@ test('compute is fail-soft when the journal clear reports non-durable: summary s
   });
 
   assert.ok(receipts);
+  acknowledgeInterruptedTurnReceipts({ journal, result: { status: 'completed' }, store: durableStore(), sessionId: 's1', receipts,
+    logger: (level, event, details) => logs.push({ level, event, details }) });
   assert.equal(logs.length, 1);
   assert.equal(logs[0].event, 'chat.interrupted_turn_receipts_clear_failed');
   assert.equal(logs[0].details.reason, 'journal_write_failed');
@@ -347,4 +426,46 @@ test('compute does not call clear when the journal has no clear method', () => {
 
   assert.equal(receipts.turn_id, 't-prior');
   assert.deepEqual(receipts.completed, [{ tool_name: 'read_file', summary: 'read' }]);
+});
+
+function durableStore() {
+  return { getSession: () => ({}),
+    _backend: { getSessionDurability: () => ({ dirtyEpoch: 7, durableEpoch: 7 }) } };
+}
+
+test('acknowledgement retains receipts when canonical durability cannot be proven', () => {
+  let clearCalls = 0;
+  acknowledgeInterruptedTurnReceipts({
+    result: { status: 'completed' },
+    journal: { clear: () => { clearCalls += 1; } },
+    store: { getSession: () => ({}), flushSession: () => false },
+    sessionId: 's1', receipts: { turn_id: 'prior' },
+  });
+  assert.equal(clearCalls, 0);
+});
+
+test('managed successful send clears persisted receipts only after its response', async () => {
+  const service = createManagedChatServiceStub();
+  const sessionId = 'receipts_success';
+  const dir = createTrackedTempDir('jenny-receipts-');
+  service.sessionStore = trackCloseable(new ElectronSessionStore(path.join(dir, 'sessions.json')));
+  service.sessionStore.createSessionWithId(sessionId, { title: 'Receipt recovery' });
+  const journalPath = path.join(dir, 'journal.json');
+  service.turnEventJournal = trackCloseable(new TurnEventJournal(journalPath));
+  service.turnEventJournal.append(sessionId, 'prior', [toolUse('c1', 'read_file')]);
+  service.sidecarClient = {
+    async chatSend(params, options) {
+      assert.equal(service.turnEventJournal.list(sessionId, 'prior').length, 1,
+        'evidence survives until the request succeeds');
+      assert.equal(params.interrupted_turn_receipts.turn_id, 'prior');
+      options.onNotification({ method: 'chat.token', params: { delta: 'Recovered.' } });
+      options.onNotification({ method: 'chat.done', params: { stop_reason: 'stop' } });
+      return { status: 'completed' };
+    },
+  };
+  const stream = await startManagedSidecarChatStream(service, buildManagedChatRequest({ sessionId }));
+  await service.activeStreams.get(stream.streamId)._pendingPromise;
+  assert.deepEqual(service.turnEventJournal.list(sessionId, 'prior'), []);
+  const reopened = trackCloseable(new TurnEventJournal(journalPath));
+  assert.deepEqual(reopened.list(sessionId, 'prior'), [], 'delivery consumption survives restart');
 });

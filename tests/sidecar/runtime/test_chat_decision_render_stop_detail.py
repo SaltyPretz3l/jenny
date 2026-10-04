@@ -10,7 +10,7 @@ from sidecar.ai.tools.models import GenerationResult
 from sidecar.protocol import CHAT_DONE_METHOD
 from sidecar.runtime.chat_decision_render import _chat_response_from_decision
 from sidecar.runtime.chat_models import ChatRequestContext
-from tests.sidecar.ai.routing.test_stream_incomplete_surfacing import _Engine, _decision_for
+from tests.sidecar.ai.routing.test_stream_incomplete_surfacing import _decision_for, _Engine
 
 
 def _render(decision: Any) -> dict[str, Any]:
@@ -100,16 +100,16 @@ def test_approval_resume_propagates_resumable_stop_to_chat_done(tmp_path, monkey
     assert decision.approval_plan is not None
 
     resume_config = dataclasses.replace(
-        router._config,  # noqa: SLF001 - harness config injection
+        router._config,  # harness config injection
         feature_flags={
-            **(router._config.feature_flags or {}),  # noqa: SLF001
+            **(router._config.feature_flags or {}),
             _feature_flags.FEATURE_CANONICAL_TURN_EVENTS: True,
         },
     )
     brain_container = SimpleNamespace(
         stack=SimpleNamespace(
             config=resume_config,
-            engine=router._engine,  # noqa: SLF001
+            engine=router._engine,
             router=router,
             tool_observations=None,
         ),

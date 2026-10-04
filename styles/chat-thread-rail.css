@@ -1,7 +1,6 @@
 /* Root-level assistant messages: no dot — top-level like user messages */
 .chat-thread-root-assistant > .chat-thread-node-row >
-.chat-thread-toggle,
-.chat-thread-root-assistant > .chat-thread-node-row > .chat-thread-toggle-spacer {
+.chat-thread-toggle {
   display: none;
 }
 
@@ -29,6 +28,15 @@
 
 .thread-compat-anchor {
   display: none !important;
+}
+
+/* An envelope-sibling node whose whole subtree is compat anchors paints
+   nothing, so it must not take a flex-gap slot in .chat-thread-children
+   either: a coalesced 40-tool turn otherwise leaves ~560px of blank band
+   after its article and below a live build (HB-023). The node stays in the
+   DOM so compat-anchor lookups still resolve to the turn article. */
+.chat-thread-node[data-thread-compat-only="true"] {
+  display: none;
 }
 
 .chat-thread-node-article >
@@ -98,8 +106,7 @@
 .turn-row-list .chat-row[data-row-kind="system_notice"] .chat-error-row .chat-error-code {
   font-family: var(--font-family-mono);
   font-size: var(--tl-font-meta);
-  font-weight: var(--tl-weight-emphasis);
-  letter-spacing: 0.02em;
+  font-weight: var(--tl-weight-label);
   color: color-mix(in srgb, var(--text-danger-emphasis) 88%, var(--text-primary));
 }
 
@@ -108,8 +115,7 @@
   color: var(--text-primary);
 }
 
-.chat-thread-toggle,
-.chat-thread-toggle-spacer {
+.chat-thread-toggle {
   position: absolute;
   inset-inline-start: calc(-1 * var(--_dot-offset) - var(--thread-dot-hit-size) / 2);
   top: var(--space-2);
@@ -125,8 +131,7 @@
   z-index: 1;
 }
 
-.chat-thread-toggle::before,
-.chat-thread-toggle-spacer::before {
+.chat-thread-toggle::before {
   content: "";
   width: var(--thread-dot-size);
   height: var(--thread-dot-size);
@@ -145,15 +150,6 @@
     transform var(--motion-duration-fast) var(--motion-ease-standard),
     background-color var(--motion-duration-fast) var(--motion-ease-standard),
     opacity var(--motion-duration-fast) var(--motion-ease-standard);
-}
-
-.chat-thread-toggle-spacer {
-  pointer-events: none;
-}
-
-.chat-thread-toggle-spacer::before {
-  opacity: 0.9;
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--_dot-ring) 65%, transparent);
 }
 
 .chat-thread-toggle {
@@ -323,13 +319,6 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .chat-thread-toggle::before,
-  .chat-thread-toggle-spacer::before,
-  .chat-row-node-dot,
-  .turn-row-list .chat-row > .chat-row-node-dot {
-    transition: none !important;
-  }
-
   .chat-thread-toggle:hover::before,
   .chat-thread-toggle:active::before,
   .chat-thread-node-nested .chat-thread-node-article .chat-row:hover .chat-row-node-dot,
@@ -337,4 +326,135 @@
     transform: none !important;
     filter: none !important;
   }
+}
+
+/* Transcript view (renderer-transcript-view-utils.js). The pane's .chat-timeline
+   carries data-transcript-view. 'answers' hides settled reasoning rows and keeps
+   the live turn's reasoning as a header-only progress line (no panel, no caret);
+   the row list stamps data-turn-live while the turn phase is non-terminal.
+   'thinking' and 'everything' differ only in the expansion defaults baked into
+   the markup, so they need no rules here. */
+.chat-timeline[data-transcript-view="answers"]
+  .turn-row-list:not([data-turn-live="true"])
+  .chat-row[data-row-kind="reasoning"] {
+  display: none;
+}
+
+.chat-timeline[data-transcript-view="answers"] .turn-row-list[data-turn-live="true"] .reasoning-row-panel,
+.chat-timeline[data-transcript-view="answers"] .turn-row-list[data-turn-live="true"] .reasoning-row-caret {
+  display: none;
+}
+
+/* The live header is a plain progress line in answers (rendered disabled),
+   not an affordance: no hover surface, no pointer. */
+.chat-timeline[data-transcript-view="answers"] .reasoning-row-header:disabled {
+  cursor: default;
+  background: transparent;
+  color: var(--text-secondary);
+}
+
+/* Legacy article path (per-session row-model rollback): the stack sits in a
+   synthetic .chat-row with no data-row-kind, and the list carries no
+   data-turn-live, so the stack itself hides once no phase is streaming.
+   Modern stacks sit inside a reasoning row and keep the turn-level rules
+   above (a completed phase between phases must not hide the live header). */
+.chat-timeline[data-transcript-view="answers"]
+  .chat-entry
+  .reasoning-row-stack:not(.chat-row[data-row-kind="reasoning"] *):not(:has([data-reasoning-live-tail="true"])) {
+  display: none;
+}
+
+/* The answers header is rendered disabled on every path, so it also carries
+   the panel/caret suppression where no data-turn-live marker exists (legacy)
+   and where a stored open override would otherwise show the panel. */
+.chat-timeline[data-transcript-view="answers"] .reasoning-row-header:disabled ~ .reasoning-row-panel,
+.chat-timeline[data-transcript-view="answers"] .reasoning-row-header:disabled .reasoning-row-caret {
+  display: none;
+}
+
+/* A hidden row still counts as a sibling: the first visible row after a hidden
+   leading reasoning row keeps the list's own top edge, and its node dot is not
+   doubled by the thread toggle dot. */
+.chat-timeline[data-transcript-view="answers"]
+  .turn-row-list:not([data-turn-live="true"])
+  .chat-row[data-row-kind="reasoning"]:first-child + .chat-row {
+  margin-block-start: 0;
+}
+
+/* Mid-list, the row after a hidden reasoning row takes the gap its visible
+   predecessor calls for: prose-to-prose keeps the paragraph gap and
+   prose-to-machinery keeps the cluster break (machinery before the hidden
+   row already yields the right pair). */
+.chat-timeline[data-transcript-view="answers"]
+  .turn-row-list:not([data-turn-live="true"])
+  .chat-row[data-row-kind="assistant_text"] + .chat-row[data-row-kind="reasoning"] + .chat-row[data-row-kind="assistant_text"] {
+  margin-block-start: var(--space-4);
+}
+
+.chat-timeline[data-transcript-view="answers"]
+  .turn-row-list:not([data-turn-live="true"])
+  .chat-row[data-row-kind="assistant_text"] + .chat-row[data-row-kind="reasoning"] + .chat-row:not([data-row-kind="assistant_text"]) {
+  margin-block-start: var(--tl-cluster-gap);
+}
+
+.chat-timeline[data-transcript-view="answers"]
+  .chat-thread-node-nested:has(> .chat-thread-node-row > .chat-thread-toggle)
+  .chat-thread-node-article
+  .turn-row-list:not([data-turn-live="true"])
+  .chat-row[data-row-kind="reasoning"]:first-child + .chat-row
+  .chat-row-node-dot {
+  display: none;
+}
+
+/* Phase changes can leave two hidden reasoning siblings; keep their visible
+   neighbours' spacing and dot. Runs of three or more remain out of scope. */
+.chat-timeline[data-transcript-view="answers"]
+  .turn-row-list:not([data-turn-live="true"])
+  .chat-row[data-row-kind="reasoning"]:first-child + [data-row-kind="reasoning"].chat-row + .chat-row {
+  margin-block-start: 0;
+}
+
+.chat-timeline[data-transcript-view="answers"]
+  .turn-row-list:not([data-turn-live="true"])
+  .chat-row[data-row-kind="assistant_text"] + .chat-row[data-row-kind="reasoning"] + [data-row-kind="reasoning"].chat-row + .chat-row[data-row-kind="assistant_text"] {
+  margin-block-start: var(--space-4);
+}
+
+.chat-timeline[data-transcript-view="answers"]
+  .turn-row-list:not([data-turn-live="true"])
+  .chat-row[data-row-kind="assistant_text"] + .chat-row[data-row-kind="reasoning"] + [data-row-kind="reasoning"].chat-row + .chat-row:not([data-row-kind="assistant_text"]) {
+  margin-block-start: var(--tl-cluster-gap);
+}
+
+.chat-timeline[data-transcript-view="answers"]
+  .chat-thread-node-nested:has(> .chat-thread-node-row > .chat-thread-toggle)
+  .chat-thread-node-article
+  .turn-row-list:not([data-turn-live="true"])
+  .chat-row[data-row-kind="reasoning"]:first-child + [data-row-kind="reasoning"].chat-row + .chat-row
+  .chat-row-node-dot {
+  display: none;
+}
+
+/* Answers tool runs (NEXT_STEPS row 21; renderer-turn-row-list-utils.js). In
+   Answers the row list emits one tool_run summary row before each run of two
+   or more tool steps and stamps the steps (and the reasoning rows between
+   them) with data-run-member. A collapsed run hides its members; an expanded
+   run shows them indented under the summary, without their own rail dots.
+   Hidden members stay siblings, so the adjacency spacing above still pairs
+   prose -> summary and machinery -> prose correctly. Other views emit no run
+   rows; the first rule only guards a node left over from a view switch. */
+.chat-timeline:not([data-transcript-view="answers"]) .chat-row[data-row-kind="tool_run"] {
+  display: none;
+}
+
+.chat-timeline[data-transcript-view="answers"] .chat-row[data-run-member]:not([data-run-expanded="true"]) {
+  display: none;
+}
+
+.chat-timeline[data-transcript-view="answers"] .chat-row[data-run-member][data-run-expanded="true"] {
+  padding-inline-start: var(--space-5);
+}
+
+.chat-timeline[data-transcript-view="answers"] .chat-row[data-run-member] .chat-row-node-dot {
+  display: none;
 }

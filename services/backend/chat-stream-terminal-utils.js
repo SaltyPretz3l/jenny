@@ -20,6 +20,8 @@ const CANCEL_REASON_TIMEOUT = 'timeout';
 const CANCEL_REASON_SESSION_DELETE = 'session_delete';
 const CANCEL_REASON_TRANSPORT_ABORT = 'transport_abort';
 const CANCEL_REASON_SIDECAR = 'sidecar_cancel';
+// The session runtime's reason when Jenny closes mid-turn (dogfood TR-012).
+const CANCEL_REASON_APP_SHUTDOWN = 'app_shutdown';
 
 const CANCEL_REASONS = new Set([
   CANCEL_REASON_USER,
@@ -29,6 +31,7 @@ const CANCEL_REASONS = new Set([
   CANCEL_REASON_SESSION_DELETE,
   CANCEL_REASON_TRANSPORT_ABORT,
   CANCEL_REASON_SIDECAR,
+  CANCEL_REASON_APP_SHUTDOWN,
 ]);
 
 const TERMINAL_ERROR_STATUSES = new Set([
@@ -138,7 +141,8 @@ function isExpectedLifecycleCancellation(errorPayload) {
     CANCEL_REASON_TRANSPORT_ABORT
   );
   return String(payload.category || '').trim().toLowerCase() === 'cancelled'
-    && (reason === CANCEL_REASON_SERVICE_STOP || reason === CANCEL_REASON_DISPOSE);
+    && (reason === CANCEL_REASON_SERVICE_STOP || reason === CANCEL_REASON_DISPOSE
+      || reason === CANCEL_REASON_APP_SHUTDOWN);
 }
 
 function resolveCancellationMetadata(candidate, category, terminalStatus) {
@@ -301,6 +305,7 @@ function resolveTerminalRouting({
 }
 
 module.exports = {
+  CANCEL_REASON_APP_SHUTDOWN,
   CANCEL_REASON_DISPOSE,
   CANCEL_REASON_SERVICE_STOP,
   CANCEL_REASON_SESSION_DELETE,

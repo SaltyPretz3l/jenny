@@ -42,7 +42,7 @@ const REQUIRED_SCENARIOS = Object.freeze([
   '21-jenny-write-edit-diff-metadata',
   '22-approval-pending',
   '23-approval-pending-status-mismatch',
-  // Ht-E (chat_tool_trace_rows_fix): the f34016f non-coalescing shape — a
+  // Ht-E (settled-tool trace-row partition): the f34016f non-coalescing shape — a
   // settled tool call in a turn with no assistant text. Pins the
   // projector/reducer contract the render-layer per-call partition relies on.
   '24-settled-tool-no-assistant-text',
@@ -55,7 +55,7 @@ const REQUIRED_SCENARIOS = Object.freeze([
 
 // SHA bump #1 (Ht-E, 2026-07-01): deliberate — adds the 24-settled-tool-no-
 // assistant-text scenario only; every pre-existing fixture is byte-identical.
-// Rationale recorded in HARDENING_HISTORY.md.
+// Rationale recorded in docs/history/timeline-corpus-sha-ledger.md.
 // SHA bump #2 (cohesiveness QoL W1-3, 2026-07-19): deliberate — the approval
 // card now quotes the exact command being approved, so approval_gap row
 // payloads carry the call's `input_json` (projector + live reducer in
@@ -66,7 +66,7 @@ const REQUIRED_SCENARIOS = Object.freeze([
 // stream-error, timed-out tool, and long collapsed-reasoning boundary fixtures.
 // SHA bump #4 (reasoning-row-dupe fix, 2026-08-29): deliberate — adds the
 // persisted-only 28-reasoning-replay-after-text scenario only; every
-// pre-existing fixture is byte-identical. Rationale in HARDENING_HISTORY.md.
+// pre-existing fixture is byte-identical. Rationale in docs/history/timeline-corpus-sha-ledger.md.
 // SHA bump #5 (W7a-S4 merge, 2026-08-29): approval fixtures in scenarios 22/23
 // use edit_file after apply_patch retired from the model-facing tool surface;
 // recomputed over the merged corpus (bump #4's scenario 28 included).
@@ -77,7 +77,7 @@ const REQUIRED_SCENARIOS = Object.freeze([
 // SHA bump #7 (plan-card live/hydrated parity, 2026-08-31): deliberate — adds
 // the 29-plan-approval-document scenario only (fixture + its notes.md
 // harness-artifact documentation); every pre-existing fixture is
-// byte-identical. Rationale in HARDENING_HISTORY.md.
+// byte-identical. Rationale in docs/history/timeline-corpus-sha-ledger.md.
 const EXPECTED_CORPUS_SHA256 = '29d6a38f35db5d08d18a088b19ecf87aa1aef4feccb9c1ff1e1002021778ebb2';
 
 function readJson(filePath) {

@@ -99,13 +99,30 @@ test('message and phase keys isolate bodies, renderer instances isolate caches, 
   f.message.phases[0].phase_id = 'settled';
   f.render();
   assert.equal(f.calls.length, 2);
-  for (let index = 0; index < 32; index += 1) {
+  // timeline-perf 2026-09-30: 256 entries, and a hit refreshes recency. The
+  // memo message is touched half-way through, so it outlives 255 others and
+  // only the 256th evicts it.
+  for (let index = 0; index < 128; index += 1) {
     f.message.id = `other-${index}`;
     f.render();
   }
   f.message.id = 'memo-message';
   f.render();
-  assert.equal(f.calls.length, 35);
+  assert.equal(f.calls.length, 130, 'a hit inside the window renders nothing');
+  for (let index = 128; index < 255; index += 1) {
+    f.message.id = `other-${index}`;
+    f.render();
+  }
+  f.message.id = 'memo-message';
+  f.render();
+  assert.equal(f.calls.length, 257, 'refreshed on the earlier hit, still resident after 255 others');
+  for (let index = 255; index < 511; index += 1) {
+    f.message.id = `other-${index}`;
+    f.render();
+  }
+  f.message.id = 'memo-message';
+  f.render();
+  assert.equal(f.calls.length, 514, 'evicted once 256 newer entries pass it');
   const other = fixture(t);
   other.render();
   assert.equal(other.calls.length, 1);

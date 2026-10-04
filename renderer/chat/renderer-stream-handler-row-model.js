@@ -79,13 +79,10 @@
       return store.get(normalizedSessionId) === true;
     }
 
-    // DC1 flicker cure: a session opts into deterministic row_ids when the
-    // internal flag is on AND its row model is live. Global-flag off (the
-    // default) => false => createTurnReducerState is called with no opt-in and
-    // the live rows are byte-identical.
+    // DC1 flicker cure: a session uses deterministic row_ids whenever its row
+    // model is live.
     function isDeterministicRowIdEnabled(sessionId) {
-      return state?.features?.featureFlags?.chat_timeline_deterministic_row_id === true
-        && isRowModelEnabled(sessionId);
+      return isRowModelEnabled(sessionId) === true;
     }
 
     function getSessionLiveTurnState(sessionId, callOptions = {}) {

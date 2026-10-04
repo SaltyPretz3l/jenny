@@ -107,6 +107,28 @@ test('llama-server startup model loading gates config autostart but not the envi
   assert.equal(resolveLlamaServerSettings({ env: {}, managed }).autostart, true);
 });
 
+// X2 (real-app pass 2026-09-29): a replay profile autostarted the managed
+// llama-server (15.5 GB VRAM) for an engine that never talks to it.
+test('llama-server config autostart runs only for the openai-compatible engine unless the env forces it', () => {
+  const managed = { enabled: true, profileId: '', lastUsedTag: 'gemma4-12b', perModel: {} };
+
+  for (const activeEngineType of ['replay', 'ollama', 'vllm', 'chatgpt']) {
+    const skipped = resolveLlamaServerSettings({ env: {}, managed, activeEngineType });
+    assert.equal(skipped.autostart, false, activeEngineType);
+    assert.equal(skipped.autostartSkipReason, 'engine_not_active', activeEngineType);
+  }
+  const forced = resolveLlamaServerSettings({
+    env: { JENNY_LLAMA_SERVER_AUTOSTART: '1' }, managed, activeEngineType: 'replay',
+  });
+  assert.equal(forced.autostart, true);
+  assert.equal(forced.autostartSkipReason, '');
+  const active = resolveLlamaServerSettings({ env: {}, managed, activeEngineType: 'openai-compatible' });
+  assert.equal(active.autostart, true);
+  assert.equal(active.autostartSkipReason, '');
+  // Callers that resolve launch settings (not the boot decision) pass no engine.
+  assert.equal(resolveLlamaServerSettings({ env: {}, managed }).autostart, true);
+});
+
 test('llama-server env profile never inherits the persisted model path of another model', () => {
   const settings = resolveLlamaServerSettings({
     env: { JENNY_LLAMA_SERVER_PROFILE: 'qwen-profile' },

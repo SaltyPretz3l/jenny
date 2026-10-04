@@ -3,6 +3,18 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { createTurnRowBubbleUtils } = require('../renderer/chat/renderer-turn-row-bubble-utils');
+const { JSDOM } = require('jsdom');
+
+test('S4: projected answer units never carry a reveal class', () => {
+  const bubbles = createTurnRowBubbleUtils({
+    renderStreamingMarkdownUnits: () => ({ html: '<p>answer</p>', units: [{ html: '<p>answer</p>', revealed: true }], changedStartIndex: 0 }),
+  });
+  for (const options of [{ streamUnits: [{ html: '<p>answer</p>', revealed: true }] }, {}]) {
+    const dom = new JSDOM(bubbles.buildStreamingBubbleHtml('answer', options));
+    assert.equal(dom.window.document.querySelectorAll('.chat-stream-unit.is-revealed').length, 0);
+    dom.window.close();
+  }
+});
 
 test('projected user bubbles render Markdown breaks while preserving failure and attachment markup', () => {
   const calls = [];

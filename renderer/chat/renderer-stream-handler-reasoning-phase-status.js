@@ -73,7 +73,7 @@
         runGuarded('mark_hidden_renderable_event', payload, () => markHiddenRenderableEvent(payload, 'thinking_status'));
       }
       if (shouldRenderThinkingStatus && runGuarded('is_visible_chat_session', payload, () => isVisibleChatSession(payload.sessionId), false)) {
-        runGuarded('queue_render', payload, () => queueRender({ messages: true }));
+        runGuarded('queue_render', payload, () => queueRender({ messages: true }, { sessionId: payload.sessionId }));
       }
       return { buffered: false, terminal: false };
     }
@@ -90,7 +90,7 @@
       runGuarded('sync_pending_message_phase_state', payload, () => syncPendingMessagePhaseState(payload));
       runGuarded('mark_hidden_renderable_event', payload, () => markHiddenRenderableEvent(payload, eventType));
       if (runGuarded('is_visible_chat_session', payload, () => isVisibleChatSession(payload.sessionId), false)) {
-        runGuarded('queue_render', payload, () => queueRender({ messages: true }));
+        runGuarded('queue_render', payload, () => queueRender({ messages: true }, { sessionId: payload.sessionId }));
       } else {
         runGuarded('queue_render', payload, () => queueRender({ chrome: true }));
       }

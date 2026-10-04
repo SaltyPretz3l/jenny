@@ -25,6 +25,7 @@
   const MAX_IMAGE_TOTAL_BYTES = 5 * 1024 * 1024;
   const MAX_IMAGE_BYTES = 4 * 1024 * 1024;
   const MAX_TEXT_BYTES = 1_000_000;
+  const MAX_DISPLAY_NAME_LENGTH = 240;
   const MAX_ARTIFACT_PREVIEW_BYTES = 4 * 1024 * 1024;
 
   function text(value, fallback = '') {
@@ -55,6 +56,7 @@
       this.attachmentUrls = new Map();
       this.artifactDownloads = new Map();
       this.artifactUrls = new Map();
+      this.artifactPreviewUrl = null;
     }
 
     _error(message, details = {}) {
@@ -74,6 +76,8 @@
       const size = Number(file?.size);
       if (!ATTACHMENT_MIME_TYPES.has(mimeType)) return jt("browserAssets.thisFileTypeIsNotSupported", "This file type is not supported.");
       if (!Number.isSafeInteger(size) || size < 0) return jt("browserAssets.thisFileHasAnInvalidSize", "This file has an invalid size.");
+      // The host counts UTF-16 length of the trimmed basename (MAX_DISPLAY_NAME_LENGTH = 240).
+      if (this._attachmentFileName(file).length > MAX_DISPLAY_NAME_LENGTH) return jt("browserAssets.theFileNameIsLongerThanTheValueCharacterLimit", "The file name is longer than the {value1} character limit. Rename the file and try again.", { value1: String(MAX_DISPLAY_NAME_LENGTH) });
       const limit = mimeType === 'text/plain' ? MAX_TEXT_BYTES : MAX_IMAGE_BYTES;
       if (size > limit) return jt("browserAssets.thisFileIsLargerThanTheValueMibLimit", "This file is larger than the {value1} MiB limit.", { value1: String(Math.round(limit / 1024 / 1024)) });
       if (count >= MAX_ATTACHMENT_COUNT) return jt("browserAssets.youCanAttachUpTo8Files", "You can attach up to 8 files.");
@@ -276,6 +280,20 @@
       return promise;
     }
 
+    revokeArtifactPreviewUrl() {
+      if (!this.artifactPreviewUrl) return;
+      try { URL.revokeObjectURL(this.artifactPreviewUrl); } catch (_error) { /* best effort */ }
+      this.artifactPreviewUrl = null;
+    }
+
+    trackArtifactPreviewUrl(blob) {
+      if (typeof URL === 'undefined' || typeof URL.createObjectURL !== 'function') throw this._error('invalid_artifact_response', { code: 'invalid_server_response' });
+      const url = URL.createObjectURL(blob);
+      this.revokeArtifactPreviewUrl();
+      this.artifactPreviewUrl = url;
+      return url;
+    }
+
     trackArtifactUrl(key, blob) {
       if (typeof URL === 'undefined' || typeof URL.createObjectURL !== 'function') throw this._error('invalid_artifact_response', { code: 'invalid_server_response' });
       const prior = this.artifactUrls.get(key);
@@ -316,7 +334,8 @@
             result,
             sessionId,
             isCurrent: () => !this.isDisposed() && generation === this.getSessionGeneration() && sessionId === this.getState().selectedSessionId,
-            trackUrl: (urlKey, blob) => this.trackArtifactUrl(urlKey, blob),
+            trackUrl: (_urlKey, blob) => this.trackArtifactPreviewUrl(blob),
+            clearPreviewUrl: () => this.revokeArtifactPreviewUrl(),
           });
           return;
         }
@@ -339,6 +358,7 @@
     }
 
     revokeArtifactUrls() {
+      this.revokeArtifactPreviewUrl();
       for (const record of this.artifactUrls.values()) {
         if (record.timer) clearTimeout(record.timer);
         try { URL.revokeObjectURL(record.url); } catch (_error) { /* best effort */ }

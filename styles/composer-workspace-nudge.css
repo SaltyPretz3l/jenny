@@ -11,7 +11,7 @@
   border: 1px solid var(--state-warning-border);
   background: var(--state-warning-bg);
   border-radius: var(--radius-sm);
-  font-size: var(--font-size-sm);
+  font-size: var(--font-size-footnote);
   color: var(--text-secondary);
 }
 
@@ -32,7 +32,7 @@
   border: 1px solid var(--state-warning-border);
   border-radius: var(--radius-xs);
   color: var(--state-warning);
-  font-size: var(--font-size-sm);
+  font-size: var(--font-size-footnote);
   padding: 2px var(--space-3);
   cursor: pointer;
 }

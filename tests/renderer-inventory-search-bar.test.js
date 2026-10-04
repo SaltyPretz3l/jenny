@@ -164,16 +164,21 @@ test('dispose removes listeners and the root element (F1)', () => {
 });
 
 // Scroll-program W2b: the global match cap needs an explicit surfaced state —
-// a capped scan renders "N of 500+" so the reader knows additional matches
-// were omitted rather than believing the total.
+// a capped scan reads "N of first 500" (with a tooltip that says why) so the
+// reader knows additional matches were omitted rather than believing the total.
 test('setMatchInfo renders the omitted-matches state when the scan was truncated', () => {
   const { host, bar } = buildBar();
   bar.mount(host);
   const count = host.querySelector('.chat-search-bar-count');
 
   bar.setMatchInfo(3, 500, { truncated: true });
-  assert.equal(count.textContent, '3 of 500+', 'a capped total is presented as a floor, not a count');
+  assert.equal(count.textContent, '3 of first 500', 'a capped total is presented as the first matches, not a count');
+  assert.equal(count.getAttribute('title'), 'Only the first 500 matches are listed. Narrow the search to reach the rest.');
 
   bar.setMatchInfo(2, 5);
   assert.equal(count.textContent, '2 of 5', 'the untruncated form is unchanged');
+  assert.equal(count.hasAttribute('title'), false, 'the cap explanation leaves with the cap');
+  bar.setMatchInfo(1, 500, { truncated: true });
+  bar.setMatchInfo(0, 0);
+  assert.equal(count.hasAttribute('title'), false, 'no matches: no cap explanation');
 });

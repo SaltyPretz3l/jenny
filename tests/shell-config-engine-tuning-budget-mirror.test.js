@@ -39,8 +39,13 @@ test('maxBudgetUsd cleared through the engine-tuning block stays cleared', () =>
   assert.deepEqual(service.getEngineTuning(), { maxToolsPerTurn: 7 });
   assert.equal(service.getState().maxBudgetUsd, null, 'mirror clears with the block');
 
+  // The cap has no control on any page, so a reset keeps it and its mirror;
+  // only an explicit update of the key clears it.
   service.updateEngineTuning({ maxBudgetUsd: 12.5 });
   service.resetEngineTuning();
+  assert.deepEqual(service.getEngineTuning(), { maxBudgetUsd: 12.5 });
+  assert.equal(service.getState().maxBudgetUsd, 12.5);
+  service.updateEngineTuning({ maxBudgetUsd: null });
   assert.deepEqual(service.getEngineTuning(), {});
   assert.equal(service.getState().maxBudgetUsd, null);
 

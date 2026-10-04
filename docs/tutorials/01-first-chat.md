@@ -1,12 +1,13 @@
 ---
 kind: tutorial
-last_reviewed: 2026-09-09
+last_reviewed: 2026-10-03
 ---
 
 # 01 — First chat with Jenny
 
-This guide follows Jenny 1.1.0. Older versions may have different labels;
-see the [release notes](../../RELEASE_NOTES.md).
+This guide follows current source after Jenny 1.2.0. Settings consolidation and
+core ChatGPT sign-in may differ in the published installer; check the
+[release notes](../../RELEASE_NOTES.md) for your version.
 Setup time depends mainly on whether you need to download a model.
 
 ## Before you start
@@ -25,6 +26,11 @@ Choose one model route:
   install Ollama or download that model. For source setup use
   `npm run setup -- --existing-server`, then
   `npm run dev -- --existing-server` for later launches when needed.
+
+Optional cloud inference is configured after setup under **Settings → Models →
+Cloud models**. **Sign in with ChatGPT** opens Jenny's browser sign-in flow;
+**Codex CLI** uses the installed CLI and its own login. Cloud inference sends
+request content to its provider. Local chat needs neither route.
 
 For browser access instead of the desktop app, use the separate
 [Docker quick start](../operations/HOSTED_QUICKSTART.md).
@@ -52,7 +58,8 @@ direction change. Translations may fall back to English for newer labels.
 - **Skills and tools:** review capabilities and permissions. Save your choices;
   if a read or save fails, retry instead of assuming the setting was applied.
 
-You can finish optional steps later and reopen setup from Settings. Reopening
+You can finish optional steps later and reopen setup from **Settings →
+Profile, data & updates → Run setup again**. Reopening
 setup does not delete conversations.
 
 ## 3. Send a message
@@ -65,8 +72,10 @@ Press Enter. The reply streams into the conversation; models that expose
 reasoning also show a thinking row. The titlebar health indicator reports
 engine readiness. A first reply may wait while the model loads.
 
-If a session pauses, its indicator distinguishes an approval, a plan review
-or a question awaiting input. Open that conversation and respond there.
+Every Send queues work. Pause and Resume control an accepted run; a waiting
+indicator distinguishes an approval, plan review or question that needs input.
+Use **Needs you** to find the waiting conversation, or **Diagnostics → Runs**
+to inspect current work and its available controls.
 
 ## 4. Choose how tools may act
 
@@ -80,7 +89,10 @@ path; a pathless tool decision can apply to the whole tool.
 a conversation does not repeat it, and displays an Auto indicator. It is not
 permission to leave the app unattended: the idle guard and safety modes still
 apply, and some calls always require approval. Settings > Tools exposes these
-controls.
+controls. The inactivity guard defaults Off; enabling it selects a 1–120 minute
+threshold. Ordinary approval waits time out after ten minutes, while an
+inactivity-guard approval can wait up to four hours. The automatic approval
+streak cap defaults to 50 consecutive approvals (0 disables the cap).
 
 **Plan** is for inspection and proposals. It does not authorize ordinary project
 edits or commands; the existing narrow plan-document capability is separate.

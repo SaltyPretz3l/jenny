@@ -947,9 +947,10 @@
             continue;
           }
           if (disposed || epoch !== applyEpoch) break;
-          // Only undo if the file still holds exactly what our replace wrote;
-          // if it changed since, don't clobber the newer edit.
-          if (textUtils.toLf(f.raw) !== textUtils.toLf(rec.afterContent)) {
+          // Only undo if the file still holds exactly what our replace wrote
+          // (byte-exact, an EOL-only external rewrite counts as changed); if it
+          // changed since, don't clobber the newer edit.
+          if (f.raw !== rec.afterContent) {
             conflicts++;
             continue;
           }

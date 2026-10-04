@@ -1,6 +1,6 @@
 ---
 kind: docs-index
-last_reviewed: 2026-09-09
+last_reviewed: 2026-10-03
 status: active
 ---
 
@@ -20,22 +20,22 @@ Two places to look before filing anything:
   Any turn that ends abnormally writes a dated JSON dump there. Process logs
   are next to it under `logs/`.
 
-## New in the 1.1 source preview
+## Current source behavior
 
 These entries describe integrated source. Check the release notes for the
 version and assets actually installed.
 
 ### Auto stopped while you were away, or an edit approval timed out
 
-Settings > Tools > **Pause Auto when inactive** controls whether keyboard/mouse
+Settings > Tools > **Pause Auto when you are away** controls whether keyboard/mouse
 inactivity pauses automatic execution. It is **Off by default**; enabling it
 reveals an adjustable 1–120 minute threshold. Existing saved values are preserved
 on upgrade, including an earlier ten-minute setting. The underlying value 0
 continues to mean Off.
 
-This is separate from the **ten-minute approval-response deadline**. If the guard
-pauses a run and nobody answers the next approval, the turn stops without running
-that tool. The approval and timeout message identify inactivity as the cause.
+Ordinary approvals have a **ten-minute response deadline**. An approval paused
+by the inactivity guard can wait **up to four hours**; if that wait expires, the
+turn stops without running that tool. The approval and timeout message identify inactivity as the cause.
 Disable the guard for intended AFK work, then resume the stopped turn. Disabling
 prevents future pauses; it does not grant a pending approval or restore Auto to
 an already-paused live turn. Change that turn's run mode explicitly, or resume it
@@ -105,14 +105,14 @@ build.
 **Open Anyway** next to the blocked-app notice. On older macOS, right-click
 **Jenny.app** → **Open** → **Open**. If neither option appears, clear the
 quarantine flag: `xattr -dr com.apple.quarantine "/Applications/Jenny.app"`.
-The published 1.1.0 release has no Mac installer; use this guidance only for
+The published 1.2.0 release has no Mac installer; use this guidance only for
 an actual experimental build whose provenance you have verified. Mac installation
 remains manual and the managed Python tool is unavailable on macOS.
 
 ### Linux: Jenny says the Chromium sandbox is off
 
 **Symptom.** Jenny shows a one-time warning that the Chromium sandbox is
-off, and the **Chromium sandbox** row under **Settings → Diagnostics**
+off, and the **Chromium sandbox** row under **Diagnostics**
 reports it as off.
 
 **Common cause.** The AppImage is running on a system that restricts
@@ -195,8 +195,7 @@ running server).
 
 **Recovery.** Wait for the titlebar health indicator, press **Re-check** on
 the engine scene, and retry the step. **Finish later** keeps your progress.
-You can reopen the checklist any time from **Settings → Local Profile &
-Setup → Run setup again**.
+You can reopen the checklist any time from **Settings → Profile, data & updates → Run setup again**.
 
 ## Engines and models
 
@@ -249,7 +248,7 @@ picker is empty.
 **Recovery.** Verify `ollama list` shows your model. Start Ollama if it's
 not running. **Settings → Models** covers installed models and engine
 recovery. To change the engine host or port, or to re-run the hardware
-recommendation, open **Settings → Local Profile & Setup → Run setup again**
+recommendation, open **Settings → Profile, data & updates → Run setup again**
 and use the **Validate your endpoint** and **Pull a local model** steps.
 
 ### Model load race / "Model is starting"
@@ -352,8 +351,8 @@ reference: [Tool is stuck in approval](#tool-is-stuck-in-approval).
 **Symptom.** A call you approved with **Always allow** stops at the card
 again.
 
-**Common cause.** Rules are scoped to the tool **and** the path it named. A
-call on a different path is a new decision. Destructive shell commands
+**Common cause.** Path-bearing rules are scoped to the tool and named target;
+a different target is a new decision. Pathless choices may cover the whole tool. Destructive shell commands
 always ask, even under **Auto**.
 
 **Recovery.** Approve again, or review the saved rules under **Settings →
@@ -387,10 +386,12 @@ continue from where it stopped.
 **Symptom.** Sending fails with that message and the session shows an
 offline-lockdown badge.
 
-**Common cause.** The session was locked down offline for the rest of its
-life. Lockdown is deliberate and permanent for that session.
+**Common cause.** Offline lockdown blocks a remote engine or a network-capable
+tool for that session. It does not make the conversation permanently read-only.
 
-**Recovery.** Start a new session. The locked session stays readable.
+**Recovery.** Choose a verified local model, or review **Offline lockdown** in
+the chat menu before changing its protection. Settings → Offline → Force local
+inference is a separate app-level control.
 
 ### `python_execute` is unavailable
 
@@ -459,10 +460,12 @@ See the troubleshooting section of
 **Symptom.** "Install plugin" rejects the package, or an installed plugin
 stays inactive.
 
-**Common cause.** The package is not a `.jenny-plugin` file, or it declares
-a privileged kind (full-host provider, native panel) without a valid
-signature. Unsigned plugins are labelled and confined to the developer
-profile; privileged kinds are refused without a signature.
+**Common cause.** The package is malformed, unsigned intake/loading is disabled,
+or it declares a retired contribution kind. Current source refuses new packages
+with plugin MCP, workflows, hooks, engine adapters, restricted execution or
+privileged hosts even when signed. Installed leftovers remain listed, with
+retired contributions inert. Unsigned declarative packages require Jenny to
+start with `JENNY_ENABLE_PLUGIN_DEVELOPER_PROFILE=1`.
 
 **Recovery.** Check the message on the Plugins card. For a plugin you are
 building, follow [docs/plugins/PACKAGING_AND_SIGNING.md](../plugins/PACKAGING_AND_SIGNING.md).
@@ -475,11 +478,11 @@ A freshly installed plugin is inactive until you enable it.
 **Symptom.** **Check for Updates** reports that the update check failed.
 
 **Common cause.** No network, or the GitHub releases endpoint is
-unreachable. On macOS updates are disabled by design.
+unreachable. Source installs, macOS and Linux `.deb` use manual installation;
+version checks can still work when online.
 
-**Recovery.** Retry later. Manual download from the
-[releases page](https://github.com/SaltyPretz3l/jenny/releases) always
-works; verify the SHA-256 hash against `RELEASE_NOTES.md`.
+**Recovery.** Retry later. When the network is available, download manually from the
+[releases page](https://github.com/SaltyPretz3l/jenny/releases); verify the SHA-256 hash against `RELEASE_NOTES.md`.
 
 ### Archive or restore failed
 
@@ -682,17 +685,18 @@ pre-flight, not the provider. If it's < 60 ms and the user still waits
 
 Per-contributor markers inside the assembly envelope:
 
-- `chat.memory_recall_completed` — [services/backend/chat-stream-context-assembly.js](../../services/backend/chat-stream-context-assembly.js)
+- `chat.personality_compiled` — [services/backend/chat-stream-context-assembly.js](../../services/backend/chat-stream-context-assembly.js)
 - `chat.git_context_resolved`
 - `chat.linked_session_recall_completed`
 
-If a single contributor dominates, jump to its sub-runbook:
+If a contributor dominates, follow its owner below. Memory recall is performed
+by the sidecar after dispatch, not as an Electron assembly contributor:
 
 | Dominator | Read |
 |---|---|
 | Memory recall | [Memory recall is surfacing wrong memories](#memory-recall-is-surfacing-wrong-memories) |
 | Git context | [services/backend/git-context-utils.js](../../services/backend/git-context-utils.js) — hard timeout, diff cap, concurrent `gitExec` calls |
-| Personality compile | [sidecar/ai/context/builder.py](../../sidecar/ai/context/builder.py) — mtime-keyed cache; staleness recompiles the bootstrap |
+| Personality compile | [services/personality-workspace-service.js](../../services/personality-workspace-service.js) — mtime-keyed compiled snapshot; file changes trigger recompilation |
 | Attachments | [services/attachment-service.js](../../services/attachment-service.js), [services/attachment-asset-store.js](../../services/attachment-asset-store.js) |
 
 #### 3. Provider-side
@@ -721,9 +725,9 @@ IPC transit cost.
 |---|---|---|
 | Cold model | dominates the first-chunk split on a cold load | warm the model before Send; pin with `keep_alive` |
 | Long chat history | grows with message count | check the prompt-cache boundary at [sidecar/ai/context/prompt_cache.py](../../sidecar/ai/context/prompt_cache.py); keep the persona stable |
-| Memory recall on a large corpus | contributor timing dominates pre-flight | recall results are cached for 60 s per composite key |
+| Memory recall on a large corpus | sidecar request-time recall cost | inspect memory status and the bounded FTS5/fallback path; Electron does not cache recall |
 | Git repo with a huge diff | capped with a timeout | if the timeout is hit consistently, narrow the diff range |
-| Personality bootstrap mtime miss | recompile on every turn | avoid live-editing the personality files mid-session |
+| Personality workspace mtime miss | compiled snapshot refreshed when a file changes | inspect `chat.personality_compiled` and workspace I/O |
 | Plan-mode tool bloat | large tool-schema payload | inspect `tool_schema_count` in the performance summary |
 
 ### Escalation
@@ -903,7 +907,8 @@ the final `chat.thinking` / `chat.token`, or a `TransportError`.
 
 ### Recovery
 
-1. Kill any orphaned `python.exe` / `python` processes bound to the app install.
+1. Close Jenny. Identify any orphan by its command line, executable path and
+   parent/process identity before stopping it; never stop every Python process.
 2. Relaunch Jenny; the managed sidecar lifecycle brings the sidecar back up.
 3. Reconciliation settles stale sessions automatically. If a session still
    shows a stuck turn, open it and click Cancel; `chat.cancelStream` forces
@@ -927,11 +932,12 @@ the final `chat.thinking` / `chat.token`, or a `TransportError`.
 
 ### Background
 
-`tool.request_approval` is the **blocking** exception to Jenny's
-fire-and-forget notification contract: every other RPC is a notification,
-but approval is a request/response. Constraints:
+`tool.request_approval` is a **blocking reverse request**: execution waits
+for an explicit approve/deny response. Other reverse-request seams include
+`tool.execute_electron` and internal `runtime.operation`; ordinary host methods
+also use request/response. Constraints:
 
-- 600-second sidecar-side timeout for GUI approvals: `TOOL_APPROVAL_TIMEOUT_SECONDS` in [sidecar/server.py](../../sidecar/server.py)
+- Ordinary GUI approvals wait up to 600 seconds (`TOOL_APPROVAL_TIMEOUT_SECONDS` in [sidecar/server.py](../../sidecar/server.py)). Inactivity-guard waits extend to four hours through [chat-stream-tool-approval.js](../../services/backend/chat-stream-tool-approval.js) and the sidecar extension callback.
 - 30-second timeout for headless mode: `_APPROVAL_TIMEOUT_SECONDS` in [sidecar/runtime/headless.py](../../sidecar/runtime/headless.py)
 - Cancel-responsive: the approval wait loop checks `cancel_handle.cancelled` on every iteration in [sidecar/runtime/approval.py](../../sidecar/runtime/approval.py); blocking reads unblock via `ApprovalResponseCancelledError` within one reader tick.
 
@@ -954,9 +960,12 @@ Correlate by `tool_call_id` in the request payload.
 The sidecar caches the execution fingerprint and approval plan keyed by
 `(request_id, call_id)` in
 [sidecar/runtime/approval_plan.py](../../sidecar/runtime/approval_plan.py)
-with a 5-minute TTL (see [sidecar/runtime/multiplexer.py](../../sidecar/runtime/multiplexer.py)).
-If a previous turn died mid-approval, the cache entry lives until the TTL
-expires or a successful replacement evicts it.
+with a TTL clamped to 60–600 seconds by
+[approval_plan_cache.py](../../sidecar/runtime/approval_plan_cache.py), based on
+the effective approval wait. It is bounded to 128 entries globally, 16 per
+session and 8 MiB. Consumption, cancellation/terminal cleanup, expiry and
+capacity eviction release entries; a sidecar restart discards the process-local
+cache. It is not durable run recovery state.
 
 #### 3. Force-cancel
 
@@ -990,7 +999,7 @@ and the loop continues with a synthetic tool result describing the denial.
 | Renderer crashed before approval; sidecar still waiting | User clicks Cancel; the cancel handle unblocks the approval read |
 | `tool_call_id` mismatch between request and response | Check `chat-stream-tool-handling.js`; verify the response `tool_call_id` threads through unchanged |
 | Preload bridge regression | Trace the decision from `renderer/chat/renderer-approval-block.js` through the preload bridge to `services/backend/chat-stream-tool-handling.js` (`tool_approval_resolved`) |
-| Sidecar restart mid-approval | Reconciliation sweeps stale entries; if not, wait 5 min for the approval-plan cache TTL |
+| Sidecar restart mid-approval | The process-local approval cache is gone; inspect Electron reconciliation and the durable run state rather than waiting for a cache TTL |
 
 ### Escalation
 

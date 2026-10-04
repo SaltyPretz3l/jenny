@@ -59,7 +59,7 @@
 .memory-provenance-trigger {
   width: fit-content;
   color: var(--text-muted);
-  font-size: var(--font-size-sm);
+  font-size: var(--font-size-caption);
 }
 
 .memory-provenance-panel {
@@ -67,7 +67,7 @@
   gap: var(--space-2);
   padding-block-start: var(--space-2);
   color: var(--text-muted);
-  font-size: var(--font-size-sm);
+  font-size: var(--font-size-caption);
 }
 
 .memory-provenance--removed {
@@ -76,14 +76,15 @@
 }
 
 .memory-list-status:empty,
-.memory-more-host:empty { display: none; }
+.memory-more-host:empty,
+.memory-record-list[hidden],
+.memory-page-filters[hidden],
+.memory-settings-card .settings-summary-row[hidden] { display: none; }
 .memory-more-host { margin-block-start: var(--space-3); }
 
-.memory-page-empty {
-  padding-block: var(--space-5);
-  color: var(--text-muted);
-  text-align: center;
-}
+/* The notes placeholder already says what belongs there; the counter stays
+   right-aligned on its own. */
+.memory-notes-meta { justify-content: flex-end; }
 
 .memory-health-list {
   margin: 0;

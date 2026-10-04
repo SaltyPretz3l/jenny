@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import io
 import json
-import queue
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -19,7 +18,6 @@ import pytest
 
 from sidecar.runtime import headless
 from sidecar.runtime.chat_models import ChatRequestError, ChatResponse
-
 
 # ---------------------------------------------------------------------------
 # Shared helpers
@@ -491,7 +489,7 @@ def test_handle_chat_request_error_stream_json_emits_notification_and_returns_1(
         error=error,
     )
     captured = capsys.readouterr()
-    lines = [l for l in captured.out.splitlines() if l.strip()]
+    lines = [line for line in captured.out.splitlines() if line.strip()]
     # stream-json emits the chat.error NDJSON notification AND falls through to
     # the json error envelope: exactly two stdout lines, in that order.
     assert len(lines) == 2

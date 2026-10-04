@@ -6,6 +6,13 @@ const {
 const { AI_ERROR_CODES, SIDECAR_ERROR_CODES } = require('./error-codes');
 const { resolveManagedConfiguredModel, resolveOpenAICompatibleApiUrl } = require('./managed-sidecar-config');
 const { sameLocalOrigin } = require('../local-origin');
+const { clearManagedInitializeStall, markManagedInitializeStalled } = require('./managed-sidecar-chat-reconnect');
+const {
+  MANAGED_ENGINE_TYPE,
+  claimManagedEngineLoad,
+  isPendingManagedLoad,
+  managedLoadPatch,
+} = require('./managed-engine-load');
 
 // Inactivity watchdog budget for managed model acquisition. During Ollama's
 // "verifying sha256 digest" phase the sidecar emits the status once and then
@@ -109,6 +116,8 @@ function setModelLifecycle(service, patch = {}, { emit = true } = {}) {
     ? service._modelLifecycle
     : {};
   const state = String(patch.state || previous.state || 'unloaded').trim().toLowerCase();
+  // A load measures from when it began, not from the init that preceded it.
+  const entersLoad = state === 'loading' && previous.state !== 'loading';
   const next = {
     state,
     requested_model: String(
@@ -124,22 +133,55 @@ function setModelLifecycle(service, patch = {}, { emit = true } = {}) {
       patch.total_bytes ?? previous.total_bytes ?? 0
     ) || 0), 0), MAX_SAFE_BYTES),
     error_code: String(patch.error_code ?? previous.error_code ?? '').trim() || null,
-    started_at: patch.started_at ?? previous.started_at ?? now,
+    started_at: patch.started_at ?? (entersLoad ? now : previous.started_at ?? now),
     updated_at: now,
     ready_at: state === 'ready' ? (patch.ready_at ?? previous.ready_at ?? now) : null,
   };
   service._modelLifecycle = next;
+  recordModelLoadDuration(service, previous, next);
   if (emit && typeof service.emit === 'function') {
     service.emit('backend-status', buildObservedBackendStatus(service));
   }
   return next;
 }
 
+// Remembers how long a pure model load took (loading -> ready in one flight)
+// so the next load of the same model can show "Last time: 48 s". A flight
+// that downloaded weights first (total_bytes > 0, reset at flight start) is
+// not an expectation for the next load and is skipped. The store is injected
+// by the backend wiring; a service without one records nothing.
+function recordModelLoadDuration(service, previous, next) {
+  const store = service.modelLoadDurationStore;
+  if (!store || typeof store.record !== 'function') return;
+  if (next.state !== 'ready' || previous.state !== 'loading') return;
+  if (Number(previous.total_bytes || 0) > 0) return;
+  const durationMs = Date.parse(next.ready_at) - Date.parse(next.started_at);
+  if (!Number.isFinite(durationMs) || durationMs <= 0) return;
+  store.record({ engine: next.engine, modelId: next.requested_model, durationMs });
+}
+
+// Read only while a model loads: the popover shows the figure at no other
+// stage, and a status is built on every download tick.
+function readLastLoadMs(service, lifecycle) {
+  const store = service.modelLoadDurationStore;
+  if (lifecycle.state !== 'loading') return null;
+  if (!store || typeof store.get !== 'function' || !lifecycle.requested_model) return null;
+  const entry = store.get({ engine: lifecycle.engine, modelId: lifecycle.requested_model });
+  return entry && Number(entry.lastMs) > 0 ? Number(entry.lastMs) : null;
+}
+
+// A managed llama-server state change drives the model lifecycle
+// (managed-engine-load.js builds the patch; this module owns the write).
+function observeManagedLlamaServerState(service, managerStatus) {
+  const patch = managedLoadPatch(service, managerStatus);
+  if (patch) setModelLifecycle(service, patch);
+}
+
 // When no initialize flight is live, reconcile unloaded/acquiring/loading state
 // against runtime truth so an abandoned flight cannot leave a persistent
-// mid-load status.
+// mid-load status. A managed-server load still in flight is live, not stale.
 function presentModelLifecycle(service, storedLifecycle, runtimeStatus) {
-  if (service._managedInitializeFlight) {
+  if (service._managedInitializeFlight || isPendingManagedLoad(service, storedLifecycle)) {
     return storedLifecycle;
   }
   const state = String(storedLifecycle.state || '').trim().toLowerCase();
@@ -169,6 +211,17 @@ function presentModelLifecycle(service, storedLifecycle, runtimeStatus) {
   return storedLifecycle;
 }
 
+// _managedReadyOnce is sticky ("initialized at least once since start()") for
+// crash detection, auto-reconnect and plugin startup waits. Reading 'ready' on
+// a spawned-but-unloaded sidecar additionally needs THIS process initialized:
+// a respawn (retryStart, restartManagedSidecar) otherwise published 'ready' at
+// spawn time, before the client was re-attached, and the renderer's one-shot
+// catalog read got "Managed sidecar is not ready yet." (split view gate §D).
+function managedInitializedForCurrentProcess(service) {
+  return (service._managedInitializedProcess ?? null)
+    === (service.sidecarManager?.process ?? null);
+}
+
 function buildObservedBackendStatus(service, rawStatus = null) {
   const resolvedStatus = rawStatus ?? service.sidecarManager?.getStatus?.() ?? {};
   const status = resolvedStatus && typeof resolvedStatus === 'object' ? resolvedStatus : {};
@@ -181,6 +234,7 @@ function buildObservedBackendStatus(service, rawStatus = null) {
   const initializedWithoutModel = sidecarSpawned
     && lifecycle.state === 'unloaded'
     && service._managedReadyOnce === true
+    && managedInitializedForCurrentProcess(service)
     && !service._managedInitializeFlight;
   let phase = status.phase;
   if (sidecarSpawned) {
@@ -219,6 +273,7 @@ function buildObservedBackendStatus(service, rawStatus = null) {
       total_bytes: Number(lifecycle.total_bytes || 0),
       started_at: lifecycle.started_at || null,
       updated_at: lifecycle.updated_at || null,
+      last_load_ms: readLastLoadMs(service, lifecycle),
     },
   };
 }
@@ -266,16 +321,22 @@ async function initializeManagedSidecarWithTimeout(service, options = {}) {
   service._managedInitializeGeneration = generation;
   service.currentEngineType = requestedEngineType;
   service._managedPendingModel = requestedModel;
+  // A managed-server load of this model is still this load: keep its clock.
+  const managedLoad = claimManagedEngineLoad(service, requestedModel, requestedEngineType);
+  const lifecycleModel = managedLoad ? managedLoad.model : requestedModel;
+  // Ollama boots unloaded by design; vLLM's no-model fallback is its
+  // deliberate hand-off to Ollama (applyManagedInitializePayload).
+  const probesEngine = Boolean(requestedModel) || requestedEngineType === MANAGED_ENGINE_TYPE;
   setModelLifecycle(service, {
-    state: 'unloaded',
-    requested_model: requestedModel,
+    state: managedLoad ? 'loading' : 'unloaded',
+    requested_model: lifecycleModel,
     engine: service.currentEngineType,
-    status: requestedModel ? 'Preparing model' : 'Preparing runtime',
+    status: managedLoad ? 'Loading model' : requestedModel ? 'Preparing model' : 'Preparing runtime',
     percent: 0,
     completed_bytes: 0,
     total_bytes: 0,
     error_code: '',
-    started_at: new Date().toISOString(),
+    started_at: managedLoad ? managedLoad.started_at : new Date().toISOString(),
   }, { emit: false });
 
   let idleTimer = null;
@@ -283,6 +344,7 @@ async function initializeManagedSidecarWithTimeout(service, options = {}) {
   let removeExternalAbort = null;
   let removeRaceAbort = null;
   let timeoutError = null;
+  let initializePromise = null;
   let lastStage = 0;
   let lastPercent = 0;
   let lastCompletedBytes = 0;
@@ -403,7 +465,10 @@ async function initializeManagedSidecarWithTimeout(service, options = {}) {
       // in this window records an epoch <= the one the token actually came
       // from: the admission gate can only be over-strict, never permissive.
       const authEpochAtSend = Number(service.chatgptAuthService?.getCredentialEpoch?.() ?? 0);
-      const initializePromise = initializeManagedSidecar(service, {
+      // initializeManagedSidecar builds its config synchronously on this call,
+      // so this is the feature-settings revision the payload carries.
+      const featureSettingsRevision = Number(service._featureSettingsRevision) || 0;
+      initializePromise = initializeManagedSidecar(service, {
         signal: controller.signal,
         timeoutMs: null,
         onProgress: handleProgress,
@@ -414,10 +479,18 @@ async function initializeManagedSidecarWithTimeout(service, options = {}) {
         throw createManagedInitializeCancellationError(controller.signal.reason);
       }
       applyManagedInitializePayload(service, payload);
+      // Attached and initialized for this process: buildObservedBackendStatus
+      // may now read a spawned, unloaded sidecar as 'ready'.
+      service._managedInitializedProcess = processGeneration;
+      clearManagedInitializeStall(service, processGeneration);
       // The running sidecar now holds the credential generation captured above.
       service._chatgptRuntimeCredentialEpoch = authEpochAtSend;
-      if (requestedModel && service._lastEngineFallback) {
-        throw createModelUnavailableError(requestedModel, service._lastEngineFallback);
+      // A no-model openai-compatible init still probes its endpoint: a
+      // fallback there is a dead port, not a ready runtime.
+      if (probesEngine && service._lastEngineFallback) {
+        throw createModelUnavailableError(
+          requestedModel || requestedEngineType, service._lastEngineFallback
+        );
       }
       if (requestedModel && !String(service.currentModel || '').trim()) {
         throw createModelUnavailableError(requestedModel, {
@@ -425,9 +498,14 @@ async function initializeManagedSidecarWithTimeout(service, options = {}) {
         });
       }
       service._managedPendingModel = '';
+      // feature-settings-service drains a save until this reaches its revision.
+      service._publishedFeatureSettingsRevision = Math.max(
+        Number(service._publishedFeatureSettingsRevision) || 0,
+        featureSettingsRevision
+      );
       setModelLifecycle(service, {
         state: requestedModel ? 'ready' : 'unloaded',
-        requested_model: requestedModel,
+        requested_model: lifecycleModel,
         engine: service.currentEngineType,
         status: requestedModel ? 'Model ready' : 'Runtime ready; no model loaded',
         percent: requestedModel ? 100 : 0,
@@ -443,7 +521,7 @@ async function initializeManagedSidecarWithTimeout(service, options = {}) {
         && !service._stopping
         && finalError?.error_code !== SIDECAR_ERROR_CODES.ABORTED
       );
-      if (mayApplyFailure && requestedModel) {
+      if (mayApplyFailure && probesEngine) {
         service.currentModel = '';
         service.currentEngineType = requestedEngineType;
         service._managedPendingModel = '';
@@ -458,6 +536,9 @@ async function initializeManagedSidecarWithTimeout(service, options = {}) {
           model: '',
           model_loaded: false,
         });
+      }
+      if (timeoutError && initializePromise && mayApplyFailure) {
+        markManagedInitializeStalled(service, processGeneration, requestedModel, timeoutError);
       }
       service._emitServiceLog('WARN', 'backend.managed_sidecar_initialize_failed', {
         message: String(finalError?.message || finalError),
@@ -514,5 +595,6 @@ module.exports = {
   initializeManagedSidecarWithTimeout,
   initializeNeedsOllama,
   normalizeProgress,
+  observeManagedLlamaServerState,
   setModelLifecycle,
 };

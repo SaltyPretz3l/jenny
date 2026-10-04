@@ -176,7 +176,10 @@
 
     function renderActions() {
       if (!dom.personalityActions || !actionButton) return;
-      var busy = personalityState.saving === true || personalityState.loading === true;
+      // ART-02: until one load succeeds the fields are blank, not the files;
+      // Save or Clear from there would overwrite real text.
+      var busy = personalityState.saving === true || personalityState.loading === true
+        || personalityState.loaded !== true;
       var saveDisabled = busy || personalityState.dirty !== true || hasOversizedFile();
       var signature = [
         personalityState.loading === true ? '1' : '0',
@@ -241,6 +244,7 @@
         compiled: personalityState.compiled,
         dirty: personalityState.dirty,
         budgets: budgets(),
+        uiLanguage: (personalityState.compiled || {}).uiLanguage,
         bodies: {
           agentName: current.agentName,
           personality: current.personality,
@@ -426,6 +430,7 @@
     function adoptState(snapshot) {
       var payload = snapshot && typeof snapshot === 'object' ? snapshot : {};
       var normalized = personalityForm.normalize(payload);
+      personalityState.loaded = true;
       personalityState.agentName = normalized.agentName;
       personalityState.personality = normalized.personality;
       personalityState.user = normalized.user;
@@ -487,14 +492,17 @@
       }
     }
 
+    // Resolves true only when everything saved; the window-exit prompt's Save
+    // must not treat a partial failure (the name kept its old value) as done.
     async function handlePersonalitySave() {
-      if (disposalFence.isDisposed()) return;
+      if (disposalFence.isDisposed()) return false;
       var api = shell();
       if (!api || typeof api.save !== 'function') {
         personalityState.actionStatus = jt('personality.errors.savingUnavailable', 'Saving personality is unavailable.');
         renderMeta();
-        return;
+        return false;
       }
+      if (personalityState.loaded !== true) return false;
       captureDraft();
       var payload = draft();
       personalityState.saving = true;
@@ -502,7 +510,7 @@
       renderMeta();
       try {
         var result = await api.save(payload);
-        if (disposalFence.isDisposed()) return;
+        if (disposalFence.isDisposed()) return false;
         if (result && result.compiled && typeof result.compiled === 'object') {
           personalityState.compiled = result.compiled;
           personalityState.notesBody = counters.splitNotesBody(result.compiled.text);
@@ -523,10 +531,10 @@
             personalityState.savedAt = nowFn();
             personalityState.actionStatus = jt('personality.status.nameSaveFailedNoteSaved', 'Name could not be saved; note saved.');
             renderForm();
-            return;
+            return false;
           }
           personalityState.actionStatus = counters.buildSaveFailureMessage(result, 'Save');
-          return;
+          return false;
         }
         personalityState.saved = {
           agentName: String(result.agentName || payload.agentName),
@@ -540,9 +548,11 @@
         personalityState.savedAt = nowFn();
         personalityState.actionStatus = '';
         if (typeof d.renderSettings === 'function') d.renderSettings();
+        return true;
       } catch (error) {
-        if (disposalFence.isDisposed()) return;
+        if (disposalFence.isDisposed()) return false;
         personalityState.actionStatus = jt('personality.errors.saveFailed', 'Save failed: {error}', { error: toMessage(error, 'unknown error') });
+        return false;
       } finally {
         if (!disposalFence.isDisposed()) {
           personalityState.saving = false;
@@ -553,25 +563,30 @@
 
     /** Clear = replace both personality files with their placeholders. */
     async function handlePersonalityReset() {
+      if (disposalFence.isDisposed()) return;
       var api = shell();
       if (!api || typeof api.clear !== 'function') {
         personalityState.actionStatus = jt('personality.errors.clearingUnavailable', 'Clearing personality is unavailable.');
         renderMeta();
         return;
       }
+      if (personalityState.loaded !== true) return;
+      captureDraft();
+      var clearingDraft = draft();
       personalityState.saving = true;
       personalityState.actionStatus = 'Clearing…';
       renderMeta();
       try {
-        var result = await api.clear({ agentName: personalityState.agentName });
+        var result = await api.clear({ agentName: clearingDraft.agentName });
+        if (disposalFence.isDisposed()) return;
         if (!result || result.ok !== true) {
           personalityState.actionStatus = counters.buildSaveFailureMessage(result, 'Clear');
           return;
         }
-        personalityState.personality = '';
-        personalityState.user = '';
+        if (personalityState.personality === clearingDraft.personality) personalityState.personality = '';
+        if (personalityState.user === clearingDraft.user) personalityState.user = '';
         personalityState.saved = {
-          agentName: personalityState.agentName,
+          agentName: clearingDraft.agentName,
           personality: '',
           user: '',
         };
@@ -579,16 +594,19 @@
           personalityState.compiled = result.compiled;
           personalityState.notesBody = counters.splitNotesBody(result.compiled.text);
         }
-        personalityState.dirty = false;
+        markDirty();
         personalityState.savedAt = nowFn();
         personalityState.actionStatus = '';
         clearPresetPrompt();
         renderForm();
       } catch (error) {
+        if (disposalFence.isDisposed()) return;
         personalityState.actionStatus = jt('personality.errors.clearFailed', 'Clear failed: {error}', { error: toMessage(error, 'unknown error') });
       } finally {
-        personalityState.saving = false;
-        renderMeta();
+        if (!disposalFence.isDisposed()) {
+          personalityState.saving = false;
+          renderMeta();
+        }
       }
     }
 
@@ -614,14 +632,22 @@
       return personalityState.dirty === true;
     }
 
-    function onBeforeUnload(event) {
-      if (!hasPersonalityUnsavedChanges()) return;
-      if (typeof event.preventDefault === 'function') event.preventDefault();
-      event.returnValue = '';
-    }
-    if (windowRef && typeof windowRef.addEventListener === 'function') {
-      windowRef.addEventListener('beforeunload', onBeforeUnload);
-    }
+    // Unsaved personality edits join the one window-exit prompt through the
+    // dirty-surface registry; no beforeunload handler may cancel an unload
+    // (it silently swallowed close/reload, real-app B4b).
+    var exitRegistry = windowRef && windowRef.rendererWindowExitPreflight
+      ? windowRef.rendererWindowExitPreflight.dirtySurfaces
+      : null;
+    var unregisterExitSurface = exitRegistry && typeof exitRegistry.register === 'function'
+      ? exitRegistry.register({
+        id: 'personality',
+        label: jt('settings.personality.heading', 'Personality'),
+        isDirty: hasPersonalityUnsavedChanges,
+        save: function () {
+          return handlePersonalitySave().then(function (saved) { return saved === true && !hasPersonalityUnsavedChanges(); });
+        },
+      })
+      : function () {};
 
     return {
       cancelPresetReplace: cancelPresetReplace,
@@ -639,9 +665,7 @@
       toggleExactPanel: toggleExactPanel,
       dispose: function dispose() {
         if (!disposalFence.dispose()) return;
-        if (windowRef && typeof windowRef.removeEventListener === 'function') {
-          windowRef.removeEventListener('beforeunload', onBeforeUnload);
-        }
+        unregisterExitSurface();
         for (var i = 0; i < boundHandlers.length; i += 1) {
           var entry = boundHandlers[i];
           if (entry[0] && typeof entry[0].removeEventListener === 'function') {

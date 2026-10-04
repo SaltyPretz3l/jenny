@@ -1,4 +1,5 @@
 const { createAttachmentIpcHandlers } = require('./main/attachment-ipc-handlers');
+const { createArtifactFileActions } = require('./artifact-file-actions');
 const { createEmptyCalendarSnapshot } = require('./calendar-service');
 const path = require('path');
 
@@ -12,6 +13,9 @@ const {
   normalizeRuntimeToolStatusMap,
 } = require('./ipc-validation-helpers');
 const { normalizeToolName } = require('./tools/tool-permission-store');
+const { surfaceFamilyForTool, connectionIdForTool } = require('./tools/tool-surface-families');
+const { DEFAULT_TOOL_DEFAULTS } = require('./tools/tool-policy-evaluator');
+const { isToolAvailableDuringSessionLockdown } = require('./backend/session-lockdown-gate');
 
 const { getWindowStateSnapshot } = require('./window-state-service');
 const {
@@ -22,6 +26,7 @@ const { loadAccelerationCatalog } = require('./backend/llama-server-acceleration
 const { writeManagedPatch } = require('./main/llama-server-runtime');
 const { buildFeatureFlags } = require('./feature-flags');
 const { normalizePreferredEngineType } = require('./shell-config-state');
+const { APP_ZOOM_DEFAULT } = require('./shell-config-zoom-state');
 const { defaultOllamaFallbackUrl } = require('./ollama-install-service');
 const { CONTEXT_LENGTH_STEPS } = require('./shell-config-compaction-tuning');
 const { buildNextTurnContextSummary } = require('./backend/next-turn-context-summary');
@@ -122,6 +127,32 @@ async function companionFollowUpOptions(personalityWorkspace) {
   };
 }
 
+const RENDERER_FOLLOW_UP_PATCH_FIELDS = [
+  'label', 'body', 'status', 'deferPreset', 'defer_preset', 'deferredUntil', 'deferred_until',
+];
+const RENDERER_FOLLOW_UP_PATCH_STATUSES = new Set(['active', 'deferred']);
+
+/* The renderer edits text and timing only. History, provenance, timestamps and
+ * the session link stay service-owned, and resolving goes through
+ * resolveFollowUp so the history entry is written. The task-board tool calls
+ * the service directly and is not filtered here. */
+function pickRendererFollowUpPatch(patch) {
+  const picked = {};
+  if (!patch || typeof patch !== 'object' || Array.isArray(patch)) {
+    return picked;
+  }
+  for (const field of RENDERER_FOLLOW_UP_PATCH_FIELDS) {
+    if (Object.prototype.hasOwnProperty.call(patch, field)) {
+      picked[field] = patch[field];
+    }
+  }
+  if (Object.prototype.hasOwnProperty.call(picked, 'status')
+    && !RENDERER_FOLLOW_UP_PATCH_STATUSES.has(picked.status)) {
+    delete picked.status;
+  }
+  return picked;
+}
+
 function getBackendStatusPhase(backendService) {
   try {
     if (backendService && typeof backendService.getBackendStatus === 'function') {
@@ -167,6 +198,9 @@ function normalizeToolListEntry(tool, runtimeStatus) {
     return null;
   }
   const status = runtimeStatus && typeof runtimeStatus === 'object' ? runtimeStatus : null;
+  const toolFamily = status?.toolFamily || '';
+  const sideEffecting = typeof status?.sideEffecting === 'boolean'
+    ? status.sideEffecting : tool?.readOnly === false;
   return {
     name,
     description: String(tool?.description || '').trim(),
@@ -174,6 +208,16 @@ function normalizeToolListEntry(tool, runtimeStatus) {
     category: String(tool?.category || status?.toolFamily || 'builtin').trim() || 'builtin',
     available: status ? status.available === true : true,
     reason: status && typeof status.reason === 'string' ? status.reason : '',
+    toolFamily,
+    sourceKind: status?.sourceKind || '',
+    serverName: status?.serverName || '',
+    connectionId: status?.connectionId || connectionIdForTool(name, {
+      source_kind: status?.sourceKind, server_name: status?.serverName,
+    }),
+    sideEffecting,
+    surfaceFamily: surfaceFamilyForTool(name, toolFamily),
+    approvalDefault: DEFAULT_TOOL_DEFAULTS[name] || (sideEffecting ? 'ask' : 'auto'),
+    lockdownAvailable: isToolAvailableDuringSessionLockdown(name, true),
   };
 }
 
@@ -219,9 +263,6 @@ function registerAuxiliaryIpcHandlers({
   suggestionCache,
   getCachedOrGenerateSuggestions,
   generateCommitMessage,
-  generateInlineCompletion,
-  listLoadedInlineModels,
-  unloadInlineModel,
   offlineIntelligenceService,
   modelTuningService = null,
   engineTuningService = null,
@@ -235,6 +276,7 @@ function registerAuxiliaryIpcHandlers({
   os,
   isChildPath,
   clipboard,
+  nativeImage,
   log,
   getMainLifecycle,
   toolExecutor,
@@ -244,7 +286,6 @@ function registerAuxiliaryIpcHandlers({
   ollamaInstallService,
   mcpDiscoveryService,
   schedulerService,
-  weatherService,
   linkStatusService,
   calendarService,
   homeAssistantService,
@@ -253,6 +294,7 @@ function registerAuxiliaryIpcHandlers({
   windowExitGuard = null,
   createAuthService = createChatGptAuthServiceDefault,
 } = {}) {
+  const fileActions = createArtifactFileActions({ artifactService, dialog, getMainWindow, clipboard, nativeImage });
   const getWindowStatePayload = () => {
     if (typeof getWindowState === 'function') {
       return getWindowState();
@@ -337,6 +379,8 @@ function registerAuxiliaryIpcHandlers({
       artifactService.readArtifact(sessionId, artifactId),
     'artifacts.save': (_, sessionId, artifactId, content) =>
       artifactService.saveArtifact(sessionId, artifactId, content),
+    'artifacts.saveAs': (_, sessionId, artifactId) => fileActions.saveAs(sessionId, artifactId),
+    'artifacts.copyImage': (_, sessionId, artifactId) => fileActions.copyImage(sessionId, artifactId),
     'artifacts.reveal': (_, sessionId, artifactId) =>
       artifactService.revealArtifact(sessionId, artifactId),
     'artifacts.openExternal': (_, sessionId, artifactId) =>
@@ -367,8 +411,6 @@ function registerAuxiliaryIpcHandlers({
     'diagnostics.phasePercentiles.reset': () => backendService.resetPhasePercentiles(),
     'codexCli.getState': () =>
       backendService?.getCodexCliState?.() || codexCliUnavailable(),
-    'codexCli.openLoginTerminal': () =>
-      backendService?.openCodexCliLoginTerminal?.() || codexCliUnavailable(),
     'codexCli.refresh': () =>
       backendService?.refreshCodexCliState?.() || codexCliUnavailable(),
     'setup.getState': () => getSetupStatePayload(setupService),
@@ -468,10 +510,6 @@ function registerAuxiliaryIpcHandlers({
       homeAssistantService && typeof homeAssistantService.undo === 'function'
         ? homeAssistantService.undo(entryId)
         : { ok: false, reason: 'unavailable' },
-    'weather.getState': () =>
-      weatherService && typeof weatherService.getState === 'function'
-        ? weatherService.getState()
-        : { available: false, configured: false, error: 'unavailable' },
     'linkStatus.getState': () =>
       linkStatusService && typeof linkStatusService.getState === 'function'
         ? linkStatusService.getState()
@@ -499,27 +537,39 @@ function registerAuxiliaryIpcHandlers({
       shellConfigService.upsertFollowUp(payload, await companionFollowUpOptions(personalityWorkspace));
       return companionService.getState();
     },
+    // Home mutations surface a stale id as CMP-COMPANION-0002 (the service
+    // mutators stay silent for the task-board tool); delete stays idempotent.
+    // The existence check sits after the await so no delete can slip between
+    // it and the synchronous mutation.
     'companion.updateFollowUp': async (_, id, patch) => {
-      shellConfigService.updateFollowUp(id, patch, await companionFollowUpOptions(personalityWorkspace));
+      const options = await companionFollowUpOptions(personalityWorkspace);
+      shellConfigService.assertFollowUpExists(id);
+      shellConfigService.updateFollowUp(id, pickRendererFollowUpPatch(patch), options);
       return companionService.getState();
     },
     'companion.deferFollowUp': async (_, id, preset) => {
-      shellConfigService.deferFollowUp(id, preset, await companionFollowUpOptions(personalityWorkspace));
+      const options = await companionFollowUpOptions(personalityWorkspace);
+      shellConfigService.assertFollowUpExists(id);
+      shellConfigService.deferFollowUp(id, preset, options);
       return companionService.getState();
     },
     'companion.activateFollowUp': (_, id) => {
+      shellConfigService.assertFollowUpExists(id);
       shellConfigService.activateFollowUp(id);
       return companionService.getState();
     },
     'companion.resolveFollowUp': (_, id) => {
+      shellConfigService.assertFollowUpExists(id);
       shellConfigService.resolveFollowUp(id);
       return companionService.getState();
     },
     'companion.archiveFollowUp': (_, id) => {
+      shellConfigService.assertFollowUpExists(id);
       shellConfigService.archiveFollowUp(id);
       return companionService.getState();
     },
     'companion.unarchiveFollowUp': (_, id) => {
+      shellConfigService.assertFollowUpExists(id);
       shellConfigService.unarchiveFollowUp(id);
       return companionService.getState();
     },
@@ -544,34 +594,6 @@ function registerAuxiliaryIpcHandlers({
         return await generateCommitMessage(backendService, payload || {});
       } catch (_error) {
         return { ok: false, reason: 'generate_failed' };
-      }
-    },
-    // One-shot, off-transcript fill-in-the-middle code completion for the editor
-    // cursor (inline ghost text). The file content stays on the machine
-    // and never enters the chat transcript; every failure degrades to a
-    // structured { ok:false } shape (the renderer shows no suggestion).
-    'inline.complete': async (_, payload) => {
-      try {
-        return await generateInlineCompletion(backendService, payload || {});
-      } catch (_error) {
-        return { ok: false, reason: 'generate_failed' };
-      }
-    },
-    // Which Ollama models are currently loaded in the daemon (for the IDE
-    // completion menu's live loaded/unloaded indicator). Degrades to empty.
-    'inline.loadedModels': async () => {
-      try {
-        return await listLoadedInlineModels(backendService);
-      } catch (_error) {
-        return { ok: false, loaded: [], reason: 'query_failed' };
-      }
-    },
-    // Evict a specific FIM completion model from the Ollama daemon by tag.
-    'inline.unloadModel': async (_, payload) => {
-      try {
-        return await unloadInlineModel(backendService, payload || {});
-      } catch (_error) {
-        return { ok: false, reason: 'unload_failed' };
       }
     },
     'offline.getState': () => offlineIntelligenceService.getState(),
@@ -663,7 +685,7 @@ function registerAuxiliaryIpcHandlers({
       // Apply the overall app zoom live to the requesting renderer's frame.
       // Startup application is handled at window creation via webPreferences.
       try {
-        const factor = (Number(nextWindowUi?.appZoomPercent) || 100) / 100;
+        const factor = (Number(nextWindowUi?.appZoomPercent) || APP_ZOOM_DEFAULT) / 100;
         const sender = event && event.sender;
         if (sender && typeof sender.setZoomFactor === 'function') {
           sender.setZoomFactor(factor);
@@ -842,35 +864,21 @@ function registerAuxiliaryIpcHandlers({
       }
       return entries;
     },
-    'tools.approve': (_, callId, options) => {
-      const approvedByBackend = backendService && backendService.approveToolCall(callId, options);
-      if (approvedByBackend) {
-        return true;
-      }
-      return toolExecutor.approve(callId, options);
-    },
+    'tools.approve': (_, callId, options) => Boolean(
+      backendService && backendService.approveToolCall(callId, options)
+    ),
     // Accepted-not-built plan -> approved, so the renderer's follow-up send
     // carries it as the approved plan. Refuses unless latest, accepted, idle.
     'tools.buildAcceptedPlan': (_, sessionId, planId) => (backendService
       ? markAcceptedPlanApproved({ service: backendService, sessionId, planId })
       : { ok: false, reason: 'unavailable' }),
-    'tools.deny': (_, callId) => {
-      const deniedByBackend = backendService && backendService.denyToolCall(callId);
-      if (deniedByBackend) {
-        return true;
-      }
-      return toolExecutor.deny(callId);
-    },
+    'tools.deny': (_, callId) => Boolean(backendService && backendService.denyToolCall(callId)),
     'tools.getPermissions': () => ({
       policies: toolPermissionStore.getAllPolicies(),
       // saved = the user's own decisions (Settings > Tools > Approval rules).
       saved: toolPermissionStore.listStoredDecisions(),
       blanket_auto_approve_retired: toolPermissionStore.consumeBlanketRuleRetiredNotice(),
     }),
-    'tools.setPermission': (_, name, policy) => {
-      toolPermissionStore.setPolicy(name, policy);
-      pushToolPermissionUpdate(backendService);
-    },
     'tools.clearPermission': (_, name) => {
       const result = toolPermissionStore.clearPolicy(name);
       pushToolPermissionUpdate(backendService);

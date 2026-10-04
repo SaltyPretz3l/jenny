@@ -11,6 +11,7 @@ from __future__ import annotations
 from typing import Any
 
 from sidecar.ai.context.compaction import is_compaction_summary_content
+from sidecar.ai.context.turn_context import is_turn_context_row
 
 
 def merge_consecutive_system_messages(
@@ -108,13 +109,21 @@ def demote_non_leading_system_messages(
     ``merge_consecutive_system_messages``: that merge exists to stop HTTP 400s
     from single-system-message GGUF templates, and exempting any row from it
     reintroduces that failure.
+
+    The trailing turn-context row (``turn_context.is_turn_context_row``) also
+    ends the run: on a first turn it can sit right after the prompt block, and
+    it must reach the model in the same untrusted tier on every turn.
     """
     demoted: list[dict[str, Any]] = []
     leading_run = True
     for message in messages:
         entry = dict(message)
         if str(entry.get("role") or "").strip().lower() == "system":
-            if leading_run and is_compaction_summary_content(entry.get("content")):
+            content = entry.get("content")
+            if leading_run and (
+                is_compaction_summary_content(content)
+                or is_turn_context_row(entry)
+            ):
                 leading_run = False
                 entry["role"] = "user"
             elif not leading_run:

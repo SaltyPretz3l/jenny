@@ -5,7 +5,7 @@
  *
  * Owns the hardware -> recommended-model catalog in the MAIN process.
  *
- * Resolution order for getCatalog(): userData cache (freshest) -> bundled default.
+ * getCatalog() selects the newer version from the userData cache and bundle.
  * refresh() fetches a remote catalog (throttled), validates it strictly, accepts
  * it only when catalogVersion is monotonically >= the current one, then writes the
  * userData cache. Any failure (offline, malformed, stale) keeps the prior catalog,
@@ -18,7 +18,7 @@
 
 const fs = require('fs');
 const path = require('path');
-const { requestWithTimeout } = require('./http-fetch-util');
+const { requestWithTimeout, readBoundedResponseText } = require('./http-fetch-util');
 
 const DEFAULT_THROTTLE_MS = 24 * 60 * 60 * 1000; // 24h
 const MAX_CATALOG_BYTES = 256 * 1024;
@@ -71,45 +71,6 @@ function sanitizeEtag(value) {
   return trimmed;
 }
 
-async function readBoundedResponseText(response) {
-  const declaredLength = Number(response?.headers?.get?.('content-length'));
-  if (Number.isFinite(declaredLength) && declaredLength > MAX_CATALOG_BYTES) {
-    throw new Error('model catalog response exceeds size limit');
-  }
-
-  const reader = response?.body?.getReader?.();
-  if (!reader) {
-    const text = await response.text();
-    if (Buffer.byteLength(text, 'utf8') > MAX_CATALOG_BYTES) {
-      throw new Error('model catalog response exceeds size limit');
-    }
-    return text;
-  }
-
-  const decoder = new TextDecoder();
-  let totalBytes = 0;
-  let text = '';
-  try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) {
-        break;
-      }
-      totalBytes += value?.byteLength || 0;
-      if (totalBytes > MAX_CATALOG_BYTES) {
-        throw new Error('model catalog response exceeds size limit');
-      }
-      text += decoder.decode(value, { stream: true });
-    }
-    return text + decoder.decode();
-  } catch (error) {
-    await reader.cancel?.().catch(() => {});
-    throw error;
-  } finally {
-    reader.releaseLock?.();
-  }
-}
-
 class ModelCatalogService {
   constructor({
     bundledPath,
@@ -147,7 +108,8 @@ class ModelCatalogService {
     // bundled catalog while logging as if the cache were fresh. last_fetched_at
     // stays seeded from meta either way -- it is the independent anti-hammer
     // stamp and does not depend on cache validity.
-    const cacheUsable = this.cachePath ? this.validate(this._readJsonFile(this.cachePath)) !== null : false;
+    const cached = this.validate(this._readJsonFile(this.cachePath));
+    const cacheUsable = cached && cached.catalogVersion >= this.getCatalog().catalogVersion;
     this._etag = hasValidRefreshMeta && cacheUsable
       ? sanitizeEtag(refreshMeta.etag)
       : null;
@@ -192,14 +154,19 @@ class ModelCatalogService {
       if (!pullTag || hasUnsafeTagChars(pullTag)) {
         continue;
       }
+      const vramRequiredMb = clampInt(entry.vramRequiredMb);
+      const ramRequiredMb = clampInt(entry.ramRequiredMb);
+      // MDL-14: unknown memory needs never rank as fitting. `vramRequiredMb: 0`
+      // is a real value (a CPU-only entry); a missing one is unknown.
+      if (!ramRequiredMb || entry.vramRequiredMb === undefined || entry.vramRequiredMb === null) continue;
       models.push({
         tier: boundedString(entry.tier),
         modelId: boundedString(entry.modelId || pullTag),
         displayName: boundedString(entry.displayName || entry.modelId || pullTag),
         params: boundedString(entry.params),
         quant: boundedString(entry.quant),
-        vramRequiredMb: clampInt(entry.vramRequiredMb),
-        ramRequiredMb: clampInt(entry.ramRequiredMb),
+        vramRequiredMb,
+        ramRequiredMb,
         contextLength: clampInt(entry.contextLength),
         downloadSizeMb: clampInt(entry.downloadSizeMb),
         pullTag,
@@ -228,13 +195,14 @@ class ModelCatalogService {
     return { catalogVersion: 0, updatedAt: '', source: 'empty', models: [] };
   }
 
-  /** Synchronous, memoized: cache (if valid) else bundled default. Never throws. */
+  /** Synchronous, memoized: newer valid catalog, with cache winning ties. Never throws. */
   getCatalog() {
     if (this._catalog) {
       return this._catalog;
     }
     const cached = this.validate(this._readJsonFile(this.cachePath));
-    this._catalog = cached || this._loadBundled();
+    const bundled = this._loadBundled();
+    this._catalog = cached && cached.catalogVersion >= bundled.catalogVersion ? cached : bundled;
     return this._catalog;
   }
 
@@ -298,10 +266,15 @@ class ModelCatalogService {
     }
     try {
       const headers = this._etag ? { 'If-None-Match': this._etag } : undefined;
-      const response = await requestWithTimeout(this.remoteUrl, {
+      const { response, text } = await requestWithTimeout(this.remoteUrl, {
         method: 'GET',
         headers,
         fetchImpl: this.fetchImpl,
+        consumeResponse: async (response, signal) => ({
+          response,
+          text: response?.ok === true && Number(response.status) !== 304
+            ? await readBoundedResponseText(response, { maxBytes: MAX_CATALOG_BYTES, signal }) : '',
+        }),
       });
       const responseEtag = response?.headers?.get?.('etag');
       if (Number(response?.status) === 304) {
@@ -317,7 +290,6 @@ class ModelCatalogService {
         });
         return this.getCatalog();
       }
-      const text = await readBoundedResponseText(response);
       const validated = this.validate(JSON.parse(text));
       if (!validated) {
         this._log('WARN', 'model_catalog.refresh_invalid');
@@ -329,7 +301,7 @@ class ModelCatalogService {
           remote: validated.catalogVersion,
           current: current.catalogVersion,
         });
-        this._writeRefreshMetadata(now, responseEtag);
+        this._writeRefreshMetadata(now, this._etag);
         return current;
       }
       const cacheWritten = this._writeCache(validated);

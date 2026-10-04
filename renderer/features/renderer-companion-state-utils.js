@@ -10,6 +10,8 @@
     return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
   }
 
+  const ACTION_SLOTS = new Set(['primary', 'inline', 'overflow']);
+
   function normalizeAction(value) {
     if (!value || typeof value !== 'object' || Array.isArray(value)) {
       return null;
@@ -20,10 +22,14 @@
       return null;
     }
     const followUpId = String(value.followUpId || '').trim();
+    const slot = String(value.slot || '').trim();
     return {
       id: String(value.id || `${type}:${followUpId || label}`).trim(),
       type,
       label,
+      labelKey: String(value.labelKey || '').trim(),
+      // Loop rows place actions by slot; anything unknown stays visible inline.
+      slot: ACTION_SLOTS.has(slot) ? slot : 'inline',
       prompt: String(value.prompt || '').trim(),
       section: String(value.section || '').trim(),
       viewId: String(value.viewId || '').trim(),
@@ -79,7 +85,6 @@
 
   function normalizeLoop(value) {
     const source = toPlainObject(value);
-    const hasExplicitContextLine = Object.prototype.hasOwnProperty.call(source, 'contextLine');
     const explicitActions = Array.isArray(source.actions)
       ? source.actions.map((entry) => normalizeAction(entry)).filter(Boolean)
       : [];
@@ -99,13 +104,13 @@
       sessionId: String(source.sessionId || '').trim(),
       sessionTitle: String(source.sessionTitle || '').trim(),
       sessionBadge: String(source.sessionBadge || '').trim(),
+      sessionState: String(source.sessionState || '').trim(),
       sourceBadge: String(source.sourceBadge || '').trim(),
-      contextLine: hasExplicitContextLine
-        ? String(source.contextLine || '').trim()
-        : String(source.sourceLabel || '').trim(),
-      sourceLabel: String(source.sourceLabel || '').trim(),
+      sourceKind: String(source.sourceKind || '').trim(),
+      contextLine: String(source.contextLine || '').trim(),
       deferredUntil: String(source.deferredUntil || '').trim(),
       deferPreset: String(source.deferPreset || '').trim(),
+      resolvedAt: String(source.resolvedAt || '').trim(),
       archivedAt: String(source.archivedAt || '').trim(),
       timingLabel: String(source.timingLabel || '').trim(),
       isDue: source.isDue === true,
@@ -129,6 +134,13 @@
           .filter(Boolean)
         : [],
     };
+  }
+
+  const LOOP_BOARD_SECTIONS = Object.freeze(['active', 'deferred', 'recentResolved', 'archived']);
+
+  function getAllLoops(board) {
+    const source = toPlainObject(board);
+    return LOOP_BOARD_SECTIONS.flatMap((key) => (Array.isArray(source[key]) ? source[key] : []));
   }
 
   function normalizeLoopCount(value) {
@@ -291,6 +303,8 @@
   }
 
   return {
+    LOOP_BOARD_SECTIONS,
+    getAllLoops,
     normalizeCompanionState,
   };
 });

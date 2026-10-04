@@ -26,6 +26,7 @@ from sidecar.ai.mcp.exceptions import (
     CMP_MCP_SSE_DISABLED,
     CMP_MCP_TOOL_NOT_FOUND,
     MCPError,
+    as_setup_error,
 )
 from sidecar.ai.mcp.models import (
     MCPResourceDescriptor,
@@ -138,7 +139,8 @@ class MCPClient:
                 try:
                     transport = self._build_transport(server, sse_enabled=sse_enabled)
                     self._register_transport(transport)
-                except MCPError as error:
+                except Exception as caught:  # noqa: BLE001 -- isolate each server's setup
+                    error = as_setup_error(caught)
                     self._record_failure(
                         MCPServerFailure(name=server.name, code=error.code, message=error.message)
                     )
@@ -202,6 +204,7 @@ class MCPClient:
         prior_generation_id: str | None = None
         recovered_operation_id: str | None = None
         pending_replay_error: MCPError | None = None
+        respawned_terminated = False
         while True:
             client_support.raise_if_cancelled(cancel_handle)
             remaining_timeout = client_support.remaining_tool_timeout(
@@ -220,11 +223,15 @@ class MCPClient:
                     message=f"tool '{current_tool_name}' is not registered",
                     retryable=False,
                 )
-            if transport is None:
+            # F2: a server killed after the last call (a Stop past the cancel grace)
+            # stays registered; respawn it once before sending (nothing sent, no replay).
+            dead = not respawned_terminated and getattr(transport, "is_terminated", False) is True
+            if transport is None or dead:
+                respawned_terminated = respawned_terminated or dead
                 if self._reconnect_transport(
                     descriptor.server_name,
                     request_timeout_seconds=remaining_timeout,
-                    expected_transport=None,
+                    expected_transport=transport,
                 ):
                     current_tool_name = descriptor.name
                     continue
@@ -295,8 +302,20 @@ class MCPClient:
                 **extracted,
             )
     def _register_transport(self, transport: transport_base.MCPTransport) -> None:
+        config = self._server_configs.get(transport.server_name)
+        expected_digest = getattr(config, "approved_tools_digest", None)
         try:
-            tools_payload = transport.list_tools()
+            raw_tools = transport.list_tools()
+            # Approved (external) servers register exactly the normalized surface
+            # their digest covers. Only the first-party builtin server is
+            # forwarded without a digest, and its raw catalog exceeds the
+            # review caps by design.
+            if expected_digest:
+                tools_payload, _ = summarize_tools(raw_tools)
+                if tools_digest(tools_payload) != expected_digest:
+                    raise ValueError("tool_surface_changed")
+            else:
+                tools_payload = raw_tools if isinstance(raw_tools, list) else []
         except Exception as error:
             log_event(
                 logger,
@@ -311,18 +330,15 @@ class MCPClient:
                 },
             )
             transport.close()
-            raise
-        config = self._server_configs.get(transport.server_name)
-        expected_digest = getattr(config, "approved_tools_digest", None)
-        if expected_digest:
-            summary, _malformed_count = summarize_tools(tools_payload)
-            if tools_digest(summary) != expected_digest:
-                transport.close()
+            if isinstance(error, ValueError):
                 raise MCPError(
-                    code=CMP_MCP_TOOL_SURFACE_CHANGED,
-                    message="MCP tool surface changed and requires trust review",
+                    code=(
+                        CMP_MCP_TOOL_SURFACE_CHANGED if expected_digest else CMP_MCP_CONFIG_INVALID
+                    ),
+                    message="MCP tool surface is invalid or changed and requires trust review",
                     retryable=False,
-                )
+                ) from error
+            raise
         pending_descriptors: dict[str, MCPToolDescriptor] = {}
         for tool_payload in tools_payload:
             descriptor = client_support.descriptor_from_payload(
@@ -350,11 +366,13 @@ class MCPClient:
                 )
             pending_descriptors[descriptor.name] = descriptor
         self._tools_by_name.update(pending_descriptors)
+        # Resource adapters are Jenny-built tools, not part of the server's surface.
         if self._resources_enabled:
             self._register_resource_tools(transport)
         self._rebuild_compat_tool_index()
         self._transports[transport.server_name] = transport
         self._connected.append(transport.server_name)
+        self._failures = [row for row in self._failures if row.name != transport.server_name]
 
     def _register_resource_tools(self, transport: transport_base.MCPTransport) -> None:
         resources_supported = self._probe_resource_capability(

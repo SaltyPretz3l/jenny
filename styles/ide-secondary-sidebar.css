@@ -61,7 +61,7 @@
   border-radius: 4px;
   background: transparent;
   color: var(--text-muted);
-  font-size: 12px;
+  font-size: var(--font-size-body);
   line-height: 1;
   cursor: pointer;
 }

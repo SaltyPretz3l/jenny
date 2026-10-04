@@ -23,6 +23,9 @@ const DIST_NODE_TESTS = Object.freeze([
   'tests/release-compat/test_shell_config_v52_i18n_safety.js',
   'tests/release-compat/test_shell_config_v53_command_sandbox.js',
   'tests/release-compat/test_shell_config_v54_session_runtime.js',
+  'tests/release-compat/test_shell_config_v56_pane_layout.js',
+  'tests/release-compat/test_shell_config_v57_app_zoom.js',
+  'tests/release-compat/test_shell_config_v59_weather_retirement.js',
   'tests/release-compat/test_shell_config_v50_tool_retirement.js',
 ]);
 

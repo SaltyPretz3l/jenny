@@ -294,14 +294,7 @@
       }
       ideStateUtils.openDiffTab?.(getIde(), { id, label });
       editorHost.activateDocument(id);
-      // Drop contexts whose diff tab is no longer open so the Map stays bounded
-      // to live diff tabs (closing a diff tab has no dedicated callback here).
-      const openIds = new Set((getIde().openTabs || []).map((tab) => tab && tab.path));
-      for (const key of [...contexts.keys()]) {
-        if (key !== id && !openIds.has(key)) {
-          contexts.delete(key);
-        }
-      }
+      pruneClosedContexts(id);
       // Capture the review context for the safety toolbar. baseModifiedText is
       // "Jenny's version" (the immutable base for hunk decisions); originalText
       // is null only in the placeholder case (snapshot gone), which withholds
@@ -806,12 +799,25 @@
         + '</div>';
     }
 
+    // Drop contexts whose diff tab is no longer open so the Map stays bounded
+    // to live diff tabs (closing a diff tab has no dedicated callback here);
+    // keepId is a context whose tab is about to be opened.
+    function pruneClosedContexts(keepId) {
+      const openIds = new Set((getIde().openTabs || []).map((tab) => tab && tab.path));
+      for (const key of [...contexts.keys()]) {
+        if (key !== keepId && !openIds.has(key)) {
+          contexts.delete(key);
+        }
+      }
+    }
+
     // Self-gating render called from the controller's renderTabs(): shows the
     // toolbar only when the active tab is a Jenny-change diff we captured.
     function renderToolbar() {
       if (disposed) {
         return;
       }
+      pruneClosedContexts();
       const el = getDom().ideDiffToolbar;
       if (!el) {
         return;

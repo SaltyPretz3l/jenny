@@ -61,10 +61,10 @@ test('local and unknown engine types use finite local ceilings', () => {
     const ceilings = resolveChatStreamCeilings(engineType);
     assert.deepEqual(
       ceilings,
-      // 2026-08-30: default local working time is 1800s. Idle caps at the
+      // 2026-09-30: default local working time is 3600s. Idle caps at the
       // 660s activity ceiling + 60s margin so hang detection stays in minutes;
       // only the absolute backstop scales with the wall budget.
-      { idleTimeoutMs: 720_000, absoluteTimeoutMs: 1_860_000 },
+      { idleTimeoutMs: 720_000, absoluteTimeoutMs: 3_660_000 },
       `engineType=${String(engineType)}`
     );
   }
@@ -80,8 +80,14 @@ test('local ceilings follow the configured working-time limit', () => {
     // 2026-08-30: idle capped at the 660s activity ceiling + 60s margin.
     { idleTimeoutMs: 720_000, absoluteTimeoutMs: 1_860_000 }
   );
+  // 2026-09-30: the 7200s ceiling keeps the absolute backstop wider than the
+  // sidecar's own wall clock by the settlement margin.
+  assert.deepEqual(
+    resolveChatStreamCeilings('ollama', 7_200),
+    { idleTimeoutMs: 720_000, absoluteTimeoutMs: 7_260_000 }
+  );
   // Invariant: the idle hang detector always fires before the absolute cap.
-  for (const wall of [60, 300, 600, 1_800, 3_600]) {
+  for (const wall of [60, 300, 600, 1_800, 3_600, 7_200]) {
     const ceilings = resolveChatStreamCeilings('ollama', wall);
     assert.ok(
       ceilings.idleTimeoutMs < ceilings.absoluteTimeoutMs,

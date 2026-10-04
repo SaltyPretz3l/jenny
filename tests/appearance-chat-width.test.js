@@ -41,8 +41,8 @@ function createRoot() {
   };
 }
 
-test('chat width presets expose the default/wide reading-measure ladder', () => {
-  assert.deepEqual(getChatWidthPresets().map((preset) => preset.id), ['default', 'wide']);
+test('chat width presets expose the narrow/standard reading-measure ladder', () => {
+  assert.deepEqual(getChatWidthPresets().map((preset) => preset.id), ['narrow', 'standard']);
   for (const preset of getChatWidthPresets()) {
     assert.ok(preset.label, `${preset.id} has a label`);
     assert.ok(preset.description, `${preset.id} has a description`);
@@ -50,41 +50,60 @@ test('chat width presets expose the default/wide reading-measure ladder', () => 
 });
 
 test('normalizeAppearancePreferences defaults and coerces chatWidthId', () => {
-  assert.equal(normalizeAppearancePreferences({}).chatWidthId, 'default');
-  assert.equal(normalizeAppearancePreferences({ chatWidthId: 'wide' }).chatWidthId, 'wide');
-  assert.equal(normalizeAppearancePreferences({ chatWidthId: 'WIDE' }).chatWidthId, 'wide');
-  assert.equal(normalizeAppearancePreferences({ chatWidthId: ' wide ' }).chatWidthId, 'wide');
-  assert.equal(normalizeAppearancePreferences({ chatWidthId: 'bogus' }).chatWidthId, 'default');
-  assert.equal(normalizeAppearancePreferences({ chatWidthId: null }).chatWidthId, 'default');
+  // Standard (1100px) is the default reading measure (owner, 2026-10-02).
+  assert.equal(normalizeAppearancePreferences({}).chatWidthId, 'standard');
+  assert.equal(normalizeAppearancePreferences({ chatWidthId: 'narrow' }).chatWidthId, 'narrow');
+  assert.equal(normalizeAppearancePreferences({ chatWidthId: 'NARROW' }).chatWidthId, 'narrow');
+  assert.equal(normalizeAppearancePreferences({ chatWidthId: ' narrow ' }).chatWidthId, 'narrow');
+  assert.equal(normalizeAppearancePreferences({ chatWidthId: 'standard' }).chatWidthId, 'standard');
+  assert.equal(normalizeAppearancePreferences({ chatWidthId: 'bogus' }).chatWidthId, 'standard');
+  assert.equal(normalizeAppearancePreferences({ chatWidthId: null }).chatWidthId, 'standard');
 });
 
-test('a stored v2 blob predating the chat width axis loads as Default', () => {
+test('ids stored before the rename land on the Standard default', () => {
+  // `default` was written for every profile whether or not the user chose it.
+  assert.equal(normalizeAppearancePreferences({ chatWidthId: 'default' }).chatWidthId, 'standard');
+  assert.equal(normalizeAppearancePreferences({ chatWidthId: 'wide' }).chatWidthId, 'standard');
+  assert.equal(normalizeAppearancePreferences({ chatWidthId: 'WIDE' }).chatWidthId, 'standard');
+  const storage = createStorage(JSON.stringify({ paletteId: 'signal', chatWidthId: 'default' }));
+  assert.equal(loadAppearancePreferences(storage).chatWidthId, 'standard');
+});
+
+test('a stored v2 blob without the chat width axis loads as Standard', () => {
   const storage = createStorage(JSON.stringify({ paletteId: 'signal', typographyId: 'technical' }));
   const loaded = loadAppearancePreferences(storage);
-  assert.equal(loaded.chatWidthId, 'default', 'existing profiles are not surprised into Wide');
+  assert.equal(loaded.chatWidthId, 'standard', 'a missing field takes the Standard default');
   assert.equal(loaded.paletteId, 'signal', 'the pre-existing axes still round-trip');
+});
+
+test('a fresh profile boots Standard', () => {
+  const { root } = createRoot();
+  const loaded = loadAppearancePreferences(createStorage());
+  assert.equal(loaded.chatWidthId, 'standard');
+  applyAppearanceToDocument(root, loaded);
+  assert.equal(root.dataset.chatWidth, 'standard');
 });
 
 test('chat width round-trips through save and load', () => {
   const storage = createStorage();
-  const saved = saveAppearancePreferences(storage, { chatWidthId: 'wide' });
-  assert.equal(saved.chatWidthId, 'wide');
-  assert.equal(JSON.parse(storage.getItem(STORAGE_KEY)).chatWidthId, 'wide');
-  assert.equal(loadAppearancePreferences(storage).chatWidthId, 'wide');
+  const saved = saveAppearancePreferences(storage, { chatWidthId: 'narrow' });
+  assert.equal(saved.chatWidthId, 'narrow');
+  assert.equal(JSON.parse(storage.getItem(STORAGE_KEY)).chatWidthId, 'narrow');
+  assert.equal(loadAppearancePreferences(storage).chatWidthId, 'narrow', 'a saved Narrow choice is kept');
 });
 
 test('applyAppearanceToDocument stamps the chat width axis onto the root dataset', () => {
   const { root } = createRoot();
-  applyAppearanceToDocument(root, { chatWidthId: 'wide' });
-  assert.equal(root.dataset.chatWidth, 'wide', 'the CSS keys off :root[data-chat-width]');
+  applyAppearanceToDocument(root, { chatWidthId: 'narrow' });
+  assert.equal(root.dataset.chatWidth, 'narrow', 'the CSS keys off :root[data-chat-width]');
   applyAppearanceToDocument(root, { chatWidthId: 'bogus' });
-  assert.equal(root.dataset.chatWidth, 'default', 'an unknown id falls back rather than stranding the attribute');
+  assert.equal(root.dataset.chatWidth, 'standard', 'an unknown id falls back rather than stranding the attribute');
 });
 
 test('chat width is a layout axis only -- it does not disturb the font-scale or holo axes', () => {
   const { root, applied } = createRoot();
-  applyAppearanceToDocument(root, { fontScaleId: 'xlarge', chatWidthId: 'wide' });
+  applyAppearanceToDocument(root, { fontScaleId: 'large', chatWidthId: 'narrow' });
   assert.equal(applied.get('--font-scale'), '1.3', 'the shell text scale is untouched by chat width');
-  assert.equal(root.dataset.fontScale, 'xlarge');
-  assert.equal(root.dataset.chatWidth, 'wide');
+  assert.equal(root.dataset.fontScale, 'large');
+  assert.equal(root.dataset.chatWidth, 'narrow');
 });

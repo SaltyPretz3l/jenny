@@ -157,7 +157,43 @@ const ROOT = path.resolve(__dirname, '..');
 // +1 on 2026-09-22 (PDF reading add-on for 1.2.0, po-review, owner-approved): the deferred
 // renderer/shell/renderer-settings-pdf-addon.js owns Settings > Tools > PDF reading add-on; no
 // vendor payload, no eager tag. Measured 685 (exactly at the ceiling); re-based to measured + 1.
-const MAX_TOTAL_SCRIPT_COUNT = 686;
+// 2026-09-25 (post-1.2.0 sweep S4): pinned to the authority, the `index_html_scripts` baseline in
+// scripts/checks/complexity_ratchet_baselines.json (enforced by check_complexity_ratchets.py), so
+// one number moves at a time: raise that baseline first, then this pin to match. The two count
+// different sets that are both 685 today: the ratchet counts every non-http <script src> tag
+// (681 local + 4 node_modules/vendor), this test counts the 681 local tags + STAGE4B_LAZY_MODULES.
+// 2026-09-25 (sweep S3): 685 -> 683 with the two fallback-registry tags gone; ratchet lowered first.
+// 2026-09-25 Split view W1-4c (approved plan docs/plans/split-view/W1_SPEC.md): +4 deferred tags,
+// renderer-pane-session-context.js, renderer-pane-layout-controller.js, renderer-chat-pane-resizer.js
+// and renderer-app-pane-composition.js (the pane layout goes live); ratchet raised first. 667 -> 671.
+// 2026-09-25 Split view W2-2a (brief docs/plans/split-view/B_W2_2A_BRIEF.md): +1 deferred tag,
+// renderer-pane-composer-rail.js (pane 1's own model/effort/run-mode rail); ratchet raised first. 671 -> 672.
+// 2026-09-26 Split view W3 foundation (spec docs/plans/split-view/W3_SPEC_2026-09-26.md): +2 deferred
+// tags, renderer-side-panel-owner.js and renderer-composer-toolbar-fit.js; ratchet raised first. 672 -> 674.
+// 2026-09-26 Split view gate §D follow-up: +1 deferred tag, renderer-pane-drag-controller.js (the drag-to-split
+// drop target and kicker drag, moved out of the at-cap pane composition); ratchet raised first. 674 -> 675.
+// 2026-09-27 Astra pane findings P1: +1 deferred tag, renderer-composer-pane-drafts.js (which session's draft each
+// pane's composer holds, kept out of the composer state controller at the 600-line ratchet); ratchet raised first. 675 -> 676.
+// 2026-09-27 Runs page (spec silly-sauteeing-pretzel §4 Wave R): renderer-orchestration-view.js splits into
+// the LAZY renderer-runs-view.js + renderer-runtime-limits-view.js (listed in STAGE4B_LAZY_MODULES, no
+// index.html tag), so this set grows by one lazy module while the index_html_scripts ratchet (tags only)
+// stays at its value. 676 -> 677 (merged with the tag above).
+// +2 on 2026-09-27: OS notifications (renderer-settings-notifications-section.js, renderer-desktop-notifications.js).
+// +1 on 2026-09-28 HB-009 waiting send: renderer-stuck-send.js (deferred; renderer-durable-send.js sat at the 600-line ratchet).
+// +1 on 2026-09-28 Subagent Monitor v2: renderer-subagent-rail.js is eager by design (the artifact bridge binds it as a factory argument and restores the persisted `subagents` rail mode at boot, like the task rail); ratchet raised first.
+// +1 on 2026-09-29 Transcript views (docs/plans/TRANSCRIPT_VIEWS.md): renderer/chat/renderer-transcript-view-utils.js, the per-session answers | thinking | everything vocabulary plus the Settings field builder (renderer-settings-support.js sits one line under the 1015-line cap); ratchet raised first.
+// +2 on 2026-09-29 open loops redesign (merged with transcript views): renderer-open-loop-row.js and renderer-open-loop-form.js, both deferred.
+// +1 on 2026-09-29 status loader: renderer-startup-starfield.js (deferred, inside #startupOverlay) replaces the curtain's circuit-trace rAF; the lifecycle module shrank by the removed trace code.
+// +1 on 2026-09-29 artifact panel review (D-12): renderer-artifact-review-rail.js (deferred), the rail state machine split out of renderer-artifacts-utils.js, which sat at 1014 of the 1015-line cap; bytes move, they do not grow.
+// 2026-09-29 UI wave landing (transcript views + open loops + shell chrome): the five deferred additions above compound.
+// +1 on 2026-09-29 native image generation (docs/plans/BYO_IMAGE_MODELS_SDCPP.md): renderer/shell/model-library/model-library-image-engine.js, the Model Library Image engine section (deferred, mounted only behind tools_image_generate_enabled); ratchet raised first.
+// +1 on 2026-09-30 composer Chat panel: renderer/chat/renderer-composer-tools-slot.js, the tools slot split out of renderer-shell-runtime-utils.js (which drops 111 lines) to stay under the 1015-line cap.
+// +1 on 2026-09-30 generated image presentation: renderer/inventory/artifact-figure.js (deferred), the inline image figure; the branch
+// did not raise this budget. Measured 689 on the 2026-09-30 landing tree (with the composer Chat panel above).
+// +1 on 2026-09-30 timeline-perf: renderer/chat/renderer-chat-ctrl-wheel-gate.js (the Ctrl-gated wheel zoom listener split out of renderer-chat-event-utils.js at the 1015-line cap).
+// +2 on 2026-09-30 Settings cohesion S0 (docs/plans/settings-cohesion/WAVE1_SPEC.md): renderer/shell/renderer-settings-field-descriptors.js and renderer-settings-field-binding.js, both deferred; ratchet raised first.
+// +1 on 2026-09-30 Circuit Trace routed board: renderer-circuit-trace-board.js (deferred), the seeded PCB generator. Merged main (timeline-perf, Settings cohesion, background effects): measured 693, + 1 script of headroom.
+const MAX_TOTAL_SCRIPT_COUNT = 701; // +3 on 2026-10-04 timeline-perf: renderer-render-pipeline-article-prediction.js and renderer-render-pipeline-render-signatures.js (deferred), split out of article-markup and message-renderer at their 1015-line caps, after renderer-stream-reasoning-patch-utils.js spent the last headroom (measured 700, +1 of headroom). merged 2026-10-03 row 31 with row 32 (measured 697 local tags + lazy modules, +1 of headroom). +1 on 2026-10-03 SIM-005 ordered IDE manifest; +1 on 2026-10-03 diagnostics review remediation: renderer-diagnostics-performance-utils.js (deferred), split out of render-utils at its file cap. merged 2026-10-02 with the owner-gate fix batch (+1, measured 695). +1 on 2026-10-02 gate F20 (owner-picked option A): renderer-admission-wait-line.js (deferred), the timeline line for a send held behind another chat. merged 2026-10-02 (timeline activity dot with plugin retirement stages 2 and 4: +3 -1 +1, measured 694). +3 on 2026-10-02 timeline activity dot: renderer/chat/renderer-sprite-activity.js (the activity derivation and sprite view applier, kept out of the thinking pipeline at its 600-line ratchet), renderer/chat/renderer-sprite-morph.js (the dot morph engine) and renderer/chat/renderer-stream-activity-typed.js (the activity row typed-state accessor, kept out of the row at 600) (measured 694). +1 on 2026-10-02 plugin retirement stage 2: renderer-settings-cloud-models.js (the Settings > Models Cloud models group; measured 692). -1 on 2026-10-02 plugin retirement stage 4: renderer-plugin-catalog.js deleted (catalogs retired). -2 on 2026-10-02 Remote Control removed: renderer-remote-control-banner.js and renderer-settings-remote-section.js deleted (merged with the chat timeline follow-ups: measured 691). +2 on 2026-10-02 chat timeline review follow-ups: renderer-approval-focus-restore.js and renderer-chat-accessibility-wiring.js, split out of two files at their line caps (measured 693, the headroom is spent). -1 on 2026-10-01 tips cache removal: renderer-tips-utils.js deleted (measured 693 -> 692). -2 on 2026-10-01 inline code suggestions removed: renderer-ide-inline-suggest.js and renderer-ide-fim-picker.js deleted (measured 690, + 1 of headroom).
 // +1 on 2026-09-01 (merge of wt/motion-css into main): this budget is a SECOND, independent
 // ceiling from the complexity ratchets, so the same merge arithmetic applies to it - both
 // parents counted their own scripts off a shared base and the file auto-merged clean. Main
@@ -366,16 +402,108 @@ const MAX_TOTAL_SCRIPT_COUNT = 686;
 // Markdown jsdom reuse): growth inside existing deferred modules only; script count, eager
 // count and vendor loading unchanged.
 // Measured 10,657,358 LF bytes; re-based to that + the established 20,000-byte review headroom.
-const MAX_TOTAL_SCRIPT_BYTES = 10677358;
+// 2026-09-25 Split view W1-4c (approved plan docs/plans/split-view/W1_SPEC.md): the four pane tags
+// named at MAX_TOTAL_SCRIPT_COUNT, the pane-routing growth in existing chat/shell modules and seven
+// catalog strings across 20 locales grow the set by 74,796 LF bytes (base 32009be39 measured
+// 10,518,662); no vendor payload, eager count unchanged.
+// Measured 10,593,458 LF bytes; re-based to that + the established 20,000-byte review headroom.
+// 2026-09-25 Split view W2-2b (brief docs/plans/split-view/B_W2_2B_BRIEF.md): per-pane attachments --
+// the session-keyed queue helpers, the pane-scoped attachment bindings, the pane tray render and
+// the pane composition's attach button/bindings grow existing deferred modules by 15,996 LF bytes
+// (base 90c358754 measured 10,612,290 after W2-1 and W2-3); no new script, no vendor payload,
+// eager count unchanged. Measured 10,628,286 LF bytes; re-based to that + the established
+// 20,000-byte review headroom.
+// 2026-09-25 Split view W2-2a (brief docs/plans/split-view/B_W2_2A_BRIEF.md): the one deferred
+// renderer-pane-composer-rail.js tag named at MAX_TOTAL_SCRIPT_COUNT plus the pane-keyed preference
+// seams in existing chat/shell modules and reasoning-effort-controls.js attachCarriers grow the set by
+// 26,678 LF bytes (base 90c358754 measured 10,612,290); no vendor payload, eager count unchanged.
+// Measured 10,638,968 LF bytes; re-based to that + the established 20,000-byte review headroom.
+// Landed together 2026-09-25: each measurement above is against 90c358754; the merged tree is
+// re-measured below: 10,655,579 LF bytes + the 20,000-byte review headroom.
+// 2026-09-26 Split view W3-3 (spec docs/plans/split-view/W3_SPEC_2026-09-26.md §5): the composer
+// settings fit and summary pill (renderer-pane-composer-rail.js createComposerSettingsFit), pane 0's
+// mount in renderer-app-shell-bindings.js, the hidden-canvas holo gate, the run-mode chip skip, pane
+// 0's rail session and nine new jt() strings grow existing deferred modules; no new script, no vendor
+// payload, eager count unchanged. Measured 10,681,814 LF bytes; re-based to that + the established
+// 20,000-byte review headroom.
+// 2026-09-26 Split view W3-2 and W3-1 (same spec, §3 and limits a-d): the side panel owner wiring,
+// the per-pane subagent monitor, per-pane selection ownership and its Shift+Click entry, per-pane
+// composer notices, session-keyed preference activity and the pane-root drop highlight grow existing
+// deferred modules (plus 44900f1b1's dropped-path attach); no new script, no vendor payload, eager
+// count unchanged. Merged tree measured 10,722,669 LF bytes; re-based to that + the established
+// 20,000-byte review headroom.
+// 2026-09-26 Split view gate §D findings (side findings S1-S6, review P3s R1-R10): the context panel
+// reopen button, per-pane inspector ids and path links, the model-catalog retry, per-pane slash menus,
+// keyed-notice cleanup, pane-1 compaction progress and the send size guard grow existing deferred
+// modules plus two catalog keys; no new script, no vendor payload, eager count unchanged. Merged tree
+// measured 10,746,549 LF bytes; re-based to that + the established 20,000-byte review headroom.
+// 2026-09-27 Workspace panels Phase 0 bug pass: stable inputs across re-renders (source control commit
+// box, search query/replace, test-runner add form), location-aware panel routing, terminal focus /
+// appearance / root-reset and resize dedupe grow existing deferred modules; no new script, no vendor
+// payload, eager count unchanged. Branch tree measured 10,772,551 LF bytes; re-based to that + the
+// established 20,000-byte review headroom.
+// 2026-09-27 Collapsed composer settings popover (owner-approved PO review 2026-09-26, the settings
+// list): whole-row clicks, row/segment keys, the pill's mode icon and caret, the sub-menu cover
+// helpers and their three positioners (renderer-pane-composer-rail.js and callers, +12,393 bytes),
+// plus the run-mode segments and the context/plan usage bar (+8,323 bytes) grow existing deferred
+// modules; no new script, no vendor payload, eager count unchanged. Measured 10,770,593 LF bytes;
+// re-based to that + the established 20,000-byte review headroom.
+// 2026-09-27 merge of the branches above (workspace panels, composer popover, context rail, pane findings): re-based from the measured merged tree (10812284 LF bytes) + 20,000 headroom.
+// 2026-09-27 Runs page (same spec, Wave R): the Runs view, the Runtime limits form, the one-poller
+// controller (all three lazy), the runs/limits binders, the Runs registry entry and text-field's number
+// type add 37,231 LF bytes net of the removed renderer-orchestration-view.js; no vendor payload, no eager
+// tag. Raised by exactly that delta, so the existing review headroom is unchanged.
+// 2026-09-27 Projects manager (same spec, Wave P) plus both waves' locale catalogs: the switcher's
+// project cache and intents, the Settings › Projects manager, Move to project (row and bulk), the
+// filter follow on New Chat, memory project labels and ~150 new jt() keys grow existing lazy modules
+// and the catalogs; no new script, no vendor payload, eager count unchanged. The branch tree measured
+// 10,836,234 LF bytes (the Wave R delta above was measured before the catalogs were rebuilt, so it
+// had eaten the headroom); re-based to that + the established 20,000-byte review headroom.
+// 2026-09-27 merge of wt/projects-runs onto the four branches above: re-based from the measured merged tree (10,900,552 LF bytes) + 20,000 headroom.
+// 2026-09-27 GUI-gate fix batch (F1-F7, N1-N9 + the Astra review of those fixes): the rail/sidebar/dock
+// saved-width rule and column sync, the changes-panel list queue, the pane-split pixel floor, the composer
+// fit recheck, the scroll coordinator's smooth-navigation hold, dir=auto on message bodies and the Runs
+// poller resume grow existing deferred modules; no new script, no vendor payload, eager count unchanged.
+// Measured 10,922,728 LF bytes; re-based to that + the established 20,000-byte review headroom.
+// 2026-09-27 OS notifications: two deferred modules + Settings copy-map rows. Measured 10,959,574 LF bytes;
+// re-based to that + the established 20,000-byte review headroom.
+// 2026-09-28 HB-009 waiting send: one deferred module (renderer-stuck-send.js) plus the strip, inbox and
+// durable-send growth, on top of the B1 remediation merged since. Measured 10,990,547 LF bytes;
+// re-based to that + the established 20,000-byte review headroom.
+// 2026-09-28 Subagent Monitor v2 (+ its B3 merge and HB-019/HB-021 live-run fixes): one deferred module
+// (renderer-subagent-rail.js) plus monitor view/model/bridge growth, +37,970 over the 11,007,836 measured
+// just before it (including the rail's dropped document fallback); no vendor payload. Measured
+// 11,045,806 LF bytes; re-based to that + the established 20,000-byte review headroom.
+// 2026-09-29 UI wave (transcript views, open loops, shell chrome incl. tab rail / title bar / artifact panel /
+// status loader / last-load memory and its review batches A-D), landed together on main 713d1086e. Per branch
+// from base 9fb08d11d: transcript views +26,869 (renderer-transcript-view-utils.js deferred); open loops
+// +35,674 (renderer-open-loop-row.js, renderer-open-loop-form.js deferred); shell chrome +87,805
+// (renderer-startup-starfield.js and renderer-artifact-review-rail.js deferred, the rest growth in existing
+// modules). No new eager script, no vendor payload. The merged tree was re-measured, never the union of the
+// per-branch re-bases: 11,196,154 LF bytes; re-based to that + the established 20,000-byte review headroom.
+// 2026-09-29 native image generation (wt/image-sdcpp): the deferred Model Library Image engine section
+// (renderer/shell/model-library/model-library-image-engine.js) plus its mount in
+// renderer-settings-model-library-section.js, the review-batch focus/cancel fixes, and 84 catalog strings
+// across 20 locales; no new eager script, no vendor payload. Measured 11,220,652 LF bytes; re-based to
+// that + the established 20,000-byte review headroom.
+// 2026-09-30 composer Chat panel (tools slot module, family registry copy, composer.chatPanel.* catalog keys; the
+// gear popover and interim tools popover deleted): measured 11,244,226 bytes; re-based to that + the 20,000-byte headroom.
+// +31591 on 2026-09-30 timeline-perf: the row-list reconcile, bail-out reasons, Ctrl-gated wheel gate
+// module and their comments (measured 11275817); re-based to measured + 20,000 bytes of headroom.
+// Merged 2026-10-01: Answers tool runs, Settings cohesion S0/Wave 1 and the background-effects batch (Circuit Trace routed board, net of the other four effects' deletions): measured 11,397,809 bytes + 20,000 headroom.
+// -6,539 on 2026-10-01 tips cache removal: renderer-tips-utils.js (2,429) plus the tips wiring in seven renderer modules (4,110), measured as that delta. Merged 2026-10-01: inline code suggestions removed, Settings Wave 2 with its review remediation (rows on one standard, the Limits page, the Tools dependent-row sync, catalog strings across 20 locales; no new eager script, no vendor payload), the tool timeline lifecycle fixes and dogfood B11: measured 11,366,200 bytes on the merged tree; re-based to that + the 20,000-byte headroom. | +34,842 on 2026-10-01 Workspace IDE review remediation (IDE-001..020): guards and their comments in 27 existing IDE modules (+19,081) and five catalog strings across 20 locales (+15,761); no new script, no vendor payload. Measured 11,390,872 bytes; re-based to that + the 20,000-byte headroom. | Merged 2026-10-01: dogfood B13 to B16, the installation lifecycle remediation and the engine lifecycle remediation (Model Library runtime actions) used all but 47 bytes of that headroom; no new eager script, no vendor payload. Measured 11,410,825 bytes on the merged tree; re-based to that + the 20,000-byte headroom.
+const MAX_TOTAL_SCRIPT_BYTES = 11559049; // 2026-10-04 long-turn render costs, follow-up: the O(1) live-row check with its write notes, the single-walk expanded-row restore, and two deferred modules split out of article-markup and message-renderer at their caps (pure moves, no vendor payload): measured 11,539,049 bytes + the 20,000-byte headroom. Before it: 2026-10-04 long-turn render costs: the active-turn-root and full-render lanes reconcile the turn row list per row, the row-list shell parse, the per-row height-prediction text cache, and the reasoning-stack patcher split out of renderer-stream-reveal-utils.js at its cap (one deferred module, no vendor payload): measured 11,532,586 bytes + the 20,000-byte headroom. Before it: 2026-10-03 merged row 31 (diagnostics review) with row 32 (memory/resource incl. SIM-005): measured 11,503,231 bytes + the 20,000-byte headroom. Before it: 2026-10-03 memory/resource remediation (row 32): bounded renderer caches, DOCX history and media budgets, disposal fences, preview URL revocation, and the SIM-005 Workspace IDE manifest and first-use loader (the IDE group still counts here as lazy bytes); no vendor payload: measured 11,481,278 bytes + the 20,000-byte headroom. Before it: 2026-10-03 diagnostics review remediation: one deferred Diagnostics performance/budget module split out of render-utils at its cap, the remaining Diagnostics labels localized (about 110 new strings in the English and pseudo-locale catalogs), the focus helper and evidence-scope copy; no vendor payload: measured 11,482,638 bytes + the 20,000-byte headroom. Before it: 2026-10-03 neglected-areas remediation merged with the Settings live review: waves 1 to 3 add the Settings personality preview's byte-for-byte mirror of the sidecar sanitizer (ART-09), the calendar form, scratchpad and MCP fixes, and the shared frame disconnect registry, less the browser facade trims; no new script, no vendor payload: measured 11,461,107 bytes + the 20,000-byte headroom. Before it: 2026-10-03 Settings live review (rows that wrap, the revert on the title line, status truth on Models and Offline with a bounded catch-up read, Runs moved to a Diagnostics tab through a shared console seam, one empty message per list, the Ollama health fold, fourteen strings across 20 locales; no new eager script, no vendor payload): measured 11,452,576 bytes + the 20,000-byte headroom. Before it: 2026-10-02 owner-gate fix batch merged (the F20 admission-wait line module, the F27 figure caption and F8 find pill growth, eight new strings across 20 locales): measured 11,425,543 bytes + the 20,000-byte headroom. Before it: 2026-10-02 merged landing (timeline activity dot, chat width rename, plugin retirement stages 2 and 4: the cloud models settings module in, the plugin catalog module and its strings out): measured 11,410,688 bytes + the 20,000-byte headroom. Before it: 2026-10-02 timeline activity dot: three new eager modules (the sprite activity derivation and view applier, the dot morph engine, the activity row typed-state accessor) less the retired sprite holo wiring, no vendor payload: measured 11,408,553 bytes + the 20,000-byte headroom. Before it: 2026-10-02 Remote Control removed (the Settings section and composer banner modules, their wiring, 56 catalog strings across 20 locales), merged with the chat timeline review remediation and follow-ups (per-pane follow/reasoning/approval/search ownership, visible-text search, four catalog strings across 20 locales, two modules split out of capped files; no new eager script, no vendor payload): measured 11,382,845 bytes + the 20,000-byte headroom.
 const MAX_EAGER_SCRIPT_COUNT = 16; // headroom above the measured 8 non-defer local scripts
 const MAX_EAGER_SCRIPT_BYTES = 300_000; // repo-LOCAL eager bytes only; vendor re-adds are caught by the eagerVendorPattern assertion below, not this budget (measureLocalScripts skips node_modules/ + vendor/)
-const STAGE4B_LAZY_MODULES = Object.freeze([
-  'renderer/shell/renderer-orchestration-view.js',
+const STAGE4B_LAZY_MODULES = Object.freeze(require('../renderer/shell/renderer-ide-script-manifest').map(([src]) => src).concat([
+  // Diagnostics › Runs (moved from Settings 2026-10-03) + Runtime limits: two views and one controller, loaded on first attach.
+  'renderer/shell/renderer-runs-view.js',
+  'renderer/shell/renderer-runtime-limits-view.js',
   'renderer/shell/renderer-orchestration-controller.js',
   // Projects v2 (2026-09-20): the shared project menu + switcher glue load on first open.
   'renderer/features/renderer-project-menu.js',
   'renderer/features/renderer-project-switcher.js',
-]);
+]));
 
 function readIndexHtml() {
   return fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');

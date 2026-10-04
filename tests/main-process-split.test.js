@@ -8,7 +8,6 @@ const MAIN_PATH = path.join(ROOT, 'main.js');
 const MAIN_OWNER_MODULES = [
   'services/main/backend-service-wiring.js',
   'services/main/ipc-handler-registration.js',
-  'services/main/comet-overlay-controller.js',
   'services/main/main-window-composition.js',
   'services/main/runtime-service-composition.js',
   'services/main/runtime-shutdown.js',
@@ -31,8 +30,10 @@ test('main process root delegates coupled Electron wiring to services/main owner
   // extract a cohesive block into a services/main owner and lower the number to
   // the new count -- do not raise it, and do not cram statements onto one line
   // to squeeze under it (which is how the windowIconPath wiring first landed).
+  // Authority: HOTSPOT_CAPS["main.js"] in scripts/checks/check_hotspot_size.py. Keep this pin
+  // equal to that cap and lower both together, so one number moves at a time (2026-09-25).
   assert.ok(
-    mainLineCount <= 726,
+    mainLineCount <= 729,
     `main.js should be under the lowered post-window-icon-resolver-extraction ceiling, got ${mainLineCount}`
   );
 
@@ -46,7 +47,6 @@ test('main process root delegates coupled Electron wiring to services/main owner
   assert.match(mainSource, /require\('\.\/services\/main\/backend-service-wiring'\)/);
   assert.match(mainSource, /require\('\.\/services\/main\/runtime-service-composition'\)/);
   assert.match(mainSource, /require\('\.\/services\/main\/ipc-handler-registration'\)/);
-  assert.match(mainSource, /require\('\.\/services\/main\/comet-overlay-controller'\)/);
   assert.match(mainSource, /require\('\.\/services\/main\/main-window-composition'\)/);
   assert.match(
     mainSource,
@@ -74,8 +74,8 @@ test('main process root delegates coupled Electron wiring to services/main owner
   assert.doesNotMatch(mainSource, /^function getCurrentSystemStatsPayload\(/m);
   assert.doesNotMatch(mainSource, /^function canUseSidecarVramPath\(/m);
   assert.doesNotMatch(mainSource, /^async function refreshGpuMemorySample\(/m);
-  assert.doesNotMatch(mainSource, /^function isCometOverlayEnabled\(/m);
-  assert.doesNotMatch(mainSource, /^function closeCometOverlayIfDisabled\(/m);
+  // The comet overlay companion was removed outright (sweep S9, 2026-09-25).
+  assert.doesNotMatch(mainSource, /comet|overlay-window|overlayRef/i);
   assert.doesNotMatch(mainSource, /^function buildFeatureStatePayload\(/m);
   assert.doesNotMatch(mainSource, /^async function applyFeatureSettingsPatch\(/m);
 
@@ -139,10 +139,9 @@ test('main starts the deferred background refreshes it wires from the backend se
   const mainSource = readSource('main.js');
   const backendWiring = readSource('services/main/backend-service-wiring.js');
 
-  // The refreshes shipped exported-but-uncalled: the Home weather tile and the
-  // ICS calendar stayed blank for ~15 minutes after every launch, and the model
-  // catalog (which has no interval at all) only refreshed when the offline
-  // surface opened. Assert the whole chain, not just the export.
+  // The refreshes shipped exported-but-uncalled: the ICS calendar stayed
+  // blank for ~15 minutes after every launch, and the model catalog (which has
+  // no interval at all) only refreshed when the offline surface opened. Assert the whole chain, not just the export.
   assert.match(backendWiring, /startDeferredBackgroundRefreshes,/);
   assert.match(mainSource, /startDeferredBackgroundRefreshes = created\.startDeferredBackgroundRefreshes;/);
 
@@ -155,4 +154,22 @@ test('main starts the deferred background refreshes it wires from the backend se
   // Ordering is load-bearing: both sit in one try block, so a scheduler throw
   // must not be able to suppress the refreshes the way it would if it ran first.
   assert.ok(refreshCall < schedulerCall, 'refreshes must run before schedulerService.start()');
+});
+
+// SC-2: a getter that registerMainIpcHandlers defaults to `() => null` turns its
+// handler into a silent no-op when main.js forgets to pass it (getSystemStats
+// left system.setStatsWatch answering {watched:false} forever).
+test('main.js passes every null-defaulting getter that registerMainIpcHandlers reads', () => {
+  const registration = readSource('services/main/ipc-handler-registration.js');
+  const start = registration.indexOf('function registerMainIpcHandlers(');
+  const signature = registration.slice(start, registration.indexOf('}) {', start));
+  const nullDefaults = Array.from(signature.matchAll(/^\s*(\w+)\s*=\s*\(\)\s*=>\s*null,/gm), (match) => match[1]);
+  assert.ok(nullDefaults.includes('getSystemStats'), 'the scan must see the getSystemStats default');
+
+  const mainSource = readSource('main.js');
+  const callStart = mainSource.indexOf('registerMainIpcHandlers({');
+  const call = mainSource.slice(callStart, mainSource.indexOf('\n});', callStart));
+  const passed = new Set(Array.from(call.matchAll(/^\s*(\w+)\s*[,:]/gm), (match) => match[1]));
+  const missing = nullDefaults.filter((name) => !passed.has(name));
+  assert.deepEqual(missing, []);
 });

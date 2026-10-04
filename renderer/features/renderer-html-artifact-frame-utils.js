@@ -136,7 +136,7 @@
     const entries = new Set();
     const observer = new windowRef.MutationObserver(function handleDisconnectMutations() {
       for (const entry of Array.from(entries)) {
-        if (!entry.host.isConnected || !entry.iframe.isConnected) {
+        if (!entry.isConnected()) {
           entries.delete(entry);
           entry.onDisconnect();
         }
@@ -152,12 +152,12 @@
     return registry;
   }
 
-  function registerDisconnectCheck(windowRef, ownerDocument, host, iframe, onDisconnect) {
+  function registerDocumentDisconnect(windowRef, ownerDocument, isConnected, onDisconnect) {
     const registry = getDisconnectRegistry(windowRef, ownerDocument);
     if (!registry || typeof onDisconnect !== 'function') {
       return function noopUnregister() {};
     }
-    const entry = { host, iframe, onDisconnect };
+    const entry = { isConnected, onDisconnect };
     registry.entries.add(entry);
     return function unregister() {
       registry.entries.delete(entry);
@@ -333,7 +333,7 @@
       teardown(true);
     }
 
-    unregisterDisconnect = registerDisconnectCheck(windowRef, ownerDocument, host, iframe, function handleDisconnect() {
+    unregisterDisconnect = registerDocumentDisconnect(windowRef, ownerDocument, () => host.isConnected && iframe.isConnected, function handleDisconnect() {
       teardown(false);
     });
 
@@ -387,5 +387,6 @@
     HTML_ARTIFACT_FRAME_FILL_CLASS,
     buildHtmlArtifactDocument,
     createHtmlArtifactFrame,
+    registerDocumentDisconnect,
   };
 });

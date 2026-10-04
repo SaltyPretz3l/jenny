@@ -75,8 +75,8 @@
     let clickHandler = null;
 
     function noteOpened(path) {
-      const normalized = String(path || '').trim();
-      if (!normalized) {
+      const normalized = String(path || '');
+      if (!normalized.trim()) {
         return;
       }
       const existing = recent.indexOf(normalized);
@@ -100,7 +100,7 @@
     }
 
     function drop(path) {
-      const index = recent.indexOf(String(path || '').trim());
+      const index = recent.indexOf(String(path || ''));
       if (index !== -1) {
         recent.splice(index, 1);
       }
@@ -181,7 +181,7 @@
             label: jt('ide.welcome.switchProject', 'Switch project…'),
             variant: 'ghost',
             size: 'sm',
-            ariaHaspopup: 'listbox',
+            ariaHaspopup: 'menu',
             dataset: { 'ide-welcome-project-menu': '1' },
           })
           : actionButton({
@@ -194,7 +194,9 @@
     }
 
     // No folder open: existing projects are one click away, so "switch" never
-    // needs the dialog. Rows share the recent-files row styling.
+    // needs the dialog. Rows share the recent-files row styling and keep the
+    // switcher's one order (current first, most recently used, D18). A
+    // missing folder reads "Locate…" in the danger text; its row locates it.
     function buildProjectsHtml(hasRoot) {
       if (hasRoot || !actionButton || !getProjectSwitcher) {
         return '';
@@ -206,10 +208,14 @@
       const rows = projects.map((project) => actionButton({
         plain: true,
         className: 'ide-welcome-recent-item',
-        dataset: { 'ide-welcome-project': project.id },
+        dataset: project.folderMissing
+          ? { 'ide-welcome-project': project.id, 'ide-welcome-project-missing': '1' }
+          : { 'ide-welcome-project': project.id },
         title: project.rootPath,
         trustedHtml: '<span class="ide-welcome-recent-name">' + escapeHtml(project.name) + '</span>'
-          + '<span class="ide-welcome-recent-dir">' + escapeHtml(project.rootPath) + '</span>',
+          + (project.folderMissing
+            ? '<span class="ide-welcome-recent-dir project-menu-detail--danger">' + escapeHtml(jt('projects.menu.locate', 'Locate…')) + '</span>'
+            : '<span class="ide-welcome-recent-dir">' + escapeHtml(project.rootPath) + '</span>'),
       })).join('');
       return '<section class="ide-welcome-section">'
         + '<h3 class="ide-welcome-heading">' + escapeHtml(jt('ide.welcome.yourProjects', 'Your projects')) + '</h3>'
@@ -316,7 +322,10 @@
       if (projectEl) {
         event.preventDefault();
         const projectId = projectEl.getAttribute('data-ide-welcome-project') || '';
-        withSwitcher((switcher) => switcher.switchToProject(projectId));
+        const missing = projectEl.hasAttribute('data-ide-welcome-project-missing');
+        withSwitcher((switcher) => (missing && typeof switcher.locateProjectFolder === 'function'
+          ? switcher.locateProjectFolder(projectId, { openAfter: true })
+          : switcher.switchToProject(projectId)));
         return;
       }
       const fileEl = target.closest('[data-ide-welcome-file]');

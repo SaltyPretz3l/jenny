@@ -398,6 +398,9 @@ test('dispose synchronously persists a debounced write already queued asynchrono
   const store = makeStore(filePath, { writeDebounceMs: 30_000 });
 
   store.write({ newest: true });
+  // Stand in for the real timer firing: firing the handler by hand leaves the
+  // armed 30 s timer referenced, which held this file's process open for 30 s.
+  clearTimeout(store._debounceTimer);
   store._handleDebounceTimerFired();
   store.dispose();
   const persistedAtDispose = fs.existsSync(filePath)

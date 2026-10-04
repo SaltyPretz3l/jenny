@@ -5,17 +5,17 @@ from __future__ import annotations
 import argparse
 import json
 import logging
-import re
 import sys  # noqa: F401 - tests patch builtin_server.sys.argv.
 import threading
 import time
 import uuid
 from contextlib import nullcontext
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Callable, Sequence
 
 from sidecar.ai.config import resolve_operation_ledger_root
-from sidecar.ai.error_codes import CMP_TOOL_DISABLED, CMP_TOOL_IO_FAILED
+from sidecar.ai.error_codes import CMP_TOOL_DISABLED
 from sidecar.ai.execution_policy import (
     DesktopExecutionPolicyError,
     desktop_policy_from_cli,
@@ -51,7 +51,8 @@ from sidecar.ai.mcp.builtin_server_ledger import (
 )
 from sidecar.ai.mcp.builtin_snapshot_leases import SnapshotLeaseStore, session_scope
 from sidecar.ai.mcp.circuit_breaker import (
-    breaker_open_reason,
+    raise_if_breaker_open,
+    record_breaker_outcome,
     record_failure,
     record_success,
 )
@@ -79,24 +80,24 @@ from sidecar.ai.tools.hosted_file_io import configure_hosted_file_io
 from sidecar.ai.tools.phase_trace import PHASE_NAMES, PhaseTrace
 from sidecar.ai.tools.plan_artifact_policy import strip_plan_artifact_write_arg
 from sidecar.ai.tools.registry import build_tool_bindings
-from sidecar.ai.tools.sanitization import strip_surrogates
+from sidecar.ai.tools.sanitization import (
+    PathKeeper,
+    error_path_keeper,
+    redact_error_paths,
+    strip_surrogates,
+)
 from sidecar.ai.tools.tool_actions import effective_side_effecting
 from sidecar.ai.tools.workspace import WorkspaceGuard
-from sidecar.runtime.diagnostics import log_tool_execution
+from sidecar.runtime.diagnostics import (
+    configure_sidecar_logging,
+    log_tool_execution,
+    shutdown_sidecar_logging,
+)
 from sidecar.runtime.media_site import activate_optional_sites
 
 ToolHandler = Callable[[dict[str, object], WorkspaceGuard], object]
 logger = logging.getLogger(__name__)
 _TRUE_ARG_VALUES = frozenset({"1", "true", "yes", "on"})
-_DELIMITED_PATH_RE = re.compile(
-    r"""(?P<quote>["'])(?P<quoted>(?:[A-Za-z]:\\|/)[^"'\r\n]+)(?P=quote)"""
-    r"|\((?P<parenthesized>(?:[A-Za-z]:\\|/)[^)\r\n]+)\)"
-    r"|\[(?P<bracketed>(?:[A-Za-z]:\\|/)[^\]\r\n]+)\]"
-)
-_BARE_PATH_RE = re.compile(
-    r"\b[A-Za-z]:\\[^\s:<>|?*\"'()\[\],;]+"
-    r"|(?<!\w)/(?:[^\s:/]+/)*[^\s:/\"'()\[\],;]+"
-)
 _MAX_ERROR_MESSAGE_CHARS = 500
 
 
@@ -128,136 +129,85 @@ TRANSPORT_ARGUMENT_KEYS: tuple[str, ...] = (
     TRUSTED_EXECUTION_CONTEXT_KEY,
 )
 
-def _default_tools(  # noqa: PLR0913
+def _default_tools(
+    config: dict[str, Any] | None = None,
     *,
-    host_mode: str = "desktop",
-    host_execution_policy_version: int | None = None,
-    desktop_execution_policy_version: int | None = None,
     workspace_root_present: bool = True,
-    pre_change_snapshot_root: str | None = None,
-    glob_enabled: bool = True,
-    grep_enabled: bool = True,
-    edit_enabled: bool = True,
-    delete_file_enabled: bool = True,
-    move_file_enabled: bool = True,
-    distill_enabled: bool = True,
-    shell_enabled: bool = False,
-    shell_security_enabled: bool = False,
-    git_tracking_enabled: bool = False,
-    web_enabled: bool = False,
-    web_rate_limit_per_min: int = 30,
-    web_max_fetch_bytes: int = 1_048_576,
-    web_allow_private_addresses: bool = False,
-    web_search_provider: str = "duckduckgo",
-    web_searxng_url: str | None = None,
-    web_search_provider_keys: dict[str, str] | None = None,
-    image_read_enabled: bool = False,
-    max_search_file_bytes: int = 2_097_152,
-    max_edit_file_bytes: int = 2_097_152,
-    python_runtime_enabled: bool = False,
-    python_runtime_timeout_seconds: int = 30,
-    python_runtime_max_memory_mb: int = 512,
-    python_runtime_interpreter: str | None = None,
-    python_runtime_root: str | None = None,
-    python_runtime_bundled_python: str | None = None,
-    python_runtime_wheelhouse_dir: str | None = None,
-    todo_enabled: bool = False,
-    connections_enabled: bool = True,
-    connections_engine_type: str = "mock",
-    connections_engine_host: str | None = None,
-    connections_mcp_servers: tuple[tuple[str, str, str], ...] = (),
-    mermaid_enabled: bool = False,
-    workspace_manifest_enabled: bool = False,
-    rich_files_enabled: bool = False,
-    knowledge_enabled: bool = False,
-    knowledge_roots: tuple[str, ...] = (),
     request_scoped_authority: bool = False,
-    lsp_enabled: bool = False,
-    lsp_command_typescript: str | None = None,
-    lsp_command_python: str | None = None,
-    load_skill_enabled: bool = True,
-    skills_bundled_root: str | None = None,
-    skills_bundled_enabled: bool = True,
-    skills_user_root: str | None = None,
-    skills_user_enabled: bool = True,
-    skills_project_root: str | None = None,
-    skills_project_enabled: bool = True,
-    skills_disabled_ids: tuple[str, ...] = (),
-    skills_auto_index: str = "auto",
 ) -> dict[str, BuiltinTool]:
-    host_policy = host_policy_from_cli(host_mode, host_execution_policy_version)
-    desktop_policy = desktop_policy_from_cli(desktop_execution_policy_version)
     config = {
-        "host_mode": host_policy.mode,
-        "host_execution_policy_version": host_policy.version,
-        "desktop_execution_policy_version": desktop_policy.version,
-        "pre_change_snapshot_root": pre_change_snapshot_root,
-        "tools_glob_enabled": glob_enabled,
-        "tools_grep_enabled": grep_enabled,
-        "tools_edit_file_enabled": edit_enabled,
-        "tools_delete_file_enabled": delete_file_enabled,
-        "tools_move_file_enabled": move_file_enabled,
-        "tools_distill_enabled": distill_enabled,
-        "tools_shell_enabled": shell_enabled,
-        "tools_web_enabled": web_enabled,
-        "tools_web_rate_limit_per_min": web_rate_limit_per_min,
-        "tools_web_max_fetch_bytes": web_max_fetch_bytes,
-        "tools_web_allow_private_addresses": web_allow_private_addresses,
-        "tools_web_search_provider": web_search_provider,
-        "tools_web_searxng_url": web_searxng_url,
-        "tools_web_search_provider_keys": web_search_provider_keys,
-        "tools_image_read_enabled": image_read_enabled,
-        "tools_max_search_file_bytes": max_search_file_bytes,
-        "tools_max_edit_file_bytes": max_edit_file_bytes,
-        "tools_python_runtime_enabled": python_runtime_enabled,
-        "tools_python_runtime_timeout_seconds": python_runtime_timeout_seconds,
-        "tools_python_runtime_max_memory_mb": python_runtime_max_memory_mb,
-        "tools_python_runtime_interpreter": python_runtime_interpreter,
-        "tools_python_runtime_root": python_runtime_root,
-        "tools_python_runtime_bundled_python": python_runtime_bundled_python,
-        "tools_python_runtime_wheelhouse_dir": python_runtime_wheelhouse_dir,
-        "tools_todo_enabled": todo_enabled,
-        "tools_connections_enabled": connections_enabled,
-        "connections_engine_type": connections_engine_type,
-        "connections_engine_host": connections_engine_host,
-        "connections_mcp_servers": connections_mcp_servers,
-        "tools_mermaid_enabled": mermaid_enabled,
-        "tools_workspace_manifest_enabled": workspace_manifest_enabled,
-        "tools_rich_files_enabled": rich_files_enabled,
-        "tools_knowledge_enabled": knowledge_enabled,
-        "knowledge_roots": knowledge_roots,
-        "tools_lsp_enabled": lsp_enabled,
-        "tools_lsp_command_typescript": lsp_command_typescript,
-        "tools_lsp_command_python": lsp_command_python,
-        "tools_load_skill_enabled": load_skill_enabled,
-        "skills_bundled_root": skills_bundled_root,
-        "skills_bundled_enabled": skills_bundled_enabled,
-        "skills_user_root": skills_user_root,
-        "skills_user_enabled": skills_user_enabled,
-        "skills_project_root": skills_project_root,
-        "skills_project_enabled": skills_project_enabled,
-        "skills_disabled_ids": skills_disabled_ids,
-        "skills_auto_index": skills_auto_index,
-        # Reconstruct the two feature flags run_command consumes so
-        # build_tool_bindings -> configure_shell_security arms the classifier and
-        # git telemetry inside this subprocess (see main()'s --*-enabled args).
-        "feature_flags": {
-            "shell_security": shell_security_enabled,
-            "git_tracking": git_tracking_enabled,
-        },
+        "host_mode": "desktop",
+        "host_execution_policy_version": None,
+        "desktop_execution_policy_version": None,
+        "pre_change_snapshot_root": None,
+        "tools_glob_enabled": True,
+        "tools_grep_enabled": True,
+        "tools_edit_file_enabled": True,
+        "tools_delete_file_enabled": True,
+        "tools_move_file_enabled": True,
+        "tools_distill_enabled": True,
+        "tools_shell_enabled": False,
+        "tools_web_enabled": False,
+        "tools_web_rate_limit_per_min": 30,
+        "tools_web_max_fetch_bytes": 1048576,
+        "tools_web_allow_private_addresses": False,
+        "tools_web_search_provider": "duckduckgo",
+        "tools_web_searxng_url": None,
+        "tools_web_search_provider_keys": None,
+        "tools_image_read_enabled": False,
+        "tools_max_search_file_bytes": 2097152,
+        "tools_max_edit_file_bytes": 2097152,
+        "tools_python_runtime_enabled": False,
+        "tools_python_runtime_timeout_seconds": 30,
+        "tools_python_runtime_max_memory_mb": 512,
+        "tools_python_runtime_interpreter": None,
+        "tools_python_runtime_root": None,
+        "tools_python_runtime_bundled_python": None,
+        "tools_python_runtime_wheelhouse_dir": None,
+        "tools_todo_enabled": False,
+        "tools_connections_enabled": True,
+        "connections_engine_type": "mock",
+        "connections_engine_host": None,
+        "connections_mcp_servers": (),
+        "tools_mermaid_enabled": False,
+        "tools_workspace_manifest_enabled": False,
+        "tools_rich_files_enabled": False,
+        "tools_knowledge_enabled": False,
+        "knowledge_roots": (),
+        "tools_lsp_enabled": False,
+        "tools_lsp_command_typescript": None,
+        "tools_lsp_command_python": None,
+        "tools_load_skill_enabled": True,
+        "skills_bundled_root": None,
+        "skills_bundled_enabled": True,
+        "skills_user_root": None,
+        "skills_user_enabled": True,
+        "skills_project_root": None,
+        "skills_project_enabled": True,
+        "skills_disabled_ids": (),
+        "skills_auto_index": "auto",
+        "feature_flags": {"shell_security": False, "git_tracking": False},
+        **(config or {}),
     }
+    host_policy = host_policy_from_cli(config["host_mode"], config["host_execution_policy_version"])
+    desktop_policy = desktop_policy_from_cli(config["desktop_execution_policy_version"])
+    config.update(
+        host_mode=host_policy.mode,
+        host_execution_policy_version=host_policy.version,
+        desktop_execution_policy_version=desktop_policy.version,
+    )
     # The owned builtin process is reused across project requests. Register the
     # knowledge handlers once even when the legacy startup config is disabled;
     # the AI request contract still hides them unless the captured request has
     # knowledge roots, and the handler itself requires a per-call registry.
     registry_config = {
         **config,
-        "tools_knowledge_enabled": knowledge_enabled or request_scoped_authority,
-        "knowledge_roots": knowledge_roots if knowledge_enabled else (),
+        "tools_knowledge_enabled": config["tools_knowledge_enabled"] or request_scoped_authority,
+        "knowledge_roots": config["knowledge_roots"] if config["tools_knowledge_enabled"] else (),
     }
     bindings = build_tool_bindings(
         config=registry_config,
-        include_shell=shell_enabled and not desktop_policy.enforced,
+        include_shell=config["tools_shell_enabled"] and not desktop_policy.enforced,
     )
     bindings["operation_status"] = lambda arguments, workspace: operation_status_tool(
         arguments,
@@ -361,26 +311,25 @@ def _result_response(message_id: Any, result: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _redact_error_message(message: str) -> str:
-    redacted = _DELIMITED_PATH_RE.sub(
-        lambda match: f"{match.group(0)[0]}<path>{match.group(0)[-1]}",
-        str(message),
-    )
-    redacted = _BARE_PATH_RE.sub("<path>", redacted)
+def _redact_error_message(message: str, *, keep: PathKeeper | None = None) -> str:
+    redacted = redact_error_paths(str(message), keep=keep)
     if len(redacted) > _MAX_ERROR_MESSAGE_CHARS:
         return f"{redacted[:_MAX_ERROR_MESSAGE_CHARS]}\n...[truncated]"
     return redacted
 
 
-def _error_response(
+def _error_response(  # noqa: PLR0913 - keyword-only response fields.
     message_id: Any,
     code: str,
     message: str,
     *,
     retryable: bool = False,
     metadata: dict[str, object] | None = None,
+    keep_path: PathKeeper | None = None,
 ) -> dict[str, Any]:
-    safe_message = _redact_error_message(message)
+    # HB-017: the model sees paths the call named or its workspace holds
+    # (``keep_path``); every other absolute path stays ``<path>``.
+    safe_message = _redact_error_message(message, keep=keep_path)
     return {
         "jsonrpc": "2.0",
         "id": message_id,
@@ -481,29 +430,13 @@ def _postprocess_call_output(
     return processed
 
 
-def _raise_if_breaker_open(tool_name: str) -> None:
-    for phase in PHASE_NAMES:
-        open_reason = breaker_open_reason(tool_name, phase)
-        if open_reason is not None:
-            raise ToolExecutionFailure(
-                code=CMP_TOOL_IO_FAILED,
-                message=open_reason,
-                retryable=False,
-                error_details={
-                    "failure_class": "unavailable",
-                    "effects": "none",
-                    "failed_phase": phase,
-                },
-            )
-
-
 def _traced_failure_data(
     *, tool_name: str, error: ToolExecutionFailure, trace: PhaseTrace, trace_id: str
 ) -> dict[str, str]:
     error_data = error.to_error_data()
     failed_phase = error_data.get("failed_phase") or trace.current_phase
     if failed_phase:
-        record_failure(tool_name, failed_phase)
+        record_breaker_outcome(tool_name, failed_phase, error, error_data)
         error_data.setdefault("failed_phase", failed_phase)
     error_data.setdefault("phase_timings_json", trace.phase_timings_json())
     if trace_id:
@@ -514,7 +447,6 @@ def _traced_failure_data(
 def _add_success_trace_metadata(
     *,
     tool_name: str,
-    success: bool,
     metadata: dict[str, Any],
     trace: PhaseTrace,
     trace_id: str,
@@ -522,9 +454,10 @@ def _add_success_trace_metadata(
     metadata.setdefault("phase_timings_json", trace.phase_timings_json())
     if trace_id:
         metadata.setdefault("trace_id", trace_id)
-    if success:
-        record_success(tool_name, "execute")
-        record_success(tool_name, "validate")
+    # The handler returned: the tool works even when its result reports a
+    # failure (a non-zero exit), so the breaker closes either way (HB-015).
+    for phase in PHASE_NAMES:
+        record_success(tool_name, phase)
 
 
 def _unpack_tool_output(
@@ -610,7 +543,7 @@ def _handle_tools_call(  # noqa: C901, PLR0911, PLR0912
             workspace = request_scope.workspace
         scope_binding = request_scope if request_scope is not None else nullcontext()
         with scope_binding, trace:
-            _raise_if_breaker_open(tool.name)
+            raise_if_breaker_open(tool.name)
             with trace.phase("validate"):
                 validated_arguments, operation_id, scope = _prepare_call_arguments(
                     tool,
@@ -682,7 +615,7 @@ def _handle_tools_call(  # noqa: C901, PLR0911, PLR0912
             arguments=arguments,
             duration_ms=(time.perf_counter() - started_at) * 1000,
             result_size=len(error.message),
-            tool_output=error.message,
+            tool_output=redact_error_paths(error.message),
             success=False,
             error_code=error.code,
         )
@@ -692,6 +625,7 @@ def _handle_tools_call(  # noqa: C901, PLR0911, PLR0912
             error.code,
             error.message,
             retryable=error.retryable,
+            keep_path=error_path_keeper(arguments=arguments, workspace_root=workspace.root),
             metadata={
                 **error_data,
                 **({"resource_cleanup": cleanup} if cleanup else {}),
@@ -712,11 +646,16 @@ def _handle_tools_call(  # noqa: C901, PLR0911, PLR0912
             arguments=arguments,
             duration_ms=(time.perf_counter() - started_at) * 1000,
             result_size=len(error_message),
-            tool_output=error_message,
+            tool_output=redact_error_paths(error_message),
             success=False,
             error_code=CMP_MCP_SERVER_FAILED,
         )
-        return _error_response(message_id, CMP_MCP_SERVER_FAILED, f"tool execution failed: {error}")
+        return _error_response(
+            message_id,
+            CMP_MCP_SERVER_FAILED,
+            error_message,
+            keep_path=error_path_keeper(arguments=arguments, workspace_root=workspace.root),
+        )
     (
         output_text,
         success,
@@ -736,7 +675,6 @@ def _handle_tools_call(  # noqa: C901, PLR0911, PLR0912
     )
     _add_success_trace_metadata(
         tool_name=tool.name,
-        success=bool(success),
         metadata=metadata,
         trace=trace,
         trace_id=trace_id,
@@ -814,13 +752,13 @@ def _build_workspace_guard(args: argparse.Namespace) -> WorkspaceGuard:
     recovery_root = str(args.workspace_recovery_root or "").strip()
     mutation_journal = None
     if root and recovery_root:
-        from sidecar.ai.routing.mutation_change_set_lifecycle import (  # noqa: PLC0415
+        from sidecar.ai.routing.mutation_change_set_lifecycle import (
             MutationChangeSetLifecycle,
         )
-        from sidecar.ai.tools.workspace_mutation_journal_store import (  # noqa: PLC0415
+        from sidecar.ai.tools.workspace_mutation_journal_store import (
             WorkspaceMutationJournalStore,
         )
-        from sidecar.ai.tools.workspace_retention import (  # noqa: PLC0415
+        from sidecar.ai.tools.workspace_retention import (
             run_recovery_maintenance,
         )
 
@@ -849,11 +787,32 @@ def _parse_bool_arg(value: object) -> bool:
     return str(value).strip().lower() in _TRUE_ARG_VALUES
 
 
+def _configure_logging(*, log_level: str = "info", capture_mode: str = "redacted") -> bool:
+    try:
+        # Its own file: this process lives as long as the sidecar, and on Windows a
+        # second long-lived handle on sidecar.log blocks every rotation rename.
+        log_path = Path.home() / ".companion" / "logs" / "builtin-tools.log"
+    except (RuntimeError, OSError):
+        return False
+    configure_sidecar_logging(
+        log_path, log_level=log_level, capture_mode=capture_mode, mirror_to_stderr=False,
+    )
+    return True
+
+
 def main(argv: Sequence[str] | None = None) -> None:
     configure_stdio()
     # Source-mode launches skip sidecar.__main__; frozen ones already ran this (no-op).
     activate_optional_sites()
     parser = build_argument_parser()
+    parser.add_argument(
+        "--diagnostics-log-level", choices=("debug", "info", "warn", "warning", "error"),
+        default="info",
+    )
+    parser.add_argument(
+        "--diagnostics-capture-mode", choices=("redacted", "sanitized_snippets"),
+        default="redacted",
+    )
     args = parser.parse_args(list(argv) if argv is not None else None)
     try:
         host_policy = host_policy_from_cli(
@@ -885,110 +844,96 @@ def main(argv: Sequence[str] | None = None) -> None:
         str(workspace.root) if workspace.root is not None else None,
         enabled=host_policy.mode == "server",
     )
-    glob_enabled = _parse_bool_arg(args.glob_enabled)
-    grep_enabled = _parse_bool_arg(args.grep_enabled)
-    edit_enabled = _parse_bool_arg(args.edit_enabled)
-    delete_file_enabled = _parse_bool_arg(args.delete_file_enabled)
-    move_file_enabled = _parse_bool_arg(args.move_file_enabled)
-    distill_enabled = _parse_bool_arg(args.distill_enabled)
-    shell_enabled = _parse_bool_arg(args.shell_enabled)
-    shell_security_enabled = _parse_bool_arg(args.shell_security_enabled)
-    git_tracking_enabled = _parse_bool_arg(args.git_tracking_enabled)
-    web_enabled = _parse_bool_arg(args.web_enabled)
-    web_allow_private_addresses = _parse_bool_arg(args.web_allow_private_addresses)
-    image_read_enabled = _parse_bool_arg(args.image_read_enabled)
-    python_runtime_enabled = _parse_bool_arg(args.python_runtime_enabled)
-    todo_enabled = _parse_bool_arg(args.todo_enabled)
-    connections_enabled = _parse_bool_arg(args.connections_enabled)
-    mermaid_enabled = _parse_bool_arg(args.mermaid_enabled)
-    workspace_manifest_enabled = _parse_bool_arg(args.workspace_manifest_enabled)
-    rich_files_enabled = _parse_bool_arg(args.rich_files_enabled)
-    knowledge_enabled = _parse_bool_arg(args.knowledge_enabled)
     knowledge_roots = tuple(
         token
         for token in (str(item or "").strip() for item in (args.knowledge_roots or []))
         if token
     )
-    lsp_enabled = _parse_bool_arg(args.lsp_enabled)
-    load_skill_enabled = _parse_bool_arg(args.load_skill_enabled)
-    skills_bundled_enabled = _parse_bool_arg(args.skills_bundled_enabled)
-    skills_user_enabled = _parse_bool_arg(args.skills_user_enabled)
-    skills_project_enabled = _parse_bool_arg(args.skills_project_enabled)
     skills_disabled_ids = tuple(
         token
         for token in (str(item or "").strip() for item in args.skills_disabled_ids)
         if token
     )[:256]
     tools = _default_tools(
-        host_mode=host_policy.mode,
-        host_execution_policy_version=host_policy.version,
-        desktop_execution_policy_version=desktop_policy.version,
+        config={
+            "host_mode": host_policy.mode,
+            "host_execution_policy_version": host_policy.version,
+            "desktop_execution_policy_version": desktop_policy.version,
+            "pre_change_snapshot_root": str(args.pre_change_snapshot_root).strip() or None,
+            "tools_glob_enabled": _parse_bool_arg(args.glob_enabled),
+            "tools_grep_enabled": _parse_bool_arg(args.grep_enabled),
+            "tools_edit_file_enabled": _parse_bool_arg(args.edit_enabled),
+            "tools_delete_file_enabled": _parse_bool_arg(args.delete_file_enabled),
+            "tools_move_file_enabled": _parse_bool_arg(args.move_file_enabled),
+            "tools_distill_enabled": _parse_bool_arg(args.distill_enabled),
+            "tools_shell_enabled": _parse_bool_arg(args.shell_enabled),
+            "tools_web_enabled": _parse_bool_arg(args.web_enabled),
+            "tools_web_rate_limit_per_min": int(str(args.web_rate_limit_per_min).strip() or "30"),
+            "tools_web_max_fetch_bytes": int(str(args.web_max_fetch_bytes).strip() or "1048576"),
+            "tools_web_allow_private_addresses": _parse_bool_arg(args.web_allow_private_addresses),
+            "tools_web_search_provider": str(args.web_search_provider).strip() or "duckduckgo",
+            "tools_web_searxng_url": str(args.web_searxng_url).strip() or None,
+            "tools_image_read_enabled": _parse_bool_arg(args.image_read_enabled),
+            "tools_max_search_file_bytes": int(
+                str(args.max_search_file_bytes).strip() or "2097152"
+            ),
+            "tools_max_edit_file_bytes": int(str(args.max_edit_file_bytes).strip() or "2097152"),
+            "tools_python_runtime_enabled": _parse_bool_arg(args.python_runtime_enabled),
+            "tools_python_runtime_timeout_seconds": int(
+                str(args.python_runtime_timeout_seconds).strip() or "30"
+            ),
+            "tools_python_runtime_max_memory_mb": int(
+                str(args.python_runtime_max_memory_mb).strip() or "512"
+            ),
+            "tools_python_runtime_interpreter": str(args.python_runtime_interpreter).strip()
+            or None,
+            "tools_python_runtime_root": str(args.python_runtime_root).strip() or None,
+            "tools_python_runtime_bundled_python": str(args.python_runtime_bundled_python).strip()
+            or None,
+            "tools_python_runtime_wheelhouse_dir": str(args.python_runtime_wheelhouse_dir).strip()
+            or None,
+            "tools_todo_enabled": _parse_bool_arg(args.todo_enabled),
+            "tools_connections_enabled": _parse_bool_arg(args.connections_enabled),
+            "connections_engine_type": str(args.connections_engine_type).strip() or "mock",
+            "connections_engine_host": str(args.connections_engine_host).strip() or None,
+            "connections_mcp_servers": tuple(
+                (str(server[0]).strip(), str(server[1]).strip(), str(server[2]).strip())
+                for server in args.connections_mcp_servers
+            ),
+            "tools_mermaid_enabled": _parse_bool_arg(args.mermaid_enabled),
+            "tools_workspace_manifest_enabled": _parse_bool_arg(args.workspace_manifest_enabled),
+            "tools_rich_files_enabled": _parse_bool_arg(args.rich_files_enabled),
+            "tools_knowledge_enabled": _parse_bool_arg(args.knowledge_enabled),
+            "knowledge_roots": knowledge_roots,
+            "tools_lsp_enabled": _parse_bool_arg(args.lsp_enabled),
+            "tools_lsp_command_typescript": str(args.lsp_command_typescript).strip() or None,
+            "tools_lsp_command_python": str(args.lsp_command_python).strip() or None,
+            "tools_load_skill_enabled": _parse_bool_arg(args.load_skill_enabled),
+            "skills_bundled_root": str(args.skills_bundled_root).strip() or None,
+            "skills_bundled_enabled": _parse_bool_arg(args.skills_bundled_enabled),
+            "skills_user_root": str(args.skills_user_root).strip() or None,
+            "skills_user_enabled": _parse_bool_arg(args.skills_user_enabled),
+            "skills_project_root": str(args.skills_project_root).strip() or None,
+            "skills_project_enabled": _parse_bool_arg(args.skills_project_enabled),
+            "skills_disabled_ids": skills_disabled_ids,
+            "skills_auto_index": args.skills_auto_index,
+            "feature_flags": {
+                "shell_security": _parse_bool_arg(args.shell_security_enabled),
+                "git_tracking": _parse_bool_arg(args.git_tracking_enabled),
+            },
+        },
         workspace_root_present=workspace.root is not None,
-        pre_change_snapshot_root=str(args.pre_change_snapshot_root).strip() or None,
-        glob_enabled=glob_enabled,
-        grep_enabled=grep_enabled,
-        edit_enabled=edit_enabled,
-        delete_file_enabled=delete_file_enabled,
-        move_file_enabled=move_file_enabled,
-        distill_enabled=distill_enabled,
-        shell_enabled=shell_enabled,
-        shell_security_enabled=shell_security_enabled,
-        git_tracking_enabled=git_tracking_enabled,
-        web_enabled=web_enabled,
-        web_rate_limit_per_min=int(str(args.web_rate_limit_per_min).strip() or "30"),
-        web_max_fetch_bytes=int(str(args.web_max_fetch_bytes).strip() or "1048576"),
-        web_allow_private_addresses=web_allow_private_addresses,
-        web_search_provider=str(args.web_search_provider).strip() or "duckduckgo",
-        web_searxng_url=str(args.web_searxng_url).strip() or None,
-        image_read_enabled=image_read_enabled,
-        max_search_file_bytes=int(str(args.max_search_file_bytes).strip() or "2097152"),
-        max_edit_file_bytes=int(str(args.max_edit_file_bytes).strip() or "2097152"),
-        python_runtime_enabled=python_runtime_enabled,
-        python_runtime_timeout_seconds=int(
-            str(args.python_runtime_timeout_seconds).strip() or "30"
-        ),
-        python_runtime_max_memory_mb=int(str(args.python_runtime_max_memory_mb).strip() or "512"),
-        python_runtime_interpreter=str(args.python_runtime_interpreter).strip() or None,
-        python_runtime_root=str(args.python_runtime_root).strip() or None,
-        python_runtime_bundled_python=str(args.python_runtime_bundled_python).strip() or None,
-        python_runtime_wheelhouse_dir=str(args.python_runtime_wheelhouse_dir).strip() or None,
-        todo_enabled=todo_enabled,
-        connections_enabled=connections_enabled,
-        connections_engine_type=str(args.connections_engine_type).strip() or "mock",
-        connections_engine_host=str(args.connections_engine_host).strip() or None,
-        connections_mcp_servers=tuple(
-            (
-                str(server[0]).strip(),
-                str(server[1]).strip(),
-                str(server[2]).strip(),
-            )
-            for server in args.connections_mcp_servers
-        ),
-        mermaid_enabled=mermaid_enabled,
-        workspace_manifest_enabled=workspace_manifest_enabled,
-        rich_files_enabled=rich_files_enabled,
-        knowledge_enabled=knowledge_enabled,
-        knowledge_roots=knowledge_roots,
         request_scoped_authority=True,
-        lsp_enabled=lsp_enabled,
-        lsp_command_typescript=str(args.lsp_command_typescript).strip() or None,
-        lsp_command_python=str(args.lsp_command_python).strip() or None,
-        load_skill_enabled=load_skill_enabled,
-        skills_bundled_root=str(args.skills_bundled_root).strip() or None,
-        skills_bundled_enabled=skills_bundled_enabled,
-        skills_user_root=str(args.skills_user_root).strip() or None,
-        skills_user_enabled=skills_user_enabled,
-        skills_project_root=str(args.skills_project_root).strip() or None,
-        skills_project_enabled=skills_project_enabled,
-        skills_disabled_ids=skills_disabled_ids,
-        skills_auto_index=args.skills_auto_index,
     )
 
     install_termination_handler()
-    inbox = start_stdin_pump()
+    logging_configured = _configure_logging(
+        log_level=args.diagnostics_log_level, capture_mode=args.diagnostics_capture_mode,
+    )
     # The finally also covers SIGTERM: the termination handler exits via
     # SystemExit, so cached language servers are closed on both exit paths.
     try:
+        inbox = start_stdin_pump()
         while True:
             stripped = inbox.get()
             if stripped is None:
@@ -1008,7 +953,11 @@ def main(argv: Sequence[str] | None = None) -> None:
             response = _dispatch_message(payload, tools, workspace, host_config)
             _write_response(response)
     finally:
-        shutdown_lsp_tools()
+        try:
+            shutdown_lsp_tools()
+        finally:
+            if logging_configured:
+                shutdown_sidecar_logging()
 
 
 if __name__ == "__main__":

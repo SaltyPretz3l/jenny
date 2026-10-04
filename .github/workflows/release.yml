@@ -4,7 +4,7 @@ name: Release
 # never publish directly: verified bytes upload only into the prepared draft.
 # The owner waits for every upload job, qualifies the complete candidate, then
 # publishes it. Signing remains optional; unsigned assets do not attest identity.
-# Each OS builds its own sidecar and native hosts. Linux additionally smokes its
+# Each OS builds its own sidecar. Linux additionally smokes its
 # unpacked app before packaging. Failed experimental legs do not block Windows.
 # One preparation job avoids the duplicate-draft race from the 1.0.0 dry run;
 # per-tag serialization and draft-aware checks prevent published-release reruns.
@@ -124,19 +124,6 @@ jobs:
 
       - name: Build sidecar artifact (this OS)
         run: python scripts/packaging/build_sidecar_artifact.py
-
-      - name: Setup native Rust toolchain
-        shell: bash
-        run: |
-          rustup toolchain install stable --profile minimal
-          rustup default stable
-          rustc --version
-
-      - name: Build restricted plugin host (this OS)
-        run: npm run build:restricted-host:release
-
-      - name: Build full plugin host supervisor (this OS)
-        run: npm run build:full-host-supervisor:release
 
       - name: Emit sidecar SBOM
         run: python scripts/packaging/emit_sbom.py

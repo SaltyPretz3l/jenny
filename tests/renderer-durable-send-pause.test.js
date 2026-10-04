@@ -245,3 +245,55 @@ test('an outstanding pause request still costs exactly one snapshot read per tic
   await h.state.runtimeSendController.refreshPending();
   assert.equal(calls.snapshots.length - before, 2, 'one snapshot per tick, no extra read per request');
 });
+
+// FG-007: after a relaunch a paused send comes back as a detached row; the
+// runtime's work read names its prompt so the person can tell what Resume
+// would send. The preview stays in this renderer (no log line carries it).
+test('a restored paused reply shows its prompt preview from one work read and falls back to "Paused reply"', async t => {
+  let clock = Date.now();
+  t.mock.method(Date, 'now', () => clock);
+  let failFirst = true;
+  const { h, calls } = queueHarness(t, {
+    snapshot: () => ({ ok: true, next_cursor: null,
+      work: [summary(1, { status: 'paused' }), summary(2, { status: 'paused' }), summary(3, { status: 'paused' })] }),
+    getWork: payload => {
+      if (payload.work_id === 'work_3' && failFirst) { failFirst = false; throw new Error('runtime hiccup'); }
+      return { ok: true, work: { work_id: payload.work_id, session_id: 'session-1', status: 'paused', revision: 3,
+        prompt_preview: { work_1: 'Reconcile the March statement', work_3: 'Continue G1' }[payload.work_id] ?? null } };
+    },
+  });
+  const flush = () => new Promise(resolve => setImmediate(resolve));
+  const labels = () => h.state.runtimeSendController.listPending('session-1').map(row => [row.key, row.prompt]);
+  await h.state.runtimeSendController.refreshSessionRows('session-1');
+  await flush();
+  assert.deepEqual(labels(), [['work:work_1', 'Reconcile the March statement'], ['work:work_2', 'Paused reply'],
+    ['work:work_3', 'Paused reply']]);
+  assert.deepEqual(calls.works.map(read => read.work_id).sort(), ['work_1', 'work_2', 'work_3']);
+  clock += 20000;
+  await h.state.runtimeSendController.refreshSessionRows('session-1');
+  await flush();
+  assert.deepEqual(calls.works.map(read => read.work_id).sort(), ['work_1', 'work_2', 'work_3', 'work_3'],
+    'a known preview (or a known absence) is never re-read; a failed read is retried');
+  assert.deepEqual(labels()[2], ['work:work_3', 'Continue G1']);
+  assert.equal(JSON.stringify(h.calls.logs).includes('Reconcile the March'), false, 'the preview is never logged');
+});
+
+// HB-034 F5: a reply that paused by itself and continues by itself has its own
+// line in the chat. The strip's "Paused reply / Resume" row is for a reply that
+// needs someone: it comes back as soon as the wait stops being automatic.
+test('a reply waiting on its own has no strip row; one that stopped being automatic gets it back', async t => {
+  const { h } = queueHarness(t, {
+    snapshot: () => ({ ok: true, next_cursor: null, work: [summary(1, { status: 'paused' })] }),
+    getWork: payload => workRead('paused', 9)(payload),
+  });
+  await h.state.runtimeSendController.refreshSessionRows('session-1');
+  assert.equal(h.state.runtimeSendController.listPending('session-1').length, 1);
+
+  let waiting = true;
+  h.state.streamWaits = { isWaitingWork: (workId) => waiting && workId === 'work_1' };
+  assert.deepEqual(h.state.runtimeSendController.listPending('session-1'), []);
+
+  waiting = false;
+  assert.deepEqual(h.state.runtimeSendController.listPending('session-1').map(row => [row.key, row.status]),
+    [['work:work_1', 'paused']]);
+});

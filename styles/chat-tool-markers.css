@@ -50,7 +50,7 @@
 }
 
 .tool-marker-banner-title {
-  font-weight: var(--tl-weight-emphasis);
+  font-weight: var(--tl-weight-label);
   color: var(--text-primary);
 }
 
@@ -217,7 +217,7 @@
 }
 
 .approval-batch-banner-title {
-  font-weight: var(--tl-weight-emphasis);
+  font-weight: var(--tl-weight-label);
   letter-spacing: 0;
 }
 
@@ -234,7 +234,7 @@
   font-weight: var(--tl-weight-label);
   letter-spacing: 0;
   text-transform: none;
-  padding: calc(var(--space-2) * var(--chat-zoom-factor, 1)) calc(var(--space-4) * var(--chat-zoom-factor, 1));
+  padding: var(--space-2) var(--space-4);
   border-radius: var(--tl-radius-chip);
   border: 1px solid color-mix(in srgb, var(--border-default) 76%, transparent);
   background: color-mix(in srgb, var(--surface-input-background) 88%, transparent);
@@ -256,26 +256,18 @@
   outline-offset: 2px;
 }
 
-.approval-batch-action--allow {
+/* "Allow all once" is the ordinary answer and carries the success tone;
+   "Always allow all" (--allow) grants a standing permission and stays the
+   neutral secondary: the base style above, no accent of its own. */
+.approval-batch-action--allow-once {
   border-color: color-mix(in srgb, var(--widget-tool-success-color) 50%, var(--border-default));
   color: var(--widget-tool-success-color);
 }
 
-.approval-batch-action--allow:hover {
+.approval-batch-action--allow-once:hover {
   background: color-mix(in srgb, var(--widget-tool-success-color) 12%, transparent);
   border-color: var(--widget-tool-success-color);
   color: var(--widget-tool-success-color);
-}
-
-.approval-batch-action--allow-once {
-  border-color: color-mix(in srgb, var(--tl-status-active) 44%, var(--border-default));
-  color: var(--tl-status-active);
-}
-
-.approval-batch-action--allow-once:hover {
-  background: color-mix(in srgb, var(--tl-status-active) 12%, transparent);
-  border-color: var(--tl-status-active);
-  color: var(--tl-status-active);
 }
 
 .approval-batch-action--deny {

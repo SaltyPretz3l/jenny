@@ -5,9 +5,12 @@ const { FileJsonStore } = require('../backend/file-json-store');
 const {
   normalizeSessionRuntime,
 } = require('../shell-config-session-runtime');
+const { CONFIG_VERSION } = require('../shell-config-state');
 
 const PORTABLE_PREFERENCES_VERSION = 1;
-const PORTABLE_SHELL_CONFIG_VERSION = 54;
+// The projection below is stamped with the live shell-config schema version so a
+// current desktop export restores; a pinned literal lagged and refused v55+ exports.
+const PORTABLE_SHELL_CONFIG_VERSION = CONFIG_VERSION;
 const PORTABLE_PREFERENCES_RELATIVE_PATH = path.join('data-lifecycle', 'portable-preferences.json');
 const APPEARANCE_KEYS = Object.freeze([
   'paletteId',
@@ -17,10 +20,13 @@ const APPEARANCE_KEYS = Object.freeze([
   'composerHoloId',
   'spriteHoloId',
   'threadStyleId',
-  'timelineStyleId',
   'fontScaleId',
   'chatWidthId',
+  'typeScaleVersion',
   'explicitMotion',
+  'startupAnimation',
+  'titlebarLoad',
+  'artifactAutoOpen',
 ]);
 const LOCAL_ENGINE_TYPES = Object.freeze(['ollama', 'vllm']);
 

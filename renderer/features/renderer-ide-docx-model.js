@@ -17,6 +17,7 @@
   const XML_NS = 'http://www.w3.org/XML/1998/namespace';
   const XML_DECL = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n';
   const PROPERTY_NAMES = { bold: 'b', italic: 'i', underline: 'u', strike: 'strike' };
+  const HISTORY_BYTE_BUDGET = 32 * 1024 * 1024;
   const RPR_ORDER = [
     'rStyle', 'rFonts', 'b', 'bCs', 'i', 'iCs', 'caps', 'smallCaps', 'strike', 'dstrike',
     'outline', 'shadow', 'emboss', 'imprint', 'noProof', 'snapToGrid', 'vanish', 'webHidden',
@@ -274,15 +275,12 @@
     const hadNumberingPart = options.numberingXml !== null && options.numberingXml !== undefined;
     let relsDeclaration = declarationOf(options.relsXml);
     let relsDoc = parseNumbering(options.relsXml);
-    let media = options.media instanceof Map ? new Map(options.media) : new Map();
-    const initialMediaNames = new Set(media.keys());
+    const media = options.media instanceof Map ? new Map(options.media) : new Map();
+    const resources = options.resources || { stacks: [], sequence: 0, mediaStores: [] };
+    const mediaRetention = imageUtils.createMediaRetention(media, resources);
 
     function relsXml() {
       return relsDoc ? serializeDom(relsDoc, relsDeclaration) : null;
-    }
-
-    function mediaSignature() {
-      return JSON.stringify(Array.from(media.entries()).sort(([left], [right]) => left.localeCompare(right)));
     }
 
     function documentXml() {
@@ -298,18 +296,37 @@
     let savedDocument = documentXml();
     let savedNumbering = initialNumbering;
     let savedRels = relsXml();
-    let savedMedia = mediaSignature();
+    let savedMedia = mediaRetention.identities(documentDoc, relsDoc);
     const undoStack = [];
     const redoStack = [];
+    resources.stacks.push(undoStack, redoStack);
+    mediaRetention.reclaim = () => mediaRetention.prune(documentDoc, relsDoc, [...undoStack, ...redoStack]);
+    mediaRetention.keptLength = () => mediaRetention.insertedLength(documentDoc, relsDoc, undoStack);
     let transactionDepth = 0;
     let transactionRecorded = false;
     let mutationVersion = 0;
 
     function snapshot() {
-      return {
+      const state = {
         documentXml: documentXml(), numberingXml: numberingXml(), relsXml: relsXml(),
-        media: Array.from(media.entries()).map(([name, value]) => [name, { ...value }]),
+        mediaNames: mediaRetention.referenced(documentDoc, relsDoc), ordinal: resources.sequence++,
       };
+      state.bytes = state.documentXml.length + (state.numberingXml?.length || 0) + (state.relsXml?.length || 0);
+      return state;
+    }
+
+    function trimHistory() {
+      const states = resources.stacks.flat();
+      let bytes = states.reduce((sum, state) => sum + state.bytes, 0);
+      // The newest snapshot was just recorded: one level always survives a large document.
+      const newest = Math.max(...states.map((state) => state.ordinal));
+      while (bytes > HISTORY_BYTE_BUDGET) {
+        const candidates = resources.stacks.filter((stack) => stack.length && stack[0].ordinal !== newest);
+        if (!candidates.length) break;
+        const oldest = candidates.reduce((left, right) => left[0].ordinal < right[0].ordinal ? left : right);
+        bytes -= oldest.shift().bytes;
+      }
+      for (const store of resources.mediaStores) store.reclaim();
     }
 
     function recordMutation() {
@@ -319,7 +336,12 @@
         if (undoStack.length > 200) {
           undoStack.shift();
         }
-        redoStack.length = 0;
+        // A new edit abandons redo in every part before applying the shared
+        // byte budget, so doomed snapshots cannot evict useful undo states.
+        for (let index = 1; index < resources.stacks.length; index += 2) {
+          resources.stacks[index].length = 0;
+        }
+        trimHistory();
         if (transactionDepth) {
           transactionRecorded = true;
         }
@@ -333,7 +355,6 @@
       numberingDoc = parseNumbering(state.numberingXml);
       relsDeclaration = declarationOf(state.relsXml);
       relsDoc = parseNumbering(state.relsXml);
-      media = new Map(state.media || []);
     }
 
     function relationshipTarget(id) {
@@ -552,6 +573,7 @@
       for (const item of affected) {
         removeRunSlice(item.run, Math.max(start, item.start) - item.start, Math.min(end, item.end) - item.start);
       }
+      mediaRetention.reclaim();
       return true;
     }
 
@@ -860,6 +882,7 @@
       getDocumentDoc: () => documentDoc,
       getRelsDoc: () => relsDoc,
       getMedia: () => media,
+      mediaRetention,
       ensureRelationships,
       paragraphFor,
       validRange,
@@ -899,6 +922,7 @@
         }
         redoStack.push(snapshot());
         restore(undoStack.pop());
+        trimHistory();
         return true;
       },
       redo() {
@@ -907,6 +931,7 @@
         }
         undoStack.push(snapshot());
         restore(redoStack.pop());
+        trimHistory();
         return true;
       },
       canUndo() {
@@ -914,6 +939,9 @@
       },
       canRedo() {
         return redoStack.length > 0;
+      },
+      getHistoryCounts() {
+        return { undo: undoStack.length, redo: redoStack.length };
       },
       getMutationVersion() {
         return mutationVersion;
@@ -931,13 +959,13 @@
       },
       isDirty() {
         return documentXml() !== savedDocument || numberingXml() !== savedNumbering
-          || relsXml() !== savedRels || mediaSignature() !== savedMedia;
+          || relsXml() !== savedRels || !mediaRetention.matches(savedMedia, documentDoc, relsDoc);
       },
       markSaved() {
         savedDocument = documentXml();
         savedNumbering = numberingXml();
         savedRels = relsXml();
-        savedMedia = mediaSignature();
+        savedMedia = mediaRetention.identities(documentDoc, relsDoc);
       },
       serialize() {
         const currentNumbering = numberingXml();
@@ -951,7 +979,7 @@
         if (relsXml() !== initialRels) {
           result['word/_rels/document.xml.rels'] = relsXml();
         }
-        result.media = new Map(Array.from(media).filter(([name]) => !initialMediaNames.has(name)));
+        result.media = mediaRetention.exported(documentDoc, relsDoc);
         return result;
       },
       getUnsupportedNotes,

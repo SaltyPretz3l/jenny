@@ -59,3 +59,25 @@ def test_astra_matches_first_party_comparison_metadata() -> None:
 def test_every_catalog_value_is_a_positive_int() -> None:
     for model, length in CHATGPT_MODEL_CONTEXT_LENGTHS.items():
         assert isinstance(length, int) and length > 0, f"{model} -> {length!r}"
+
+
+
+def test_host_catalog_is_bounded_and_invalid_overlays_fall_back() -> None:
+    from sidecar.ai.engines.chatgpt_model_catalog import normalize_chatgpt_model_catalog
+
+    row = {"id": "gpt-6.1-sol", "label": "GPT-6.1 Sol", "context_length": 128_000,
+           "reasoning_efforts": ["low", "medium", "max"],
+           "default_reasoning_effort": "medium", "vision": True}
+    assert normalize_chatgpt_model_catalog([row]) == (row,)
+    for override in ({"context_length": 1_050_000}, {"context_length": True},
+                     {"id": "../escape"}, {"reasoning_efforts": ["ultra"]},
+                     {"default_reasoning_effort": "high"}, {"vision": "yes"}):
+        assert normalize_chatgpt_model_catalog([{**row, **override}]) == ()
+    assert normalize_chatgpt_model_catalog([row, row]) == ()
+    assert normalize_chatgpt_model_catalog([row] * 129) == ()
+
+
+def test_current_family_is_in_the_conservative_fallback() -> None:
+    for model in ("gpt-6.1-sol", "gpt-6-sol", "gpt-6-luna"):
+        assert CHATGPT_MODEL_CONTEXT_LENGTHS[model] == 272_000
+        assert "ultra" not in CHATGPT_MODEL_REASONING_PROFILES[model]["reasoning_efforts"]

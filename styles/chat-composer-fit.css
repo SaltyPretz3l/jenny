@@ -1,0 +1,483 @@
+/* styles/chat-composer-fit.css - split view W3-3 (2026-09-26, spec
+ * docs/plans/split-view/W3_SPEC_2026-09-26.md): a composer whose one-line
+ * toolbar would overflow collapses its settings into one summary pill.
+ * Imported after chat-composer-shell-v2.css (the rail and pill looks).
+ *
+ * Settings popover polish (2026-09-27, PO spec "collapsed composer settings
+ * popover"): the open group is a settings list (one 36px row per slot, label
+ * left, value right), a row's own menu opens over the list, and a chat-view
+ * button row never wraps. */
+
+/* Split view W3-3 (2026-09-26): toolbar fit. Expanded, the settings group is
+   one rail item that lays its slots out on the rail's own gap and carries the
+   break before the primary controls (its margin plus the rail gap make the
+   12px space-6 break, whichever of Stop, Pause and Send shows); the summary
+   pill exists only while collapsed.
+   renderer-composer-toolbar-fit.js sets [data-toolbar-compact]; the pill
+   toggles [data-settings-open]. */
+.composer-settings-group {
+  display: flex;
+  align-items: center;
+  gap: inherit;
+  margin-inline-end: var(--space-3);
+}
+
+.composer-settings-summary {
+  display: none;
+}
+
+/* Chat and Workspace share one line at any width. (0,3,0) beats the
+   narrow-window `.chat-view .composer-toolbar { flex-wrap: wrap }`. The fit
+   measures natural item widths; a resize that outruns its frame briefly
+   overflows sideways until the settings collapse. */
+:is(.chat-view, .ide-chat-dock-body) .composer .composer-toolbar {
+  flex-wrap: nowrap;
+  min-width: 0;
+}
+
+:is(.chat-view, .ide-chat-dock-body) .composer .composer-toolbar-left {
+  flex: none;
+}
+
+:is(.chat-view, .ide-chat-dock-body) .composer .composer-toolbar-right {
+  flex: 1 1 auto;
+  min-width: 0;
+  /* Gate F3: an overflowing rail spills past its end edge (the pane clips
+     it) instead of back over Attach and Commands and out of the pane. */
+  justify-content: safe flex-end;
+}
+
+:is(.chat-view, .ide-chat-dock-body) .composer .composer-rail {
+  flex-wrap: nowrap;
+}
+
+/* Expanded, rail items keep their natural width: measureComposerToolbar sums
+   offsetWidths, so an item that shrank to absorb the overflow would hide it
+   (the fit would never collapse and the slots would overlap). */
+:is(.chat-view, .ide-chat-dock-body) .composer:not([data-toolbar-compact]) :is(.composer-rail, .composer-settings-group) > * {
+  flex-shrink: 0;
+}
+
+.composer[data-toolbar-compact] .composer-rail {
+  position: relative;
+  flex-wrap: nowrap;
+}
+
+/* Squeezed, the pill's label gives way first; the mode icon, the caret,
+   Pause, Stop and Send keep their size. */
+.composer[data-toolbar-compact] .composer-rail > :is(.composer-send, .composer-stop-button, .composer-pause-button) {
+  flex: none;
+}
+
+/* Gate F3: collapsed while a reply streams, the queue button is the send
+   arrow alone ("Queue — runs in Auto" stays its aria-label), the size of
+   Stop beside it, so the row fits the split's pixel floor
+   (renderer-chat-pane-resizer.js MIN_PANE_WIDTH_PX). */
+.composer[data-toolbar-compact] .composer-rail > .composer-send.composer-send-queue {
+  width: auto;
+  aspect-ratio: 1;
+  padding: 0;
+  border-radius: 50%;
+  font-size: 0;
+}
+
+.composer[data-toolbar-compact] .composer-rail > .composer-send.composer-send-queue::before {
+  content: "\2191" / "";
+  font-size: var(--font-size-heading);
+}
+
+/* Collapsed, the row's gaps tighten to the settings pill's own so the split
+   floor still fits Chat, the pill and three primary controls. */
+.composer[data-toolbar-compact] :is(.composer-rail, .composer-toolbar-left) {
+  gap: var(--space-2);
+}
+
+/* The Chat chip never leaves the row; collapsed, it is its icon (the count
+   stays in its aria-label) so the summary pill keeps room at the split floor. */
+.composer[data-toolbar-compact] .composer-toolbar-left .composer-tools-chip {
+  width: var(--composer-secondary-control-size);
+  padding: 0;
+  justify-content: center;
+}
+
+.composer[data-toolbar-compact] .composer-toolbar-left .composer-tools-chip .inv-chip-label {
+  display: none;
+}
+
+.composer[data-toolbar-compact] .composer-settings-summary {
+  display: inline-flex;
+  flex: 0 1 auto;
+  min-width: 0;
+  /* Tighter than the base chip (gap space-3, padding-inline space-5): at the
+     316px split floor the streaming row needs the pill this narrow. */
+  gap: var(--space-2);
+  padding-inline: var(--space-2);
+  margin-inline-end: var(--space-3);
+}
+
+.composer[data-toolbar-compact] .composer-settings-summary .inv-chip-label {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.composer-settings-summary-mode {
+  color: var(--accent-amber);
+}
+
+.composer-settings-summary-mode-icon,
+.composer-settings-summary-caret {
+  display: inline-flex;
+  flex: none;
+}
+
+.composer-settings-summary-mode-icon {
+  color: var(--accent-amber);
+}
+
+.composer-settings-summary-mode-icon svg {
+  width: 12px;
+  height: 12px;
+}
+
+.composer-settings-summary-caret {
+  color: var(--text-muted);
+  transition: transform var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.composer-settings-summary-caret svg {
+  width: 10px;
+  height: 10px;
+}
+
+.composer-settings-summary[aria-expanded="true"] .composer-settings-summary-caret {
+  transform: rotate(180deg);
+}
+
+.composer[data-toolbar-compact] .composer-settings-group {
+  display: none;
+}
+
+/* The group becomes the popover: a settings list of the same controls, each
+   row labelled from its slot's data-settings-label. */
+.composer[data-toolbar-compact][data-settings-open] .composer-settings-group {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0;
+  margin-inline-end: 0;
+  position: absolute;
+  bottom: calc(100% + var(--space-3));
+  inset-inline-end: 0;
+  box-sizing: border-box;
+  width: min(280px, var(--settings-max-inline, 280px));
+  /* Bounded to its host (a short stacked dock) and scrollable. */
+  max-block-size: var(--settings-max-block, none);
+  overflow-y: auto;
+  padding: var(--space-2) 0;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border-strong);
+  background: var(--surface-popover-background);
+  box-shadow: var(--shadow-elevation-2);
+  z-index: var(--z-popover);
+}
+
+/* Row anatomy. :is() lends the group's id specificity so these beat the
+   slots' own id rules (#composerRunModeSlot { display: inline-flex } ...).
+   Slots are static so a row's .inv-popover resolves to the group (below). */
+.composer[data-toolbar-compact][data-settings-open] :is(#composerSettingsGroup, .composer-settings-group) > [data-settings-label] {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  position: static;
+  box-sizing: border-box;
+  width: auto;
+  min-width: 0;
+  min-height: 36px;
+  margin: 0;
+  padding: 0 var(--space-5);
+  cursor: pointer;
+}
+
+.composer[data-toolbar-compact][data-settings-open] :is(#composerSettingsGroup, .composer-settings-group) > [data-settings-label]:hover {
+  background: var(--surface-popover-row-hover);
+}
+
+.composer[data-toolbar-compact][data-settings-open] :is(#composerSettingsGroup, .composer-settings-group) > [data-settings-label]::before {
+  content: attr(data-settings-label);
+  flex: 0 0 72px;
+  color: var(--text-muted);
+  font-size: var(--font-size-body);
+  text-align: start;
+}
+
+/* An empty slot (no project pill, no usage yet) takes no row. */
+.composer[data-toolbar-compact][data-settings-open] :is(#composerSettingsGroup, .composer-settings-group) > [data-settings-label]:empty {
+  display: none;
+}
+
+/* The value: a row's direct content sits at the end edge. */
+.composer[data-toolbar-compact][data-settings-open] :is(#composerSettingsGroup, .composer-settings-group) > [data-settings-label] > :not(.inv-popover) {
+  margin-inline-start: auto;
+  min-width: 0;
+}
+
+/* The slot's chip, stripped of its chrome: plain full-contrast text. */
+.composer[data-toolbar-compact][data-settings-open] :is(#composerSettingsGroup, .composer-settings-group) > [data-settings-label] .inv-chip:not(.inv-popover *),
+.composer[data-toolbar-compact][data-settings-open] :is(#composerSettingsGroup, .composer-settings-group) > [data-settings-label] .inv-chip:not(.inv-popover *):hover:not(.inv-chip--disabled) {
+  min-width: 0;
+  min-height: 0;
+  height: auto;
+  padding: 0;
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
+  transform: none;
+  color: var(--text-primary);
+  font-size: var(--font-size-body);
+  font-weight: 500;
+  letter-spacing: 0;
+  line-height: normal;
+}
+
+.composer[data-toolbar-compact][data-settings-open] :is(#composerSettingsGroup, .composer-settings-group) > [data-settings-label] .inv-chip:not(.inv-popover *) .inv-chip-label {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: none;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* A row that opens something ends in a chevron. */
+.composer[data-toolbar-compact][data-settings-open] :is(#composerSettingsGroup, .composer-settings-group) > [data-settings-label] .inv-chip[aria-haspopup]:not(.inv-popover *)::after {
+  content: '';
+  order: 2;
+  flex: none;
+  width: 10px;
+  height: 10px;
+  background: var(--text-muted);
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 4l4 4-4 4'/%3E%3C/svg%3E") center / contain no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 4l4 4-4 4'/%3E%3C/svg%3E") center / contain no-repeat;
+}
+
+/* Focus shows on the row, inset (as the model picker's options do). */
+.composer[data-toolbar-compact][data-settings-open] :is(#composerSettingsGroup, .composer-settings-group) > [data-settings-label] .inv-chip:not(.inv-popover *):focus-visible {
+  outline: none;
+}
+
+.composer[data-toolbar-compact][data-settings-open] :is(#composerSettingsGroup, .composer-settings-group) > [data-settings-label]:has(.inv-chip:not(.inv-popover *):focus-visible) {
+  outline: 2px solid var(--focus-outline);
+  outline-offset: -2px;
+}
+
+/* Project: the folder icon stays muted; a General pill keeps its muted value. */
+.composer[data-toolbar-compact][data-settings-open] :is(#composerSettingsGroup, .composer-settings-group) .composer-project-pill .inv-chip-icon {
+  color: var(--text-muted);
+}
+
+.composer[data-toolbar-compact][data-settings-open] :is(#composerSettingsGroup, .composer-settings-group) > [data-settings-label] .inv-chip.composer-project-pill--general:not(.inv-popover *) {
+  color: var(--text-muted);
+}
+
+/* Run mode: the cycling chip stays on the toolbar; the list shows a
+   segmented Ask | Auto | Plan (the model picker's Thinking segments). */
+.composer-run-mode-segments {
+  display: none;
+}
+
+/* Translated segments ("Ejecución automática") can outgrow the space beside
+   the label: they wrap under it at the row's full width. The segments share
+   the row evenly (basis 0) but none is narrower than its longest word, so a
+   label wraps only between words (gate F4: "Pregu|ntar"); only when the
+   longest words cannot sit side by side do whole segments stack onto a
+   second line. Never clipped, never broken inside a word. */
+.composer[data-toolbar-compact][data-settings-open] :is(#composerSettingsGroup, .composer-settings-group) > .composer-run-mode-slot {
+  flex-wrap: wrap;
+  row-gap: var(--space-2);
+  padding-block: var(--space-2);
+  cursor: default;
+}
+
+.composer[data-toolbar-compact][data-settings-open] :is(#composerSettingsGroup, .composer-settings-group) > .composer-run-mode-slot:hover {
+  background: transparent;
+}
+
+.composer[data-toolbar-compact][data-settings-open] :is(#composerSettingsGroup, .composer-settings-group) .composer-run-mode-chip {
+  display: none;
+}
+
+.composer[data-toolbar-compact][data-settings-open] :is(#composerSettingsGroup, .composer-settings-group) .composer-run-mode-segments {
+  display: inline-flex;
+  flex-wrap: wrap;
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 100%;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+
+.composer-run-mode-segment {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-3);
+  border: 0;
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: var(--font-size-body);
+  cursor: pointer;
+}
+
+.composer-run-mode-segment.is-active {
+  background: var(--surface-popover-row);
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
+.composer-run-mode-segment:hover:not(.is-active):not(:disabled) {
+  color: var(--text-primary);
+}
+
+.composer-run-mode-segment:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.composer-run-mode-segment:focus-visible {
+  outline: 2px solid var(--focus-outline);
+  outline-offset: -2px;
+}
+
+.composer-run-mode-segments .composer-run-mode-segment {
+  flex: 1 1 0;
+  justify-content: center;
+}
+
+.composer-run-mode-segment-label {
+  line-height: 1.2;
+  text-align: center;
+}
+
+.composer-run-mode-segment-icon {
+  display: inline-flex;
+  flex: none;
+}
+
+.composer-run-mode-segment-icon svg {
+  width: 12px;
+  height: 12px;
+}
+
+.composer-run-mode-segment.is-active:not(.composer-run-mode-segment--ask) .composer-run-mode-segment-icon {
+  color: var(--accent-amber);
+}
+
+/* Context and plan usage: a bar and a percent instead of the 18px ring
+   (which, unlabelled, read as a spinner). Both stay hidden on the toolbar. */
+.inv-usage-bar,
+.inv-context-ring-percent {
+  display: none;
+}
+
+.composer[data-toolbar-compact][data-settings-open] :is(#composerSettingsGroup, .composer-settings-group) .inv-context-ring:not(.inv-popover *) {
+  gap: var(--space-3);
+}
+
+.composer[data-toolbar-compact][data-settings-open] :is(#composerSettingsGroup, .composer-settings-group) .inv-context-ring:not(.inv-popover *) .inv-chip-icon {
+  display: none;
+}
+
+.composer[data-toolbar-compact][data-settings-open] :is(#composerSettingsGroup, .composer-settings-group) .inv-usage-bar {
+  display: block;
+  position: relative;
+  flex: none;
+  width: 44px;
+  height: 4px;
+  border-radius: 2px;
+  overflow: hidden;
+  background: var(--surface-popover-row);
+}
+
+.inv-usage-bar-fill {
+  position: absolute;
+  inset-block: 0;
+  inset-inline-start: 0;
+  width: calc(var(--usage-ratio, 0) * 100%);
+  border-radius: inherit;
+  background: var(--widget-context-ring-arc);
+}
+
+.inv-context-ring--warning .inv-usage-bar-fill {
+  background: var(--widget-context-ring-warning);
+}
+
+.inv-context-ring--danger .inv-usage-bar-fill {
+  background: var(--widget-context-ring-danger);
+}
+
+.composer[data-toolbar-compact][data-settings-open] :is(#composerSettingsGroup, .composer-settings-group) .inv-context-ring-percent {
+  display: inline;
+}
+
+/* Bar, then percent, on both rows (the plan chip's own label precedes its
+   bar in the markup); the chevron stays last. */
+.composer[data-toolbar-compact][data-settings-open] :is(#composerSettingsGroup, .composer-settings-group) .inv-context-ring .inv-chip-label {
+  order: 1;
+  flex: none;
+  font-size: var(--font-size-body);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-primary);
+}
+
+.composer[data-toolbar-compact][data-settings-open] :is(#composerSettingsGroup, .composer-settings-group) .inv-plan-ring--warning .inv-chip-label {
+  color: var(--widget-context-ring-warning);
+}
+
+.composer[data-toolbar-compact][data-settings-open] :is(#composerSettingsGroup, .composer-settings-group) :is(.inv-plan-ring--danger, .inv-plan-ring--exhausted) .inv-chip-label {
+  color: var(--widget-context-ring-danger);
+}
+
+/* A row's own menu replaces the list in place: the model picker and tools
+   popovers resolve to the group (slots are static) and cover it from its
+   bottom-end corner. Body-level popovers (context, plan) do the
+   same in JS (rendererPaneComposerRail.placePopoverOverAnchor). The list's
+   scroll bound would clip a menu wider or taller than the list, so the group
+   stops clipping while one of its own menus is open. */
+.composer[data-toolbar-compact][data-settings-open] .composer-settings-group:has(> * > .inv-popover:not([hidden])) {
+  overflow: visible;
+}
+
+.composer[data-toolbar-compact][data-settings-open] :is(#composerSettingsGroup, .composer-settings-group) .inv-popover {
+  top: auto;
+  bottom: 0;
+  inset-inline-start: auto;
+  inset-inline-end: 0;
+  box-sizing: border-box;
+  min-width: 100%;
+  min-height: 100%;
+  max-width: var(--settings-max-inline, 340px);
+  /* Gate N2: the popover token is 98% opaque; over the list it covers, an
+     opaque base keeps the rows from ghosting through. */
+  background-color: var(--bg-surface);
+}
+
+.composer-popover[data-settings-cover="1"],
+.inv-popover[data-settings-cover="1"] {
+  background-color: var(--bg-surface);
+}
+
+.composer[data-toolbar-compact][data-settings-open] :is(#composerSettingsGroup, .composer-settings-group) .composer-model-popover {
+  min-width: max(100%, min(300px, var(--settings-max-inline, 300px)));
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .composer-settings-summary-caret {
+    transition: none;
+  }
+}

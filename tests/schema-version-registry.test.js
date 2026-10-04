@@ -100,7 +100,6 @@ test('getAllSchemaVersions returns Electron registry entries and normalized side
     ['electron.plugin_contract_set', 1],
     ['electron.plugin_generation_store', 1],
     ['electron.mcp_servers', 1],
-    ['electron.plugin_catalog_sources', 1],
     ['sidecar.memory_store', 5],
   ]);
 

@@ -98,8 +98,33 @@
     return false;
   }
 
+  /**
+   * The session pane `paneId` is showing, or '' when it shows nothing.
+   *
+   * This is the per-SURFACE session a pane-bound reader (its render pipeline,
+   * its composer, its send path) asks for, split view W1-4. It answers with
+   * the same layout rule as `isSessionVisibleInPane`: while the layout holds
+   * a session, each pane owns its own entry; while it is blank (the one-pane
+   * app, every pre-W0-2 fixture) pane 0 falls back to `state.currentSessionId`
+   * and any other pane holds nothing. `state.currentSessionId` itself keeps
+   * meaning "the FOCUSED pane's session" and is never widened here.
+   *
+   * Invariant, pinned in tests/renderer-pane-visibility.test.js: whenever this
+   * returns a non-blank id on a live surface, `isSessionVisibleInPane(state,
+   * id, paneId)` is true.
+   * @returns {string}
+   */
+  function resolvePaneSessionId(state, paneId) {
+    if (!Number.isInteger(paneId) || paneId < 0) return '';
+    var panes = panesInUse(state);
+    if (!panes) return paneId === 0 ? normalizeId(state && state.currentSessionId) : '';
+    if (paneId >= panes.length) return '';
+    return paneSessionId(panes[paneId]);
+  }
+
   return {
     isSessionVisibleInPane: isSessionVisibleInPane,
     isSessionVisibleInAnyPane: isSessionVisibleInAnyPane,
+    resolvePaneSessionId: resolvePaneSessionId,
   };
 });

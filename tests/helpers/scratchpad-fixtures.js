@@ -24,9 +24,62 @@ function twoNotesActive(activeNoteId) {
   };
 }
 
-// Wrap a scratchpad in the render ctx with the scratchpad_v2 flag on.
+// Wrap a scratchpad in the render ctx.
 function flagOnCtx(scratchpad) {
-  return { state: { features: { featureFlags: { scratchpad_v2: true } }, homeConfig: { scratchpad } } };
+  return { state: { features: { featureFlags: {} }, homeConfig: { scratchpad } } };
 }
 
-module.exports = { scratch, twoNotesActive, flagOnCtx };
+function createTimerStub() {
+  const timers = [];
+  return {
+    timers,
+    setTimeoutImpl: (fn, ms) => {
+      const timer = { fn, ms, cleared: false };
+      timers.push(timer);
+      return timer;
+    },
+    clearTimeoutImpl: (timer) => {
+      if (timer) {
+        timer.cleared = true;
+      }
+    },
+    async fire() {
+      for (const timer of timers.splice(0)) {
+        if (!timer.cleared) {
+          timer.fn();
+        }
+      }
+      await new Promise((resolve) => setImmediate(resolve));
+    },
+  };
+}
+
+// Pass `getScratchpad` to echo the MERGED config: scratchpadEchoMatches() rejects
+// an acknowledgement missing notes/activeNoteId/settings/pins, so a bare pointer
+// echo reads as a FAILED write. See hyg-W7 / W7e-18-F01.
+function createShellStub(getScratchpad) {
+  const calls = { updates: [], followUps: [] };
+  return {
+    calls,
+    shell: {
+      home: {
+        updateConfig: async (patch) => {
+          calls.updates.push(patch);
+          const base = (getScratchpad && getScratchpad()) || {};
+          return {
+            links: [], widgets: {}, calendar: {}, focusMode: false, showContextualTips: true,
+            scratchpad: { ...base, ...patch.scratchpad, pins: patch.scratchpad?.pins || base.pins || [] },
+          };
+        },
+      },
+      companion: {
+        addFollowUp: async (payload) => {
+          calls.followUps.push(payload);
+          return { openLoopsBoard: { counts: { active: 1 } } };
+        },
+      },
+    },
+  };
+}
+
+module.exports = { scratch, twoNotesActive, flagOnCtx, createTimerStub, createShellStub };

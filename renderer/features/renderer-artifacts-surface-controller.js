@@ -507,7 +507,6 @@
     // shared note/editor toggles; the registry mermaid kind receives it
     // through rendererDeps so both dispatch paths run this exact function.
     function renderMermaidToolOutputArtifact(surface, artifact) {
-      setDetailNote(surface, jt('artifacts.text.transcriptOutputReadOnlyNote', 'Transcript-derived tool output. Read-only in the artifact panel.'));
       surface.editorShell.classList.add('hidden');
       surface.previewContent.classList.remove('hidden');
       const mermaidSource = extractMermaidSourceFromToolArtifact(artifact);
@@ -546,7 +545,8 @@
       if (!liveTitle) return;
       surface.detailTitle = liveTitle;
       const textNode = liveTitle.querySelector?.('.artifact-panel-title-text') || liveTitle;
-      textNode.textContent = String(value || '');
+      // An equal title keeps the chrome's middle-ellipsis head/tail spans.
+      if (textNode.textContent !== String(value || '')) textNode.textContent = String(value || '');
     }
 
     function renderSelectedArtifactDetail(surface, artifact) {
@@ -927,7 +927,6 @@
       hasImageArtifactLoadFailed: (artifact) => failedImageArtifactKeys.has(imageArtifactFailureKey(artifact?.sessionId, artifact?.id)),
       // web/chart kinds
       getArtifactViewMode,
-      renderArtifactViewModeButton: artifactRender.renderArtifactViewModeButton,
     };
     const rendererKindPredicates = {
       isGeneratedFile,

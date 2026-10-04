@@ -32,6 +32,7 @@ from sidecar.runtime.local_engine.request_context import (
     clear_request_context as _clear_shared_request_context,
 )
 from sidecar.runtime.local_engine.request_context import (
+    consume_provider_call_purpose,
     current_diagnostics_store,
     current_request_context,
 )
@@ -84,6 +85,9 @@ _DEFAULT_REASONING_REQUEST_KEY = "__default__"
 _DEFAULT_CHATGPT_CONTEXT_LENGTH = 272_000
 
 CHATGPT_MODEL_CONTEXT_LENGTHS: dict[str, int] = {
+    "gpt-6.1-sol": 272_000,
+    "gpt-6-sol": 272_000,
+    "gpt-6-luna": 272_000,
     "gpt-5.6-sol": 272_000,
     "gpt-6-astra": 272_000,
     "gpt-5.6-terra": 272_000,
@@ -99,6 +103,18 @@ CHATGPT_MODEL_CONTEXT_LENGTHS: dict[str, int] = {
 # is omitted because Codex defines it as reasoning plus automatic delegation and
 # Jenny's sub-agent architecture is explicitly not part of this implementation.
 CHATGPT_MODEL_REASONING_PROFILES: dict[str, dict[str, Any]] = {
+    "gpt-6.1-sol": {
+        "default_reasoning_effort": "medium",
+        "reasoning_efforts": ["low", "medium", "high", "xhigh", "max"],
+    },
+    "gpt-6-sol": {
+        "default_reasoning_effort": "medium",
+        "reasoning_efforts": ["low", "medium", "high", "xhigh", "max"],
+    },
+    "gpt-6-luna": {
+        "default_reasoning_effort": "medium",
+        "reasoning_efforts": ["low", "medium", "high", "xhigh", "max"],
+    },
     "gpt-6-astra": {
         "default_reasoning_effort": "medium",
         "reasoning_efforts": ["low", "medium", "high", "xhigh", "max"],
@@ -161,6 +177,8 @@ class ChatGPTSubscriptionEngine(BaseEngine):
     """Direct ChatGPT-plan transport with Jenny-owned function-tool execution."""
 
     _ENGINE_TYPE = "chatgpt"
+
+    MODEL_RESIDENCY = "remote"
 
     def __init__(  # noqa: PLR0913
         self,
@@ -339,21 +357,38 @@ class ChatGPTSubscriptionEngine(BaseEngine):
     def clear_request_context(self, *, request_id: str | None = None) -> None:
         _clear_shared_request_context(self, request_id=request_id)
 
-    def _record_completion_shape(self, diagnostics: dict[str, Any]) -> None:
+    @staticmethod
+    def _record_diagnostic(store: Any, request_id: str, method: str, **kwargs: Any) -> None:
+        if store is None or not request_id:
+            return
         try:
-            store = current_diagnostics_store(self)
-            request_id = active_request_id(self)
-            if (
-                store is not None
-                and request_id
-                and hasattr(store, "record_provider_completion_shape")
-            ):
-                store.record_provider_completion_shape(
-                    request_id=request_id,
-                    diagnostics=diagnostics,
-                )
+            getattr(store, method)(request_id=request_id, **kwargs)
         except Exception:  # noqa: BLE001 - diagnostics never break inference.
             pass
+
+    def _record_completion_shape(self, diagnostics: dict[str, Any]) -> None:
+        # Nothing streamed (HTTP error, transport error, early cancel): recording an empty
+        # shape would zero the counters an earlier call of the same turn recorded.
+        if not diagnostics:
+            return
+        self._record_diagnostic(
+            current_diagnostics_store(self), active_request_id(self),
+            "record_provider_completion_shape", diagnostics=diagnostics,
+        )
+
+    def _record_response_usage(self, store: Any, request_id: str, usage: dict[str, Any]) -> None:
+        details = usage.get("input_tokens_details")
+        cached = details.get("cached_tokens") if isinstance(details, dict) else None
+        self._record_diagnostic(
+            store, request_id, "record_provider_usage",
+            prompt_eval_count=usage.get("input_tokens"),
+            eval_count=usage.get("output_tokens"),
+            cached_tokens=cached,
+            provider_label="chatgpt",
+        )
+
+    def _resolve_reasoning_effort(self, effort: str | None) -> str | None:
+        return effort
 
     def stream_with_tools(  # noqa: PLR0913 - BaseEngine transport contract.
         self,
@@ -379,7 +414,7 @@ class ChatGPTSubscriptionEngine(BaseEngine):
             system=system,
             messages=messages,
             tools=tools,
-            reasoning_effort=reasoning_effort,
+            reasoning_effort=self._resolve_reasoning_effort(reasoning_effort),
             reasoning_by_call_id=self._reasoning_snapshot(request_key),
         )
         request_timeout = clamp_timeout_to_deadline(
@@ -388,6 +423,18 @@ class ChatGPTSubscriptionEngine(BaseEngine):
         )
         reasoning_sink: dict[str, dict[str, Any]] = {}
         completion_diagnostics: dict[str, Any] = {}
+        store = current_diagnostics_store(self)
+        request_id = active_request_id(self)
+        purpose = consume_provider_call_purpose(self) or "turn"
+        outcome = "failed"
+        finish_reason: str | None = "error"
+        self._record_diagnostic(
+            store, request_id, "record_provider_request",
+            think_enabled=bool(reasoning_effort), num_predict=None,
+            temperature=temperature, message_count=len(payload.get("input", [])),
+            tool_count=len(tools), tool_capable=True, purpose=purpose,
+            provider_reasoning_effort=reasoning_effort,
+        )
         try:
             with self._service.stream_response(
                 "POST",
@@ -407,13 +454,37 @@ class ChatGPTSubscriptionEngine(BaseEngine):
                         cancel_handle=cancel_handle,
                         reasoning_sink=reasoning_sink,
                         completion_diagnostics_sink=completion_diagnostics,
+                        on_first_chunk=lambda: self._record_diagnostic(
+                            store, request_id, "record_first_chunk",
+                        ),
+                        on_usage=lambda usage: self._record_response_usage(
+                            store, request_id, usage,
+                        ),
+                        on_visible_output=lambda text: self._record_diagnostic(
+                            store, request_id, "record_visible_output", text=text,
+                        ),
                     )
                     self._cache_reasoning_items(reasoning_sink, request_id=request_key)
-                    self._record_completion_shape(completion_diagnostics)
+                    finish_reason = result.finish_reason
+                    outcome = (
+                        "incomplete"
+                        if completion_diagnostics.get("terminal_event_type")
+                        == "response.incomplete"
+                        else "completed"
+                    )
                     return result
                 finally:
                     unregister_cancel()
-        except (ProviderHttpError, GenerationError, TerminalChatStateError):
+        except GeneratorExit:
+            outcome = "cancelled"
+            finish_reason = None
+            raise
+        except TerminalChatStateError as error:
+            if error.status == "cancelled":
+                outcome = "cancelled"
+                finish_reason = None
+            raise
+        except (ProviderHttpError, GenerationError):
             raise
         except (httpx.TimeoutException, httpx.TransportError) as error:
             raise_if_cancelled(cancel_handle)
@@ -434,6 +505,31 @@ class ChatGPTSubscriptionEngine(BaseEngine):
             raise GenerationError(
                 f"ChatGPT streaming failed: {type(error).__name__}"
             ) from error
+
+        finally:
+            self._finalize_provider_call(
+                store, request_id, completion_diagnostics,
+                outcome=outcome, finish_reason=finish_reason, cancel_handle=cancel_handle,
+            )
+
+    def _finalize_provider_call(  # noqa: PLR0913 - one call's captured diagnostic state.
+        self, store: Any, request_id: str, completion_diagnostics: dict[str, Any],
+        *, outcome: str, finish_reason: str | None, cancel_handle: Any,
+    ) -> None:
+        if getattr(cancel_handle, "cancelled", False) is True:
+            outcome = "cancelled"
+            finish_reason = None
+        elif (
+            outcome == "failed"
+            and completion_diagnostics.get("finish_reason") == "incomplete"
+        ):
+            outcome = "incomplete"
+            finish_reason = "incomplete"
+        self._record_completion_shape(completion_diagnostics)
+        self._record_diagnostic(
+            store, request_id, "complete_provider_request",
+            outcome=outcome, finish_reason=finish_reason,
+        )
 
     def stream(  # noqa: PLR0913 - BaseEngine transport contract.
         self,

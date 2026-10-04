@@ -410,3 +410,89 @@ describe('getGitContextForChat — multiple staged files', () => {
     );
   });
 });
+
+// ---------------------------------------------------------------------------
+// Configured helper programs must never run during context collection (CMC-004)
+// ---------------------------------------------------------------------------
+
+describe('getGitContextForChat — configured helpers are not executed', () => {
+  let tempDir;
+
+  // A tiny Node helper that records that it ran. Paths use forward slashes and
+  // are double-quoted so git's shell handling accepts them on Windows too.
+  function writeMarkerHelper(name) {
+    const toPosix = (p) => p.split(path.sep).join('/');
+    const marker = path.join(tempDir, `${name}.marker`);
+    const helper = path.join(tempDir, `${name}-helper.js`);
+    fs.writeFileSync(
+      helper,
+      `require('fs').writeFileSync(${JSON.stringify(toPosix(marker))}, 'ran');\n`
+    );
+    const command = `"${toPosix(process.execPath)}" "${toPosix(helper)}"`;
+    return { marker, command };
+  }
+
+  before(() => {
+    tempDir = makeTempDir('helpers');
+    gitInit(tempDir);
+    writeFile(tempDir, 'tracked.txt', 'one\ntwo\n');
+    git(['add', 'tracked.txt'], tempDir);
+    git(['commit', '-m', 'initial'], tempDir);
+    writeFile(tempDir, 'tracked.txt', 'one\ntwo\nthree-changed\n');
+  });
+
+  after(() => {
+    removeTempDir(tempDir);
+  });
+
+  test('diff.external and textconv do not run, and the diff is still returned', async () => {
+    const external = writeMarkerHelper('external');
+    const textconv = writeMarkerHelper('textconv');
+    git(['config', 'diff.external', external.command], tempDir);
+    git(['config', 'diff.jenny.textconv', textconv.command], tempDir);
+    writeFile(tempDir, '.gitattributes', 'tracked.txt diff=jenny\n');
+    try {
+      const result = await getGitContextForChat(tempDir);
+      assert.equal(fs.existsSync(external.marker), false, 'diff.external helper ran');
+      assert.equal(fs.existsSync(textconv.marker), false, 'textconv helper ran');
+      assert.equal(typeof result, 'string');
+      assert.ok(result.includes('three-changed'), `diff content missing:\n${result}`);
+    } finally {
+      git(['config', '--unset', 'diff.external'], tempDir);
+      git(['config', '--unset', 'diff.jenny.textconv'], tempDir);
+      fs.rmSync(path.join(tempDir, '.gitattributes'), { force: true });
+    }
+  });
+
+  test('core.fsmonitor command does not run', async () => {
+    const fsmonitor = writeMarkerHelper('fsmonitor');
+    git(['config', 'core.fsmonitor', fsmonitor.command], tempDir);
+    try {
+      const result = await getGitContextForChat(tempDir);
+      assert.equal(fs.existsSync(fsmonitor.marker), false, 'fsmonitor hook ran');
+      assert.equal(typeof result, 'string');
+      assert.ok(result.includes('three-changed'), `diff content missing:\n${result}`);
+    } finally {
+      git(['config', '--unset', 'core.fsmonitor'], tempDir);
+    }
+  });
+
+  test('clean and process filter drivers do not run, even when required', async () => {
+    const clean = writeMarkerHelper('filter-clean');
+    const processFilter = writeMarkerHelper('filter-process');
+    git(['config', 'filter.jenny.clean', clean.command], tempDir);
+    git(['config', 'filter.jenny.process', processFilter.command], tempDir);
+    git(['config', 'filter.jenny.required', 'true'], tempDir);
+    writeFile(tempDir, '.gitattributes', 'tracked.txt filter=jenny\n');
+    try {
+      const result = await getGitContextForChat(tempDir);
+      assert.equal(fs.existsSync(clean.marker), false, 'clean filter ran');
+      assert.equal(fs.existsSync(processFilter.marker), false, 'process filter ran');
+      assert.equal(typeof result, 'string');
+      assert.ok(result.includes('three-changed'), `diff content missing:\n${result}`);
+    } finally {
+      git(['config', '--remove-section', 'filter.jenny'], tempDir);
+      fs.rmSync(path.join(tempDir, '.gitattributes'), { force: true });
+    }
+  });
+});

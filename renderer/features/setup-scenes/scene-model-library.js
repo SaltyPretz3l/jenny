@@ -169,7 +169,7 @@
         summary: jt('setup.modelLibrary.summary', 'Choose an installed model or pull one from the local catalog.'),
         bodyHtml: bodyHtml,
         actions: [
-          { id: 'close', label: jt('common.back', 'Back'), variant: 'secondary' },
+          { id: 'close', label: jt('common.back', 'Back'), variant: 'secondary', disabled: operationCoordinator.isLocked() },
           { id: 'skip', label: jt('setup.modelLibrary.skipForNow', 'Skip for now'), variant: 'ghost' },
         ],
       });
@@ -180,6 +180,8 @@
     }
 
     function replaceCard(key) {
+      var back = rootEl && rootEl.querySelector('[data-step-modal-action="close"]');
+      if (back) back.disabled = operationCoordinator.isLocked();
       var card = findCard(key);
       var element = findCardElement(key);
       if (!card || !element || disposed) return false;
@@ -200,6 +202,8 @@
       activeOperationKey = '';
       settlingKey = '';
       operationCoordinator.release(operationToken);
+      var back = rootEl && rootEl.querySelector('[data-step-modal-action="close"]');
+      if (back) back.disabled = false;
     }
 
     async function completeSelection(tag, operationToken) {
@@ -232,8 +236,10 @@
       if (disposed) return;
       var pull = currentPulls()[key];
       replaceCard(key);
-      if (!pull || key !== activeOperationKey) return;
-      if (pull.status === 'done') {
+      if (key !== activeOperationKey) return;
+      if (!pull) {
+        if (settlingKey !== key) releaseOperation(operationCoordinator.capture());
+      } else if (pull.status === 'done') {
         void completeSelection(pull.tag, operationCoordinator.capture());
       } else if (pull.status === 'error') {
         releaseOperation(operationCoordinator.capture());
@@ -259,6 +265,8 @@
         return;
       }
       activeOperationKey = card.key;
+      var back = rootEl && rootEl.querySelector('[data-step-modal-action="close"]');
+      if (back) back.disabled = true;
       if (button) button.disabled = true;
       void completeSelection(card.tag, operationCoordinator.capture());
     }
@@ -281,12 +289,12 @@
       if (button) button.disabled = true;
       var operationToken = operationCoordinator.capture();
       var sceneToken = sourceGeneration;
-      var result = await pullController.cancel(tag);
-      if (isStale(sceneToken, operationToken)) return;
-      if (result && result.cancelled === true) {
-        releaseOperation(operationToken);
-        replaceCard(key);
-      }
+      try { await pullController.cancel(tag); } catch (_error) { /* the card shows the cancel failure */ }
+      if (isStale(sceneToken, operationToken) || key !== activeOperationKey) return;
+      // Cancelled or not, release the scene: a pull nobody can stop must not
+      // trap the user behind a disabled Back and Skip.
+      releaseOperation(operationToken);
+      replaceCard(key);
     }
 
     async function handleSkip() {
@@ -326,7 +334,7 @@
       var footerAction = target.closest('[data-step-modal-action]');
       if (!footerAction || !rootEl || !rootEl.contains(footerAction)) return;
       var footerId = footerAction.getAttribute('data-step-modal-action');
-      if (footerId === 'close') closeModal();
+      if (footerId === 'close' && !operationCoordinator.isLocked()) closeModal();
       else if (footerId === 'skip') void handleSkip();
     }
 

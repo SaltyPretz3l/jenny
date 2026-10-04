@@ -36,6 +36,9 @@
     return jt('ide.fileLifecycle.openFailed', '{path} was closed — it could not be opened.', { path });
   }
 
+  // CMP-WORKSPACEFS-0004: the versioned read's "file is gone" refusal.
+  const NOT_FOUND_CODE = 'CMP-WORKSPACEFS-0004';
+
   function resolveFileOperations() {
     if (globalRef.rendererIdeFileOperations) return globalRef.rendererIdeFileOperations;
     if (typeof require === 'function') {
@@ -75,9 +78,14 @@
 
     // Lifecycle state that moved out of the controller with these functions.
     let savingToken = null;
+    let savingSettled = null; // resolves when the save holding savingToken ends
     let gitDiscardPath = '';
     let lifecycleEpoch = 1;
     let bypassReopenPush = false;
+    // The most recent openFile failure, so a failed reopen can tell a vanished
+    // file (drop the history entry) from a transient error (keep it).
+    let lastOpenFailure = null;
+    let reopenRetriedPath = '';
     const fileOperations = deps?.fileOperations || resolveFileOperations().createIdeFileOperations?.({
       getWorkspaceFsApi,
       platform: deps?.platform,
@@ -91,10 +99,14 @@
     }
 
     // Closes every open tab affected by a tree delete/rename: the exact path,
-    // plus everything under it when a directory moved or vanished.
-    function closeTabsUnder(path, kind) {
+    // plus everything under it when a directory moved or vanished. A tab the
+    // close preflight reported as edited after the user's confirmation
+    // (`preservedPaths`) that is still dirty is NOT closed: it is marked stale
+    // and the user is told, so the newer unsaved edits can be copied out.
+    function closeTabsUnder(path, kind, { preservedPaths = [], renamed = false } = {}) {
       const ide = getIde();
       const prefix = `${path}/`;
+      const preserved = new Set(preservedPaths);
       const affected = ide.openTabs
         .filter((tab) => tab.path === path
           || (kind === 'directory' && tab.path.startsWith(prefix)))
@@ -102,23 +114,39 @@
       // The file(s) vanished - close without recording for reopen, then purge
       // any pre-existing reopen-stack entries beneath the path.
       bypassReopenPush = true;
+      let kept = false;
       try {
         for (const tabPath of affected) {
+          // After a rename an unsaved tab is never force-closed, whether or not
+          // the close plan named it: its edits exist nowhere else.
+          if ((renamed || preserved.has(tabPath)) && editorHost?.isDirty?.(tabPath)) {
+            ideStateUtils.setTabStale?.(ide, tabPath, true);
+            const message = renamed
+              ? jt('ide.fileLifecycle.renamedWithUnsavedEdits', '{path} was renamed on disk. Its unsaved editor remains open under the old name so you can copy the changes.', { path: tabPath })
+              : jt('ide.watch.deletedWithUnsavedEdits', '{path} was deleted on disk. Its unsaved editor remains open so you can copy the changes.', { path: tabPath });
+            showToastMessage(message, { dedupeKey: `ide:stale:${tabPath}` });
+            kept = true;
+            continue;
+          }
           closeTab(tabPath);
         }
       } finally {
         bypassReopenPush = false;
       }
+      if (kept) renderTabs();
       closedTabs?.dropUnder(path);
       return affected;
     }
 
-    function handleTreeEntryDeleted(path, kind) {
-      closeTabsUnder(path, kind);
+    function handleTreeEntryDeleted(path, kind, { preservedPaths = [] } = {}) {
+      closeTabsUnder(path, kind, { preservedPaths });
     }
 
-    function handleTreeEntryRenamed(fromPath, toPath, kind, { wasOpen = false } = {}) {
-      const affected = wasOpen ? [] : closeTabsUnder(fromPath, kind);
+    function handleTreeEntryRenamed(fromPath, toPath, kind, { wasOpen = false, preservedPaths = [] } = {}) {
+      // The close plan normally closed the tabs already (wasOpen), so the fan-out
+      // finds none. A commit that was refused or failed leaves tabs on the old
+      // path: clean ones close, unsaved ones stay open and are marked stale.
+      const affected = closeTabsUnder(fromPath, kind, { preservedPaths, renamed: true });
       closedTabs?.dropUnder(fromPath);
       if (kind !== 'directory' && (wasOpen || affected.length)) {
         return openFile(toPath);
@@ -239,6 +267,10 @@
             if (!applied || !committedToken) return false;
           }
         } catch (error) {
+          // An open that began under an older root must not touch the new
+          // root's same-path tab, history or toasts.
+          if (fileOperations.isOpenContextCurrent?.(intent) === false) return false;
+          lastOpenFailure = { path: normalized, code: String(error?.code || '') };
           // A persisted (or explicitly opened) tab that fails to load — usually a
           // file deleted/moved on disk, but any read error lands here — is closed
           // and purged from the reopen stack. Surface a deduped, path-keyed toast
@@ -339,16 +371,28 @@
     }
 
     // Ctrl+Shift+T: reopen the most recently closed file tab and restore its
-    // cursor/scroll. A vanished file fails to open and is silently skipped.
+    // cursor/scroll. A vanished file fails to open and its entry is dropped; a
+    // tab-cap refusal keeps the entry, and any other failure keeps it for ONE
+    // retry, so a file that can never open does not block the entries behind it.
     async function reopenClosedTab() {
       if (!closedTabs) {
         return;
       }
-      const entry = closedTabs.pop();
-      if (!entry) {
+      const top = closedTabs.peek();
+      if (!top || refuseAtTabCap(getIde(), top.path)) {
         return;
       }
+      const entry = closedTabs.pop();
+      const epoch = lifecycleEpoch;
+      lastOpenFailure = null;
       const opened = await openFile(entry.path);
+      const retried = reopenRetriedPath === entry.path;
+      reopenRetriedPath = '';
+      if (!opened && !retried && epoch === lifecycleEpoch
+        && lastOpenFailure?.code !== NOT_FOUND_CODE) {
+        closedTabs.push(entry);
+        reopenRetriedPath = entry.path;
+      }
       if (opened && entry.viewState) {
         editorHost?.applyViewState?.(entry.path, entry.viewState);
       }
@@ -390,6 +434,8 @@
       const operationEpoch = lifecycleEpoch;
       const operationToken = {};
       savingToken = operationToken;
+      let releaseSaving = () => {};
+      savingSettled = new Promise((resolve) => { releaseSaving = resolve; });
       let hygieneOutcome = { formatStatus: 'disabled', formatReason: '' };
       try {
         if (editorHost.getDocumentKind(path) === 'document') {
@@ -497,7 +543,22 @@
         return false;
       } finally {
         if (savingToken === operationToken) savingToken = null;
+        releaseSaving();
       }
+    }
+
+    // Run and Debug need the visible buffer on disk. saveFile answers false at
+    // once while another save (auto-save) is writing, so wait that one out and
+    // then save only what is still unsaved.
+    async function saveForLaunch(targetPath) {
+      if (savingToken && savingSettled) {
+        await savingSettled;
+      }
+      const path = resolveDocumentPath(targetPath || getIde().activeTabPath);
+      if (path && editorHost?.hasDocument(path) && editorHost.isDirty?.(path) === false) {
+        return true;
+      }
+      return saveFile(targetPath);
     }
 
     function saveActiveFile(options) {
@@ -617,6 +678,7 @@
       fileOperations,
       getDocumentToken: (path) => fileOperations?.getDocumentToken(path) || null,
       isSaving: () => Boolean(savingToken),
+      saveForLaunch,
       noteDirty,
       noteEdit: (path) => fileOperations?.noteEdit(path),
       resetForRoot,

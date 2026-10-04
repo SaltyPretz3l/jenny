@@ -1,8 +1,8 @@
 'use strict';
 
 // Red-first coverage for B1 (backend per-session in-flight admission control)
-// and the B3 follow-on (activeStreams leak no longer locks out inline
-// completion) — see the plan at
+// and the B3 follow-on (a rejected send leaks no activeStreams entry) — see
+// the plan at
 // the original B1/B3 concurrency plan, Slice 1.
 //
 // B1: startManagedSidecarChatStream / startExternalChatStream must reject a
@@ -13,8 +13,8 @@
 // B3 follow-on: a rejected preflight (managed image-attachment validation,
 // external resolveModel failure — covered directly in
 // tests/managed-sidecar/managed-sidecar-chat-preflight.test.js for managed)
-// must not leave a phantom activeStreams entry; this file asserts the
-// downstream consumer (generateInlineCompletion) is unblocked afterward.
+// must not leave a phantom activeStreams entry (auxiliary inference such as
+// suggestions skips while any stream is active).
 
 const path = require('node:path');
 const test = require('node:test');
@@ -23,9 +23,6 @@ const assert = require('node:assert/strict');
 const {
   startManagedSidecarChatStream,
 } = require('../services/backend/managed-sidecar-chat');
-const {
-  generateInlineCompletion,
-} = require('../services/backend/backend-inline-complete');
 const {
   startActiveTurn,
 } = require('../services/backend/chat-stream-session-lifecycle');
@@ -385,9 +382,9 @@ test('B1 cancel-race: busy while the controller is live; crash evidence is recla
 
 // --- B3 follow-on: external resolveModel failure does not leak activeStreams ---
 
-// --- B3 follow-on: inline completion is unblocked after a rejected send ---
+// --- B3 follow-on: a rejected managed send leaks no active stream ---
 
-test('B3 follow-on: generateInlineCompletion is no longer locked out after a rejected managed send', async () => {
+test('B3 follow-on: a rejected managed send leaves no active stream behind', async () => {
   const service = createManagedChatServiceStub();
   const tempDir = createTrackedTempDir('jenny-overlap-image-reject-');
   service.sidecarManager = {
@@ -412,7 +409,7 @@ test('B3 follow-on: generateInlineCompletion is no longer locked out after a rej
 
   await assert.rejects(
     startManagedSidecarChatStream(service, buildManagedChatRequest({
-      sessionId: 'session_overlap_inline_unblock',
+      sessionId: 'session_overlap_reject_no_leak',
       prompt: 'Describe this image',
       attachments: [{
         id: 'att_overlap',
@@ -430,25 +427,6 @@ test('B3 follow-on: generateInlineCompletion is no longer locked out after a rej
 
   assert.equal(chatSendCount, 0);
   assert.equal(service.activeStreams.size, 0, 'rejected preflight must not leak an active stream');
-
-  // Prove the lockout is gone: inline completion must not see chat_stream_active.
-  service.sidecarManager = { getStatus: () => ({ phase: 'ready' }) };
-  let requestCalled = false;
-  service.sidecarClient = {
-    async request(_method, _params) {
-      requestCalled = true;
-      return { completion: 'const x = 1;' };
-    },
-  };
-  const result = await generateInlineCompletion(service, {
-    prefix: 'const x =',
-    suffix: '',
-    model: 'fim-model',
-  });
-
-  assert.equal(result.ok, true);
-  assert.notEqual(result.reason, 'chat_stream_active');
-  assert.equal(requestCalled, true);
 });
 
 // --- CAS-aware setActiveTurn: second line of defense ---

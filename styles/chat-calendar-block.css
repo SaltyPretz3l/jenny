@@ -19,8 +19,6 @@
   color: var(--text-muted);
   font-size: var(--tl-font-meta);
   font-weight: var(--tl-weight-label);
-  letter-spacing: var(--tracking-kicker-sm);
-  text-transform: uppercase;
 }
 
 .cal-chat__day--today {
@@ -108,7 +106,7 @@
 .cal-chat__title {
   min-width: 0;
   overflow: hidden;
-  font-weight: var(--tl-weight-emphasis);
+  font-weight: var(--tl-weight-label);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -127,8 +125,6 @@
 .cal-chat__badge {
   color: var(--text-secondary);
   font-size: var(--tl-font-meta);
-  letter-spacing: var(--tracking-kicker-sm);
-  text-transform: uppercase;
 }
 
 .cal-chat__jenny {
@@ -137,7 +133,6 @@
   background: color-mix(in srgb, var(--accent-strong) 14%, transparent);
   color: color-mix(in srgb, var(--accent-strong) 45%, var(--text-primary));
   font-size: var(--tl-font-meta);
-  letter-spacing: var(--tracking-kicker-sm);
 }
 
 .cal-chat__new {

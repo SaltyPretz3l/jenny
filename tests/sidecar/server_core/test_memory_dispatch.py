@@ -27,7 +27,7 @@ def _insert_pending_candidate(  # noqa: PLR0913 - migrated-row fixture mirrors s
 ) -> tuple[int, str]:
     timestamp = datetime.now(timezone.utc).isoformat()
     fingerprint = build_content_digest(lesson_kind, lesson_text)
-    cursor = store._connection.execute(  # noqa: SLF001
+    cursor = store._connection.execute(
         """
         INSERT INTO pending_memory_candidates (
             session_id, source_request_id, title, lesson_text, lesson_kind,
@@ -50,7 +50,7 @@ def _insert_pending_candidate(  # noqa: PLR0913 - migrated-row fixture mirrors s
             project_id,
         ),
     )
-    store._connection.commit()  # noqa: SLF001
+    store._connection.commit()
     assert cursor.lastrowid is not None
     return int(cursor.lastrowid), fingerprint
 
@@ -327,7 +327,7 @@ def test_process_message_memory_suggest_skips_duplicate_saved_memory(tmp_path) -
         },
     }
     server.process_message(init_message, initialized=False)
-    memory_store = server._BRAIN_CONTAINER.stack.memory_store  # noqa: SLF001
+    memory_store = server._BRAIN_CONTAINER.stack.memory_store
     memory_store.save_memory(
         session_id="session_1",
         title="Preference: tea over coffee",
@@ -720,7 +720,7 @@ def test_process_message_memory_recall_returns_ranked_memories(tmp_path) -> None
         },
     }
     server.process_message(init_message, initialized=False)
-    memory_store = server._BRAIN_CONTAINER.stack.memory_store  # noqa: SLF001
+    memory_store = server._BRAIN_CONTAINER.stack.memory_store
     memory_store.save_memory(
         session_id="session_1",
         title="Preference: tea",
@@ -800,7 +800,7 @@ def test_process_message_memory_recall_returns_tool_strategy_memories(tmp_path) 
         },
     }
     server.process_message(init_message, initialized=False)
-    memory_store = server._BRAIN_CONTAINER.stack.memory_store  # noqa: SLF001
+    memory_store = server._BRAIN_CONTAINER.stack.memory_store
     memory_store.save_memory(
         session_id="session_tool_strategy",
         title="Tool strategy: prefer ripgrep",
@@ -842,7 +842,7 @@ def test_process_message_memory_recall_returns_working_preference_memories(tmp_p
         },
     }
     server.process_message(init_message, initialized=False)
-    memory_store = server._BRAIN_CONTAINER.stack.memory_store  # noqa: SLF001
+    memory_store = server._BRAIN_CONTAINER.stack.memory_store
     memory_store.save_memory(
         session_id="session_working_preference",
         title="Working preference: diagnose root cause first",
@@ -884,7 +884,7 @@ def test_process_message_memory_recall_returns_project_context_memories(tmp_path
         },
     }
     server.process_message(init_message, initialized=False)
-    memory_store = server._BRAIN_CONTAINER.stack.memory_store  # noqa: SLF001
+    memory_store = server._BRAIN_CONTAINER.stack.memory_store
     memory_store.save_memory(
         session_id="session_project_context",
         title="Project context: workspace has no git metadata",
@@ -983,7 +983,7 @@ def test_process_message_memory_list_returns_all_memories(tmp_path) -> None:
         },
     }
     server.process_message(init_message, initialized=False)
-    memory_store = server._BRAIN_CONTAINER.stack.memory_store  # noqa: SLF001
+    memory_store = server._BRAIN_CONTAINER.stack.memory_store
     older_memory, _ = memory_store.save_memory(
         session_id="session_1",
         title="Preference: tea",
@@ -1057,7 +1057,7 @@ def test_process_message_memory_pending_list_returns_candidates(tmp_path) -> Non
         },
     }
     server.process_message(init_message, initialized=False)
-    memory_store = server._BRAIN_CONTAINER.stack.memory_store  # noqa: SLF001
+    memory_store = server._BRAIN_CONTAINER.stack.memory_store
     older_id, _ = _insert_pending_candidate(
         memory_store,
         session_id="session-old",
@@ -1081,15 +1081,15 @@ def test_process_message_memory_pending_list_returns_candidates(tmp_path) -> Non
         category="user",
         project_id="project_alpha",
     )
-    memory_store._connection.execute(  # noqa: SLF001
+    memory_store._connection.execute(
         "UPDATE pending_memory_candidates SET updated_at = ? WHERE id = ?",
         ("2026-03-15T00:00:00+00:00", older_id),
     )
-    memory_store._connection.execute(  # noqa: SLF001
+    memory_store._connection.execute(
         "UPDATE pending_memory_candidates SET updated_at = ? WHERE id = ?",
         ("2026-03-16T00:00:00+00:00", newer_id),
     )
-    memory_store._connection.commit()  # noqa: SLF001
+    memory_store._connection.commit()
 
     message = {
         "jsonrpc": "2.0",
@@ -1123,7 +1123,7 @@ def test_process_message_memory_update_updates_existing_memory(tmp_path) -> None
         },
     }
     server.process_message(init_message, initialized=False)
-    memory_store = server._BRAIN_CONTAINER.stack.memory_store  # noqa: SLF001
+    memory_store = server._BRAIN_CONTAINER.stack.memory_store
     saved, _ = memory_store.save_memory(
         session_id="session_1",
         title="Preference: tea",
@@ -1169,7 +1169,7 @@ def test_process_message_memory_update_rejects_duplicate_lesson_text(tmp_path) -
         },
     }
     server.process_message(init_message, initialized=False)
-    memory_store = server._BRAIN_CONTAINER.stack.memory_store  # noqa: SLF001
+    memory_store = server._BRAIN_CONTAINER.stack.memory_store
     memory_store.save_memory(
         session_id="session_1",
         title="Preference: tea",
@@ -1218,7 +1218,7 @@ def test_process_message_memory_delete_removes_memory(tmp_path) -> None:
         },
     }
     server.process_message(init_message, initialized=False)
-    memory_store = server._BRAIN_CONTAINER.stack.memory_store  # noqa: SLF001
+    memory_store = server._BRAIN_CONTAINER.stack.memory_store
     saved, _ = memory_store.save_memory(
         session_id="session_1",
         title="Preference: tea",
@@ -1285,7 +1285,7 @@ def test_process_message_memory_pending_delete_removes_candidate(tmp_path) -> No
         },
     }
     server.process_message(init_message, initialized=False)
-    memory_store = server._BRAIN_CONTAINER.stack.memory_store  # noqa: SLF001
+    memory_store = server._BRAIN_CONTAINER.stack.memory_store
     _, pending_fingerprint = _insert_pending_candidate(
         memory_store,
         session_id="session-delete",
@@ -1356,7 +1356,7 @@ def test_process_message_memory_recall_recent_returns_recent_memories_by_kind(tm
         },
     }
     server.process_message(init_message, initialized=False)
-    memory_store = server._BRAIN_CONTAINER.stack.memory_store  # noqa: SLF001
+    memory_store = server._BRAIN_CONTAINER.stack.memory_store
     older_memory, _ = memory_store.save_memory(
         session_id="session_old",
         title="Response style: concise",
@@ -1381,15 +1381,15 @@ def test_process_message_memory_recall_recent_returns_recent_memories_by_kind(tm
         confidence=0.99,
         source_excerpt="my name is Jen",
     )
-    memory_store._connection.execute(  # noqa: SLF001
+    memory_store._connection.execute(
         "UPDATE memories SET updated_at = ? WHERE id = ?",
         ("2026-03-15T00:00:00+00:00", older_memory.id),
     )
-    memory_store._connection.execute(  # noqa: SLF001
+    memory_store._connection.execute(
         "UPDATE memories SET updated_at = ? WHERE id = ?",
         ("2026-03-16T00:00:00+00:00", newer_memory.id),
     )
-    memory_store._connection.commit()  # noqa: SLF001
+    memory_store._connection.commit()
 
     message = {
         "jsonrpc": "2.0",

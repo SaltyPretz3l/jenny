@@ -1,0 +1,32 @@
+{
+  "version": 1,
+  "families": {
+    "qwen_image21": {
+      "label": "Qwen-Image 2.1",
+      "architectures": ["qwen_image21"],
+      "diffusion_flag": "--diffusion-model",
+      "encoder_flag": "--llm",
+      "vae_flag": "--vae",
+      "defaults": { "steps": 20, "cfg_scale": 2.5, "sampler": "euler", "flow_shift": 3 },
+      "resolutions": ["1024x1024", "1344x1344", "1472x1120", "1120x1472", "1664x928", "928x1664", "1600x1056", "1056x1600"],
+      "extra_args": ["--fa", "--offload-to-cpu"],
+      "min_total_vram_mb": 12000,
+      "free_vram_headroom_mb": 5000,
+      "unsupported_encoder_patterns": ["convrot", "fp8"]
+    },
+    "qwen_image": {
+      "label": "Qwen-Image",
+      "architectures": ["qwen_image"],
+      "diffusion_flag": "--diffusion-model",
+      "encoder_flag": "--llm",
+      "vae_flag": "--vae",
+      "defaults": { "steps": 20, "cfg_scale": 2.5, "sampler": "euler", "flow_shift": 3 },
+      "resolutions": ["1024x1024", "1344x1344", "1472x1120", "1120x1472", "1664x928", "928x1664", "1600x1056", "1056x1600"],
+      "extra_args": ["--fa", "--offload-to-cpu"],
+      "min_total_vram_mb": 12000,
+      "free_vram_headroom_mb": 5000,
+      "unsupported_encoder_patterns": ["convrot", "fp8"]
+    }
+  },
+  "_comment": "Numbers from the Step 0 measurement of 2026-09-30 on a 16 GB card with the pinned build (1024x1024, 20 steps, Q4_K_M diffusion + Q4_K_M encoder + bf16 VAE): peak VRAM 9.1 GB with --offload-to-cpu (10.0 GB without), dominated by the 7.8 GB VAE decode buffer, so a 12 GB card is the floor and the free requirement is the diffusion file plus 5 GB; peak RAM 9.9 GB with the offload, 0.8 GB without; engine time about 60 s either way. Every width and height is a multiple of 32 (sd.cpp requirement). No model names, URLs or download links belong here."
+}

@@ -63,8 +63,7 @@ def test_runtime_section_publishes_the_local_loop_profile(tmp_path: Path) -> Non
         "profile": "local",
         "max_iterations_chat": 8,
         "max_iterations_task": 30,
-        # 2026-08-30: local working-time default raised to 1800 seconds.
-        "max_loop_wall_seconds": 1_800.0,
+        "max_loop_wall_seconds": 3_600.0,
         "max_tools_per_turn": 20,
         "tools_execution_timeout_seconds": 120.0,
         "chunk_inactivity_seconds": 120.0,
@@ -83,15 +82,3 @@ def test_runtime_section_publishes_the_cloud_loop_profile(tmp_path: Path) -> Non
         "tools_execution_timeout_seconds": 1_800.0,
         "chunk_inactivity_seconds": 300.0,
     }
-
-
-def test_runtime_section_reports_local_when_the_rollback_flag_is_set(tmp_path: Path) -> None:
-    loop_profile = _runtime_section(
-        tmp_path,
-        engine_type="chatgpt",
-        feature_flags={"cloud_loop_profile": False},
-    )["loop_profile"]
-
-    assert loop_profile["profile"] == "local"
-    assert loop_profile["max_iterations_task"] == 30
-    assert loop_profile["chunk_inactivity_seconds"] == 120.0

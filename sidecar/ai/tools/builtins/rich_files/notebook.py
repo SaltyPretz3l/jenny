@@ -58,14 +58,14 @@ def notebook_inspect_tool(
         )
 
     caps = _inspect_caps(arguments)
+    raw_notebook = read_bounded_file_bytes(
+        source.absolute_path,
+        max_bytes=filesystem_content.MAX_MEDIA_FILE_BYTES,
+        authorized_root=workspace.require_root(),
+        message="notebook source changed beyond rich-file size limit",
+    )
     try:
-        notebook = json.loads(
-            read_bounded_file_bytes(
-                source.absolute_path,
-                max_bytes=filesystem_content.MAX_MEDIA_FILE_BYTES,
-                message="notebook source changed beyond rich-file size limit",
-            ).decode("utf-8")
-        )
+        notebook = json.loads(raw_notebook.decode("utf-8"))
         if not isinstance(notebook, dict):
             raise ValueError("notebook root must be an object")
         result = _inspect_notebook(source=source, notebook=notebook, caps=caps)

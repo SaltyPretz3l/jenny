@@ -6,6 +6,8 @@ const { ProjectApplicationService } = require('./project-application-service');
 const { RuntimeApplicationService } = require('../session-runtime/application-service');
 const { ensureWorkspaceProject } = require('./workspace-project-provisioner');
 const { getConfiguredToolsWorkspaceRoot } = require('../backend/managed-sidecar-config');
+const { moveProjectMemories } = require('../backend/backend-memory');
+const { resolveSessionToolDenyList } = require('../backend/backend-service-utils');
 
 function isSessionBusy(service, sessionId) {
   if (service.sessionTurnActors?.hasActiveLifecycle?.(sessionId) !== false) return true;
@@ -39,6 +41,12 @@ function initializeSessionExecutionAuthority(service) {
     resolvePluginToolAuthority: (expectedAuthority) => (
       getManagedPluginRuntime(service)?.captureExecutionToolAuthority(expectedAuthority)
     ),
+    resolveSessionDisabledTools: (sessionId) => resolveSessionToolDenyList(
+      typeof service.sessionStore.getSessionSummary === 'function'
+        ? service.sessionStore.getSessionSummary(sessionId)
+        : service.sessionStore.getSession(sessionId),
+      service.currentStatus?.tools_status
+    ),
   });
   // The Workspace folder is the project: the root commit and the "use this
   // folder" affordance both resolve through this one seam.
@@ -54,6 +62,12 @@ function initializeSessionExecutionAuthority(service) {
       getConfiguredToolsWorkspaceRoot(service), 'session_adopt_workspace'
     ),
     resolveWorkspaceRoot: () => getConfiguredToolsWorkspaceRoot(service),
+    // Deleting a project moves its knowledge folders and memories to General.
+    knowledgeService: service.knowledgeService || null,
+    moveProjectMemories: ({ from_project_id: from, to_project_id: to }) => (
+      moveProjectMemories(service, from, to)
+    ),
+    projectDeleteJournal: service.projectDeleteJournal || null,
     onPermissionChanged() {
       // Live calls recheck the canonical policy through runtime.operation.
       // Reinitialization must not disturb an admitted turn or its live waiter.

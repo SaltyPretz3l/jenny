@@ -7,6 +7,7 @@ schema-roundtrip results. This module performs no HTTP traffic.
 
 from __future__ import annotations
 
+import logging
 import threading
 import time
 from dataclasses import asdict, dataclass, field, replace
@@ -15,6 +16,8 @@ from typing import TYPE_CHECKING, Any, Mapping
 
 if TYPE_CHECKING:  # pragma: no cover — import only for type annotations.
     from sidecar.ai.tools.schema_roundtrip import RoundtripResult
+
+logger = logging.getLogger(__name__)
 
 PROFILE_EXPIRY_SECONDS = 300
 
@@ -417,3 +420,68 @@ def provider_capability_profiles_payload(
     except Exception:  # noqa: BLE001
         return []
     return [profile.to_payload() for profile in profiles]
+
+
+def record_capability_probe_success(  # noqa: PLR0913 - one probe row, all keyword.
+    store: ProviderCapabilityProfileStore | None,
+    *,
+    engine_type: str,
+    base_url: str | None,
+    model_id: str,
+    native_tools_supported: bool,
+    thinking_supported: bool,
+    context_length: int | None,
+) -> None:
+    """Record a local engine's successful model-load probe (shared engine writer).
+
+    The store is diagnostic state: a write failure never fails a model load,
+    but it is logged so a stale or missing profile has a visible cause.
+    """
+    if store is None:
+        return
+    try:
+        store.record_probe_result(
+            endpoint_id=derive_endpoint_id(engine_type, base_url),
+            model_id=model_id,
+            features=ProviderCapabilityFeatures(
+                chat_supported=True,
+                streaming_supported=True,
+                native_tools_supported=native_tools_supported,
+                thinking_or_reasoning_supported=thinking_supported,
+            ),
+            observed=ProviderCapabilityObserved(max_context_advertised=context_length),
+            probe_status=PROBE_STATUS_READY,
+        )
+    except Exception:  # noqa: BLE001 - diagnostic
+        logger.warning(
+            "capability profile write failed (engine=%s, model=%s, probe=ready)",
+            engine_type,
+            model_id,
+            exc_info=True,
+        )
+
+
+def record_capability_probe_failure(
+    store: ProviderCapabilityProfileStore | None,
+    *,
+    engine_type: str,
+    base_url: str | None,
+    model_id: str,
+    error: BaseException,
+) -> None:
+    """Mark a local engine's model-load probe failed (shared engine writer)."""
+    if store is None:
+        return
+    try:
+        store.mark_failed(
+            endpoint_id=derive_endpoint_id(engine_type, base_url),
+            model_id=model_id or "unknown",
+            reason=f"{type(error).__name__}: {str(error)[:120]}",
+        )
+    except Exception:  # noqa: BLE001 - diagnostic
+        logger.warning(
+            "capability profile write failed (engine=%s, model=%s, probe=failed)",
+            engine_type,
+            model_id or "unknown",
+            exc_info=True,
+        )

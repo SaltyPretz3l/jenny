@@ -86,3 +86,24 @@ test('evicting a live aggregate does not discard subsequent events or retain ter
   backend.emit('chat-stream', { type: 'delta', sessionId: 's_0', streamId: 't_0', content: 'late' });
   assert.equal(events.cursor, settled); events.dispose();
 });
+
+test('a runtime pause withdrawal asks the browser to refresh its decision snapshot', () => {
+  // The snapshot's pending lists read the live waiter maps, so a withdrawal is
+  // forwarded as a decision change that re-reads them; no tool body travels.
+  const backend = new EventEmitter();
+  const events = new BackendEvents({ backend, bootEpoch: 'boot' });
+  const published = [];
+  events.events.publish = (type, payload) => published.push([type, payload]);
+  backend.emit('chat-stream', { type: 'started', sessionId: 's', streamId: 't' });
+  published.length = 0;
+  backend.emit('chat-stream', { type: 'tool_approval_withdrawn', sessionId: 's', streamId: 't', callId: 'call',
+    approvalId: 'approval:scoped', toolName: 'write_file', reason: 'runtime_pause', input: { secret: 'hidden' } });
+  backend.emit('chat-stream', { type: 'user_questions_withdrawn', sessionId: 's', streamId: 't', callId: 'call',
+    questionId: 'q', questionRef: 'question_s_t_call_q', toolName: 'ask_user', reason: 'runtime_pause' });
+  assert.deepEqual(published, [
+    ['decision_changed', { session_id: 's', stream_id: 't', approval_id: 'approval:scoped' }],
+    ['decision_changed', { session_id: 's', stream_id: 't', question_ref: 'question_s_t_call_q' }],
+  ]);
+  assert.equal(events.snapshot('s').stream_id, 't', 'a withdrawal is not a terminal');
+  events.dispose();
+});

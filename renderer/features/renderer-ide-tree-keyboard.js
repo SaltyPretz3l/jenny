@@ -192,7 +192,7 @@
               render();
             }
             toggleDir(path);
-          } else if (isDir && expanded) {
+          } else if (isDir && expanded && rows[index + 1]?.dataset.ideTreePath.startsWith(`${path}/`)) {
             moveTreeFocus(rows, index + 1);
             if (qolEnabled && !event.shiftKey && !event.ctrlKey && !event.metaKey) {
               const target = rows[Math.min(rows.length - 1, index + 1)];

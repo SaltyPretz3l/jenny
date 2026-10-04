@@ -314,3 +314,23 @@ test('routeError never throws on garbage input', () => {
   }
   assert.equal(routeError('plain string failure').envelope.message, 'plain string failure');
 });
+
+
+test('static origin rows preserve identities and precedence for every origin', () => {
+  const rows = [
+    ['chat-stream', 2, 'timeline'], ['backend-status', 4, 'banner'],
+    ['settings-refresh', 5, 'toast'], ['offline-refresh', 6, 'none'],
+    ['health-poll', 6, 'none'], ['update-action', 7, 'toast'],
+    ['shell-action', 8, 'toast'], ['global-boundary', 9, 'toast'],
+    ['auth', 10, 'auth-inline'], ['startup-crash', 11, 'startup-overlay'],
+    ['unknown-origin', 12, 'toast'],
+  ];
+  for (const [origin, id, surface] of rows) {
+    const route = routeError({ message: 'failure' }, { origin });
+    assert.equal(route.ruleId, id);
+    assert.equal(route.surface, surface);
+    const stop = routeError({ recovery_class: 'cancelled' }, { origin, backendUnusable: true });
+    assert.equal(stop.ruleId, 1);
+  }
+  assert.equal(routeError({ message: 'failure' }, { origin: 'chat-stream', backendUnusable: true }).ruleId, 3);
+});

@@ -1,79 +1,176 @@
 /* ── Shell Chrome ── */
 
-.metric-list {
+/* Title-bar layout (the base grid and its tokens live in foundation.css). */
+/* Below 1200px the nav drops to a 40px second row instead of shrinking. */
+@media (max-width: 1199px) {
+  :root {
+    --titlebar-nav-row-height: 40px;
+  }
+
+  .titlebar {
+    grid-template-columns: auto minmax(var(--titlebar-drag-gutter), 1fr) auto auto;
+    grid-template-rows: var(--titlebar-row-height) var(--titlebar-nav-row-height);
+    grid-template-areas:
+      "brand gutter status controls"
+      "nav nav nav nav";
+  }
+}
+
+/* The drag gutter: pinned notes and the live turn pill ride here, left
+   aligned, and shrink; the trailing padding is drag surface the row never
+   gives up. */
+.titlebar-center {
+  grid-area: gutter;
   display: flex;
   align-items: center;
-  gap: var(--space-8);
-  color: var(--text-secondary);
-  font-size: var(--font-size-sm);
+  justify-content: flex-start;
+  align-self: stretch;
+  gap: var(--space-4);
+  min-width: var(--titlebar-drag-gutter);
+  padding-inline-end: var(--titlebar-drag-gutter);
+  box-sizing: border-box;
+  overflow: hidden;
+}
+
+/* The right cluster: glyphs only, no container. Only its interactive
+   children opt out of drag, so the gaps between them still move the window. */
+.titlebar-status {
+  grid-area: status;
+  display: flex;
+  align-items: center;
+  justify-self: end;
+  gap: var(--space-3);
+  padding-inline-end: var(--space-3);
   white-space: nowrap;
 }
 
-.metric-list[role="button"] {
-  cursor: pointer;
-  transition: opacity 140ms var(--motion-ease-standard);
+.titlebar-status > * {
+  flex-shrink: 0;
 }
 
-.metric-list[role="button"]:is(:hover, :focus-visible) {
-  color: var(--text-primary);
+.titlebar-status > :is(button, .titlebar-health-slot, .titlebar-settings-slot, .titlebar-load, .session-lockdown-header, .attention-inbox-badge) {
+  -webkit-app-region: no-drag;
 }
 
-.metric-list[role="button"]:focus-visible {
-  outline: 2px solid var(--focus-outline);
-  outline-offset: 2px;
-  border-radius: var(--radius-xs);
+/* Machine load read-out (Settings > Appearance "Show machine load in the
+   title bar", off by default). A non-interactive group, fixed-width value
+   slots and tabular figures so the 2 s tick never shifts the row. */
+.metric-list {
+  display: flex;
+  align-items: center;
+  gap: var(--space-5);
+  padding-inline: var(--space-2);
+  color: var(--text-muted);
+  font-size: var(--font-size-footnote);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
-.metric-list[role="button"]::after {
-  content: "\21bb";
+.metric-list[hidden] {
+  display: none;
+}
+
+.metric-item {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--space-2);
+}
+
+.metric-item-value {
   display: inline-block;
-  width: 1em;
-  margin-inline-start: var(--space-2);
-  opacity: 0;
-  font-size: 1em;
-  line-height: 1;
-  text-align: center;
-  transition: opacity 140ms var(--motion-ease-standard);
+  color: var(--text-secondary);
+  font-weight: 500;
+  text-align: end;
 }
 
-.metric-list[role="button"]:is(:hover, :focus-visible)::after {
-  opacity: 0.7;
+/* 5ch, not 4: "100%" is three digits plus a percent sign wider than a digit. */
+.metric-item-value[data-slot="percent"] {
+  min-width: 5ch;
+}
+
+.metric-item-value[data-slot="memory"] {
+  min-width: 7ch;
 }
 
 .metric-item[data-stale="true"] {
   opacity: 0.55;
 }
 
-.metric-list.is-refreshing {
-  opacity: 0.7;
+/* A hairline between the read-out and the glyphs. */
+.metric-list::after {
+  content: "";
+  align-self: center;
+  width: 1px;
+  height: var(--space-8);
+  margin-inline-start: var(--space-2);
+  background: var(--border-default);
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .metric-list[role="button"],
-  .metric-list[role="button"]::after {
-    transition: none;
-  }
+/* Glyph buttons in the right cluster: search and the Settings gear. */
+.titlebar-icon-button {
+  display: inline-grid;
+  place-items: center;
+  width: var(--titlebar-icon-button-size);
+  height: var(--titlebar-icon-button-size);
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  -webkit-app-region: no-drag;
+  transition:
+    background-color var(--transition-fast),
+    color var(--transition-fast);
 }
 
-.metric-item {
+.titlebar-icon-button:is(:hover, [aria-expanded="true"]) {
+  background: var(--toprail-item-hover-bg);
+  color: var(--text-primary);
+}
+
+.titlebar-icon-button[aria-current="page"] {
+  color: var(--text-primary);
+}
+
+.titlebar-icon-button:focus-visible {
+  outline: 2px solid var(--focus-outline);
+  outline-offset: -2px;
+}
+
+.titlebar-icon-button.hidden {
+  display: none;
+}
+
+.titlebar-icon {
+  width: 20px;
+  height: 20px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.titlebar-settings-slot {
   display: inline-flex;
-  align-items: center;
 }
 
-/* Pinned-note tabs ride in the draggable titlebar center — opt them out so a
-   click selects the tab instead of dragging the window. */
 .pin-tabs,
 .pin-tab {
   -webkit-app-region: no-drag;
 }
 
+/* Windows 11 caption cluster: three 46px tiles stretched to the title-bar
+   row, flush to the top-right corner, never shrinking. Glyphs are 10px SVG. */
 .window-controls {
   position: relative;
   z-index: var(--z-window-controls);
-  grid-column: 4;
-  grid-row: 1;
+  grid-area: controls;
   display: flex;
+  flex-shrink: 0;
   align-self: stretch;
+  height: var(--titlebar-row-height);
   -webkit-app-region: no-drag;
 }
 
@@ -97,12 +194,37 @@
 
 .window-button {
   -webkit-app-region: no-drag;
-  width: 38px;
+  display: grid;
+  place-items: center;
+  width: 46px;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
   color: var(--text-muted);
   cursor: pointer;
   transition:
     background-color var(--transition-fast),
     color var(--transition-fast);
+}
+
+.window-glyph {
+  width: 10px;
+  height: 10px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1;
+  shape-rendering: crispEdges;
+}
+
+/* Maximize and restore are both in the tile; the window state picks one. */
+.window-glyph--restore,
+.window-button[data-maximized="true"] .window-glyph--maximize {
+  display: none;
+}
+
+.window-button[data-maximized="true"] .window-glyph--restore {
+  display: block;
 }
 
 .window-button:is(:hover, :focus-visible) {
@@ -115,15 +237,18 @@
   outline-offset: -2px;
 }
 
-.close-button:is(:hover, :focus-visible) {
+/* Red on hover only: a focused close tile keeps the neutral wash. */
+.close-button:hover {
   background: var(--widget-close-hover-bg);
   color: white;
 }
 
+/* Last resort (reachable only at app zoom >= 134%): the right cluster clips
+   inside a bounded track; the wordmark and the window tiles keep their size. */
 @media (max-width: 480px) {
   .titlebar {
     grid-template-columns: auto 0 minmax(0, 1fr) auto;
-    gap: var(--space-4);
+    column-gap: var(--space-2);
     padding-inline-start: var(--space-4);
   }
 
@@ -131,21 +256,20 @@
     padding-inline-start: var(--space-4);
   }
 
+  .titlebar-center {
+    min-width: 0;
+    padding-inline-end: 0;
+  }
+
   .titlebar-status {
     justify-self: stretch;
-    gap: var(--space-4);
-    padding-inline-start: 0;
+    min-width: 0;
+    gap: var(--space-2);
     overflow: hidden;
   }
 
-  .titlebar-status > .stat-divider,
   .titlebar-status > .metric-list {
     display: none;
-  }
-
-  .turn-status-pill {
-    min-width: 0;
-    max-width: 100%;
   }
 }
 
@@ -153,7 +277,9 @@
   flex: 1;
   min-height: 0;
   display: grid;
-  grid-template-columns: var(--sidebar-current-width) var(--sidebar-resizer-width) minmax(0, 1fr);
+  /* The resizer track is 0: the handle overlays the panel edge (sidebar.css),
+     so the tab band and the view start flush against the expanded panel. */
+  grid-template-columns: var(--sidebar-current-width) 0 minmax(0, 1fr);
   position: relative;
 }
 
@@ -218,7 +344,7 @@
   box-shadow: none;
   color: var(--text-primary);
   font: inherit;
-  font-size: var(--font-size-md);
+  font-size: var(--font-size-body);
   outline: none;
   transition:
     border-color var(--motion-duration-fast) var(--motion-ease-standard),
@@ -245,7 +371,7 @@
 .empty-state {
   padding: var(--space-9) var(--space-5);
   color: var(--text-secondary);
-  font-size: var(--font-size-base);
+  font-size: var(--font-size-footnote);
 }
 
 .hidden {
@@ -296,7 +422,7 @@
   border-radius: 999px;
   color: var(--state-warning);
   font-size: var(--font-size-xs);
-  font-weight: 600;
+  font-weight: 500;
   line-height: 1.4;
   white-space: nowrap;
 }
@@ -330,7 +456,7 @@
 .session-row__lockdown-badge {
   margin-inline-end: var(--space-4);
   padding: 0 var(--space-4);
-  font-size: 10px;
+  font-size: var(--font-size-caption);
 }
 
 /* The expanded sidebar row badge stays icon-only (title= carries "Offline

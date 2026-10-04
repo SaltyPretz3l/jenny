@@ -128,14 +128,40 @@ test('projectLastError classifies the code when recovery_class is absent and fal
   });
 });
 
-test('projectLastError skips later success and surfaces the most recent error; null when clean', () => {
-  const withError = baseState({
+// Dogfood DE-003: lastError describes the latest turn only. An older turn's
+// error (a turn cancelled when the app closed) must not make a driver read a
+// later clean turn as failed.
+test('projectLastError reports only the latest turn: a later success or a new user turn clears it; null when clean', () => {
+  const retried = baseState({
     messagesBySession: new Map([['s1', [
+      { id: 'u1', role: 'user' },
       { id: 'a1', role: 'assistant', error_code: 'CMP-CTX-0002', stream_error: 'too long' },
       { id: 'a2', role: 'assistant', status: 'completed', content: 'recovered' },
     ]]]),
   });
-  assert.strictEqual(projectLastError(withError, 's1').code, 'CMP-CTX-0002');
+  assert.strictEqual(projectLastError(retried, 's1'), null);
+
+  const nextTurn = baseState({
+    messagesBySession: new Map([['s1', [
+      { id: 'u1', role: 'user' },
+      { id: 'a1', role: 'assistant', status: 'cancelled', error_code: 'CMP-SIDECAR-0002', recovery_class: 'cancelled' },
+      { id: 'u2', role: 'user' },
+      { id: 't1', role: 'tool', kind: 'tool_result' },
+      { id: 'a2', role: 'assistant', status: 'completed', content: 'folders listed' },
+    ]]]),
+  });
+  assert.strictEqual(projectLastError(nextTurn, 's1'), null);
+
+  const latestFailed = baseState({
+    messagesBySession: new Map([['s1', [
+      { id: 'u1', role: 'user' },
+      { id: 'a1', role: 'assistant', status: 'completed', content: 'fine' },
+      { id: 'u2', role: 'user' },
+      { id: 't1', role: 'tool', kind: 'tool_result' },
+      { id: 'a2', role: 'assistant', error_code: 'CMP-CTX-0002', stream_error: 'too long' },
+    ]]]),
+  });
+  assert.strictEqual(projectLastError(latestFailed, 's1').code, 'CMP-CTX-0002');
 
   const clean = baseState({
     messagesBySession: new Map([['s1', [

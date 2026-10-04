@@ -26,7 +26,7 @@ from tests.sidecar.runtime.test_chat_continuation_resume import _artifacts, _can
 from tests.sidecar.runtime.test_continuation_checkpoint import _decision_plan
 
 
-def test_captured_preview_survives_question_checkpoint_only_as_text(captured):  # noqa: F811
+def test_captured_preview_survives_question_checkpoint_only_as_text(captured):  # noqa: F811, PLR0915  # scenario
     root, payload = captured
     harness = kernel(root)
     context = ChatRequestContext(request_id="preview", trace_id="preview", session_id="visual_review",

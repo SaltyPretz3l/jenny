@@ -1,9 +1,10 @@
 'use strict';
 
-/* WorkspacePtyService: real ConPTY terminal behind the default-OFF
- * `workspace_pty_terminal` flag. Structured-result contracts (never throws
- * across the IPC seam), the never-load-native-code-when-gated pin (flag OFF
- * or rootless spawn must not call the pty module loader), spawn shape (cwd,
+/* WorkspacePtyService: the Workspace IDE's real ConPTY terminal (its
+ * workspace_pty_terminal flag was retired in post-1.2.0 sweep S8).
+ * Structured-result contracts (never throws across the IPC seam), the
+ * never-load-native-code-when-rootless pin (a rootless spawn must not call
+ * the pty module loader), spawn shape (cwd,
  * scrubbed env, clamped cols/rows), single-session policy, write/resize/kill
  * plumbing to the IPty handle, byte-capped onData / onExit bridge events,
  * MODULE_LOAD_FAILED fail-soft, and the powershell->cmd fixture fallback.
@@ -35,7 +36,6 @@ function createFakePty() {
 
 function createFixture({
   root = 'G:/fake-root',
-  flag = true,
   ptyModuleLoader,
   scheduleOutputFlush,
   setTimeoutImpl,
@@ -46,7 +46,6 @@ function createFixture({
   const events = [];
   const logs = [];
   const ptys = [];
-  let enabled = flag;
   const loader = ptyModuleLoader || (() => ({
     spawn: (shell, args, opts) => {
       spawns.push({ shell, args, opts });
@@ -57,7 +56,6 @@ function createFixture({
   }));
   const service = new WorkspacePtyService({
     configService: { getToolsWorkspaceRoot: () => root },
-    featureFlagProvider: () => ({ workspace_pty_terminal: enabled }),
     sendBridgeEvent: (key, payload) => events.push({ key, payload }),
     ptyModuleLoader: loader,
     env: {
@@ -75,7 +73,6 @@ function createFixture({
   return {
     service, spawns, events, logs, ptys,
     lastPty: () => ptys[ptys.length - 1],
-    setFlag: (value) => { enabled = value; },
   };
 }
 
@@ -83,23 +80,15 @@ const THROWING_LOADER = () => {
   throw new Error('loader must not be invoked');
 };
 
-// 1. flag-off spawn -> {available:false} and loader never invoked.
-test('spawn is gated: flag off returns available:false without loading native code', async () => {
-  const { service, spawns } = createFixture({ flag: false, ptyModuleLoader: THROWING_LOADER });
-  const result = await service.spawn({ cols: 80, rows: 24 });
-  assert.deepEqual(result, { available: false });
-  assert.equal(spawns.length, 0);
+// 1-2. write/resize/kill with no session are structured no-ops, loader never invoked.
+test('write/resize/kill without a session never load native code', async () => {
+  const { service } = createFixture({ ptyModuleLoader: THROWING_LOADER });
+  assert.deepEqual(await service.write({ sessionId: 'pty-1', data: 'x' }), { ok: false, code: TERMINAL_ERROR_CODES.NO_SESSION });
+  assert.deepEqual(await service.resize({ sessionId: 'pty-1', cols: 80, rows: 24 }), { ok: false, code: TERMINAL_ERROR_CODES.NO_SESSION });
+  assert.deepEqual(await service.kill({ sessionId: 'pty-1' }), { ok: true, killed: false });
 });
 
-// 2. flag-off write/resize/kill -> {available:false}, loader never invoked.
-test('write/resize/kill are gated when flag off', async () => {
-  const { service } = createFixture({ flag: false, ptyModuleLoader: THROWING_LOADER });
-  assert.deepEqual(await service.write({ sessionId: 'pty-1', data: 'x' }), { available: false });
-  assert.deepEqual(await service.resize({ sessionId: 'pty-1', cols: 80, rows: 24 }), { available: false });
-  assert.deepEqual(await service.kill({ sessionId: 'pty-1' }), { available: false });
-});
-
-// 3. flag-on, null root -> ok:false ROOT_MISSING, loader never invoked (root before load).
+// 3. null root -> ok:false ROOT_MISSING, loader never invoked (root before load).
 test('spawn with no workspace root returns ROOT_MISSING before loading native code', async () => {
   const { service } = createFixture({ root: '', ptyModuleLoader: THROWING_LOADER });
   const result = await service.spawn({ cols: 80, rows: 24 });
@@ -136,6 +125,8 @@ test('single-session policy: second spawn reuses the live session', async () => 
   assert.equal(again.ok, true);
   assert.equal(again.alreadyRunning, true);
   assert.equal(again.sessionId, first.sessionId);
+  assert.equal(again.shell, first.shell, 'a reused session still reports its shell (command quoting)');
+  assert.equal(again.cwd, first.cwd);
   assert.equal(spawns.length, 1);
 });
 
@@ -170,6 +161,20 @@ test('write/resize/kill reach the handle; wrong id rejects; write is capped', as
   assert.deepEqual(k, { ok: true, killed: true, terminationConfirmed: true });
   assert.equal(pty.killed, 1);
   assert.equal(service.hasSession(), false);
+});
+
+test('resize to the current size is a no-op; a real change still reaches the handle', async () => {
+  const { service, lastPty } = createFixture();
+  const { sessionId } = await service.spawn({ cols: 80, rows: 24 });
+  const pty = lastPty();
+
+  assert.deepEqual(await service.resize({ sessionId, cols: 80, rows: 24 }), { ok: true, unchanged: true });
+  assert.deepEqual(pty.resizes, [], 'the spawn size is not re-applied');
+
+  assert.deepEqual(await service.resize({ sessionId, cols: 100, rows: 30 }), { ok: true });
+  assert.deepEqual(await service.resize({ sessionId, cols: 100, rows: 30 }), { ok: true, unchanged: true });
+  assert.deepEqual(await service.resize({ sessionId, cols: 100, rows: 31 }), { ok: true });
+  assert.deepEqual(pty.resizes, [{ cols: 100, rows: 30 }, { cols: 100, rows: 31 }]);
 });
 
 test('multibyte terminal input is capped to 16 KiB of complete UTF-8 code points', async () => {
@@ -228,20 +233,6 @@ test('wide-036: dispose latches shutdown and refuses a later PTY spawn', async (
   assert.equal(refused.code, TERMINAL_ERROR_CODES.NO_SESSION);
   assert.equal(refused.reason, 'disposed');
   assert.equal(spawns.length, 0);
-});
-
-test('wide-036: a live session remains writable and killable after the feature flag flips off', async () => {
-  const { service, lastPty, setFlag } = createFixture();
-  const { sessionId } = await service.spawn({ cols: 80, rows: 24 });
-  setFlag(false);
-  assert.deepEqual(await service.write({ sessionId, data: 'x' }), { ok: true, written: 1 });
-  assert.deepEqual(await service.resize({ sessionId, cols: 90, rows: 30 }), { ok: true });
-  assert.deepEqual(await service.kill({ sessionId }), {
-    ok: true, killed: true, terminationConfirmed: true,
-  });
-  assert.equal(lastPty().killed, 1);
-  assert.equal(service.hasSession(), false);
-  assert.deepEqual(await service.spawn({}), { available: false }, 'the flag still gates creation');
 });
 
 test('wide-036: a native kill throw retains ownership and reports observable failure', async () => {
@@ -336,7 +327,6 @@ test('spawn falls back to cmd.exe when powershell.exe throws (win32 path)', asyn
   const spawns = [];
   const service = new WorkspacePtyService({
     configService: { getToolsWorkspaceRoot: () => 'G:/fake-root' },
-    featureFlagProvider: () => ({ workspace_pty_terminal: true }),
     sendBridgeEvent: () => {},
     ptyModuleLoader: () => ({
       spawn: (shell, args, opts) => {

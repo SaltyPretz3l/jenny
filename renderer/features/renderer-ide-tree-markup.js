@@ -101,6 +101,9 @@
     // Projects v2: when a switcher is wired the header title is the current
     // project's name and opens the project menu; otherwise the static label.
     const getProjectTitle = typeof deps.getProjectTitle === 'function' ? deps.getProjectTitle : null;
+    // Split view W3-4: { projectId, projectName } | null - the one-line nudge
+    // under the header when the reference chat works in another project.
+    const getProjectNudge = typeof deps.getProjectNudge === 'function' ? deps.getProjectNudge : null;
     const textField = resolveModule('inventoryTextField', '../inventory/text-field');
     const actionButton = resolveModule('inventoryActionButton', '../inventory/action-button');
     const ideIcons = resolveModule('rendererIdeIcons', './renderer-ide-icons');
@@ -249,7 +252,7 @@
           { ariaLabel: sortTitle, title: sortTitle, trustedHtml: sortSvg, dataset: { 'ide-tree-action': 'cycle-sort' } }
         );
       }
-      const buttonMarkup = buttons
+      const buttonMarkup = (getRootNeedsChoose() ? [] : buttons)
         .map((options) => actionButton({ plain: true, className: 'ide-tree-header-button', ...options }))
         .join('');
       const chevronSvg = `${svgOpen}<path d="m4.5 6.5 3.5 3.5 3.5-3.5"/></svg>`;
@@ -257,8 +260,8 @@
         ? actionButton({
           plain: true,
           className: 'ide-tree-header-title ide-tree-header-project',
-          ariaHaspopup: 'listbox',
-          ariaLabel: jt('ide.tree.switchProject', 'Switch project'),
+          ariaHaspopup: 'menu',
+          ariaLabel: jt('projects.switcher.switchCurrentAria', 'Switch project, current: {name}', { name: getProjectTitle() }),
           title: jt('ide.tree.switchProject', 'Switch project'),
           dataset: { 'ide-tree-action': 'project-menu' },
           trustedHtml: `<span class="ide-tree-header-project-name">${escapeHtml(getProjectTitle())}</span>${chevronSvg}`,
@@ -266,7 +269,31 @@
         : `<span class="ide-tree-header-title">${escapeHtml(jt('ide.tree.explorer', 'Explorer'))}</span>`;
       return '<div class="ide-tree-header">'
         + titleMarkup
-        + `<span class="ide-tree-header-actions">${buttonMarkup}</span></div>`;
+        + `<span class="ide-tree-header-actions">${buttonMarkup}</span></div>`
+        + buildProjectNudge().markup;
+    }
+
+    // The nudge line and its identity key ('' when absent). The key is what a
+    // live node reads back as (data attribute + textContent), so an in-place
+    // header repaint can compare without re-serializing markup.
+    function buildProjectNudge() {
+      const nudge = getProjectNudge && typeof actionButton === 'function' ? getProjectNudge() : null;
+      if (!nudge || !nudge.projectId) {
+        return { key: '', markup: '' };
+      }
+      const params = { project: nudge.projectName };
+      const text = jt('ide.explorer.nudge.text', 'The focused chat is in {project}.', params);
+      const label = jt('ide.explorer.nudge.open', 'Open {project}', params);
+      const markup = `<p class="ide-explorer-project-nudge" data-ide-project-nudge="${escapeHtml(nudge.projectId)}">`
+        + `${escapeHtml(text)} `
+        + actionButton({
+          plain: true,
+          className: 'ide-explorer-project-nudge-action',
+          label,
+          dataset: { 'ide-tree-action': 'project-nudge', 'ide-project-id': nudge.projectId },
+        })
+        + '</p>';
+      return { key: projectNudgeKey(nudge.projectId, `${text} ${String(label).trim()}`), markup };
     }
 
     function buildTreeMarkup() {
@@ -278,8 +305,9 @@
         if (rootNeedsChoose && hasChooseRoot() && typeof actionButton === 'function') {
           body += '<div class="ide-tree-choose-root">'
             + actionButton({
-              label: jt('ide.tree.chooseFolder', 'Choose Folder'),
-              variant: 'primary',
+              label: jt('ide.tree.chooseFolderLink', 'Choose a folder'),
+              plain: true,
+              className: 'ide-tree-choose-root-action',
               dataset: { 'ide-tree-choose-root': '1' },
             })
             + '</div>';
@@ -299,11 +327,22 @@
     return {
       buildTreeMarkup,
       buildChildrenMarkup,
+      buildProjectNudge,
     };
+  }
+
+  function projectNudgeKey(projectId, text) {
+    return projectId ? `${projectId}\n${text}` : '';
+  }
+
+  // The key a rendered nudge node carries ('' for no node).
+  function readProjectNudgeKey(node) {
+    return node ? projectNudgeKey(node.getAttribute('data-ide-project-nudge') || '', node.textContent || '') : '';
   }
 
   return {
     createIdeTreeMarkup,
+    readProjectNudgeKey,
     parentDirOf,
     nameOf,
     isValidEntryName,

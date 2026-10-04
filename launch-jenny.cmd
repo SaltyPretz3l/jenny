@@ -22,6 +22,22 @@ if not exist "%ELECTRON_EXE%" (
   exit /b 1
 )
 
+rem Refresh the esbuild preload bundle (skipped when its stamp is current). A
+rem missing or stale bundle boots a window whose shell API never loads.
+where node >nul 2>nul
+if errorlevel 1 (
+  if not exist "%REPO_ROOT%\preload.bundle.js" (
+    >&2 echo Jenny launcher needs Node.js on PATH to build preload.bundle.js.
+    exit /b 1
+  )
+) else (
+  node "%REPO_ROOT%\scripts\build\build-preload.js" >nul
+  if errorlevel 1 (
+    >&2 echo Jenny launcher failed to build the preload bundle.
+    exit /b 1
+  )
+)
+
 start "" /D "%REPO_ROOT%" "%ELECTRON_EXE%" "%REPO_ROOT%"
 set "LAUNCH_EXIT=%ERRORLEVEL%"
 if not "%LAUNCH_EXIT%"=="0" (

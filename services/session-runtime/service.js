@@ -24,6 +24,23 @@ function immediateBusy(reason, work) {
   return error;
 }
 
+// The paused work whose retained attempt owns this stream, if any. A paused
+// turn keeps its attempt, so the stream the chat still shows names it. So does
+// a continuation whose resource freed but which is still pending behind a busy
+// lane: it has not started a fresh stream yet.
+const HELD_CONTINUATION_STATUSES = ['paused', 'pending'];
+function pausedWorkForStream(runtime, streamId) {
+  const id = String(streamId || '').trim();
+  if (!id) return null;
+  for (const summary of runtime._listSummaries()) {
+    if (!HELD_CONTINUATION_STATUSES.includes(summary.status)) continue;
+    const work = runtime.store.get(summary.work_id);
+    if (HELD_CONTINUATION_STATUSES.includes(work?.status) && work.checkpoint_ref
+      && work.attempt?.stream_id === id) return work;
+  }
+  return null;
+}
+
 class SessionRuntimeService {
   constructor({ store, scheduler, chatAdapter, resourceBroker = null, pathResolver = null,
     checkpointStore = null, budgetStore = null, lineageStore = null, conversationStore = null,
@@ -303,12 +320,21 @@ class SessionRuntimeService {
   }
 
   noteStreamCancellation(streamId, reason = 'user') {
-    this.eligibilityCoordinator?.forgetStream(streamId);
     try {
       const entry = [...this.scheduler.active.values()].find(item => item.attempt.stream_id === streamId);
+      // A paused turn has no active entry. Stop cancels it through the same
+      // proof-gated path as Discard, which also drops its own resume wait;
+      // forgetting the wait first would strand the work paused (HB-034).
+      const paused = entry ? null : pausedWorkForStream(this, streamId);
+      if (paused) {
+        return Object.freeze({ ...cancelRuntimeSubtree(this, paused.work_id, {
+          expectedRevision: paused.revision, reason: normalizeReason(reason, 'user'), abort: true }), paused: true });
+      }
+      this.eligibilityCoordinator?.forgetStream(streamId);
       if (!entry) return this.scheduler.noteStreamCancellation(streamId, normalizeReason(reason, 'user'));
       return cancelRuntimeSubtree(this, entry.work.work_id, { reason: normalizeReason(reason, 'user'), abort: false });
     } catch (error) {
+      try { this.eligibilityCoordinator?.forgetStream(streamId); } catch (_error) { /* The intent result below reports the failure. */ }
       return Object.freeze({ status: 'requested', work_id: null,
         cleanup_confirmed: false, persisted: false,
         reason: String(error?.code || error?.message || 'runtime_cancellation_intent_failed') });
@@ -383,9 +409,11 @@ class SessionRuntimeService {
         });
       }
     }
-    const completion = waitForCleanup(() => this._globalCleanupConfirmed(), {
+    const completion = waitForCleanup(() => this._globalCleanupConfirmed()
+      || this._cleanupAwaitsBackendRestart(), {
       timeoutMs: timeout, waiters: () => this.scheduler.cleanupPromises(),
-    });
+    }).then(result => (result.ok && !this._globalCleanupConfirmed()
+      ? Object.freeze({ ok: false, reason: 'runtime_cleanup_awaits_backend_restart' }) : result));
     this.shutdownRequest = Object.freeze({ requested: true, completion });
     return this.shutdownRequest;
   }
@@ -410,19 +438,41 @@ class SessionRuntimeService {
     return reopened;
   }
 
-  // Backend-restart proof (B3D-1): nothing that ran under the previous
-  // sidecar can still hold its lane or resources. Producers that returned
-  // unproven are retired and quarantined resource leases confirmed before
-  // the runtime is asked to reopen; producers that never returned stay.
-  reclaimAbandonedAfterBackendRestart({ reason = 'backend_restart' } = {}) {
+  // Restart proves cleanup of sidecar lanes and sidecar-produced leases, not of
+  // external resource owners (DLG-01).
+  reclaimAbandonedAfterBackendRestart({ reason = 'backend_restart', cleanupLeases = [] } = {}) {
     const report = this.scheduler.reclaimAbandoned({ reason });
-    const resourcesConfirmed = Number(this.resourceBroker?.confirmQuarantinedCleanup?.() || 0);
+    const resourcesConfirmed = Number(this.resourceBroker?.confirmQuarantinedCleanup?.(
+      cleanupLeases, { backendRestart: true }) || 0);
     return Object.freeze({ ...report, resources_confirmed: resourcesConfirmed });
   }
 
+  _lineageWorkSettled(workId) {
+    const work = this.store.get(workId);
+    return Boolean(work && TERMINAL.has(work.status) && !work.checkpoint_ref
+      && !this.scheduler.active.has(workId) && !this.scheduler.cancellationFences.has(workId)
+      && !this.children?.publications.has(workId)
+      && ![...this.pendingSubmissions].some(item => item.current && item.sessionId === work.session_id)
+      && (!this.checkpointStore || this.checkpointStore.canDiscardWorkContext(workId))
+      && !(this.resourceBroker?.snapshot().lease_count > 0));
+  }
+
+  // Read-only: settled lineage does not hold a session (DLG-03), but it is
+  // retired only by retireSettledLineage inside the deletion commit.
   _hasLineageReferences(sessionId) {
-    try { return this.lineageStore?.hasSessionReferences(sessionId) === true; }
+    try {
+      return this.lineageStore?.hasSessionReferences(sessionId,
+        workId => this._lineageWorkSettled(workId)) === true;
+    }
     catch (_error) { return true; } // Unreadable ownership cannot authorize deletion.
+  }
+
+  // Called by session deletion after every refusal has passed. Throws when the
+  // lineage store cannot retire, so the deletion is refused rather than orphaned.
+  retireSettledLineage(sessionId) {
+    const id = String(sessionId || '').trim();
+    if (!id || !this.lineageStore) return 0;
+    return this.lineageStore.retireSessionReferences(id, workId => this._lineageWorkSettled(workId));
   }
 
   _sessionCleanupConfirmed(sessionId) {
@@ -439,6 +489,25 @@ class SessionRuntimeService {
       && Number(lanes.active_leases || 0) === 0 && Number(lanes.quarantined || 0) === 0
       && Number(resources.lease_count || 0) === 0 && Number(resources.waiter_count || 0) === 0
       && Number(resources.quarantined_count || 0) === 0;
+  }
+
+  // True when all that is left is what the backend-restart reclaim retires
+  // (B3D-1): entries whose producer already returned unproven, their fences,
+  // and quarantined lane leases. Nothing in this process can settle those, so a
+  // shutdown drain stops waiting on them. A running producer, a paused
+  // cancellation proof, a live lane lease or any resource lease keeps the drain.
+  _cleanupAwaitsBackendRestart() {
+    const { scheduler } = this;
+    const lanes = this.lanes?.snapshot?.() || {};
+    const resources = this.resourceBroker?.snapshot?.() || {};
+    return [...scheduler.active.values()].every(entry => entry.initialSettlementDone === true)
+      && scheduler.pausedCancellationSettlements.size === 0
+      && [...scheduler.cancellationFences.keys()].every(workId => {
+        try { return scheduler.active.has(workId) || this.store.get(workId)?.control_request?.kind === 'cancel'; }
+        catch (_error) { return false; }
+      })
+      && Number(lanes.active_leases || 0) === Number(lanes.quarantined || 0)
+      && Number(resources.lease_count || 0) === 0 && Number(resources.waiter_count || 0) === 0;
   }
 
   _listSummaries(sessionId = null) {

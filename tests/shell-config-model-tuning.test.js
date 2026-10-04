@@ -133,6 +133,23 @@ test('an existing override wins and consumes the one-shot legacy value', () => {
   assert.deepEqual(service.resolveStreamInactivitySeconds('qwen3:latest'), { seconds: 120, automatic: true });
 });
 
+test('legacy timeout adoption preserves saved generation profiles on disk', () => {
+  const userDataPath = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-model-tuning-mixed-'));
+  trackDirectory(userDataPath);
+  fs.writeFileSync(path.join(userDataPath, 'shell-config.json'), JSON.stringify({
+    version: CONFIG_VERSION,
+    modelTuning: {
+      pendingLegacyStreamInactivitySeconds: 180,
+      generationProfilesByModel: { saved: { temperature: 0.5 } },
+    },
+  }));
+  const service = new ShellConfigService({ userDataPath });
+  service.resolveStreamInactivitySeconds('new-model');
+  const reloaded = new ShellConfigService({ userDataPath });
+  assert.deepEqual(reloaded.getModelTuning().generationProfilesByModel, { saved: { temperature: 0.5 } });
+  assert.equal(reloaded.getModelTuning().pendingLegacyStreamInactivitySeconds, null);
+});
+
 test('explicit updates persist and null restores Automatic', () => {
   const userDataPath = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-model-tuning-update-'));
   trackDirectory(userDataPath);

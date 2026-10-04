@@ -51,6 +51,26 @@
     return raw.replace(CITATION_MARKER_PATTERN, '');
   }
 
+  // Any prefix of a marker (with its optional leading space) at the very end
+  // of the text, including a lone trailing space a marker could still follow.
+  const PARTIAL_CITATION_MARKER_TAIL = /\s?(?:[[【]\s*(?:w(?:e(?:b(?::[\s\d,]*)?)?)?)?)?$/i;
+
+  // Streaming variant: strip complete markers and hold back a trailing marker
+  // that may still be arriving, so a marker never flashes in the live bubble.
+  // Holding back the trailing space too keeps each frame a prefix of the next
+  // (the settled strip removes the space before a marker), so the incremental
+  // stream renderer keeps its stable prefix.
+  function stripCitationMarkersForStreaming(text) {
+    return stripCitationMarkers(text).replace(PARTIAL_CITATION_MARKER_TAIL, '');
+  }
+
+  // Flag-gated entry for the bubble renderers: a source_citations-off
+  // relaunch renders the marker exactly as before.
+  function stripCitationMarkersForFlags(text, featureFlags, options) {
+    if (featureFlags?.source_citations !== true) return text;
+    return options?.streaming ? stripCitationMarkersForStreaming(text) : stripCitationMarkers(text);
+  }
+
   function safeHttpUrl(value) {
     const raw = String(value == null ? '' : value).trim();
     if (!raw) return null;
@@ -93,5 +113,5 @@
     return `<div class="citation-chips-row">${chips.join('')}</div>`;
   }
 
-  return { renderCitationChips, stripCitationMarkers };
+  return { renderCitationChips, stripCitationMarkers, stripCitationMarkersForStreaming, stripCitationMarkersForFlags };
 });

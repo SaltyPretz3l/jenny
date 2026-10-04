@@ -248,6 +248,64 @@ test('an empty follow-up scan prunes a detached Mermaid observer target', (t) =>
   assert.equal(observer.observed.size, 0);
 });
 
+// A transcript clear that stays empty runs no later scan, so the clear path
+// prunes directly; the shared observer itself stays alive (artifact and IDE
+// previews observe through it too).
+test('pruneDetachedMermaidObservations releases a detached block without another scan and keeps connected blocks observed', (t) => {
+  const dom = new JSDOM('<div id="root"></div><div id="other"></div>', { pretendToBeVisual: true });
+  const previousWindow = global.window;
+  const previousDocument = global.document;
+  const previousPurify = global.DOMPurify;
+  const previousRendererMermaidUtils = global.rendererMermaidUtils;
+  const previousIO = global.IntersectionObserver;
+
+  global.window = dom.window;
+  global.document = dom.window.document;
+  global.DOMPurify = createDOMPurify(dom.window);
+  global.rendererMermaidUtils = { renderMermaidDirect() {} };
+  let observer;
+  const unobserved = [];
+  let disconnected = false;
+  global.IntersectionObserver = class FakeIO {
+    constructor() { this.observed = new Set(); observer = this; }
+    observe(target) { this.observed.add(target); }
+    unobserve(target) { unobserved.push(target); this.observed.delete(target); }
+    disconnect() { disconnected = true; this.observed.clear(); }
+  };
+
+  const { renderMarkdown, renderInlineMermaidBlocks, pruneDetachedMermaidObservations, disposeMermaidLazyObserver } = loadMarkdownUtils();
+  t.after(() => {
+    disposeMermaidLazyObserver();
+    global.window = previousWindow;
+    global.document = previousDocument;
+    global.DOMPurify = previousPurify;
+    global.rendererMermaidUtils = previousRendererMermaidUtils;
+    global.IntersectionObserver = previousIO;
+    dom.window.close();
+  });
+
+  const root = dom.window.document.getElementById('root');
+  const other = dom.window.document.getElementById('other');
+  root.innerHTML = renderMarkdown('```mermaid\nflowchart TD\nA-->B\n```');
+  other.innerHTML = renderMarkdown('```mermaid\nflowchart TD\nC-->D\n```');
+  renderInlineMermaidBlocks(root);
+  renderInlineMermaidBlocks(other);
+  const detachedBlock = root.firstElementChild;
+  const connectedBlock = other.firstElementChild;
+  assert.equal(observer.observed.has(detachedBlock), true);
+  assert.equal(observer.observed.has(connectedBlock), true);
+
+  root.textContent = '';
+  assert.equal(detachedBlock.isConnected, false);
+  assert.equal(typeof pruneDetachedMermaidObservations, 'function', 'the clear path can call the prune directly');
+  pruneDetachedMermaidObservations();
+
+  assert.deepEqual(unobserved, [detachedBlock], 'only the detached block is unobserved');
+  assert.equal(observer.observed.has(detachedBlock), false, 'the observer no longer retains the detached node');
+  assert.equal(observer.observed.has(connectedBlock), true, 'a still-connected block stays observed');
+  assert.equal(disconnected, false, 'the shared observer is not disposed');
+});
+
 test('UIUX-026: a mermaid block that fails to render does not opt into virtualizer live-state pinning', async (t) => {
   const dom = new JSDOM('<div id="root"></div>', { pretendToBeVisual: true });
   const previousWindow = global.window;

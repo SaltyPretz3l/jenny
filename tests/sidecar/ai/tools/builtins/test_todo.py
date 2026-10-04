@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+import importlib
 import json
+import os
+from pathlib import Path
+from types import ModuleType
 
 import pytest
 
@@ -239,3 +243,151 @@ def test_default_status_is_pending() -> None:
     )
     data = _read()
     assert data["todos"][0]["status"] == "pending"
+
+
+# ── FG-002-A: persistence across a sidecar restart ───────────────────
+
+
+def _profile_guard(tmp_path: Path) -> WorkspaceGuard:
+    """A per-call guard as the builtin server binds it: the profile-scoped
+    snapshot root is ``<profile>/workspace-snapshots``."""
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(exist_ok=True)
+    snapshot_root = tmp_path / "profile" / "workspace-snapshots"
+    return WorkspaceGuard(str(workspace), pre_change_snapshot_root=str(snapshot_root))
+
+
+def _restart() -> ModuleType:
+    """Simulate a sidecar restart: fresh module state, same profile on disk."""
+    return importlib.reload(todo_module)
+
+
+def test_todo_list_survives_a_sidecar_restart(tmp_path: Path) -> None:
+    guard = _profile_guard(tmp_path)
+    todos = [
+        {"content": "Reconcile March", "status": "in_progress"},
+        {"content": "Write the report", "status": "pending"},
+    ]
+    todo_write_tool({"_jenny_session_id": "sess-a", "todos": todos}, guard)
+
+    fresh = _restart()
+    data = json.loads(fresh.todo_read_tool({"_jenny_session_id": "sess-a"}, guard))
+
+    assert data == {"count": 2, "todos": todos}
+    persisted = list((tmp_path / "profile" / "todo-lists").iterdir())
+    assert len(persisted) == 1
+    # Profile state, never workspace content.
+    assert list((tmp_path / "workspace").iterdir()) == []
+
+
+def test_restored_todo_lists_stay_per_session(tmp_path: Path) -> None:
+    guard = _profile_guard(tmp_path)
+    todo_write_tool(
+        {"_jenny_session_id": "sess-a", "todos": [{"content": "A", "status": "pending"}]}, guard
+    )
+    todo_write_tool(
+        {"_jenny_session_id": "sess-b", "todos": [{"content": "B", "status": "pending"}]}, guard
+    )
+
+    fresh = _restart()
+
+    read_a = json.loads(fresh.todo_read_tool({"_jenny_session_id": "sess-a"}, guard))
+    read_b = json.loads(fresh.todo_read_tool({"_jenny_session_id": "sess-b"}, guard))
+    read_c = json.loads(fresh.todo_read_tool({"_jenny_session_id": "sess-c"}, guard))
+    assert read_a["todos"] == [{"content": "A", "status": "pending"}]
+    assert read_b["todos"] == [{"content": "B", "status": "pending"}]
+    assert read_c == {"count": 0, "todos": []}
+
+
+def test_completed_list_is_cleared_on_disk_too(tmp_path: Path) -> None:
+    guard = _profile_guard(tmp_path)
+    todo_write_tool(
+        {"_jenny_session_id": "sess-a", "todos": [{"content": "A", "status": "pending"}]}, guard
+    )
+    todo_write_tool(
+        {"_jenny_session_id": "sess-a", "todos": [{"content": "A", "status": "completed"}]},
+        guard,
+    )
+
+    fresh = _restart()
+
+    data = json.loads(fresh.todo_read_tool({"_jenny_session_id": "sess-a"}, guard))
+    assert data == {"count": 0, "todos": []}
+    assert list((tmp_path / "profile" / "todo-lists").iterdir()) == []
+
+
+def test_a_rewrite_after_restart_replaces_the_restored_list(tmp_path: Path) -> None:
+    guard = _profile_guard(tmp_path)
+    todo_write_tool(
+        {"_jenny_session_id": "sess-a", "todos": [{"content": "Old", "status": "pending"}]},
+        guard,
+    )
+    fresh = _restart()
+    fresh.todo_write_tool(
+        {"_jenny_session_id": "sess-a", "todos": [{"content": "New", "status": "pending"}]},
+        guard,
+    )
+
+    again = _restart()
+
+    data = json.loads(again.todo_read_tool({"_jenny_session_id": "sess-a"}, guard))
+    assert data["todos"] == [{"content": "New", "status": "pending"}]
+
+
+def test_corrupt_or_invalid_persisted_list_reads_as_empty(tmp_path: Path) -> None:
+    guard = _profile_guard(tmp_path)
+    todo_write_tool(
+        {"_jenny_session_id": "sess-a", "todos": [{"content": "A", "status": "pending"}]}, guard
+    )
+    todo_write_tool(
+        {"_jenny_session_id": "sess-b", "todos": [{"content": "B", "status": "pending"}]}, guard
+    )
+    files = sorted((tmp_path / "profile" / "todo-lists").iterdir())
+    files[0].write_text("{not json", encoding="utf-8")
+    files[1].write_text(
+        json.dumps({"schema_version": 1, "session_id": "sess-x", "todos": [{"content": ""}]}),
+        encoding="utf-8",
+    )
+
+    fresh = _restart()
+
+    for session_id in ("sess-a", "sess-b"):
+        data = json.loads(fresh.todo_read_tool({"_jenny_session_id": session_id}, guard))
+        assert data == {"count": 0, "todos": []}
+
+
+def test_persisted_lists_keep_the_session_cap(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    guard = _profile_guard(tmp_path)
+    monkeypatch.setattr(todo_module, "MAX_SESSION_ENTRIES", 2)
+    for index, session_id in enumerate(("sess-a", "sess-b", "sess-c")):
+        todo_write_tool(
+            {"_jenny_session_id": session_id, "todos": [{"content": session_id}]}, guard
+        )
+        # Distinct mtimes so "oldest" is well defined on coarse filesystems.
+        for path in (tmp_path / "profile" / "todo-lists").iterdir():
+            if session_id in path.read_text(encoding="utf-8"):
+                os.utime(path, (1_000_000 + index, 1_000_000 + index))
+
+    assert len(list((tmp_path / "profile" / "todo-lists").iterdir())) == 2
+    _reset_todos()
+    evicted = json.loads(todo_read_tool({"_jenny_session_id": "sess-a"}, guard))
+    kept = json.loads(todo_read_tool({"_jenny_session_id": "sess-c"}, guard))
+    assert evicted == {"count": 0, "todos": []}
+    assert kept["todos"] == [{"content": "sess-c", "status": "pending"}]
+
+
+def test_no_profile_root_keeps_the_list_in_memory_only(tmp_path: Path) -> None:
+    todo_write_tool(
+        {"_jenny_session_id": "sess-a", "todos": [{"content": "A", "status": "pending"}]},
+        WorkspaceGuard(str(tmp_path)),
+    )
+
+    fresh = _restart()
+
+    data = json.loads(
+        fresh.todo_read_tool({"_jenny_session_id": "sess-a"}, WorkspaceGuard(str(tmp_path)))
+    )
+    assert data == {"count": 0, "todos": []}
+    assert list(tmp_path.iterdir()) == []

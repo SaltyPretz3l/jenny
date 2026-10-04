@@ -23,11 +23,8 @@
   var RING_RADIUS = 8;
   var RING_CIRCUMFERENCE = 2 * Math.PI * RING_RADIUS;
 
-  function escapeHtml(value) {
-    return String(value == null ? '' : value)
-      .replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;')
-      .replaceAll('"', '&quot;').replaceAll("'", '&#39;');
-  }
+  const escapeHtml = ((typeof globalThis !== 'undefined' && globalThis.stringUtils)
+    || (typeof require === 'function' ? require('../shared/string-utils') : null)).escapeHtml;
 
   function formatTokenCount(value) {
     var count = Math.max(Number(value || 0), 0);
@@ -221,6 +218,30 @@
     return lines.join('\n');
   }
 
+  /* Collapsed settings popover row (2026-09-26 spec §4 step 3): the chip also
+   * carries a thin usage bar and a visible percent. The stylesheet hides both
+   * on the toolbar (the ring stays) and swaps the ring for them in the popover.
+   * `--usage-ratio` (0..1) sizes the bar fill. The chip primitive has no style
+   * or trailing-content option, so both are spliced into its markup: every
+   * attribute it writes is escaped, so the first '>' closes the opening tag. */
+  function formatUsageRatio(ratio) {
+    var value = Number(ratio);
+    if (!Number.isFinite(value)) value = 0;
+    return String(Number(Math.min(1, Math.max(0, value)).toFixed(4)));
+  }
+
+  function withUsageBar(chipHtml, ratio, percentLabel) {
+    var html = String(chipHtml || '');
+    var openEnd = html.indexOf('>');
+    var closeStart = html.lastIndexOf('</');
+    if (openEnd < 0 || closeStart <= openEnd) return html;
+    return html.slice(0, openEnd) + ' style="--usage-ratio:' + formatUsageRatio(ratio) + '"'
+      + html.slice(openEnd, closeStart)
+      + '<span class="inv-usage-bar" aria-hidden="true"><span class="inv-usage-bar-fill"></span></span>'
+      + '<span class="inv-chip-label inv-context-ring-percent">' + escapeHtml(percentLabel || '') + '</span>'
+      + html.slice(closeStart);
+  }
+
   function renderContextUsage(sessionId, options) {
     var opts = options || {};
     var summary = describeContextUsage(sessionId, opts);
@@ -253,18 +274,20 @@
       + (pulse ? ' inv-context-ring--pulse' : '')
       + (warnPulse ? ' inv-context-ring--warn-pulse' : '');
 
+    var chipHtml = chip({
+      id: 'composer-context-ring',
+      domId: 'composerContextRing',
+      iconHtml: svg,
+      ariaLabel: jt('chat.contextUsage.ariaLabel', 'Context usage: {usage}', { usage: displayText }),
+      title: buildDetailText(summary),
+      hasPopup: Boolean(popover && actionButton),
+      ariaControls: popover && actionButton ? 'composerContextDetailsPopover' : '',
+      pressed: false,
+      className: ringClass,
+    });
+
     return '<div class="inv-context-usage inv-context-usage--ring">'
-      + chip({
-        id: 'composer-context-ring',
-        domId: 'composerContextRing',
-        iconHtml: svg,
-        ariaLabel: jt('chat.contextUsage.ariaLabel', 'Context usage: {usage}', { usage: displayText }),
-        title: buildDetailText(summary),
-        hasPopup: Boolean(popover && actionButton),
-        ariaControls: popover && actionButton ? 'composerContextDetailsPopover' : '',
-        pressed: false,
-        className: ringClass,
-      })
+      + withUsageBar(chipHtml, summary.ratio, summary.percentLabel)
       + (popover && actionButton ? popover({
         id: 'composer-context-details',
         domId: 'composerContextDetailsPopover',

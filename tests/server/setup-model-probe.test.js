@@ -3,7 +3,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const http = require('node:http');
 const { EventEmitter } = require('node:events');
-const { probeModels, probePrivateHttps, probeLocalHost } = require('../../services/host/setup-model-probe');
+const { probeModels, probePrivateHttps, probeLocalHost, probePrivateReady, probeLocalReady } = require('../../services/host/setup-model-probe');
 
 async function server(t, handler) {
   const host = http.createServer(handler);
@@ -82,4 +82,29 @@ test('localhost health probe uses the fixed service name and exact configured br
   assert.equal(calls[0].path, '/healthz');
   assert.equal(calls[0].headers.Host, '127.0.0.1:8080');
   assert.equal(calls[0].headers.Origin, 'http://127.0.0.1:8080');
+});
+
+test('readiness probes request /readyz and require ready:true', async (t) => {
+  const apiUrl = await server(t, (request, response) => {
+    if (request.url === '/readyz') { response.writeHead(503); return response.end('{"ready":false}'); }
+    response.end('{"alive":true}');
+  });
+  assert.equal(await probePrivateHttps(apiUrl), true);
+  assert.equal(await probePrivateReady(apiUrl), false);
+  const calls = [];
+  const requestImpl = (options, callback) => {
+    calls.push(options);
+    const request = new EventEmitter();
+    request.destroy = () => {};
+    request.end = () => {
+      const response = new EventEmitter();
+      response.statusCode = 200;
+      callback(response);
+      response.emit('data', Buffer.from('{"ready":true}'));
+      response.emit('end');
+    };
+    return request;
+  };
+  assert.equal(await probeLocalReady({ port: 8080, canonicalOrigin: 'http://127.0.0.1:8080' }, { requestImpl }), true);
+  assert.equal(calls[0].path, '/readyz');
 });

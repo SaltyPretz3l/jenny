@@ -30,7 +30,7 @@
   min-width: 0;
   padding: 4px;
   color: var(--text-primary);
-  font-weight: 600;
+  font-weight: 500;
   white-space: nowrap;
   cursor: pointer;
 }
@@ -39,7 +39,7 @@
   flex-shrink: 0;
   width: 12px;
   text-align: center;
-  font-size: 9px;
+  font-size: var(--font-size-caption);
   color: var(--text-muted);
 }
 
@@ -56,7 +56,7 @@
   text-overflow: ellipsis;
   color: var(--text-muted);
   font-weight: 400;
-  font-size: 10px;
+  font-size: var(--font-size-caption);
 }
 
 .ide-search-file-count {
@@ -65,7 +65,7 @@
   border-radius: 8px;
   background: var(--bg-panel);
   color: var(--text-muted);
-  font-size: 10px;
+  font-size: var(--font-size-caption);
   line-height: 1.6;
 }
 
@@ -107,7 +107,7 @@
   min-width: 28px;
   text-align: end;
   color: var(--text-muted);
-  font-size: 10px;
+  font-size: var(--font-size-caption);
   line-height: 1.7;
 }
 
@@ -117,7 +117,7 @@
   text-overflow: ellipsis;
   white-space: nowrap;
   font-family: var(--font-family-mono);
-  font-size: 11px;
+  font-size: var(--font-size-code);
   line-height: 1.6;
 }
 
@@ -134,7 +134,7 @@
   border-radius: 4px;
   background: var(--bg-base);
   color: var(--text-primary);
-  font-size: 12px;
+  font-size: var(--font-size-body);
   line-height: 1.4;
 }
 
@@ -168,7 +168,7 @@
   border-radius: 4px;
   background: var(--bg-base);
   color: var(--text-muted);
-  font-size: 11px;
+  font-size: var(--font-size-footnote);
   font-family: var(--font-family-mono);
   cursor: pointer;
 }
@@ -199,7 +199,7 @@
   padding: 0 4px;
   background: transparent;
   color: var(--text-muted);
-  font-size: 11px;
+  font-size: var(--font-size-footnote);
   line-height: 1;
   cursor: pointer;
   opacity: 0;
@@ -247,7 +247,7 @@
   border-radius: 9px;
   background: color-mix(in srgb, var(--accent) 14%, transparent);
   color: var(--accent);
-  font-size: 11px;
+  font-size: var(--font-size-caption);
   line-height: 1.5;
   cursor: pointer;
   overflow: hidden;
@@ -258,7 +258,7 @@
 .ide-search-scope-chip::after {
   content: "✕";
   margin-inline-start: 6px;
-  font-size: 10px;
+  font-size: var(--font-size-caption);
   opacity: 0.7;
 }
 

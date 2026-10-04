@@ -45,7 +45,7 @@ function createFakeShellConfigService(data = {}) {
     // For SessionTemplateStore
     get: (key) => store[key],
     set: (key, value) => { store[key] = value; },
-    // For WorkspaceIdeService / WorkspaceTerminalService
+    // For WorkspaceIdeService / WorkspacePtyService
     getWorkspaceState: () => ({}),
     updateWorkspaceState: () => ({}),
     getWorkspaceIdeState: () => ({}),
@@ -125,7 +125,6 @@ function buildDeps(overrides = {}) {
       updateSettings: () => ({}),
       openScopeFolder: () => ({}),
     },
-    tipsService: { getState: () => ({}), updateSettings: () => ({}) },
     suggestionCache: {},
     offlineIntelligenceService: {},
     applyFeatureSettingsPatch: () => ({}),
@@ -147,7 +146,6 @@ function buildDeps(overrides = {}) {
     ollamaInstallService: {},
     mcpDiscoveryService: {},
     schedulerService: {},
-    weatherService: {},
     linkStatusService: {},
     calendarService: {},
     chatStreamBridge: {},
@@ -157,12 +155,6 @@ function buildDeps(overrides = {}) {
     refreshGpuMemorySample: async () => null,
     getCurrentSystemStatsPayload: () => ({ cpu: 0 }),
     buildFeatureStatePayload: () => ({ flags: {} }),
-    getOverlayRef: () => null,
-    setOverlayRef: () => {},
-    isCometOverlayEnabled: () => false,
-    createCometOverlay: () => null,
-    handleCometOverlayToggle: () => null,
-    normalizeCometOverlayPresencePayload: (p) => p,
     getProcessLogWriter: () => null,
     getLogRedactionPrefixes: () => [],
     trashItemImpl: null,
@@ -257,26 +249,25 @@ describe('workspaceRoot two-phase choose + clear handlers', () => {
 // registerMainIpcHandlers return contract + full registration
 //
 // Terminal teardown used to be an app.once('will-quit', …) hook inside this
-// function; it was removed because WorkspaceTerminalService.dispose() is async
-// and a will-quit listener cannot delay quit for async work — the dropped kill
-// promise could orphan the piped PowerShell tree. registerMainIpcHandlers now
-// RETURNS the piped line-terminal + ConPTY pty services so main.js can thread
-// them into the awaited stopRuntimeBeforeQuit sequence
+// function; it was removed because terminal dispose() is async and a will-quit
+// listener cannot delay quit for async work — the dropped kill promise could
+// orphan the shell tree. registerMainIpcHandlers now RETURNS the ConPTY pty
+// service so main.js can thread it into the awaited stopRuntimeBeforeQuit sequence
 // (services/main/runtime-shutdown.js). The awaited-ordering behavior itself is
 // covered in tests/runtime-shutdown-drain.test.js; here we pin the return shape
 // plus the load-bearing invoke/send registration (proven RED elsewhere via the
-// comet channel + diagnostics extraction mutations).
+// diagnostics extraction mutations).
 // ---------------------------------------------------------------------------
 
 describe('registerMainIpcHandlers return contract + full registration', () => {
-  test('returns the piped line-terminal and ConPTY pty services, each exposing dispose()', () => {
+  test('returns the ConPTY pty service exposing dispose(); the retired line terminal is gone', () => {
     const { deps } = buildDeps();
     const result = registerMainIpcHandlers(deps);
     assert.ok(result && typeof result === 'object', 'registerMainIpcHandlers must return a services object');
     assert.equal(
-      typeof result.workspaceTerminalService?.dispose,
-      'function',
-      'must return the piped line-terminal service exposing dispose() for the awaited shutdown path'
+      Object.hasOwn(result, 'workspaceTerminalService'),
+      false,
+      'the piped line-terminal service was retired in sweep S8'
     );
     assert.equal(
       typeof result.workspacePtyService?.dispose,
@@ -292,7 +283,6 @@ describe('registerMainIpcHandlers return contract + full registration', () => {
     // session/template/diagnostics invoke channels must all be wired.
     for (const method of [
       'sessions.exportSession',
-      'sessions.importSession',
       'sessions.forkSession',
       'templates.list',
       'diagnostics.reportClientStreamMetrics',
@@ -306,14 +296,12 @@ describe('registerMainIpcHandlers return contract + full registration', () => {
     }
   });
 
-  test('exactly the two comet and two compatible renderer-log send channels are registered', () => {
+  test('exactly the two compatible renderer-log send channels are registered', () => {
     const { deps, ipcMain } = buildDeps();
     registerMainIpcHandlers(deps);
-    assert.ok(ipcMain.send.has(sendChannel('comet.sendOverlayState')), 'comet.sendOverlayState must be registered');
-    assert.ok(ipcMain.send.has(sendChannel('comet.toggleOverlay')), 'comet.toggleOverlay must be registered');
     assert.ok(ipcMain.send.has(sendChannel('diagnostics.logs.appendRendererBatch')), 'canonical diagnostics ingestion must be registered');
     assert.ok(ipcMain.send.has(sendChannel('logs.clientAppend')), 'deprecated client-log alias must remain registered');
-    assert.equal(ipcMain.send.size, 4, 'exactly 4 send channels: 2 comet + canonical diagnostics + compatibility alias');
+    assert.equal(ipcMain.send.size, 2, 'exactly 2 send channels: canonical diagnostics + compatibility alias (comet relay removed in S9)');
   });
 });
 
@@ -374,73 +362,6 @@ describe('sessions.exportSession handler (lines 228-233)', () => {
     await handler({}, 'sid-example-001');
     // getSession must have been called with the exact sessionId
     assert.deepEqual(exportedResults, ['sid-example-001']);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// Lines 236-242: sessions.importSession handler body
-// Calls importSession(sessionStore, jsonPayload, assetStore, {shadowStore})
-// ---------------------------------------------------------------------------
-
-describe('sessions.importSession handler (lines 236-242)', () => {
-  test('importSession throws a parse error when payload is not valid JSON export', async () => {
-    const { deps, ipcMain } = buildDeps({
-      backendService: new Proxy(
-        {
-          sessionStore: {},
-          attachmentAssetStore: null,
-          shadowStore: {},
-        },
-        {
-          get(target, prop) {
-            if (prop in target) return target[prop];
-            return () => null;
-          },
-        }
-      ),
-    });
-    registerMainIpcHandlers(deps);
-    const handler = ipcMain.invoke.get(invokeChannel('sessions.importSession'));
-    // importSession validates the JSON payload; a bad payload throws SessionImportError
-    // Use async () => to convert the synchronous throw into a rejection.
-    await assert.rejects(
-      async () => handler({}, 'not-valid-json-sample'),
-      (err) => {
-        // Must be a SessionImportError with parse_error reason
-        assert.equal(err.name, 'SessionImportError');
-        assert.equal(err.reason, 'parse_error');
-        return true;
-      }
-    );
-  });
-
-  test('importSession rejects with format_mismatch when JSON lacks jenny-session-export format', async () => {
-    const { deps, ipcMain } = buildDeps({
-      backendService: new Proxy(
-        {
-          sessionStore: {},
-          attachmentAssetStore: null,
-          shadowStore: {},
-        },
-        {
-          get(target, prop) {
-            if (prop in target) return target[prop];
-            return () => null;
-          },
-        }
-      ),
-    });
-    registerMainIpcHandlers(deps);
-    const handler = ipcMain.invoke.get(invokeChannel('sessions.importSession'));
-    const badPayload = JSON.stringify({ format: 'wrong-format', version: 1 });
-    await assert.rejects(
-      async () => handler({}, badPayload),
-      (err) => {
-        assert.equal(err.name, 'SessionImportError');
-        assert.equal(err.reason, 'format_mismatch');
-        return true;
-      }
-    );
   });
 });
 
@@ -790,136 +711,81 @@ describe('diagnostics.reportClientStreamMetrics handler (lines 307-312)', () => 
   });
 });
 
-// ---------------------------------------------------------------------------
-// Lines 378-382: comet.sendOverlayState — the overlayRef present + not-destroyed path
-// (The existing test covers the null overlayRef path; this covers the non-null path)
-// ---------------------------------------------------------------------------
 
-describe('comet.sendOverlayState handler — overlayRef present (lines 378-382)', () => {
-  test('sends normalized state to overlay window when overlayRef is live', () => {
-    const sentMessages = [];
-    const fakeOverlayRef = {
-      window: {
-        isDestroyed: () => false,
-        webContents: {
-          send: (channel, data) => {
-            sentMessages.push({ channel, data });
-          },
-        },
+describe('personality preview scope validation', () => {
+  test('personality clear accepts the existing renderer name payload and keeps the stored identity', async () => {
+    const { deps } = buildDeps();
+    deps.shellConfigService.getAssistantIdentity = () => ({ agentName: 'Stored' });
+    const calls = [];
+    deps.personalityWorkspace.clear = (options) => { calls.push(options); return { ok: true }; };
+    registerMainIpcHandlers(deps);
+    await deps.ipcMain.invoke.get(invokeChannel('personality.clear'))({}, { agentName: 'Draft' });
+    assert.equal(calls[0].agentName, 'Stored');
+    assert.equal(calls[0].projectId, 'project_general');
+  });
+
+  test('personality IPC uses canonical chat scope and configured reply language for every preview', async () => {
+    const { deps } = buildDeps();
+    const captures = [];
+    const projectAuthority = {
+      captureSession(id) {
+        captures.push(['session', id]);
+        if (id === 'draft') throw Object.assign(new Error('missing'), { reason: 'session_not_found' });
+        if (id === 'broken') throw new Error('unreadable');
+        return { project_id: id === 'general' ? 'project_general' : 'project_bound', root_path: null };
+      },
+      captureProject(id) {
+        captures.push(['project', id]);
+        return { project_id: id, root_path: null };
       },
     };
-    const normalizePayloads = [];
-    const { deps, ipcMain } = buildDeps({
-      getOverlayRef: () => fakeOverlayRef,
-      normalizeCometOverlayPresencePayload: (payload) => {
-        normalizePayloads.push(payload);
-        return { normalized: true, original: payload };
-      },
+    deps.backendService = new Proxy(deps.backendService, {
+      get: (target, key) => key === 'projectAuthority' ? projectAuthority : target[key],
     });
+    deps.shellConfigService.getUiLanguage = () => 'fr';
+    const calls = [];
+    for (const method of ['getState', 'save', 'clear']) {
+      deps.personalityWorkspace[method] = (options) => { calls.push(options); return { ok: true }; };
+    }
     registerMainIpcHandlers(deps);
-
-    const handler = ipcMain.send.get(sendChannel('comet.sendOverlayState'));
-    handler({}, { visible: true, x: 10 });
-
-    // normalizeCometOverlayPresencePayload must have been called with the raw data
-    assert.equal(normalizePayloads.length, 1);
-    assert.deepEqual(normalizePayloads[0], { visible: true, x: 10 });
-    // webContents.send must have been called with the normalized payload
-    assert.equal(sentMessages.length, 1);
-    assert.equal(sentMessages[0].channel, 'comet:state-changed');
-    assert.deepEqual(sentMessages[0].data, { normalized: true, original: { visible: true, x: 10 } });
+    for (const method of ['getState', 'save', 'clear']) {
+      const handler = deps.ipcMain.invoke.get(invokeChannel(`personality.${method}`));
+      for (const [payload, expected] of [
+        [{ session_id: 'bound', project_id: 'project_stale' }, 'project_bound'],
+        [{ session_id: 'general', project_id: 'project_stale' }, 'project_general'],
+        [{ session_id: 'draft', project_id: 'project_draft' }, 'project_draft'],
+        [{ session_id: 'broken', project_id: 'project_stale' }, 'project_general'],
+        [undefined, 'project_general'],
+        [null, 'project_general'],
+      ]) {
+        await handler({}, payload);
+        assert.equal(calls.at(-1).projectId, expected, `${method} must use canonical project scope`);
+        assert.equal(calls.at(-1).uiLanguage, 'fr', `${method} must use the configured language`);
+      }
+    }
+    assert.ok(captures.some(([kind, id]) => kind === 'project' && id === 'project_draft'));
+    assert.equal(captures.some(([kind, id]) => kind === 'project' && id === 'project_stale'), false);
   });
 
-  test('does not send to overlay when overlayRef window is destroyed (line 380 guard)', () => {
-    const sentMessages = [];
-    const fakeOverlayRef = {
-      window: {
-        isDestroyed: () => true,  // destroyed — must NOT send
-        webContents: {
-          send: (channel, data) => {
-            sentMessages.push({ channel, data });
-          },
-        },
-      },
-    };
-    const { deps, ipcMain } = buildDeps({
-      getOverlayRef: () => fakeOverlayRef,
-    });
+  test('personality IPC rejects malformed scope before reading or writing state', async () => {
+    const { deps } = buildDeps();
+    const effects = [];
+    deps.shellConfigService.updateAssistantIdentity = () => effects.push('rename');
+    for (const method of ['getState', 'save', 'clear']) {
+      deps.personalityWorkspace[method] = () => effects.push(method);
+    }
     registerMainIpcHandlers(deps);
-    const handler = ipcMain.send.get(sendChannel('comet.sendOverlayState'));
-    handler({}, { visible: false });
-    assert.equal(sentMessages.length, 0, 'destroyed window must not receive state');
+    for (const method of ['getState', 'save', 'clear']) {
+      const handler = deps.ipcMain.invoke.get(invokeChannel(`personality.${method}`));
+      for (const payload of [[], 'bad', { session_id: 42 }, { project_id: 'x'.repeat(257) },
+        { projectId: 'project_spoofed' }, { uiLanguage: 'es' }, { unexpected: true }]) {
+        await assert.rejects(async () => handler({}, payload), TypeError);
+      }
+    }
+    await assert.rejects(async () => deps.ipcMain.invoke.get(invokeChannel('personality.save'))(
+      {}, { agentName: 'Ada', session_id: false }
+    ), TypeError);
+    assert.deepEqual(effects, [], 'validation must precede all persistence');
   });
 
-  test('does not send when overlayRef window property is absent (null window guard)', () => {
-    const sentMessages = [];
-    const { deps, ipcMain } = buildDeps({
-      getOverlayRef: () => ({ window: null }),
-    });
-    registerMainIpcHandlers(deps);
-    const handler = ipcMain.send.get(sendChannel('comet.sendOverlayState'));
-    handler({}, { visible: false });
-    assert.equal(sentMessages.length, 0, 'null window must be skipped silently');
-  });
-});
-
-// ---------------------------------------------------------------------------
-// Lines 392-394: comet.toggleOverlay — onOverlayDisposed callback
-// The callback sets overlayRef to null ONLY when getOverlayRef() === disposedOverlay.
-// ---------------------------------------------------------------------------
-
-describe('comet.toggleOverlay onOverlayDisposed callback (lines 392-394)', () => {
-  test('onOverlayDisposed clears overlayRef when disposed overlay is the current overlay', () => {
-    const overlayRefHolder = { current: { id: 'overlay-example-A' } };
-    const setRefCalls = [];
-
-    const { deps, ipcMain } = buildDeps({
-      getOverlayRef: () => overlayRefHolder.current,
-      setOverlayRef: (ref) => {
-        setRefCalls.push(ref);
-        overlayRefHolder.current = ref;
-      },
-      handleCometOverlayToggle: ({ onOverlayDisposed }) => {
-        // Immediately fire the disposed callback with the current overlay
-        const currentOverlay = overlayRefHolder.current;
-        onOverlayDisposed(currentOverlay);
-        return { id: 'overlay-example-B' };
-      },
-    });
-    registerMainIpcHandlers(deps);
-    const handler = ipcMain.send.get(sendChannel('comet.toggleOverlay'));
-    handler({}, { toggle: true });
-
-    // onOverlayDisposed set overlayRef to null (lines 392-394)
-    // then the outer code set it to the return value of handleCometOverlayToggle
-    // setRefCalls[0] = null (from onOverlayDisposed), setRefCalls[1] = next overlay
-    assert.equal(setRefCalls[0], null, 'disposed overlay must clear the ref to null');
-    assert.deepEqual(setRefCalls[setRefCalls.length - 1], { id: 'overlay-example-B' });
-  });
-
-  test('onOverlayDisposed does NOT clear overlayRef when a different overlay was disposed', () => {
-    const currentOverlay = { id: 'overlay-example-current' };
-    const differentOverlay = { id: 'overlay-example-other' };
-    const setRefCalls = [];
-
-    const { deps, ipcMain } = buildDeps({
-      getOverlayRef: () => currentOverlay,
-      setOverlayRef: (ref) => {
-        setRefCalls.push(ref);
-      },
-      handleCometOverlayToggle: ({ onOverlayDisposed }) => {
-        // Fire with a DIFFERENT overlay (not current) — setOverlayRef must NOT be called with null
-        onOverlayDisposed(differentOverlay);
-        return { id: 'overlay-example-next' };
-      },
-    });
-    registerMainIpcHandlers(deps);
-    const handler = ipcMain.send.get(sendChannel('comet.toggleOverlay'));
-    handler({}, { toggle: false });
-
-    // The only setOverlayRef call should be for the next overlay (not null)
-    const nullCalls = setRefCalls.filter((r) => r === null);
-    assert.equal(nullCalls.length, 0, 'different disposed overlay must NOT clear current ref');
-    assert.deepEqual(setRefCalls[setRefCalls.length - 1], { id: 'overlay-example-next' });
-  });
 });

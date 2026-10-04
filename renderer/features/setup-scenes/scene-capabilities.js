@@ -52,11 +52,8 @@
     { key: 'workspace', title: jt('setup.capabilities.workspaceChanges', 'Workspace changes') },
   ];
 
-  function escapeHtml(value) {
-    return sceneUtils && sceneUtils.escapeHtml
-      ? sceneUtils.escapeHtml(value)
-      : String(value == null ? '' : value);
-  }
+  const escapeHtml = ((typeof globalThis !== 'undefined' && globalThis.stringUtils)
+    || (typeof require === 'function' ? require('../../shared/string-utils') : null)).escapeHtml;
 
   function renderGroup(section, draft, disabled) {
     if (!toggleSwitch) return '';

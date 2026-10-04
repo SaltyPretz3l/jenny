@@ -61,22 +61,6 @@
     return [...set].sort().join(FIELD);
   }
 
-  function resolveBackendStrings() {
-    if (globalThis.jennyBackendStrings) return globalThis.jennyBackendStrings;
-    if (typeof require === 'function') {
-      try { return require('../shared/i18n-backend-strings'); } catch (_error) { /* not available */ }
-    }
-    return null;
-  }
-
-  // Scope and consequence are backend strings: translate them exactly as the
-  // transcript card does (renderer-approval-block.js), else show the text.
-  function translatePolicyText(method, value) {
-    var strings = resolveBackendStrings();
-    if (!strings || typeof strings[method] !== 'function') return value;
-    try { return strings[method](value); } catch (_error) { return value; }
-  }
-
   function slug(value) {
     return String(value || 'row').replace(/[^A-Za-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60) || 'row';
   }
@@ -96,6 +80,7 @@
    * @param {Object} [deps.facts] - { getApprovalFacts, getApprovalCommandPreview }
    * @param {Object} [deps.callbacks] - { openSession, setActiveView, setSidebarCollapsed, appendClientLog, showComposerActionError }
    * @param {Function} [deps.getAttentionInbox] - Overrides the built-in model read
+   * @param {Function} [deps.onInboxRows] - Told the model rows on every pass whose sources moved
    * @returns {{render: Function, dispose: Function}}
    */
   function createAttentionInboxController(deps) {
@@ -180,6 +165,7 @@
       }).join(FIELD);
       return [
         readCollapsed() ? '1' : '0', String(state.currentSessionId || ''), approvalKeys, sessionKeys,
+        stuckSends().map(function keyOf(entry) { return entry.key + PART + entry.sessionId; }).join(FIELD),
         sortedKeys(stale), sortedKeys(inFlight), sortedKeys(resolved),
       ].join(GROUP);
     }
@@ -194,6 +180,7 @@
         pendingToolApprovals: state.pendingToolApprovals,
         currentSessionId: state.currentSessionId,
         facts: options.facts,
+        stuckSends: stuckSends(),
       });
     }
 
@@ -334,27 +321,27 @@
       node.appendChild(detail);
     }
 
-    /* Line 3: what this call may do, in ONE uniform line -- the backend's
-     * scope and consequence in its own words, then the writes-or-not facts,
-     * none of them painted more alarming than another (the transcript card
-     * keeps them uniform on purpose) -- or the card's own fallback line (the
-     * same catalog key the backend-strings table resolves it to) when nothing
-     * was declared at all, as for every MCP or plugin tool: the row never goes
-     * silent on it. */
-    function policyLine(row) {
-      var parts = [];
-      if (row.policyScope) parts.push(translatePolicyText('approvalScope', row.policyScope));
-      if (row.consequence) parts.push(translatePolicyText('approvalConsequence', row.consequence));
-      (Array.isArray(row.facts) ? row.facts : []).forEach(function addFact(fact) {
-        if (fact && fact.label) parts.push(fact.label);
-      });
-      if (!parts.length) return jt('approval.consequence.reviewRequestedInput', 'Review requested input');
-      return parts.join(LINE_SEPARATOR);
-    }
-
+    // Line 3: what this call may do (renderer-attention-inbox-model.js policyLine).
     function renderApprovalRow(row, node) {
       renderApprovalDetail(row, node);
-      node.appendChild(muted('attention-inbox__policy', policyLine(row)));
+      node.appendChild(muted('attention-inbox__policy', (inboxModel || globalThis.rendererAttentionInboxModel).policyLine(row)));
+    }
+
+    // Restart engine frees a model whose last reply's cleanup is unconfirmed;
+    // the row leaves once the waiting message starts, never on this say-so.
+    function restartEngine(row) {
+      var controller = state.runtimeSendController;
+      if (inFlight.has(row.key) || !controller || typeof controller.restartEngine !== 'function') return;
+      inFlight.add(row.key);
+      redraw();
+      Promise.resolve(controller.restartEngine(row.sessionId)).catch(function failed(error) {
+        log('ERROR', 'chat.attention_inbox_restart_failed', { message: String(error && error.message ? error.message : error || '') });
+      }).then(function settle() { inFlight.delete(row.key); if (!disposed) redraw(); });
+    }
+
+    function stuckSends() {
+      var controller = state.runtimeSendController;
+      return controller && typeof controller.listStuckSends === 'function' ? controller.listStuckSends() : [];
     }
 
     /* Line 1: the conversation, and the row's way back to the context it is
@@ -413,6 +400,16 @@
         });
         return;
       }
+      if (row.kind === 'stuck_send') {
+        control(actions, { action: 'open', domId: 'attention-inbox-open-' + id, className: ACTION_CLASS,
+          modifier: 'attention-inbox__action--open', label: jt('chat.attentionInbox.open', 'Open'),
+          onClick: function onOpen() { openSession(row.sessionId); } });
+        control(actions, { action: 'restart', domId: 'attention-inbox-restart-' + id, className: ACTION_CLASS,
+          modifier: 'attention-inbox__action--restart', label: jt('chat.stuckSend.restartEngine', 'Restart engine'), disabled: busy,
+          title: jt('chat.runtimeQueue.restartTitle', 'Restart the engine so this message can start'),
+          onClick: function onRestart() { restartEngine(row); } });
+        return;
+      }
       // A plan is read in its conversation, and a question batch is answered in
       // the transcript that holds it: both buttons open the chat.
       var isPlan = row.kind === 'plan_review';
@@ -435,6 +432,9 @@
       renderTitle(row, node);
       if (row.kind === 'approval') {
         renderApprovalRow(row, node);
+      } else if (row.kind === 'stuck_send') {
+        node.appendChild(muted('attention-inbox__note', jt('chat.attentionInbox.stuckSend',
+          "Message waiting to start · last reply's cleanup unconfirmed")));
       } else if (row.kind === 'plan_review') {
         node.appendChild(muted('attention-inbox__note',
           jt('chat.attentionInbox.planReady', 'Plan ready for review')));
@@ -539,6 +539,8 @@
       fingerprint = nextFingerprint;
       var inbox = readInbox();
       var modelRows = Array.isArray(inbox && inbox.rows) ? inbox.rows : [];
+      // Desktop notifications see every moved pass; a failure never breaks the inbox.
+      try { if (typeof options.onInboxRows === 'function') options.onInboxRows(modelRows); } catch (_error) { /* optional */ }
       var live = new Set(modelRows.map(function keyOf(row) { return row.key; }));
       // A wait the sources no longer list is gone for good; forget its verdict.
       resolved.forEach(function pruneResolved(key) { if (!live.has(key)) resolved.delete(key); });

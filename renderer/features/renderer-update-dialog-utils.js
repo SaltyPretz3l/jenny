@@ -16,14 +16,8 @@
   var asyncFence = (root && root.rendererAsyncFence)
     || (typeof require === 'function' ? require('../shared/async-fence') : null);
 
-  function escapeHtml(value) {
-    return String(value || '')
-      .replaceAll('&', '&amp;')
-      .replaceAll('<', '&lt;')
-      .replaceAll('>', '&gt;')
-      .replaceAll('"', '&quot;')
-      .replaceAll("'", '&#39;');
-  }
+  const escapeHtml = ((typeof globalThis !== 'undefined' && globalThis.stringUtils)
+    || (typeof require === 'function' ? require('../shared/string-utils') : null)).escapeHtml;
 
   function normalizeStatus(value) {
     var status = String(value || '').trim().toLowerCase();

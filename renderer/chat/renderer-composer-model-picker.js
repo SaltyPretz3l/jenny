@@ -48,6 +48,12 @@
     const escapeHtml = typeof actionButton?.escapeHtml === 'function'
       ? actionButton.escapeHtml
       : (value) => String(value == null ? '' : value);
+    // Split view W2-2a: a second pane's picker is handed its own nodes (its
+    // cloned popover, host, carriers and pill) instead of the document ids, and
+    // suffixes the two ids it renders; it never becomes the module singleton.
+    const domOverrides = options.dom && typeof options.dom === 'object' ? options.dom : null;
+    const idSuffix = String(options.idSuffix || '').replace(/[^A-Za-z0-9_-]/g, '');
+    const listId = 'composerModelPickerList' + idSuffix;
 
     let popoverEl = null;
     let host = null;
@@ -108,8 +114,8 @@
         ? '<span class="composer-model-picker-check" aria-hidden="true">&#10003;</span>'
         : '';
       return '<span class="composer-model-picker-meta">'
-        + glyph(source.vision, 'Vision', EYE_GLYPH)
-        + glyph(source.thinking, 'Thinking', BULB_GLYPH)
+        + glyph(source.vision, jt('composer.modelPicker.vision', 'Vision'), EYE_GLYPH)
+        + glyph(source.thinking, jt('composer.modelPicker.thinking', 'Thinking'), BULB_GLYPH)
         + glyph(source.insert, jt('composer.modelPicker.codeCompletion', 'Code completion'), CODE_GLYPH)
         + size + loaded + check
         + '</span>';
@@ -159,7 +165,7 @@
         });
       }).join('');
       return '<div class="composer-model-picker-thinking">'
-        + '<span class="composer-model-picker-thinking-label">Thinking</span>'
+        + '<span class="composer-model-picker-thinking-label">' + escapeHtml(jt('composer.modelPicker.thinking', 'Thinking')) + '</span>'
         + '<div class="composer-model-picker-segments" role="radiogroup" aria-label="' + escapeHtml(jt('composer.modelPicker.thinkingEffort', 'Thinking effort')) + '">'
         + segments
         + '</div></div>';
@@ -240,13 +246,13 @@
         disabled: locked,
         dataset: { 'picker-model': '' },
         title: defaultTitle,
-        trustedHtml: nameHtml('Default', inputs.backendModel ? ` · ${inputs.backendModel}` : '')
+        trustedHtml: nameHtml(jt('composer.modelPicker.defaultModel', 'Default'), inputs.backendModel ? ` · ${inputs.backendModel}` : '')
           + metaHtml({ loaded: backendLoaded, selected: defaultSelected }),
       });
       const search = totalCount > 8
         ? '<div class="composer-model-picker-search">'
           + textField({
-            id: 'composerModelPickerSearch',
+            id: `composerModelPickerSearch${idSuffix}`,
             value: query,
             placeholder: jt('composer.modelPicker.searchPlaceholder', 'Search models'),
             ariaLabel: jt('composer.modelPicker.searchPlaceholder', 'Search models'),
@@ -272,17 +278,17 @@
         : '';
 
       host.innerHTML = search
-        + '<div class="composer-model-picker-list" role="listbox" id="composerModelPickerList">'
+        + `<div class="composer-model-picker-list" role="listbox" id="${listId}">`
         + defaultOption + retainedOption + catalogOptions + empty
         + '</div>'
         + thinkingHtml(inputs, defaultEffortHint)
         + '<div class="inv-popover-footer">' + escapeHtml(jt('composer.modelPicker.chatDefaultsHint', 'Applies to this chat. Defaults live in Settings.')) + '</div>';
-      host.querySelector('#composerModelPickerList')?.setAttribute('aria-label', jt('composer.modelPicker.modelLabel', 'Model'));
+      host.querySelector(`#${listId}`)?.setAttribute('aria-label', jt('composer.modelPicker.modelLabel', 'Model'));
       signature = nextSignature;
 
       const searchInput = host.querySelector('[data-picker-search]');
       if (searchInput) {
-        searchInput.setAttribute('aria-controls', 'composerModelPickerList');
+        searchInput.setAttribute('aria-controls', listId);
         searchInput.setAttribute('autocomplete', 'off');
       }
       host.querySelectorAll('.composer-model-picker-option.is-unavailable').forEach((button) => {
@@ -329,7 +335,7 @@
     }
 
     function syncPill() {
-      const pill = documentRef?.getElementById?.('composerModelPill');
+      const pill = domOverrides ? domOverrides.pill || null : documentRef?.getElementById?.('composerModelPill');
       if (!pill || !modelSelect || !effortSelect
           || typeof utils.formatComposerModelPillLabel !== 'function'
           || typeof utils.buildPillTitle !== 'function'
@@ -472,9 +478,23 @@
       }
     }
 
+    // Opening on an unavailable catalog ("Managed sidecar is not ready yet.")
+    // re-reads it once instead of listing only Default until a reload; the
+    // app refresher (renderer-snapshot-refresh.js) owns the read and backoff.
+    function refreshCatalogIfUnavailable() {
+      const refresh = typeof options.refreshModelsIfUnavailable === 'function'
+        ? options.refreshModelsIfUnavailable
+        : root.rendererSnapshotRefresh?.instance?.refreshModelsIfUnavailable;
+      if (typeof refresh !== 'function') return;
+      Promise.resolve(refresh()).then((refreshed) => {
+        if (refreshed === true && bound) renderIfOpen();
+      }, () => {});
+    }
+
     function handlePopoverToggle(event) {
       if (event.detail?.id !== 'composer-model') return;
       if (event.detail.open === true) {
+        refreshCatalogIfUnavailable();
         render();
         const searchInput = host.querySelector('[data-picker-search]');
         const activeOption = host.querySelector('.composer-model-picker-option.is-active');
@@ -490,17 +510,17 @@
 
     function bind() {
       if (bound || !documentRef) return;
-      popoverEl = documentRef.getElementById('composerModelPopover');
+      popoverEl = domOverrides ? domOverrides.popover || null : documentRef.getElementById('composerModelPopover');
       if (!popoverEl) return;
-      host = popoverEl.querySelector('[data-composer-model-picker]');
+      host = (domOverrides && domOverrides.host) || popoverEl.querySelector('[data-composer-model-picker]');
       if (!host) {
         host = documentRef.createElement('div');
         host.className = 'composer-model-picker';
         host.setAttribute('data-composer-model-picker', '');
         popoverEl.insertBefore(host, popoverEl.firstChild);
       }
-      modelSelect = documentRef.getElementById('composerModelSelect');
-      effortSelect = documentRef.getElementById('composerEffortSelect');
+      modelSelect = domOverrides ? domOverrides.modelSelect || null : documentRef.getElementById('composerModelSelect');
+      effortSelect = domOverrides ? domOverrides.effortSelect || null : documentRef.getElementById('composerEffortSelect');
       host.addEventListener('click', handleClick);
       host.addEventListener('keydown', handleKeydown);
       host.addEventListener('input', handleInput);
@@ -523,6 +543,7 @@
     }
 
     const instance = { bind, render, renderIfOpen, syncPill, dispose };
+    if (domOverrides) return instance;
     moduleApi.instance = instance;
     if (!root.rendererComposerModelPicker) root.rendererComposerModelPicker = moduleApi;
     root.rendererComposerModelPicker.instance = instance;

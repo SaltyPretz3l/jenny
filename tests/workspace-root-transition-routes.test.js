@@ -133,7 +133,6 @@ function buildMainIpcDeps(overrides = {}) {
     shellConfigService,
     companionService: {},
     skillsService: { getState: () => ({}), updateSettings: () => ({}), openScopeFolder: () => ({}) },
-    tipsService: { getState: () => ({}), updateSettings: () => ({}) },
     suggestionCache: {},
     offlineIntelligenceService: {},
     applyFeatureSettingsPatch: () => ({}),
@@ -155,7 +154,6 @@ function buildMainIpcDeps(overrides = {}) {
     ollamaInstallService: {},
     mcpDiscoveryService: {},
     schedulerService: {},
-    weatherService: {},
     linkStatusService: {},
     calendarService: {},
     chatStreamBridge: {},
@@ -200,7 +198,7 @@ describe('canonical route: workspaceRoot prepare/commit process recheck', () => 
     assert.match(shellConfigService.getState().toolsWorkspaceRoot, /workspace[\\/]selected$/);
   });
 
-  test('active terminal: target selection succeeds but commit is blocked and config stays unchanged', async () => {
+  test('active PTY terminal: target selection succeeds but commit is blocked and config stays unchanged', async () => {
     const showOpenCalls = [];
     const shellConfigService = createFakeShellConfigService();
     const { deps, ipcMain } = buildMainIpcDeps({
@@ -217,14 +215,14 @@ describe('canonical route: workspaceRoot prepare/commit process recheck', () => 
     // White-box: stub the participant signal on the real service instance
     // registerMainIpcHandlers constructed internally; the coordinator reads
     // the live service at commit time.
-    result0.workspaceTerminalService.hasSession = () => true;
+    result0.workspacePtyService.hasSession = () => true;
     const handler = ipcMain.invoke.get(invokeChannel('workspaceRoot.prepareChoose'));
     const prepared = await handler({});
     assert.equal(showOpenCalls.length, 1, 'target selection precedes process recheck');
     const commit = ipcMain.invoke.get(invokeChannel('workspaceRoot.commit'));
     const result = await commit({}, { transitionId: prepared.transitionId });
     assert.equal(result.blocked, true);
-    assert.deepEqual(result.blockers, [{ id: 'workspace_terminal', reason: 'terminal_active' }]);
+    assert.deepEqual(result.blockers, [{ id: 'workspace_pty', reason: 'pty_active' }]);
     assert.equal(result.changed, false);
     assert.equal(shellConfigService.getState().toolsWorkspaceRoot, '', 'root must be unchanged');
   });

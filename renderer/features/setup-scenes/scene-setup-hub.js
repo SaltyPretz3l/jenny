@@ -1,8 +1,7 @@
 /**
  * renderer/features/setup-scenes/scene-setup-hub.js
  *
- * First-run checklist hub. Every persisted setup step remains independently
- * actionable; local-engine health is a derived, non-persisted row.
+ * First-run setup hub with one model-route decision and optional file setup.
  */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) {
@@ -18,13 +17,15 @@
   var actionButton = sceneUtils && sceneUtils.resolveDependency
     ? sceneUtils.resolveDependency('inventoryActionButton', '../../inventory/action-button')
     : null;
+  var inventoryCheckbox = sceneUtils && sceneUtils.resolveDependency
+    ? sceneUtils.resolveDependency('inventoryCheckbox', '../../inventory/checkbox')
+    : null;
   var registry = sceneUtils && Array.isArray(sceneUtils.SETUP_STEP_REGISTRY)
     ? sceneUtils.SETUP_STEP_REGISTRY.slice().sort(function byOrder(left, right) { return left.order - right.order; })
     : [];
 
-  function escapeHtml(value) {
-    return sceneUtils && sceneUtils.escapeHtml ? sceneUtils.escapeHtml(value) : String(value || '');
-  }
+  const escapeHtml = ((typeof globalThis !== 'undefined' && globalThis.stringUtils)
+    || (typeof require === 'function' ? require('../../shared/string-utils') : null)).escapeHtml;
 
   function renderButton(options) {
     return actionButton ? actionButton(options) : '';
@@ -32,10 +33,6 @@
 
   function currentValue(stepId, state) {
     if (stepId === 'workspaceRoot') return String(state.toolsWorkspaceRoot || '').trim();
-    if (stepId === 'localModel') {
-      return String(state.preferredLocalModel || state.preferredModelTag
-        || (state.raw && state.raw.preferred_local_model) || '').trim();
-    }
     if (stepId === 'personality') {
       return String(state.assistantIdentity && state.assistantIdentity.agentName || '').trim();
     }
@@ -49,56 +46,76 @@
     return { glyph: String(number), tone: 'pending', label: jt('setup.hub.pending', 'Pending') };
   }
 
-  function buildStepRow(spec, setupState) {
+  function buildStepRow(spec, setupState, number) {
     var status = String(setupState.steps && setupState.steps[spec.id] || 'pending');
-    var meta = glyphMeta(status, spec.order + 1);
+    var meta = glyphMeta(status, number);
     var value = currentValue(spec.id, setupState);
+    var title = spec.id === 'workspaceRoot' ? jt('setup.hub.workspaceFolder', 'Workspace folder')
+      : spec.id === 'personality' ? jt('setup.hub.personalityAndName', 'Personality and name') : spec.title;
+    var suffix = spec.id === 'workspaceRoot' ? jt('setup.hub.forFileTools', ' \u00b7 for file tools')
+      : value ? jt('setup.hub.currentValue', ' \u00b7 {value}', { value: value }) : jt('setup.hub.optional', ' \u00b7 optional');
     var openerLabel = status === 'done' ? jt('setup.hub.change', 'Change') : status === 'skipped' ? jt('setup.hub.revisit', 'Revisit') : jt('setup.hub.setUp', 'Set up');
+    if (spec.id === 'workspaceRoot' && status !== 'done' && status !== 'skipped') openerLabel = jt('setup.hub.chooseFolder', 'Choose');
     var actions = renderButton({
       id: 'openStep', label: openerLabel, variant: status === 'pending' || status === 'error' ? 'secondary' : 'ghost',
       size: 'sm', dataset: { 'step-id': spec.id }, className: 'setup-hub-row-action',
     });
     if (status !== 'done' && status !== 'skipped') {
       actions += renderButton({
-        id: 'skipStep', label: jt('setup.hub.skip', 'Skip'), variant: 'ghost', size: 'sm',
+        id: 'skipStep', label: spec.id === 'workspaceRoot' ? jt('setup.hub.folderLater', 'Later') : jt('setup.hub.skip', 'Skip'), variant: 'ghost', size: 'sm',
         dataset: { 'step-id': spec.id }, className: 'setup-hub-row-skip',
       });
     }
     return '<li class="setup-hub-row" data-setup-step-id="' + escapeHtml(spec.id) + '">'
       + '<span class="setup-hub-glyph setup-hub-glyph--' + meta.tone + '" aria-label="' + escapeHtml(meta.label) + '">'
       + escapeHtml(meta.glyph) + '</span>'
-      + '<div class="setup-hub-row-copy"><div class="setup-hub-row-title">' + escapeHtml(spec.title)
-      // Endpoint is an alternative model route; one badge per requirement keeps the promised two-step model canonical.
-      + (spec.id === 'workspaceRoot' ? '<span class="setup-hub-required">Required</span>'
-        : spec.health === 'model' ? '<span class="setup-hub-required">' + escapeHtml(jt('setupHub.chooseOneModelRoute', 'Choose one model route')) + '</span>' : '')
+      + '<div class="setup-hub-row-copy"><div class="setup-hub-row-title">' + escapeHtml(title)
+      + '<span class="setup-hub-row-suffix">' + escapeHtml(suffix) + '</span>'
       + '</div><p class="setup-hub-row-description"' + (value ? ' title="' + escapeHtml(value) + '"' : '') + '>'
-      + escapeHtml(value || spec.description) + '</p></div>'
+      + escapeHtml(spec.id === 'workspaceRoot' ? value || spec.description : spec.description) + '</p></div>'
       + '<div class="setup-hub-row-actions">'
-      + (status === 'skipped' ? '<span class="setup-hub-skipped-label">Skipped</span>' : '')
+      + (status === 'skipped' ? '<span class="setup-hub-skipped-label">' + escapeHtml(jt('setup.hub.skipped', 'Skipped')) + '</span>' : '')
       + actions + '</div></li>';
   }
 
-  function buildEngineRow(engine) {
+  function routeRadio(value, selectedRoute) {
+    return inventoryCheckbox ? inventoryCheckbox.radio({ name: 'setup-hub-model-route', value: value, checked: selectedRoute === value }) : '';
+  }
+
+  function buildModelRouteRow(setupState, selectedRoute, engine, modelStepId) {
     var done = engine.state === 'running';
     var label = done ? (jt('setup.hub.running', 'Running') + (engine.version ? ' v' + engine.version : ''))
       : engine.state === 'upgrade' ? (engine.version ? jt('setup.hub.updateRequiredVersion', 'Update required — v{version}', { version: engine.version }) : jt('setup.hub.updateRequired', 'Update required'))
         : engine.state === 'checking' ? jt('setup.hub.checking', 'Checking…')
           : engine.state === 'missing' ? jt('setup.hub.notRunning', 'Not running') : engine.state === 'absent' ? jt('setup.hub.notInstalled', 'Not installed') : jt('setup.hub.notDetected', 'Not detected');
-    return '<li class="setup-hub-row setup-hub-row--derived" data-setup-derived="local-engine">'
-      + '<span class="setup-hub-glyph setup-hub-glyph--' + (done ? 'success' : 'warning')
-      + '" aria-label="' + escapeHtml(done ? jt('setup.hub.running', 'Running') : jt('setup.hub.needsAttention', 'Needs attention')) + '">' + (done ? '✓' : '!') + '</span>'
-      + '<div class="setup-hub-row-copy"><div class="setup-hub-row-title">' + escapeHtml(jt('setupHub.ollamaOptionalForExistingServers', 'Ollama on this computer (optional for existing servers)')) + '</div>'
-      + '<p class="setup-hub-row-description">' + escapeHtml(label) + '</p></div>'
-      + '<div class="setup-hub-row-actions">' + (done ? '' : renderButton({
-        id: 'openStep', label: jt('setup.hub.setUp', 'Set up'), variant: 'secondary', size: 'sm', dataset: { 'step-id': 'localEngine' },
-      })) + '</div></li>';
+    var health = sceneUtils.computeSetupHealth(setupState);
+    var modelDone = health.pendingSteps.concat(health.skippedSteps).indexOf('model') === -1;
+    var steps = setupState.steps || {};
+    var meta = glyphMeta(modelDone ? 'done'
+      : steps.localModel === 'error' || steps.endpoint === 'error' ? 'error' : 'pending', 1);
+    return '<li class="setup-hub-row" data-setup-model-route>'
+      + '<span class="setup-hub-glyph setup-hub-glyph--' + meta.tone + '" aria-label="' + escapeHtml(meta.label) + '">'
+      + escapeHtml(meta.glyph) + '</span>'
+      + '<div class="setup-hub-row-copy"><div class="setup-hub-row-title" id="setup-hub-model-route-title">'
+      + escapeHtml(jt('setup.hub.modelRoute', 'Model route')) + '</div>'
+      + '<div class="setup-hub-model-routes" role="radiogroup" aria-labelledby="setup-hub-model-route-title">'
+      + '<label class="setup-hub-model-option">' + routeRadio('ollama', selectedRoute) + '<span>'
+      + escapeHtml(jt('setup.hub.ollamaRoute', 'Ollama on this computer')) + '</span>'
+      + (selectedRoute === 'ollama' ? '<span class="setup-hub-engine-status">' + escapeHtml(label) + '</span>' : '') + '</label>'
+      + '<label class="setup-hub-model-option">' + routeRadio('endpoint', selectedRoute) + '<span>'
+      + escapeHtml(jt('setup.hub.existingServerRoute', 'An existing server (local or private network)')) + '</span></label>'
+      + '</div></div><div class="setup-hub-row-actions">' + renderButton({
+        id: 'openStep', label: modelDone ? jt('setup.hub.change', 'Change') : jt('setup.hub.setUp', 'Set up'),
+        variant: modelDone ? 'ghost' : 'secondary', size: 'sm', dataset: { 'step-id': modelStepId },
+        className: 'setup-hub-row-action',
+      }) + '</div></li>';
   }
 
-  function firstUnresolvedRequiredStepId(setupState) {
+  function firstUnresolvedRequiredStepId(setupState, modelStepId) {
     var health = sceneUtils.computeSetupHealth(setupState);
     var unresolved = health.pendingSteps.concat(health.skippedSteps);
     if (unresolved.indexOf('workspaceRoot') !== -1) return 'workspaceRoot';
-    if (unresolved.indexOf('model') !== -1) return usesExistingServer(setupState) ? 'endpoint' : 'localModel';
+    if (unresolved.indexOf('model') !== -1) return modelStepId;
     return '';
   }
 
@@ -119,20 +136,34 @@
       : jt('setup.hub.noWorkspaceRoot', 'No workspace root set — file tools will be off until you set one.');
   }
 
-  function requiredHealthLine(setupState) {
+  function requiredHealthLine(setupState, selectedRoute, engine) {
     var health = sceneUtils.computeSetupHealth(setupState);
-    var completed = 2 - health.pendingSteps.length - health.skippedSteps.length;
-    return jt('setup.hub.requiredStepsComplete', '{count} of 2 required steps complete', { count: Math.max(0, completed) });
+    var modelDone = health.pendingSteps.concat(health.skippedSteps).indexOf('model') === -1;
+    var workspaceDone = setupState.steps && setupState.steps.workspaceRoot === 'done';
+    if (!modelDone) return workspaceDone
+      ? jt('setup.hub.chooseRouteToChat', 'Choose a model route to start chatting')
+      : jt('setup.hub.chooseRouteAndFolder', 'Choose a model route to start chatting \u00b7 file tools need a folder');
+    if (selectedRoute === 'ollama' && ['missing', 'absent', 'upgrade'].indexOf(engine.state) !== -1) return workspaceDone
+      ? jt('setup.hub.startOllamaToChat', 'Start Ollama to chat')
+      : jt('setup.hub.startOllamaAndFolder', 'Start Ollama to chat \u00b7 file tools need a folder');
+    if (selectedRoute === 'ollama' && engine.state === 'checking') return jt('setup.hub.checkingOllama', 'Checking Ollama…');
+    if (selectedRoute === 'ollama' && engine.state !== 'running') return workspaceDone
+      ? jt('setup.hub.routeSet', 'Model route set')
+      : jt('setup.hub.routeSetNeedsFolder', 'Model route set · file tools need a folder');
+    return workspaceDone ? jt('setup.hub.readyChatAndFiles', 'Ready to chat and use file tools')
+      : jt('setup.hub.readyChatNeedsFolder', 'Ready to chat \u00b7 file tools need a folder');
   }
 
-  function buildWarning(setupState) {
+  function buildWarning(setupState, modelStepId) {
     var healthComplete = sceneUtils.computeSetupHealth(setupState).state === 'complete';
-    var stepId = healthComplete ? (usesExistingServer(setupState) ? 'endpoint' : 'localEngine')
-      : (firstUnresolvedRequiredStepId(setupState) || 'localModel');
+    var stepId = healthComplete ? (modelStepId === 'endpoint' ? 'endpoint' : 'localEngine')
+      : (firstUnresolvedRequiredStepId(setupState, modelStepId) || modelStepId);
+    var health = sceneUtils.computeSetupHealth(setupState);
+    var onlyFolderLeft = !healthComplete && health.pendingSteps.concat(health.skippedSteps).join() === 'workspaceRoot';
     var fixLabel = stepId === 'endpoint' ? jt("sceneSetupHub.checkExistingServer", "Check existing server") : healthComplete ? jt("sceneSetupHub.checkOllama", "Check Ollama")
       : stepId === 'workspaceRoot' ? jt('setup.hub.setWorkspaceRoot', 'Set workspace root') : jt('setup.hub.configureModel', 'Configure model');
     return '<div class="setup-hub-finish-warning" role="alert">'
-      + '<div class="setup-hub-warning-copy"><strong>' + escapeHtml(jt('setup.hub.notReady', 'Setup is not ready')) + '</strong><p>'
+      + '<div class="setup-hub-warning-copy"><strong>' + escapeHtml(onlyFolderLeft ? jt('setup.hub.finishWithoutFolder', 'Finish without a folder?') : jt('setup.hub.notReady', 'Setup is not ready')) + '</strong><p>'
       + escapeHtml(warningCopy(setupState)) + '</p></div>'
       + '<div class="setup-hub-warning-actions">'
       + renderButton({ id: 'fixRequired', label: fixLabel, variant: 'primary', dataset: { 'step-id': stepId } })
@@ -162,18 +193,24 @@
     var finishInFlight = false;
     var skipInFlight = {};
     var engine = { state: 'checking', version: '' };
+    var selectedRoute = usesExistingServer(setupState) ? 'endpoint' : 'ollama';
+    var modelStepId = selectedRoute === 'endpoint' ? 'endpoint' : 'localModel';
 
     function render() {
       if (!rootEl || disposed) return;
-      var rows = registry.map(function renderRegistryStep(spec) { return buildStepRow(spec, setupState); });
-      if (!usesExistingServer(setupState)) rows.splice(2, 0, buildEngineRow(engine));
+      var selector = focusedControlSelector();
+      modelStepId = selectedRoute === 'endpoint' ? 'endpoint'
+        : ['missing', 'absent', 'upgrade'].indexOf(engine.state) !== -1 ? 'localEngine' : 'localModel';
+      var rows = [buildModelRouteRow(setupState, selectedRoute, engine, modelStepId)].concat(registry
+        .filter(function hubStep(spec) { return spec.health !== 'model'; })
+        .map(function renderRegistryStep(spec, index) { return buildStepRow(spec, setupState, index + 2); }));
       var body = '<div class="setup-hub"><ol class="setup-hub-list">' + rows.join('') + '</ol>'
-        + (finishGateOpen ? buildWarning(setupState) : '')
-        + '<p class="setup-hub-health" aria-live="polite">' + escapeHtml(requiredHealthLine(setupState)) + '</p></div>';
+        + (finishGateOpen ? buildWarning(setupState, modelStepId) : '')
+        + '<p class="setup-hub-health" aria-live="polite">' + escapeHtml(requiredHealthLine(setupState, selectedRoute, engine)) + '</p></div>';
       rootEl.innerHTML = sceneUtils.renderStepModalHtml({
         id: 'setup-hub',
         title: jt('setup.hub.title', 'Set up Jenny'),
-        summary: jt("sceneSetupHub.chooseAWorkspaceAndOneModelRouteUseOllama", "Choose a workspace and one model route: use Ollama on this computer or connect an existing server. Everything else is optional."),
+        summary: jt('setup.hub.routeAndFolderSummary', 'Pick how Jenny runs models. A folder is only needed for file work.'),
         bodyHtml: body,
         actions: [
           { id: 'close', label: jt('setup.hub.finishLater', 'Finish later'), variant: 'secondary' },
@@ -181,23 +218,31 @@
             variant: 'primary', disabled: finishInFlight },
         ],
       });
+      var target = selector && rootEl.querySelector(selector);
+      if (target && typeof target.focus === 'function') target.focus();
+      else if (selector) focusFirstUnresolvedRequired();
     }
 
     function focusFirstUnresolvedRequired() {
       if (!rootEl) return;
-      var stepId = firstUnresolvedRequiredStepId(setupState);
+      var stepId = firstUnresolvedRequiredStepId(setupState, modelStepId);
       var target = stepId
         ? rootEl.querySelector('[data-action="openStep"][data-step-id="' + stepId + '"]')
         : rootEl.querySelector('[data-step-modal-action="finishSetup"]');
       if (target && typeof target.focus === 'function') target.focus();
     }
 
-    function renderEngineRow() {
-      if (!rootEl || disposed) return;
-      if (usesExistingServer(setupState)) return;
-      var current = rootEl.querySelector('[data-setup-derived="local-engine"]');
-      if (!current) { render(); return; }
-      current.outerHTML = buildEngineRow(engine);
+    function handleRouteChange(event) {
+      var target = event.target;
+      if (!target || target.name !== 'setup-hub-model-route' || !target.checked) return;
+      selectedRoute = target.value;
+      detectGeneration += 1;
+      if (focusTimer !== null) clearTimeout(focusTimer);
+      focusTimer = null;
+      if (selectedRoute === 'ollama') engine = { state: 'checking', version: '' };
+      render();
+      rootEl.querySelector('input[name="setup-hub-model-route"][value="' + selectedRoute + '"]').focus();
+      detectEngine();
     }
 
     function handleOpen(_event, target) {
@@ -254,10 +299,12 @@
       var doc = rootEl && rootEl.ownerDocument;
       var active = doc && doc.activeElement;
       if (!active || !rootEl.contains(active)) return null;
+      if (active.name === 'setup-hub-model-route') return 'input[name="setup-hub-model-route"][value="' + active.value + '"]';
       var modalAction = active.getAttribute('data-step-modal-action');
       if (modalAction) return '[data-step-modal-action="' + modalAction + '"]';
       var action = active.getAttribute('data-action');
       if (!action) return '';
+      if (action === 'openStep' && active.closest('[data-setup-model-route]')) return '[data-setup-model-route] [data-action="openStep"]';
       var stepId = active.getAttribute('data-step-id');
       return '[data-action="' + action + '"]' + (stepId ? '[data-step-id="' + stepId + '"]' : '');
     }
@@ -319,7 +366,7 @@
     }
 
     function detectEngine() {
-      if (usesExistingServer(setupState)) return;
+      if (selectedRoute !== 'ollama') return;
       var generation = ++detectGeneration;
       if (!setupService || typeof setupService.detectOllama !== 'function') {
         engine = { state: 'unknown', version: '' };
@@ -335,14 +382,14 @@
             : result && result.installed === true
               ? { state: 'missing', version: '' }
               : { state: 'absent', version: '' };
-        renderEngineRow();
+        render();
       }, function applyDetectFailure(error) {
         if (disposed || generation !== detectGeneration) return;
         engine = { state: 'unknown', version: '' };
         appendClientLog('WARN', 'setup.hub_engine_detect_failed', {
           message: error && error.message ? error.message : String(error),
         });
-        renderEngineRow();
+        render();
       });
     }
 
@@ -366,6 +413,7 @@
             });
           },
         });
+        rootEl.addEventListener('change', handleRouteChange);
         focusFirstUnresolvedRequired();
         focusTimer = setTimeout(focusFirstUnresolvedRequired, 0);
         detectEngine();
@@ -379,6 +427,7 @@
         focusTimer = null;
         if (typeof unbindClicks === 'function') unbindClicks();
         unbindClicks = null;
+        if (rootEl) rootEl.removeEventListener('change', handleRouteChange);
         rootEl = null;
       },
     };

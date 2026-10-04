@@ -153,7 +153,7 @@ class _OcrPage:
 
         class _TextPage:
             @staticmethod
-            def extractText() -> str:  # noqa: N802 - PyMuPDF API name.
+            def extractText() -> str:  # PyMuPDF API name.
                 return text
 
         return _TextPage()

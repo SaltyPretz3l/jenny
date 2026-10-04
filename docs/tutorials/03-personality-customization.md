@@ -1,6 +1,6 @@
 ---
 kind: tutorial
-last_reviewed: 2026-09-09
+last_reviewed: 2026-10-03
 ---
 
 # 03 — Personality customization
@@ -8,9 +8,10 @@ last_reviewed: 2026-09-09
 Jenny's personality is deliberately small and task-first. The current request,
 runtime rules, workspace instructions, and tool contracts always outrank tone.
 
-Everything you write here reaches the model as exactly **one** system message —
-a name line plus up to three short sections — so the whole personality layer
-costs a few hundred tokens per turn instead of a few thousand.
+On a normal turn with **Personality and notes** enabled, Jenny compiles this
+content into one request-time system message: a name line and up to three short
+sections. Empty placeholders add no sections; context budgeting can omit the
+block. The assistant name still reaches the runtime when the toggle is off.
 
 ## Language, time and identity
 
@@ -48,9 +49,10 @@ current date.
 
 ## Settings → Memory → Long-term notes
 
-Durable facts and preferences Jenny should always know, sent with every message.
-This is `MEMORY.md`, and it is separate from approved memories (which the memory
-manager below it owns).
+These legacy notes live in `MEMORY.md`. Current source includes them only in
+General-project chats because the old file has no project provenance. Voice and
+About you remain shared across projects. Approved memories are separate records
+owned by the memory manager; use the project filter to inspect their scope.
 
 ## What the model receives
 

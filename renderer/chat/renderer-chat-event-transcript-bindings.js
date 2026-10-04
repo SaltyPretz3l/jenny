@@ -5,7 +5,8 @@
       require('./renderer-unsaved-reply-actions'),
       require('./renderer-approval-batch-utils'),
       require('./renderer-tool-detail-body'),
-      require('./renderer-user-questions-actions')
+      require('./renderer-user-questions-actions'),
+      require('./renderer-approval-focus-restore')
     );
     return;
   }
@@ -14,14 +15,16 @@
     root.rendererUnsavedReplyActions || {},
     root.rendererApprovalBatchUtils || {},
     root.rendererToolDetailBody || {},
-    root.rendererUserQuestionsActions || {}
+    root.rendererUserQuestionsActions || {},
+    root.rendererApprovalFocusRestore || {}
   );
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (
   fileDiffBindings,
   unsavedReplyActions,
   approvalBatchUtils,
   toolDetailBody,
-  userQuestionsActionsModule
+  userQuestionsActionsModule,
+  approvalFocusRestoreModule
 ) {
   const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   const motionHeightUtils = (typeof globalThis !== 'undefined' && globalThis.rendererMotionHeightUtils)
@@ -45,12 +48,13 @@
       handleLaterProactiveSuggestionMessage,
       handleErrorRecoveryAction,
       handleArtifactAction,
+      handleStopActiveStream = function noopHandleStopActiveStream() { return Promise.resolve(); },
       handleCodeReviewAction = function noopHandleCodeReviewAction() { return Promise.resolve(); },
       handleOpenChangeDiff = function noopHandleOpenChangeDiff() { return Promise.resolve(false); },
       toggleInteractiveRoundRecap,
       toggleContextCompactionDetails = function noopToggleContextCompactionDetails() {},
       toggleThreadBranch,
-      setReasoningPhaseExpandedPreference, setReasoningPhaseExpandedPreferences,
+      setReasoningPhaseExpandedPreference,
       syncThinkingBlockNode,
       appendClientLog,
       showComposerActionError,
@@ -66,6 +70,8 @@
       timelineVirtualizer,
       getSessionMessages,
       setSessionMessages,
+      ownsFileDiffRegistry = true, // W2-3: a second pane's dispose leaves the shared file-diff registry to pane 0
+      getSessionId = () => String(state?.currentSessionId || '').trim(), // the pane's session (split view)
     } = deps || {};
     const doc = chatTimeline?.ownerDocument || (typeof document !== 'undefined' ? document : null);
     const unsavedReplyController = unsavedReplyActions.createUnsavedReplyActionController?.({
@@ -171,7 +177,7 @@
           && String(approval?.sessionId || '').trim() === sessionId);
         return matches.length === 1 ? matches[0].approvalId : '';
       };
-      if (find()) return answer(find());
+      if (find()) { try { return answer(find()); } catch (error) { return Promise.reject(error); } } // a synchronous throw still rejects: the caller releases its claim
       const wait = (waited) => new Promise((resolve) => setTimeout(resolve, 100))
         .then(() => (find() || waited >= 5000 ? answer(find() || id) : wait(waited + 100)));
       return wait(100);
@@ -197,133 +203,32 @@
       scopeRoot: chatTimeline,
       getActiveTurnState: (sessionId) => windowRef?.jennyShell?.chat?.getActiveTurnState?.(sessionId),
       rehydrateSession: (sessionId) => refreshRecoveredSession({ payload: { sessionId }, reason: 'approval_reconcile' }),
-      getCurrentSessionId: () => state.currentSessionId,
+      getCurrentSessionId: () => getSessionId(),
       setBlockBusy: setApprovalBlockBusy,
       appendClientLog,
       delayMs: approvalReconcileDelayMs,
       setTimeoutFn: approvalReconcileSetTimeout,
       clearTimeoutFn: approvalReconcileClearTimeout,
     }) || { start() {}, dispose() {} };
-    const approvalRowRemovalWatchers = new Set();
+    // CTR-006/007: one batch controller per pane timeline, sharing the per-approval in-flight claims with the card handlers below.
+    const approvalClaims = approvalBatchUtils.approvalClaims || { claim: () => true, release() {} };
+    const approvalBatch = approvalBatchUtils.bindApprovalBatchUx?.({
+      scopeRoot: chatTimeline, document: doc, callbacks: {
+        approveOne: (id, options) => window.jennyShell.tools.approve(id, options || {}), denyOne: (id) => window.jennyShell.tools.deny(id),
+        setRowBusy: setApprovalBlockBusy,
+        onError: (action, callId, error) => {
+          const deny = action === 'deny-all';
+          appendClientLog('ERROR', deny ? 'tool.deny_failed' : 'tool.approve_failed', { callId, batch_action: action, message: error?.message || String(error) });
+          showComposerActionError(error, deny ? jt('app.controller.denyFailedTitle', 'Deny Failed') : jt('app.controller.approvalFailedTitle', 'Approval Failed'));
+        },
+      },
+    });
     let disposed = false;
 
-    // A2: snapshot the fallback focus target BEFORE the approval row can be
-    // removed from the DOM. Row removal (removeApprovalGapRow) is driven by a
-    // later stream event through the reducer/render pipeline, not by this
-    // click handler, so we can't rely on a single post-render callback here —
-    // instead a MutationObserver watches for the row's actual removal and
-    // focuses the fallback the moment it happens (no setTimeout race).
-    function resolveApprovalFocusFallback(currentRow) {
-      if (!chatTimeline || typeof chatTimeline.querySelectorAll !== 'function') {
-        return null;
-      }
-      // Plan-variant gap rows are deliberately actionless (no buttons, no
-      // tabindex — see renderer-approval-block.js), so they can never receive
-      // focus; keep them out of the fallback pool (lockstep with the batch
-      // selector in renderer-approval-batch-utils.js).
-      const pendingRows = Array.from(
-        chatTimeline.querySelectorAll('.approval-gap-row:not([data-approval-variant="plan"]), .tool-approval-block, .user-questions-block')
-      );
-      const nextRow = pendingRows.find((candidate) => candidate !== currentRow
-        && !currentRow.contains(candidate)
-        && !candidate.contains(currentRow));
-      if (nextRow) {
-        return nextRow.querySelector('.tool-approve-btn, .tool-deny-btn') || nextRow;
-      }
-      const composerInput = doc && typeof doc.getElementById === 'function'
-        ? doc.getElementById('chatInput')
-        : null;
-      return composerInput || null;
-    }
-
-    function focusApprovalFallback(fallbackTarget) {
-      if (!fallbackTarget || typeof fallbackTarget.focus !== 'function') {
-        return;
-      }
-      // The fallback may itself have been removed/replaced between the
-      // snapshot and the row actually disappearing (e.g. resolved out of
-      // order); skip focusing a detached node.
-      if (typeof fallbackTarget.isConnected === 'boolean' && !fallbackTarget.isConnected) {
-        return;
-      }
-      try {
-        fallbackTarget.focus();
-      } catch (_error) {
-        // Best-effort only — focus restoration must never throw into the
-        // click handler's promise chain.
-      }
-    }
-
-    // Observes `approvalRow` for its own removal from the DOM (which
-    // removeApprovalGapRow performs via Array.splice-equivalent DOM removal
-    // once the reducer sees the call resolve) and focuses the pre-snapshotted
-    // fallback the moment that happens. Self-disconnects after firing once or
-    // after a real timeout so a row that never gets
-    // removed (e.g. a resolution that doesn't retire the row for some reason)
-    // doesn't leak an observer forever.
-    //
-    // `heldFocus` is a snapshot (taken at click time, before any async gap)
-    // of whether the approval row actually held focus when the user clicked
-    // Allow/Deny. Without this gate, the restore fires unconditionally on
-    // removal — stealing focus back from wherever the user has since moved
-    // it (e.g. into the composer to keep typing) even though the row wasn't
-    // focused to begin with.
-    function watchApprovalRowRemoval(approvalRow, fallbackTarget, heldFocus) {
-      if (!approvalRow || !fallbackTarget) {
-        return;
-      }
-      const win = doc && doc.defaultView ? doc.defaultView : (typeof window !== 'undefined' ? window : null);
-      if (!win || typeof win.MutationObserver !== 'function') {
-        // No MutationObserver available (non-browser environment) — fall back
-        // to focusing immediately, since there is no reliable removal signal
-        // to wait for.
-        if (heldFocus) {
-          focusApprovalFallback(fallbackTarget);
-        }
-        return;
-      }
-      let settled = false;
-      let timeoutHandle = null;
-      const watcher = {
-        disconnect() {
-          if (settled) return;
-          settled = true;
-          observer.disconnect();
-          if (timeoutHandle !== null && typeof win.clearTimeout === 'function') {
-            win.clearTimeout(timeoutHandle);
-          }
-          timeoutHandle = null;
-          approvalRowRemovalWatchers.delete(watcher);
-        },
-      };
-      const observer = new win.MutationObserver(() => {
-        if (settled) {
-          return;
-        }
-        if (!approvalRow.isConnected) {
-          watcher.disconnect();
-          // Only restore focus if the row held it at click time AND focus is
-          // still orphaned by the removal (nothing else claimed it in the
-          // meantime) — never pull focus away from an element the user has
-          // since moved to on their own.
-          const active = doc ? doc.activeElement : null;
-          const focusOrphaned = !active || active === doc.body || approvalRow.contains(active);
-          if (heldFocus && focusOrphaned) {
-            focusApprovalFallback(fallbackTarget);
-          }
-        }
-      });
-      const observeRoot = (approvalRow.parentNode && approvalRow.parentNode.isConnected)
-        ? approvalRow.parentNode
-        : chatTimeline;
-      if (!observeRoot) {
-        focusApprovalFallback(fallbackTarget);
-        return;
-      }
-      observer.observe(observeRoot, { childList: true, subtree: true });
-      approvalRowRemovalWatchers.add(watcher);
-      timeoutHandle = win.setTimeout(() => watcher.disconnect(), 5000);
-    }
+    // Focus hand-off when a resolved approval row leaves the DOM (renderer-approval-focus-restore.js).
+    const { resolveApprovalFocusFallback, watchApprovalRowRemoval, dispose: disposeApprovalFocusRestore } =
+      approvalFocusRestoreModule.createApprovalFocusRestore?.({ chatTimeline, doc })
+      || { resolveApprovalFocusFallback: () => null, watchApprovalRowRemoval() {}, dispose() {} };
 
     const userQuestionsActions = userQuestionsActionsModule.createUserQuestionsActions?.({
       state,
@@ -383,26 +288,32 @@
       const setT = win && win.setTimeout ? win.setTimeout.bind(win) : null;
       const clearT = win && win.clearTimeout ? win.clearTimeout.bind(win) : null;
       const pending = revealTimers.get(el);
-      if (pending && clearT) {
-        clearT(pending);
+      if (pending?.timerId && clearT) {
+        clearT(pending.timerId);
       }
-      revealTimers.delete(el);
+      const intent = { expanded, timerId: 0 };
+      revealTimers.set(el, intent);
       const transitionMs = typeof getToolDetailsTransitionMs === 'function'
         ? (Number(getToolDetailsTransitionMs()) || 0)
         : 0;
-      const settle = () => { el.style.maxHeight = expanded ? 'none' : ''; };
+      const settle = () => {
+        if (revealTimers.get(el) !== intent) return;
+        el.style.maxHeight = expanded ? 'none' : ''; intent.timerId = 0;
+      };
       if (transitionMs === 0 || !raf || !setT) {
         settle();
         return;
       }
       if (expanded) {
-        motionHeightUtils.pinHeightForTransition(el, 0);
-        raf(() => { el.style.maxHeight = `${Math.max(el.scrollHeight || 0, 0)}px`; });
+        motionHeightUtils.pinHeightForTransition(el, pending?.timerId && !pending.expanded
+          ? motionHeightUtils.readCurrentMaxHeightPx(el, win) : 0);
+        raf(() => { if (revealTimers.get(el) === intent) el.style.maxHeight = `${Math.max(el.scrollHeight || 0, 0)}px`; });
       } else {
-        motionHeightUtils.pinHeightForTransition(el, motionHeightUtils.resolveCollapseStartPx(el));
-        raf(() => { el.style.maxHeight = '0px'; });
+        motionHeightUtils.pinHeightForTransition(el, pending?.timerId
+          ? motionHeightUtils.readCurrentMaxHeightPx(el, win) : motionHeightUtils.resolveCollapseStartPx(el));
+        raf(() => { if (revealTimers.get(el) === intent) el.style.maxHeight = '0px'; });
       }
-      revealTimers.set(el, setT(() => { settle(); revealTimers.delete(el); }, transitionMs));
+      intent.timerId = setT(settle, transitionMs);
     }
     function toggleMinimalToolRow(toggleNode, forceExpanded) {
       const rowNode = toggleNode && typeof toggleNode.closest === 'function'
@@ -419,14 +330,7 @@
       if (rowKey && toolRowUtils && typeof toolRowUtils.setToolRowExpansion === 'function') {
         toolRowUtils.setToolRowExpansion(rowKey, nextExpanded);
       }
-      if (rowKey && typeof chatTimeline?.dispatchEvent === 'function') {
-        const CustomEventCtor = doc?.defaultView?.CustomEvent || globalThis.CustomEvent;
-        if (typeof CustomEventCtor === 'function') {
-          chatTimeline.dispatchEvent(new CustomEventCtor('tool-row-user-expansion', {
-            detail: { rowKey, expanded: nextExpanded },
-          }));
-        }
-      }
+      notifyToolRowExpansion(rowKey, nextExpanded);
       if (nextExpanded && rowNode.dataset?.toolDetailsMaterialized === 'false') {
         const bodyNode = rowNode.querySelector('.tool-call-row-body');
         const materialized = !bodyNode
@@ -467,6 +371,30 @@
         if (typeof animateRevealHeight === 'function') {
           animateRevealHeight(bodyNode, nextExpanded);
         }
+      }
+    }
+
+    // Answers tool run (renderer-turn-row-list-utils): the summary row and its
+    // flat member rows share data-run-id; the override is keyed like a tool row
+    // so a view switch resets it with the session's other tool overrides.
+    function toggleToolRun(toggleNode, forceExpanded) {
+      const summaryRow = toggleNode?.closest?.('.chat-row[data-row-kind="tool_run"]');
+      const list = summaryRow?.closest?.('.turn-row-list');
+      if (!summaryRow || !list) return;
+      const next = typeof forceExpanded === 'boolean' ? forceExpanded : summaryRow.getAttribute('data-run-expanded') !== 'true';
+      globalThis.toolCallUtils?.getToolRunRows?.(list, summaryRow.getAttribute('data-run-id'))
+        ?.forEach((node) => node.setAttribute('data-run-expanded', next ? 'true' : 'false'));
+      toggleNode.setAttribute('aria-expanded', next ? 'true' : 'false');
+      const runKey = toggleNode.getAttribute('data-tool-run-key') || '';
+      globalThis.rendererTurnRowToolRenderUtils?.setToolRowExpansion?.(runKey, next);
+      notifyToolRowExpansion(runKey, next);
+    }
+
+    // A user toggle tells the search overlay to drop its transient record.
+    function notifyToolRowExpansion(rowKey, expanded) {
+      const CustomEventCtor = doc?.defaultView?.CustomEvent || globalThis.CustomEvent;
+      if (rowKey && typeof CustomEventCtor === 'function') {
+        chatTimeline?.dispatchEvent?.(new CustomEventCtor('tool-row-user-expansion', { detail: { rowKey, expanded } }));
       }
     }
 
@@ -518,12 +446,12 @@
             return;
           }
           const callId = resolveToolCallId(toolApproveBtn);
-          if (callId) {
+          if (callId && approvalClaims.claim(callId)) {
             const block = resolveApprovalBlockContainer(toolApproveBtn);
             // The scope is the button that was pressed ("Allow once" vs
             // "Always allow"), never a modifier read from elsewhere in the block.
             const alwaysAllow = toolApproveBtn.getAttribute('data-approval-scope') === 'always';
-            const originSessionId = String(state.currentSessionId || '').trim();
+            const originSessionId = String(getSessionId() || '').trim();
             const approvalRow = toolApproveBtn.closest('.approval-gap-row') || block;
             const fallbackTarget = approvalRow ? resolveApprovalFocusFallback(approvalRow) : null;
             // Snapshot BEFORE setApprovalBlockBusy/disabling the button — disabling
@@ -545,7 +473,7 @@
               // watchApprovalRowRemoval's heldFocus gate).
               // No re-enable here: the row (and its buttons) is on its way out.
               if (approvalRow) {
-                const originStillCurrent = originSessionId === String(state.currentSessionId || '').trim();
+                const originStillCurrent = originSessionId === String(getSessionId() || '').trim();
                 approvalReconciliation.start({ sessionId: originSessionId, reference: callId, row: approvalRow, block });
                 if (originStillCurrent && approvalRow.isConnected) watchApprovalRowRemoval(approvalRow, fallbackTarget, heldFocus);
               }
@@ -553,7 +481,7 @@
               setApprovalBlockBusy(block, false);
               appendClientLog('ERROR', 'tool.approve_failed', { callId, message: error.message || String(error) });
               showComposerActionError(error, jt('chat.transcript.approvalFailedTitle', 'Approval Failed'));
-            });
+            }).finally(() => approvalClaims.release(callId));
           }
           return;
         }
@@ -565,9 +493,9 @@
             return;
           }
           const callId = resolveToolCallId(toolDenyBtn);
-          if (callId) {
+          if (callId && approvalClaims.claim(callId)) {
             const block = resolveApprovalBlockContainer(toolDenyBtn);
-            const originSessionId = String(state.currentSessionId || '').trim();
+            const originSessionId = String(getSessionId() || '').trim();
             const approvalRow = toolDenyBtn.closest('.approval-gap-row') || block;
             const fallbackTarget = approvalRow ? resolveApprovalFocusFallback(approvalRow) : null;
             // Snapshot BEFORE setApprovalBlockBusy/disabling the button — see
@@ -582,7 +510,7 @@
                 return;
               }
               if (approvalRow) {
-                const originStillCurrent = originSessionId === String(state.currentSessionId || '').trim();
+                const originStillCurrent = originSessionId === String(getSessionId() || '').trim();
                 approvalReconciliation.start({ sessionId: originSessionId, reference: callId, row: approvalRow, block });
                 if (originStillCurrent && approvalRow.isConnected) watchApprovalRowRemoval(approvalRow, fallbackTarget, heldFocus);
               }
@@ -590,7 +518,7 @@
               setApprovalBlockBusy(block, false);
               appendClientLog('ERROR', 'tool.deny_failed', { callId, message: error.message || String(error) });
               showComposerActionError(error, jt('chat.transcript.denyFailedTitle', 'Deny Failed'));
-            });
+            }).finally(() => approvalClaims.release(callId));
           }
           return;
         }
@@ -637,6 +565,13 @@
           return;
         }
 
+        if (event.target.closest('[data-inv-image-cancel]')) {
+          event.preventDefault();
+          Promise.resolve().then(() => handleStopActiveStream()).catch((error) => {
+            showComposerActionError(error, jt('chat.transcript.stopFailedTitle', 'Stop Failed'));
+          });
+          return;
+        }
         const artifactActionButton = event.target.closest('[data-inv-artifact-action]');
         if (artifactActionButton) {
           event.preventDefault();
@@ -844,6 +779,13 @@
           return;
         }
 
+        const toolRunToggle = event.target.closest('[data-tool-run-toggle]');
+        if (toolRunToggle) {
+          event.preventDefault();
+          toggleToolRun(toolRunToggle);
+          return;
+        }
+
         const compactionToggle = event.target.closest('[data-action="context-compaction-details"]');
         if (compactionToggle) {
           event.preventDefault();
@@ -873,7 +815,7 @@
             ? thinkingController.togglePhaseExpanded(msgId, tidAttr, defaultExpanded, { liveStreamingTail })
             : thinkingController.toggleExpanded(msgId);
           setReasoningPhaseExpandedPreference?.(
-            state.currentSessionId,
+            getSessionId(),
             msgId,
             tidAttr,
             nextExpanded,
@@ -914,6 +856,12 @@
           toggleMinimalToolRow(toolRowToggle);
           return;
         }
+        const toolRunToggle = event.target.closest('[data-tool-run-toggle]');
+        if (toolRunToggle) {
+          event.preventDefault();
+          toggleToolRun(toolRunToggle);
+          return;
+        }
 
         const toolHeader = event.target.closest('.tool-call-header');
         if (!toolHeader) return;
@@ -926,88 +874,36 @@
           event.target.closest('.user-questions-block[data-question-ref]')
         );
       };
+      // Chat search (CTR-5) opens a collapsed row around a match through the
+      // reader's own toggle path: a full render alone would be undone by the
+      // preservation registry restoring the row's collapsed DOM state.
+      registerListener(chatTimeline, 'tool-row-expand-request', (event) => {
+        const toggle = event.target?.closest?.('[data-tool-row-toggle]');
+        if (toggle && typeof event.detail?.expanded === 'boolean') toggleMinimalToolRow(toggle, event.detail.expanded);
+      }, listenerOptions);
       registerListener(chatTimeline, 'pointerover', checkQuestionsFromEvent, listenerOptions);
       registerListener(chatTimeline, 'focusin', checkQuestionsFromEvent, listenerOptions);
       chatTimeline.querySelectorAll('.user-questions-block[data-question-ref]').forEach(
         userQuestionsActions.checkUserQuestionsLiveness
       );
 
-      const collapseExpandToggle = doc ? doc.getElementById('timelineCollapseExpandToggle') : null;
-      if (collapseExpandToggle) {
-        registerListener(collapseExpandToggle, 'click', (event) => {
-          event.preventDefault();
-          const clock = doc?.defaultView?.performance;
-          const startedAt = typeof clock?.now === 'function' ? clock.now() : Date.now();
-          const toolHeaders = Array.from(chatTimeline.querySelectorAll('.tool-call-header'));
-          const minimalToolToggles = Array.from(chatTimeline.querySelectorAll('[data-tool-row-toggle]'));
-          const reasoningToggles = Array.from(chatTimeline.querySelectorAll('[data-reasoning-toggle]'));
-          const anyExpanded = toolHeaders.some(el => el.getAttribute('aria-expanded') === 'true') ||
-                              minimalToolToggles.some(el => el.getAttribute('aria-expanded') === 'true') ||
-                              reasoningToggles.some(el => el.getAttribute('aria-expanded') === 'true');
-          const nextExpanded = !anyExpanded;
-          const legacyToolKeys = new Set(toolHeaders.map((header) => String(header.dataset?.toolRowKey
-            || header.closest?.('[data-tool-row-key]')?.dataset?.toolRowKey || '').trim()).filter(Boolean));
-          const minimalToolKeys = new Set(minimalToolToggles.map((toggle) => String(toggle.dataset?.toolRowKey
-            || toggle.closest?.('[data-tool-row-key]')?.dataset?.toolRowKey || '').trim()).filter(Boolean));
-          const reasoningEntries = new Map();
-          for (const toggle of reasoningToggles) {
-            const messageId = String(toggle.dataset?.messageId || '').trim();
-            const phaseKey = String(toggle.dataset?.phaseKey || toggle.dataset?.thinkingId || '').trim();
-            if (messageId && phaseKey) reasoningEntries.set(`${messageId}::${phaseKey}`, {
-              messageId, phaseKey, expanded: nextExpanded, defaultExpanded: toggle.dataset.defaultExpanded === 'true',
-            });
-          }
-          for (const rowKey of legacyToolKeys) setToolCallExpansion(rowKey, nextExpanded);
-          const toolRowUtils = typeof globalThis !== 'undefined' ? globalThis.rendererTurnRowToolRenderUtils : null;
-          for (const rowKey of minimalToolKeys) toolRowUtils?.setToolRowExpansion?.(rowKey, nextExpanded);
-          const CustomEventCtor = doc?.defaultView?.CustomEvent || globalThis.CustomEvent;
-          if (typeof CustomEventCtor === 'function') {
-            for (const rowKey of new Set([...legacyToolKeys, ...minimalToolKeys])) {
-              chatTimeline.dispatchEvent(new CustomEventCtor('tool-row-user-expansion', {
-                detail: { rowKey, expanded: nextExpanded },
-              }));
-            }
-          }
-          const reasoningBatch = [...reasoningEntries.values()];
-          for (const entry of reasoningBatch) {
-            thinkingController?.phaseExpansionState?.set?.(`${entry.messageId}::${entry.phaseKey}`, nextExpanded);
-          }
-          if (typeof setReasoningPhaseExpandedPreferences === 'function') {
-            setReasoningPhaseExpandedPreferences(state?.currentSessionId, reasoningBatch);
-          } else {
-            for (const entry of reasoningBatch) setReasoningPhaseExpandedPreference?.(
-              state?.currentSessionId, entry.messageId, entry.phaseKey, nextExpanded,
-              { defaultExpanded: entry.defaultExpanded }
-            );
-          }
-          const rowCount = legacyToolKeys.size + minimalToolKeys.size + reasoningBatch.length;
-          if (rowCount > 0) renderAll({ forceFullRender: true });
-          // Bulk expand/collapse is a deliberate reasoning interaction: drop
-          // live-tail follow exemptions so an expanded tail pauses again
-          // (2026-08-29 review fix).
-          thinkingController?.clearFollowExemptions?.();
-          if (typeof thinkingController?.syncReasoningExpansionPause === 'function') {
-            thinkingController.syncReasoningExpansionPause({ userInitiated: true });
-          } else if (thinkingController) {
-            thinkingController.autoScrollPaused = true;
-          }
-          const finishedAt = typeof clock?.now === 'function' ? clock.now() : Date.now();
-          appendClientLog?.('INFO', 'chat.timeline_bulk_expansion', {
-            expanded: nextExpanded, legacyToolRows: legacyToolKeys.size, minimalToolRows: minimalToolKeys.size,
-            reasoningRows: reasoningBatch.length,
-            elapsedMs: Math.max(0, Math.round(finishedAt - startedAt)),
-          });
-        }, listenerOptions);
+      // Transcript views: this pane's utility
+      // cluster carries the view control; the bulk collapse/expand toggle it
+      // replaces retired with the views (its per-row batch writes are gone).
+      const utilityCluster = chatTimeline?.closest?.('.chat-pane')?.querySelector?.('[data-chat-node="chatTimelineUtilityCluster"]') || null;
+      if (utilityCluster) {
+        globalThis.rendererTranscriptViewUtils?.mountTranscriptViewControl?.({
+          cluster: utilityCluster, chatTimeline, getSessionId, registerListener, listenerOptions,
+        });
       }
-
     }
 
     return { bindTranscriptEvents, dispose: () => {
       disposed = true;
       userQuestionsActions.dispose();
-      for (const watcher of [...approvalRowRemovalWatchers]) watcher.disconnect();
-      approvalReconciliation.dispose();
-      fileDiffBindings.disposeFileDiffBindings?.();
+      disposeApprovalFocusRestore();
+      approvalReconciliation.dispose(); approvalBatch?.dispose();
+      if (ownsFileDiffRegistry) fileDiffBindings.disposeFileDiffBindings?.();
     } };
   }
 

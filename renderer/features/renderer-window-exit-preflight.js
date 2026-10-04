@@ -13,6 +13,14 @@
  *   - 'discard' proceeds without saving.
  *   - Cancel / Esc / scrim block the exit (proceed:false).
  *
+ * The action ('close' | 'reload' | 'update-restart') flows into the prompt as
+ * its intent so the copy says what is about to happen. Non-IDE editors with
+ * unsaved state (Settings > Memory long-term notes, Personality) register with
+ * the dirty-surface registry below and join the SAME prompt; on Save each
+ * surface's save runs after the IDE buffers, and one failure cancels the exit.
+ * No beforeunload handler may cancel an unload: this preflight is the only
+ * guard, and main treats a prevented unload as a stray handler.
+ *
  * The ready plan is deliberately NOT committed. The frame is about to be
  * destroyed (close) or rebuilt (reload); force-closing the tabs would only drop
  * the open-tab set on reload even though the files were already saved during
@@ -35,6 +43,60 @@
     return slash === -1 ? str : str.slice(slash + 1);
   }
 
+  const EXIT_INTENTS = ['close', 'reload', 'update-restart'];
+
+  function normalizeIntent(action) {
+    const value = String(action || 'close');
+    return EXIT_INTENTS.indexOf(value) === -1 ? 'close' : value;
+  }
+
+  // Dirty-surface registry: register({ id, label, isDirty, save }) returns an
+  // unregister function; listDirty() returns the surfaces with unsaved state.
+  // `save` must resolve true on success. Re-registering an id replaces the
+  // older entry (an editor rebuilt without dispose never leaves a ghost).
+  function createDirtySurfaceRegistry() {
+    const surfaces = new Map();
+
+    function register(spec) {
+      const s = spec || {};
+      const id = String(s.id || '');
+      if (!id || typeof s.isDirty !== 'function' || typeof s.save !== 'function') {
+        return function noopUnregister() {};
+      }
+      const entry = { id, label: String(s.label || id), isDirty: s.isDirty, save: s.save };
+      surfaces.set(id, entry);
+      return function unregister() {
+        if (surfaces.get(id) === entry) {
+          surfaces.delete(id);
+        }
+      };
+    }
+
+    function listDirty() {
+      const dirty = [];
+      for (const entry of surfaces.values()) {
+        let isDirty;
+        try {
+          isDirty = entry.isDirty() === true;
+        } catch (_error) {
+          isDirty = false;
+        }
+        if (isDirty) {
+          dirty.push({ id: entry.id, label: entry.label, save: entry.save });
+        }
+      }
+      return dirty;
+    }
+
+    return { register, listDirty };
+  }
+
+  const dirtySurfaces = createDirtySurfaceRegistry();
+
+  function surfaceLabels(surfaces) {
+    return surfaces.map(({ id, label }) => ({ id, label }));
+  }
+
   function createWindowExitPreflight(deps) {
     const options = deps || {};
     const rootRef = options.root || (typeof globalThis !== 'undefined' ? globalThis : {});
@@ -48,6 +110,82 @@
     const appendClientLog = typeof options.appendClientLog === 'function'
       ? options.appendClientLog
       : () => {};
+    const registry = options.dirtySurfaces && typeof options.dirtySurfaces.listDirty === 'function'
+      ? options.dirtySurfaces
+      : dirtySurfaces;
+    const getConfirmDialog = typeof options.getConfirmDialog === 'function'
+      ? options.getConfirmDialog
+      : defaultConfirmDialog;
+    let fallbackDialog = null;
+
+    // Used only when no IDE controller is mounted but a registered surface is
+    // dirty: the same confirm dialog, on its own overlay host.
+    function defaultConfirmDialog() {
+      if (fallbackDialog) {
+        return fallbackDialog;
+      }
+      const factory = rootRef.rendererIdeConfirmDialog && rootRef.rendererIdeConfirmDialog.createIdeConfirmDialog;
+      const overlay = rootRef.inventoryHelpOverlay && rootRef.inventoryHelpOverlay.createHelpOverlay;
+      if (typeof factory !== 'function' || typeof overlay !== 'function') {
+        return null;
+      }
+      fallbackDialog = factory({
+        document: rootRef.document || null,
+        actionButton: typeof rootRef.inventoryActionButton === 'function' ? rootRef.inventoryActionButton : null,
+        helpOverlayFactory: overlay,
+        hostId: 'windowExitConfirmOverlay',
+      }) || null;
+      return fallbackDialog;
+    }
+
+    function listDirtySurfaces() {
+      try {
+        const listed = registry.listDirty();
+        return Array.isArray(listed) ? listed : [];
+      } catch (_error) {
+        return [];
+      }
+    }
+
+    // Save each dirty surface in order; the first failure (false, or a throw)
+    // stops the batch and cancels the exit.
+    async function saveSurfaces(surfaces) {
+      for (const surface of surfaces) {
+        let saved;
+        try {
+          saved = await surface.save() === true;
+        } catch (_error) {
+          saved = false;
+        }
+        if (!saved) {
+          showToast(jt('window.exit.surfaceSaveFailed', 'Couldn’t save {label}. Canceled so you don’t lose changes.', { label: surface.label }));
+          return { proceed: false, reason: 'save_failed', failedSurface: surface.id };
+        }
+      }
+      return null;
+    }
+
+    async function promptWithoutIde(intent, surfaces) {
+      let dialog;
+      try {
+        dialog = getConfirmDialog();
+      } catch (_error) {
+        dialog = null;
+      }
+      let decision = 'cancel';
+      if (dialog && typeof dialog.confirmClose === 'function') {
+        try {
+          decision = await dialog.confirmClose({ dirtyPaths: [], surfaces: surfaceLabels(surfaces), intent });
+        } catch (_error) {
+          decision = 'cancel';
+        }
+      }
+      if (decision !== 'save' && decision !== 'discard') {
+        return { proceed: false, reason: 'canceled' };
+      }
+      const failed = decision === 'save' ? await saveSurfaces(surfaces) : null;
+      return failed || { proceed: true, reason: decision };
+    }
 
     function resolveOrchestrator() {
       try {
@@ -76,10 +214,13 @@
           return { proceed: false, reason: 'plugin_session_active' };
         }
       }
+      const intent = normalizeIntent(action);
+      const surfaces = listDirtySurfaces();
       const orch = resolveOrchestrator();
       if (!orch) {
-        // No IDE controller mounted → there is nothing to lose. Fail open.
-        return { proceed: true, reason: 'no_ide' };
+        // No IDE controller mounted: only registered surfaces can hold
+        // unsaved state. Nothing dirty -> nothing to lose. Fail open.
+        return surfaces.length ? promptWithoutIde(intent, surfaces) : { proceed: true, reason: 'no_ide' };
       }
       let dirty;
       try {
@@ -87,8 +228,8 @@
       } catch (_error) {
         dirty = [];
       }
-      if (!Array.isArray(dirty) || dirty.length === 0) {
-        // Cheap check: no dirty tabs, so no prompt.
+      if ((!Array.isArray(dirty) || dirty.length === 0) && surfaces.length === 0) {
+        // Cheap check: no dirty tabs or surfaces, so no prompt.
         return { proceed: true, reason: 'clean' };
       }
       let paths;
@@ -99,7 +240,7 @@
       }
       let plan;
       try {
-        plan = await orch.preflight(paths);
+        plan = await orch.preflight(paths, { intent, surfaces: surfaceLabels(surfaces) });
       } catch (error) {
         appendClientLog('WARN', 'window.exit_preflight_error', {
           action: String(action || ''),
@@ -120,9 +261,10 @@
           reason: (plan && (plan.canceled ? 'canceled' : plan.code)) || 'canceled',
         };
       }
-      // Ready. Saves (if any) already happened during preflight; release the
-      // plan WITHOUT committing (see the module header for why the frame's tabs
-      // are not force-closed on exit/reload).
+      // IDE buffers were saved during preflight; the surfaces save now. Either
+      // way release the plan WITHOUT committing (see the module header for why
+      // the frame's tabs are not force-closed on exit/reload).
+      const failed = plan.decision === 'save' ? await saveSurfaces(surfaces) : null;
       try {
         if (typeof orch.cancel === 'function') {
           orch.cancel(plan);
@@ -130,7 +272,7 @@
       } catch (_error) {
         /* best-effort release */
       }
-      return { proceed: true, reason: plan.decision || 'ready' };
+      return failed || { proceed: true, reason: plan.decision || 'ready' };
     }
 
     let unsubscribe = null;
@@ -208,5 +350,5 @@
     return { preflightExit, bind, dispose };
   }
 
-  return { createWindowExitPreflight };
+  return { createWindowExitPreflight, createDirtySurfaceRegistry, dirtySurfaces };
 });

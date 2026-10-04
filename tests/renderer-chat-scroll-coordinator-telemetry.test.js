@@ -395,3 +395,46 @@ test('unattributed jumps inside the marker-TTL echo after an attributed move sta
   harness.runFrame();
   assert.equal(harness.jumps().length, 1, 'a genuinely unattributed jump still fires after the echo window');
 });
+
+// HB-005: the dogfood evidence was 18,573 scroll events against 726 user
+// frames with nothing naming the writer. One WARN per streaming turn names the
+// programmatic write rate and its reasons once it exceeds a frame-rate writer.
+test('a programmatic scroll write rate above the ceiling warns once per streaming turn', (t) => {
+  let streaming = true;
+  const harness = createTelemetryHarness({ followLatest: true, isStreaming: () => streaming });
+  t.after(() => harness.coordinator.dispose());
+  const rateWarnings = () => harness.logs.filter((entry) => entry.event === 'chat.scroll_write_rate_high');
+  const burst = (count, reason) => {
+    for (let index = 0; index < count; index += 1) {
+      harness.coordinator.noteProgrammaticWrite(reason);
+      harness.advance(1000 / count);
+    }
+  };
+
+  // Counts divide 1000 so each burst fills exactly one one-second window.
+  burst(125, 'live_follow');
+  burst(125, 'live_follow');
+  assert.equal(rateWarnings().length, 0, 'one frame-rate writer stays under the ceiling');
+
+  burst(500, 'anchor_restore');
+  harness.coordinator.noteProgrammaticWrite('live_follow');
+  assert.equal(rateWarnings().length, 1);
+  assert.equal(rateWarnings()[0].level, 'WARN');
+  assert.equal(rateWarnings()[0].details.sessionId, 'telemetry-session');
+  assert.equal(rateWarnings()[0].details.writesPerSecond, 500);
+  assert.deepEqual(rateWarnings()[0].details.reasons, { anchor_restore: 500 });
+  assert.equal(rateWarnings()[0].details.followLatest, true);
+
+  burst(500, 'anchor_restore');
+  harness.coordinator.noteProgrammaticWrite('live_follow');
+  assert.equal(rateWarnings().length, 1, 'the same turn never logs twice');
+
+  // Between turns the viewport sits still: no write or scroll closes a
+  // window, but the terminal render's content frame re-opens the latch.
+  streaming = false;
+  harness.runFrame();
+  streaming = true;
+  burst(500, 'virtualizer');
+  harness.coordinator.noteProgrammaticWrite('live_follow');
+  assert.equal(rateWarnings().length, 2, 'the next streaming turn may log again');
+});

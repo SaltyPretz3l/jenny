@@ -188,3 +188,78 @@ test('live registry updates, session fencing, ARIA and teardown', (t) => {
   assert.equal(h.doc.querySelector('.slash-autocomplete-popover'), null);
   assert.equal(h.input.getAttribute('role'), null);
 });
+
+// Split view gate §D side finding: typing "/" in pane 1 showed no menu (the
+// command still ran on Enter). Each pane's send dispatch builds a menu; pane
+// 1's bound #chatInput (pane 0's) instead of its own textarea. It now binds
+// its own composer and session, anchors there, and leaves pane 0's alone.
+test('split view: a second pane gets its own menu on its textarea, keyed to its session, disposed with it', (t) => {
+  const dom = new JSDOM('<textarea id="chatInput"></textarea><button id="composerTerminalShortcut">/commands</button>'
+    + '<section class="chat-pane" data-pane-id="1"><textarea class="composer-input" data-chat-node="chatInput"></textarea></section>');
+  const doc = dom.window.document;
+  const input0 = doc.getElementById('chatInput');
+  const input1 = doc.querySelector('[data-chat-node="chatInput"]');
+  const state = { currentSessionId: 's2', ui: { activeView: 'chat' }, composerSessionState: new Map() };
+  const registry0 = createSlashCommandRegistry({ state });
+  registry0.register('/help', 'List commands', () => {}, { requiresSession: false });
+  const registry1 = createSlashCommandRegistry({ state });
+  registry1.register('/help', 'List commands', () => {}, { requiresSession: false });
+  registry1.register('/context', 'Show context', () => {}, { requiresSession: false });
+  const menus = [];
+  const autocomplete = { createSlashAutocomplete(options) { const menu = autocompleteUtils.createSlashAutocomplete(options); menus.push(menu); return menu; } };
+  const pane0 = createSendSlashDispatch({ state, registry: registry0, chatInput: input0, autocompleteUtils: autocomplete });
+  const pane1 = createSendSlashDispatch({ state, registry: registry1, chatInput: input1, autocompleteUtils: autocomplete,
+    sessionContext: { paneId: 1, getSessionId: () => 's2' } });
+  t.after(() => { pane0.dispose(); dom.window.close(); });
+  input1.getBoundingClientRect = () => ({ left: 500, top: 400, bottom: 440, right: 800, width: 300, height: 40 });
+  const type = (target, value) => {
+    target.value = value;
+    target.setSelectionRange(value.length, value.length);
+    target.dispatchEvent(new dom.window.Event('input', { bubbles: true }));
+  };
+
+  type(input1, '/');
+  assert.equal(input1.getAttribute('role'), 'combobox', 'pane 1 textarea is the combobox');
+  assert.equal(input1.getAttribute('aria-expanded'), 'true', 'typing "/" in pane 1 opens its menu');
+  assert.equal(input0.getAttribute('aria-expanded'), 'false', 'pane 0 menu stays closed');
+  assert.notEqual(input1.getAttribute('aria-controls'), input0.getAttribute('aria-controls'), 'each pane has its own listbox');
+  const listbox1 = doc.getElementById(input1.getAttribute('aria-controls'));
+  assert.deepEqual([...listbox1.querySelectorAll('[role="option"] .slash-autocomplete-command')].map((node) => node.textContent), ['/help', '/context'],
+    'pane 1 lists its own registry');
+  const popover1 = listbox1.closest('.slash-autocomplete-popover');
+  assert.equal(popover1.style.left, '500px', 'anchored to pane 1\'s composer');
+
+  state.currentSessionId = 's1'; // focus moved to pane 0 while pane 1's menu is open
+  type(input1, '/c');
+  assert.equal(input1.getAttribute('aria-expanded'), 'true', 'pane 1 fences on its own session, not the focused mirror');
+
+  let legacy = 0;
+  doc.getElementById('composerTerminalShortcut').addEventListener('click', () => { legacy += 1; });
+  input1.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+  doc.getElementById('composerTerminalShortcut').click();
+  assert.equal(legacy, 0, 'the Commands button is claimed once, by pane 0');
+  assert.equal(input0.getAttribute('aria-expanded'), 'false');
+  assert.equal(input1.getAttribute('aria-expanded'), 'false');
+  assert.equal(doc.querySelectorAll('.slash-autocomplete-popover:not(.hidden)').length, 1, 'one menu open: pane 0\'s button menu');
+
+  pane1.dispose();
+  assert.equal(input1.hasAttribute('role'), false, 'pane 1 close restores its textarea');
+  assert.equal(popover1.isConnected, false, 'and removes its menu');
+  assert.equal(input0.getAttribute('role'), 'combobox', 'pane 0 keeps its menu');
+});
+
+// Gate §D follow-up: the popover's surface named an undefined token (--bg-elevated), so it
+// rendered see-through over the transcript in either pane. Every var() without a fallback in
+// the composer v2 sheet must name a custom property some stylesheet defines.
+test('slash popover: an opaque popover surface, and no undefined tokens in the composer v2 sheet', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const stylesDir = path.join(__dirname, '..', 'styles');
+  const all = fs.readdirSync(stylesDir).filter((f) => f.endsWith('.css')).map((f) => fs.readFileSync(path.join(stylesDir, f), 'utf8')).join('\n');
+  const defined = new Set([...all.matchAll(/(--[\w-]+)\s*:/g)].map((m) => m[1]));
+  const sheet = fs.readFileSync(path.join(stylesDir, 'chat-composer-v2.css'), 'utf8');
+  const undefinedTokens = [...new Set([...sheet.matchAll(/var\((--[\w-]+)\s*\)/g)].map((m) => m[1]))].filter((name) => !defined.has(name));
+  assert.deepEqual(undefinedTokens, []);
+  const popoverRule = sheet.match(/\.slash-autocomplete-popover\s*\{([^}]*)\}/)[1];
+  assert.match(popoverRule, /background:\s*var\(--surface-popover-background\)/);
+});

@@ -120,7 +120,7 @@ def test_v7_migration_preserves_rows_scope_and_sequence_highwater(tmp_path: Path
 
     store = MemoryStore(db_path)
     try:
-        assert store._connection.execute("PRAGMA user_version").fetchone()[0] == 8  # noqa: SLF001
+        assert store._connection.execute("PRAGMA user_version").fetchone()[0] == 8
         memory = store.get_memory_by_id(7)
         assert memory is not None
         assert memory.project_id == GENERAL_PROJECT_ID
@@ -129,14 +129,14 @@ def test_v7_migration_preserves_rows_scope_and_sequence_highwater(tmp_path: Path
         assert [(row.id, row.project_id) for row in pending] == [
             (8, GENERAL_PROJECT_ID)
         ]
-        assert store._connection.execute(  # noqa: SLF001
+        assert store._connection.execute(
             "SELECT project_id, attempt_count FROM memory_extraction_runs"
         ).fetchone() == (GENERAL_PROJECT_ID, 2)
-        assert store._connection.execute(  # noqa: SLF001
+        assert store._connection.execute(
             "SELECT project_id, reason FROM memory_suppressions"
         ).fetchone()[0] == GENERAL_PROJECT_ID
         sequences = dict(
-            store._connection.execute(  # noqa: SLF001
+            store._connection.execute(
                 "SELECT name, seq FROM sqlite_sequence"
             ).fetchall()
         )
@@ -149,7 +149,7 @@ def test_v7_migration_preserves_rows_scope_and_sequence_highwater(tmp_path: Path
     reopened = MemoryStore(db_path)
     try:
         assert reopened.get_memory_by_id(7) is not None
-        assert reopened._connection.execute("PRAGMA user_version").fetchone()[0] == 8  # noqa: SLF001
+        assert reopened._connection.execute("PRAGMA user_version").fetchone()[0] == 8
     finally:
         reopened.close()
 

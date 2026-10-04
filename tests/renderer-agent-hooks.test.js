@@ -235,3 +235,24 @@ test('waitForIdle resolves true when streams drain and false on timeout', async 
   assert.strictEqual(await win.__jennyAgent.waitForIdle({ timeoutMs: 150, pollMs: 20 }), false);
   dispose();
 });
+
+test('the snapshot lists would-be desktop toasts and drainDesktopNotifications drains through the controller', async () => {
+  const win = createFakeWindow();
+  const state = createBaseState({ agent_test_hooks: true });
+  const dispose = installAgentTestHooks({ window: win, state });
+  await waitForTicks(400);
+  assert.deepStrictEqual(win.__jennyAgent.getStateSnapshot().desktopNotifications, []);
+  assert.deepStrictEqual(win.__jennyAgent.drainDesktopNotifications(), [], 'no controller drains nothing');
+
+  const entry = { at: 1, category: 'replies', key: 'turn:s', sessionId: 'session-1', title: 'Reply ready', body: 'Chat' };
+  state.desktopNotificationLog = Array.from({ length: 40 }, (_value, index) => ({ ...entry, key: `turn:${index}` }));
+  const listed = win.__jennyAgent.getStateSnapshot().desktopNotifications;
+  assert.strictEqual(listed.length, 32);
+  assert.strictEqual(listed[31].key, 'turn:39');
+  listed[0].key = 'mutated';
+  assert.strictEqual(state.desktopNotificationLog[8].key, 'turn:8', 'the snapshot hands out copies');
+
+  state.desktopNotificationsController = { drain: () => [entry] };
+  assert.deepStrictEqual(win.__jennyAgent.drainDesktopNotifications(), [entry]);
+  dispose();
+});

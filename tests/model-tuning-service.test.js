@@ -4,6 +4,41 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const { ModelTuningService } = require('../services/model-tuning-service');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+const { ShellConfigService } = require('../services/shell-config-service');
+
+test('failed tuning restores evicted profiles and timeouts using the persisted store', async (t) => {
+  const userDataPath = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-tuning-rollback-'));
+  t.after(() => fs.rmSync(userDataPath, { recursive: true, force: true }));
+  const shellConfigService = new ShellConfigService({ userDataPath });
+  const entries = Array.from({ length: 128 }, (_, index) => `saved-${index}`);
+  shellConfigService.replaceState({ ...shellConfigService.getState(), modelTuning: {
+    streamInactivitySecondsByModel: Object.fromEntries(entries.map((id) => [id, 180])),
+    generationProfilesByModel: Object.fromEntries(entries.map((id) => [id, { temperature: 0.5 }])),
+  } });
+  const previous = shellConfigService.getModelTuning();
+  let refreshCalls = 0;
+  const service = new ModelTuningService({ shellConfigService, backendService: {
+    async refreshManagedConfig() {
+      refreshCalls += 1;
+      if (refreshCalls === 1) {
+        assert.equal(shellConfigService.getModelTuning().generationProfilesByModel['saved-0'], undefined);
+        shellConfigService.updateUiLanguage('es');
+        throw new Error('runtime refresh failed');
+      }
+      return { status: 'ready' };
+    },
+  } });
+  const result = await service.update({
+    modelId: 'new-model', streamInactivitySeconds: 60, generationProfile: { temperature: 0.7 },
+  });
+  assert.equal(result.status, 'rolled_back');
+  const reloaded = new ShellConfigService({ userDataPath });
+  assert.deepEqual(reloaded.getModelTuning(), previous);
+  assert.equal(reloaded.getState().uiLanguage, 'es');
+});
 
 function createHarness({
   refreshFails = false,
@@ -26,6 +61,11 @@ function createHarness({
   const logs = [];
   const inspectionCalls = [];
   const shellConfigService = {
+    getState: () => ({ modelTuning: structuredClone(state.model) }),
+    replaceState(snapshot) {
+      state.model = structuredClone(snapshot.modelTuning);
+      return this.getState();
+    },
     getModelTuning: () => structuredClone(state.model),
     getCompactionTuning: () => structuredClone(state.compaction),
     updateModelTuning(patch) {
@@ -119,6 +159,19 @@ test('rejects malformed values and active streams without persistence or cancell
   assert.equal((await active.service.update({ modelId: 'gemma3:latest', contextLength: 4096 })).reason, 'active_stream');
   assert.equal(active.refreshCalls, 0);
   assert.equal(active.service.backendService.activeStreams.size, 1);
+
+  // F31: while the chat GPU handoff holds the lease (an image render), the
+  // refusal names the image, not the parked turn, and is logged.
+  const rendering = createHarness({ active: true });
+  rendering.service.backendService.chatGpuHandoff = { launchRefusal: () => 'gpu_lease_held' };
+  const refused = await rendering.service.update({ modelId: 'gemma3:latest', contextLength: 16384 });
+  assert.equal(refused.status, 'rejected');
+  assert.equal(refused.reason, 'gpu_lease_held');
+  assert.equal(rendering.refreshCalls, 0);
+  assert.deepEqual(rendering.state.compaction.contextLengthByModel, {});
+  assert.deepEqual(rendering.logs.map((entry) => [entry.level, entry.event, entry.details.reason]), [
+    ['WARN', 'model_tuning.apply_refused', 'gpu_lease_held'],
+  ]);
 
   const unsupported = createHarness({ engineType: 'codex-cli' });
   assert.equal((await unsupported.service.update({

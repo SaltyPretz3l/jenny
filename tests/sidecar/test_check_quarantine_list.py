@@ -19,7 +19,7 @@ def _load_module() -> ModuleType:
     return module
 
 
-def _run(module, monkeypatch, capsys, repo_root: Path, quarantine, *, test_files=()):
+def _run(module, monkeypatch, capsys, repo_root: Path, quarantine, *, test_files=()):  # noqa: PLR0913  # fixture
     (repo_root / "tests").mkdir(parents=True, exist_ok=True)
     for rel in test_files:
         target = repo_root / rel

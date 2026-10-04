@@ -32,7 +32,7 @@ function makeTempStoreService(t) {
 }
 
 function wireAttachment(overrides = {}) {
-  const data = Buffer.from('fake-jpeg-bytes-0123456789');
+  const data = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff]), Buffer.from('fake-jpeg-bytes-0123456789')]);
   return {
     id: 'att_source_1',
     kind: 'image',
@@ -50,7 +50,7 @@ test('normalizeWireToolResultAttachment maps snake_case wire keys to camelCase',
   const normalized = normalizeWireToolResultAttachment(wireAttachment({ page_number: 2 }));
   assert.equal(normalized.id, 'att_source_1');
   assert.equal(normalized.mimeType, 'image/jpeg');
-  assert.equal(normalized.byteLength, 26);
+  assert.equal(normalized.byteLength, 29);
   assert.equal(normalized.pageNumber, 2);
   assert.equal(normalized.width, 32);
 });
@@ -201,12 +201,22 @@ test('production cache reads reject a deleted or replaced owning session', (t) =
   }), []);
 });
 
+test('ingest records the sniffed image type, not the wire claim', (t) => {
+  const service = makeTempStoreService(t);
+  const png = Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), Buffer.from('png-body')]);
+  const refs = ingestToolResultAttachments(service, [wireAttachment({
+    id: 'att_png', mime_type: 'image/jpeg', data_base64: png.toString('base64'), byte_length: png.length,
+  })], { sessionId: 'session-a' });
+  assert.equal(refs[0].mimeType, 'image/png');
+});
+
 test('ingest drops sliced base64 and enforces the aggregate cap whole-attachment', (t) => {
   const service = makeTempStoreService(t);
   const sliced = wireAttachment({ id: 'att_sliced' });
   sliced.data_base64 = sliced.data_base64.slice(0, sliced.data_base64.length - 3);
 
   const big = Buffer.alloc(1_500_000, 7);
+  big.set([0xff, 0xd8, 0xff]);
   const first = wireAttachment({
     id: 'att_big_1',
     data_base64: big.toString('base64'),

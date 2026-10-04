@@ -2,12 +2,18 @@
 
 from __future__ import annotations
 
+import secrets
 from dataclasses import dataclass
 from typing import Any, Callable, TypeVar
 
 T = TypeVar("T")
 
 MAX_INNER_TURN_RETRIES = 2
+# Per-process proof that a system row was appended by this module: a caller
+# can put any ``jenny_retry_*`` key in its own history, but not this value, so
+# a forged row can never be stripped out of the approval drift hash.
+_RETRY_ROW_NONCE_KEY = "jenny_retry_nonce"
+_RETRY_ROW_NONCE = secrets.token_hex(16)
 _RETRY_MESSAGE_TEMPLATE = (
     "[System: your previous output could not be accepted. "
     "Please retry and follow this guidance exactly: {retry_prompt}]"
@@ -31,6 +37,10 @@ class InnerRetryableTurnError(Exception):
     retry_prompt: str
     terminal_subcode: str | None = None
     diagnostic_components: tuple[str, ...] = ()
+    # False when another attempt cannot change the outcome (for example an
+    # approval plan validated against a live context that drifted for good):
+    # the loop settles through ``exhausted_factory`` on this attempt.
+    retryable: bool = True
 
     def __str__(self) -> str:
         return self.reason
@@ -70,11 +80,31 @@ def append_retry_system_message(
                 "jenny_retry_reason": error.reason,
                 "jenny_retry_index": retry_index,
                 "jenny_terminal_subcode": error.terminal_subcode,
+                _RETRY_ROW_NONCE_KEY: _RETRY_ROW_NONCE,
             },
         }
     )
     cloned["messages"] = messages
     return cloned
+
+
+def is_retry_system_message(message: Any) -> bool:
+    """True for a system row appended by ``append_retry_system_message``.
+
+    Identified by this process's retry nonce in its metadata, never by its
+    text or by a ``jenny_retry_*`` key alone (a caller could forge those).
+    """
+
+    if not isinstance(message, dict) or message.get("role") != "system":
+        return False
+    metadata = message.get("metadata")
+    return isinstance(metadata, dict) and secrets.compare_digest(
+        str(metadata.get(_RETRY_ROW_NONCE_KEY) or ""), _RETRY_ROW_NONCE
+    )
+
+
+def strip_retry_system_messages(messages: list[Any]) -> list[Any]:
+    return [message for message in messages if not is_retry_system_message(message)]
 
 
 def execute_with_inner_turn_retry(
@@ -90,7 +120,7 @@ def execute_with_inner_turn_retry(
         try:
             return execute_attempt(current_params)
         except InnerRetryableTurnError as error:
-            if attempt > max(int(max_inner_retries), 0):
+            if not error.retryable or attempt > max(int(max_inner_retries), 0):
                 if exhausted_factory is not None:
                     return exhausted_factory(error, attempt)
                 raise

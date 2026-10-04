@@ -1004,5 +1004,6 @@
     clearMarkdownRenderCache,
     getMarkdownRenderCacheStats,
     disposeMermaidLazyObserver,
+    pruneDetachedMermaidObservations,
   };
 });

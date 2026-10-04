@@ -1,4 +1,4 @@
-"""Deterministic Mermaid diagram generation builtin."""
+"""Bounded Mermaid source and artifact builtin."""
 
 from __future__ import annotations
 
@@ -83,19 +83,7 @@ def _normalize_prompt(value: object) -> str:
             reason="prompt must not be empty",
             details={"field": "prompt"},
         )
-    if _looks_like_mermaid_source(value):
-        return value
-
-    normalized_lines = [_normalize_line_text(line, max_chars=320) for line in value.splitlines()]
-    normalized = "\n".join(line for line in normalized_lines if line)
-    normalized = normalized.strip()
-    if not normalized:
-        raise _machine_error(
-            code=CMP_TOOL_MERMAID_VALIDATION,
-            reason="prompt must not be empty",
-            details={"field": "prompt"},
-        )
-    return normalized
+    return value
 
 
 def _normalize_optional_field(
@@ -136,172 +124,6 @@ def _normalize_diagram_type(value: object) -> str:
             },
         )
     return normalized
-
-
-def _mermaid_safe(value: str, *, max_chars: int) -> str:
-    sanitized = _normalize_line_text(value, max_chars=max_chars)
-    return sanitized.replace('"', "'").replace("`", "'")
-
-
-_MERMAID_SOURCE_LEADING_KEYWORDS: Final[frozenset[str]] = frozenset(
-    [
-        "flowchart",
-        # `graph` is the classic Mermaid flowchart header (e.g. `graph TD`); without
-        # it, pasted real flowchart source is not recognized as Mermaid and gets
-        # rebuilt into a trivial 2-node placeholder diagram.
-        "graph",
-        "sequencediagram",
-        "classdiagram",
-        "statediagram",
-        "erdiagram",
-        "journey",
-        "gantt",
-        "pie",
-        "mindmap",
-        "timeline",
-        "gitgraph",
-        "quadrantchart",
-    ]
-)
-
-
-def _looks_like_mermaid_source(value: str) -> bool:
-    """Return True when the value already contains full Mermaid syntax."""
-    first = value.split(maxsplit=1)[0].rstrip(":").lower() if value.split() else ""
-    return first in _MERMAID_SOURCE_LEADING_KEYWORDS
-
-
-def _build_mermaid(
-    *,
-    diagram_type: str,
-    prompt: str,
-    title: str | None,
-) -> str:
-    safe_title = _mermaid_safe(title or "Prompt Diagram", max_chars=120)
-    prompt_inline = _mermaid_safe(prompt.replace("\n", " / "), max_chars=280)
-
-    if diagram_type == "flowchart":
-        return "\n".join(
-            (
-                "flowchart TD",
-                f'    A["{safe_title}"]',
-                f'    B["{prompt_inline}"]',
-                "    A --> B",
-            )
-        )
-    if diagram_type == "sequence":
-        return "\n".join(
-            (
-                "sequenceDiagram",
-                "    participant User",
-                "    participant Jenny",
-                f"    User->>Jenny: {prompt_inline}",
-                f"    Jenny-->>User: {safe_title}",
-            )
-        )
-    if diagram_type == "class":
-        return "\n".join(
-            (
-                "classDiagram",
-                "    class PromptContext {",
-                "      +summary",
-                "    }",
-                f"    PromptContext : {prompt_inline}",
-            )
-        )
-    if diagram_type == "state":
-        return "\n".join(
-            (
-                "stateDiagram-v2",
-                "    [*] --> Prompt",
-                f"    Prompt : {prompt_inline}",
-                "    Prompt --> [*]",
-            )
-        )
-    if diagram_type == "er":
-        return "\n".join(
-            (
-                "erDiagram",
-                "    PROMPT {",
-                "      string text",
-                "      string title",
-                "    }",
-            )
-        )
-    if diagram_type == "journey":
-        return "\n".join(
-            (
-                "journey",
-                f"    title {safe_title}",
-                "    section Prompt",
-                f"      {prompt_inline}: 5: Jenny",
-            )
-        )
-    if diagram_type == "gantt":
-        return "\n".join(
-            (
-                "gantt",
-                f"    title {safe_title}",
-                "    dateFormat YYYY-MM-DD",
-                "    section Plan",
-                "    Prompt synthesis :done, p1, 2026-01-01, 1d",
-            )
-        )
-    if diagram_type == "pie":
-        return "\n".join(
-            (
-                f"pie title {safe_title}",
-                '    "Prompt focus" : 100',
-            )
-        )
-    if diagram_type == "mindmap":
-        return "\n".join(
-            (
-                "mindmap",
-                f"  root(({safe_title}))",
-                f"    {prompt_inline}",
-            )
-        )
-    if diagram_type == "timeline":
-        return "\n".join(
-            (
-                "timeline",
-                f"    title {safe_title}",
-                f"    Prompt : {prompt_inline}",
-            )
-        )
-    if diagram_type == "gitGraph":
-        commit_label = _mermaid_safe(f"{safe_title} seed", max_chars=64)
-        return "\n".join(
-            (
-                "gitGraph",
-                '    commit id: "start"',
-                f'    commit id: "{commit_label}"',
-            )
-        )
-    if diagram_type == "quadrantChart":
-        return "\n".join(
-            (
-                "quadrantChart",
-                f"    title {safe_title}",
-                "    x-axis Low --> High",
-                "    y-axis Low --> High",
-                "    quadrant-1 Act",
-                "    quadrant-2 Explore",
-                "    quadrant-3 Avoid",
-                "    quadrant-4 Monitor",
-                "    Prompt Context: [0.6, 0.6]",
-            )
-        )
-
-    raise _machine_error(
-        code=CMP_TOOL_MERMAID_UNSUPPORTED_TYPE,
-        reason="unsupported diagram_type",
-        details={
-            "diagram_type": diagram_type,
-            "supported_types": list(SUPPORTED_DIAGRAM_TYPES),
-        },
-    )
 
 
 def _validate_generated_output(*, diagram_type: str, mermaid: str) -> None:
@@ -357,7 +179,7 @@ def mermaid_generate_tool(
     arguments: dict[str, object],
     workspace: WorkspaceGuard,
 ) -> ToolHandlerResult:
-    """Generate deterministic Mermaid syntax from a bounded natural-language prompt."""
+    """Return the supplied Mermaid source and optionally save its artifact."""
     try:
         prompt = _normalize_prompt(arguments.get("prompt"))
         diagram_type = _normalize_diagram_type(arguments.get("diagram_type"))
@@ -382,14 +204,7 @@ def mermaid_generate_tool(
             json.dumps(hash_payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
         ).hexdigest()
 
-        if _looks_like_mermaid_source(prompt):
-            mermaid = prompt
-        else:
-            mermaid = _build_mermaid(
-                diagram_type=diagram_type,
-                prompt=prompt,
-                title=title,
-            )
+        mermaid = prompt
         _validate_generated_output(diagram_type=diagram_type, mermaid=mermaid)
 
         output_payload: dict[str, object] = {
@@ -424,7 +239,7 @@ def mermaid_generate_tool(
         )
     except ToolExecutionFailure:
         raise
-    except Exception as error:  # noqa: BLE001
+    except Exception as error:
         raise _machine_error(
             code=CMP_TOOL_MERMAID_INTERNAL,
             reason="internal mermaid generation failure",

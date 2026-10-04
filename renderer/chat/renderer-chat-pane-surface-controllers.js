@@ -38,7 +38,7 @@
   /* The composition destructured the viewport controller with a default for
      every member so a null controller could not crash the shell. That contract
      moves here unchanged: same names, same default values, same semantics. */
-  function buildViewportApi(viewportController, state, callbacks) {
+  function buildViewportApi(viewportController, state, callbacks, followState) {
     const {
       composerLayoutRuntime = { measureCanvas: null, measureContext: null, resizeObserver: null, safeOffset: 0 },
       getReasoningEntries = (m) => m?.reasoning?.entries && Array.isArray(m.reasoning.entries) ? m.reasoning.entries : [],
@@ -51,7 +51,8 @@
       },
       getScrollMetrics = () => ({ scrollTop: 0, scrollHeight: 0, clientHeight: 0 }),
       getScrollBehavior = () => 'auto',
-      setFollowLatest = (v) => { state.ui.followLatest = Boolean(v); },
+      setFollowLatest = (v) => { followState.set(Boolean(v)); },
+      isFollowingLatest = () => followState.get() !== false,
       syncThreadScrollState = () => true,
       getComposerSafeOffset = () => 0, measureComposerSafeOffset = () => 0,
       updateComposerSafeOffset = noop, initializeComposerLayoutObserver = noop,
@@ -67,7 +68,7 @@
     } = viewportController || {};
     return {
       composerLayoutRuntime, getReasoningEntries, mergeMessageReasoning, getScrollMetrics, getScrollBehavior,
-      setFollowLatest, syncThreadScrollState, getComposerSafeOffset, measureComposerSafeOffset,
+      setFollowLatest, isFollowingLatest, syncThreadScrollState, getComposerSafeOffset, measureComposerSafeOffset,
       updateComposerSafeOffset, initializeComposerLayoutObserver, scrollThreadToTop, scrollThreadToBottom,
       scrollMessageIntoView, viewportReveal, getCurrentMessageById, isInteractiveRoundRecapExpanded,
       pruneInteractiveRoundRecapExpansionState, toggleInteractiveRoundRecap, isContextCompactionExpanded,
@@ -85,18 +86,27 @@
     const callbacks = opts.callbacks || {};
     const controllers = opts.controllers || {};
     const factories = opts.factories || {};
+    /* This pane's follow intent and session. Unsupplied (pane 0 and every existing caller)
+       they are state.ui.followLatest and state.currentSessionId; a second pane injects its own. */
+    const followState = opts.followState || {
+      get: () => state.ui.followLatest,
+      set: (value) => { state.ui.followLatest = value; },
+    };
+    const getSessionId = typeof opts.getSessionId === 'function' ? opts.getSessionId : () => state.currentSessionId;
     const scrollCoordinatorUtils = factories.scrollCoordinatorUtils || {};
     const viewportUtils = factories.viewportUtils || {};
     const pinToTopUtils = factories.pinToTopUtils || {};
 
     const scrollCoordinator = scrollCoordinatorUtils.createChatScrollCoordinator?.({
-      state, scrollContainer: dom.chatThreadScroll, timelineContainer: dom.chatTimeline, window: opts.windowRef,
+      state, followState, getSessionId, scrollContainer: dom.chatThreadScroll, timelineContainer: dom.chatTimeline, window: opts.windowRef,
       appendClientLog: callbacks.appendClientLog, renderJumpControls: callbacks.renderJumpControls,
       isStreaming: callbacks.isStreaming,
     }) || null;
 
     const viewport = viewportUtils.createViewportController?.({
       state,
+      followState,
+      getSessionId,
       constants: opts.constants,
       dom: {
         chatView: dom.chatView,
@@ -125,7 +135,7 @@
         appendClientLog: callbacks.appendClientLog,
       },
     }) || null;
-    const viewportApi = buildViewportApi(viewport, state, callbacks);
+    const viewportApi = buildViewportApi(viewport, state, callbacks, followState);
     scrollCoordinator?.setViewportController?.(viewport);
 
     const pinToTop = (typeof pinToTopUtils.createPinToTopController === 'function'
@@ -137,7 +147,7 @@
           onStateChange: function (nextState) {
             callbacks.getWayfinderController?.()?.setPinState?.({
               ...nextState,
-              sessionId: state.currentSessionId,
+              sessionId: getSessionId(),
             });
             callbacks.renderJumpControls?.();
           },

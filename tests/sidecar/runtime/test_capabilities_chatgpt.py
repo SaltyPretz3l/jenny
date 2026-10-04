@@ -46,7 +46,7 @@ def test_astra_is_published_with_explicit_reasoning_metadata(token: str) -> None
             "reasoning_efforts": ["low", "medium", "high", "xhigh", "max"],
         },
     }
-    assert result["models"][0]["id"] == "gpt-5.6-sol"
+    assert result["models"][0]["id"] == "gpt-6.1-sol"
     assert result["available"] is bool(token)
 
 
@@ -115,3 +115,18 @@ def test_chatgpt_models_list_signed_in_returns_full_catalog() -> None:
         "available": True,
         "reason": "",
     }
+
+
+
+def test_discovered_catalog_replaces_static_entries_with_actual_capabilities() -> None:
+    row = {"id": "gpt-6.1-sol", "label": "GPT-6.1 Sol", "context_length": 128_000,
+           "reasoning_efforts": ["low", "medium"],
+           "default_reasoning_effort": "medium", "vision": False}
+    config = RuntimeConfig(chatgpt_access_token="fixture-token", chatgpt_model_catalog=(row,))
+    result = models_list_result(
+        {"engine_type": "chatgpt", "_runtime_config": config}, models_for_engine=lambda _engine: [],
+    )
+    assert result["models"] == [{"id": "gpt-6.1-sol", "label": "GPT-6.1 Sol", "capabilities": {
+        "reasoning_effort": True, "reasoning_efforts": ["low", "medium"],
+        "default_reasoning_effort": "medium", "vision": False,
+    }}]

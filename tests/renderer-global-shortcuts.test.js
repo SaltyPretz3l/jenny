@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 const { JSDOM } = require('jsdom');
-const { loadRendererApp, waitForUi } = require('./helpers/renderer-shell-harness');
+const { loadRendererApp, waitForStartupCurtainRemoval, waitForUi } = require('./helpers/renderer-shell-harness');
 const { createOverlayManager } = require('../renderer/shell/renderer-overlay-manager.js');
 const { createGlobalShortcutsController } = require('../renderer/shell/renderer-global-shortcuts.js');
 
@@ -13,6 +13,8 @@ async function loadRendererTestApp(t, options) {
   t.after(async () => {
     await app.dispose();
   });
+  // App chords stand down while the startup curtain is mounted.
+  await waitForStartupCurtainRemoval(app.window);
   return app;
 }
 
@@ -174,7 +176,7 @@ test('UIUX-020: Ctrl+1-5 moves focus to the destination toprail tab after switch
   await waitForUi(window, 60);
   assert.equal(window.__rendererState.ui.activeView, 'settings');
   assert.equal(doc.activeElement && doc.activeElement.id, 'settingsTopRailTab',
-    'Ctrl+5 must land focus on the Settings toprail tab');
+    'Ctrl+5 must land focus on the Settings gear');
 });
 
 test('UIUX-020: global shortcuts stand down while focus is in a text-editing surface', async (t) => {
@@ -406,4 +408,47 @@ test('a leaked overlay entry (root removed without close) no longer blocks the c
   dialog.remove(); // re-rendered chrome dropped the overlay; nobody called close()
   pressCtrl(window, 'n');
   assert.deepEqual(calls, [['newChat']], 'the stale entry no longer blocks the chord');
+});
+
+/* Split view W1-4c: Ctrl+Shift+Backslash toggles the side-by-side pane. */
+
+test('Ctrl+Shift+Backslash toggles the split from the page and from a chat composer, not from other editors or behind an overlay (unit)', (t) => {
+  const dom = new JSDOM('<!DOCTYPE html><html><body>'
+    + '<textarea class="composer-input" id="composer"></textarea>'
+    + '<textarea class="inputarea" id="editor"></textarea></body></html>');
+  const { window } = dom;
+  const doc = window.document;
+  const calls = [];
+  let overlayOpen = false;
+  const controller = createGlobalShortcutsController({
+    windowRef: window,
+    isOverlayOpen: () => overlayOpen,
+    callbacks: { togglePaneSplit: () => { calls.push('toggle'); return true; } },
+  });
+  controller.bind();
+  t.after(() => { controller.dispose(); window.close(); });
+  const chord = { shiftKey: true, code: 'Backslash' };
+
+  const fromPage = pressCtrl(window, '|', chord);
+  assert.deepEqual(calls, ['toggle'], 'the chord toggles from the page');
+  assert.equal(fromPage.defaultPrevented, true);
+
+  doc.getElementById('composer').focus();
+  pressCtrl(window, '|', chord);
+  assert.deepEqual(calls, ['toggle', 'toggle'], 'a chat composer does not own the chord');
+
+  doc.getElementById('editor').focus();
+  const fromEditor = pressCtrl(window, '|', chord);
+  assert.deepEqual(calls, ['toggle', 'toggle'], 'any other text-editing surface keeps its own Ctrl+Shift+Backslash');
+  assert.equal(fromEditor.defaultPrevented, false);
+
+  doc.getElementById('editor').blur();
+  overlayOpen = true;
+  pressCtrl(window, '|', chord);
+  assert.deepEqual(calls, ['toggle', 'toggle'], 'a managed overlay stands the chord down');
+
+  overlayOpen = false;
+  pressCtrl(window, '\\', { code: 'Backslash' });
+  pressCtrl(window, '|', { ...chord, altKey: true });
+  assert.deepEqual(calls, ['toggle', 'toggle'], 'Ctrl+Backslash without Shift, or with Alt, is not the chord');
 });

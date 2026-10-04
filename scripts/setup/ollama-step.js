@@ -42,7 +42,19 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+// `ollama --version` prints `ollama version is X` when a server answers, and
+// `Warning: client version is X` (after a could-not-connect warning) when none
+// does. Read either from stdout+stderr; '' when the answer is unparseable.
+function probeInstalledVersion({ run, platform, env, fileExists }) {
+  const result = run(resolveOllamaCommand({ platform, env, fileExists }), ['--version']) || {};
+  const text = `${result.stdout || ''}\n${result.stderr || ''}`;
+  const match = text.match(/\b(?:ollama|client) version is\s+v?(\d+\.\d+\.\d+\S*)/i);
+  return match ? match[1] : '';
+}
+
 // Probe the local Ollama daemon + PATH. Returns { installed, running, version }.
+// A stopped install reports the version of its CLI so an outdated one is caught
+// before the daemon is started.
 async function detectOllama({
   fetchImpl = globalThis.fetch,
   run = defaultRun,
@@ -85,12 +97,14 @@ async function detectOllama({
     : run('which', ['ollama']);
   const onPath = probe.status === 0 && Boolean((probe.stdout || '').trim());
   if (onPath) {
-    return withVersionPolicy({ installed: true, running: false, version: '' });
+    const installedVersion = probeInstalledVersion({ run, platform, env, fileExists });
+    return withVersionPolicy({ installed: true, running: false, version: installedVersion });
   }
   // PATH probe failed. A freshly winget-installed Ollama may not be on this
   // process's stale PATH yet, so fall back to its known absolute location.
   if (ollamaBinaryPath(platform, env, fileExists)) {
-    return withVersionPolicy({ installed: true, running: false, version: '' });
+    const installedVersion = probeInstalledVersion({ run, platform, env, fileExists });
+    return withVersionPolicy({ installed: true, running: false, version: installedVersion });
   }
   return withVersionPolicy({ installed: false, running: false, version: '' });
 }
@@ -158,10 +172,20 @@ async function ensureServing({
   if (!initial.installed) {
     return { running: false, started: false, reason: 'not_installed' };
   }
+  // `ollama serve` is a detached daemon meant to outlive setup: never kill it.
+  // Spawn failures such as ENOENT arrive as an asynchronous 'error' event, and a
+  // child that exits has nothing left to wait for.
+  let child;
+  let spawnFailed = false;
+  let childExited = false;
   try {
-    const child = spawnImpl(resolveOllamaCommand({ platform, env, fileExists }), ['serve'], {
+    child = spawnImpl(resolveOllamaCommand({ platform, env, fileExists }), ['serve'], {
       detached: true, stdio: 'ignore', windowsHide: true,
     });
+    if (child && typeof child.on === 'function') {
+      child.on('error', () => { spawnFailed = true; });
+      child.on('exit', () => { childExited = true; });
+    }
     if (child && typeof child.unref === 'function') {
       child.unref();
     }
@@ -174,8 +198,20 @@ async function ensureServing({
     if (probe.running) {
       return { running: true, started: true };
     }
+    if (spawnFailed) {
+      return { running: false, started: false, reason: 'serve_spawn_failed' };
+    }
+    if (childExited) {
+      return { running: false, started: false, reason: 'serve_exited' };
+    }
   }
-  return { running: false, started: true, reason: 'serve_timeout' };
+  const pid = Number(child?.pid);
+  return {
+    running: false,
+    started: true,
+    reason: 'serve_timeout',
+    ...(Number.isInteger(pid) && pid > 0 ? { pid } : {}),
+  };
 }
 
 // Spawn `ollama pull <tag>`, translating per-layer redraws into 0-100 progress.

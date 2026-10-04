@@ -1,6 +1,6 @@
 ---
 kind: docs-index
-last_reviewed: 2026-09-09
+last_reviewed: 2026-10-03
 ---
 
 # Jenny tutorials
@@ -13,8 +13,10 @@ Practical walkthroughs for common first-time tasks. Each tutorial assumes Jenny 
 | [02 — Adding an MCP server](02-adding-mcp-server.md) | ~10 min | Add an MCP connection under Settings → Plugins & Extensions, review the tools it advertises, approve it, and use its tools in chat. |
 | [03 — Personality customization](03-personality-customization.md) | ~5 min | Change Jenny's name, pick a voice template, write a personality note, and tell Jenny about yourself. |
 
-For the 1.1 source candidate, the first-chat guide includes both model routes,
-language/time preferences and supervision controls. Browser hosting has its own
+The guides track current source after the 1.2.0 release, including the current
+Settings labels. Check [release notes](../../RELEASE_NOTES.md) for the package
+you installed. The first-chat guide includes local model routes, optional cloud
+sign-in, language/time preferences and supervision controls. Browser hosting has its own
 [Docker quick start](../operations/HOSTED_QUICKSTART.md); desktop command
 isolation has a separate [sandbox guide](../operations/DESKTOP_COMMAND_SANDBOX.md).
 These experimental paths do not imply published packages.

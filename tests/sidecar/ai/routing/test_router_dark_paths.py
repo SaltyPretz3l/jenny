@@ -8,8 +8,6 @@ would fail if the router's logic changed.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -19,8 +17,7 @@ from sidecar.ai.context.builder import ContextBuilder, RuntimeToolStatus
 from sidecar.ai.context.prompt_cache import StructuredSystemPrompt
 from sidecar.ai.error_codes import CMP_TSRCH_DEFERRED_TOOL
 from sidecar.ai.mcp.models import MCPToolDescriptor, MCPToolResult
-from sidecar.ai.routing import tool_execution, tool_execution_snapshots, tool_resolution
-from sidecar.ai.routing.loop_runtime import LoopRuntime
+from sidecar.ai.routing import tool_execution, tool_execution_snapshots
 from sidecar.ai.routing.router import AgentKernel, ChatRouter
 from sidecar.ai.tools.catalog import tool_display_name
 from sidecar.ai.tools.models import GenerationResult, ToolCallRequest
@@ -30,7 +27,6 @@ from sidecar.ai.tools.schema_examples import (
     tool_schema_repair_hints,
 )
 from sidecar.ai.tools.tool_search import TOOL_SEARCH_TOOL_NAME
-
 
 # ---------------------------------------------------------------------------
 # Minimal stubs
@@ -400,7 +396,7 @@ def test_cache_usage_tokens_clamps_negative_to_zero() -> None:
 
 def test_build_chat_decision_assembles_chat_decision_from_parts() -> None:
     """Line 455: _build_chat_decision returns a ChatDecision with the right fields."""
-    from sidecar.ai.routing.router import ChatDecision, ToolExecutionOutcome
+    from sidecar.ai.routing.router import ChatDecision
 
     kernel = _make_kernel()
     working_messages: list[dict[str, object]] = [{"role": "user", "content": "hello"}]
@@ -503,7 +499,6 @@ def test_inject_expected_read_snapshot_passes_through_for_non_write_tool() -> No
 def test_tool_outcome_from_handler_result_wraps_string_result() -> None:
     """The tool-execution owner wraps a handler result as an outcome."""
     from sidecar.ai.routing.router import ToolExecutionOutcome
-
     from sidecar.ai.tools.contracts import ToolHandlerResult
 
     outcome = tool_execution.tool_outcome_from_handler_result(
@@ -655,8 +650,6 @@ def test_log_missing_current_info_early_return_not_current_info(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Line 332: returns early without logging when content is not a current-info request."""
-    from sidecar.ai.routing.router import ToolExecutionOutcome
-
     captured: list[Any] = []
     monkeypatch.setattr("sidecar.ai.routing.router.log_event", lambda *a, **kw: captured.append(kw))
 

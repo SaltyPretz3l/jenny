@@ -51,6 +51,7 @@ test('an idle durable Send is a direct send: its pending row is not queued', asy
   const sending = h.controller.startPromptSend('hello'); await tick();
   let [row] = h.state.runtimeSendController.listPending('session-1');
   assert.equal(row.queued, false); assert.equal(row.status, 'pending');
+  assert.equal(row.userId, row.key.replace(/^durable_/, 'user_'), 'the row names its optimistic user message');
   ack.resolve(receipt(submitted)); await sending;
   [row] = h.state.runtimeSendController.listPending('session-1');
   assert.equal(row.queued, false); assert.equal(row.status, 'pending');
@@ -414,7 +415,7 @@ test('resuming paused work carries the freshly read revision and reports a refus
   await h.state.runtimeSendController.resume(paused.key);
   const notice = h.calls.composerNotices.at(-1);
   assert.equal(notice.options.owner, 'runtime:resume');
-  assert.match(notice.message, /Settings/);
+  assert.match(notice.message, /Diagnostics › Runs/);
 });
 
 test('a calm refusal explains the wait in the composer instead of raising a Send Failed dialog', async t => {
@@ -433,6 +434,20 @@ test('a calm refusal explains the wait in the composer instead of raising a Send
   assert.equal(h.state.messagesBySession.get('session-1').length, 0);
 });
 
+// Gate re-run 2026-10-02 (P4): the calm notice is one line made of the title
+// and the hint, so an unpunctuated title must end its sentence.
+test('a calm refusal notice reads as two sentences when the title has no stop', async t => {
+  const h = createControllerHarness([], { durableRuntime: true, chatInputValue: 'draw later', shell: {
+    sessionRuntime: { submit: async () => ({ ok: false, acceptance: 'rejected',
+      error: { code: 'CMP-RUNTIME-0005', reason: 'gpu_busy_plugin' } }) },
+  } }); t.after(h.restore); t.after(() => h.controller.dispose());
+  await h.controller.startPromptSend('draw later');
+  const notice = h.calls.composerNotices.at(-1);
+  assert.equal(notice.options.owner, 'runtime:refusal');
+  assert.equal(notice.message,
+    'An image is being drawn. Send again when it finishes — your draft is back in the composer.');
+});
+
 test('a refusal that needs a decision keeps the failure dialog but names the real reason', async t => {
   const h = createControllerHarness([], { durableRuntime: true, chatInputValue: 'turn it on', shell: {
     sessionRuntime: { submit: async () => ({ ok: false, acceptance: 'rejected',
@@ -441,7 +456,21 @@ test('a refusal that needs a decision keeps the failure dialog but names the rea
   await h.controller.startPromptSend('turn it on');
   assert.equal(h.calls.errors.length, 1);
   assert.match(h.calls.errors[0].title, /runtime is off/i);
-  assert.match(h.calls.errors[0].message, /Settings/);
+  assert.match(h.calls.errors[0].message, /Diagnostics › Runs/);
   assert.equal(h.calls.errors[0].message.includes('The change could not be applied'), false);
   assert.equal(h.chatInput.value, 'turn it on');
+});
+test('a durable Send ships renderer send-phase timing with its immutable submission (P3-PERF-A 2026-09-25)', async t => {
+  const payloads = [];
+  const h = createControllerHarness([], { durableRuntime: true, shell: { sessionRuntime: { submit: async payload => {
+    payloads.push(payload); if (payloads.length === 1) throw new Error('lost_ack'); return receipt(payload); } } } });
+  t.after(h.restore); t.after(() => h.controller.dispose());
+  const before = Date.now();
+  await h.controller.startPromptSend('timed');
+  const timing = payloads[0].client_timing;
+  assert.ok(timing, 'the durable payload carries client_timing');
+  assert.ok(timing.send_started_at_ms >= before && timing.send_started_at_ms <= Date.now());
+  assert.ok(timing.optimistic_rendered_at_ms >= timing.send_started_at_ms);
+  assert.equal(timing.local_render_latency_ms, timing.optimistic_rendered_at_ms - timing.send_started_at_ms);
+  assert.deepEqual(payloads[1], payloads[0], 'a lost-ack retry resubmits the same timing');
 });

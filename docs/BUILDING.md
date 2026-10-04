@@ -17,7 +17,7 @@ Unpackaged startup maintains only `Jenny (Dev).lnk`; packaged startup maintains
 ## Packaging Flow (Sidecar + Electron)
 
 ### Purpose
-- Produce a deterministic sidecar artifact at `build/sidecar/sidecar(.exe)`.
+- Build a verified sidecar artifact at `build/sidecar/sidecar(.exe)`.
 - Package Electron with sidecar resources copied into `resources/sidecar`.
 - Verify packaged runtime resolves and trusts the packaged sidecar artifact.
 
@@ -40,8 +40,9 @@ majors are intentionally rejected before dependency installation.
      incomplete package.
 4. Run full packaged-flow smoke:
    - `npm run release:smoke`
-5. For a W1-A release candidate, run the redaction-safe packaged model and
-   restart-persistence probes serially:
+5. For a W1-A release candidate, run the redaction-safe packaged model probe and
+   the attachment store-reopen probe (a service contract run from source, not a
+   packaged restart) serially:
    - `npm run test:live-local-evidence -- --phase packaged --packaged-sidecar dist\win-unpacked\resources\sidecar\sidecar.exe --output artifacts\release-evidence\w1-a\packaged-sidecar.json`
    - `npm run test:packaged-attachment-rehydration -- --output artifacts\release-evidence\w1-a\packaged-rehydration.json`
    - These do not replace the visible packaged composer/relaunch rows in
@@ -232,17 +233,12 @@ with the `media` extra keeps PyMuPDF for local PDF reads.
 - The packaged launch resolver trusts sidecar binaries only when:
   - `resources/sidecar/manifest.json` is present,
   - `manifest.api_version` matches runtime `SIDECAR_API_VERSION`,
-  - `manifest.sha256` matches the packaged artifact file bytes,
-  - `manifest.git_commit` matches the current checkout, unless
-    `scripts/packaging/smoke_packaged_flow.py --allow-stale-source` is used
-    for an intentional stale-artifact check.
+  - the artifact name/platform and `manifest.sha256` match the packaged file, and
+  - the preflight probe reports the expected API version.
+  The source-aware packaging smoke additionally checks `manifest.git_commit` against the checkout; `--allow-stale-source` explicitly bypasses that smoke freshness comparison. Installed runtime does not compare against a Git checkout.
 - Packaged builds resolve the sidecar through `services/backend/packaged-sidecar-launch.js` and fail closed when the packaged artifact is missing, untrusted, or not runnable. Packaged apps do not silently fall back to `python -m sidecar`.
 - `python -m sidecar` remains the canonical development launch path and the packaging/bootstrap probe target.
 - `scripts/packaging/smoke_packaged_flow.py` now validates packaged source freshness, records Windows signing status when `signtool` is available, runs a direct packaged-sidecar `initialize` probe that requires core built-in tools to register, launches the unpacked packaged app, clears `ELECTRON_RUN_AS_NODE` for the packaged app process, uses a temporary request/output-file handshake for smoke automation, waits for renderer-ready plus completed backend startup, and requires `launchSource == "packaged-binary"` before the smoke passes.
-- Root-file packaging globs must continue to include the overlay companion assets:
-  - `overlay.html`
-  - `renderer/overlay/overlay-comet.js`
-  - `preload-overlay.js`
 - At runtime, packaged launch performs a preflight `--version` probe before the
   main process adopts the packaged sidecar command.
 - Assistant reply TTS audio remains runtime-generated app data under the managed
@@ -318,9 +314,10 @@ CI then, per OS runner:
 1. Sets up Node (from `.nvmrc`) + Python 3.11.
 2. Builds the platform sidecar (`scripts/packaging/build_sidecar_artifact.py` →
    `sidecar.exe` on Windows, `sidecar` on macOS).
-3. Builds both native plugin hosts with the release builders and locked Cargo
-   dependencies, then runs `electron-builder --win|--mac --publish never`.
-4. On `macos-15` ARM64, verifies DMG/ZIP integrity, app/sidecar/native-host architecture,
+3. Runs `electron-builder --win|--mac --publish never`. No legacy native plugin host
+   is built or shipped (the current plugin platform uses the application-owned JavaScript/Python host paths), so the release
+   workflow needs no Rust toolchain.
+4. On `macos-15` ARM64, verifies DMG/ZIP integrity, app/sidecar architecture,
    bundled preload, runtime provenance, and framed initialize through
    `scripts/packaging/verify_macos_release.py` before upload.
 5. On public-repository tag pushes only, uploads the verified platform assets
@@ -346,7 +343,7 @@ that release. A tag or an unpublished draft does not change the latest download.
 
 #### What a friend downloads
 
-Jenny 1.1.0 provides the Windows installer and experimental Linux AppImage/deb
+Jenny 1.2.0 provides the Windows installer and experimental Linux AppImage/deb
 packages. Linux CI verifies the glibc floor and packaged-app startup; native
 installed-format and upgrade checks remain outstanding. macOS stays
 experimental until native CI, Apple Silicon install/launch, and public artifact
@@ -449,7 +446,7 @@ from its `sha256sum.txt` and bump `version`, `sizeBytes`, and `url`.
 
 ## Release Provenance and Evidence
 
-Last reviewed: 2026-08-12
+Last reviewed: 2026-10-03
 
 ### Purpose
 
@@ -472,15 +469,14 @@ operator checklist for what must be present before promotion.
 | Packaged sidecar artifact | `build/sidecar/manifest.json` and packaged `resources/sidecar/manifest.json` | Manifest `api_version`, `artifact_name`, `sha256`, `git_commit`, and artifact bytes are recorded. |
 | Builder environment | CI run metadata or local release worksheet | Windows builder, `.nvmrc`, npm lock install, Python 3.11, all three hashed Python locks, `--no-build-isolation`, `pip check`, and `SOURCE_DATE_EPOCH` state are recorded. |
 | Managed Python runtime bundle | `config/python-runtime-bundle-lock.json`, generated embed/wheel manifests, packaged `resources/python-*` | CPython 3.13.14 source hash, lock fingerprints, every generated file hash, and packaged resource presence pass the fail-closed checker. |
-| Signing state | `electron-builder.yml`, CI signing secrets, `signtool verify` when available | Release notes say signed, unsigned-dev, or blocked. Production-ready releases cannot be silently unsigned. |
-| Notarization state | Platform release notes | Windows-only releases record `not applicable`; macOS notarization remains blocked until macOS packaging is explicitly enabled. |
+| Signing state | `electron-builder.yml`, CI signing secrets, `signtool verify` when available | Release notes say signed, unsigned, unsigned-dev, or blocked. Signing status must be explicit; current owner-approved Windows releases are unsigned. |
+| Notarization state | Platform release notes | Windows-only releases record `not applicable`. Experimental macOS build verification does not qualify a public notarized channel; native install/launch evidence and signing/notarization gates remain required. |
 | Automated packaged smoke | `npm run release:smoke`, `artifacts/logs/packaging-smoke-phase4.log` | Smoke validates sidecar manifest integrity, source freshness, initialize probe, launch resolver, packaged app readiness, and `launchSource == "packaged-binary"`. |
 | Core local-model evidence | `docs/operations/release-evidence/w1-a-core-local-model.json` plus its ignored artifact references | Exact release targets, live Ollama reliability/sampling, direct-vLLM disposition, real vision/refusal, packaged readiness, and managed restart rehydration are explicit; any blocked direct engine or owner UI gate holds W1-A. |
 | Manual smoke | Completed `MANUAL_TEST_MATRIX.md` template | Release notes include reviewer, machine, app path, temp profile, workspace, model/runtime, stream id, diagnostic paths, deviations, and release decision. |
 | Failure drills | Packaged failure-drill notes plus focused test evidence | Missing manifest/artifact, hash mismatch, stale commit, launch-probe failure, and approval terminal outcomes fail closed and do not fall back to `python -m sidecar`. |
 | SBOM and dependency audit | `dist/sidecar-sbom.json`, package locks, audit outputs | Existing sidecar SBOM is attached; npm/Python advisory results or explicit deferrals are recorded. |
 | Bundled app/tool assets | `electron-builder.yml`, `skills/`, `services/tools/tool-manifest.json`, `vendor/` | First-party bundles are named; vendored or promoted third-party assets have source, version, license, hash, and rollback notes. |
-| External official image plugin | External `local-image-generation-1.0.0-win32-x64.jenny-plugin`, signing-kit provenance, production-intake output, and owner qualification worksheet | Package is current-key signed, absent from installer/root plugin inputs, source/host/package digests match, and real NVIDIA peaks stay below 80% of `gpu_image_v1`; install/adopt/provision/generate/cancel/repair/remove/update/disable/uninstall/tree-empty/manual UI gates are recorded before distribution. |
 | Rollback and reinstall decision | Release notes and support handoff | Decision says promote, hold, rollback, reinstall, or rebuild, with the reason and data-preservation expectation. |
 
 ### Source Identity
@@ -519,10 +515,6 @@ Jenny currently has three hash layers:
 - Packaged sidecar trust: `build/sidecar/manifest.json` records the sidecar
   artifact SHA256, API version, source commit, dirty state, Python executable,
   PyInstaller version, and build timestamp metadata.
-- External official-plugin trust: the local-image signing kit binds the source
-  tree, contract lock, build/packager scripts, host and provenance; the returned
-  current-key signature covers canonical package metadata, and production V6
-  intake recomputes every archive/content/executable digest before install.
 
 Before publish, the release operator should run:
 
@@ -576,20 +568,19 @@ Release candidates should be built on Windows with:
 - Signing secrets supplied through CI or local environment variables, never
   committed certificate paths.
 
-The GitHub release attestation workflow uploads and attests `build/sidecar/**`
-and `dist/**`. That attestation is evidence for the built outputs, not a
-replacement for the release-notes hash manifest or manual smoke decision.
+The private attestation workflow is retired. Current release builds validate and hash candidate assets before draft upload; they do not claim an artifact attestation or publisher signature.
 
 ### Signing and Notarization
 
 Windows signing is configured through `electron-builder.yml` with Authenticode
-SHA-256 signing and `verifyUpdateCodeSignature: true`. Local unsigned smoke
+SHA-256 signing when signing secrets are provisioned. The current unsigned channel sets `verifyUpdateCodeSignature: false`; enable signature verification only with a qualified signed update channel. Local unsigned smoke
 builds are allowed so developers can validate packaging without a certificate.
 
 Release notes must record one of:
 
 - `signed`: Authenticode verification passed and the signing identity is named.
-- `unsigned-dev`: local smoke only; not production-ready.
+- `unsigned`: the explicitly recorded owner-approved unsigned release channel.
+- `unsigned-dev`: unsigned local smoke without release qualification.
 - `blocked`: signing was required but failed or could not be verified.
 
 Notarization is not applicable for current Windows-first releases. If macOS
@@ -629,12 +620,12 @@ actual result. Minimum drills for this baseline:
 | Condition | Decision |
 |---|---|
 | Hash mismatch, missing sidecar artifact, missing manifest, stale commit, or failed packaged initialize probe | Hold the candidate. Rebuild or repair packaging; do not publish and do not bypass with dev fallback. |
-| Signing verification unavailable on local smoke | Mark as `unsigned-dev`; do not call the artifact production-ready. |
-| Signing verification fails for a release candidate | Block publish until signing is fixed and smoke is rerun. |
+| Signing verification unavailable on local smoke | Mark as `unsigned-dev`; local smoke does not qualify a release. For an owner-approved unsigned release, record `unsigned` explicitly with the actual candidate checks. |
+| Signing is required for the selected release channel but verification fails | Hold publication until signing is fixed and affected smoke is rerun. The current unsigned channel must not claim a publisher signature. |
 | Manual smoke fails on clean temp profile | Hold candidate and capture diagnostic dumps plus the representative stream id. |
 | Failure drill does not fail closed | Block release; this is a trust-chain regression. |
-| User needs reinstall of the same version | Reinstall the signed installer; preserve `%APPDATA%\jenny` unless the user explicitly chooses a data reset. |
-| User needs rollback to a prior release | Prefer the previous signed installer and updater metadata. Verify release-compat coverage before downgrading across schema changes; export user data first if rollback safety is uncertain. |
+| User needs reinstall of the same version | Reinstall the verified installer from the selected release channel; preserve `%APPDATA%\jenny` unless the user explicitly chooses a data reset. |
+| User needs rollback to a prior release | Use the previous verified installer and matching updater metadata from the selected release channel. Verify release-compat coverage before downgrading across schema changes; export user data first if rollback safety is uncertain. |
 | Local model or tool asset failure | Repair the local engine/tool installation separately. Current release packages do not bundle model weights, `llama_server_extract/`, language servers, or optional ML/audio/content extras. |
 
 ### Manual vs Automated

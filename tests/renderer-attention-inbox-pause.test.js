@@ -84,3 +84,77 @@ test('a runtime pause withdraws the approval from Needs you with nothing else st
   assert.equal(host.hidden, true);
   assert.equal(toolCall()?.status, 'pending_approval', 'the checkpoint keeps the tool row as it was');
 });
+
+// The ask_user half: "Needs you" lists question batches, not ask_user waits,
+// so the waiting chat's "Input needed" attention is what a pause must clear.
+const QUESTION_SESSION = 'session-q1';
+const QUESTIONS = [{ id: 'choice', prompt: 'Which value?', options: ['One', 'Two'] }];
+const questionEvent = (streamId, questionRef, type = 'user_questions_requested') => ({
+  type, sessionId: QUESTION_SESSION, streamId, turnId: 'turn-q', callId: 'call-q', questionId: `id-${questionRef}`,
+  questionRef, toolName: 'ask_user',
+  ...(type === 'user_questions_requested' ? { questions: QUESTIONS, input: { questions: QUESTIONS },
+    summary: 'Ask user 1 question', status: 'pending_user_input', resultKind: 'user_questions' } : { reason: 'runtime_pause' }),
+});
+
+async function openQuestion(t) {
+  const answers = [];
+  const app = await loadRendererApp({ shell: {
+    sessions: [summary(QUESTION_SESSION, 'Questions')],
+    workspaceState: { activeSessionId: QUESTION_SESSION, openSessionIds: [QUESTION_SESSION] },
+    sessionMessagePayloads: { [QUESTION_SESSION]: { data: [], turn_events: [] } },
+  } });
+  t.after(async () => { await app.dispose(); });
+  Object.assign(app.shell.chat, {
+    async hasPendingUserQuestions(ref) { return ref === 'ref-b'; },
+    async answerUserQuestions(ref) { answers.push(ref); return ref === 'ref-b'; },
+  });
+  const { window, shell } = app;
+  await waitForUi(window, 100);
+  const offer = async (streamId, questionRef) => {
+    await shell.__emitChat({ type: 'started', sessionId: QUESTION_SESSION, streamId, turnId: 'turn-q' });
+    await shell.__emitChat({ type: 'tool_use', sessionId: QUESTION_SESSION, streamId, turnId: 'turn-q', callId: 'call-q',
+      toolName: 'ask_user', status: 'running', input: { questions: QUESTIONS }, summary: 'Ask user' });
+    await shell.__emitChat(questionEvent(streamId, questionRef));
+    await waitForUi(window, 80);
+  };
+  await offer('stream-a', 'ref-a');
+  const attention = () => window.rendererMultiStreamController.getSessionAttentionStates([QUESTION_SESSION]).get(QUESTION_SESSION);
+  const toolCall = (streamId) => (window.__rendererState.messagesBySession.get(QUESTION_SESSION) || [])
+    .find((message) => message?.id === `tool_use_${streamId}_call-q`)?.tool_call;
+  assert.equal(attention(), 'input_needed', 'precondition: the chat reads Input needed');
+  return { window, shell, answers, offer, attention, toolCall };
+}
+
+test('a runtime pause withdraws ask_user questions from Input needed and leaves the transcript card pending', async (t) => {
+  const { window, shell, attention, toolCall } = await openQuestion(t);
+  await shell.__emitChat(questionEvent('stream-a', 'ref-other', 'user_questions_withdrawn'));
+  await waitForUi(window, 60);
+  assert.equal(attention(), 'input_needed', 'a withdrawal for another question ref changes nothing');
+
+  await shell.__emitChat(questionEvent('stream-a', 'ref-a', 'user_questions_withdrawn'));
+  await waitForUi(window, 80);
+  assert.equal(attention(), undefined, 'the withdrawn questions no longer ask for input');
+  assert.equal(toolCall('stream-a')?.status, 'pending_user_input', 'the checkpoint keeps the card as it was');
+  assert.equal(toolCall('stream-a')?.question_ref, 'ref-a');
+  assert.ok(window.document.querySelector('.user-questions-block[data-question-ref="ref-a"]'), 'the card still renders');
+});
+
+for (const withdrawn of [true, false]) {
+  test(`Resume re-offers the questions under a new ref and the card answers with it (${withdrawn ? 'after a withdrawal' : 'next stream only'})`, async (t) => {
+    const { window, shell, answers, offer, attention } = await openQuestion(t);
+    if (withdrawn) await shell.__emitChat(questionEvent('stream-a', 'ref-a', 'user_questions_withdrawn'));
+    await shell.__emitChat({ type: 'started', sessionId: QUESTION_SESSION, streamId: 'stream-b', turnId: 'turn-q' });
+    await waitForUi(window, 60);
+    assert.equal(attention(), undefined, 'the next stream supersedes the older stream\'s questions');
+
+    await offer('stream-b', 'ref-b');
+    assert.equal(attention(), 'input_needed', 'the re-offer asks again');
+    const cards = [...window.document.querySelectorAll('.user-questions-block')].map((card) => card.dataset.questionRef);
+    assert.deepEqual(cards, ['ref-b']);
+    const card = window.document.querySelector('.user-questions-block');
+    card.querySelector('[data-user-question-option][value="Two"]').closest('label').click();
+    card.querySelector('.user-questions-submit-btn').click();
+    await waitForUi(window, 60);
+    assert.deepEqual(answers, ['ref-b'], 'the card answers the live question ref, not the suspended one');
+  });
+}

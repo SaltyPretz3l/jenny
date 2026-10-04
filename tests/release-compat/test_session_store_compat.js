@@ -29,7 +29,7 @@ const {
 
 const FIXTURE_ROOT = path.join(__dirname, 'fixtures');
 const APP_VERSION = require('../../package.json').version;
-const EXPECTED_APP_VERSION = '1.2.0';
+const EXPECTED_APP_VERSION = '1.3.0';
 const EXPECTED_SCHEMA_VERSION = 22;
 const FIXTURE_DIRS = [
   'userdata-v3',
@@ -49,6 +49,7 @@ const FIXTURE_DIRS = [
   'userdata-v19-current',
   'userdata-v20-current',
   'userdata-v21-current',
+  'userdata-v22-image-interrupted',
 ];
 
 test.afterEach(async () => {
@@ -659,6 +660,44 @@ test('release-compat: v21 split payload normalizes bounded failure-retry reasoni
   assert.equal(readPersistedPayload(sessionsPath).schema_version, EXPECTED_SCHEMA_VERSION);
   assert.equal(
     logs.entries.find((entry) => entry.event === 'session_store.newer_schema_detected'),
+    undefined
+  );
+});
+
+test('release-compat: v22 plugin session with a running operation settles as interrupted on read', () => {
+  const { sessionsPath } = loadFixture('userdata-v22-image-interrupted');
+  const logs = createLogCollector();
+  const store = new ElectronSessionStore(sessionsPath, { logger: logs.logger });
+  assert.equal(store.hasPendingMigrations(), false, 'fixture is already at the current schema');
+
+  const session = store.getSession('image_sess_v22_interrupted');
+  assert.equal(session.session_type, 'plugin');
+  assert.equal(session.plugin_session.active_operation, null);
+  assert.equal(session.messages[0].content, 'Draw a lighthouse at dusk');
+  const assistant = session.messages.find((message) => message.id === 'assistant_v22_working');
+  assert.equal(assistant.content, 'The plugin operation was interrupted before it finished.');
+  assert.equal(assistant.status, 'runtime_error');
+  assert.deepEqual(assistant.plugin_operation, {
+    operation_id: 'op_v22_interrupted',
+    attempt: 1,
+    action_id: 'generate',
+    status: 'interrupted',
+    reason_code: 'app_restarted',
+  });
+  store.flush();
+  store.dispose();
+
+  const persisted = JSON.parse(fs.readFileSync(
+    sessionFilePathFromSessionsPath(sessionsPath, 'image_sess_v22_interrupted'), 'utf8'
+  )).session;
+  assert.equal(persisted.plugin_session.active_operation, null);
+  assert.equal(
+    persisted.messages.find((message) => message.id === 'assistant_v22_working').status,
+    'runtime_error'
+  );
+  assert.equal(readPersistedPayload(sessionsPath).schema_version, EXPECTED_SCHEMA_VERSION);
+  assert.equal(
+    logs.entries.find((entry) => entry.event === 'session_store.plugin_operation_settlement_failed'),
     undefined
   );
 });

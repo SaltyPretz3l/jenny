@@ -17,6 +17,7 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   const DEFAULT_SCROLL_FOLLOW_THRESHOLD = 48;
   const DEFAULT_LOGICAL_ANCHOR_CAP = 32;
+  const MIN_RESTORE_SHIFT_PX = 1;
   const LOGICAL_ROW_SELECTOR = '[data-row-id]';
   const LOGICAL_ENTRY_FALLBACK_SELECTOR = '.chat-entry[data-message-id]';
 
@@ -239,6 +240,17 @@
       return true;
     }
 
+    // HB-005: a restore whose anchor did not move (the mutation landed below
+    // it -- the streaming tail) must not write. A sub-pixel rewrite can still
+    // fire a scroll event, the coordinator re-captures a fractionally different
+    // offset, and the next restore writes again: a scroll event per render.
+    function writeScrollTop(container, value) {
+      const next = Math.max(0, Number(value) || 0);
+      if (Math.abs(next - (Number(container.scrollTop) || 0)) < MIN_RESTORE_SHIFT_PX) return false;
+      container.scrollTop = next;
+      return true;
+    }
+
     function restore(key, container, rootNode = container) {
       const normalizedKey = String(key || '').trim();
       if (disposed || !normalizedKey || !container) return 'unavailable';
@@ -246,7 +258,7 @@
       if (!anchor) return 'missing';
       touch(normalizedKey, anchor);
       if (anchor.nearBottom) {
-        container.scrollTop = Math.max(0, (Number(container.scrollHeight) || 0) - (Number(container.clientHeight) || 0));
+        writeScrollTop(container, (Number(container.scrollHeight) || 0) - (Number(container.clientHeight) || 0));
         return 'near_bottom';
       }
       let rows = null;
@@ -281,16 +293,28 @@
         target = rows[Math.min(anchor.rowIndex, rows.length - 1)];
         outcome = 'nearest';
       }
+      // A retained row that lost its box (a reasoning row the transcript view
+      // hides) restores against its parent entry instead of a zero rect.
+      if (target && outcome === 'logical' && anchor.identity?.kind === 'row' && anchor.identity.parentMessageId) {
+        const rowRect = getRect(target);
+        if (!rowRect || !(rowRect.bottom > rowRect.top)) {
+          const parent = findMessageEntry(rootNode, anchor.identity.parentMessageId);
+          if (parent) {
+            target = parent;
+            outcome = 'parent';
+          }
+        }
+      }
       const containerRect = getRect(container);
       const targetRect = getRect(target);
       if (target && containerRect && targetRect) {
-        container.scrollTop = Math.max(0, (Number(container.scrollTop) || 0)
+        writeScrollTop(container, (Number(container.scrollTop) || 0)
           + (Number(targetRect.top - containerRect.top) || 0)
           - (outcome === 'parent' && anchor.parentOffset !== null
             ? anchor.parentOffset : anchor.offset));
         return outcome;
       }
-      container.scrollTop = Math.max(0, anchor.rawScrollTop);
+      writeScrollTop(container, anchor.rawScrollTop);
       return 'raw';
     }
 
@@ -315,11 +339,57 @@
     };
   }
 
+  // HB-005 diagnostic: programmatic scroll writes and native scroll events per
+  // window. Each note returns the summary of the window it closed (or null),
+  // so the caller decides whether a closed window is worth one log line.
+  function createScrollWriteRateMeter(options = {}) {
+    const windowMs = Number(options.windowMs) > 0 ? Number(options.windowMs) : 1000;
+    let windowStart = null;
+    let writes = 0;
+    let scrollEvents = 0;
+    let reasons = {};
+
+    function roll(at) {
+      const timestamp = Number(at) || 0;
+      if (windowStart === null) windowStart = timestamp;
+      const elapsed = timestamp - windowStart;
+      if (elapsed < windowMs) return null;
+      const perSecond = 1000 / elapsed;
+      const summary = {
+        writesPerSecond: Math.round(writes * perSecond),
+        scrollEventsPerSecond: Math.round(scrollEvents * perSecond),
+        windowMs: Math.round(elapsed),
+        reasons,
+      };
+      windowStart = timestamp;
+      writes = 0;
+      scrollEvents = 0;
+      reasons = {};
+      return summary;
+    }
+
+    return {
+      noteWrite(reason, at) {
+        const closed = roll(at);
+        const key = String(reason || '').trim() || 'unknown';
+        writes += 1;
+        reasons[key] = (reasons[key] || 0) + 1;
+        return closed;
+      },
+      noteScrollEvent(at) {
+        const closed = roll(at);
+        scrollEvents += 1;
+        return closed;
+      },
+    };
+  }
+
   return {
     DEFAULT_LOGICAL_ANCHOR_CAP,
     DEFAULT_SCROLL_FOLLOW_THRESHOLD,
     collectLogicalRows,
     createLogicalScrollAnchorRegistry,
+    createScrollWriteRateMeter,
     deriveFollowLatestFromScroll,
     findMessageEntry,
     getLatestUserMessageId,

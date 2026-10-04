@@ -472,9 +472,10 @@ test('renderEnhancedFailureNotice accepts camelCase recovery keys', () => {
    Artifact Cards
    ══════════════════════════════════════════════════════ */
 
-test('renderArtifactCards renders image card with thumbnail', () => {
+test('renderArtifactCards renders a trusted image as a figure with its local source', () => {
   const html = artifactCardUtils.renderArtifactCards([
     {
+      artifact_id: 'chart-1',
       artifact_kind: 'image',
       title: 'Chart',
       absolute_path: '/tmp/chart.png',
@@ -483,29 +484,28 @@ test('renderArtifactCards renders image card with thumbnail', () => {
       local_trusted: true,
     },
   ], 'call_1');
-  assert.ok(html.includes('inv-artifact-card--image'), 'image card class');
-  assert.ok(html.includes('<img class="inv-artifact-thumb"'), 'has thumbnail');
+  assert.ok(html.includes('<figure class="inv-artifact-figure"'), 'figure markup');
   assert.ok(html.includes('src="file:///tmp/chart.png"'), 'uses trusted file URL');
-  assert.ok(html.includes('Chart'), 'title shown');
-  assert.ok(html.includes('data-inv-artifact-action="open"'), 'has open action');
+  assert.ok(html.includes('alt="Chart"'), 'title is the alt text');
+  assert.ok(html.includes('data-inv-artifact-action="save-as"'), 'has save-as action');
+  assert.ok(!html.includes('inv-artifact-list'), 'image stays out of the collapsed list');
 });
 
 test('renderArtifactCards blocks untrusted absolute local image preview sources', () => {
   const html = artifactCardUtils.renderArtifactCards([
     { artifact_kind: 'image', title: 'Local Chart', absolute_path: '/tmp/chart.png' },
   ], 'call_local');
-  assert.ok(html.includes('inv-artifact-card--image'), 'still renders image card');
-  assert.ok(!html.includes('<img class="inv-artifact-thumb"'), 'absolute image preview blocked');
-  assert.ok(html.includes('inv-artifact-thumb-placeholder'), 'falls back to placeholder');
+  assert.ok(html.includes('inv-artifact-figure'), 'still renders the figure');
+  assert.ok(!html.includes(' src='), 'absolute image preview blocked');
+  assert.ok(!html.includes('inv-artifact-figure-actions'), 'no actions without an artifact id');
 });
 
 test('renderArtifactCards blocks non-local image preview sources', () => {
   const html = artifactCardUtils.renderArtifactCards([
     { artifact_kind: 'image', title: 'Remote Chart', absolute_path: 'https://example.com/chart.png' },
   ], 'call_remote');
-  assert.ok(html.includes('inv-artifact-card--image'), 'still renders image card');
-  assert.ok(!html.includes('<img class="inv-artifact-thumb"'), 'remote image preview blocked');
-  assert.ok(html.includes('inv-artifact-thumb-placeholder'), 'falls back to placeholder');
+  assert.ok(html.includes('inv-artifact-figure'), 'still renders the figure');
+  assert.ok(!html.includes(' src='), 'remote image preview blocked');
 });
 
 test('renderArtifactCards renders file card', () => {
@@ -535,8 +535,8 @@ test('renderArtifactCards renders multiple cards', () => {
     { artifact_kind: 'image', title: 'A', absolute_path: '/a.png' },
     { artifact_kind: 'file', file_name: 'b.txt', absolute_path: '/b.txt' },
   ], 'call_6');
-  assert.ok(html.includes('inv-artifact-list'), 'has list wrapper');
-  assert.ok(html.includes('inv-artifact-card--image'), 'image card');
+  assert.ok(html.indexOf('inv-artifact-figures') < html.indexOf('inv-artifact-list'), 'figures precede the list');
+  assert.ok(html.includes('inv-artifact-figure'), 'image figure');
   assert.ok(html.includes('inv-artifact-card--file'), 'file card');
 });
 
@@ -822,4 +822,32 @@ test('inventory index exports canonical keys and compatibility aliases', () => {
   global.inventoryStatusRow = prevStatusRow;
   global.inventoryToggleSwitch = prevToggle;
   global.inventorySelectField = prevSelectField;
+});
+
+test('toggleSwitch.setError shows one reason line under the label and help, and clears it', () => {
+  const dom = new JSDOM('<div id="root"></div>');
+  const root = dom.window.document.getElementById('root');
+  root.innerHTML = ToggleSwitch.toggleSwitch({ id: 'with-help', label: 'Format on save', description: 'Formats the active file.' })
+    + ToggleSwitch.toggleSwitch({ id: 'bare', label: 'Minimap' });
+  const track = (id) => root.querySelector(`[data-inv-toggle="${id}"]`);
+  const wrapper = (id) => track(id).closest('.inv-toggle');
+
+  ToggleSwitch.setError(track('with-help'), 'Could not save.');
+  ToggleSwitch.setError(track('with-help'), 'Could not save.');
+  const lines = wrapper('with-help').querySelectorAll('.inv-toggle-error');
+  assert.equal(lines.length, 1, 'setting the same reason twice keeps one line');
+  assert.equal(lines[0].textContent, 'Could not save.');
+  assert.equal(lines[0].getAttribute('role'), 'alert');
+  assert.equal(lines[0].previousElementSibling.className, 'inv-toggle-description', 'under the help text');
+  assert.equal(wrapper('with-help').getAttribute('data-state'), 'error');
+
+  // A switch without help text gets the label group the line needs.
+  ToggleSwitch.setError(track('bare'), 'Blocked.');
+  assert.equal(wrapper('bare').querySelector('.inv-toggle-label-group .inv-toggle-error').textContent, 'Blocked.');
+  assert.equal(wrapper('bare').querySelector('.inv-toggle-label-group .inv-toggle-label').textContent, 'Minimap');
+
+  ToggleSwitch.setError(track('with-help'), null);
+  assert.equal(wrapper('with-help').querySelector('.inv-toggle-error'), null);
+  assert.equal(wrapper('with-help').hasAttribute('data-state'), false);
+  dom.window.close();
 });

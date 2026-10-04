@@ -183,6 +183,47 @@ test('buildLanePlan (fallback) -> stable node lane only, no pytest lane', () => 
   assert.equal(lanes.pytestArgs, null);
 });
 
+test('CHK-03: unmapped Python fallback runs the existing fast lane and retains mapped tests', () => {
+  const plan = sel.computeAffectedPlan({}, {
+    collectChangedSources: () => ({ sources: ['sidecar/new.py', 'sidecar/known.py'], reason: null }),
+    resolveTestsForSource: (source) => source.endsWith('known.py')
+      ? { tests: ['tests/sidecar/test_known.py'], source: 'coarse-map' }
+      : { tests: [], source: 'none' },
+  });
+  assert.deepEqual(sel.buildLanePlan(plan).pytestArgs, [
+    '-m', 'pytest', '-q', 'tests/sidecar/test_server.py', 'tests/sidecar/test_known.py',
+  ]);
+});
+
+test('CHK-03: JS fallback retains mapped Python tests and unknown discovery selects the fast lane', () => {
+  const plan = sel.computeAffectedPlan({}, {
+    collectChangedSources: () => ({ sources: ['services/new.js', 'sidecar/known.py'], reason: null }),
+    resolveTestsForSource: (source) => source.endsWith('.py')
+      ? { tests: ['tests/sidecar/test_known.py'], source: 'coarse-map' }
+      : { tests: [], source: 'none' },
+  });
+  assert.deepEqual(sel.buildLanePlan(plan).pytestArgs, ['-m', 'pytest', '-q', 'tests/sidecar/test_known.py']);
+  for (const reason of [null, 'git unavailable']) {
+    const unknown = sel.computeAffectedPlan({}, {
+      collectChangedSources: () => ({ sources: [], reason }),
+    });
+    assert.deepEqual(sel.buildLanePlan(unknown).pytestArgs, ['-m', 'pytest', '-q', 'tests/sidecar/test_server.py']);
+  }
+});
+
+test('CHK-07: hosted and other mapped targets survive admission in a mixed change', () => {
+  const sources = ['server/command-router.js', 'renderer/chat/chat-message-utils.js']
+    .filter(sel.isAffectedSource);
+  assert.deepEqual(sources, ['server/command-router.js', 'renderer/chat/chat-message-utils.js']);
+  const plan = sel.computeAffectedPlan({}, {
+    collectChangedSources: () => ({ sources, reason: null }),
+  });
+  assert.equal(plan.mode, 'affected');
+  assert.ok(plan.tests.includes('tests/server/command-router.test.js'));
+  assert.equal(sel.isAffectedSource('styles/chat-composer.css'), true);
+  assert.equal(sel.isAffectedSource('server/unmapped-new.js'), true);
+});
+
 // --- subprocess-level smoke (real repo git state; loose assertions) ---------
 
 test('CLI --dry-run exits 0 and prints the [affected] banner against the real repo', () => {

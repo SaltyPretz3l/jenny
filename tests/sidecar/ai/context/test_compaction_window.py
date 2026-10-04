@@ -2,12 +2,9 @@ from __future__ import annotations
 
 from sidecar.ai.context import compaction as c
 from sidecar.ai.context.compaction_window import (
+    _TOOL_PLACEHOLDER,
     MID_TURN_NUDGE,
     MID_TURN_TASK_STUB,
-    _TOOL_PLACEHOLDER,
-    _copy_message_for_compaction,
-    _index_tool_calls,
-    _strip_matching_tool_call_arguments,
     admit_summary_source,
     split_mid_turn_window,
     summary_input_limit,
@@ -115,15 +112,20 @@ def test_admit_summary_source_drops_oldest_rows_and_prepends_omission_marker() -
         prompt_tokens=512,
     )
 
-    assert result.dropped_messages == 2
+    # The chars//4 heuristic is admitted under its estimate margin (HB-028).
+    assert result.dropped_messages == 3
     assert result.messages[0] == {
         "role": "system",
-        "content": "[2 earlier messages omitted from this summary input]",
+        "content": "[3 earlier messages omitted from this summary input]",
     }
-    assert result.messages[1] == messages[2]
+    assert result.messages[1] == messages[3]
     assert estimate_messages_tokens(result.messages, backend) <= summary_input_limit(
-        _admission_budget(), prompt_tokens=512
+        _admission_budget(), prompt_tokens=512, backend=backend
     )
+
+
+class _ExactTokenizer(CharEstimationBackend):
+    is_exact_match = True
 
 
 def test_summary_input_limit_excludes_prompt_and_summary_reservation() -> None:
@@ -133,8 +135,10 @@ def test_summary_input_limit_excludes_prompt_and_summary_reservation() -> None:
         reserved_for_summary=512,
     )
 
-    assert summary_input_limit(budget, prompt_tokens=256) == 2_816
-    assert summary_input_limit(budget, prompt_tokens=10_000) == 1_024
+    exact = _ExactTokenizer()
+
+    assert summary_input_limit(budget, prompt_tokens=256, backend=exact) == 2_816
+    assert summary_input_limit(budget, prompt_tokens=10_000, backend=exact) == 1_024
 
 
 def _mid_turn_rows(

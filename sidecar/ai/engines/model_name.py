@@ -47,6 +47,11 @@ BONSAI2_MODEL_PREFIXES = (
     "ternary-bonsai2-27b",
     "bonsai2-27b",
 )
+# Ornith 1.5 reasons natively (reasoning_content on llama-server). Kept out of
+# THINKING_MODEL_PREFIXES: that list also feeds the Ollama metadata fallback and
+# the catalog, and Ollama already advertises thinking for these tags. Ornith 1.0
+# ("ornith:9b-48k") is deliberately not matched, as in the app profile.
+ORNITH15_MODEL_PREFIXES = ("ornith-1.5", "ornith-1-5", "ornith15")
 THINKING_MODEL_PREFIXES = (
     "qwen3.5",
     "qwen3.6",
@@ -104,6 +109,13 @@ def is_bonsai2_model(name: str | None) -> bool:
 
     tokens = (canonical_model_token(name), canonicalize_model_name(name or ""))
     return any(token.startswith(BONSAI2_MODEL_PREFIXES) for token in tokens)
+
+
+def is_ornith15_model(name: str | None) -> bool:
+    """Return whether ``name`` identifies an Ornith 1.5 model variant."""
+
+    tokens = (canonical_model_token(name), canonicalize_model_name(name or ""))
+    return any(token.startswith(ORNITH15_MODEL_PREFIXES) for token in tokens)
 
 
 def uses_qwen38_chat_contract(name: str | None) -> bool:

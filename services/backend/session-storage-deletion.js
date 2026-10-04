@@ -1,5 +1,6 @@
 const fs = require('fs');
-const { logWriteFailed } = require('./session-store-logging');
+const { logWriteFailed, safeEmitLog } = require('./session-store-logging');
+const { purgeSessionRecoveryCopies } = require('./session-recovery-copies');
 
 // Deletion mechanics for SessionStorageBackend.deleteSession (CTL-008).
 // Extracted to a sibling module to keep session-storage-backend.js under the
@@ -58,6 +59,14 @@ function deleteSessionFromBackend(backend, sessionId) {
   backend._scanActiveTurns.delete(sessionId);
   delete backend._cachedIndex.sessions[sessionId];
   backend._scheduleIndexWrite();
+  // Best effort: the delete itself already succeeded.
+  const purged = purgeSessionRecoveryCopies(backend, sessionId);
+  if (purged.failed > 0) {
+    safeEmitLog(backend._logger, 'WARN', `${backend._storeName}.recovery_copy_delete_failed`, {
+      sessionId,
+      failed: purged.failed,
+    });
+  }
   return true;
 }
 

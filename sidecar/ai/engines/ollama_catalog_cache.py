@@ -254,7 +254,7 @@ def _copy_model_entries(models: list[Any]) -> list[Any]:
     return copied
 
 
-def _copy_model_entry(entry: Any) -> Any | None:
+def _copy_model_entry(entry: Any) -> Any | None:  # noqa: C901, PLR0912  # normalizer
     if isinstance(entry, str):
         normalized = entry.strip()
         return normalized if _is_safe_cache_model_id(normalized) else None
@@ -310,7 +310,9 @@ def _copy_model_entry(entry: Any) -> Any | None:
     parameter_size = _bounded_cache_str(entry.get("parameter_size"), MAX_CACHE_PARAMETER_SIZE_CHARS)
     if parameter_size:
         copied["parameter_size"] = parameter_size
-    quantization_level = _bounded_cache_str(entry.get("quantization_level"), MAX_CACHE_QUANTIZATION_LEVEL_CHARS)
+    quantization_level = _bounded_cache_str(
+        entry.get("quantization_level"), MAX_CACHE_QUANTIZATION_LEVEL_CHARS
+    )
     if quantization_level:
         copied["quantization_level"] = quantization_level
     digest = _bounded_cache_str(entry.get("digest"), MAX_CACHE_DIGEST_CHARS)

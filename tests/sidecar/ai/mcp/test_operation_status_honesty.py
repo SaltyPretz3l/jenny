@@ -29,8 +29,8 @@ def ledger_root(tmp_path: Path):
 
 
 def _status_text(tmp_path: Path) -> str:
-    tools = builtin_server._default_tools()  # noqa: SLF001
-    response = builtin_server._handle_tools_call(  # noqa: SLF001
+    tools = builtin_server._default_tools()
+    response = builtin_server._handle_tools_call(
         "status-honesty",
         tools,
         WorkspaceGuard(str(tmp_path / "ws")),

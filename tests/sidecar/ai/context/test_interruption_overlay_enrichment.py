@@ -75,7 +75,7 @@ def test_ledger_entries_surface_without_journal_evidence(tmp_path: Path) -> None
         request_fingerprint="fp_1",
         generation_id="gen_dead",
         now_iso="2026-08-28T12:00:00Z",
-        evidence={"tool": "write_file", "relative_path": "src/late.py"},
+        evidence={"tool": "write_file", "relative_path": "src/late.py", "session_id": "session-w8s3"},
     )
     merged = merge_ledger_interruptions(
         None,  # Electron journal produced nothing for this crash
@@ -155,7 +155,7 @@ def test_wired_dead_generation_pending_renders_with_no_electron_receipts() -> No
         request_fingerprint="fp_1",
         generation_id="gen_dead",
         now_iso="2026-08-29T12:00:00Z",
-        evidence={"tool": "write_file", "relative_path": "src/crashed.py"},
+        evidence={"tool": "write_file", "relative_path": "src/crashed.py", "session_id": "session-w8s3"},
     )
     messages = _append(None, _StubMCP("gen_live"))
     assert len(messages) == 1
@@ -174,7 +174,7 @@ def test_wired_ledger_only_block_uses_honest_provenance_wording() -> None:
         request_fingerprint="fp_1",
         generation_id="gen_dead",
         now_iso="2026-08-29T12:00:00Z",
-        evidence={"tool": "write_file", "relative_path": "src/x.py"},
+        evidence={"tool": "write_file", "relative_path": "src/x.py", "session_id": "session-w8s3"},
     )
     messages = _append(None, _StubMCP("gen_live"))
     assert len(messages) == 1
@@ -190,7 +190,7 @@ def test_wired_live_generation_pending_is_never_disclosed() -> None:
         request_fingerprint="fp_1",
         generation_id="gen_live",
         now_iso="2026-08-29T12:00:00Z",
-        evidence={"tool": "write_file", "relative_path": "src/inflight.py"},
+        evidence={"tool": "write_file", "relative_path": "src/inflight.py", "session_id": "session-w8s3"},
     )
     assert _append(None, _StubMCP("gen_live")) == []
 
@@ -203,7 +203,7 @@ def test_wired_unknown_liveness_skips_the_ledger_merge() -> None:
         request_fingerprint="fp_1",
         generation_id="gen_dead",
         now_iso="2026-08-29T12:00:00Z",
-        evidence={"tool": "write_file", "relative_path": "src/unknown.py"},
+        evidence={"tool": "write_file", "relative_path": "src/unknown.py", "session_id": "session-w8s3"},
     )
     assert _append(None, _StubMCP(None)) == []
 
@@ -214,7 +214,7 @@ def test_wired_electron_receipts_keep_interruption_preamble_and_gain_ledger_rows
         request_fingerprint="fp_1",
         generation_id="gen_dead",
         now_iso="2026-08-29T12:00:00Z",
-        evidence={"tool": "write_file", "relative_path": "src/extra.py"},
+        evidence={"tool": "write_file", "relative_path": "src/extra.py", "session_id": "session-w8s3"},
     )
     electron = {
         "completed": [{"tool_name": "read_file", "summary": "read 10 lines"}],
@@ -295,3 +295,48 @@ def test_journal_and_ledger_entries_deduplicate_by_operation_key(tmp_path: Path)
     merged = merge_ledger_interruptions(journal, ledger_entries)
     block = _render_interrupted_turn_receipts_block(merged)
     assert block.count("idem_ffffffffff") == 1
+
+
+def test_wired_foreign_session_pending_is_never_disclosed() -> None:
+    # HB-003: a dead-generation pending from ANOTHER chat (or a test run that
+    # shared the ledger) is not this session's interruption; presenting it as
+    # ground truth made every new chat verify effect.txt/later.txt.
+    _hermetic_ledger().create_pending(
+        operation_id="idem_f1f1f1f1f1f1f1f1f1f1f1f1",
+        request_fingerprint="fp_1",
+        generation_id="gen_dead",
+        now_iso="2026-08-29T12:00:00Z",
+        evidence={"tool": "write_file", "relative_path": "effect.txt", "session_id": "other"},
+    )
+    assert _append(None, _StubMCP("gen_live")) == []
+
+
+def test_wired_unattributed_legacy_pending_is_never_disclosed() -> None:
+    _hermetic_ledger().create_pending(
+        operation_id="idem_f2f2f2f2f2f2f2f2f2f2f2f2",
+        request_fingerprint="fp_1",
+        generation_id="gen_dead",
+        now_iso="2026-08-29T12:00:00Z",
+        evidence={"tool": "write_file", "relative_path": "later.txt"},
+    )
+    assert _append(None, _StubMCP("gen_live")) == []
+
+
+def test_wired_mixed_ledger_surfaces_only_this_session() -> None:
+    ledger = _hermetic_ledger()
+    for operation_id, owner, path in (
+        ("idem_f3f3f3f3f3f3f3f3f3f3f3f3", "session-w8s3", "src/mine.py"),
+        ("idem_f4f4f4f4f4f4f4f4f4f4f4f4", "session-other", "created.txt"),
+    ):
+        ledger.create_pending(
+            operation_id=operation_id,
+            request_fingerprint="fp_1",
+            generation_id="gen_dead",
+            now_iso="2026-08-29T12:00:00Z",
+            evidence={"tool": "write_file", "relative_path": path, "session_id": owner},
+        )
+    messages = _append(None, _StubMCP("gen_live"))
+    assert len(messages) == 1
+    assert "src/mine.py" in messages[0]
+    assert "created.txt" not in messages[0]
+    assert "idem_f4f4f4f4f4" not in messages[0]

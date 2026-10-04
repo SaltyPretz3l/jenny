@@ -130,8 +130,9 @@ async function executeResolvedTool(executor, call, context, {
         approvalState,
         durationMs,
         metadata: executor._mergePolicyDecisionMetadata(result.metadata, policyDecision),
-        ...(toolName === 'preview_test' && tool.category === 'builtin' && input?.screenshot === true && !isError
-          ? { previewImage: result.previewImage } : {}),
+        // F27: an image_generate picture reaches a vision chat model like a preview_test screenshot.
+        ...((toolName === 'image_generate' || (toolName === 'preview_test' && input?.screenshot === true))
+          && tool.category === 'builtin' && !isError ? { previewImage: result.previewImage } : {}),
         errorCode,
       };
     } catch (error) {

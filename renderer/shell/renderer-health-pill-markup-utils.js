@@ -22,6 +22,7 @@
 
   const escapeHtml = stringUtils.escapeHtml;
   const normString = stringUtils.normalizeString;
+  const PROVIDER_ENGINE_RESIDENCY = Object.freeze({ chatgpt: 'remote', 'codex-cli': 'cli' });
 
   function pickPositiveNumber(value) {
     const n = Number(value);
@@ -32,35 +33,48 @@
     return Array.isArray(value) ? value.length : 0;
   }
 
+  function runModeText(pauseState) {
+    if (pauseState === 'requested') return jt('healthPill.runMode.pauseRequested', 'Auto · Pause requested');
+    if (pauseState === 'paused') return jt('healthPill.runMode.paused', 'Auto · Paused');
+    return jt('healthPill.runMode.autoChip', 'Auto');
+  }
+
+  /* The health dot, plus (only while Auto run is on) the run-mode chip as its
+   * own button beside it: it opens the run-mode setting, not this dialog. The
+   * dot's name carries every visible segment (status, engine, model, unseen
+   * errors, remote devices); the badge itself is presentational. */
   function buildPillMarkup(toneLabel, options) {
+    const opts = options || {};
     const tone = escapeHtml(toneLabel.tone || 'muted');
     const labelHtml = escapeHtml(toneLabel.label || 'Unknown');
-    const runMode = options && options.runMode === 'auto' ? 'auto' : 'ask';
-    const pauseState = options && ['requested', 'paused'].includes(options.pauseState)
-      ? options.pauseState
-      : 'none';
-    const modeText = pauseState === 'requested'
-      ? jt('healthPill.runMode.pauseRequested', 'Auto · Pause requested')
-      : (pauseState === 'paused'
-        ? jt('healthPill.runMode.paused', 'Auto · Paused')
-        : jt('healthPill.runMode.autoChip', 'Auto'));
-    const modeChip = runMode === 'auto'
-      ? '<span class="workbench-health-pill-mode" data-run-mode="auto" data-pause-state="'
-        + pauseState + '">' + escapeHtml(modeText) + '</span>'
-      : '';
-    const accessibleLabel = (toneLabel.tone === 'success'
-      ? jt('healthPill.accessibleReady', 'Engine ready — runtime health')
-      : jt('healthPill.accessibleStatus', '{status} — runtime health', { status: toneLabel.label || 'Unknown' }))
-      + (runMode === 'auto'
-        ? jt('healthPill.runMode.ariaSuffix', ', Auto run on')
-        : '');
-    /* EH-W11: tiny danger count badge when the error center holds
-     * unseen entries; absent store (or zero unseen) renders as before. */
-    const unseen = Number(options && options.unseenErrorCount) || 0;
+    const runMode = opts.runMode === 'auto' ? 'auto' : 'ask';
+    const pauseState = ['requested', 'paused'].includes(opts.pauseState) ? opts.pauseState : 'none';
+    const unseen = Number(opts.unseenErrorCount) || 0;
+    const segments = (Array.isArray(toneLabel.segments) ? toneLabel.segments : [])
+      .filter((segment) => segment && normString(segment.label));
+    const accessibleLabel = [
+      normString(toneLabel.statusLabel) || normString(toneLabel.label) || jt('healthPill.unknown', 'Unknown'),
+      normString(opts.engine),
+      normString(opts.model),
+      unseen > 0 ? jtn('healthPill.popover.recentErrorCount', unseen, { count: unseen }, '{count} recent error', '{count} recent errors') : '',
+    ].concat(segments.map((segment) => normString(segment.label))).filter(Boolean).join(' · ');
     const badge = unseen > 0
-      ? '<span class="workbench-health-pill-error-badge" role="status"'
-        + ' aria-label="' + escapeHtml(jtn('healthPill.popover.recentErrorCount', unseen, { count: unseen }, '{count} recent error', '{count} recent errors')) + '">'
+      ? '<span class="workbench-health-pill-error-badge" aria-hidden="true">'
         + (unseen > 9 ? '9+' : unseen) + '</span>'
+      : '';
+    const segmentHtml = segments.map((segment) => '<span class="workbench-health-pill-label" data-health-tone="'
+      + escapeHtml(segment.tone || 'neutral') + '">' + escapeHtml(segment.label) + '</span>').join('');
+    const actionButton = runMode === 'auto' ? resolveActionButtonPrimitive() : null;
+    const modeText = runModeText(pauseState);
+    const modeChip = actionButton
+      ? actionButton({
+        label: modeText,
+        plain: true,
+        className: 'workbench-health-pill-mode',
+        ariaLabel: jt('healthPill.runMode.chipLabel', 'Run mode: {mode}', { mode: modeText }),
+        title: jt('healthPill.runMode.chipLabel', 'Run mode: {mode}', { mode: modeText }),
+        dataset: { 'run-mode': 'auto', 'pause-state': pauseState, 'health-pill-action': 'open-run-mode' },
+      })
       : '';
     return ''
       + '<button type="button" class="workbench-health-pill"'
@@ -75,9 +89,10 @@
       + (toneLabel.tone === 'success'
         ? ''
         : '<span class="workbench-health-pill-label">' + labelHtml + '</span>')
-      + modeChip
+      + segmentHtml
       + badge
-      + '</button>';
+      + '</button>'
+      + modeChip;
   }
 
   function buildPopoverRow(label, valueHtml, valueClass) {
@@ -116,8 +131,19 @@
     const engine = normString(runtime && runtime.engine) || jt('healthPill.noEngine', 'no engine');
     const model = normString(runtime && runtime.model) || jt('healthPill.noModel', 'no model');
     const loaded = runtime && runtime.model_loaded === true;
-    const tag = loaded ? 'loaded' : 'unloaded';
-    const valueClass = loaded ? 'success' : 'muted';
+    const runtimeModel = runtime && runtime.local_runtime && runtime.local_runtime.model;
+    // The sidecar's residency wins; before its first status arrives, only the provider engines are named.
+    const residency = normString(runtimeModel && runtimeModel.residency)
+      || PROVIDER_ENGINE_RESIDENCY[normString(runtime && runtime.engine)] || 'local';
+    const providerConfigured = runtimeModel && typeof runtimeModel.configured === 'boolean'
+      ? runtimeModel.configured : !!normString(runtime && runtime.model);
+    const isProvider = residency === 'remote' || residency === 'cli';
+    const tag = isProvider
+      ? (providerConfigured
+        ? (residency === 'remote' ? jt('healthPill.configuredCloud', 'Configured (cloud)') : jt('healthPill.configuredCli', 'Configured (CLI)'))
+        : jt('healthPill.notConfigured', 'Not configured'))
+      : (loaded ? 'loaded' : 'unloaded');
+    const valueClass = (isProvider ? providerConfigured : loaded) ? 'success' : 'muted';
     return {
       html: escapeHtml(engine + ' · ' + model + ' · ') + '<em>' + escapeHtml(tag) + '</em>',
       valueClass,
@@ -161,14 +187,17 @@
     };
   }
 
+  // Decimal units, as the model sources report sizes: one download, one GB
+  // total.
+  const BYTE_UNIT_BASE = 1000;
   function formatByteCount(value) {
     const bytes = pickPositiveNumber(value);
     if (bytes == null || bytes === 0) return '';
     const units = ['B', 'KB', 'MB', 'GB', 'TB'];
     let scaled = bytes;
     let unit = 0;
-    while (scaled >= 1024 && unit < units.length - 1) {
-      scaled /= 1024;
+    while (scaled >= BYTE_UNIT_BASE && unit < units.length - 1) {
+      scaled /= BYTE_UNIT_BASE;
       unit += 1;
     }
     return (scaled >= 10 || unit === 0 ? scaled.toFixed(0) : scaled.toFixed(1)) + ' ' + units[unit];
@@ -194,16 +223,36 @@
     };
   }
 
+  // m:ss, the one clock for the pill's live load label and the popover.
+  function formatLoadClock(ms) {
+    const seconds = Math.max(0, Math.floor(Number(ms) / 1000) || 0);
+    return Math.floor(seconds / 60) + ':' + String(seconds % 60).padStart(2, '0');
+  }
+
+  /* While a model loads, what the same model took last time (the backend's
+   * bounded per-model memory, model_acquisition.last_load_ms). Nothing when
+   * no earlier load is known or nothing is loading. */
+  function buildLastLoadFact(lifecycleFacet) {
+    const acquisition = lifecycleFacet && lifecycleFacet.model_acquisition;
+    if (!acquisition || typeof acquisition !== 'object') return '';
+    const stage = normString(acquisition.stage).toLowerCase();
+    const lastMs = Number(acquisition.last_load_ms);
+    if ((stage !== 'loading' && stage !== 'model_loading') || !Number.isFinite(lastMs) || lastMs <= 0) return '';
+    return '<div class="workbench-health-popover-fact" data-health-fact="last-load">'
+      + escapeHtml(jt('healthPill.popover.lastLoad', 'Last time: {duration}', { duration: formatLoadClock(lastMs) }))
+      + '</div>';
+  }
+
   function formatRecentIssues(snapshot) {
     const logs = snapshot && snapshot.logs ? snapshot.logs : null;
     const slowOps = snapshot && snapshot.slow_operations ? snapshot.slow_operations : null;
     const issueCount = logs && logs.available === true ? arrayLength(logs.recent_issues) : 0;
     const slowCount = slowOps && slowOps.available === true ? arrayLength(slowOps.items) : 0;
     if (issueCount === 0 && slowCount === 0) {
-      return { html: escapeHtml(jt('healthPill.noRecentIssues', 'no warnings or slow operations')), valueClass: 'success' };
+      return { html: escapeHtml(jt('healthPill.noRecentIssues', 'no warnings or slow operations')), valueClass: 'success', none: true };
     }
     const parts = [];
-    if (issueCount > 0) parts.push(issueCount + ' recent ' + (issueCount === 1 ? 'issue' : 'issues'));
+    if (issueCount > 0) parts.push(jtn('healthPill.recentIssueCount', issueCount, { count: issueCount }, '{count} recent issue', '{count} recent issues'));
     if (slowCount > 0) parts.push(jtn('healthPill.slowOperationCount', slowCount, { count: slowCount }, '{count} slow op', '{count} slow ops'));
     const valueClass = issueCount > 0 ? 'warning' : 'muted';
     return { html: escapeHtml(parts.join(' · ')), valueClass };
@@ -279,6 +328,37 @@
     }) : '';
   }
 
+  function formatLoadPercent(value) {
+    const n = value === null || value === undefined || value === '' ? NaN : Number(value);
+    return Number.isFinite(n) ? Math.round(n) + '%' : '';
+  }
+
+  /* Machine load as one flat fact: CPU, then GPU utilization and VRAM when the
+   * sampler has them (never on Windows ARM), RAM without a VRAM sample. No
+   * stats yet renders nothing rather than invented zeros. */
+  function buildLoadFact(stats) {
+    if (!stats || typeof stats !== 'object') return '';
+    const arch = normString(stats.arch).toLowerCase();
+    const blocked = (arch === 'arm' || arch === 'arm64') && normString(stats.platform) !== 'darwin';
+    const gpu = !blocked && stats.gpuMemory && typeof stats.gpuMemory === 'object' ? stats.gpuMemory : null;
+    const parts = [];
+    const cpu = formatLoadPercent(stats.cpuPercent);
+    if (cpu) parts.push(jt('titlebar.metrics.cpu', 'CPU') + ' ' + cpu);
+    const gpuUtil = gpu && gpu.utilAvailable === true ? formatLoadPercent(gpu.utilPercent) : '';
+    if (gpuUtil) parts.push(jt('titlebar.metrics.gpu', 'GPU') + ' ' + gpuUtil);
+    const usedMb = Number(gpu && gpu.usedMb);
+    const totalMb = Number(gpu && gpu.totalMb);
+    if (gpu && gpu.available === true && Number.isFinite(usedMb) && Number.isFinite(totalMb) && totalMb > 0) {
+      parts.push(jt('titlebar.metrics.vram', 'VRAM') + ' ' + (usedMb / 1024).toFixed(1) + ' / ' + (totalMb / 1024).toFixed(1) + ' GB');
+    } else {
+      const ram = formatLoadPercent(stats.ramPercent);
+      if (ram) parts.push(jt('titlebar.metrics.ram', 'RAM') + ' ' + ram);
+    }
+    return parts.length
+      ? '<div class="workbench-health-popover-fact" data-health-fact="load">' + escapeHtml(parts.join(' · ')) + '</div>'
+      : '';
+  }
+
   function buildPopoverMarkup(state, snapshot, extras) {
     if (state.error) {
       return ''
@@ -286,7 +366,7 @@
         + ' tabindex="-1" aria-label="' + escapeHtml(jt('healthPill.popover.ariaLabel', 'Runtime health')) + '" data-health-tone="danger">'
         + '<div class="workbench-health-popover-status">'
         + '<span class="workbench-health-pill-dot" aria-hidden="true"></span>'
-        + '<span>Error</span>'
+        + '<span>' + escapeHtml(jt('healthPill.error', 'Error')) + '</span>'
         + '</div>'
         + '<div class="workbench-health-popover-empty">' + escapeHtml(state.error) + '</div>'
         + '</div>';
@@ -300,7 +380,7 @@
         + '<span class="workbench-health-pill-dot" aria-hidden="true"></span>'
         + '<span>' + escapeHtml(jt('healthPill.popover.loadingStatus', 'Loading status…')) + '</span>'
         + '</div>'
-        + '<div class="workbench-health-popover-empty">Loading</div>'
+        + '<div class="workbench-health-popover-empty">' + escapeHtml(jt('healthPill.popover.loading', 'Loading')) + '</div>'
         + '</div>';
     }
 
@@ -334,7 +414,7 @@
       lifecycleFacet && lifecycleFacet.model_acquisition && lifecycleFacet.model_acquisition.stage
     ).toLowerCase();
     const hasAcquisition = acquisitionStage === 'acquiring' || acquisitionStage === 'unavailable';
-    const hasIssues = issues.html !== escapeHtml('no warnings or slow operations');
+    const hasIssues = issues.none !== true;
 
     return ''
       + '<div class="workbench-health-popover" id="' + ID_POPOVER + '" role="dialog"'
@@ -358,6 +438,7 @@
       + (hasLifecycle
         ? '<div class="workbench-health-popover-fact">' + lifecycle.html + '</div>'
         : '')
+      + buildLastLoadFact(lifecycleFacet)
       + (hasAcquisition
         ? '<div class="workbench-health-popover-fact workbench-health-popover-row-value-'
           + acquisition.valueClass + '">' + acquisition.html + '</div>'
@@ -370,6 +451,7 @@
         ? '<div class="workbench-health-popover-fact workbench-health-popover-row-value-warning">'
           + issues.html + '</div>'
         : '')
+      + buildLoadFact(extras && extras.systemStats)
       + '</div>'
       + buildRecentErrorsSection(extras)
       + '<div class="workbench-health-popover-actions">'
@@ -377,11 +459,14 @@
         ? buildPopoverAction(jt('healthPill.popover.restartLlamaServer', 'Restart llama-server'), 'restart-llama-server')
         : '')
       + (modelUnavailable
-        ? buildPopoverAction('Retry', 'retry-model')
-          + buildPopoverAction('Models', 'open-models')
+        ? buildPopoverAction(jt('healthPill.popover.retry', 'Retry'), 'retry-model')
+          + buildPopoverAction(jt('healthPill.popover.models', 'Models'), 'open-models')
         : '')
-      + buildPopoverAction('Diagnostics', 'open-runtime-health')
-      + buildPopoverAction('Logs', 'open-logs')
+      + buildPopoverAction(jt('healthPill.popover.diagnostics', 'Diagnostics'), 'open-runtime-health')
+      + buildPopoverAction(jt('healthPill.popover.logs', 'Logs'), 'open-logs')
+      + buildPopoverAction(extras && extras.titlebarLoad === true
+        ? jt('healthPill.popover.hideLoad', 'Hide load from title bar')
+        : jt('healthPill.popover.showLoad', 'Show load in title bar'), 'toggle-titlebar-load')
       + (recentErrors.length ? buildPopoverAction(jt('healthPill.popover.clearErrors', 'Clear errors'), 'clear-errors') : '')
       + '</div>'
       + '</div>';
@@ -413,6 +498,7 @@
     buildRecentErrorsSection,
     formatRelativeTime,
     formatLifecycleDetail,
+    formatLoadClock,
     formatEngineModel,
     formatModelAcquisition,
     formatRecentIssues,

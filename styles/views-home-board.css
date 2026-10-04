@@ -14,10 +14,8 @@
   display: inline-flex;
   align-items: center;
   color: var(--text-secondary);
-  font-size: var(--font-size-sm);
-  font-weight: 700;
-  letter-spacing: var(--tracking-kicker-lg);
-  text-transform: uppercase;
+  font-size: var(--font-size-caption);
+  font-weight: 500;
 }
 
 .home-skeleton-stack {
@@ -75,18 +73,15 @@
 .home-panel--board h3 {
   margin: 0;
   color: color-mix(in srgb, var(--text-secondary) 75%, var(--text-primary));
-  font-size: var(--font-size-lg);
-  font-weight: 700;
-  letter-spacing: var(--tracking-kicker-lg);
-  text-transform: uppercase;
+  font-size: var(--font-size-caption);
+  font-weight: 500;
 }
 
 .home-panel h4 {
   margin: 0;
   color: color-mix(in srgb, var(--text-primary) 86%, transparent);
-  font-size: var(--font-size-lg);
-  font-weight: 700;
-  letter-spacing: -0.01em;
+  font-size: var(--font-size-heading);
+  font-weight: 500;
 }
 
 .home-summary-list {
@@ -108,36 +103,25 @@
   border-top: 1px solid color-mix(in srgb, var(--border-default) 62%, transparent);
 }
 
-/* Due / resolved / archived stay distinguishable by a flat tint (no gradient). */
-.home-summary-item[data-loop-due="true"] {
-  background: color-mix(in srgb, var(--home-live-accent) 7%, transparent);
+/* No row tints: status is carried by the section heading and the meta line,
+ * and a tint that stops flush with the text read as a mistake. Completed and
+ * archived titles step down to secondary text instead. */
+.home-summary-item[data-loop-status="resolved"] .home-summary-value,
+.home-summary-item[data-loop-status="archived"] .home-summary-value {
+  color: var(--text-secondary);
 }
 
-.home-summary-item[data-loop-status="resolved"] {
-  background: color-mix(in srgb, var(--text-primary) 5%, transparent);
-}
-
-.home-summary-item[data-loop-status="archived"] {
-  opacity: 0.88;
-}
-
-/* The first/oldest active loop gets no distinct treatment — the side accent
- * bar, elevated fill, and glow are retired (no side bars anywhere on Home).
- * `.memory-commitment-item--first` is still set by the renderer as a hook. */
-
-/* Resolve-in-progress: fade the card during the 6s undo window.
+/* Resolve/delete in progress: fade the row during the undo window.
    --motion-duration-emphasis zeroes under prefers-reduced-motion globally. */
-.home-summary-item.memory-commitment-item[data-loop-resolving="true"] {
+.home-summary-item[data-loop-resolving="true"] {
   pointer-events: none;
   animation: loop-fade-out var(--motion-duration-emphasis) var(--motion-ease-emphasis) forwards;
 }
 
 .home-summary-label {
   color: var(--text-secondary);
-  font-size: var(--font-size-sm);
-  font-weight: 700;
-  letter-spacing: var(--tracking-kicker-lg);
-  text-transform: uppercase;
+  font-size: var(--font-size-caption);
+  font-weight: 500;
 }
 
 .home-summary-value {
@@ -147,30 +131,75 @@
 
 .home-summary-meta {
   color: var(--text-secondary);
-  font-size: var(--font-size-base);
+  font-size: var(--font-size-footnote);
   line-height: 1.4;
 }
 
-.home-loop-meta-block {
-  display: grid;
-  gap: var(--space-3);
-}
-
-.home-loop-badge-row {
+/* One quiet meta line: source · session · timing. The middots are
+ * generated (empty alt text) so screen readers do not read them. */
+.home-loop-meta {
   display: flex;
   flex-wrap: wrap;
-  gap: var(--space-4);
+  align-items: baseline;
+  column-gap: var(--space-3);
+  color: var(--text-secondary);
+  font-size: var(--font-size-footnote);
+  line-height: 1.4;
 }
 
-/* Plain secondary-text counts — the pill chrome (fill, radius, min-height)
- * and the per-variant accent fills are retired. */
+.home-loop-meta > * + *::before {
+  content: "\00B7" / "";
+  margin-inline-end: var(--space-3);
+}
+
 .home-loop-badge {
-  display: inline-flex;
-  align-items: center;
   color: var(--text-secondary);
-  font-size: var(--font-size-sm);
-  font-weight: 700;
-  letter-spacing: 0.02em;
+  font-weight: 500;
+}
+
+.home-loop-meta__due {
+  color: var(--accent);
+  font-weight: 500;
+}
+
+/* Bodies clamp to two lines; "Show more" lifts the clamp for that row. */
+.home-loop-body {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+}
+
+.home-loop-body[data-expanded="true"] {
+  display: block;
+  -webkit-line-clamp: unset;
+  overflow: visible;
+}
+
+.home-loop-text-toggle {
+  justify-self: start;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: var(--font-size-footnote);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+
+.home-loop-text-toggle:hover {
+  color: var(--text-primary);
+}
+
+.home-loop-text-toggle:focus-visible {
+  outline: var(--focus-ring-width) solid var(--focus-ring-color);
+  outline-offset: var(--focus-ring-offset);
+}
+
+.home-loop-text-toggle[hidden] {
+  display: none;
 }
 
 .home-action-row {
@@ -179,27 +208,55 @@
   gap: var(--space-5);
 }
 
-.home-loop-history {
-  display: grid;
+/* Every row lays its controls out the same way: primary first, inline
+ * actions next, History and the overflow menu grouped at the trailing edge
+ * (the auto margin keeps the group flush right even after a wrap). */
+.home-loop-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
   gap: var(--space-4);
-  margin-top: var(--space-1);
-  padding-top: var(--space-5);
-  border-top: 1px solid color-mix(in srgb, var(--border-default) 62%, transparent);
+  margin-top: var(--space-2);
 }
 
-.home-loop-history-toggle {
-  cursor: pointer;
-  color: color-mix(in srgb, var(--text-primary) 90%, transparent);
-  font-size: var(--font-size-base);
-  font-weight: 700;
-  list-style: none;
+.home-loop-actions__trailing {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-4);
+  margin-inline-start: auto;
+}
+
+.home-loop-icon-btn {
+  --btn-padding-inline: var(--space-4);
+  min-width: var(--space-16);
+  gap: var(--space-2);
+}
+
+.home-loop-icon-btn svg {
+  width: 16px;
+  height: 16px;
+  flex: none;
+}
+
+.home-loop-icon-btn[aria-expanded="true"] {
+  --btn-bg: var(--widget-item-active-bg);
+  --btn-color: var(--text-primary);
+}
+
+.home-loop-icon-btn__count {
+  font-size: var(--font-size-footnote);
 }
 
 .home-loop-history-list {
   display: grid;
   gap: var(--space-4);
-  margin-top: var(--space-5);
-  padding-inline-start: var(--space-2);
+  margin: var(--space-2) 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.home-loop-history-list[hidden] {
+  display: none;
 }
 
 .home-loop-history-item {
@@ -265,4 +322,15 @@
   align-items: center;
   justify-content: flex-start;
   gap: var(--space-5);
+}
+
+/* The eyebrow's base align-self:start floated the count like a superscript
+   beside the larger subsection heading. */
+.home-card-header--subsection .home-card-eyebrow {
+  align-self: center;
+}
+
+/* A Show/Show all toggle trails the heading, pushed to the far edge. */
+.home-card-header--subsection .home-card-header-actions {
+  margin-inline-start: auto;
 }

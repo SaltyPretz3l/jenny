@@ -38,8 +38,8 @@ def ledger_root(tmp_path: Path):
 
 
 def _server_call(name: str, arguments: dict, workspace_root: Path) -> dict:
-    tools = builtin_server._default_tools()  # noqa: SLF001
-    return builtin_server._handle_tools_call(  # noqa: SLF001
+    tools = builtin_server._default_tools()
+    return builtin_server._handle_tools_call(
         f"{name}-call",
         tools,
         WorkspaceGuard(str(workspace_root)),

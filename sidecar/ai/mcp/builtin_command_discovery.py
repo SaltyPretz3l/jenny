@@ -39,7 +39,7 @@ def program_roots(read_env: EnvironmentReader) -> list[Path]:
 def registered_pythons() -> list[Path]:
     """Read PythonCore registration without launching interpreters or installers."""
     try:
-        import winreg  # noqa: PLC0415 - Windows-only optional platform module.
+        import winreg  # Windows-only optional platform module.
     except ImportError:
         return []
     candidates = []

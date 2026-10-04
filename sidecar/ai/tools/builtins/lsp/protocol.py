@@ -174,7 +174,7 @@ class LSPProcessSession:
         self._close_timeout_seconds = max(0.001, float(resolved_limits.close_timeout_seconds))
         self._stderr_tail_chars = max(0, int(resolved_limits.stderr_tail_chars))
         self._max_message_bytes = max(1, int(resolved_limits.max_message_bytes))
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
         self._next_request_id = 1
         self._closed = False
         self._process: subprocess.Popen[bytes] | None = None
@@ -265,8 +265,8 @@ class LSPProcessSession:
                 "method": str(method),
                 "params": params or {},
             }
-            self._write_message(process, payload)
             deadline = time.monotonic() + self._request_timeout_seconds
+            self._write_message(process, payload, deadline=deadline)
             while True:
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
@@ -294,6 +294,7 @@ class LSPProcessSession:
                         message["id"],
                         code=-32601,
                         message=error_message,
+                        deadline=deadline,
                     )
                     continue
                 break
@@ -313,7 +314,8 @@ class LSPProcessSession:
                 "method": str(method),
                 "params": params or {},
             }
-            self._write_message(process, payload)
+            deadline = time.monotonic() + self._request_timeout_seconds
+            self._write_message(process, payload, deadline=deadline)
 
     def drain_notifications(self) -> list[dict[str, Any]]:
         with self._notifications_lock:
@@ -324,15 +326,20 @@ class LSPProcessSession:
     def close(self) -> None:
         if self._closed:
             return
-        process = self._process
-        if process is not None and process.poll() is None:
-            try:
-                self.request("shutdown", {})
-            except LSPProtocolError:
-                pass
-        self._closed = True
-        self._stop_process()
-        self._reader.shutdown(wait=False, cancel_futures=True)
+        acquired = self._lock.acquire(timeout=self._close_timeout_seconds)
+        try:
+            process = self._process
+            if acquired and process is not None and process.poll() is None:
+                try:
+                    self.request("shutdown", {})
+                except LSPProtocolError:
+                    pass
+            self._closed = True
+            self._stop_process()
+            self._reader.shutdown(wait=False, cancel_futures=True)
+        finally:
+            if acquired:
+                self._lock.release()
 
     def _require_process(self) -> subprocess.Popen[bytes]:
         process = self._process
@@ -342,14 +349,28 @@ class LSPProcessSession:
             raise LSPServerTerminated("LSP process exited", stderr_tail=self._stderr())
         return process
 
-    def _write_message(self, process: subprocess.Popen[bytes], payload: dict[str, Any]) -> None:
-        if process.stdin is None:
+    def _write_message(
+        self, process: subprocess.Popen[bytes], payload: dict[str, Any], *, deadline: float
+    ) -> None:
+        stream = process.stdin
+        if stream is None:
             raise LSPServerTerminated("LSP stdin is closed", stderr_tail=self._stderr())
         raw = json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+
+        frame = f"Content-Length: {len(raw)}\r\n\r\n".encode("ascii") + raw
         try:
-            process.stdin.write(f"Content-Length: {len(raw)}\r\n\r\n".encode("ascii"))
-            process.stdin.write(raw)
-            process.stdin.flush()
+            futures = (
+                self._reader.submit(stream.write, frame),
+                self._reader.submit(stream.flush),
+            )
+            for future in futures:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise TimeoutError
+                future.result(timeout=remaining)
+        except TimeoutError as error:
+            self._stop_process()
+            raise LSPRequestTimeout("LSP transmission timed out") from error
         except OSError as error:
             raise LSPServerTerminated(
                 "failed to write LSP request", stderr_tail=self._stderr()
@@ -362,6 +383,7 @@ class LSPProcessSession:
         *,
         code: int,
         message: str,
+        deadline: float,
     ) -> None:
         self._write_message(
             process,
@@ -370,6 +392,7 @@ class LSPProcessSession:
                 "id": request_id,
                 "error": {"code": code, "message": message},
             },
+            deadline=deadline,
         )
 
     def _record_notification(self, message: dict[str, Any]) -> None:

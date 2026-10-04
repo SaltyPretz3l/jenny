@@ -68,6 +68,27 @@ test('journal v2 compacts only the affected turn partition', () => {
   assert.equal(fs.readFileSync(fileByIdentity.get('session-b:turn-b'), 'utf8'), untouchedBefore);
 });
 
+test('journal v2 does not re-compact on every append once the snapshot exceeds the byte limit', () => {
+  const journalPath = freshPath();
+  const journal = new TurnEventJournal(journalPath, { compactionByteLimit: 1024 });
+  const compactPartition = journal._compactPartition.bind(journal);
+  let compactions = 0;
+  journal._compactPartition = (...args) => {
+    compactions += 1;
+    return compactPartition(...args);
+  };
+  const filler = 'x'.repeat(200);
+  for (let index = 0; index < 60; index += 1) {
+    journal.append('session-a', 'turn-a', [{ event_id: `e${index}`, filler }]);
+  }
+
+  // A snapshot past the limit must not make every later append rewrite the
+  // whole turn: the threshold grows with the snapshot, so rewrites stay
+  // logarithmic in the turn size instead of one per event.
+  assert.ok(compactions <= 6, `expected few compactions, saw ${compactions}`);
+  assert.equal(journal.list('session-a', 'turn-a').length, 60);
+});
+
 test('journal v2 migrates legacy schema once and retires the source after durable import', () => {
   const journalPath = freshPath();
   fs.writeFileSync(journalPath, JSON.stringify({

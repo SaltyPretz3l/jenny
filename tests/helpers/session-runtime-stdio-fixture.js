@@ -61,4 +61,14 @@ function holdAtAdmission(runtime, workspace, target) {
   return () => runtime.resourceBroker.release(held, { producerSettled: true });
 }
 
-module.exports = { ROOT, waitFor, createBackend, holdAtAdmission };
+// Stops the backend, releasing fixture-held leases only once stop has begun:
+// shutdown has already closed admission and cleared live resource waits, so the
+// release cannot resume paused work, and the runtime confirms cleanup instead of
+// waiting out its drain timeout (session_runtime.shutdown_unconfirmed).
+async function stopReleasingHolds(backend, ...releases) {
+  const stopping = backend.stop();
+  for (const release of releases) release?.();
+  await stopping;
+}
+
+module.exports = { ROOT, waitFor, createBackend, holdAtAdmission, stopReleasingHolds };

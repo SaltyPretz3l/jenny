@@ -15,7 +15,7 @@ from sidecar.ai.tools.workspace import WorkspaceGuard
 
 
 def test_default_tools_include_search_tools_by_default() -> None:
-    tools = builtin_server._default_tools()  # noqa: SLF001
+    tools = builtin_server._default_tools()
 
     assert "glob_files" in tools
     assert "grep_search" in tools
@@ -34,10 +34,8 @@ def test_default_tools_include_search_tools_by_default() -> None:
 
 
 def test_default_tools_can_disable_search_tools() -> None:
-    tools = builtin_server._default_tools(  # noqa: SLF001
-        glob_enabled=False,
-        grep_enabled=False,
-        edit_enabled=False,
+    tools = builtin_server._default_tools(
+        {"tools_glob_enabled": False, "tools_grep_enabled": False, "tools_edit_file_enabled": False}
     )
 
     assert "glob_files" not in tools
@@ -46,8 +44,8 @@ def test_default_tools_can_disable_search_tools() -> None:
 
 
 def test_default_tools_gate_workspace_manifest_tool() -> None:
-    disabled = builtin_server._default_tools(workspace_manifest_enabled=False)  # noqa: SLF001
-    enabled = builtin_server._default_tools(workspace_manifest_enabled=True)  # noqa: SLF001
+    disabled = builtin_server._default_tools({"tools_workspace_manifest_enabled": False})
+    enabled = builtin_server._default_tools({"tools_workspace_manifest_enabled": True})
 
     assert "workspace_manifest_read" not in disabled
     assert "workspace_manifest_read" in enabled
@@ -55,10 +53,9 @@ def test_default_tools_gate_workspace_manifest_tool() -> None:
 
 
 def test_default_tools_do_not_expose_retired_expand_tool() -> None:
-    disabled = builtin_server._default_tools(distill_enabled=False)  # noqa: SLF001
-    enabled = builtin_server._default_tools(  # noqa: SLF001
-        distill_enabled=True,
-        shell_enabled=True,
+    disabled = builtin_server._default_tools({"tools_distill_enabled": False})
+    enabled = builtin_server._default_tools(
+        {"tools_distill_enabled": True, "tools_shell_enabled": True}
     )
 
     assert "expand" not in disabled
@@ -70,10 +67,9 @@ def test_default_tools_gate_knowledge_tools(tmp_path) -> None:
     root = tmp_path / "corpus"
     root.mkdir()
     (root / "doc.md").write_text("needle\n", encoding="utf-8")
-    disabled = builtin_server._default_tools(knowledge_enabled=False)  # noqa: SLF001
-    enabled = builtin_server._default_tools(  # noqa: SLF001
-        knowledge_enabled=True,
-        knowledge_roots=(str(root),),
+    disabled = builtin_server._default_tools({"tools_knowledge_enabled": False})
+    enabled = builtin_server._default_tools(
+        {"tools_knowledge_enabled": True, "knowledge_roots": (str(root),)}
     )
 
     assert "knowledge_search" not in disabled
@@ -89,9 +85,8 @@ def test_default_tools_gate_knowledge_tools(tmp_path) -> None:
 
 
 def test_owned_server_registers_scoped_knowledge_superset() -> None:
-    tools = builtin_server._default_tools(  # noqa: SLF001
-        knowledge_enabled=False,
-        request_scoped_authority=True,
+    tools = builtin_server._default_tools(
+        {"tools_knowledge_enabled": False}, request_scoped_authority=True
     )
 
     assert {"knowledge_search", "knowledge_view", "knowledge_exec"}.issubset(tools)
@@ -104,7 +99,8 @@ def test_builtin_server_main_parses_knowledge_args(tmp_path, monkeypatch) -> Non
     root_b.mkdir()
     captured: dict[str, object] = {}
 
-    def fake_default_tools(**kwargs):
+    def fake_default_tools(config, **kwargs):
+        captured.update({key.removeprefix("tools_"): value for key, value in config.items()})
         captured.update(kwargs)
         return {}
 
@@ -132,8 +128,8 @@ def test_builtin_server_main_parses_knowledge_args(tmp_path, monkeypatch) -> Non
 
 
 def test_default_tools_gate_lsp_tools() -> None:
-    disabled = builtin_server._default_tools(lsp_enabled=False)  # noqa: SLF001
-    enabled = builtin_server._default_tools(lsp_enabled=True)  # noqa: SLF001
+    disabled = builtin_server._default_tools({"tools_lsp_enabled": False})
+    enabled = builtin_server._default_tools({"tools_lsp_enabled": True})
 
     assert "lsp" not in disabled
     assert "lsp" in enabled
@@ -144,30 +140,32 @@ def test_default_tools_gate_lsp_tools() -> None:
 
 
 def test_default_tools_can_expose_pdf_pages_when_image_read_enabled() -> None:
-    tools = builtin_server._default_tools(image_read_enabled=True)  # noqa: SLF001
+    tools = builtin_server._default_tools({"tools_image_read_enabled": True})
 
     assert "pages" in tools["read_file"].input_schema["properties"]
 
 
 def test_default_tools_apply_full_web_configuration() -> None:
-    tools = builtin_server._default_tools(  # noqa: SLF001
-        web_enabled=True,
-        web_rate_limit_per_min=7,
-        web_max_fetch_bytes=4097,
-        web_allow_private_addresses=True,
-        web_search_provider="bing",
+    tools = builtin_server._default_tools(
+        {
+            "tools_web_enabled": True,
+            "tools_web_rate_limit_per_min": 7,
+            "tools_web_max_fetch_bytes": 4097,
+            "tools_web_allow_private_addresses": True,
+            "tools_web_search_provider": "bing",
+        }
     )
 
     assert "web_search" in tools
     assert "fetch_url" in tools
-    assert web_module._rate_limiter._limit == 7  # noqa: SLF001
-    assert web_module._max_fetch_bytes == 4097  # noqa: SLF001
-    assert web_module._allow_private_addresses is True  # noqa: SLF001
-    assert web_module._search_provider == "bing"  # noqa: SLF001
+    assert web_module._rate_limiter._limit == 7
+    assert web_module._max_fetch_bytes == 4097
+    assert web_module._allow_private_addresses is True
+    assert web_module._search_provider == "bing"
 
 
 def test_safe_json_dumps_replaces_lone_surrogates() -> None:
-    serialized = builtin_server._safe_json_dumps({"text": "bad\udc8fvalue"})  # noqa: SLF001
+    serialized = builtin_server._safe_json_dumps({"text": "bad\udc8fvalue"})
 
     assert "\udc8f" not in serialized
     assert json.loads(serialized) == {"text": "bad\ufffdvalue"}
@@ -189,7 +187,7 @@ def test_tools_call_serializes_tool_handler_result_output_alias(tmp_path) -> Non
         )
     }
 
-    response = builtin_server._handle_tools_call(  # noqa: SLF001
+    response = builtin_server._handle_tools_call(
         "msg-1",
         tools,
         WorkspaceGuard(str(workspace_root)),
@@ -208,9 +206,9 @@ def test_tools_call_rejects_malformed_grep_arguments(tmp_path) -> None:
     workspace_root.mkdir()
     (workspace_root / "notes.txt").write_text("Needle\n", encoding="utf-8")
 
-    response = builtin_server._handle_tools_call(  # noqa: SLF001
+    response = builtin_server._handle_tools_call(
         "msg-2",
-        builtin_server._default_tools(),  # noqa: SLF001
+        builtin_server._default_tools(),
         WorkspaceGuard(str(workspace_root)),
         {
             "name": "grep_search",
@@ -227,9 +225,9 @@ def test_tools_call_write_file_requires_snapshot_for_existing_file(tmp_path) -> 
     workspace_root.mkdir()
     (workspace_root / "notes.txt").write_text("before\n", encoding="utf-8")
 
-    response = builtin_server._handle_tools_call(  # noqa: SLF001
+    response = builtin_server._handle_tools_call(
         "msg-write-existing",
-        builtin_server._default_tools(),  # noqa: SLF001
+        builtin_server._default_tools(),
         WorkspaceGuard(str(workspace_root)),
         {
             "name": "write_file",
@@ -249,12 +247,12 @@ def test_tools_call_write_file_accepts_matching_snapshot_for_existing_file(tmp_p
     workspace = WorkspaceGuard(str(workspace_root))
     read_result = builtin_server._default_tools()["read_file"].handler(
         {"path": "notes.txt"}, workspace
-    )  # noqa: SLF001
+    )
     assert isinstance(read_result, ToolHandlerResult)
 
-    response = builtin_server._handle_tools_call(  # noqa: SLF001
+    response = builtin_server._handle_tools_call(
         "msg-write-existing-ok",
-        builtin_server._default_tools(),  # noqa: SLF001
+        builtin_server._default_tools(),
         workspace,
         {
             "name": "write_file",
@@ -276,15 +274,15 @@ def test_tools_call_auto_injects_snapshot_from_prior_direct_mcp_read(tmp_path) -
     target = workspace_root / "notes.txt"
     target.write_text("before\n", encoding="utf-8")
     workspace = WorkspaceGuard(str(workspace_root))
-    tools = builtin_server._default_tools()  # noqa: SLF001
+    tools = builtin_server._default_tools()
 
-    read_response = builtin_server._handle_tools_call(  # noqa: SLF001
+    read_response = builtin_server._handle_tools_call(
         "msg-read-lease",
         tools,
         workspace,
         {"name": "read_file", "arguments": {"path": "notes.txt"}},
     )
-    write_response = builtin_server._handle_tools_call(  # noqa: SLF001
+    write_response = builtin_server._handle_tools_call(
         "msg-write-lease",
         tools,
         workspace,
@@ -310,9 +308,9 @@ def test_tools_call_edit_file_applies_without_snapshot_via_content_anchor(tmp_pa
     target = workspace_root / "notes.txt"
     target.write_text("hello world\n", encoding="utf-8")
 
-    response = builtin_server._handle_tools_call(  # noqa: SLF001
+    response = builtin_server._handle_tools_call(
         "msg-edit-existing",
-        builtin_server._default_tools(),  # noqa: SLF001
+        builtin_server._default_tools(),
         WorkspaceGuard(str(workspace_root)),
         {
             "name": "edit_file",
@@ -344,9 +342,9 @@ def test_mutation_tools_refuse_reserved_jenny_state(tmp_path, tool_name) -> None
         },
     }[tool_name]
 
-    response = builtin_server._handle_tools_call(  # noqa: SLF001
+    response = builtin_server._handle_tools_call(
         f"msg-{tool_name}",
-        builtin_server._default_tools(),  # noqa: SLF001
+        builtin_server._default_tools(),
         WorkspaceGuard(str(workspace_root)),
         {"name": tool_name, "arguments": arguments},
     )
@@ -366,12 +364,12 @@ def test_tools_call_edit_file_accepts_matching_snapshot_for_existing_file(tmp_pa
     workspace = WorkspaceGuard(str(workspace_root))
     read_result = builtin_server._default_tools()["read_file"].handler(
         {"path": "notes.txt"}, workspace
-    )  # noqa: SLF001
+    )
     assert isinstance(read_result, ToolHandlerResult)
 
-    response = builtin_server._handle_tools_call(  # noqa: SLF001
+    response = builtin_server._handle_tools_call(
         "msg-edit-existing-ok",
-        builtin_server._default_tools(),  # noqa: SLF001
+        builtin_server._default_tools(),
         workspace,
         {
             "name": "edit_file",

@@ -152,6 +152,26 @@ run_status() {
   run_compose_step "status" run --rm --no-deps -T setup status
 }
 
+start_host() {
+  local policy status
+  policy="$("${COMPOSE[@]}" run --rm --no-deps -T --entrypoint node setup -e \
+    "console.log(require('./server/config').loadHostConfig('/etc/jenny/host.json').hostExecutionPolicyVersion)")"
+  status=$?
+  if (( status != 0 )); then
+    fail_step "execution policy read" "$status"
+    return "$status"
+  fi
+  policy="${policy//$'\r'/}"
+  case "$policy" in
+    1)
+      printf '%s\n' 'services:' '  jenny:' '    depends_on: !reset {}' '  sandbox:' '    profiles: [execution]' | \
+        run_compose_step "start" -f - up --wait --wait-timeout 120 -d jenny
+      ;;
+    2) run_compose_step "start" up --wait --wait-timeout 120 -d jenny ;;
+    *) error "saved execution policy is invalid; rerun configure."; return 10 ;;
+  esac
+}
+
 main() {
   local mode=setup
   if (( $# == 1 )); then
@@ -214,7 +234,7 @@ main() {
   else
     run_compose_step "interactive owner initialization" run --rm --no-deps setup init || return $?
   fi
-  run_compose_step "start" up --wait --wait-timeout 120 -d jenny || return $?
+  start_host || return $?
   run_status
 }
 

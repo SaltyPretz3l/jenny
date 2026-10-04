@@ -240,7 +240,7 @@ def test_scanned_pdf_page_uses_ocr_textpage(
         def __init__(self, parent: object) -> None:
             self.parent = parent
 
-        def extractWORDS(self, *args: object, **kwargs: object):  # noqa: N802
+        def extractWORDS(self, *args: object, **kwargs: object):
             return textpage.extractWORDS(*args, **kwargs)
 
     def _recover_textpage(page: object, *, tessdata_dir: Path) -> object:

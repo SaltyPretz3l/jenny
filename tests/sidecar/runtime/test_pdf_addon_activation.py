@@ -139,7 +139,7 @@ def test_minimal_env_passes_pdf_addon_directory(
     addon_dir = tmp_path / "pdf-addon"
     monkeypatch.setenv(media_site.PDF_ADDON_ENV, str(addon_dir))
 
-    env = process_containment._minimal_env(  # noqa: SLF001
+    env = process_containment._minimal_env(
         MCPServerConfig(name="builtin", transport="stdio", command="builtin-mcp"),
         command_path=None,
     )

@@ -12,9 +12,8 @@
   border: 1px solid var(--border-strong);
   background: var(--widget-action-bg);
   color: var(--text-secondary);
-  font-size: var(--font-size-xs);
-  font-weight: 600;
-  letter-spacing: 0.02em;
+  font-size: var(--font-size-caption);
+  font-weight: 500;
   white-space: nowrap;
   cursor: pointer;
   transition:
@@ -64,9 +63,8 @@
   border: 1px solid var(--accent);
   background: color-mix(in srgb, var(--accent) 45%, var(--widget-action-bg));
   color: var(--text-primary);
-  font-size: 0.85em;
-  font-weight: 700;
-  letter-spacing: 0.06em;
+  font-size: var(--font-size-caption);
+  font-weight: 500;
 }
 
 .inv-chip--disabled {
@@ -111,7 +109,7 @@
   margin-top: var(--space-3);
   padding-top: var(--space-3);
   border-top: 1px solid var(--border-strong);
-  font-size: var(--font-size-xs);
+  font-size: var(--font-size-caption);
   color: var(--text-muted);
 }
 

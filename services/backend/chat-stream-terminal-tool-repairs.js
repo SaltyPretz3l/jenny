@@ -5,6 +5,8 @@ const { buildToolResultMessageId } = require('./tool-message-id');
 const { normalizeId } = require('../shared/normalize');
 
 const TOOL_INTERRUPTED_OUTPUT = 'System error: tool execution interrupted. Retry if needed.';
+// A user Stop is not a system error: say who stopped the call (F3).
+const TOOL_STOPPED_OUTPUT = 'Tool execution stopped by the user before it finished.';
 const TERMINAL_TOOL_STATUSES = new Set([
   'cancelled', 'complete', 'denied', 'error', 'interrupted',
 ]);
@@ -52,21 +54,24 @@ function buildInterruptedToolResult(repair, identity, timestamp) {
   const toolName = normalizeId(toolCall.tool_name || toolCall.toolName);
   const summary = normalizeId(toolCall.summary);
   const status = repairStatus(repair);
+  const output = status === 'cancelled' ? TOOL_STOPPED_OUTPUT : TOOL_INTERRUPTED_OUTPUT;
   return {
     id: buildToolResultMessageId(identity.streamId, callId),
     role: 'tool',
     kind: 'tool_result',
-    content: TOOL_INTERRUPTED_OUTPUT,
+    content: output,
     timestamp,
     finalizedAt: timestamp,
     model_used: normalizeId(repair?.model || repair?.patch?.model_used),
     tool_result: {
       call_id: callId,
       tool_name: toolName,
-      output_text: TOOL_INTERRUPTED_OUTPUT,
+      output_text: output,
       summary,
       is_error: true,
       error_code: LOOP_PROTOCOL_ERROR_CODES.TOOL_INTERRUPTED,
+      // The renderer's message projection reads the verdict from here.
+      approval_state: status,
       exit_code: null,
       duration_ms: 0,
       parent_stream_id: identity.streamId,
@@ -85,11 +90,13 @@ function buildToolResultTurnEvent(resultMessage, identity, timestamp) {
   const messageId = normalizeId(resultMessage?.id);
   if (!callId || !messageId) return null;
   const isError = toolResult.is_error === true;
+  // A user Stop keeps its verdict on the persisted event too (F3).
+  const cancelled = normalizeId(toolResult.approval_state || toolResult.metadata?.terminal_state) === 'cancelled';
   return {
     event_id: `terminal_repair:${identity.turnId}:${callId}:tool_result`,
     turn_id: identity.turnId,
     kind: 'tool_result',
-    status: isError ? 'error' : 'complete',
+    status: cancelled ? 'cancelled' : (isError ? 'error' : 'complete'),
     primary_message_id: messageId,
     source_message_ids: [messageId],
     tool_call_id: callId,

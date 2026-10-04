@@ -12,7 +12,8 @@ const path = require('path');
 
 const { registerIpcInvokeHandlers } = require('../ipc-contract');
 const { t } = require('../i18n-main');
-const { pairProjector, splitGgufFiles } = require('../llama-server-gguf-files');
+const { filterDiffusionGgufs, pairProjector, splitGgufFiles } = require('../llama-server-gguf-files');
+const { readGgufArchitecture } = require('../gguf-header');
 const { isLocalAbsolutePath, isManagedModelPath, managedModelKey } = require('../shell-config-engines');
 const { normalizeSpec } = require('./llama-server-manager');
 const { validateRuntimeExecutable } = require('./llama-server-runtime');
@@ -185,8 +186,7 @@ function registerLlamaServerIpcHandlers(ipcMainLike, {
     return (parts.length > 0 ? parts : [main])
       .reduce((total, name) => total + (fileSize(path.join(dir, name)) ?? 0), 0);
   };
-  const describeGgufDir = (tag, dir, source, mainGguf = '') => {
-    const files = readGgufs(dir);
+  const describeGgufDir = (tag, dir, source, mainGguf = '', files = readGgufs(dir)) => {
     const resolvedMain = mainGguf || files.main[0] || '';
     return {
       tag,
@@ -243,7 +243,7 @@ function registerLlamaServerIpcHandlers(ipcMainLike, {
   // `{userData}/models/<tag>/` and `{repoRoot}/.jenny/models/<tag>/` — one
   // directory per tag, never deeper, symlinks skipped (Dirent.isDirectory()
   // is false for them and lstat never follows).
-  const listLocalGgufs = async () => {
+  const scanLocalGgufs = async () => {
     const builtInRoots = [
       userDataPath && path.join(userDataPath, 'models'),
       path.join(repoRoot, '.jenny', 'models'),
@@ -254,16 +254,54 @@ function registerLlamaServerIpcHandlers(ipcMainLike, {
     // under two tags (Ollama's blob store holds every model's copy).
     const seen = new Set();
     const seenKey = (dir, key) => `${dir.toLowerCase()}\n${key}`;
-    const scanRoot = (root) => {
+    // Root entries by resolved model file: a persisted entry for the SAME file
+    // under another tag (folder name vs the picked file's tag) replaces the
+    // root entry, so the library lists one model carrying its per-model
+    // settings (dogfood TR-001: Bonsai listed twice, one without its build).
+    const fileKey = (dir, mainGguf) => {
+      if (!mainGguf) return '';
+      const resolved = path.resolve(dir, mainGguf);
+      return platform === 'win32' ? resolved.toLowerCase() : resolved;
+    };
+    const rootEntryByFile = new Map();
+    const superseded = new Set();
+    const diffusion = [];
+    const scannedDirs = new Map();
+    const readScannedGgufs = async (dir) => {
+      const key = fileKey(dir, '.');
+      if (scannedDirs.has(key)) return scannedDirs.get(key);
+      const files = readGgufs(dir);
+      const architectures = new Map();
+      const buckets = await filterDiffusionGgufs(dir, files.main, {
+        readArchitecture: (filePath) => {
+          const architecture = readGgufArchitecture(filePath, { fsImpl });
+          architectures.set(filePath, architecture);
+          return architecture;
+        },
+      });
+      for (const file of buckets.diffusion) {
+        const filePath = path.join(dir, file);
+        diffusion.push({ dir, file, sizeBytes: fileSize(filePath) ?? 0, architecture: architectures.get(filePath) });
+      }
+      const result = { ...files, ...buckets };
+      scannedDirs.set(key, result);
+      return result;
+    };
+    const scanRoot = async (root) => {
       for (const tagEntry of readDir(root).filter((entry) => entry.isDirectory())) {
         const dir = path.join(root, tagEntry.name);
         const key = managedModelKey(tagEntry.name);
-        entries.push(describeGgufDir(tagEntry.name, dir, 'root'));
+        const files = await readScannedGgufs(dir);
+        if (files.diffusion.length > 0 && files.chat.length === 0) continue;
+        const entry = describeGgufDir(tagEntry.name, dir, 'root', files.chat[0], files);
+        entries.push(entry);
+        const file = fileKey(dir, entry.mainGguf);
+        if (file && !rootEntryByFile.has(file)) rootEntryByFile.set(file, entry);
         entryKeys.add(key);
         seen.add(seenKey(dir, key));
       }
     };
-    for (const root of builtInRoots) scanRoot(root);
+    for (const root of builtInRoots) await scanRoot(root);
 
     let libraryRoots = [];
     try {
@@ -283,12 +321,12 @@ function registerLlamaServerIpcHandlers(ipcMainLike, {
       });
     const sizeIndex = new Map();
     const indexedDirs = new Set();
-    const indexLibraryDir = (dir) => {
+    const indexLibraryDir = async (dir) => {
       // One readdir per directory per scan: roots, tag folders and persisted
       // model folders overlap, and the first entry for a size already wins.
       if (indexedDirs.has(dir)) return;
       indexedDirs.add(dir);
-      for (const mainGguf of readGgufs(dir).main) {
+      for (const mainGguf of (await readScannedGgufs(dir)).chat) {
         const sizeBytes = fileSize(path.join(dir, mainGguf));
         // A partial download (0 bytes) must never size-match anything.
         if (!sizeBytes) continue;
@@ -297,14 +335,14 @@ function registerLlamaServerIpcHandlers(ipcMainLike, {
     };
     for (const root of libraryRoots) {
       const tagDirs = readDir(root).filter((entry) => entry.isDirectory());
-      scanRoot(root);
-      indexLibraryDir(root);
-      for (const tagEntry of tagDirs) indexLibraryDir(path.join(root, tagEntry.name));
+      await scanRoot(root);
+      await indexLibraryDir(root);
+      for (const tagEntry of tagDirs) await indexLibraryDir(path.join(root, tagEntry.name));
     }
     for (const root of builtInRoots) {
-      indexLibraryDir(root);
+      await indexLibraryDir(root);
       for (const tagEntry of readDir(root).filter((entry) => entry.isDirectory())) {
-        indexLibraryDir(path.join(root, tagEntry.name));
+        await indexLibraryDir(path.join(root, tagEntry.name));
       }
     }
 
@@ -320,15 +358,19 @@ function registerLlamaServerIpcHandlers(ipcMainLike, {
       const isBlobPath = OLLAMA_BLOB_BASENAME.test(path.basename(modelPath));
       // Ollama's blob store holds thousands of extensionless files and no .gguf,
       // so indexing it is a full readdir that can never contribute a size match.
-      if (!isBlobPath) indexLibraryDir(dir);
+      if (!isBlobPath) await indexLibraryDir(dir);
       const key = managedModelKey(tag);
-      if (seen.has(seenKey(dir, key))) continue;
+      const files = await readScannedGgufs(dir);
+      // A mixed folder's discovered chat main does not represent its pinned diffusion file.
+      if (seen.has(seenKey(dir, key)) && !files.diffusion.includes(path.basename(modelPath))) continue;
       seen.add(seenKey(dir, key));
       // Always listed even when a root already carries the tag: the drawer
       // matches a persisted path by PATH, so its own directory decides the
       // drafter verdict. Only the Ollama source below defers to earlier keys.
-      const entry = describeGgufDir(tag, dir, 'persisted', path.basename(modelPath));
+      const entry = describeGgufDir(tag, dir, 'persisted', path.basename(modelPath), files);
       if (isBlobPath) entry.ollamaBlob = true;
+      const rootTwin = rootEntryByFile.get(fileKey(dir, entry.mainGguf));
+      if (rootTwin) superseded.add(rootTwin);
       entries.push(entry);
       entryKeys.add(key);
     }
@@ -359,7 +401,7 @@ function registerLlamaServerIpcHandlers(ipcMainLike, {
       // mtp-*.gguf drafter is found) even though that directory is already
       // listed under its own folder name: the tag is what the drawer matches.
       const entry = match
-        ? describeGgufDir(tag, match.dir, 'library', match.mainGguf)
+        ? describeGgufDir(tag, match.dir, 'library', match.mainGguf, await readScannedGgufs(match.dir))
         : {
             tag,
             dir: path.dirname(blobPath),
@@ -373,10 +415,15 @@ function registerLlamaServerIpcHandlers(ipcMainLike, {
       entries.push(entry);
       entryKeys.add(key);
     }
-    return entries
-      .sort((left, right) => left.tag.localeCompare(right.tag))
-      .slice(0, MAX_LOCAL_GGUF_ENTRIES);
+    return {
+      entries: entries.filter((entry) => !superseded.has(entry))
+        .sort((left, right) => left.tag.localeCompare(right.tag)).slice(0, MAX_LOCAL_GGUF_ENTRIES),
+      diffusion: diffusion.sort((left, right) => left.dir.localeCompare(right.dir) || left.file.localeCompare(right.file))
+        .slice(0, 64),
+    };
   };
+  const listLocalGgufs = async () => (await scanLocalGgufs()).entries;
+  const listLocalDiffusionGgufs = async () => (await scanLocalGgufs()).diffusion;
 
   const channels = registerIpcInvokeHandlers(ipcMainLike, {
     'llamaServer.getStatus': manage('get_status', (manager) => manager.getStatus()),
@@ -444,9 +491,9 @@ function registerLlamaServerIpcHandlers(ipcMainLike, {
       }
     },
   });
-  return channels.concat(registerIpcInvokeHandlers(ipcMainLike, {
+  return Object.assign(channels.concat(registerIpcInvokeHandlers(ipcMainLike, {
     'llamaServer.chooseRuntime': chooseRuntime,
-  }, typeof authorization?.authorize === 'function' ? authorization : { authorize: () => false }));
+  }, typeof authorization?.authorize === 'function' ? authorization : { authorize: () => false })), { listLocalDiffusionGgufs });
 }
 
 module.exports = {

@@ -2,9 +2,12 @@ const {
   normalizeJennyLevel,
   resolveStructuredLogLevel,
 } = require('./log-level-utils');
-const { normalizeString } = require('../renderer/shared/string-utils');
+const { normalizeString } = require('./shared/normalize');
 const {
   collapseRedactedPathTails,
+  normalizeLogIdentifier,
+  normalizeLogName,
+  normalizeLogStatus,
   redactLogReportValue,
   redactLogText,
 } = require('../renderer/shared/log-contract-utils');
@@ -29,6 +32,15 @@ function pickFirstNonEmpty(...values) {
     }
   }
   return '';
+}
+
+function pickFirstPresent(...values) {
+  return values.find((value) => value != null && value !== '');
+}
+
+// Sidecar approval/rpc ids are integers; Electron approval ids are string tokens.
+function toIdOrNull(value, redactionOptions) {
+  return Number.isSafeInteger(value) ? value : normalizeLogIdentifier(value, redactionOptions);
 }
 
 function normalizeRedactionPrefixes(entry = {}, defaults = {}) {
@@ -92,9 +104,13 @@ function normalizeLogEntry(entry = {}, defaults = {}) {
   const details = entry && typeof entry.details === 'object' && !Array.isArray(entry.details)
     ? { ...entry.details }
     : {};
-  const layer = pickFirstNonEmpty(entry.layer, entry.source, defaults.layer, 'electron');
-  const event = pickFirstNonEmpty(entry.event, defaults.event, `${layer}.event`);
-  const component = pickFirstNonEmpty(entry.component, defaults.component, deriveComponent(event));
+  const redactionOptions = { prefixes: normalizeRedactionPrefixes(entry, defaults) };
+  const layer = normalizeLogName(pickFirstPresent(entry.layer, entry.source, defaults.layer), redactionOptions) || 'electron';
+  const defaultEvent = normalizeLogName(defaults.event, redactionOptions)
+    || normalizeLogName(`${layer}.event`, redactionOptions) || 'electron.event';
+  const event = normalizeLogName(pickFirstPresent(entry.event, defaults.event), redactionOptions) || defaultEvent;
+  const defaultComponent = normalizeLogName(defaults.component, redactionOptions) || deriveComponent(event);
+  const component = normalizeLogName(pickFirstPresent(entry.component, defaults.component), redactionOptions) || defaultComponent;
   const rawMessage = pickFirstNonEmpty(
     entry.message,
     details.message,
@@ -103,19 +119,19 @@ function normalizeLogEntry(entry = {}, defaults = {}) {
     typeof details.line === 'string' ? details.line : '',
     event
   );
-  const status = pickFirstNonEmpty(entry.status, details.status, defaults.status, 'ok');
+  const status = normalizeLogStatus(pickFirstPresent(entry.status, details.status, defaults.status), redactionOptions);
   const durationMs = toFiniteNumberOrNull(entry.duration_ms ?? details.duration_ms);
   const rawData = entry && typeof entry.data === 'object' && !Array.isArray(entry.data)
     ? { ...entry.data }
     : { ...details };
   const level = resolveEntryLevel(entry.level || defaults.level, { event, details, data: rawData });
-  const ts = pickFirstNonEmpty(entry.ts, defaults.ts, new Date().toISOString());
-  const redactionMode = pickFirstNonEmpty(entry.redaction_mode, defaults.redaction_mode, 'redacted');
-  const shouldRedact = redactionMode === 'redacted';
-  const redactionOptions = { prefixes: normalizeRedactionPrefixes(entry, defaults) };
-  const message = shouldRedact ? redactText(rawMessage, redactionOptions) : rawMessage;
-  const data = shouldRedact ? redactLogValue(rawData, redactionOptions) : rawData;
-  const redactedDetails = shouldRedact ? redactLogValue(details, redactionOptions) : details;
+  const rawTs = pickFirstNonEmpty(entry.ts, defaults.ts, new Date().toISOString());
+  const ts = redactText(rawTs, redactionOptions) === rawTs ? rawTs : new Date().toISOString();
+  const requestedMode = pickFirstNonEmpty(entry.redaction_mode, defaults.redaction_mode, 'redacted');
+  const redactionMode = requestedMode === 'sanitized_snippets' ? requestedMode : 'redacted';
+  const message = redactText(rawMessage, redactionOptions);
+  const data = redactLogValue(rawData, redactionOptions);
+  const redactedDetails = redactLogValue(details, redactionOptions);
   const normalized = {
     ts,
     level,
@@ -123,12 +139,12 @@ function normalizeLogEntry(entry = {}, defaults = {}) {
     component,
     event,
     message,
-    trace_id: pickFirstNonEmpty(entry.trace_id, details.trace_id, defaults.trace_id),
-    request_id: pickFirstNonEmpty(entry.request_id, details.request_id, defaults.request_id),
-    session_id: pickFirstNonEmpty(entry.session_id, details.session_id, details.sessionId, defaults.session_id),
-    tool_call_id: pickFirstNonEmpty(entry.tool_call_id, details.tool_call_id, details.call_id, details.callId, defaults.tool_call_id),
-    approval_id: pickFirstNonEmpty(entry.approval_id, details.approval_id, defaults.approval_id),
-    rpc_id: pickFirstNonEmpty(entry.rpc_id, details.rpc_id, defaults.rpc_id),
+    trace_id: normalizeLogIdentifier(pickFirstPresent(entry.trace_id, details.trace_id, defaults.trace_id), redactionOptions),
+    request_id: normalizeLogIdentifier(pickFirstPresent(entry.request_id, details.request_id, defaults.request_id), redactionOptions),
+    session_id: normalizeLogIdentifier(pickFirstPresent(entry.session_id, details.session_id, details.sessionId, defaults.session_id), redactionOptions),
+    tool_call_id: normalizeLogIdentifier(pickFirstPresent(entry.tool_call_id, details.tool_call_id, details.call_id, details.callId, defaults.tool_call_id), redactionOptions),
+    approval_id: toIdOrNull(pickFirstPresent(entry.approval_id, details.approval_id, defaults.approval_id), redactionOptions),
+    rpc_id: toIdOrNull(pickFirstPresent(entry.rpc_id, details.rpc_id, defaults.rpc_id), redactionOptions),
     status,
     duration_ms: durationMs,
     data,
@@ -142,14 +158,10 @@ function normalizeLogEntry(entry = {}, defaults = {}) {
     message: data.message || redactedDetails.message || message,
     status: data.status || redactedDetails.status || status,
   };
-  if (entry.id) {
-    normalized.id = String(entry.id);
+  for (const key of ['agent_id', 'stream_id', 'id', 'entry_id', 'origin_entry_id', 'run_id']) {
+    const value = normalizeLogIdentifier(pickFirstPresent(entry[key], details[key], defaults[key]), redactionOptions);
+    if (value) normalized[key] = value;
   }
-  if (entry.entry_id) {
-    normalized.entry_id = String(entry.entry_id);
-  }
-  if (entry.origin_entry_id) normalized.origin_entry_id = String(entry.origin_entry_id);
-  if (entry.run_id) normalized.run_id = String(entry.run_id);
   if (Number.isFinite(Number(entry.sequence))) normalized.sequence = Number(entry.sequence);
   return normalized;
 }
@@ -169,6 +181,8 @@ function toPersistedMainLog(level, entry = {}) {
     request_id: entry.request_id,
     session_id: entry.session_id,
     tool_call_id: entry.tool_call_id,
+    agent_id: entry.agent_id,
+    stream_id: entry.stream_id,
     approval_id: entry.approval_id,
     rpc_id: entry.rpc_id,
     redaction_mode: entry.redaction_mode,

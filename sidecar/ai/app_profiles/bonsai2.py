@@ -44,12 +44,8 @@ BONSAI2_PROFILE: AppProfile = AppProfile(
             name="27b",
             aliases=("27b", "bonsai-2-27b"),
             label="Bonsai 2 27B",
-            param_billions=27.0,
-            active_param_billions=27.0,
             native_context_length=262_144,
             is_moe=False,
-            family_supports_vision=True,
-            family_supports_audio=False,
             behavior=RequestBehavior(
                 # Only PrismML's llama.cpp fork loads the ternary GGUF.
                 engine_types=("openai-compatible",),

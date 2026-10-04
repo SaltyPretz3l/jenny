@@ -20,6 +20,7 @@ from sidecar.ai.routing.tool_resource_deferral import ToolResourceDeferred, Tool
 from sidecar.ai.tools.builtins import temp_script
 from sidecar.ai.tools.contracts import ToolExecutionFailure
 from sidecar.ai.tools.workspace import WorkspaceGuard
+from sidecar.runtime.chat_models import TerminalChatStateError
 
 _BUILTIN = "jenny_builtin"
 _ELECTRON = "electron_tool_bridge"
@@ -285,15 +286,15 @@ def test_builtin_rejection_releases_only_with_explicit_pre_dispatch_proof(
 
 def test_oversized_builtin_read_error_releases_resource_after_server_reply(tmp_path) -> None:
     (tmp_path / "large.md").write_text("x" * 200_001, encoding="utf-8")
-    response = builtin_server._handle_tools_call(  # noqa: SLF001
+    response = builtin_server._handle_tools_call(
         "call_1", builtin_server._default_tools(), WorkspaceGuard(str(tmp_path)),
         {"name": "read_file", "arguments": {"path": "large.md"}},
     )
     assert "200000 byte limit" in response["error"]["message"]
     transport = object.__new__(StdioMCPTransport)
-    transport._config = MCPServerConfig(name=_BUILTIN, transport="stdio", command="unused")  # noqa: SLF001
+    transport._config = MCPServerConfig(name=_BUILTIN, transport="stdio", command="unused")
     with pytest.raises(MCPError) as caught:
-        transport._raise_for_error(response)  # noqa: SLF001
+        transport._raise_for_error(response)
     events: list[Any] = []
     with pytest.raises(MCPError):
         _dispatch(events=events, admission=_Admission(events), result=caught.value)
@@ -305,16 +306,16 @@ def test_failed_git_process_releases_resource_with_its_cleanup_verdict(tmp_path)
     # 2026-09-18: git_log on a repository with no commits exits non-zero. The
     # process is gone, but the error reply carried no cleanup verdict, so the
     # git resource stayed quarantined and the turn's next call waited on it.
-    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)  # noqa: S603, S607
-    response = builtin_server._handle_tools_call(  # noqa: SLF001
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    response = builtin_server._handle_tools_call(
         "call_1", builtin_server._default_tools(), WorkspaceGuard(str(tmp_path)),
         {"name": "git_log", "arguments": {"max_count": 5}},
     )
     assert response["error"]["data"]["resource_cleanup"]["cleanup"] == "confirmed"
     transport = object.__new__(StdioMCPTransport)
-    transport._config = MCPServerConfig(name=_BUILTIN, transport="stdio", command="unused")  # noqa: SLF001
+    transport._config = MCPServerConfig(name=_BUILTIN, transport="stdio", command="unused")
     with pytest.raises(MCPError) as caught:
-        transport._raise_for_error(response)  # noqa: SLF001
+        transport._raise_for_error(response)
     events: list[Any] = []
     with pytest.raises(MCPError):
         _dispatch(events=events, admission=_Admission(events), result=caught.value,
@@ -322,14 +323,25 @@ def test_failed_git_process_releases_resource_with_its_cleanup_verdict(tmp_path)
     assert events[-1] == ("settle", "failed", "confirmed")
 
 
-@pytest.mark.parametrize("evidence", [
-    None,
-    {"cleanup": "uncertain", "process_tree_terminated": True,
-     "output_readers_terminated": False, "reason": "child_cleanup_pending"},
-    {"cleanup": "confirmed", "process_tree_terminated": True,
-     "output_readers_terminated": False, "reason": None},
-    {"cleanup": "confirmed"},
-])
+@pytest.mark.parametrize(
+    "evidence",
+    [
+        None,
+        {
+            "cleanup": "uncertain",
+            "process_tree_terminated": True,
+            "output_readers_terminated": False,
+            "reason": "child_cleanup_pending",
+        },
+        {
+            "cleanup": "confirmed",
+            "process_tree_terminated": True,
+            "output_readers_terminated": False,
+            "reason": None,
+        },
+        {"cleanup": "confirmed"},
+    ],
+)
 def test_failed_process_reply_without_confirmed_verdict_stays_quarantined(evidence: Any) -> None:
     error = MCPError(code="CMP-TOOL-0006", message="failed", response_received=True,
                      resource_cleanup=evidence)
@@ -353,7 +365,10 @@ def test_process_verdict_without_a_server_reply_is_not_evidence() -> None:
 @pytest.mark.parametrize("language", ["powershell", "javascript"])
 @pytest.mark.parametrize("cleanup_fails", [False, True])
 def test_missing_script_interpreter_cleanup_survives_mcp_and_router(
-    tmp_path, monkeypatch, language: str, cleanup_fails: bool,
+    tmp_path,
+    monkeypatch,
+    language: str,
+    cleanup_fails: bool,
 ) -> None:
     temp_root = tmp_path / "owned-temp"
     temp_root.mkdir()
@@ -362,16 +377,21 @@ def test_missing_script_interpreter_cleanup_survives_mcp_and_router(
     (workspace / "marker.txt").write_text("still-readable", encoding="utf-8")
     monkeypatch.setattr(temp_script, "_create_temp_root", lambda: temp_root)
     monkeypatch.setattr(temp_script.shutil, "which", lambda _name: None)
+
     def unexpected_launch(*_args, **_kwargs):
         pytest.fail("missing interpreter must not launch a process")
+
     monkeypatch.setattr(temp_script, "run_command_tool", unexpected_launch)
     if cleanup_fails:
         monkeypatch.setattr(temp_script, "_cleanup_temp_root", lambda _root: "PermissionError")
-    tools = builtin_server._default_tools(shell_enabled=True)  # noqa: SLF001
+    tools = builtin_server._default_tools({"tools_shell_enabled": True})
     guard = WorkspaceGuard(str(workspace))
     arguments = {"script": "echo audit", "language": language}
-    response = builtin_server._handle_tools_call(  # noqa: SLF001
-        "call_1", tools, guard, {"name": "run_temp_script", "arguments": arguments},
+    response = builtin_server._handle_tools_call(
+        "call_1",
+        tools,
+        guard,
+        {"name": "run_temp_script", "arguments": arguments},
     )
     assert "error" not in response
     result = MCPToolResult(tool_name="run_temp_script", **extract_tool_output(response["result"]))
@@ -381,12 +401,20 @@ def test_missing_script_interpreter_cleanup_survives_mcp_and_router(
     assert temp_root.exists() is cleanup_fails
     events: list[Any] = []
     admission = _Admission(events)
-    _dispatch(events=events, admission=admission, result=result,
-              tool_name="run_temp_script", arguments=arguments)
+    _dispatch(
+        events=events,
+        admission=admission,
+        result=result,
+        tool_name="run_temp_script",
+        arguments=arguments,
+    )
     assert events[-1] == ("settle", "failed", "uncertain" if cleanup_fails else "confirmed")
     if not cleanup_fails:
-        read_response = builtin_server._handle_tools_call(  # noqa: SLF001
-            "call_2", tools, guard, {"name": "read_file", "arguments": {"path": "marker.txt"}},
+        read_response = builtin_server._handle_tools_call(
+            "call_2",
+            tools,
+            guard,
+            {"name": "read_file", "arguments": {"path": "marker.txt"}},
         )
         read = MCPToolResult(tool_name="read_file", **extract_tool_output(read_response["result"]))
         assert _dispatch(events=events, admission=admission, result=read).output == "still-readable"
@@ -406,29 +434,62 @@ def test_error_reply_cleanup_does_not_prove_process_or_transport_cleanup(
     assert events[-1] == ("settle", "failed", expected)
 
 
-def test_background_start_and_failed_process_result_preserve_cleanup_uncertainty() -> None:
+def test_registered_background_job_hands_its_workspace_lease_off() -> None:
+    """Owner decision 2026-09-28 (dogfood HB-008): a finished 59 ms smoke job
+    kept the workspace quarantined and every later tool call in the turn was
+    rejected. A start receipt with the job id and spawned pid hands the process
+    to the background-job registry and releases the call's lease."""
     events: list[Any] = []
-    result = MCPToolResult(
-        tool_name="run_command",
-        output="started",
-        success=True,
-        metadata={"resource_cleanup": {
-            "cleanup": "confirmed",
-            "process_tree_terminated": True,
-            "output_readers_terminated": True,
-            "reason": None,
-        }},
-    )
     _dispatch(
         events=events,
         admission=_Admission(events),
-        result=result,
+        result=MCPToolResult(tool_name="run_command", output="started", success=True,
+                             metadata={"background_job_id": "0123456789ab",
+                                       "background_job_pid": 4242}),
         tool_name="run_command",
         arguments={"command": "server", "run_in_background": True},
     )
-    assert events[-1] == ("settle", "succeeded", "uncertain")
+    assert events[-1] == ("settle", "succeeded", "confirmed")
 
-    events = []
+
+@pytest.mark.parametrize(
+    ("success", "metadata"),
+    [
+        (
+            True,
+            {
+                "resource_cleanup": {
+                    "cleanup": "confirmed",
+                    "process_tree_terminated": True,
+                    "output_readers_terminated": True,
+                    "reason": None,
+                }
+            },
+        ),
+        (True, {"background_job_id": "0123456789ab"}),
+        (True, {"background_job_id": "../escape", "background_job_pid": 4242}),
+        (True, {"background_job_id": "0123456789ab", "background_job_pid": 0}),
+        (True, {"background_job_id": "0123456789ab", "background_job_pid": True}),
+        (False, {"background_job_id": "0123456789ab", "background_job_pid": 4242}),
+    ],
+)
+def test_background_start_without_a_registration_receipt_stays_uncertain(
+    success: bool, metadata: dict[str, Any],
+) -> None:
+    events: list[Any] = []
+    _dispatch(
+        events=events,
+        admission=_Admission(events),
+        result=MCPToolResult(tool_name="run_command", output="started", success=success,
+                             metadata=metadata),
+        tool_name="run_command",
+        arguments={"command": "server", "run_in_background": True},
+    )
+    assert events[-1] == ("settle", "succeeded" if success else "failed", "uncertain")
+
+
+def test_failed_process_result_preserves_cleanup_uncertainty() -> None:
+    events: list[Any] = []
     _dispatch(
         events=events,
         admission=_Admission(events),
@@ -520,4 +581,91 @@ def test_lost_transport_reply_on_process_builtin_stays_quarantined() -> None:
             events=events, admission=_Admission(events), result=error,
             tool_name="run_command", arguments={"command": "echo hi"},
         )
+    assert events[-1] == ("settle", "failed", "uncertain")
+
+
+_ABORTED_COMMAND_REPLY = {
+    "id": 1,
+    "error": {
+        "message": "aborted",
+        "data": {
+            "code": "CMP-TOOL-0041",
+            "resource_cleanup": {
+                "cleanup": "confirmed",
+                "process_tree_terminated": True,
+                "output_readers_terminated": True,
+                "reason": None,
+            },
+        },
+    },
+}
+
+
+def _cancelled_reply_error(reply: dict[str, Any]) -> BaseException:
+    """What the stdio transport raises when ``reply`` wins a cancel race."""
+    transport = object.__new__(StdioMCPTransport)
+    transport._config = MCPServerConfig(name=_BUILTIN, transport="stdio", command="unused")
+    transport._take_next_response = lambda *_args, **_kwargs: reply  # type: ignore[method-assign]
+    transport._handle_out_of_band_response = (  # type: ignore[method-assign]
+        lambda *_args, **_kwargs: False
+    )
+    pending = SimpleNamespace(
+        cancel_handle=SimpleNamespace(cancelled=True), request_id=1, method="tools/call",
+        on_output_chunk=None,
+    )
+    with pytest.raises(TerminalChatStateError) as caught:
+        transport._await_cancel_race_result(pending, deadline=0.0)  # type: ignore[arg-type]
+    return caught.value
+
+
+def test_cancelled_command_keeps_the_servers_kill_verdict_and_releases_its_lease() -> None:
+    # Dogfood HB-034: Stop during a running run_command. The builtin server
+    # killed the tree and said so, but the cancel path replaced its reply with
+    # a bare cancellation, the lease stayed quarantined, and every later tool
+    # call on the workspace waited on it until the app was relaunched.
+    cancelled_error = _cancelled_reply_error(_ABORTED_COMMAND_REPLY)
+    assert isinstance(cancelled_error.__cause__, MCPError)
+    assert cancelled_error.__cause__.resource_cleanup["cleanup"] == "confirmed"
+
+    events: list[Any] = []
+    with pytest.raises(TerminalChatStateError):
+        _dispatch(events=events, admission=_Admission(events), result=cancelled_error,
+                  tool_name="run_command", arguments={"command": "ping"}, cancelled=True)
+    assert events[-1] == ("settle", "cancelled", "confirmed")
+
+
+@pytest.mark.parametrize(
+    "cleanup",
+    [
+        None,
+        {
+            "cleanup": "uncertain",
+            "process_tree_terminated": False,
+            "output_readers_terminated": True,
+            "reason": "child_cleanup_pending",
+        },
+    ],
+)
+def test_cancelled_command_without_a_confirmed_kill_stays_quarantined(cleanup: Any) -> None:
+    reply = {"id": 1, "error": {"message": "aborted", "data": {"code": "CMP-TOOL-0041"}}}
+    if cleanup is not None:
+        reply["error"]["data"]["resource_cleanup"] = cleanup
+    events: list[Any] = []
+    with pytest.raises(TerminalChatStateError):
+        _dispatch(events=events, admission=_Admission(events),
+                  result=_cancelled_reply_error(reply),
+                  tool_name="run_command", arguments={"command": "ping"}, cancelled=True)
+    assert events[-1] == ("settle", "cancelled", "uncertain")
+
+
+def test_a_reply_as_cause_is_not_evidence_unless_the_call_was_cancelled() -> None:
+    error = RuntimeError("wrapped")
+    error.__cause__ = MCPError(
+        code="CMP-TOOL-0041", message="aborted", response_received=True,
+        resource_cleanup=_ABORTED_COMMAND_REPLY["error"]["data"]["resource_cleanup"],
+    )
+    events: list[Any] = []
+    with pytest.raises(RuntimeError):
+        _dispatch(events=events, admission=_Admission(events), result=error,
+                  tool_name="run_command", arguments={"command": "ping"})
     assert events[-1] == ("settle", "failed", "uncertain")

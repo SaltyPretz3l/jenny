@@ -185,7 +185,7 @@ def probe_dependency_wait(
     ):
         return
     # The mixed dataclass extends this module; import at the request edge.
-    from sidecar.ai.routing.tool_mixed_dependency_wait import (  # noqa: PLC0415
+    from sidecar.ai.routing.tool_mixed_dependency_wait import (
         build_mixed_dependency,
         mixed_dependency_state,
     )

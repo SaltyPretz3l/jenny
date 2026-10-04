@@ -35,6 +35,8 @@ _ENV_PASSTHROUGH_KEYS = (
     # and the optional PDF add-on root used by the builtin server.
     "JENNY_ENABLE_PDF_OCR",
     "JENNY_ENABLE_PDF_OCR_RAPID",
+    # Kill switch for the shell tools' workspace_changed probe (TR-015).
+    "JENNY_ENABLE_SHELL_CHANGE_EVIDENCE",
     "JENNY_PDF_OCR_SITE_DIR",
     "JENNY_SIDECAR_MEDIA_SITE_DIR",
     "JENNY_SIDECAR_PDF_ADDON_DIR",
@@ -264,6 +266,7 @@ class MCPProcessContainment:
     def __init__(self, config: MCPServerConfig) -> None:
         self._config = config
         self._job: JobObject | None = None
+        self._process_group_id: int | None = None
         self._cpu_stop = threading.Event()
         self._cpu_thread: threading.Thread | None = None
 
@@ -284,6 +287,7 @@ class MCPProcessContainment:
 
     def after_spawn(self, process: subprocess.Popen[str]) -> None:
         if not _is_windows():
+            self._process_group_id = int(process.pid)
             return
         job = JobObject(
             memory_limit_mb=self._config.memory_limit_mb,
@@ -321,12 +325,11 @@ class MCPProcessContainment:
         if self._job is not None:
             self._job.close()
             self._job = None
-        if process.poll() is not None:
-            return
-        if _is_posix():
+        if _is_posix() and self._process_group_id is not None:
             self._terminate_posix_group(process)
             return
-        self._terminate_process(process)
+        if process.poll() is None:
+            self._terminate_process(process)
 
     def close(self) -> None:
         self._cpu_stop.set()
@@ -347,19 +350,30 @@ class MCPProcessContainment:
                 stop_process()
                 process.wait(timeout=_PROCESS_EXIT_TIMEOUT_SECONDS)
                 return
-            except Exception:
+            except Exception:  # noqa: BLE001  # teardown
                 continue
 
     def _signal_posix_group(self, process: subprocess.Popen[str], sig: int) -> bool:
         killpg = getattr(os, "killpg", None)
         if not callable(killpg):
             return False
-        try:
-            killpg(int(process.pid), sig)
-            process.wait(timeout=_PROCESS_EXIT_TIMEOUT_SECONDS)
-        except Exception:
+        group_id = self._process_group_id
+        if group_id is None:
             return False
-        return True
+        deadline = time.monotonic() + _PROCESS_EXIT_TIMEOUT_SECONDS
+        try:
+            killpg(group_id, sig)
+            while True:
+                process.poll()  # Reap the leader; group existence is checked independently.
+                killpg(group_id, 0)
+                if time.monotonic() >= deadline:
+                    return False
+                time.sleep(0.01)
+        except ProcessLookupError:
+            self._process_group_id = None
+            return True
+        except OSError:
+            return False
 
     def _watch_cpu_usage(
         self,

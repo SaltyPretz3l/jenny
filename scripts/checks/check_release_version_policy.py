@@ -33,9 +33,6 @@ PRELOAD_BUILD_MARKERS = (
     "npm run pack:",
     "npm run release:windows",
 )
-NATIVE_RELEASE_BUILD_COMMANDS = {
-    "build:restricted-host:release", "build:full-host-supervisor:release",
-}
 
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
@@ -44,29 +41,17 @@ from scripts.checks.release_contract_versions import validate_contract_versions 
 
 REQUIRED_SCRIPTS = {
     "build:sidecar": "python scripts/packaging/build_sidecar_artifact.py",
-    "build:restricted-host": "python scripts/packaging/build_restricted_host_artifact.py",
-    "build:restricted-host:release": (
-        "python scripts/packaging/build_restricted_host_artifact.py --release"
-    ),
-    "build:full-host-supervisor": (
-        "python scripts/packaging/build_full_host_supervisor_artifact.py"
-    ),
-    "build:full-host-supervisor:release": (
-        "python scripts/packaging/build_full_host_supervisor_artifact.py --release"
-    ),
     "pack:dir": (
         "npm run build:preload && npm run check:python-runtime-bundle && "
         "npm run check:media-site && "
-        "npm run build:sidecar && npm run build:restricted-host && "
-        "npm run build:full-host-supervisor && npm run sbom:sidecar && "
+        "npm run build:sidecar && npm run sbom:sidecar && "
         "npm exec -- electron-builder --dir "
         "--config electron-builder.yml --publish never"
     ),
     "pack:release": (
         "npm run build:preload:force && npm run check:python-runtime-bundle && "
         "npm run check:media-site && "
-        "npm run build:sidecar && npm run build:restricted-host:release && "
-        "npm run build:full-host-supervisor:release && npm run sbom:sidecar && "
+        "npm run build:sidecar && npm run sbom:sidecar && "
         "npm exec -- electron-builder "
         "--config electron-builder.yml --publish never"
     ),
@@ -80,8 +65,7 @@ REQUIRED_SCRIPTS = {
     "release:windows": (
         "npm run build:preload:force && npm run check:python-runtime-bundle && "
         "npm run check:media-site && "
-        "npm run build:sidecar && npm run build:restricted-host:release && "
-        "npm run build:full-host-supervisor:release && npm run sbom:sidecar && "
+        "npm run build:sidecar && npm run sbom:sidecar && "
         "npm exec -- electron-builder --win "
         "--config electron-builder.yml --publish never"
     ),
@@ -297,11 +281,6 @@ def _validate_public_release_safety(workflow: dict[str, object]) -> list[str]:
         violations.extend(_validate_prepare_dependency(job, name))
         verified = False
         linux_verified = False
-        upload_platforms = set().union(*(
-            _upload_platforms(str(step.get("run") or ""), job) for step in steps
-            if "release_assets.py upload" in str(step.get("run") or "")
-        ))
-        native_builds = set()
         for step in steps:
             run = str(step.get("run") or "")
             guard = f"{job.get('if', '')} {step.get('if', '')}"
@@ -310,15 +289,6 @@ def _validate_public_release_safety(workflow: dict[str, object]) -> list[str]:
             ))
             if "electron-builder" in run and not _has_cli_option(run, "--publish", "never"):
                 violations.append("release.yml must build with --publish never before verification")
-            if ("mac" in upload_platforms and "electron-builder" in run
-                    and native_builds != NATIVE_RELEASE_BUILD_COMMANDS):
-                violations.append(
-                    "release.yml must build both native plugin hosts before packaging"
-                )
-            if step.get("continue-on-error") is not True and not step.get("if"):
-                for command in NATIVE_RELEASE_BUILD_COMMANDS:
-                    if f"npm run {command}" in run:
-                        native_builds.add(command)
             if ("scripts/packaging/smoke_packaged_flow.py" in run
                     and _has_cli_option(run, "--existing-artifacts")
                     and _has_cli_option(run, "--composition", "release")

@@ -188,17 +188,6 @@ test('a refresh returning null is saved-but-deferred, not a rollback', async () 
   assert.equal(applied.details.reason, 'deferred');
 });
 
-test('a deferred reset still clears the overrides', async () => {
-  const { service, shellConfigService } = createService({
-    initial: { maxToolsPerTurn: 7, cloudMaxToolsPerTurn: 150 },
-    backend: { refresh: async () => null },
-  });
-  const result = await service.reset({});
-  assert.equal(result.status, 'applied');
-  assert.equal(result.reason, 'deferred');
-  assert.deepEqual(shellConfigService.getEngineTuning(), {});
-});
-
 test('a refresh that rejects still rolls back', async () => {
   // The deferred path is ONLY for a null result; a thrown refresh means the
   // running sidecar refused the config, which must still restore the previous value.
@@ -211,17 +200,22 @@ test('a refresh that rejects still rolls back', async () => {
   assert.equal(shellConfigService.getEngineTuning().maxToolsPerTurn, 9);
 });
 
-test('reset clears every override with one write and one refresh', async () => {
-  // Resetting field-by-field would reinitialise the sidecar once per field.
-  const { service, shellConfigService, backendService } = createService({
-    initial: { maxToolsPerTurn: 7, maxSubAgentConcurrency: 4, cloudMaxToolsPerTurn: 150 },
+// Resetting field-by-field would reinitialise the sidecar once per field. With no sidecar
+// up the refresh resolves null: the write still stands and the result says it is deferred.
+for (const [when, backend, deferred] of [['with the runtime up', undefined, false], ['with no sidecar running', { refresh: async () => null }, true]]) {
+  test(`reset clears every override with one write and one refresh, ${when}`, async () => {
+    const { service, shellConfigService, backendService } = createService({
+      initial: { maxToolsPerTurn: 7, maxSubAgentConcurrency: 4, cloudMaxToolsPerTurn: 150 }, backend,
+    });
+    const result = await service.reset({});
+    assert.equal(result.status, 'applied');
+    assert.equal(result.reason === 'deferred', deferred);
+    assert.deepEqual(result.state.values, {});
+    assert.deepEqual(shellConfigService.getEngineTuning(), {});
+    assert.equal(shellConfigService.writes, 1, 'exactly one config write');
+    assert.deepEqual(backendService.refreshCalls, ['engine_tuning_reset']);
   });
-  const result = await service.reset({});
-  assert.equal(result.status, 'applied');
-  assert.deepEqual(result.state.values, {});
-  assert.equal(shellConfigService.writes, 1, 'exactly one config write');
-  assert.deepEqual(backendService.refreshCalls, ['engine_tuning_reset']);
-});
+}
 
 test('reset scoped to a pane spares the other pane', async () => {
   const { service } = createService({
@@ -345,4 +339,22 @@ test('a failed reset rolls back with ONE config write, not one per override', as
   });
   // one write for the reset itself + one write for the whole rollback patch
   assert.equal(shellConfigService.writes - before, 2);
+});
+
+test('a page reset keeps the stored spend cap', async () => {
+  const { service } = createService({ initial: { maxToolsPerTurn: 7, maxBudgetUsd: 5 } });
+  const result = await service.reset({});
+  assert.equal(result.status, 'applied');
+  assert.deepEqual(result.state.values, { maxBudgetUsd: 5 });
+});
+
+test('a retired key takes no new value', async () => {
+  const { service, shellConfigService, backendService } = createService();
+  for (const key of ['maxLoopIterations', 'tokenBudgetReservedForSummary', 'tokenBudgetToolOverhead', 'tokenBudgetAutoCompactRatio']) {
+    const result = await service.update({ key, value: key === 'tokenBudgetAutoCompactRatio' ? 0.8 : 16 });
+    assert.equal(result.status, 'rejected', key);
+    assert.equal(result.reason, 'invalid_field', key);
+  }
+  assert.equal(shellConfigService.writes, 0);
+  assert.deepEqual(backendService.refreshCalls, []);
 });

@@ -120,6 +120,7 @@ test('no managed input preserves the projection with neutral engine and accelera
       selectedEngine: 'ollama',
       mtp: { eligible: false, enabled: false, headroomMb: 0 },
       serving: false,
+      servingPaused: false,
       servingPort: 0,
       customBuild: 0,
       libraryGguf: false,

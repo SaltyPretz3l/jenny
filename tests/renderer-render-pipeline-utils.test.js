@@ -209,6 +209,20 @@ test('render pipeline handles an empty transcript during bootstrap', () => {
   assert.equal(dom.window.document.getElementById('timeline').innerHTML, '');
 });
 
+test('CTR-008: an empty-transcript commit releases detached lazy-Mermaid targets without waiting for another scan', () => {
+  const dom = createRenderDom();
+  const { pipeline, dom: harnessDom } = createPipelineHarness({ dom });
+  const previous = globalThis.markdownUtils;
+  let prunes = 0;
+  globalThis.markdownUtils = { ...(previous || {}), pruneDetachedMermaidObservations() { prunes += 1; } };
+  try {
+    withWindowGlobals(harnessDom, () => pipeline.renderMessages({ forceFullRender: true }));
+  } finally {
+    globalThis.markdownUtils = previous;
+  }
+  assert.equal(prunes, 1);
+});
+
 test('F7: render pipeline emits non-entry time dividers for long timestamp gaps', () => {
   const dom = createRenderDom();
   const visibleMessages = [

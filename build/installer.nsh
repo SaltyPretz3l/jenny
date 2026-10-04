@@ -52,6 +52,18 @@
 !macro customUnInstall
   StrCmp $JennyRemovalMode "cleanup" 0 done
   StrCpy $JennyCleanupIncomplete "0"
+  ; A junction or symlink at the profile root would redirect every deletion
+  ; below into its target. GetFileAttributesW returns -1 when the attributes
+  ; cannot be read, and -1 & 0x400 is non-zero, so an unreadable root fails
+  ; closed through the same test.
+  IfFileExists "$APPDATA\jenny" 0 jenny_root_clear
+  System::Call 'kernel32::GetFileAttributesW(t "$APPDATA\jenny") i .r0'
+  IntOp $1 $0 & 0x400
+  StrCmp $1 "0" jenny_root_clear
+  MessageBox MB_OK|MB_ICONEXCLAMATION "Jenny left $APPDATA\jenny in place because the profile folder is a link or could not be inspected. Nothing inside it was removed."
+  SetErrorLevel 24
+  Goto done
+  jenny_root_clear:
   !insertmacro RemoveJennyProfileChild ".jenny"
   !insertmacro RemoveJennyProfileChild "attachments"
   !insertmacro RemoveJennyProfileChild "backend-sidecar"
@@ -71,9 +83,16 @@
   !insertmacro RemoveJennyProfileChild "diagnostics"
   !insertmacro RemoveJennyProfileChild "Dictionary"
   !insertmacro RemoveJennyProfileChild "disabled-startup-shortcuts"
+  !insertmacro RemoveJennyProfileChild "engines"
   !insertmacro RemoveJennyProfileChild "GPUCache"
   !insertmacro RemoveJennyProfileChild "GrShaderCache"
+  !insertmacro RemoveJennyProfileChild "home-ai-journal.json"
   !insertmacro RemoveJennyProfileChild "home-calendar.json"
+  !insertmacro RemoveJennyProfileChild "image-engine-scratch"
+  !insertmacro RemoveJennyProfileChild "image-engine.pid"
+  !insertmacro RemoveJennyProfileChild "image-engine.pid.tmp"
+  !insertmacro RemoveJennyProfileChild "image-models.json"
+  !insertmacro RemoveJennyProfileChild "image-models.json.part"
   !insertmacro RemoveJennyProfileChild "IndexedDB"
   !insertmacro RemoveJennyProfileChild "knowledge.json"
   !insertmacro RemoveJennyProfileChild "llama-server.pid"
@@ -85,10 +104,12 @@
   !insertmacro RemoveJennyProfileChild "model-recommendation-catalog.json.meta.json"
   !insertmacro RemoveJennyProfileChild "Network"
   !insertmacro RemoveJennyProfileChild "Network Persistent State"
+  !insertmacro RemoveJennyProfileChild "ollama-catalog.json"
   !insertmacro RemoveJennyProfileChild "ollama-process.json"
   !insertmacro RemoveJennyProfileChild "personality"
   !insertmacro RemoveJennyProfileChild "plugins"
   !insertmacro RemoveJennyProfileChild "Preferences"
+  !insertmacro RemoveJennyProfileChild "project-delete-operations.json"
   !insertmacro RemoveJennyProfileChild "projects.json"
   !insertmacro RemoveJennyProfileChild "session-runtime"
   !insertmacro RemoveJennyProfileChild "session-runtime-budgets"
@@ -110,6 +131,7 @@
   !insertmacro RemoveJennyProfileChild "SingletonLock"
   !insertmacro RemoveJennyProfileChild "SingletonSocket"
   !insertmacro RemoveJennyProfileChild "terminal-repairs.json"
+  !insertmacro RemoveJennyProfileChild "todo-lists"
   !insertmacro RemoveJennyProfileChild "tool-permissions.json"
   !insertmacro RemoveJennyProfileChild "TransportSecurity"
   !insertmacro RemoveJennyProfileChild "Trust Tokens"

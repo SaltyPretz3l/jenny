@@ -350,33 +350,73 @@
   }
 
   // Settings > Tools: name the project the Workspace folder provisioned (the
-  // folder IS the project, Projects v2). One projects.list read per 15 s per
-  // folder: a new folder re-reads at once, since its commit may just have
-  // provisioned the project (F33). A stale completion for a different root
-  // is dropped.
-  let toolsProjectCache = { at: 0, projects: [], generation: 0, key: '' };
+  // folder IS the project, Projects v2). No timer cache (D21): the list comes
+  // from the project switcher's `jenny:projects-changed` event (detail
+  // {projects}, the renderer's one project cache), which repaints the line.
+  // Only a folder the known list does not name is read once (its commit may
+  // just have provisioned the project, F33); a stale completion is dropped.
+  const toolsProject = { projects: null, readKey: '', generation: 0, node: null, rootPath: '', rootState: '', windowRef: null };
+  function toolsFolderKey(value) {
+    return String(value || '').trim().replace(/[\\/]+/g, '/').replace(/\/+$/, '').toLowerCase();
+  }
+  function toolsProjectFolder(project) {
+    if (typeof project.root_path === 'string') return project.root_path;
+    return typeof project.rootPath === 'string' ? project.rootPath : '';
+  }
+  function toolsProjectCurrentFlag(project) {
+    if (typeof project.is_current === 'boolean') return project.is_current;
+    return typeof project.isCurrent === 'boolean' ? project.isCurrent : null;
+  }
+  function toolsProjectFor(projects, key) {
+    const list = Array.isArray(projects) ? projects.filter((project) => project && typeof project === 'object') : [];
+    // Main's realpath-aware answer (is_current) wins when the rows carry it.
+    if (list.some((project) => toolsProjectCurrentFlag(project) !== null)) {
+      return list.find((project) => toolsProjectCurrentFlag(project) === true) || null;
+    }
+    return list.find((project) => toolsProjectFolder(project) && toolsFolderKey(toolsProjectFolder(project)) === key) || null;
+  }
+  function handleToolsProjectsChanged(event) {
+    const list = event && event.detail && Array.isArray(event.detail.projects) ? event.detail.projects : null;
+    toolsProject.generation += 1; // an in-flight read is older than this news
+    toolsProject.projects = list && list.length ? list : null;
+    toolsProject.readKey = '';
+    if (toolsProject.node) paintToolsWorkspaceProject(toolsProject.node, toolsProject.rootPath, toolsProject.rootState);
+  }
+  function subscribeToolsProjects(windowRef) {
+    if (!windowRef || typeof windowRef.addEventListener !== 'function' || toolsProject.windowRef === windowRef) return;
+    if (toolsProject.windowRef && typeof toolsProject.windowRef.removeEventListener === 'function') {
+      toolsProject.windowRef.removeEventListener('jenny:projects-changed', handleToolsProjectsChanged);
+    }
+    toolsProject.windowRef = windowRef;
+    windowRef.addEventListener('jenny:projects-changed', handleToolsProjectsChanged);
+  }
   function paintToolsWorkspaceProject(node, rootPath, rootState) {
     if (!node) return;
     const path = String(rootPath || '').trim();
+    Object.assign(toolsProject, { node, rootPath: path, rootState });
+    const windowRef = typeof window !== 'undefined' ? window : null;
+    subscribeToolsProjects(windowRef);
     if (!path || rootState !== 'ready') { node.hidden = true; node.textContent = ''; return; }
-    const key = path.replace(/[\\/]+/g, '/').replace(/\/+$/, '').toLowerCase();
+    const key = toolsFolderKey(path);
     const paint = (projects) => {
-      const match = (projects || []).find((project) => project && typeof project.root_path === 'string'
-        && project.root_path.replace(/[\\/]+/g, '/').replace(/\/+$/, '').toLowerCase() === key);
+      const match = toolsProjectFor(projects, key);
       if (!match) { node.hidden = true; node.textContent = ''; return; }
       node.hidden = false;
       node.textContent = jt('settings.tools.workspaceRoot.project', 'Project: {name} · new chats start here', { name: match.name });
     };
-    const api = (typeof window !== 'undefined' && window.jennyShell?.projects) || null;
+    if (toolsProject.projects && (toolsProjectFor(toolsProject.projects, key) || toolsProject.readKey === key)) {
+      paint(toolsProject.projects);
+      return;
+    }
+    const api = (windowRef && windowRef.jennyShell && windowRef.jennyShell.projects) || null;
     if (!api || typeof api.list !== 'function') { node.hidden = true; return; }
-    const now = Date.now();
-    if (toolsProjectCache.key === key && now - toolsProjectCache.at < 15000) { paint(toolsProjectCache.projects); return; }
-    const generation = ++toolsProjectCache.generation;
+    const generation = ++toolsProject.generation;
     Promise.resolve().then(() => api.list()).then((result) => {
-      if (generation !== toolsProjectCache.generation) return;
-      toolsProjectCache = { at: Date.now(), projects: Array.isArray(result?.projects) ? result.projects : [], generation, key };
-      paint(toolsProjectCache.projects);
-    }).catch(() => { node.hidden = true; });
+      if (generation !== toolsProject.generation) return;
+      toolsProject.projects = Array.isArray(result?.projects) ? result.projects : [];
+      toolsProject.readKey = key;
+      if (toolsProject.node === node && toolsFolderKey(toolsProject.rootPath) === key) paint(toolsProject.projects);
+    }).catch(() => { if (generation === toolsProject.generation) node.hidden = true; });
   }
 
   return {

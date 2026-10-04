@@ -42,7 +42,12 @@
     }
   }
 
-  function shouldAutoExpandReasoningV2(status, { isStreaming = false } = {}) {
+  // Transcript view (renderer-transcript-view-utils.js): 'answers' never opens
+  // a panel, even while streaming (the row is a header-only progress line);
+  // 'everything' opens settled phases too; 'thinking' (default) is the rule below.
+  function shouldAutoExpandReasoningV2(status, { isStreaming = false, transcriptView = '' } = {}) {
+    if (transcriptView === 'answers') return false;
+    if (transcriptView === 'everything') return true;
     if (isStreaming) return true;
     /* Settled reasoning, including errors, collapses because the error card owns the failure story;
        stored user expansion still overrides the default. */
@@ -134,6 +139,11 @@
   // (non-streaming) render never elides, so the full body appears when the
   // step completes.
   const LIVE_WINDOW_CHARS = 32 * 1024;
+  // While the reader has scrolled away from the live edge, the window widens
+  // to this ceiling: the forward-only floor then holds where it was when they
+  // left, so no unit above them is emptied mid-read (HB-024). The 32K window
+  // returns, and the floor jumps forward, once follow re-latches.
+  const LIVE_WINDOW_DETACHED_CHARS = 4 * LIVE_WINDOW_CHARS;
   const LIVE_WINDOW_ELIDED_FINGERPRINT = 'elided';
   const LIVE_WINDOW_NOTE_FINGERPRINT = 'elided-note';
   const LIVE_WINDOW_NOTE_HTML = '<p class="reasoning-row-meta reasoning-live-window-note">' + String(jt('chat.reasoningRow.earlierThinkingAfterCompletion', 'Earlier thinking will show when this step completes.')).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;') + '</p>';
@@ -171,9 +181,30 @@
     return start;
   }
 
+  // Detached reader (HB-024): the floor is frozen by the caller, so the DOM is
+  // bounded from the other end instead: units past `windowChars` of rendered
+  // html from `start` are held back (not emitted) until follow re-latches.
+  // Returns the exclusive end index; at least one unit past `start` renders.
+  function resolveDetachedTailEnd(units, start, windowChars) {
+    const list = Array.isArray(units) ? units : [];
+    const budget = Number(windowChars) > 0 ? Number(windowChars) : LIVE_WINDOW_DETACHED_CHARS;
+    const from = Math.max(0, Math.min(Math.floor(Number(start) || 0), list.length));
+    let kept = 0;
+    let end = from;
+    while (end < list.length) {
+      const length = String(list[end]?.html || '').length;
+      if (end > from && kept + length > budget) break;
+      kept += length;
+      end += 1;
+    }
+    return end;
+  }
+
   return {
     REASONING_STATUS_VALUES,
     LIVE_WINDOW_CHARS,
+    LIVE_WINDOW_DETACHED_CHARS,
+    resolveDetachedTailEnd,
     LIVE_WINDOW_ELIDED_FINGERPRINT,
     LIVE_WINDOW_NOTE_FINGERPRINT,
     LIVE_WINDOW_NOTE_HTML,

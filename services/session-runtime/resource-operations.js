@@ -259,7 +259,8 @@ class ToolResourceOperations {
     }
     let revalidation = null;
     const admission = this.broker.tryAcquire({ ownerId: ownerId(this.identity.requestId, id), resources,
-      includeWaitingResource: this.continuationEnabled,
+      includeWaitingResource: this.continuationEnabled, sessionId: this.identity.sessionId,
+      restartReclaimable: record.externalProducer !== true,
       validate: () => {
         validatePreparation?.();
         try { revalidation = this._policyCheck(params); } catch (_error) { revalidation = null; }

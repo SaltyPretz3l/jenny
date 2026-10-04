@@ -3,6 +3,11 @@
 
 .sidebar-resizer {
   position: relative;
+  /* Its grid track is 0 wide (shell-chrome.css .workspace): the 10px hit area
+     straddles the panel edge and paints nothing, so no gap shows between the
+     expanded panel and the tab band. */
+  z-index: var(--z-raised);
+  margin-inline: calc(var(--sidebar-resizer-width) / -2);
   width: var(--sidebar-resizer-width);
   min-height: 0;
   cursor: col-resize;

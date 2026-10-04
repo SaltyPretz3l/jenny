@@ -12,6 +12,7 @@ const MAX_WORK_RECORD_BYTES = MAX_PENDING_INPUT_BYTES + (64 * 1024);
 const MAX_INDEX_BYTES = 16 * 1024 * 1024;
 const MAX_SUMMARIES = 100_000;
 const MAX_CHECKPOINT_BYTES = 1024 * 1024;
+const PROMPT_PREVIEW_CHARS = 120;
 const ID_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/u;
 const WORK_STATUSES = Object.freeze(new Set([
   'pending', 'paused', 'running', 'completed', 'failed', 'cancelled', 'needs_attention',
@@ -229,6 +230,20 @@ function workSummary(record) {
   });
 }
 
+// FG-007: the one line of the visible prompt a paused or queued row shows, so
+// the person can tell what Resume would send. Only the visible prompt, never the
+// expanded model prompt; code points, so a cut never splits a surrogate pair.
+// It rides only on the work read the renderer asks for: never persisted in the
+// index, logged, or sent to telemetry.
+function workPromptPreview(input) {
+  const visible = isRecord(input) && isRecord(input.request) ? input.request.visiblePrompt : null;
+  if (typeof visible !== 'string') return null;
+  const line = Array.from(visible.replace(/[\s\p{Cc}]+/gu, ' ').trim());
+  if (!line.length) return null;
+  return line.length > PROMPT_PREVIEW_CHARS
+    ? `${line.slice(0, PROMPT_PREVIEW_CHARS - 1).join('')}\u2026` : line.join('');
+}
+
 function validateSummary(value) {
   if (!hasExactKeys(value, SUMMARY_KEYS) || !validId(value.work_id) || !validId(value.turn_id)
     || !validId(value.idempotency_key) || !validId(value.project_id) || !validId(value.session_id)
@@ -342,6 +357,7 @@ module.exports = {
   MAX_PENDING_PROJECT,
   MAX_PENDING_SESSION,
   MAX_WORK_RECORD_BYTES,
+  PROMPT_PREVIEW_CHARS,
   RUNTIME_STORE_SCHEMA_VERSION,
   cloneJson,
   createIndexDocument,
@@ -360,5 +376,6 @@ module.exports = {
   validateIndexDocument,
   validateJournal,
   validateWorkRecord,
+  workPromptPreview,
   workSummary,
 };

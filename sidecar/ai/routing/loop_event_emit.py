@@ -116,7 +116,7 @@ def emit_tool_result(
     """Emit a ``ToolResultEvent`` (and bracketing ``PhaseCompleted/Started`` events)."""
     # Must run before the event's metadata copy below: this notification is
     # the persistence channel the next turn's history re-frame reads from.
-    from sidecar.ai.routing.tool_execution_results import (  # noqa: PLC0415 - preserve lazy routing import
+    from sidecar.ai.routing.tool_execution_results import (  # preserve lazy routing import
         annotate_derived_envelope_fields,
     )
 
@@ -214,7 +214,7 @@ def build_interrupted_tool_outcome(record: dict[str, Any], output: str) -> Any:
     # (router -> tool_call_execution -> loop_event_emit), so a top-level import
     # here fails with a partially-initialized module whenever router is
     # imported first. Verified, not defensive.
-    from sidecar.ai.routing.router import ToolExecutionOutcome  # noqa: PLC0415
+    from sidecar.ai.routing.router import ToolExecutionOutcome
 
     call_id = str(record.get("call_id") or "").strip()
     tool_name = str(record.get("tool_name") or "tool").strip() or "tool"

@@ -11,8 +11,11 @@ const {
   sanitizeApprovalReason,
   sanitizeApprovalPolicyText,
   sanitizeToolInputValue,
-  buildModelReplayToolInputJson,
+  sanitizeToolSummary,
+  buildPersistedToolInputSnapshot,
+  buildInvalidToolArgumentsMessage,
 } = require('../services/backend/tool-loop-input-sanitization');
+const { redactTranscriptPaths } = require('../services/backend/transcript-export-redaction');
 const {
   sanitizeApprovalPolicyPresentation,
 } = require('../services/backend/chat-stream-tool-payload-utils');
@@ -71,86 +74,32 @@ test('tool input sanitization preserves __proto__ and constructor as own JSON fi
   );
 });
 
-test('model replay input rewrites workspace paths before applying persisted sanitization', () => {
-  const workspaceRoot = 'C:\\Users\\me\\ws';
-
-  assert.deepEqual(
-    JSON.parse(buildModelReplayToolInputJson({ path: workspaceRoot }, workspaceRoot)),
-    { path: '.' }
+// HB-012: the persisted transcript presents real paths (timeline and model
+// history); only secrets are redacted at persist time.
+test('transcript sanitizers keep real paths and still redact secrets', () => {
+  const python = 'D:\\Work\\bank_recon\\.venv\\Scripts\\python';
+  const input = {
+    path: 'D:\\Work\\bank_recon\\agentj.md',
+    command: `${python} -m pytest -q`,
+    cwd: '/home/me/ws',
+    api_key: 'secret-value',
+    note: 'uses Bearer abcdefghijklmnopqrstuvwxyz',
+  };
+  const snapshot = buildPersistedToolInputSnapshot(input);
+  assert.deepEqual(snapshot.input, {
+    path: 'D:\\Work\\bank_recon\\agentj.md',
+    command: `${python} -m pytest -q`,
+    cwd: '/home/me/ws',
+    api_key: '[redacted]',
+    note: 'uses [redacted]',
+  });
+  assert.deepEqual(JSON.parse(snapshot.inputJson), snapshot.input);
+  assert.equal(sanitizeToolSummary(`Bash ${python} token=abc`), `Bash ${python} token="[redacted]"`);
+  assert.equal(
+    sanitizeApprovalReason('Writes C:/Users/example/private.txt with api_key=sk-abcdefghijklmnop'),
+    'Writes C:/Users/example/private.txt with api_key="[redacted]"'
   );
-  assert.deepEqual(
-    JSON.parse(buildModelReplayToolInputJson(
-      { path: `${workspaceRoot}\\` },
-      `${workspaceRoot}\\`
-    )),
-    { path: '.' }
-  );
-  assert.deepEqual(
-    JSON.parse(buildModelReplayToolInputJson(
-      { path: 'C:/Users/me/ws/src/a.js' },
-      workspaceRoot
-    )),
-    { path: './src/a.js' }
-  );
-  assert.deepEqual(
-    JSON.parse(buildModelReplayToolInputJson(
-      { path: 'c:\\users\\ME\\WS\\src\\a.js' },
-      workspaceRoot
-    )),
-    { path: '.\\src\\a.js' }
-  );
-  assert.deepEqual(
-    JSON.parse(buildModelReplayToolInputJson(
-      {
-        path: 'C:\\Users\\me\\ws2',
-        outside: 'D:\\private\\notes.txt',
-        api_key: 'secret-value',
-      },
-      workspaceRoot
-    )),
-    {
-      path: `${REDACTED_PATH_TOKEN}\\ws2`,
-      outside: `${REDACTED_PATH_TOKEN}\\notes.txt`,
-      api_key: '[redacted]',
-    }
-  );
-});
-
-test('model replay input handles Windows shell punctuation and UNC roots', () => {
-  assert.deepEqual(
-    JSON.parse(buildModelReplayToolInputJson({ command: 'cd C:\\ws; dir C:\\ws\\src' }, 'C:\\ws')),
-    { command: 'cd .; dir .\\src' }
-  );
-  assert.deepEqual(
-    JSON.parse(buildModelReplayToolInputJson({ path: '\\\\Server\\Share\\WS\\a.txt' }, '\\\\server\\share\\ws')),
-    { path: '.\\a.txt' }
-  );
-});
-
-test('model replay input rewrites POSIX workspace paths in command strings', () => {
-  assert.deepEqual(
-    JSON.parse(buildModelReplayToolInputJson(
-      { command: 'cd /home/me/ws && ls' },
-      '/home/me/ws/'
-    )),
-    { command: 'cd . && ls' }
-  );
-  assert.deepEqual(
-    JSON.parse(buildModelReplayToolInputJson({ path: '/x/home/me/ws/a' }, '/home/me/ws')),
-    { path: `${REDACTED_PATH_TOKEN}/a` },
-    'the root only matches as a whole path prefix'
-  );
-  assert.equal(buildModelReplayToolInputJson({ path: '/home/me/ws' }, ''), '');
-  assert.deepEqual(
-    JSON.parse(buildModelReplayToolInputJson({ command: 'cd /home/me/ws; ls /home/me/ws/src' }, '/home/me/ws')),
-    { command: 'cd .; ls ./src' },
-    'shell punctuation ends the root'
-  );
-  assert.deepEqual(
-    JSON.parse(buildModelReplayToolInputJson({ path: '/home/me/ws.bak/a' }, '/home/me/ws')),
-    { path: `${REDACTED_PATH_TOKEN}/a` },
-    'a sibling that extends the last segment is not the root'
-  );
+  assert.ok(buildInvalidToolArgumentsMessage('read_file', '{"path":"C:\\ws\\a.js"').includes('C:\\ws\\a.js'));
 });
 
 test('file:// URLs redact identically on Windows and POSIX shapes', () => {
@@ -220,12 +169,12 @@ test('final path segments are capped at 80 characters', () => {
   );
 });
 
-test('tool-loop path redaction matches the shared canonical filename fixtures', () => {
-  for (const item of canonicalFixtureCases.filter(({ name }) => name.startsWith('filename_preserving_'))) {
-    assert.equal(
-      redactPathLikeText(item.input.payload.tool_input_summary),
-      item.expected.sanitized_payload.tool_input_summary,
-      item.name
-    );
+test('tool-loop path redaction matches the export redactor on the shared path fixtures', () => {
+  const pathCases = canonicalFixtureCases.filter(({ name }) => /_is_presented$/.test(name));
+  assert.equal(pathCases.length, 4);
+  for (const item of pathCases) {
+    const summary = item.input.payload.tool_input_summary;
+    assert.notEqual(redactPathLikeText(summary), summary, item.name);
+    assert.equal(redactPathLikeText(summary), redactTranscriptPaths(summary), item.name);
   }
 });

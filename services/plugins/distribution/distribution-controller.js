@@ -9,11 +9,10 @@ const { putContent, getContent } = require('../store/content-store');
 const { writePackageRecord } = require('../store/package-record-store');
 const { putDataSnapshot } = require('../store/data-snapshot-store');
 const { readDataState, writeDataState } = require('../store/data-state-store');
-const { readDistributionState, writeDistributionState, createEmptyDistributionState } = require('../store/distribution-state-store');
+const { readDistributionState, createEmptyDistributionState } = require('../store/distribution-state-store');
 const { putEvidence } = require('../store/distribution-evidence-store');
-const { putSource, getSource } = require('../store/source-registry-store');
 const { createOperationRecord, advanceOperationPhase, findOperationByFingerprint } = require('../store/distribution-operation-store');
-const { getPartialCacheEntry, putPartialCacheEntry, discardPartialCacheEntry, putVerifiedCacheEntry } = require('../store/package-cache');
+const { putVerifiedCacheEntry } = require('../store/package-cache');
 const { writeArtifactLease, releaseArtifactLease, readActiveArtifactDigests } = require('../store/artifact-lease-store');
 const { runCommitSequence } = require('../lifecycle/commit-sequence');
 const { readGeneration } = require('../store/generation-store');
@@ -21,14 +20,13 @@ const { appendJournalEntry } = require('../store/journal');
 const { stableStringify } = require('../package/canonical-metadata');
 const { verifyDistributionPackage } = require('../package/distribution-package-intake');
 const { parseMigrations, findMigrationPath, applyMigrationPath } = require('../data/data-transition');
-const { normalizeReusableUrl, normalizeOfflineRoot, digest, publicSourceIdentity } = require('./source-intake');
+const { digest } = require('./source-intake');
 const { sourceTrustIsValid } = require('./production-context');
 const { fingerprintOperation, redactedOperationRecord } = require('./distribution-operation');
 const { buildVerificationCacheKey } = require('./verification-cache');
 const { admitCandidate } = require('./advisory-policy');
 const { solveDependencies } = require('./dependency-solver');
-const { acquireGitPackage } = require('./git-source');
-const { recordDigest, validateV3Generation, recoverDistribution } = require('./distribution-recovery');
+const { recordDigest, recoverDistribution } = require('./distribution-recovery');
 const { enforceGenerationRetention } = require('./distribution-retention');
 const { LIMITS } = require('./distribution-limits');
 const ZERO_DIGEST = '0'.repeat(64);
@@ -78,13 +76,13 @@ function promotionPreservesAuthority(current, promoted, generationSchemaVersion 
       : (generationSchemaVersion === 4 ? isV4PluginEntry(promoted) : isV3PluginEntry(promoted))));
 }
 class DistributionController {
-  constructor({ facade, baseDir, networkBroker, mintOperationId, now = () => new Date().toISOString(),
+  constructor({ facade, baseDir, mintOperationId, now = () => new Date().toISOString(),
     realpath, runCommit = runCommitSequence, recoverStore = recoverDistribution,
-    gitAcquire = acquireGitPackage, onCommitted = null } = {}) {
+    onCommitted = null } = {}) {
     if (!facade || typeof baseDir !== 'string' || typeof mintOperationId !== 'function') throw new TypeError('distribution controller dependencies invalid');
-    this.facade = facade; this.baseDir = baseDir; this.networkBroker = networkBroker;
+    this.facade = facade; this.baseDir = baseDir;
     this.mintOperationId = mintOperationId; this.now = now; this.realpath = realpath;
-    this.runCommit = runCommit; this.recoverStore = recoverStore; this.gitAcquire = gitAcquire;
+    this.runCommit = runCommit; this.recoverStore = recoverStore;
     this.onCommitted = onCommitted;
     this.abortControllers = new Map(); this.inFlight = new Map();
   }
@@ -94,11 +92,6 @@ class DistributionController {
     if (current.ok) return { ok: true, state: current.state };
     if (current.reason === 'distribution_state_not_found') return { ok: true, state: createEmptyDistributionState(this.now()), persisted: false };
     return current;
-  }
-
-  async selectOfflineMirror({ sourceId, rootPath }) {
-    const normalized = await normalizeOfflineRoot(rootPath, { realpath: this.realpath }); if (!normalized.ok) return normalized;
-    return putSource(this.facade, this.baseDir, { source_id: sourceId, kind: 'offline_mirror', real_root: normalized.real_root, updated_at: this.now() });
   }
 
   async cancelOperation(operationId) {
@@ -200,66 +193,13 @@ class DistributionController {
           sourceIdentity: { kind: 'local_package', package_path_digest: selected.sourcePathDigest } }
         : fail(operationId, selected?.reason || 'local_package_unavailable');
     }
-    if (operation.source_kind === 'https_url') {
-      let rawLocator = operation.source_locator;
-      if (!rawLocator.includes('://')) {
-        const stored = await getSource(this.facade, this.baseDir, rawLocator);
-        if (!stored.ok || stored.source.kind !== 'https_url') return fail(operationId, 'source_not_found');
-        rawLocator = stored.source.locator;
-      }
-      const source = normalizeReusableUrl(rawLocator, { allowLoopbackHttp: context.allowLoopbackHttp === true }); if (!source.ok) return source;
-      if (!this.networkBroker) return fail(operationId, 'network_broker_unavailable');
-      if (context.retainSource === true) {
-        const retained = await putSource(this.facade, this.baseDir, { source_id: context.sourceId, kind: 'https_url', locator: source.locator, updated_at: this.now() });
-        if (!retained.ok) return fail(operationId, retained.reason);
-      }
-      const result = await this.networkBroker.download({ purpose: 'package_url', request_id: `download_${operationId}`.slice(0, 64), operation_id: operationId,
-        redaction_policy: 'strict', deadline_epoch_ms: Date.now() + 120000, url: source.locator,
-        consent: context.networkConsent, allow_loopback_http: context.allowLoopbackHttp === true, signal,
-        source_identity_digest: source.locator_digest, max_bytes: LIMITS.packageBytes,
-        read_partial: async () => {
-          const partial = await getPartialCacheEntry(this.facade, this.baseDir, operationId);
-          if (partial.ok) return partial.partial;
-          await discardPartialCacheEntry(this.facade, this.baseDir, operationId); return null;
-        },
-        write_partial: (partial) => putPartialCacheEntry(this.facade, this.baseDir, { operationId, ...partial, createdAt: this.now(), sourceIdentityDigest: partial.source_identity_digest }),
-        discard_partial: () => discardPartialCacheEntry(this.facade, this.baseDir, operationId) });
-      return result.ok ? { ok: true, bytes: result.bytes, sourceIdentity: { kind: 'https_url', url_digest: source.locator_digest } } : result;
-    }
-    if (operation.source_kind === 'git') {
-      let rawLocator = operation.source_locator;
-      if (!rawLocator.includes('://')) {
-        const stored = await getSource(this.facade, this.baseDir, rawLocator);
-        if (!stored.ok || stored.source.kind !== 'git') return fail(operationId, 'source_not_found');
-        rawLocator = stored.source.locator;
-      }
-      const normalized = normalizeReusableUrl(rawLocator); if (!normalized.ok) return normalized;
-      if (context.retainSource === true) {
-        const retained = await putSource(this.facade, this.baseDir, { source_id: context.sourceId, kind: 'git', locator: normalized.locator, updated_at: this.now() });
-        if (!retained.ok) return fail(operationId, retained.reason);
-      }
-      const result = await this.gitAcquire({ locator: normalized.locator, ref: context.gitRef || 'HEAD', consent: context.networkConsent, resolve: context.resolve, signal });
-      return result.ok ? { ok: true, bytes: result.bytes, sourceIdentity: { kind: 'git', repository_url_digest: result.repository_url_digest, pinned_commit: result.pinned_commit } } : result;
-    }
-    if (typeof context.acquireCatalogTarget !== 'function') return fail(operationId, 'catalog_acquirer_unavailable');
-    if (!['signed_catalog', 'offline_mirror'].includes(sourceKind)) return fail(operationId, 'catalog_source_required');
-    const sourceId = operation.source_locator || context.sourceId;
-    if (sourceKind === 'offline_mirror') {
-      const stored = await getSource(this.facade, this.baseDir, sourceId); if (!stored.ok || stored.source.kind !== 'offline_mirror') return fail(operationId, 'offline_mirror_not_selected');
-    }
-    const target = await context.acquireCatalogTarget({ kind: sourceKind, sourceId, target: operation.target,
-      targetVersion: operation.target_version, signal });
-    if (!target?.ok) return target || fail(operationId, 'catalog_target_failed');
-    return { ok: true, bytes: target.bytes, sourceIdentity: publicSourceIdentity({ kind: sourceKind, source_id: sourceId }, {
-      targetPathDigest: target.target_path_digest, tufRootDigest: target.tuf_root_digest,
-    }) };
+    // Catalog, offline-mirror and any other remote source kind are retired: refuse before any acquisition.
+    return fail(operationId, 'catalog_source_retired');
   }
 
   async _execute(args) {
     const { operationId, request, context, signal } = args;
     try {
-      if (request.operation.kind === 'catalog_refresh') return this._executeCatalogRefresh(args);
-      if (request.operation.kind === 'rollback') return this._executeRollback(args);
       if (!['install', 'update', 'downgrade', 'check'].includes(request.operation.kind)) return this._terminal(operationId, fail(operationId, 'operation_not_supported'));
       let currentVersion = null; let currentPlugins = []; let currentGenerationSchemaVersion = 3;
       if (args.expectedGenerationId) {
@@ -349,6 +289,8 @@ class DistributionController {
     context, signal, acquired, verified, solved, preservedPlugins = [], currentGenerationSchemaVersion = 3 }) {
     const content = await putContent(this.facade, this.baseDir, acquired.bytes); if (!content.ok) return this._terminal(operationId, fail(operationId, content.reason));
     for (const executable of verified.executable_object_bytes || []) {
+      // Retired executables are verified by digest during intake and never stored.
+      if (executable.bytes == null) continue;
       const stored = await putContent(this.facade, this.baseDir, executable.bytes);
       if (!stored.ok || stored.digest !== executable.executable_digest) {
         return this._terminal(operationId, fail(operationId, 'executable_object_write_failed'));
@@ -501,96 +443,6 @@ class DistributionController {
     return this._terminal(operationId, { ok: true, operation_id: operationId, status: 'committed', generation_id: generationId,
       installed_but_incompatible: !compatible, degraded: !dataState.ok,
       ...(dataState.ok ? {} : { recovery_required: true }) });
-  }
-
-  async _executeCatalogRefresh({ operationId, generationId, fingerprint, expectedGenerationId, lifecycleEpoch, request, context, signal }) {
-    if (typeof context.refreshCatalog !== 'function') return this._terminal(operationId, fail(operationId, 'catalog_refresh_unavailable'));
-    await this._phase(operationId, 'acquisition');
-    const refreshed = await context.refreshCatalog({ catalogId: request.operation.catalog_id, signal });
-    if (!refreshed?.ok) return this._terminal(operationId, fail(operationId, refreshed?.reason || 'catalog_refresh_failed'));
-    if (refreshed.distributionState) {
-      const current = await readDistributionState(this.facade, this.baseDir);
-      const written = await writeDistributionState(this.facade, this.baseDir, refreshed.distributionState,
-        { expectedRevision: current.ok ? current.state.revision : -1 });
-      if (!written.ok) return this._terminal(operationId, fail(operationId, written.reason));
-    }
-    if (typeof context.commitTrustedTime === 'function' && await context.commitTrustedTime(refreshed) !== true) {
-      return this._terminal(operationId, fail(operationId, 'trusted_time_commit_failed'));
-    }
-    const quarantineIds = new Set(refreshed.quarantined_plugins || []);
-    if (!quarantineIds.size) return this._terminal(operationId, { ok: true, operation_id: operationId, status: 'refreshed' });
-    const pointer = await readActivePointer(this.facade, this.baseDir);
-    if (pointer.status !== 'ok') return this._terminal(operationId, fail(operationId, 'active_generation_unavailable'));
-    const currentGeneration = await readGeneration(this.facade, this.baseDir, pointer.pointer.generation_id);
-    const generationSchemaVersion = currentGeneration.record?.generation_schema_version;
-    if (!currentGeneration.ok || !DISTRIBUTION_GENERATION_SCHEMA_VERSIONS.has(generationSchemaVersion)) {
-      return this._terminal(operationId, fail(operationId, 'advisory_quarantine_requires_distribution_generation'));
-    }
-    const advisory = await putEvidence(this.facade, this.baseDir, 'advisory', refreshed.advisorySnapshot);
-    const distributionState = await this.getDistributionState();
-    const distribution = distributionState.ok && await putEvidence(this.facade, this.baseDir, 'catalog', distributionState.state);
-    if (!advisory.ok || !distribution?.ok) return this._terminal(operationId, fail(operationId, 'distribution_evidence_write_failed'));
-    const plugins = currentGeneration.record.plugins.map((plugin) => ({ ...plugin,
-      advisory_snapshot_digest: advisory.digest,
-      ...(quarantineIds.has(`${plugin.publisher_id}/${plugin.plugin_id}`)
-        ? { desired_state: 'quarantined', effective_state: 'quarantined' } : {}),
-    }));
-    const committed = await this.runCommit(this.facade, this.baseDir, { operationId, requestFingerprint: fingerprint,
-      lifecycleEpoch, generationId, createdAt: this.now(), plugins,
-      policyGrantRef: currentPolicyReference(context, generationSchemaVersion,
-        currentGeneration.record.policy_grant_ref),
-      dataSchemaRefs: [], now: this.now(), auditAction: 'quarantine', isCanceled: () => signal.aborted,
-      generationSchemaVersion, lockDigest: currentGeneration.record.lock_digest,
-      distributionStateDigest: distribution.digest, adoptPendingReceipt: true, expectedGenerationId,
-      commitAuthority: context.commitAuthority,
-      ...(typeof context.participantPrepare === 'function'
-        ? { participantPrepare: context.participantPrepare } : {}) });
-    return committed.ok ? this._terminal(operationId, { ok: true, operation_id: operationId, status: 'committed', generation_id: generationId, quarantined: [...quarantineIds].sort() })
-      : this._terminal(operationId, fail(operationId, committed.reason));
-  }
-
-  async _executeRollback({ operationId, generationId, fingerprint, expectedGenerationId, lifecycleEpoch, request, context, signal }) {
-    if (![context.validateTrust, context.validatePolicy, context.validateAdvisories, context.validateRollbackData]
-      .every((item) => typeof item === 'function')) {
-      return this._terminal(operationId, fail(operationId, 'rollback_revalidation_unavailable'));
-    }
-    const target = await readGeneration(this.facade, this.baseDir, request.operation.target_generation_id);
-    const generationSchemaVersion = target.record?.generation_schema_version;
-    if (!target.ok || !DISTRIBUTION_GENERATION_SCHEMA_VERSIONS.has(generationSchemaVersion)) {
-      return this._terminal(operationId, fail(operationId, 'rollback_generation_invalid'));
-    }
-    const revalidated = await validateV3Generation(this.facade, this.baseDir, target.record, { validateTrust: context.validateTrust,
-      validatePolicy: context.validatePolicy, validateAdvisories: context.validateAdvisories });
-    if (!revalidated.ok || await context.validateRollbackData(target.record) !== true) {
-      return this._terminal(operationId, fail(operationId, revalidated.reason || 'rollback_data_barrier'));
-    }
-    for (const plugin of target.record.plugins) {
-      const state = await readDataState(this.facade, this.baseDir, { publisherId: plugin.publisher_id, pluginId: plugin.plugin_id });
-      if (!state.ok || state.state.rollback_barrier.kind !== 'none') {
-        return this._terminal(operationId, fail(operationId, 'rollback_data_barrier'));
-      }
-    }
-    const committed = await this.runCommit(this.facade, this.baseDir, { operationId, requestFingerprint: fingerprint,
-      lifecycleEpoch, generationId, createdAt: this.now(), plugins: target.record.plugins,
-      policyGrantRef: currentPolicyReference(context, generationSchemaVersion,
-        target.record.policy_grant_ref), dataSchemaRefs: [], now: this.now(), auditAction: 'rollback',
-      isCanceled: () => signal.aborted, generationSchemaVersion, lockDigest: target.record.lock_digest,
-      distributionStateDigest: target.record.distribution_state_digest, adoptPendingReceipt: true, expectedGenerationId,
-      commitAuthority: context.commitAuthority,
-      ...(typeof context.participantPrepare === 'function'
-        ? { participantPrepare: context.participantPrepare } : {}) });
-    if (!committed.ok) return this._terminal(operationId, fail(operationId, committed.reason));
-    let degraded = false;
-    for (const plugin of target.record.plugins) {
-      const current = await readDataState(this.facade, this.baseDir, { publisherId: plugin.publisher_id, pluginId: plugin.plugin_id });
-      if (!current.ok) { degraded = true; continue; }
-      const references = [...current.state.snapshot_references, { operation_id: operationId, generation_id: generationId, created_at: this.now() }].slice(-8);
-      const written = await writeDataState(this.facade, this.baseDir, { ...current.state, data_generation_id: generationId,
-        mutation_watermark: { sequence: current.state.mutation_watermark.sequence + 1, recorded_at: this.now() }, snapshot_references: references },
-      { expectedWatermark: current.state.mutation_watermark.sequence });
-      if (!written.ok) degraded = true;
-    }
-    return this._terminal(operationId, { ok: true, operation_id: operationId, status: 'committed', generation_id: generationId, degraded });
   }
 
   async recover(options = {}) { return this.recoverStore(this.facade, this.baseDir, { now: this.now(), ...options }); }

@@ -6,6 +6,7 @@ const {
   DEFAULT_SCROLL_FOLLOW_THRESHOLD,
   collectLogicalRows,
   createLogicalScrollAnchorRegistry,
+  createScrollWriteRateMeter,
   deriveFollowLatestFromScroll,
   getLatestUserMessageId,
   isNearBottom,
@@ -242,6 +243,45 @@ test('missing virtualized row restores through its parent message instead of an 
   assert.equal(scroll.scrollTop, 170, 'the original message returns to the row offset');
 });
 
+function checkHiddenAnchorRowRestoresThroughParent(registryOptions, expectedScrollTop) {
+  const dom = new JSDOM(`<!doctype html><body><div id="scroll">
+    <article class="chat-entry" data-message-id="m1"><div data-row-id="r1" data-row-kind="reasoning"></div><div data-row-id="r1b"></div></article>
+    <article class="chat-entry" data-message-id="m2"><div data-row-id="r2"></div></article>
+  </div></body>`);
+  const scroll = dom.window.document.getElementById('scroll');
+  const [message1, message2] = scroll.children;
+  const [row1, row1b] = message1.children;
+  Object.defineProperties(scroll, {
+    scrollHeight: { configurable: true, value: 2000 },
+    clientHeight: { configurable: true, value: 400 },
+  });
+  setRect(scroll, 0, 400);
+  setRect(message1, -30, 30);
+  setRect(row1, -20, 20);
+  setRect(row1b, 20, 30);
+  setRect(message2, 40, 100);
+  scroll.scrollTop = 500;
+  const registry = createLogicalScrollAnchorRegistry(registryOptions);
+  registry.capture('reader', scroll);
+
+  // The view switch hides the reasoning row: same node, zero rect.
+  setRect(row1, 0, 0);
+  setRect(message1, 50, 110);
+  setRect(message2, 120, 180);
+  scroll.scrollTop = 100;
+
+  assert.equal(registry.restore('reader', scroll), 'parent');
+  assert.equal(scroll.scrollTop, expectedScrollTop, "restores the parent at the row's offset");
+}
+
+test('a retained anchor row that lost its box (hidden by the transcript view) restores through its parent', () => {
+  checkHiddenAnchorRowRestoresThroughParent(undefined, 170);
+});
+
+test('the timeline registry config (preferEntries + refineEntries) restores a hidden anchor row through its parent', () => {
+  checkHiddenAnchorRowRestoresThroughParent({ preferEntries: true, refineEntries: true }, 180);
+});
+
 // NOTE (2026-08-30): the two approval-gap skip tests below construct the
 // registry with default options (row granularity, preferEntries: false),
 // which matches the IDE chat dock registry. The MAIN chat coordinator runs
@@ -442,4 +482,64 @@ test('a registry without a content-generation source scans every capture (dock s
     'without a generation source there is nothing safe to cache against'
   );
   registry.dispose();
+});
+
+// HB-005: a streamed delta lands BELOW the reader's anchor (the live tail), so
+// the anchor does not move and the restore must not write. A rewrite of an
+// unchanged (or sub-pixel) position can still fire a scroll event, which the
+// coordinator answered with a re-capture and the next render with another
+// restore: one programmatic scroll per streamed delta.
+test('a restore whose anchor did not move writes nothing; an above-anchor shift still compensates', () => {
+  const dom = new JSDOM('<!doctype html><body><div id="scroll"><div data-row-id="r1"></div></div></body>');
+  const scroll = dom.window.document.getElementById('scroll');
+  let top = 500;
+  let writes = 0;
+  Object.defineProperties(scroll, {
+    scrollHeight: { configurable: true, value: 2000 },
+    clientHeight: { configurable: true, value: 400 },
+    scrollTop: { configurable: true, get: () => top, set(value) { writes += 1; top = value; } },
+  });
+  setRect(scroll, 0, 400);
+  setRect(scroll.firstElementChild, 20, 60);
+  const registry = createLogicalScrollAnchorRegistry();
+  registry.capture('reader', scroll);
+
+  const tail = dom.window.document.createElement('div');
+  tail.setAttribute('data-row-id', 'streamed-tail');
+  setRect(tail, 420, 900);
+  scroll.appendChild(tail);
+  assert.equal(registry.restore('reader', scroll), 'logical');
+  assert.equal(writes, 0, 'a mutation below the anchor cannot move it, so nothing is written');
+
+  setRect(scroll.firstElementChild, 20.4, 60.4);
+  assert.equal(registry.restore('reader', scroll), 'logical');
+  assert.equal(writes, 0, 'a sub-pixel drift is not worth a scroll event');
+
+  setRect(scroll.firstElementChild, 140, 180);
+  assert.equal(registry.restore('reader', scroll), 'logical');
+  assert.equal(writes, 1);
+  assert.equal(top, 620, 'growth above the anchor is still compensated');
+});
+
+test('the scroll write-rate meter reports each closed window once, per second', () => {
+  const meter = createScrollWriteRateMeter({ windowMs: 1000 });
+  assert.equal(meter.noteWrite('live_follow', 0), null, 'the first note opens the window');
+  for (let index = 1; index < 300; index += 1) {
+    assert.equal(meter.noteWrite(index % 3 ? 'live_follow' : 'anchor_restore', index * 3), null);
+  }
+  for (let index = 0; index < 50; index += 1) meter.noteScrollEvent(900 + index);
+  const closed = meter.noteScrollEvent(1000);
+  assert.deepEqual(closed, {
+    writesPerSecond: 300,
+    scrollEventsPerSecond: 50,
+    windowMs: 1000,
+    reasons: { live_follow: 201, anchor_restore: 99 },
+  });
+  assert.equal(meter.noteWrite('live_follow', 1500), null, 'the closing note opened the next window');
+  assert.deepEqual(meter.noteWrite('virtualizer', 3000), {
+    writesPerSecond: 1,
+    scrollEventsPerSecond: 1,
+    windowMs: 2000,
+    reasons: { live_follow: 1 },
+  }, 'an idle gap dilutes the rate instead of reporting a burst');
 });

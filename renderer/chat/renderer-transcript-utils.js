@@ -29,6 +29,7 @@
     const actionRenderer = actionUtils?.createTranscriptActionRenderer?.(deps) || {};
 
     return {
+      dispose: () => toolCallRenderer.dispose?.(),
       renderMessageAttachments: attachmentsRenderer.renderMessageAttachments || (() => ''),
       buildInteractiveRecapViewModel: interactionRenderer.buildInteractiveRecapViewModel || (() => null),
       renderInteractiveRoundRecap: interactionRenderer.renderInteractiveRoundRecap || (() => ''),

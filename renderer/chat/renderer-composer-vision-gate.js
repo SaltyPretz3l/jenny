@@ -63,14 +63,16 @@
     return { blocked: false, notice: '', tone: '', sendReason: '', imageCount, vision };
   }
 
+  // `queued` (split view W2-2b): the queue being sent (a pane's own); default the live one.
   function evaluateComposerVisionGate({
     state,
     runtimePreferences,
     maxImages = MAX_IMAGE_ATTACHMENTS,
+    queued = state?.attachments?.queued,
   } = {}) {
     try {
       const vision = resolveActiveModelVision(state, runtimePreferences);
-      const imageCount = (Array.isArray(state?.attachments?.queued) ? state.attachments.queued : [])
+      const imageCount = (Array.isArray(queued) ? queued : [])
         .filter((entry) => String(entry?.kind || '').trim() === 'image').length;
       if (imageCount === 0) return noGate(vision);
       if (imageCount > maxImages) {

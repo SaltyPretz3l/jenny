@@ -462,8 +462,8 @@ class WorkspaceImportService {
         'Import destination must be a workspace-relative directory.'
       );
     }
-    const trimmed = value.trim();
-    return trimmed ? normalizeWorkspaceRelPath(trimmed) : '';
+    // The destination is a folder as Explorer listed it, so its name is exact.
+    return value.trim() ? normalizeWorkspaceRelPath(value) : '';
   }
 
   _checkImportBoundary(controller, operation) {

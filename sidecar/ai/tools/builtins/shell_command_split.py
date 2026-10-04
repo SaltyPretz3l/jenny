@@ -17,6 +17,33 @@ from __future__ import annotations
 import os
 
 _SEPARATOR_CHARS = (";", "|", "&", "\r", "\n")
+_LINE_BREAK_CHARS = ("\r", "\n")
+
+CMD_EXE_MULTILINE_REFUSAL = (
+    "run_command uses cmd.exe on Windows, which runs only the first line of a "
+    "multi-line command and silently skips the rest (even inside quotes, so a "
+    "multi-line python -c program runs as an empty program). Run one command "
+    "per call, joining steps that must run together on one line with &&, or use "
+    "run_temp_script for a multi-line script (language python, powershell or cmd)."
+)
+
+
+def cmd_exe_multiline_refusal(command: str) -> str | None:
+    """Return the refusal for a command ``cmd.exe /c`` would silently truncate.
+
+    ``cmd.exe /d /s /c`` executes only the text before the first CR or LF,
+    whatever the quoting or caret escaping, and reports that line's exit code,
+    so a multi-line command "succeeds" with every later line dropped (dogfood
+    HB-013). Leading and trailing line breaks are harmless because the launcher
+    strips the command. POSIX ``/bin/sh -c`` runs every line and is never
+    refused.
+    """
+    if os.name != "nt":
+        return None
+    stripped = command.strip()
+    if any(char in stripped for char in _LINE_BREAK_CHARS):
+        return CMD_EXE_MULTILINE_REFUSAL
+    return None
 
 
 def _is_escaped(current: list[str], escape_char: str) -> bool:

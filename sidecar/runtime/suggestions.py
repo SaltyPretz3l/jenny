@@ -166,7 +166,7 @@ def generate_suggestions(
         )
     except InferenceAdmissionError:
         raise
-    except Exception:
+    except Exception:  # noqa: BLE001  # boundary
         log_event(
             logger,
             logging.WARNING,

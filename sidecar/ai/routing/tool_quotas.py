@@ -22,11 +22,10 @@ from sidecar.runtime.cooldowns import CooldownRegistry
 
 TOOL_QUOTA_COOLDOWN_NAMESPACE = "tool_quota"
 DEFAULT_TOOL_COOLDOWN_SECONDS = 30.0
-# Fail-open ceiling for the per-session cap. Raised from 1_000 to admit the
-# cloud loop profile's 2_000 (config parsing bounds cloud_max_tool_calls_per_session
-# by the same number, so the two ceilings cannot drift into a silent fail-open
-# back to 200). Local config parsing still clamps its own key at 1_000, so the
-# local profile's behavior is unchanged.
+# Fail-open ceiling for the per-session (per-chat) cap. Config parsing bounds
+# both max_tool_calls_per_session and cloud_max_tool_calls_per_session by the same
+# number, so the ceilings cannot drift into a silent fail-open to the default.
+# TR-008 (owner 2026-09-28): the local default equals the cloud one, 2_000.
 _MAX_SESSION_TOOL_CALL_CEILING = 2_000
 
 
@@ -34,7 +33,7 @@ _MAX_SESSION_TOOL_CALL_CEILING = 2_000
 class ToolQuotaPolicy:
     max_web_tool_calls_per_turn: int = 10
     max_code_intelligence_tool_calls_per_turn: int = 16
-    max_tool_calls_per_session: int = 200
+    max_tool_calls_per_session: int = 2_000
     tool_cooldown_seconds: float = DEFAULT_TOOL_COOLDOWN_SECONDS
 
     def __post_init__(self) -> None:
@@ -57,7 +56,7 @@ class ToolQuotaPolicy:
             "max_tool_calls_per_session",
             _bounded_int(
                 self.max_tool_calls_per_session,
-                default=200,
+                default=2_000,
                 max_value=_MAX_SESSION_TOOL_CALL_CEILING,
             ),
         )
@@ -97,6 +96,9 @@ class ToolQuotaRegistry:
     cooldown_registry: CooldownRegistry = field(default_factory=CooldownRegistry)
     _web_calls: int = 0
     _code_intelligence_calls: int = 0
+    # TR-008: the first per-chat budget block of the turn carries the
+    # user-visible notice; the timeline shows it on that one row.
+    _session_budget_noticed: bool = field(default=False, init=False, repr=False)
     _session_baseline: int = field(init=False, repr=False)
     _admissions: dict[str, dict[str, Any]] = field(default_factory=dict, init=False, repr=False)
 
@@ -155,6 +157,7 @@ class ToolQuotaRegistry:
             classification = _classify_call(call, tool_contract=tool_contract)
             blocked_call = self._blocked_call(call, classification=classification)
             if blocked_call is not None:
+                self._claim_session_budget_notice(blocked_call)
                 blocked.append(blocked_call)
                 if blocked_call.reason != "tool_cooldown":
                     self.cooldown_registry.mark(
@@ -175,6 +178,11 @@ class ToolQuotaRegistry:
             allowed.append(call)
             self._record_allowed(classification=classification)
         return ToolQuotaDecision(allowed=tuple(allowed), blocked=tuple(blocked))
+
+    def _claim_session_budget_notice(self, blocked_call: BlockedToolCall) -> None:
+        if blocked_call.reason == "session_tool_budget" and not self._session_budget_noticed:
+            self._session_budget_noticed = True
+            blocked_call.metadata["session_budget_notice"] = True
 
     def _blocked_call(
         self,

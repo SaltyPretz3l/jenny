@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import re
+import time
 from collections import deque
-from typing import Callable
+from typing import Any, Callable
 
 from sidecar.ai.config import read_environment_value
 
@@ -21,6 +22,15 @@ THINKING_BUDGET_ENGINE_CHARS_FLOOR = 16_384
 # the answer draw on one pool. The remainder is what is left to answer with, so
 # the checkpoint fires while the model can still act on it.
 THINKING_BUDGET_NUM_PREDICT_FRACTION = 0.65
+
+# ``StreamingEvent.kind`` a tool-loop engine yields when its guard hides the
+# rest of the reasoning without ending the generation (abort kill switch off).
+# The router turns it into a non-persisted status ``ThinkingEvent`` so the live
+# reasoning row says why it went quiet (HB-004). Plain ``stream()`` paths never
+# yield it: ``chat_streaming`` renders unknown kinds as visible text.
+THINKING_STATUS_EVENT_KIND = "thinking_status"
+REPETITION_HIDDEN_STATUS_TEXT = "Reasoning hidden - repetition detected"
+BUDGET_HIDDEN_STATUS_TEXT = "Reasoning hidden - thinking budget reached"
 
 
 def _budget_chars(tokens: int) -> int:
@@ -89,8 +99,41 @@ def _never_tripped() -> bool:
 
 
 def budget_trip_check(guard: "ThinkingRepetitionGuard | None") -> Callable[[], bool]:
-    """Check whether the guard tripped on its char budget; always False without one."""
-    return guard.tripped_on_budget if guard is not None else _never_tripped
+    """Check whether the guard's verdict should end the generation.
+
+    Either trip counts: a repetition trip hides every later delta, so leaving
+    the engine running only produced minutes of silent reasoning before the
+    char budget finally aborted it (HB-004). Callers still gate the abort on
+    :py:func:`thinking_budget_abort_enabled`; always False without a guard.
+    """
+    return guard.tripped_for_abort if guard is not None else _never_tripped
+
+
+def guard_log_data(guard: "ThinkingRepetitionGuard | None", *, model: str) -> dict[str, Any]:
+    """The ``data`` payload for guard trip/abort/suppression log events.
+
+    Fields must ride ``data``: the JSON log sink drops other ``extra`` keys,
+    which is why the HB-004 abort line carried ``data: {}``.
+    """
+    data: dict[str, Any] = {"model": model}
+    if guard is not None:
+        data.update(guard.verdict_data())
+    return data
+
+
+def take_hidden_reasoning_notice(guard: "ThinkingRepetitionGuard | None") -> str | None:
+    """Status text to show once when a repetition trip hides ongoing reasoning.
+
+    Only when the abort kill switch is off: with the abort on, the engine ends
+    the generation instead and the checkpoint continuation takes over.
+    """
+    if guard is None or thinking_budget_abort_enabled():
+        return None
+    if not guard.claim_hidden_notice():
+        return None
+    if guard.first_trip_reason == "repetition":
+        return REPETITION_HIDDEN_STATUS_TEXT
+    return BUDGET_HIDDEN_STATUS_TEXT
 
 
 class ThinkingRepetitionGuard:
@@ -114,6 +157,13 @@ class ThinkingRepetitionGuard:
         self._buffered_chars = 0
         self._total_chars = 0
         self._consecutive_repetitive_windows = 0
+        self._started_at = time.monotonic()
+        self._dropped_deltas = 0
+        self._dropped_chars = 0
+        self._first_trip_reason: str | None = None
+        self._trip_offset_chars: int | None = None
+        self._trip_elapsed_ms: int | None = None
+        self._hidden_notice_claimed = False
 
     def feed(self, text: str) -> bool:
         """Return True when the incoming delta should be suppressed.
@@ -122,7 +172,10 @@ class ThinkingRepetitionGuard:
         char budget stays reachable afterwards: a latched guard that stopped
         counting could never report ``char_limit``, so the engine kept
         generating hidden reasoning to the provider's hard cap (owner turn
-        2026-09-20). A ``char_limit`` verdict is never downgraded.
+        2026-09-20). A ``char_limit`` verdict is never downgraded. Engines
+        now end the generation on either trip when the abort is enabled
+        (``budget_trip_check``); counting through suppression still bounds the
+        kill-switch-off path.
         """
         delta = str(text or "")
         if not delta:
@@ -132,13 +185,20 @@ class ThinkingRepetitionGuard:
         if self._total_chars > self.max_chars:
             if self.stop_reason != "char_limit":
                 self._trip("char_limit")
-            return True
+            return self._drop(delta)
         if self.should_stop:
-            return True
+            return self._drop(delta)
 
         self._recent_chunks.append(delta)
         self._buffered_chars += len(delta)
         self._prune_buffer()
+
+        # No verdict until two full windows exist. Halving a short buffer
+        # compared a few words against a few words, so a think that opened
+        # with a self-correction ("X is missing - wait no, X is ...") tripped
+        # at 81 chars on token-sized deltas (HB-011).
+        if self._buffered_chars < self.window_chars * 2:
+            return False
 
         previous_window, current_window = self._build_windows()
         if previous_window and current_window:
@@ -150,12 +210,45 @@ class ThinkingRepetitionGuard:
 
             if self._consecutive_repetitive_windows >= self.max_repetitive_windows:
                 self._trip("repetition")
-                return True
+                return self._drop(delta)
 
         return False
 
     def tripped_on_budget(self) -> bool:
         return self.should_stop and self.stop_reason == "char_limit"
+
+    def tripped_for_abort(self) -> bool:
+        """True once either trip hides further reasoning (see ``budget_trip_check``)."""
+        return self.should_stop
+
+    def claim_hidden_notice(self) -> bool:
+        """True exactly once, after either trip, for the hidden-reasoning status."""
+        if self._hidden_notice_claimed or self._first_trip_reason is None:
+            return False
+        self._hidden_notice_claimed = True
+        return True
+
+    @property
+    def first_trip_reason(self) -> str | None:
+        return self._first_trip_reason
+
+    @property
+    def dropped_deltas(self) -> int:
+        """Deltas suppressed since the first trip, the tripping delta included."""
+        return self._dropped_deltas
+
+    def verdict_data(self) -> dict[str, Any]:
+        """Structured guard state for the trip/abort/suppression log events."""
+        return {
+            "stop_reason": self.stop_reason,
+            "first_trip_reason": self._first_trip_reason,
+            "trip_offset_chars": self._trip_offset_chars,
+            "trip_elapsed_ms": self._trip_elapsed_ms,
+            "counted_chars": self._total_chars,
+            "max_chars": self.max_chars,
+            "dropped_deltas": self._dropped_deltas,
+            "dropped_chars": self._dropped_chars,
+        }
 
     @property
     def total_chars(self) -> int:
@@ -194,8 +287,17 @@ class ThinkingRepetitionGuard:
         return normalized
 
     def _trip(self, reason: str) -> None:
+        if self._first_trip_reason is None:
+            self._first_trip_reason = reason
+            self._trip_offset_chars = self._total_chars
+            self._trip_elapsed_ms = int((time.monotonic() - self._started_at) * 1000)
         self.should_stop = True
         self.stop_reason = reason
+
+    def _drop(self, delta: str) -> bool:
+        self._dropped_deltas += 1
+        self._dropped_chars += len(delta)
+        return True
 
     def _prune_buffer(self) -> None:
         max_buffer_chars = max(self.window_chars * 2, self.window_chars)

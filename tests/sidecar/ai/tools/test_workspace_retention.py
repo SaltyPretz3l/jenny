@@ -142,6 +142,54 @@ def test_active_seconds_establish_baseline_then_reach_eligibility_and_stop_writi
     assert touched == ()
 
 
+def test_small_active_use_advances_do_not_rewrite_journals(tmp_path: Path) -> None:
+    """Every chat.send advances the clock; rewriting (and fsyncing) each live
+    journal per send is SSD churn with no retention value. Only a quantum of
+    active use, or reaching eligibility, earns a durable rewrite."""
+    workspace, store, lifecycle = _lifecycle(tmp_path)
+    change_set_id = "00000000-0000-7000-8000-0000000000b7"
+    _commit_one_write(lifecycle, workspace, change_set_id=change_set_id, filename="q.txt")
+    workspace_id = next(store.version_root.glob("*")).name
+
+    assert record_active_use_seconds(store, workspace, 1_000) == (change_set_id,)
+    for step in range(1, 30):
+        assert record_active_use_seconds(store, workspace, 1_000 + step * 60) == ()
+
+    quantum = retention_module.ACTIVE_USE_WRITE_QUANTUM_SECONDS
+    assert record_active_use_seconds(store, workspace, 1_000 + quantum) == (change_set_id,)
+    loaded = store.load(workspace_id, change_set_id)
+    assert loaded.record["retention"]["active_age_seconds"] == quantum
+
+    # Eligibility is never delayed by the quantum.
+    eligible_at = 1_000 + ACTIVE_RETENTION_SECONDS
+    assert record_active_use_seconds(store, workspace, eligible_at) == (change_set_id,)
+
+
+def test_unchanged_ledger_is_not_rewritten(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    workspace, store, lifecycle = _lifecycle(tmp_path)
+    _commit_one_write(
+        lifecycle, workspace, change_set_id="00000000-0000-7000-8000-0000000000b8", filename="l.txt"
+    )
+    writes: list[str] = []
+    original = GuardedWorkspaceStore.write_json_atomic
+
+    def counting_write(self: GuardedWorkspaceStore, *args: object, **kwargs: object) -> object:
+        writes.append("ledger")
+        return original(self, *args, **kwargs)
+
+    monkeypatch.setattr(GuardedWorkspaceStore, "write_json_atomic", counting_write)
+    guarded = GuardedWorkspaceStore(workspace)
+    retention_module._record_current_active_use(guarded, 500)
+    record_active_use_seconds(store, workspace, 500, guarded=guarded)
+    writes.clear()
+
+    retention_module._record_current_active_use(guarded, 500)
+    record_active_use_seconds(store, workspace, 500, guarded=guarded)
+    assert writes == [], "a repeated touch with nothing new must not rewrite the ledger"
+
+
 def test_active_use_seconds_never_roll_backward(tmp_path: Path) -> None:
     workspace, store, lifecycle = _lifecycle(tmp_path)
     change_set_id = "00000000-0000-7000-8000-000000000003"
@@ -393,7 +441,7 @@ def test_backup_retention_with_active_use_tracker_ignores_wall_clock_entirely(
 
     store = GuardedWorkspaceStore(tmp_path)
     zero_use_tracker = ActiveUseAgeTracker(current_active_use_seconds=0)
-    file_history_module._apply_backup_retention(  # noqa: SLF001 - exercising the injection seam directly
+    file_history_module._apply_backup_retention(  # exercising the injection seam directly
         store, active_use_age_source=zero_use_tracker
     )
     names_before = {
@@ -407,7 +455,7 @@ def test_backup_retention_with_active_use_tracker_ignores_wall_clock_entirely(
         current_active_use_seconds=_THIRTY_ONE_DAYS, baselines=dict(zero_use_tracker.baselines)
     )
     monkeypatch.setattr(file_history_module, "MAX_BACKUP_SNAPSHOTS", 1)
-    file_history_module._apply_backup_retention(  # noqa: SLF001
+    file_history_module._apply_backup_retention(
         store, active_use_age_source=advanced_tracker
     )
     names_after = {
@@ -464,9 +512,9 @@ def test_protected_journal_references_survive_trash_and_backup_purge(
     trash_target.unlink()
     lifecycle.mark_applied(prepared)
     assert lifecycle.finalize(change_set_id).ok is True
-    retention_module._record_current_active_use(guarded, 0)  # noqa: SLF001
+    retention_module._record_current_active_use(guarded, 0)
     run_recovery_maintenance(store, workspace)
-    retention_module._record_current_active_use(guarded, _THIRTY_ONE_DAYS)  # noqa: SLF001
+    retention_module._record_current_active_use(guarded, _THIRTY_ONE_DAYS)
     run_recovery_maintenance(store, workspace)
     assert backups[0][2].exists() is False
     assert backups[1][2].exists() is True
@@ -508,7 +556,7 @@ def test_builtin_guard_runs_startup_maintenance_and_commit_maintenance(
         "run_recovery_maintenance",
         lambda _store, _root: calls.append("maintenance"),
     )
-    guard = builtin_server._build_workspace_guard(  # noqa: SLF001
+    guard = builtin_server._build_workspace_guard(
         Namespace(
             workspace_root=str(workspace),
             pre_change_snapshot_root=None,
@@ -534,7 +582,7 @@ def test_iter_change_set_ids_is_bounded(tmp_path: Path, monkeypatch: pytest.Monk
     for index in range(10):
         (workspace_dir / f"dir-{index}").mkdir()
 
-    ids = retention_module._iter_change_set_ids(store, workspace_id)  # noqa: SLF001
+    ids = retention_module._iter_change_set_ids(store, workspace_id)
     assert len(ids) == 3
 
 

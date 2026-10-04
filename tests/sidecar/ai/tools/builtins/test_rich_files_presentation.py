@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import builtins
 import importlib
+import io
 import zipfile
 from pathlib import Path
 
 import pytest
 
+from sidecar.ai.error_codes import CMP_TOOL_OUTSIDE_WORKSPACE
+from sidecar.ai.tools.contracts import ToolExecutionFailure
 from sidecar.ai.tools.workspace import WorkspaceGuard
 
 
@@ -166,7 +170,7 @@ def test_presentation_inspect_rejects_legacy_ppt_format(tmp_path: Path) -> None:
 
     result = _presentation_tool()({"path": "legacy.ppt"}, WorkspaceGuard(str(workspace_root)))
 
-    assert result.success is True
+    assert result.success is False
     assert result.metadata["status"] == "unsupported"
     assert result.metadata["failure"]["reason"] == "presentation_format_unsupported"
 
@@ -178,6 +182,67 @@ def test_presentation_inspect_corrupt_pptx_returns_unsupported(tmp_path: Path) -
 
     result = _presentation_tool()({"path": "broken.pptx"}, WorkspaceGuard(str(workspace_root)))
 
-    assert result.success is True
+    assert result.success is False
     assert result.metadata["status"] == "unsupported"
     assert result.metadata["failure"]["reason"] == "presentation_parse_failed"
+
+
+def test_presentation_parser_rejects_redirected_handle_after_validation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = importlib.import_module("sidecar.ai.tools.builtins.rich_files.presentation")
+    workspace_root = tmp_path / "workspace"
+    workspace_root.mkdir()
+    path = workspace_root / "sample.pptx"
+    outside = tmp_path / "outside.pptx"
+    _write_pptx(path)
+    _write_pptx(outside)
+    original_validate = module.validate_rich_file_source
+    original_open = builtins.open
+    original_io_open = io.open
+
+    def validate_then_redirect(**kwargs):
+        source = original_validate(**kwargs)
+
+        def redirect(file, *args, **options):
+            target = outside if isinstance(file, (str, Path)) and Path(file) == path else file
+            return original_open(target, *args, **options)
+
+        def redirect_io(file, *args, **options):
+            target = outside if isinstance(file, (str, Path)) and Path(file) == path else file
+            return original_io_open(target, *args, **options)
+
+        monkeypatch.setattr(builtins, "open", redirect)
+        monkeypatch.setattr(io, "open", redirect_io)
+        return source
+
+    monkeypatch.setattr(module, "validate_rich_file_source", validate_then_redirect)
+    with pytest.raises(ToolExecutionFailure) as exc:
+        module.presentation_inspect_tool(
+            {"path": "sample.pptx"}, WorkspaceGuard(str(workspace_root))
+        )
+    assert exc.value.code == CMP_TOOL_OUTSIDE_WORKSPACE
+
+
+def test_presentation_parser_rechecks_byte_limit_after_validation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = importlib.import_module("sidecar.ai.tools.builtins.rich_files.presentation")
+    path = tmp_path / "sample.pptx"
+    _write_pptx(path)
+    limit = path.stat().st_size + 1
+    original_validate = module.validate_rich_file_source
+
+    def validate_then_grow(**kwargs):
+        source = original_validate(**kwargs)
+        path.write_bytes(path.read_bytes() + b"x" * limit)
+        return source
+
+    monkeypatch.setattr(module.filesystem_content, "MAX_MEDIA_FILE_BYTES", limit)
+    monkeypatch.setattr(module, "validate_rich_file_source", validate_then_grow)
+    with pytest.raises(ToolExecutionFailure, match="size limit"):
+        module.presentation_inspect_tool(
+            {"path": "sample.pptx"}, WorkspaceGuard(str(tmp_path))
+        )

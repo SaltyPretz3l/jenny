@@ -45,11 +45,9 @@
   // the true current height is the computed value while it interpolates.
   // Must run with the panel visible: a hidden panel measures 0.
   function readCollapseStartPx(panel, win, wasCollapsing) {
-    if (wasCollapsing && typeof win?.getComputedStyle === 'function') {
-      const computed = String(win.getComputedStyle(panel)?.maxHeight || '');
-      if (/^\d+(\.\d+)?px$/.test(computed)) return Number(computed.slice(0, -2));
-    }
-    return motionHeightUtils.measureCollapseStartPx(panel);
+    return wasCollapsing
+      ? motionHeightUtils.readCurrentMaxHeightPx(panel, win)
+      : motionHeightUtils.measureCollapseStartPx(panel);
   }
 
   function runReasoningPanelAutoCollapse(panel, options) {
@@ -206,6 +204,10 @@
         if (!remembered.entries.length) remembered = null;
       },
       clear() {
+        remembered = null;
+      },
+      dispose() {
+        handoffTrackers.delete(tracker);
         remembered = null;
       },
       replay() {

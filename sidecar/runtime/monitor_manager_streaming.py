@@ -28,7 +28,12 @@ from sidecar.runtime.monitor_salience import (
     MONITOR_SALIENCE_BUDGET_SECONDS,
     SalienceVerdict,
 )
-from sidecar.runtime.monitor_status import MonitorStatusError, MonitorStatusStore
+from sidecar.runtime.monitor_status import (
+    MonitorStatusError,
+    MonitorStatusStore,
+    decode_monitor_status,
+    encode_monitor_status,
+)
 
 logger = logging.getLogger(__name__)
 _MAX_MONITOR_STREAM_LINE_UNITS = MAX_MONITOR_EVENT_CHARS * 4
@@ -452,10 +457,10 @@ class _MonitorStreamingMixin:
             active.terminal_reason = terminal_reason
             active.exit_code = exit_code
             active.success = success
-            terminal = self._terminal_status(active)
-            active.terminal_status = terminal
             active.terminal_event.set()
             self._safe_write_status(active)
+            terminal = self._terminal_status(active)
+            active.terminal_status = terminal
         # Reap #2: collects a worker respawned in the window between reap #1 and
         # terminal_event.set(), since the respawn guard in _salience_worker_locked
         # only engages once terminal is set. Usually a no-op. Every termination path
@@ -492,14 +497,17 @@ class _MonitorStreamingMixin:
             }
 
     def _status_payload(self, active: _ActiveMonitor) -> dict[str, object]:
-        payload = self._metadata(active)
-        payload.update(
-            {
-                "updated_at": _utc_now_iso(),
-                "terminal": active.terminal_event.is_set() or active.terminal_status is not None,
-            }
-        )
-        return payload
+        with active.lock:
+            payload = self._metadata(active)
+            payload.update(
+                {
+                    "updated_at": _utc_now_iso(),
+                    "terminal": (
+                        active.terminal_event.is_set() or active.terminal_status is not None
+                    ),
+                }
+            )
+            return payload
 
     def _terminal_status(self, active: _ActiveMonitor) -> dict[str, object]:
         return {
@@ -511,6 +519,8 @@ class _MonitorStreamingMixin:
             "terminal_reason": active.terminal_reason,
             "success": bool(active.success),
             "exit_code": active.exit_code,
+            "event_count": active.event_count,
+            "dropped_event_count": active.dropped_event_count,
             "suppressed_event_count": active.suppressed_event_count,
             "salience_gate_disabled": active.salience_gate_disabled,
             "salience_gate_disabled_reason": active.salience_gate_disabled_reason,
@@ -522,7 +532,16 @@ class _MonitorStreamingMixin:
         return max(0, int((time.monotonic() - active.started_at) * 1000))
 
     def _write_status(self, active: _ActiveMonitor) -> None:
-        self._write_status_payload(active.monitor_id, self._status_payload(active))
+        with active.lock:
+            # The same lock covers snapshot capture and replacement, including terminal writes.
+            payload = decode_monitor_status(encode_monitor_status(self._status_payload(active)))
+            events = payload["events"]
+            assert isinstance(events, list)
+            active.events = events
+            dropped = payload["dropped_event_count"]
+            assert isinstance(dropped, int)
+            active.dropped_event_count = dropped
+            self._write_status_payload(active.monitor_id, payload)
 
     def _safe_write_status(self, active: _ActiveMonitor) -> None:
         import sidecar.runtime.monitor_manager as _mm_hub

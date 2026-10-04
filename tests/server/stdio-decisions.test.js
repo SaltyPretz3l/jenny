@@ -32,6 +32,20 @@ function waitFor(predicate, timeoutMs = 15_000) {
   });
 }
 
+// Race a promise against a deadline and always clear the timer so a settled
+// promise does not leave the process waiting on the losing timeout.
+async function withDeadline(promise, ms, message) {
+  let timer;
+  const deadline = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(message)), ms);
+  });
+  try {
+    return await Promise.race([promise, deadline]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 function createScript(root, name, calls) {
   const scriptPath = path.join(root, `${name}.json`);
   fs.writeFileSync(scriptPath, JSON.stringify({ version: 1, calls }), 'utf8');
@@ -175,8 +189,7 @@ test('framed hosted stdio ask_user survives a takeover and accepts one exact ans
       expected_revision: afterTakeover.session.revision,
     }), fixture.contextB);
     assert.equal(answered.ok, true, JSON.stringify(answered));
-    const final = await Promise.race([terminal, new Promise((_, reject) => setTimeout(
-      () => reject(new Error('question turn did not settle')), 15_000))]);
+    const final = await withDeadline(terminal, 15_000, 'question turn did not settle');
     assert.equal(final.type, 'complete', JSON.stringify(final));
     const session = fixture.host.backend.sessionStore.getSession(sessionId);
     assert.ok(session.messages.some((message) => message.role === 'tool'
@@ -215,8 +228,7 @@ test('framed hosted stdio cancellation during paced replay persists cancelled wi
       expected_revision: before.session.revision,
     }), fixture.contextA);
     assert.equal(admitted.ok, true, JSON.stringify(admitted));
-    await Promise.race([started, new Promise((_, reject) => setTimeout(
-      () => reject(new Error('paced replay did not emit a delta')), 10_000))]);
+    await withDeadline(started, 10_000, 'paced replay did not emit a delta');
     const current = fixture.router.snapshot(sessionId);
     const cancelled = await fixture.router.dispatch(fixture.command(fixture.a, 'chat.cancel', {
       stream_id: current.active_turn.stream_id,
@@ -226,8 +238,7 @@ test('framed hosted stdio cancellation during paced replay persists cancelled wi
       expected_revision: current.session.revision,
     }), fixture.contextA);
     assert.equal(cancelled.ok, true, JSON.stringify(cancelled));
-    const final = await Promise.race([terminal, new Promise((_, reject) => setTimeout(
-      () => reject(new Error('cancelled replay did not settle')), 15_000))]);
+    const final = await withDeadline(terminal, 15_000, 'cancelled replay did not settle');
     assert.ok(final.type === 'cancelled' || final.terminalStatus === 'cancelled' || final.status === 'cancelled', JSON.stringify(final));
     const session = fixture.host.backend.sessionStore.getSession(sessionId);
     const cancelledRow = session.messages.find((message) => message.parent_stream_id === current.active_turn.stream_id);

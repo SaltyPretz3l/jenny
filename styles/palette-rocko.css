@@ -43,16 +43,13 @@
   /* ── Reactive grid dots: orange idle, teal active ── */
   --widget-reactive-grid-dot-idle: rgba(232, 100, 26, 0.24);
   --widget-reactive-grid-dot-active: rgba(94, 232, 208, 0.96);
-  --widget-reactive-grid-dot-glow: rgba(232, 100, 26, 0.46);
 
   /* ── Playlist scroll ── */
   --playlist-scroll-line-color: rgba(232, 100, 26, 0.5);
   --playlist-scroll-lane-alpha: 0.10;
   --playlist-scroll-bar-alpha: 0.18;
   --playlist-scroll-sub-alpha: 0.07;
-  --playlist-scroll-band-alpha: 0.04;
   --playlist-scroll-ghost-color: rgba(232, 130, 60, 0.18);
-  --playlist-scroll-pad-color: rgba(255, 150, 80, 0.05);
   --playlist-scroll-accent-color: rgba(255, 130, 60, 0.6);
 
   /* ── Atomic burst — orange + teal + hot-pink trio ── */
@@ -62,15 +59,14 @@
   --widget-atomic-burst-flare-color: rgba(255, 230, 200, 0.94);
   --widget-atomic-burst-link-color: rgba(232, 180, 100, 0.62);
   --widget-atomic-burst-wave-color: rgba(232, 100, 26, 0.86);
-  --widget-atomic-burst-size: 28;
-  --widget-atomic-burst-density: 9.0;
 
   /* ── Circuit trace — teal hex grid, orange line, hot-pink glow, amber accent ── */
-  --widget-circuit-trace-grid-color: rgba(61, 191, 171, 0.16);
+  --widget-circuit-trace-grid-color: rgba(61, 191, 171, 0.30);
   --widget-circuit-trace-line-color: rgba(232, 100, 26, 0.92);
   --widget-circuit-trace-glow-color: rgba(212, 60, 160, 0.92);
-  --widget-circuit-trace-accent-color: rgba(232, 180, 32, 0.92);
-  --widget-circuit-trace-hex-size: 36;
+  --widget-circuit-trace-accent-color: rgba(96, 214, 196, 0.68);
+  --widget-circuit-trace-inner-color: rgba(61, 150, 140, 0.10);
+  --widget-circuit-trace-shadow-color: rgba(0, 0, 0, 0.28);
   --widget-circuit-trace-density: 1.0;
 
   /* ── Shadows ── */
@@ -129,17 +125,6 @@
   --surface-prompt-chip-hover: rgba(255, 255, 255, 0.055);
   --surface-prompt-chip-border: rgba(61, 191, 171, 0.14);
   --surface-prompt-chip-border-hover: rgba(232, 100, 26, 0.26);
-
-  --surface-assistant-sprite-background:
-    radial-gradient(circle at 32% 28%, rgba(240, 248, 244, 0.22), rgba(240, 248, 244, 0) 42%),
-    linear-gradient(180deg, rgba(20, 50, 44, 0.97), rgba(12, 30, 26, 0.98));
-  --surface-assistant-sprite-border: rgba(61, 191, 171, 0.26);
-  --surface-assistant-sprite-holo:
-    rgba(232, 100, 26, 0.96) 0deg,
-    rgba(212, 60, 160, 0.96) 90deg,
-    rgba(61, 191, 171, 0.96) 180deg,
-    rgba(232, 180, 32, 0.96) 270deg,
-    rgba(232, 100, 26, 0.96) 360deg;
 
   --surface-interactive-card-background:
     linear-gradient(180deg, rgba(14, 36, 32, 0.96), rgba(8, 20, 18, 0.96)),
@@ -205,14 +190,8 @@
   --widget-copy-chip-color: #d8f0ec;
 
 
-  /* Sprite streaming */
+  /* Rail J glyph */
   --widget-sprite-color: rgba(224, 244, 240, 0.94);
-  --widget-sprite-streaming-border: rgba(61, 191, 171, 0.3);
-  --widget-sprite-streaming-shadow:
-    0 0 0 1px rgba(0, 0, 0, 0.34),
-    0 12px 30px rgba(232, 100, 26, 0.14),
-    0 0 22px rgba(232, 100, 26, 0.12),
-    inset 0 1px 0 rgba(255, 255, 255, 0.09);
 
   /* Home orbit */
   --widget-face-glow-color: #e8641a;

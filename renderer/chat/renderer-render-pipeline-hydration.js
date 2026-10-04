@@ -69,6 +69,10 @@
         });
         return result;
       },
+      // Split view W1-4a: the session this pane shows (one pane: currentSessionId).
+      getPaneSessionId = () => String(state.currentSessionId || '').trim(),
+      // Transcript view of the session this pane shows (renderer-render-pipeline-utils.js).
+      getPaneTranscriptView = () => 'thinking',
     } = callbacks;
 
     function getPersistedTurnEventState(sessionId) {
@@ -303,11 +307,10 @@
       // DC1 flicker cure: the base canonical projection is what renders after
       // the reconciled overlay is pruned, so it must stamp the SAME deterministic
       // row_ids as the live/reconciled rows or the terminal-handoff blink returns
-      // one render later. Gate = global flag AND this session's row model live
-      // (the only case that produces a live overlay to match). Off by default =>
-      // projectTurn/projectTurnRows keep `row:${event_id}`, byte-identical.
-      const deterministicRowId = state?.features?.featureFlags?.chat_timeline_deterministic_row_id === true
-        && isLiveRowModelEnabledForSession(String(sessionId || '').trim());
+      // one render later. Gate = this session's row model live (the only case
+      // that produces a live overlay to match); otherwise projectTurn/
+      // projectTurnRows keep `row:${event_id}`.
+      const deterministicRowId = isLiveRowModelEnabledForSession(String(sessionId || '').trim());
       const turnById = new Map();
       const turnIdByMessageId = new Map();
       const rowsByTurnId = new Map();
@@ -682,17 +685,48 @@
       return target?.row ? buildTurnRowId(target.row) : '';
     }
 
+    // Every reasoning row the live segment owns (primary or reused via its
+    // source ids), from the first turn that has any, active turn first.
+    function findLiveReasoningRows(messageId, projectionContext) {
+      const liveId = String(messageId || '').trim();
+      const rowsByTurnId = projectionContext?.rowsByTurnId;
+      if (!liveId || !rowsByTurnId || typeof rowsByTurnId.get !== 'function') {
+        return [];
+      }
+      const activeTurnId = String(projectionContext?.activeTurnId || '').trim();
+      const turnRowLists = activeTurnId ? [rowsByTurnId.get(activeTurnId)] : [];
+      if (typeof rowsByTurnId.values === 'function') turnRowLists.push(...rowsByTurnId.values());
+      for (const rows of turnRowLists) {
+        const owned = (Array.isArray(rows) ? rows : []).filter((row) => String(row?.kind || '') === 'reasoning'
+          && (String(row?.primary_message_id || '').trim() === liveId
+            || (Array.isArray(row?.source_message_ids) && row.source_message_ids.some((id) => String(id || '').trim() === liveId))));
+        if (owned.length) return owned;
+      }
+      return [];
+    }
+
+    // target.row: the projection's streaming tool row, rendered as streaming;
+    // returns that one row. target.liveReasoningMessageId: every reasoning row
+    // the live segment owns, rendered exactly as the turn article renders them
+    // for that streaming message, so a surgical patch writes what a full render
+    // would (HB-010); returns all of those rows.
     function buildProjectionStreamingRowMarkup(target, messages, projectionContext) {
-      if (!target?.row) {
+      const liveReasoningMessageId = String(target?.liveReasoningMessageId || '').trim();
+      const rows = target?.row ? [target.row] : findLiveReasoningRows(liveReasoningMessageId, projectionContext);
+      if (!rows.length) {
         return '';
       }
-      const rowListMarkup = buildTurnRowListMarkup([target.row], messages, {
+      const rowListMarkup = buildTurnRowListMarkup(rows, messages, {
          projectionContext,
          messageById: projectionContext?.messageById,
          turnIdByMessageId: projectionContext?.turnIdByMessageId,
-         sessionId: String(state.currentSessionId || '').trim(),
+         sessionId: getPaneSessionId(),
+         // Same view the turn article renders with, or the surgical patch and
+         // the full render disagree on expansion defaults (per-delta flips).
+         transcriptView: getPaneTranscriptView(),
         reducedMotion: reducedMotionQuery.matches === true,
-        streamingRowId: buildTurnRowId(target.row),
+        streamingRowId: target?.row ? buildTurnRowId(target.row) : '',
+        streamingMessageId: liveReasoningMessageId,
       });
       if (!String(rowListMarkup || '').trim()) {
         return '';
@@ -702,6 +736,9 @@
         return '';
       }
       template.innerHTML = String(rowListMarkup || '').trim();
+      if (!target?.row) {
+        return template.content.querySelector('[data-turn-row-list="true"]')?.innerHTML || '';
+      }
       return template.content.querySelector('.chat-row')?.outerHTML || '';
     }
 
@@ -756,6 +793,7 @@
       buildHydratedProjectionDigest,
       resolveThreadRootMessageId,
       isLiveRowModelEnabledForSession,
+      isTurnStreamLive,
       getLiveProjectionStateForSession,
       overlayProjectedRows,
       resolveProjectionStreamingRowTarget,

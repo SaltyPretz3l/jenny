@@ -8,6 +8,7 @@ from typing import Any
 
 from sidecar.ai.config import resolve_effective_max_tokens
 from sidecar.ai.context.compaction import compact_context
+from sidecar.ai.context.compaction_diagnostics import compaction_window_shape
 from sidecar.ai.context.compaction_prompts import resolve_compaction_prompt
 from sidecar.ai.context.token_budget import estimate_messages_tokens
 from sidecar.ai.feature_flags import (
@@ -66,9 +67,15 @@ def compact_tool_loop_context(
             message_count=len(loop.working_messages),
         )
     )
+    # A trailing turn-context row (turn_context.py) sits out compaction: the
+    # summary never absorbs it, its tokens are reserved, and the loop's
+    # _after_context_compaction hook puts it back.
+    hold_row = getattr(loop, "_hold_turn_context_row", None)
+    held_row = hold_row() if callable(hold_row) else None
+    held_tokens = estimate_messages_tokens([held_row], backend) if held_row is not None else 0
     result = compact_context(
-        loop.working_messages,
-        budget,
+        [message for message in loop.working_messages if message is not held_row],
+        budget.with_reserved_tokens(held_tokens) if held_tokens else budget,
         backend,
         num_tools=num_tools,
         system_context=str(loop.system_prompt),
@@ -77,6 +84,9 @@ def compact_tool_loop_context(
         force=force,
         mode="mid_turn",
         task_content=str(getattr(loop, "latest_user_content", "") or "") or None,
+        plan_approved_in_turn=bool(
+            getattr(getattr(loop, "request_context", None), "plan_approved_in_turn", False)
+        ),
         generate_fn=loop.kernel._build_compaction_generate_fn(
             request_id=loop.request_id,
             max_tokens=min(
@@ -119,6 +129,9 @@ def compact_tool_loop_context(
     loop.compaction_stalled = False
     loop.compaction_last_ditch_used = False
     loop.working_messages[:] = list(result.messages)
+    after_compaction = getattr(loop, "_after_context_compaction", None)
+    if callable(after_compaction):
+        after_compaction()  # re-pins per-turn instructions the window dropped
     loop.runtime._preview_context_tokens(loop.working_messages)
     log_event(
         logger,
@@ -155,9 +168,14 @@ def compact_tool_loop_context(
             summary_message=result.summary_message,
             covered_through_tool_call_id=result.covered_through_tool_call_id,
             input_complete=False,
+            summary_source_dropped_messages=max(
+                0, int(result.summary_input_dropped_messages or 0)
+            ),
+            # After the re-pin above: the window the next model call reads.
+            window_shape=compaction_window_shape(loop.working_messages),
         )
     )
-    return max(0, int(result.tokens_after))
+    return max(0, int(result.tokens_after)) + int(held_tokens)
 
 
 def _apply_context_pressure(  # noqa: PLR0913

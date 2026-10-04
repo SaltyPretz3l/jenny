@@ -29,7 +29,6 @@ from sidecar.ai.error_codes import (
     CMP_CFG_WORKSPACE_MISSING,
     CMP_CHAT_INVALID_PARAMS,
     CMP_CHAT_STREAM_FAILED,
-    CMP_PLUGIN_EXPECTED_GENERATION_CONFLICT,
     CMP_PROTO_VERSION_MISMATCH,
     CMP_RESOURCE_EXCEEDED,
 )
@@ -37,7 +36,11 @@ from sidecar.ai.feature_flags import (
     FEATURE_CANONICAL_TURN_EVENTS,
     FEATURE_PHASE_EVENTS,
 )
-from sidecar.ai.routing.iteration_limits import effective_max_tools_per_turn
+from sidecar.ai.routing.iteration_limits import (
+    effective_max_loop_wall_seconds,
+    effective_max_tools_per_turn,
+    max_iterations_for_agent_surface,
+)
 from sidecar.ai.routing.loop_events import (
     ApprovalRequestedEvent,
     ApprovalResolvedEvent,
@@ -45,6 +48,7 @@ from sidecar.ai.routing.loop_events import (
     PhaseStartedEvent,
 )
 from sidecar.ai.routing.plan_mode_transition import context_with_plan_decision
+from sidecar.ai.routing.route_policy_runtime import with_request_safety
 from sidecar.ai.routing.tool_resource_deferral import ToolLoopSuspended
 from sidecar.ai.tools.workspace_retention import touch_workspace_active_use
 from sidecar.protocol import CHAT_SEND_METHOD
@@ -70,7 +74,6 @@ from sidecar.runtime.outcomes import (
 )
 from sidecar.runtime.request_dispatch_chat_support import (
     _approval_terminal_log_fields,
-    _build_plugin_workflow_response,
     _emit_canonical_notification,
     _emit_phase_notification,
     _normalize_approval_resolution,
@@ -169,6 +172,33 @@ def _credit_approval_wait(plan: Any, wait_seconds: float) -> Any:
         return copied_plan
 
 
+_PLAN_BUILD_DECISIONS = frozenset({"approved", "approved_auto"})
+
+
+def _fresh_build_budget(plan: Any, max_loop_wall_seconds: float, task_cap: int) -> Any:
+    """Give an approved plan's build a full working-time and step budget.
+
+    "Build it" is a fresh user decision: the build continues inside the same
+    request, so without this the planning time (TR-004) and planning steps
+    (TR-013) were charged against the build. The build leg's remaining steps
+    become at least the task cap; the loop's speed scaler then works from that
+    budget. Iteration numbering (``completed_iterations``) is untouched. Never
+    shortens an existing deadline or step budget.
+    """
+    updates: dict[str, Any] = {}
+    deadline = getattr(plan, "wall_clock_deadline", None)
+    if deadline is not None:
+        try:
+            fresh = monotonic() + max(0.0, float(max_loop_wall_seconds))
+            updates["wall_clock_deadline"] = max(float(deadline), fresh)
+        except (TypeError, ValueError, OverflowError):
+            pass
+    remaining = int(getattr(plan, "remaining_iterations", 0) or 0)
+    if remaining < task_cap:
+        updates["remaining_iterations"] = task_cap
+    return replace(plan, **updates) if updates else plan
+
+
 def _with_stack_generation_lease(func: Callable[..., ProcessOutcome]) -> Callable[..., ProcessOutcome]:
     @wraps(func)
     def wrapped(*args: Any, **kwargs: Any) -> ProcessOutcome:
@@ -227,25 +257,6 @@ def _with_plugin_runtime_admission(
                 )
         try:
             with admission.bind():
-                raw_invocation = params.get("plugin_command_invocation") if isinstance(params, dict) else None
-                if raw_invocation is not None:
-                    try:
-                        registry_factory = getattr(brain_container, "_plugin_registry", None)
-                        if not callable(registry_factory):
-                            raise RuntimeError("plugin registry unavailable")
-                        registry = registry_factory()
-                        kwargs["plugin_command_resolution"] = registry.resolve_command(raw_invocation)
-                    except Exception as error:  # noqa: BLE001 - normalized command authority refusal
-                        code = str(getattr(error, "code", CMP_PLUGIN_EXPECTED_GENERATION_CONFLICT))
-                        reason = str(getattr(error, "reason_code", "plugin_command_authority_mismatch"))
-                        safe_reason = reason if reason.replace("_", "").isalnum() and len(reason) <= MAX_REASON_CODE_LENGTH else "plugin_command_authority_mismatch"
-                        return ProcessOutcome(
-                            initialized=bool(initialized), shutdown_requested=False,
-                            response=error_response(message_id, code=INVALID_PARAMS_CODE,
-                                message="chat.send plugin command invocation rejected",
-                                data={"code": code, "reason": safe_reason, "retryable": False}),
-                            notifications=[],
-                        )
                 return func(*args, **kwargs)
         finally:
             admission.release()
@@ -255,6 +266,7 @@ def _with_plugin_runtime_admission(
 
 @_with_plugin_runtime_admission
 @_with_stack_generation_lease
+@with_request_safety  # per-request safety_mode / auto_approve_streak_cap (owner D3)
 def process_chat_send_request(
     *,
     message_id: Any,
@@ -274,7 +286,6 @@ def process_chat_send_request(
     approval_timeout_seconds: float = TOOL_APPROVAL_TIMEOUT_SECONDS,
     stream_notifications: bool = False,
     cancel_handle: TurnCancellationHandle | None = None,
-    plugin_command_resolution: Any | None = None,
 ) -> ProcessOutcome:
     import sidecar.runtime.request_dispatch as _rd_hub
 
@@ -296,18 +307,6 @@ def process_chat_send_request(
         FEATURE_CANONICAL_TURN_EVENTS,
     )
     canonical_seq_state = {"seq": 0}
-
-    if plugin_command_resolution is not None and plugin_command_resolution.target.kind == "prompt":
-        from sidecar.ai.plugins.workflow_interpreter import render_prompt_command
-
-        rendered = render_prompt_command(plugin_command_resolution)
-        params = dict(params)
-        messages = [dict(item) for item in params.get("messages", [])]
-        if messages and messages[-1].get("role") == "user":
-            messages[-1]["content"] = rendered
-        else:
-            messages.append({"role": "user", "content": rendered})
-        params["messages"] = messages
 
     version_error = validate_accept_version(
         method=CHAT_SEND_METHOD,
@@ -482,48 +481,36 @@ def process_chat_send_request(
             data={"interactive_approval": interactive_approval},
         )
         try:
-            if plugin_command_resolution is not None and plugin_command_resolution.target.kind == "workflow":
-                chat_response = _build_plugin_workflow_response(
-                    resolution=plugin_command_resolution, brain_container=brain_container,
-                    params=params, request_id=request_id, trace_id=trace_id,
-                    session_id=session_id or "", write_message=write_message,
-                    read_message=read_message, stream_notifications=stream_notifications,
-                    approval_response_reader=approval_response_reader,
-                    approval_response_waiter_factory=approval_response_waiter_factory,
-                    approval_timeout_seconds=approval_timeout_seconds,
-                    cancel_handle=cancel_handle, logger=logger,
-                )
-            else:
-                chat_response = _rd_hub._build_chat_response(
-                    message_id=message_id,
-                    params=params,
-                    # INVARIANT (W4.2, 2026-06-10): when interactive approval is on,
-                    # the FIRST pass always runs with approvals_pre_granted=False --
-                    # side-effecting tools detour through ApprovalPlanCache and the
-                    # approval/resume round-trip (approvals_pre_granted=True only on
-                    # the approved resume below); read-only tools run inline as
-                    # approvalState 'auto'. This is the intended approval
-                    # architecture, not a missed enablement.
-                    approvals_pre_granted=not interactive_approval,
-                    brain_container=brain_container,
-                    stream_notifications=stream_notifications,
-                    write_message=write_message,
-                    read_message=read_message,
-                    canonical_seq_state=canonical_seq_state,
-                    approval_response_reader=approval_response_reader,
-                    approval_response_waiter_factory=approval_response_waiter_factory,
-                    approval_timeout_seconds=approval_timeout_seconds,
-                    cancel_handle=cancel_handle,
-                    approval_plan=None,
-                    canonical_session_messages=(
-                        params.get("canonical_session_messages") if isinstance(params, dict) else None
-                    ),
-                    session_title=(
-                        str(params.get("session_title") or "").strip()
-                        if isinstance(params, dict)
-                        else ""
-                    ),
-                )
+            chat_response = _rd_hub._build_chat_response(
+                message_id=message_id,
+                params=params,
+                # INVARIANT (W4.2, 2026-06-10): when interactive approval is on,
+                # the FIRST pass always runs with approvals_pre_granted=False --
+                # side-effecting tools detour through ApprovalPlanCache and the
+                # approval/resume round-trip (approvals_pre_granted=True only on
+                # the approved resume below); read-only tools run inline as
+                # approvalState 'auto'. This is the intended approval
+                # architecture, not a missed enablement.
+                approvals_pre_granted=not interactive_approval,
+                brain_container=brain_container,
+                stream_notifications=stream_notifications,
+                write_message=write_message,
+                read_message=read_message,
+                canonical_seq_state=canonical_seq_state,
+                approval_response_reader=approval_response_reader,
+                approval_response_waiter_factory=approval_response_waiter_factory,
+                approval_timeout_seconds=approval_timeout_seconds,
+                cancel_handle=cancel_handle,
+                approval_plan=None,
+                canonical_session_messages=(
+                    params.get("canonical_session_messages") if isinstance(params, dict) else None
+                ),
+                session_title=(
+                    str(params.get("session_title") or "").strip()
+                    if isinstance(params, dict)
+                    else ""
+                ),
+            )
         except ToolLoopSuspended as error:
             return _pause_outcome_or_failure(
                 initialized=initialized, message_id=message_id, params=params,
@@ -654,7 +641,7 @@ def process_chat_send_request(
                 session_id=session_id,
                 canonical_seq_state=canonical_seq_state,
             )
-            from sidecar.runtime.decision_checkpoint import (  # noqa: PLC0415
+            from sidecar.runtime.decision_checkpoint import (
                 prepare_approval_decision,
             )
 
@@ -870,6 +857,17 @@ def process_chat_send_request(
                             cached_plan.request_context, approval_resolution
                         ),
                     )
+                    if approval_resolution.decision in _PLAN_BUILD_DECISIONS:
+                        stack_config = brain_container.stack.config
+                        cached_plan = _fresh_build_budget(
+                            cached_plan,
+                            effective_max_loop_wall_seconds(stack_config),
+                            max_iterations_for_agent_surface(
+                                stack_config,
+                                mode=cached_plan.request_context.mode,
+                                agent_surface=cached_plan.request_context.agent_surface,
+                            ),
+                        )
                 chat_response = _rd_hub._build_chat_response(
                     message_id=message_id,
                     params=params,

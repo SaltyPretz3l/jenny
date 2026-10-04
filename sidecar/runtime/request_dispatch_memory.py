@@ -18,6 +18,7 @@ from sidecar.exceptions import MemoryStoreError
 from sidecar.protocol import (
     MEMORY_DELETE_METHOD,
     MEMORY_LIST_METHOD,
+    MEMORY_MOVE_PROJECT_METHOD,
     MEMORY_PENDING_DELETE_METHOD,
     MEMORY_PENDING_LIST_METHOD,
     MEMORY_RECALL_METHOD,
@@ -34,6 +35,7 @@ from sidecar.runtime.memory import (
     list_memories_page,
     list_pending_memories_page,
     memory_error_payload,
+    move_project_memories,
     recall_memories,
     recall_recent_memories,
     save_memory_candidate,
@@ -104,7 +106,7 @@ def _request_include_general(params: Any) -> bool:
     return value
 
 
-def process_memory_method(  # noqa: PLR0917 - mirrors the dispatcher boundary.
+def process_memory_method(  # mirrors the dispatcher boundary.
     method: str,
     message_id: Any,
     params: Any,
@@ -113,6 +115,8 @@ def process_memory_method(  # noqa: PLR0917 - mirrors the dispatcher boundary.
     logger: logging.Logger,
 ) -> ProcessOutcome | None:
     """Dispatch memory.* JSON-RPC methods.  Returns None if method is not a memory method."""
+    if method == MEMORY_MOVE_PROJECT_METHOD:
+        return _process_move_project(message_id, params, initialized, brain_container)
 
     if method == MEMORY_STATUS_METHOD:
         version_error = validate_accept_version(
@@ -795,3 +799,59 @@ def process_memory_method(  # noqa: PLR0917 - mirrors the dispatcher boundary.
         )
 
     return None
+
+
+def _process_move_project(
+    message_id: Any,
+    params: Any,
+    initialized: bool,
+    brain_container: BrainContainer,
+) -> ProcessOutcome:
+    """memory.move_project: the desktop project delete moves memories to General."""
+
+    def outcome(response: Any) -> ProcessOutcome:
+        return ProcessOutcome(
+            initialized=initialized,
+            shutdown_requested=False,
+            response=response,
+            notifications=[],
+        )
+
+    version_error = validate_accept_version(
+        method=MEMORY_MOVE_PROJECT_METHOD,
+        message_id=message_id,
+        params=params,
+        invalid_params_code=INVALID_PARAMS_CODE,
+        version_mismatch_code=PROTOCOL_VERSION_MISMATCH,
+    )
+    if version_error is not None:
+        return outcome(version_error)
+    if message_id is None:
+        return outcome(None)
+    source = params.get("project_id") if isinstance(params, dict) else None
+    target = params.get("target_project_id") if isinstance(params, dict) else None
+    try:
+        moved = move_project_memories(
+            source_project_id=source,
+            target_project_id=target,
+            memory_store=_require_memory_service(brain_container.stack),
+        )
+    except ValueError as error:
+        return outcome(
+            error_response(
+                message_id,
+                code=INVALID_PARAMS_CODE,
+                message="memory.move_project invalid params",
+                data=memory_error_payload(str(error)),
+            )
+        )
+    except MemoryStoreError as error:
+        return outcome(
+            error_response(
+                message_id,
+                code=INTERNAL_ERROR_CODE,
+                message="memory.move_project failed",
+                data=memory_error_payload(error),
+            )
+        )
+    return outcome(result_response(message_id, moved))

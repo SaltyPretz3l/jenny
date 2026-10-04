@@ -334,15 +334,18 @@ test('renderer timeout badge does not duplicate timed out label', async (t) => {
     },
   });
   // A finished row stays collapsed, so the exit badge only renders once the
-  // reader opens the row; the header must not pre-empt it with its own label.
+  // reader opens the row. The row status reads Timed out (dogfood B11); the
+  // opened details carry one exit badge, not two.
   await expandToolDetails(window, 'call-bash-timeout');
   const block = await waitForToolBlock(
     window,
     'call-bash-timeout',
-    (candidate) => /timed out/.test(candidate.textContent)
+    (candidate) => Boolean(candidate.querySelector('.bash-exit-badge'))
   );
-  const labelMatches = (block.textContent.match(/timed out/g) || []).length;
-  assert.equal(labelMatches, 1, 'timed out should appear once');
+  const badges = Array.from(block.querySelectorAll('.bash-exit-badge'));
+  assert.equal(badges.length, 1, 'one exit badge');
+  assert.equal((badges[0].textContent.match(/timed out/g) || []).length, 1, 'timed out should appear once in the badge');
+  assert.equal(block.querySelector('.tool-call-status-label').textContent, 'Timed out');
 });
 
 test('renderer generic tool details keep full expanded output for diagnosis', async (t) => {
@@ -605,4 +608,64 @@ test('tool shell fallback logs throttled warn diagnostics on renderer exception'
   assert.equal(warnCalls.length, 1, 'first exception should log');
   assert.equal(renderer.renderToolShell({ ...model, callId: 'call-debug-2' }), null);
   assert.equal(warnCalls.length, 1, 'second exception in throttle window should be suppressed');
+});
+
+// Dogfood HB-035: a command that ran and exited non-zero (a requested failing
+// test) read "Error" with "{" as its failure line. The row names the exit
+// status and shows the command's own last output line.
+test('a failed command row reads exit N and shows the last output line', async (t) => {
+  const sessionId = 'session-bash-exit-label';
+  const streamId = `stream-${sessionId}`;
+  const { window, shell } = await loadRendererTestApp(t, {
+    shell: {
+      chat: {
+        startStream: createToolSessionStartStream(sessionId, 'Exit Label Session'),
+      },
+    },
+  });
+
+  await submitPrompt(window, 'Run the tests');
+
+  await shell.__emitChat({
+    type: 'tool_use',
+    sessionId,
+    streamId,
+    callId: 'call-bash-exit',
+    toolName: 'run_command',
+    summary: 'run_command pytest',
+    input: { command: 'python -m pytest -q' },
+    status: 'running',
+  });
+  await shell.__emitChat({
+    type: 'tool_result',
+    sessionId,
+    streamId,
+    callId: 'call-bash-exit',
+    toolName: 'run_command',
+    input: { command: 'python -m pytest -q' },
+    summary: 'run_command pytest',
+    content: JSON.stringify({
+      command: 'python -m pytest -q',
+      cwd: '.',
+      exit_code: 1,
+      stdout: '..F\n1 failed, 116 passed in 13.39s\n',
+      stderr: '',
+      ok: false,
+      shell: 'cmd',
+    }, null, 2),
+    isError: true,
+    errorCode: 'CMP-TOOL-0008',
+    approvalState: 'auto',
+    durationMs: 14200,
+    // The sidecar shell tool's wire casing.
+    metadata: { shell: 'cmd', exit_code: 1 },
+  });
+  const block = await waitForToolBlock(
+    window,
+    'call-bash-exit',
+    (candidate) => candidate.querySelector('.tool-call-status-label')?.textContent === 'exit 1'
+  );
+  assert.equal(block.querySelector('.tool-call-status-label').textContent, 'exit 1');
+  assert.match(block.textContent, /1 failed, 116 passed in 13\.39s/);
+  assert.doesNotMatch(block.textContent, /Error/);
 });

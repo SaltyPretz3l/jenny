@@ -27,7 +27,7 @@ test('setup status translations remain inside their aria-label attributes', asyn
     setupService: { detectOllama: async () => ({ installed: true, running: true }) } });
   t.after(() => { scene.dispose(); dom.window.close(); });
   scene.mount(host);
-  const glyph = () => host.querySelector('[data-setup-derived] .setup-hub-glyph');
+  const glyph = () => host.querySelector('[data-setup-model-route] .setup-hub-glyph');
   assert.equal(glyph().getAttribute('aria-label'), hostile);
   assert.equal(host.querySelector('[data-injected]'), null);
   await new Promise((resolve) => setImmediate(resolve));

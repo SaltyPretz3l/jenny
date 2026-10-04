@@ -324,7 +324,13 @@ def rich_inspect_result_to_tool_result(
     }
     return ToolHandlerResult(
         output=output,
-        success=True,
+        success=result.status == "inspected",
+        error_code=(
+            result.failure.error_code if result.failure is not None
+            else CMP_TOOL_RICH_FILES_DEPENDENCY_MISSING if result.status == "unavailable"
+            else CMP_TOOL_RICH_FILES_UNSUPPORTED if result.status == "unsupported"
+            else None
+        ),
         generated_artifacts=generated_artifacts,
         metadata=metadata,
     )
@@ -499,17 +505,26 @@ def read_bounded_file_bytes(
 ) -> bytes:
     content = bytearray()
     total = 0
-    with open_regular_file(path, "rb", authorized_root=authorized_root) as handle:
-        while True:
-            chunk = handle.read(65_536)
-            if not chunk:
-                break
-            total += len(chunk)
-            if total > max_bytes:
-                raise ToolExecutionFailure(
-                    code=CMP_TOOL_RICH_FILES_UNSUPPORTED,
-                    message=message,
-                    retryable=False,
-                )
-            content.extend(chunk)
+    try:
+        with open_regular_file(path, "rb", authorized_root=authorized_root) as handle:
+            while True:
+                chunk = handle.read(65_536)
+                if not chunk:
+                    break
+                total += len(chunk)
+                if total > max_bytes:
+                    raise ToolExecutionFailure(
+                        code=CMP_TOOL_RICH_FILES_UNSUPPORTED,
+                        message=message,
+                        retryable=False,
+                    )
+                content.extend(chunk)
+    except OSError as error:
+        # Callers read before their parse guard; a file error after validation
+        # is a structured failure, never a raw exception (or a raw path).
+        raise ToolExecutionFailure(
+            code=CMP_TOOL_RICH_FILES_UNSUPPORTED,
+            message="rich-file source could not be read",
+            retryable=False,
+        ) from error
     return bytes(content)

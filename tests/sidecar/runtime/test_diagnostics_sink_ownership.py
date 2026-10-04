@@ -45,7 +45,7 @@ def test_post_close_emit_is_rejected_not_reopened(tmp_path) -> None:
 
     handler.emit(_record("after close"))
 
-    assert handler._stream is None  # noqa: SLF001 - the leak under test
+    assert handler._stream is None  # the leak under test
     lines = (tmp_path / "sidecar.log").read_text("utf-8").strip().splitlines()
     assert len(lines) == 1
 
@@ -72,7 +72,7 @@ def test_transfer_sink_close_hands_disposal_to_the_live_listener() -> None:
     assert listener.transfer_sink_close(lambda: closes.append(1)) is True
 
     release_sink.set()
-    listener._thread.join(5.0)  # noqa: SLF001 - deterministic wait for the finally
+    listener._thread.join(5.0)  # deterministic wait for the finally
     assert closes == [1]
 
 
@@ -89,7 +89,7 @@ def test_timed_out_shutdown_reports_stages_to_stderr_not_the_contended_sink(
     tmp_path, monkeypatch, capsys
 ) -> None:
     configure_sidecar_logging(tmp_path / "logs" / "sidecar.log")
-    state = _diag_module._STATE  # noqa: SLF001
+    state = _diag_module._STATE
     assert state is not None
     real_stop = state.listener.stop
     monkeypatch.setattr(

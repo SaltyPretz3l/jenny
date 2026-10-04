@@ -6,6 +6,7 @@ const { getSessionMessages } = require('../services/backend/backend-sessions');
 const { CanonicalTurnEventCollector } = require('../services/backend/canonical-turn-event-collector');
 const { buildCanonicalTurnEvent } = require('../services/backend/canonical-turn-event');
 const { projectTurnTree } = require('../renderer/chat/renderer-turn-tree-projector');
+const { redactTranscriptPaths } = require('../services/backend/transcript-export-redaction');
 
 function fixture() {
   const collector = new CanonicalTurnEventCollector({
@@ -29,9 +30,18 @@ function fixture() {
     event_id: 'stream_physical:canonical:12',
     payload: { text: content, trace_id: 'stream_physical', assistant_phase: 'final_answer' },
   }));
-  assert.match(final.payload.text, /\[redacted:path\]/);
+  assert.equal(final.payload.text, content, 'HB-012: canonical text keeps real paths');
   return { collector, messages, final };
 }
+
+test('ownership recovery still matches a capture persisted with pre-HB-012 path-redacted text', async () => {
+  const { messages, final } = fixture();
+  const legacyFinal = { ...final, payload: { ...final.payload, text: redactTranscriptPaths(final.payload.text) } };
+  assert.match(legacyFinal.payload.text, /\[redacted:path\]/);
+  const session = { messages, turn_event_log_version: 4, turn_events: [legacyFinal] };
+  const response = await getSessionMessages({ sessionStore: { getSession: () => session } }, 'session');
+  assert.equal(response.turn_events[0].primary_message_id, messages[2].id);
+});
 
 test('canonical finalization assigns a segmented response to its actual saved message', () => {
   const { collector, messages, final } = fixture();

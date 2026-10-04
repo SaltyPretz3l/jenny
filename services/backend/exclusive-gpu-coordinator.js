@@ -42,25 +42,36 @@ function defaultLeaseIdFactory() {
   return `gpu_${Date.now()}_${crypto.randomBytes(6).toString('hex')}`;
 }
 
+// Owner kinds and the identity fields each must carry. `plugin` is the
+// session-provider broker; `builtin` is an Electron-owned chat tool call
+// (services/backend/chat-gpu-handoff.js), fenced by the calling stream.
+const OWNER_IDENTITY_FIELDS = Object.freeze({
+  plugin: Object.freeze(['publisher_id', 'plugin_id', 'operation_id']),
+  builtin: Object.freeze(['tool_name', 'call_id', 'stream_id']),
+});
+
 function normalizeOwner(value = {}) {
   const source = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
-  const owner = {
-    kind: String(source.kind || '').trim().toLowerCase(),
-    publisher_id: String(source.publisher_id || '').trim(),
-    plugin_id: String(source.plugin_id || '').trim(),
-    operation_id: String(source.operation_id || '').trim(),
-  };
-  if (owner.kind !== 'plugin' || !owner.publisher_id || !owner.plugin_id || !owner.operation_id) {
+  const kind = String(source.kind || '').trim().toLowerCase();
+  const fields = OWNER_IDENTITY_FIELDS[kind];
+  if (!fields) {
     return null;
+  }
+  const owner = { kind };
+  for (const field of fields) {
+    owner[field] = String(source[field] || '').trim();
+    if (!owner[field]) {
+      return null;
+    }
   }
   return owner;
 }
 
 function sameOwner(left, right) {
-  return Boolean(left && right && left.kind === right.kind
-    && left.publisher_id === right.publisher_id
-    && left.plugin_id === right.plugin_id
-    && left.operation_id === right.operation_id);
+  if (!left || !right || left.kind !== right.kind || !OWNER_IDENTITY_FIELDS[left.kind]) {
+    return false;
+  }
+  return OWNER_IDENTITY_FIELDS[left.kind].every((field) => left[field] === right[field]);
 }
 
 class ExclusiveGpuCoordinator extends EventEmitter {

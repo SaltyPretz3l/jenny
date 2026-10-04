@@ -61,7 +61,6 @@
     const quickOpenUtils = resolveModule('rendererIdeQuickOpen', './renderer-ide-quick-open');
     const previewControllerUtils = resolveModule('rendererIdePreviewController', './renderer-ide-preview-controller');
     const diffControllerUtils = resolveModule('rendererIdeDiffController', './renderer-ide-diff-controller');
-    const terminalPanelUtils = resolveModule('rendererIdeTerminalPanel', './renderer-ide-terminal-panel');
     const themeBridgeUtils = resolveModule('rendererIdeThemeBridge', './renderer-ide-theme-bridge');
     const actionButton = resolveModule('inventoryActionButton', '../inventory/action-button');
     const pathMenuUtils = resolveModule('rendererIdePathMenu', './renderer-ide-path-menu');
@@ -86,9 +85,7 @@
     const layoutUtils = resolveModule('rendererIdeLayout', './renderer-ide-layout');
     const commandsUtils = resolveModule('rendererIdeCommands', './renderer-ide-commands');
     const navBookmarksUtils = resolveModule('rendererIdeNavBookmarks', './renderer-ide-nav-bookmarks');
-    const inlineSuggestUtils = resolveModule('rendererIdeInlineSuggest', './renderer-ide-inline-suggest');
     const autoSaveUtils = resolveModule('rendererIdeAutoSave', './renderer-ide-auto-save');
-    const fimPickerUtils = resolveModule('rendererIdeFimPicker', './renderer-ide-fim-picker');
     const branchSwitcherUtils = resolveModule('rendererIdeBranchSwitcher', './renderer-ide-branch-switcher');
     const keyboardUtils = resolveModule('rendererChatKeyboardUtils', '../chat/renderer-chat-keyboard-utils');
     /* Path/OS utility context-menu items (reveal/open-in-default/copy) live in
@@ -128,8 +125,8 @@
     function getWorkspaceRootApi() {
       return workspaceRootService;
     }
-    function getWorkspaceTerminalApi() {
-      return windowRef.jennyShell?.workspaceTerminal || null;
+    function getWorkspacePtyApi() {
+      return windowRef.jennyShell?.workspacePty || null;
     }
 
     const themeBridge = themeBridgeUtils.createIdeThemeBridge?.({
@@ -176,7 +173,6 @@
         selectionIntents?.registerActions();
         wordWrap?.registerAction(monacoApi);
         debugInspector?.registerActions(); runScripts?.registerActions();
-        inlineSuggest?.handleMonacoReady(monacoApi);
         symbolNav?.handleMonacoReady(monacoApi);
       },
     }) || null;
@@ -199,19 +195,6 @@
         editorHost, getDom, windowRef, escapeHtml, appendClientLog,
         onOpenFile: (path) => openFile(path),
       }) || null;
-    // Inline autocomplete provider (registers itself onto Monaco in
-    // onMonacoReady above when the workspace_inline_suggest flag is on; also owns
-    // its statusbar quick-toggle via statusCallbacks() below).
-    const inlineSuggest = inlineSuggestUtils.createIdeInlineSuggest?.({
-      editorHost,
-      getIde: () => getIde(),
-      isFeatureEnabled: () => state?.features?.featureFlags?.workspace_inline_suggest === true,
-      isTestHookEnabled: () => state?.features?.featureFlags?.agent_test_hooks === true,
-      windowRef,
-      commitPreference: (key, value) => commitEditorPreference(key, value),
-      requestStatusRender: () => statusBar?.render(),
-      log: (...args) => appendClientLog(...args),
-    }) || null;
     // Debounced auto-save (default-OFF via the per-user autoSaveEnabled pref).
     // Reuses saveActiveFile so the
     // mtime-conflict + stale guards hold; the module skips non-file/stale tabs and
@@ -247,6 +230,8 @@
       schedulePersist();
       renderIde();
     };
+    // Show a panel on whichever side hosts it (reveal / find / Ctrl+Shift+F / Changes).
+    const showPanel = (id) => ideStateUtils.showPanel(getIde(), id, { openSecondary: (p) => secondarySidebar?.open(p), schedulePersist, requestRender: renderIde });
     const explorer = wiringUtils.createIdeExplorerWiring?.({
       getDom, escapeHtml, getIde, getWorkspaceFsApi, openFile,
       buildFileContextMenuItems, buildPathUtilityMenuItems, schedulePersist,
@@ -265,6 +250,8 @@
       schedulePersist: () => schedulePersist(),
       onToggleSecondary: () => secondarySidebar?.toggle(),
       onToggleChatDock: () => ideChatDock?.toggle(),
+      // The other columns are budgeted against the shown rail: re-apply them per gesture step.
+      onWidthApplied: () => { secondarySidebar?.syncWidth?.(); ideChatDock?.syncWidth?.(); },
       isChatDockEnabled: () => state?.features?.featureFlags?.ide_chat_dock === true,
       onMovePanel,
       // Stage-surface entries (two-entry-kind activity strip): flag getters
@@ -290,8 +277,8 @@
       onOpenResult: handleSearchResultOpen, appendClientLog, showShellErrorToast: (...args) => showShellErrorToast(...args),
       renderTabs: () => renderTabs(),
       isSaving: () => fileLifecycle?.isSaving() === true,
-      // Find-in-Folder switches the rail to search (rail state + renderIde live here).
-      onActivateSearch: () => { const ide = getIde(); if (ide.railPanel !== 'search') { ide.railPanel = 'search'; schedulePersist(); } renderIde(); },
+      // Find-in-Folder shows Search on whichever side hosts it (rail or secondary).
+      onActivateSearch: () => showPanel('search'),
     };
     const searchPanel = searchPanelUtils.createIdeSearchPanel?.({ ...searchDeps, ...panelDeps('search') }) || null;
     const changesDeps = {
@@ -312,11 +299,10 @@
     const changesPanel = changesPanelUtils.createIdeChangesPanel?.({ ...changesDeps, ...panelDeps('changes') }) || null;
 
     const ptyTerminalPanelUtils = resolveModule('rendererIdePtyTerminalPanel', './renderer-ide-pty-terminal-panel');
-    const terminalPanel = resolveModule('rendererIdeTerminalWiring', './renderer-ide-terminal-wiring').createIdeTerminalPanelForFlags?.({
-      isPtyEnabled: () => state?.features?.featureFlags?.workspace_pty_terminal === true, getPtyMountEl: () => getDom().ideBottomTerminalHost, terminalPanelUtils, ptyTerminalPanelUtils,
+    const terminalPanel = resolveModule('rendererIdeTerminalWiring', './renderer-ide-terminal-wiring').createIdeTerminalPanel?.({
+      getPtyMountEl: () => getDom().ideBottomTerminalHost, ptyTerminalPanelUtils,
       deps: {
-        getDom, getIde: () => getIde(), getWorkspaceTerminalApi, appendClientLog, getMountEl: () => getDom().ideBottomPanelContent,
-        getWorkspacePtyApi: () => windowRef.jennyShell?.workspacePty || null,
+        getDom, getIde: () => getIde(), appendClientLog, getMountEl: () => getDom().ideBottomPanelContent, getWorkspacePtyApi,
         isActivePanel: () => getIde().bottomPanelOpen === true && getIde().bottomPanelActiveView === 'terminal',
         showError: (message, meta) => showShellErrorToast(message, meta), toErrorMessage: (...args) => toErrorMessage(...args),
       },
@@ -333,8 +319,6 @@
         getDirtyCount: () => gitFeature?.getDirtyCount() || 0,
         getProblemCounts: () => problemsPanel?.getCounts() || null,
         getBottomPanelOpen: () => getIde().bottomPanelOpen === true, getRunning: () => runScripts?.isRunning() === true,
-        ...(inlineSuggest?.statusCallbacks?.() || {}),
-        onOpenInlineSuggestMenu: (anchor) => fimPicker?.open(anchor),
         onSwitchBranch: () => branchSwitcher?.open(),
         onOpenProblems: () => bottomPanel?.open('problems'),
         onToggleBottomPanel: () => bottomPanel?.toggle(), onKillRun: () => runScripts?.kill(),
@@ -437,9 +421,9 @@
     // "Debug this file (Node Inspector)" launches via the
     // terminal + scrape the ws:// banner; all logic lives in the sibling.
     const debugInspector = debugInspectorUtils.createIdeDebugInspector?.({
-      editorHost, getWorkspaceTerminalApi, appendClientLog, showToastMessage,
+      editorHost, getWorkspacePtyApi, getWorkspaceRootApi, appendClientLog, showToastMessage, saveFile: (path) => saveForLaunch(path),
       openTerminalPanel: () => bottomPanel?.open('terminal'),
-      startTerminalSession: () => terminalPanel?.startSession(),
+      sendTerminalCommand: (builder) => terminalPanel?.sendCommand?.(builder) ?? false,
       isDiffTabId: (path) => ideStateUtils.isDiffTabId?.(path) === true,
       getClipboardApi: () => windowRef.jennyShell?.clipboard || null,
     }) || null;
@@ -476,10 +460,10 @@
     const ideCommands = commandsUtils.createIdeCommands?.({
       document: windowRef.document || null,
       getActiveView: () => state.ui?.activeView || '',
-      editorHost,
+      editorHost, appendClientLog,
       toggleMinimap: () => editorPrefsUtils.toggleMinimap?.(getIde(), editorHost, commitEditorPreference, () => statusBar?.render()),
-      reopenClosedTab: () => reopenClosedTab(),
-      workspaceSymbolPicker: () => symbolNav?.openPicker(), openFileMap: () => qol?.mapController?.openFileMap(), isFileMapEnabled: () => state.features?.featureFlags?.workspace_file_map === true, revealInMap: () => qol?.revealActiveFileInMap?.(), showBlastRadius: () => qol?.blastActiveFileInMap?.(), toggleExplodedView: () => qol?.explodeController?.toggleActiveTab(), isExplodedViewEnabled: () => state.features?.featureFlags?.workspace_exploded_view === true, openPreviewSurface: () => qol?.stageSurface?.activate('preview'), previewActiveFile: () => qol?.previewStage?.open(getIde().activeTabPath || ''), isPreviewSurfaceEnabled: () => state.features?.featureFlags?.workspace_preview_surface === true,
+      reopenClosedTab: () => reopenClosedTab(), showPanel,
+      workspaceSymbolPicker: () => symbolNav?.openPicker(), openFileMap: () => qol?.mapController?.openFileMap(), isFileMapEnabled: () => state.features?.featureFlags?.workspace_file_map === true, revealInMap: () => qol?.revealActiveFileInMap?.(), showBlastRadius: () => qol?.blastActiveFileInMap?.(), toggleExplodedView: () => qol?.explodeController?.toggleActiveTab(), openPreviewSurface: () => qol?.stageSurface?.activate('preview'), previewActiveFile: () => qol?.previewStage?.open(getIde().activeTabPath || ''), isPreviewSurfaceEnabled: () => state.features?.featureFlags?.workspace_preview_surface === true,
       ...(navBookmarks?.bookmarkActions),
       helpOverlayFactory: helpOverlayUtils.createHelpOverlay,
       buildShortcutsHtml: () => ideShortcutsUtils.buildIdeShortcutsHtml?.() || '',
@@ -506,28 +490,10 @@
       onAfterChange: (change) => { void editorPrefsUtils.persistChipChange?.(getIde(), change, commitEditorPreference); },
     }) || null;
 
-    // Completion-model menu behind the statusbar autocomplete caret (FIM model
-    // pick + live load/unload). Controller-free chrome like chipPicker.
-    const fimPicker = fimPickerUtils.createIdeFimPicker?.({
-      getDom,
-      getIde: () => getIde(),
-      popover: typeof popoverUtils === 'function' ? popoverUtils : popoverUtils?.default,
-      actionButton: typeof actionButton === 'function' ? actionButton : null,
-      escapeHtml,
-      commitPreference: (key, value) => commitEditorPreference(key, value),
-      requestStatusRender: () => statusBar?.render(),
-      windowRef,
-    }) || null;
-
-    // Breadcrumb clicks / "Reveal in Explorer": switch the rail to the
-    // explorer panel and route tree focus (which scrolls) to the path.
+    // Breadcrumb clicks / "Reveal in Explorer": show the explorer on its side
+    // (rail or secondary), then route tree focus (which scrolls) to the path.
     function revealInExplorer(path, options) {
-      const ide = getIde();
-      if (ide.railPanel !== 'explorer') {
-        ide.railPanel = 'explorer';
-        schedulePersist();
-      }
-      renderIde();
+      showPanel('explorer');
       tree?.revealPath(path, options);
     }
 
@@ -606,18 +572,22 @@
       onReveal: (path, line, column) => handleSearchResultOpen(path, line, column),
     }) || null;
     const runScripts = resolveModule('rendererIdeRunScripts', './renderer-ide-run-scripts').createIdeRunScripts?.({
-      getDom, escapeHtml, editorHost, getWorkspaceFsApi, getWorkspaceTerminalApi, appendClientLog, showToastMessage,
+      getDom, escapeHtml, editorHost, getWorkspaceFsApi, appendClientLog, showToastMessage, saveFile: (path) => saveForLaunch(path),
       isActivePanel: () => getIde().bottomPanelOpen === true && getIde().bottomPanelActiveView === 'run',
       isDiffTabId: (p) => ideStateUtils.isDiffTabId?.(p) === true || ideStateUtils.isPreviewTabId?.(p) === true,
       openRunPanel: () => bottomPanel?.open('run'), onRunStateChange: () => statusBar?.render(),
     }) || null;
     const testRunnerWiring = resolveModule('rendererIdeTestRunnerWiring', './renderer-ide-test-runner-wiring').createIdeTestRunnerWiring?.({ windowRef, actionButton, getMountEl: () => getDom().ideBottomPanelContent, isActiveView: () => getIde().bottomPanelOpen === true && getIde().bottomPanelActiveView === 'test-runner', showShellErrorToast }) || null;
     // Collapsible bottom panel (Terminal/Problems/Run).
+    const focusIdeEditor = () => { editorHost?.focus?.(); const host = getDom().ideEditorHost; return Boolean(host?.contains?.(host.ownerDocument?.activeElement)); };
     const bottomPanel = bottomPanelUtils.createIdeBottomPanel?.({
       getDom, getIde: () => getIde(), escapeHtml,
       requestRender: () => renderIde(), schedulePersist: () => schedulePersist(),
       renderTerminal: () => terminalPanel?.renderTerminalPanel(),
-      renderProblems: () => problemsPanel?.renderPanel(), renderRun: () => runScripts?.renderRunPanel(), renderTestRunner: () => testRunnerWiring?.render(), hasPersistentTerminalHost: () => state?.features?.featureFlags?.workspace_pty_terminal === true,
+      renderProblems: () => problemsPanel?.renderPanel(), renderRun: () => runScripts?.renderRunPanel(), renderTestRunner: () => testRunnerWiring?.render(), hasPersistentTerminalHost: () => true,
+      // Focus hooks: open lands in xterm; collapse lands in the editor (true only if focus got there).
+      focusTerminal: () => terminalPanel?.focusTerminal?.() === true,
+      focusEditor: focusIdeEditor,
     }) || null;
     // Secondary sidebar: a second static side container opposite the rail. The
     // module owns the chrome (which panels live here + the visibility/width);
@@ -625,8 +595,9 @@
     const secondarySidebar = secondarySidebarUtils.createIdeSecondarySidebar?.({
       getDom, getIde: () => getIde(),
       requestRender: () => renderIde(), schedulePersist: () => schedulePersist(),
-      onMovePanel,
+      onMovePanel, focusEditor: focusIdeEditor, // closing lands focus in the editor (else the rail tab)
       getMaxWidth: () => layout?.maxSecondaryWidth() ?? Infinity,
+      onWidthApplied: () => { rail?.syncWidth?.(); ideChatDock?.syncWidth?.(); },
     }) || null;
     // Workspace Chat Dock (ide_chat_dock): the chat subtree relocated into an
     // outermost #ideShell column. The module owns the chrome + the idempotent
@@ -639,6 +610,8 @@
       layoutIdeEditor: () => layoutIdeEditor(), getMaxWidth: () => layout?.maxChatDockWidth() ?? Infinity,
       onNewChat: () => getDom().ideChatDock?.ownerDocument?.getElementById('newChatButton')?.click(),
       onSelectSession: (sessionId) => activateWorkspaceSession(sessionId), showShellErrorToast, appendClientLog, noteProgrammaticWrite: (reason) => callbacks.noteScrollProgrammaticWrite?.(reason),
+      // Split view: the dock hosts pane 0, so pane 0 holds focus while docked.
+      onHostChanged: (docked) => globalThis.rendererAppPaneComposition?.getPaneComposition?.()?.handleChatDocked?.(docked),
     }) || null;
     // Layout owns the panel render fan-out + secondary-sidebar + bottom-panel
     // render. Each panel render fn self-targets (getMountEl) and self-gates
@@ -707,17 +680,6 @@
       return persistence ? persistence.hydratePersistedState() : Promise.resolve();
     }
 
-    function openChangesPanel() {
-      const ide = getIde();
-      if (ideStateUtils.getPanelLocation(ide, 'changes') === 'secondary') {
-        secondarySidebar?.open('changes');
-        return;
-      }
-      ide.railPanel = 'changes';
-      schedulePersist();
-      renderIde();
-    }
-
     // QoL chrome (breadcrumb nav + Ctrl+Tab MRU + save-time hygiene) behind one
     // collector so features add no per-module wiring to this at-ceiling controller;
     // built pre-fileLifecycle/keydown so saveHygiene + mruSwitcher thread into them.
@@ -727,7 +689,7 @@
       onOpenFile: (p) => openFile(p), activateTab: (p) => activateTab(p),
       onRevealInExplorer: (p) => revealInExplorer(p, { expandSelf: true }), onOpenSymbolPicker: () => editorHost?.runAction('editor.action.quickOutline'),
       getWorkspaceId: () => String(state.workspace?.activeWorkspaceId || ''), getFeatureFlags: () => state.features?.featureFlags || {}, sendToJenny: (payload) => onSendToJenny(payload), getGitDecoration: (p) => gitFeature?.getDecoration(p), subscribeGitChange: (fn) => gitFeature?.subscribe(fn), ideStateUtils, requestRender: () => renderIde(), activityBus: state.workspaceActivityBus || null, getActiveSessionId: () => String(state.currentSessionId || ''), // Shared bus + active-session accessor for the map controller's presenter
-      getWorkspaceRootContext: () => state.workspaceRoot || null, chooseWorkspaceRoot: (...args) => chooseWorkspaceRoot(...args), getChangeLedger: () => getChangeLedger(), openChangeDiff: (change) => openChangeDiff(change), openChangesPanel, showShellErrorToast: (...args) => showShellErrorToast(...args), // Root context is the canonical File Map identity, never 'default'
+      getWorkspaceRootContext: () => state.workspaceRoot || null, chooseWorkspaceRoot: (...args) => chooseWorkspaceRoot(...args), getChangeLedger: () => getChangeLedger(), openChangeDiff: (change) => openChangeDiff(change), openChangesPanel: () => showPanel('changes'), showShellErrorToast: (...args) => showShellErrorToast(...args), // Root context is the canonical File Map identity, never 'default'
       schedulePersist: () => schedulePersist(), getFileOperations: () => fileLifecycle?.fileOperations,
     }) || null;
 
@@ -783,6 +745,7 @@
     function saveFile(targetPath) {
       return fileLifecycle ? fileLifecycle.saveFile(targetPath) : Promise.resolve(false);
     }
+    function saveForLaunch(targetPath) { return fileLifecycle ? fileLifecycle.saveForLaunch(targetPath) : Promise.resolve(false); }
     function saveActiveFile(options) {
       return fileLifecycle ? fileLifecycle.saveActiveFile(options) : Promise.resolve(false);
     }
@@ -839,7 +802,7 @@
       bottomPanel,
       chatDock: ideChatDock, isChatDockEnabled: () => state?.features?.featureFlags?.ide_chat_dock === true,
       mruSwitcher: qol?.mruSwitcher || null,
-      reopenClosedTab,
+      reopenClosedTab, showPanel,
       workspaceSymbolPicker: () => symbolNav?.openPicker(),
       navBack: () => navBookmarks?.back(),
       navForward: () => navBookmarks?.forward(),
@@ -874,7 +837,7 @@
       secondarySidebar?.bindEvents();
       ideChatDock?.bindEvents();
       symbolNav?.bindEvents(); qol?.bindAll();
-      chipPicker?.initHandlers(); fimPicker?.initHandlers();
+      chipPicker?.initHandlers();
       // Flush the pending debounced persist before a hard window close (mirrors
       // the dashboard scratchpad beforeunload flush) so edits are not lost.
       const flushOnUnload = () => { persistence?.flushIfPending(); };
@@ -892,7 +855,7 @@
         welcome?.dispose();
         confirmDialog?.dispose();
         ideCommands?.disposeHelp();
-        chipPicker?.dispose(); fimPicker?.dispose();
+        chipPicker?.dispose();
         dom.ideView.removeEventListener('keydown', handleViewKeydown, true);
         // Flush any pending persist before teardown (clears the timer internally).
         persistence?.flushIfPending();
@@ -915,7 +878,6 @@
         rail?.dispose();
         explorer?.disposeAll();
         themeBridge?.dispose();
-        inlineSuggest?.dispose();
         autoSave?.dispose();
         gutterDecorations?.dispose();
         navBookmarks?.dispose();

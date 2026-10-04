@@ -1,7 +1,10 @@
 /* styles/project-menu.css - the shared project menu (Projects v2, 2026-09-20).
- * One listbox for the Explorer header, the welcome page, the composer line and
- * the Chats panel filter. Rides the app's .composer-popover chrome; rows reuse
- * the popover row tokens. Imported from composer-workspace-nudge.css. */
+ * One menu for the Explorer header, the welcome page, the composer pill, the
+ * chat row menu and the Chats panel filter. Rides the app's .composer-popover
+ * chrome; rows reuse the popover row tokens. The heading is the Chats
+ * .group-label kicker type (no hairline: the popover edge already frames it);
+ * only the project list scrolls, so the heading, the commands and the
+ * footnote stay in view. Imported from composer-workspace-nudge.css. */
 
 .project-menu {
   z-index: 60;
@@ -13,10 +16,23 @@
 
 .project-menu-heading {
   padding: var(--space-2) var(--space-4) var(--space-1);
-  font-size: 11px;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
   color: var(--text-muted);
+  font-size: var(--font-size-caption);
+  font-weight: 500;
+  line-height: 1.15;
+}
+
+/* The row list is bounded to the viewport and scrolls on its own (D12). */
+.project-menu-list {
+  max-height: min(60vh, 420px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.project-menu-footnote {
+  padding: var(--space-2) var(--space-4) var(--space-1);
+  color: var(--text-muted);
+  font-size: var(--font-size-footnote);
 }
 
 .project-menu-row {
@@ -30,7 +46,7 @@
   background: transparent;
   color: var(--text-primary);
   font: inherit;
-  font-size: var(--font-size-xs);
+  font-size: var(--font-size-body);
   text-align: start;
   cursor: pointer;
 }
@@ -45,12 +61,14 @@
   outline-offset: -2px;
 }
 
-.project-menu-row[disabled] {
+.project-menu-row[disabled],
+.project-menu-row[aria-disabled="true"] {
   color: var(--text-muted);
   cursor: default;
 }
 
-.project-menu-row[disabled]:hover {
+.project-menu-row[disabled]:hover,
+.project-menu-row[aria-disabled="true"]:hover {
   background: transparent;
 }
 
@@ -80,7 +98,7 @@
   text-overflow: ellipsis;
   white-space: nowrap;
   font-family: var(--font-family-mono);
-  font-size: 11px;
+  font-size: var(--font-size-caption);
   color: var(--text-muted);
 }
 

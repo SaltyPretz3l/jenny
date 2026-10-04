@@ -26,7 +26,7 @@ def _repo(tmp_path: Path) -> tuple[Path, WorkspaceGuard]:
 
 @pytest.fixture(autouse=True)
 def _reset() -> None:
-    tracking._reset_worktree_tracking_for_tests()  # noqa: SLF001
+    tracking._reset_worktree_tracking_for_tests()
 
 
 def _baseline(guard: WorkspaceGuard) -> str:
@@ -204,7 +204,7 @@ def test_failed_observation_marks_later_change_ambiguous(
 ) -> None:
     repo, guard = _repo(tmp_path)
     baseline_id = _baseline(guard)
-    original_capture = tracking._capture_repo  # noqa: SLF001
+    original_capture = tracking._capture_repo
     monkeypatch.setattr(
         tracking,
         "_capture_repo",
@@ -228,7 +228,7 @@ def test_missing_or_reset_baseline_returns_0043(tmp_path: Path) -> None:
     _repo(tmp_path)
     guard = WorkspaceGuard(str(tmp_path))
     baseline_id = _baseline(guard)
-    tracking._reset_worktree_tracking_for_tests()  # noqa: SLF001
+    tracking._reset_worktree_tracking_for_tests()
     with pytest.raises(ToolExecutionFailure) as excinfo:
         _delta(guard, baseline_id)
     assert excinfo.value.code == CMP_TOOL_WORKTREE_BASELINE_NOT_FOUND
@@ -238,7 +238,7 @@ def test_expired_baseline_returns_0043(tmp_path: Path) -> None:
     _repo(tmp_path)
     guard = WorkspaceGuard(str(tmp_path))
     baseline_id = _baseline(guard)
-    tracking._BASELINES[baseline_id].created_at -= tracking.BASELINE_TTL_SECONDS + 1  # noqa: SLF001
+    tracking._BASELINES[baseline_id].created_at -= tracking.BASELINE_TTL_SECONDS + 1
     with pytest.raises(ToolExecutionFailure) as excinfo:
         _delta(guard, baseline_id)
     assert excinfo.value.code == CMP_TOOL_WORKTREE_BASELINE_NOT_FOUND
@@ -257,13 +257,13 @@ def test_baseline_capacity_evicts_oldest_entry(tmp_path: Path) -> None:
             initial=snapshot,
             last_observed=snapshot,
         )
-        tracking._BASELINES[baseline_id] = baseline  # noqa: SLF001
-        tracking._ACTIVE_BY_SESSION_REPO[("session", str(snapshot.repo_root).casefold())] = (  # noqa: SLF001
+        tracking._BASELINES[baseline_id] = baseline
+        tracking._ACTIVE_BY_SESSION_REPO[("session", str(snapshot.repo_root).casefold())] = (
             baseline_id
         )
-    tracking._evict_locked()  # noqa: SLF001
-    assert len(tracking._BASELINES) == tracking.MAX_BASELINES  # noqa: SLF001
-    assert "baseline-0" not in tracking._BASELINES  # noqa: SLF001
+    tracking._evict_locked()
+    assert len(tracking._BASELINES) == tracking.MAX_BASELINES
+    assert "baseline-0" not in tracking._BASELINES
 
 
 def test_operation_ledger_records_bounded_per_call_delta(tmp_path: Path) -> None:
@@ -318,3 +318,96 @@ def test_operation_ledger_bounds_changed_paths(
     assert entry["changed_paths_truncated"] is True
     assert len(entry["changed_paths"]) == tracking.MAX_OPERATION_LEDGER_PATHS
     assert _delta(guard, baseline_id)["operation_ledger"][-1] == entry
+
+
+# TR-015 G5: a Python run_temp_script rewrote a tracked source file and nothing
+# downstream (write-progress streak, edit surfaces) could tell it was a save.
+def _run_shell(
+    guard: WorkspaceGuard, handler: object, *, tool_name: str = "run_temp_script", **extra: object
+) -> ToolHandlerResult:
+    return tracking.run_with_worktree_observation(
+        side_effecting=True,
+        tool_name=tool_name,
+        arguments={"cwd": "repo", **extra},
+        workspace=guard,
+        handler=lambda: (handler(), ToolHandlerResult(output="ok"))[1],
+        logger=logging.getLogger(__name__),
+    )
+
+
+def test_a_foreground_script_that_edits_a_tracked_file_reports_workspace_changed(
+    tmp_path: Path,
+) -> None:
+    repo, guard = _repo(tmp_path)
+
+    result = _run_shell(guard, lambda: (repo / "tracked.txt").write_text("edited\n", "utf-8"))
+
+    assert result.metadata["workspace_changed"] is True
+
+
+def test_a_second_edit_to_an_already_dirty_file_still_counts(tmp_path: Path) -> None:
+    repo, guard = _repo(tmp_path)
+    (repo / "tracked.txt").write_text("dirty\n", encoding="utf-8")
+
+    result = _run_shell(
+        guard,
+        lambda: (repo / "tracked.txt").write_text("dirty and longer\n", "utf-8"),
+        tool_name="run_command",
+    )
+
+    assert result.metadata["workspace_changed"] is True
+
+
+def test_a_read_only_command_reports_no_change(tmp_path: Path) -> None:
+    repo, guard = _repo(tmp_path)
+
+    result = _run_shell(guard, lambda: (repo / "tracked.txt").read_text("utf-8"))
+
+    assert result.metadata["workspace_changed"] is False
+
+
+def test_interpreter_caches_are_not_workspace_changes(tmp_path: Path) -> None:
+    repo, guard = _repo(tmp_path)
+
+    def _cache_only() -> None:
+        (repo / "__pycache__").mkdir()
+        (repo / "__pycache__" / "mod.cpython-311.pyc").write_bytes(b"\0")
+        (repo / ".pytest_cache").mkdir()
+        (repo / ".pytest_cache" / "README.md").write_text("x", encoding="utf-8")
+
+    result = _run_shell(guard, _cache_only)
+
+    assert result.metadata["workspace_changed"] is False
+
+
+def test_background_commands_and_non_shell_tools_carry_no_evidence(tmp_path: Path) -> None:
+    repo, guard = _repo(tmp_path)
+
+    def _edit() -> None:
+        (repo / "tracked.txt").write_text("edited\n", "utf-8")
+
+    background = _run_shell(guard, _edit, tool_name="run_command", run_in_background=True)
+    other = _run_shell(guard, _edit, tool_name="write_file")
+
+    assert "workspace_changed" not in background.metadata
+    assert "workspace_changed" not in other.metadata
+
+
+def test_shell_change_evidence_kill_switch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo, guard = _repo(tmp_path)
+    monkeypatch.setenv(tracking.SHELL_CHANGE_EVIDENCE_FLAG, "0")
+
+    result = _run_shell(guard, lambda: (repo / "tracked.txt").write_text("edited\n", "utf-8"))
+
+    assert "workspace_changed" not in result.metadata
+
+
+def test_a_workspace_without_git_carries_no_evidence(tmp_path: Path) -> None:
+    (tmp_path / "repo").mkdir()
+    guard = WorkspaceGuard(str(tmp_path))
+
+    result = _run_shell(guard, lambda: (tmp_path / "repo" / "a.txt").write_text("x", "utf-8"))
+
+    assert "workspace_changed" not in result.metadata

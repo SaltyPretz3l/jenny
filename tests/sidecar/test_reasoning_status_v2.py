@@ -15,7 +15,7 @@ from sidecar.runtime.reasoning_status import ReasoningStatusExtractor, Reasoning
 
 
 def test_v2_extractor_enforces_two_to_six_word_bound() -> None:
-    extractor = ReasoningStatusExtractor(v2_enabled=True)
+    extractor = ReasoningStatusExtractor()
 
     _, one_word = extractor.feed("\u27e8STATUS: Inspecting\u27e9")
     _, two_words = extractor.feed("\u27e8STATUS: Inspecting constraints\u27e9")
@@ -30,20 +30,8 @@ def test_v2_extractor_enforces_two_to_six_word_bound() -> None:
     assert seven_words is None
 
 
-def test_legacy_extractor_retains_one_to_eight_word_bound() -> None:
-    extractor = ReasoningStatusExtractor(v2_enabled=False)
-
-    _, one_word = extractor.feed("\u27e8STATUS: Inspecting\u27e9")
-    _, eight_words = extractor.feed(
-        "\u27e8STATUS: Inspecting all current runtime contract constraints very carefully\u27e9"
-    )
-
-    assert one_word == "Inspecting"
-    assert eight_words == "Inspecting all current runtime contract constraints very carefully"
-
-
 def test_v2_organic_marker_resets_silence_window_and_fallback_resumes() -> None:
-    synth = ReasoningStatusSynthesizer(v2_enabled=True)
+    synth = ReasoningStatusSynthesizer()
     assert synth.feed("Earlier reasoning that must not survive the organic reset. " * 3) is not None
 
     synth.mark_organic()
@@ -61,7 +49,7 @@ def test_v2_resumed_fallback_keeps_existing_dedupe() -> None:
     repeated = (
         "Carefully examining the same bounded implementation details for the current phase. " * 2
     )
-    synth = ReasoningStatusSynthesizer(v2_enabled=True)
+    synth = ReasoningStatusSynthesizer()
     first = synth.feed(repeated)
     synth.mark_organic()
     second = synth.feed(repeated)
@@ -78,25 +66,14 @@ def test_v2_suppresses_long_one_word_identifier_and_url_statuses() -> None:
 
     for reasoning in candidates:
         assert len(reasoning) >= 120
-        assert ReasoningStatusSynthesizer(v2_enabled=True).feed(reasoning) is None
+        assert ReasoningStatusSynthesizer().feed(reasoning) is None
 
 
 def test_v2_suppresses_two_word_status_truncated_to_one_word() -> None:
     reasoning = f"{'a' * 59} {'b' * 70}"
 
     assert len(reasoning.split()) == 2
-    assert ReasoningStatusSynthesizer(v2_enabled=True).feed(reasoning) is None
-
-
-def test_legacy_synthesis_retains_final_truncation_behavior() -> None:
-    candidates = (
-        "reasoning_identifier_" + ("x" * 130),
-        f"{'a' * 59} {'b' * 70}",
-    )
-
-    for reasoning in candidates:
-        result = ReasoningStatusSynthesizer(v2_enabled=False).feed(reasoning)
-        assert result == reasoning[:60].strip()
+    assert ReasoningStatusSynthesizer().feed(reasoning) is None
 
 
 def test_synthesizer_reason_is_empty_until_first_emit() -> None:

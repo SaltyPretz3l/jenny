@@ -364,6 +364,33 @@ def test_unavailable_result_serialization_is_nonfatal(
 
     tool_result = rich_inspect_result_to_tool_result(result)
 
-    assert tool_result.success is True
+    assert tool_result.success is False
     assert tool_result.metadata["status"] == "unavailable"
     assert tool_result.metadata["failure"]["error_code"] == CMP_TOOL_RICH_FILES_DEPENDENCY_MISSING
+
+
+@pytest.mark.parametrize("status,code", [
+    ("unsupported", CMP_TOOL_RICH_FILES_UNSUPPORTED),
+    ("unavailable", CMP_TOOL_RICH_FILES_DEPENDENCY_MISSING),
+])
+def test_rich_failure_uses_failed_tool_envelope(workspace, tmp_path, status, code):
+    target = tmp_path / "doc.pdf"
+    target.write_bytes(b"%PDF-1.4")
+    source = validate_rich_file_source(requested_path="doc.pdf", workspace=workspace, adapter="pdf")
+    result = RichInspectResult(
+        status=status, adapter="pdf", source=source,
+        failure=RichInspectFailure(adapter="pdf", reason="cannot inspect", error_code=code),
+    )
+    tool_result = rich_inspect_result_to_tool_result(result)
+    assert tool_result.success is False
+    assert tool_result.error_code == code
+    assert json.loads(tool_result.output)["failure"]["error_code"] == code
+
+
+def test_bounded_read_os_error_is_a_structured_failure(tmp_path):
+    from sidecar.ai.tools.builtins.rich_files.base import read_bounded_file_bytes
+
+    missing = tmp_path / "gone.docx"
+    with pytest.raises(ToolExecutionFailure) as caught:
+        read_bounded_file_bytes(missing, max_bytes=10)
+    assert str(tmp_path) not in caught.value.message

@@ -22,16 +22,37 @@
 
 .ide-tree-header-title {
   color: var(--text-primary);
-  font-size: 11px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
+  font-size: var(--font-size-caption);
+  font-weight: 500;
 }
 
 .ide-tree-header-actions {
   display: flex;
   align-items: center;
   gap: 2px;
+}
+
+.ide-tree-choose-root {
+  padding-block: 4px;
+  padding-inline: 22px 8px;
+}
+
+.ide-tree-choose-root-action {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-link);
+  font-size: var(--font-size-body);
+  cursor: pointer;
+}
+
+.ide-tree-choose-root-action:hover {
+  text-decoration: underline;
+}
+
+.ide-tree-choose-root-action:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 /* Projects v2: the title is the current project and opens the project menu.
@@ -48,10 +69,8 @@
   background: transparent;
   cursor: pointer;
   font: inherit;
-  font-size: 11px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
+  font-size: var(--font-size-caption);
+  font-weight: 500;
   color: var(--text-primary);
 }
 
@@ -101,7 +120,7 @@
 .ide-tree-generated-toggle {
   width: auto;
   padding: 0 6px;
-  font-size: 10px;
+  font-size: var(--font-size-caption);
 }
 
 .ide-tree-generated-toggle--active {
@@ -138,7 +157,7 @@
   border-bottom: 1px solid var(--line);
   background: var(--surface-input-background);
   color: var(--text-muted);
-  font-size: 11px;
+  font-size: var(--font-size-footnote);
   font-weight: 500;
   text-transform: none;
   letter-spacing: normal;
@@ -237,7 +256,7 @@
   min-width: 0;
   padding-top: 2px;
   color: var(--text-danger-emphasis);
-  font-size: 10px;
+  font-size: var(--font-size-caption);
   line-height: 1.35;
   white-space: normal;
 }
@@ -282,7 +301,7 @@
   align-items: center;
   padding: 6px 9px;
   color: var(--text-primary);
-  font-size: 12px;
+  font-size: var(--font-size-body);
   background: var(--surface-card-background, var(--surface-input-background));
   border: 1px solid var(--border-subtle);
   border-radius: 7px;
@@ -297,7 +316,40 @@
   padding: 0 4px;
   place-items: center;
   color: var(--surface-input-background);
-  font-weight: 700;
+  font-weight: 500;
   background: var(--accent);
   border-radius: 999px;
+}
+
+/* Split view W3-4 (2026-09-26): the Explorer stays on the Workspace folder;
+   one muted line under the header says when the focused chat works in
+   another project's folder. The action is plain text, underlined. */
+.ide-explorer-project-nudge {
+  margin: 0;
+  padding: 6px 12px 8px;
+  color: var(--text-muted);
+  font-size: var(--font-size-footnote);
+  line-height: 1.45;
+}
+
+.ide-explorer-project-nudge-action {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text-primary);
+  font: inherit;
+  text-decoration: underline;
+  text-decoration-color: var(--border-strong);
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+.ide-explorer-project-nudge-action:hover {
+  text-decoration-color: currentColor;
+}
+
+.ide-explorer-project-nudge-action:focus-visible {
+  outline: 2px solid var(--focus-outline);
+  outline-offset: 2px;
+  border-radius: 2px;
 }

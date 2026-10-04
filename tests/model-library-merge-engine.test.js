@@ -247,3 +247,22 @@ test('serving status matches the managed key including the model size tag', () =
   assert.equal(byTag.get('gemma4:27b').serving, false);
   assert.equal(byTag.get('gemma4:27b').servingPort, 0);
 });
+
+// Owner gate P2: the chat GPU handoff parks llama-server for an image render
+// (stopped, identity retained). Its card reads paused, not serving; a plain
+// stop or another model's parked server leaves the card neither.
+test('a llama-server parked for an image render marks its card paused, not serving', () => {
+  const merge = (llamaServer) => new Map(mergeLibrary({
+    recommendations: [recommendation(0, { pullTag: 'gemma4:12b' }), recommendation(1, { pullTag: 'gemma4:27b' })],
+    llamaServer,
+  }).cards.map((card) => [card.tag, card]));
+  const parked = merge({ state: 'stopped', alias: 'gemma4:12b', port: 8033, identityRetained: true });
+  assert.equal(parked.get('gemma4:12b').serving, false);
+  assert.equal(parked.get('gemma4:12b').servingPaused, true);
+  assert.equal(parked.get('gemma4:27b').servingPaused, false);
+  const stopped = merge({ state: 'stopped', alias: 'gemma4:12b', port: 8033, identityRetained: false });
+  assert.equal(stopped.get('gemma4:12b').servingPaused, false);
+  const serving = merge({ state: 'ready', alias: 'gemma4:12b', port: 8033 });
+  assert.equal(serving.get('gemma4:12b').serving, true);
+  assert.equal(serving.get('gemma4:12b').servingPaused, false);
+});

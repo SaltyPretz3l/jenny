@@ -12,9 +12,6 @@ async function deleteSessionWithQuiescence(service, sessionId, options = {}) {
     const session = service.sessionStore.getSession(normalizedSessionId);
     if (!session) return refused('not_found');
     if (session.pending_question_batch || session.active_turn) return refused('session_busy');
-    // Plugin work has its own supervisor: bulk deletion fails closed rather
-    // than stopping it as a side effect of cleanup.
-    if (session.session_type === 'plugin' || session.plugin_session) return refused('plugin_session');
     if (typeof options.expectedUpdatedAt !== 'string'
       || session.updated_at !== options.expectedUpdatedAt) return refused('activity_changed');
     if (service.sessionRuntime?.hasSessionWork?.(normalizedSessionId) === true) {
@@ -36,21 +33,6 @@ async function deleteSessionWithQuiescence(service, sessionId, options = {}) {
   });
   if (!deletion) return refused('session_busy');
   try {
-    if (service._pluginSessionProviderBroker?.prepareSessionDeletion) {
-      const pluginQuiescence = await service._pluginSessionProviderBroker
-        .prepareSessionDeletion(normalizedSessionId);
-      if (!pluginQuiescence?.ok) {
-        service.sessionTurnActors.rollbackDeletion(deletion);
-        service._emitServiceLog('WARN', 'lifecycle.plugin_session_delete_not_quiescent', {
-          sessionId: normalizedSessionId,
-          reason: pluginQuiescence?.reason || 'plugin_cleanup_unproven',
-        });
-        return {
-          object: 'session', id: normalizedSessionId, deleted: false,
-          reason: pluginQuiescence?.reason || 'plugin_cleanup_unproven',
-        };
-      }
-    }
     let runtimeQuiescence = { ok: true };
     let runtimeWait = null;
     if (!onlyIfIdle && service.sessionRuntime) {
@@ -95,6 +77,8 @@ async function deleteSessionWithQuiescence(service, sessionId, options = {}) {
         if (onlyIfIdle && service.sessionRuntime?.hasSessionWork?.(normalizedSessionId) === true) {
           return refused('runtime_work_active');
         }
+        try { service.sessionRuntime?.retireSettledLineage?.(normalizedSessionId); }
+        catch (_error) { return refused('runtime_lineage_retained'); }
         return deleteSession(service, normalizedSessionId);
       }
     );
@@ -109,8 +93,6 @@ async function deleteSessionWithQuiescence(service, sessionId, options = {}) {
   } catch (error) {
     service.sessionTurnActors.rollbackDeletion(deletion);
     throw error;
-  } finally {
-    service._pluginSessionProviderBroker?.finishSessionDeletion?.(normalizedSessionId);
   }
 }
 

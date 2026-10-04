@@ -11,7 +11,7 @@
   border: 1px solid var(--line);
   border-radius: 4px;
   color: var(--text-muted);
-  font-size: 10px;
+  font-size: var(--font-size-caption);
   cursor: pointer;
 }
 
@@ -42,12 +42,12 @@
 }
 
 .ide-diff-toolbar-title {
-  font-size: 12px;
+  font-size: var(--font-size-body);
   color: var(--text-secondary, var(--text-muted));
 }
 
 .ide-diff-toolbar-note {
-  font-size: 11px;
+  font-size: var(--font-size-caption);
   color: var(--text-muted);
 }
 
@@ -85,6 +85,6 @@
 
 .ide-diff-hunk-summary {
   font-family: var(--font-family-mono);
-  font-size: 11px;
+  font-size: var(--font-size-caption);
   color: var(--text-secondary, var(--text-muted));
 }

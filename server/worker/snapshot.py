@@ -64,12 +64,13 @@ def _copy_fd(source_fd: int, target_fd: int, size: int, remaining: int) -> int:
     return copied
 
 
-def _snapshot_descriptors(  # noqa: PLR0913, PLR0915 - explicit bounded descriptor traversal
-    source: Path, destination: Path, max_bytes: int, max_files: int, max_depth: int
+def _snapshot_descriptors(  # noqa: C901, PLR0913, PLR0915 - explicit bounded descriptor traversal
+    source: Path, destination: Path, subpath: str,
+    max_bytes: int, max_files: int, max_depth: int,
 ) -> SnapshotStats:
     files = total = visited = 0
 
-    def visit(source_fd: int, destination_fd: int, depth: int, prefix: str) -> None:  # noqa: C901, PLR0912, PLR0915 - descriptor containment checks
+    def visit(source_fd: int, destination_fd: int, depth: int, prefix: str) -> None:  # noqa: PLR0912 - descriptor containment checks
         nonlocal files, total, visited
         # Do not materialize/sort an unbounded directory before counting it.
         with os.scandir(source_fd) as entries:
@@ -138,6 +139,11 @@ def _snapshot_descriptors(  # noqa: PLR0913, PLR0915 - explicit bounded descript
 
     source_fd = _open_directory(source)
     try:
+        if subpath != ".":
+            for part in subpath.split("/"):
+                child_fd = _open_directory(part, source_fd)
+                os.close(source_fd)
+                source_fd = child_fd
         destination_fd = _open_directory(destination)
         try:
             visit(source_fd, destination_fd, 0, "")
@@ -212,10 +218,11 @@ def _copy_regular(source: Path, target: Path, size: int, remaining: int) -> int:
         os.close(fd)
 
 
-def snapshot_inputs(  # noqa: C901, PLR0912 - traversal enforces independent file safety gates
+def snapshot_inputs(  # noqa: C901, PLR0912, PLR0913, PLR0915 - bounded subtree traversal and limits
     source: os.PathLike[str] | str,
     destination: os.PathLike[str] | str,
     *,
+    subpath: str = ".",
     max_bytes: int = MAX_BYTES,
     max_files: int = MAX_FILES,
     max_depth: int = MAX_DEPTH,
@@ -227,6 +234,12 @@ def snapshot_inputs(  # noqa: C901, PLR0912 - traversal enforces independent fil
     """
     if max_bytes < 0 or max_files < 0 or max_depth < 0:
         raise ValueError("snapshot limits must be non-negative")
+    parts = subpath.split("/")
+    if (
+        not subpath or subpath.startswith("/") or "\\" in subpath or ":" in parts[0]
+        or (subpath != "." and any(part in ("", ".", "..") for part in parts))
+    ):
+        raise SnapshotError("input subpath must be relative")
     src = Path(source)
     dst = Path(destination)
     source_info = _lstat(src)
@@ -236,7 +249,12 @@ def snapshot_inputs(  # noqa: C901, PLR0912 - traversal enforces independent fil
         raise SnapshotError("snapshot destination cannot be the input root")
     _mkdir(dst)
     if os.name == "posix":
-        return _snapshot_descriptors(src, dst, max_bytes, max_files, max_depth)
+        return _snapshot_descriptors(src, dst, subpath, max_bytes, max_files, max_depth)
+    if subpath != ".":
+        for part in parts:
+            src = src / part
+            if not stat.S_ISDIR(_lstat(src).st_mode):
+                raise SnapshotError("input root must be a directory")
     count = 0
     total = 0
     visited = 0

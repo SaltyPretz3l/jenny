@@ -3,7 +3,7 @@
  * Tier D quick-settings modal (JENNY_UIUX_OVERHAUL_PLAN.md L91-94, resolved
  * decisions L123-138, hardening L146-181): a compact Ctrl/Cmd+, overlay over
  * a curated subset of the settings catalog -- theme/palette, model context +
- * force-local inference, font-scale + chat-zoom. Same inventory controls + write paths
+ * force-local inference, text size. Same inventory controls + write paths
  * as the full settings page; this is a VIEW, not a second store.
  *
  * DOM contract: styles/quick-settings.css documents the exact markup shape
@@ -27,7 +27,6 @@
  * Persistence contracts (three independent adapters -- NEVER cross-write):
  *   - appearance (palette + font-scale): adapters.appearance
  *     (createAppearanceAdapter, localStorage).
- *   - chat zoom: adapters.zoom (createZoomAdapter, chatUi.updateSettings IPC).
  *   - force-local inference: adapters.offline (createOfflineAdapter,
  *     offline.updateSettings IPC).
  *   - runtimePrefs.getCurrent() reads the active session model only to scope
@@ -96,7 +95,6 @@
 
     const inventory = resolveModule(options, 'inventory', 'inventory', '../inventory');
     const appearanceUtils = resolveModule(options, 'appearanceUtils', 'appearanceUtils', '../shared/appearance-utils');
-    const chatZoomUtils = resolveModule(options, 'chatZoomUtils', 'chatZoomUtils', '../chat/chat-zoom-utils');
     const statusChipUtils = resolveModule(
       options, 'statusChipUtils', 'rendererStatusChipUtils', './renderer-status-chip-utils'
     );
@@ -367,10 +365,8 @@
       title.textContent = jt('quickSettings.display', 'Display');
       slotRoot.appendChild(title);
 
-      const fontScaleRow = buildRow(jt('quickSettings.fontScale', 'Font scale'));
+      const fontScaleRow = buildRow(jt('quickSettings.fontScale', 'Text size'));
       slotRoot.appendChild(fontScaleRow.row);
-      const chatZoomRow = buildRow(jt('quickSettings.chatZoom', 'Chat zoom'));
-      slotRoot.appendChild(chatZoomRow.row);
       const sessionOpenRow = buildRow(jt('quickSettings.sessionOpening', 'Session opening'));
       slotRoot.appendChild(sessionOpenRow.row);
 
@@ -390,13 +386,13 @@
         const html = useSegmentedFontScale
           ? (inventory && inventory.segmentedControl ? inventory.segmentedControl({
             id: 'quickSettingsFontScale',
-            ariaLabel: jt('quickSettings.fontScale', 'Font scale'),
+            ariaLabel: jt('quickSettings.fontScale', 'Text size'),
             value: current.fontScaleId,
             options,
           }) : '')
           : (inventory && inventory.selectField ? inventory.selectField({
             id: 'quickSettingsFontScale',
-            ariaLabel: jt('quickSettings.fontScale', 'Font scale'),
+            ariaLabel: jt('quickSettings.fontScale', 'Text size'),
             value: current.fontScaleId,
             options,
           }) : '');
@@ -426,29 +422,6 @@
         );
       });
 
-      function renderChatZoom() {
-        const zoomOptions = chatZoomUtils && typeof chatZoomUtils.getChatZoomOptions === 'function'
-          ? chatZoomUtils.getChatZoomOptions().map((o) => ({ value: String(o.value), label: o.label }))
-          : [];
-        const currentZoom = adapters.zoom && typeof adapters.zoom.read === 'function'
-          ? adapters.zoom.read()
-          : (chatZoomUtils && typeof chatZoomUtils.getDefaultChatZoomPercent === 'function'
-            ? chatZoomUtils.getDefaultChatZoomPercent()
-            : 100);
-        buildInventoryHtml(chatZoomRow.control, inventory && inventory.selectField ? inventory.selectField({
-          id: 'quickSettingsChatZoom',
-          ariaLabel: jt('quickSettings.chatZoom', 'Chat zoom'),
-          value: String(currentZoom),
-          options: zoomOptions,
-        }) : '');
-        const selectEl = chatZoomRow.control.querySelector('select');
-        if (selectEl) {
-          selectEl.addEventListener('change', () => {
-            writeAdapterValue(adapters.zoom, Number(selectEl.value), renderChatZoom, 'chat-zoom');
-          });
-        }
-      }
-
       function renderSessionOpen() {
         const checked = adapters.sessionOpen?.read?.() === true;
         buildInventoryHtml(sessionOpenRow.control, inventory?.toggleSwitch ? inventory.toggleSwitch({
@@ -464,7 +437,6 @@
 
       function render() {
         renderFontScale();
-        renderChatZoom();
         renderSessionOpen();
       }
 

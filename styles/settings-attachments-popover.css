@@ -12,7 +12,7 @@
   background: var(--widget-attachment-bg);
   border: 1px solid var(--widget-attachment-border);
   color: var(--widget-attachment-color);
-  font-size: 12px;
+  font-size: var(--font-size-body);
 }
 
 .attachment-chip-image {
@@ -46,10 +46,8 @@
   border-radius: var(--radius-pill);
   background: color-mix(in srgb, var(--accent-cyan) 14%, transparent);
   color: var(--accent-cyan);
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+  font-size: var(--font-size-caption);
+  font-weight: 500;
 }
 
 .attachment-chip-copy {
@@ -67,7 +65,7 @@
 
 .attachment-chip-meta {
   color: var(--widget-attachment-meta-color);
-  font-size: 11px;
+  font-size: var(--font-size-caption);
 }
 
 .attachment-chip-remove {
@@ -99,7 +97,7 @@
   color: var(--text-primary);
   background: transparent;
   cursor: pointer;
-  font-size: 11px;
+  font-size: var(--font-size-caption);
 }
 
 .attachment-chip-clear {
@@ -129,7 +127,7 @@
 
 .message-attachment-unavailable {
   color: var(--text-secondary);
-  font-size: 12px;
+  font-size: var(--font-size-footnote);
 }
 
 .message-attachment-image-preview {
@@ -178,8 +176,8 @@
   background: color-mix(in srgb, var(--accent-primary) 10%, transparent);
   color: var(--text-primary);
   font: inherit;
-  font-size: 12px;
-  font-weight: 700;
+  font-size: var(--font-size-body);
+  font-weight: 500;
   cursor: pointer;
 }
 
@@ -196,7 +194,7 @@
 
 .assistant-reply-audio-duration {
   color: var(--text-secondary);
-  font-size: 11px;
+  font-size: var(--font-size-caption);
   font-variant-numeric: tabular-nums;
 }
 
@@ -208,14 +206,14 @@
 .message-attachment-label {
   margin-top: var(--space-4);
   color: var(--text-primary);
-  font-size: 12px;
-  font-weight: 600;
+  font-size: var(--font-size-body);
+  font-weight: 500;
   line-height: 1.5;
 }
 
 .message-attachment-meta {
   color: var(--text-secondary);
-  font-size: 11px;
+  font-size: var(--font-size-caption);
 }
 
 .composer-popover {
@@ -225,12 +223,11 @@
   max-width: min(340px, calc(100vw - 24px));
   padding: calc(var(--space-5) + 2px);
   border-radius: calc(var(--radius-md) + 8px);
-  background:
-    linear-gradient(
-      180deg,
-      color-mix(in srgb, var(--mat-ephemeral-bg) 94%, white) 0%,
-      var(--mat-ephemeral-bg) 100%
-    );
+  /* The popover surface token (gate N2, as the slash menu, 2026-09-26): the
+     old color-mix() over --mat-ephemeral-bg, a gradient in most palettes, was
+     invalid, so the menu drew no background and the blur below showed
+     whatever it covered. */
+  background: var(--surface-popover-background);
   border: 1px solid color-mix(in srgb, var(--mat-ephemeral-border) 52%, transparent);
   box-shadow:
     var(--shadow-float),
@@ -269,14 +266,14 @@
 
 .composer-popover-title {
   color: var(--text-primary);
-  font-size: 15px;
-  font-weight: 700;
+  font-size: var(--font-size-heading);
+  font-weight: 500;
 }
 
 .composer-popover-copy {
   margin-top: var(--space-2);
   color: var(--text-secondary);
-  font-size: 12px;
+  font-size: var(--font-size-footnote);
   line-height: 1.5;
   max-width: 28ch;
 }
@@ -297,10 +294,8 @@
 
 .composer-popover-section-label {
   color: var(--widget-composer-meta-color);
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+  font-size: var(--font-size-caption);
+  font-weight: 500;
 }
 
 .composer-popover-action,
@@ -376,12 +371,12 @@
 }
 
 .composer-command-name {
-  font-weight: 650;
+  font-weight: 500;
 }
 
 .composer-command-item .composer-popover-copy {
   margin: 0;
-  font-size: 11px;
+  font-size: var(--font-size-caption);
   max-width: none;
 }
 
@@ -392,11 +387,9 @@
   border: 1px solid color-mix(in srgb, var(--widget-composer-signal-border) 32%, transparent);
   border-radius: var(--radius-pill);
   color: var(--text-secondary);
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.06em;
+  font-size: var(--font-size-caption);
+  font-weight: 500;
   text-align: center;
-  text-transform: uppercase;
 }
 
 .composer-command-item--unavailable {
@@ -412,7 +405,7 @@
   margin: 0;
   padding: var(--space-4);
   color: var(--text-secondary);
-  font-size: 12px;
+  font-size: var(--font-size-footnote);
 }
 
 .composer-popover-secondary {

@@ -111,13 +111,13 @@ def test_send_outcome_uses_ordered_terminal_result_when_available() -> None:
     calls: list[tuple[str, object]] = []
 
     class _FakeMultiplexer:
-        def send_terminal_result(self, notifications, response):  # noqa: ANN001
+        def send_terminal_result(self, notifications, response):
             calls.append(("terminal", (list(notifications), response)))
 
-        def send_data(self, message):  # noqa: ANN001
+        def send_data(self, message):
             raise AssertionError(f"unexpected data send: {message!r}")
 
-        def send_control(self, message):  # noqa: ANN001
+        def send_control(self, message):
             raise AssertionError(f"unexpected control send: {message!r}")
 
     notifications = [
@@ -138,7 +138,7 @@ def test_send_outcome_uses_ordered_terminal_result_when_available() -> None:
         "result": {"request_id": "req_ordered_terminal", "status": "completed"},
     }
 
-    server._send_outcome(  # noqa: SLF001
+    server._send_outcome(
         SimpleNamespace(notifications=notifications, response=response),
         multiplexer=_FakeMultiplexer(),
     )
@@ -166,13 +166,13 @@ def test_send_outcome_routes_a_notificationless_response_through_the_terminal_la
     calls: list[tuple[str, object]] = []
 
     class _FakeMultiplexer:
-        def send_terminal_result(self, notifications, response):  # noqa: ANN001
+        def send_terminal_result(self, notifications, response):
             calls.append(("terminal", (list(notifications), response)))
 
-        def send_data(self, message):  # noqa: ANN001
+        def send_data(self, message):
             raise AssertionError(f"unexpected data send: {message!r}")
 
-        def send_control(self, message):  # noqa: ANN001
+        def send_control(self, message):
             raise AssertionError(f"response must not jump the queue on control: {message!r}")
 
     response = {
@@ -181,7 +181,7 @@ def test_send_outcome_routes_a_notificationless_response_through_the_terminal_la
         "result": {"ok": True},
     }
 
-    server._send_outcome(  # noqa: SLF001
+    server._send_outcome(
         SimpleNamespace(notifications=[], response=response),
         multiplexer=_FakeMultiplexer(),
     )
@@ -194,12 +194,12 @@ def test_send_outcome_requires_the_terminal_lane_and_routes_through_it() -> None
     calls: list[tuple[str, object]] = []
 
     class _TerminalLaneMultiplexer:
-        def send_terminal_result(self, notifications, response):  # noqa: ANN001
+        def send_terminal_result(self, notifications, response):
             calls.append(("terminal", list(notifications), response))
 
     response = {"jsonrpc": "2.0", "id": 16, "result": {"ok": True}}
 
-    server._send_outcome(  # noqa: SLF001
+    server._send_outcome(
         SimpleNamespace(notifications=[], response=response),
         multiplexer=_TerminalLaneMultiplexer(),
     )

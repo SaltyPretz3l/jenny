@@ -45,6 +45,8 @@
     'CMP-CHAT-0002': function () { return jt('error.chat.streamFailed', 'Chat stream failed.'); },
     'CMP-CHAT-0013': function () { return jt('error.chat.reasoningAfterVisibleText', 'Transcript protocol error: reasoning after visible text.'); },
     'CMP-COMPANION-0001': function () { return jt('error.companion.followUpInvalid', 'Follow-up label/body exceeds the configured limit.'); },
+    'CMP-COMPANION-0002': function () { return jt('error.companion.followUpNotFound', 'That open loop no longer exists.'); },
+    'CMP-COMPANION-0003': function () { return jt('error.companion.followUpStateConflict', "That change isn't available for this open loop right now."); },
     'CMP-CTX-0001': function () { return jt('error.context.skillLoadFailed', 'Skill {name} failed to load.'); },
     'CMP-CTX-0002': function () { return jt('error.context.activeContextTooLarge', 'Start a new thread or reduce the active context.'); },
     'CMP-DATA-0001': function () { return jt('error.data.invalidRequest', 'The data operation request was invalid.'); },

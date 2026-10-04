@@ -6,155 +6,33 @@ from copy import deepcopy
 
 import pytest
 
-from sidecar.ai.context.builder_plugins import PluginContextItem
 from sidecar.ai.plugins.runtime_apply import (
     RESOURCE_KINDS,
     PluginRuntimeContractError,
-    _tool_descriptor_digest,
     apply_plugin_runtime,
 )
-from sidecar.ai.plugins.runtime_registry import (
-    PluginAuthorityMismatchError,
-    PluginDeclarativeContribution,
-    PluginRuntimeAuthority,
-    PluginRuntimeGeneration,
-    PluginRuntimeRegistry,
-)
-
-
-def _generation(index: int) -> PluginRuntimeGeneration:
-    authority = PluginRuntimeAuthority(
-        registry_revision=index + 1,
-        dependency_graph_hash=f"{index + 1:064x}",
-        commit_epoch=index + 1,
-        active_generation_id=f"gen-{index + 1}",
-    )
-    contribution = PluginContextItem(
-        publisher_id="jenny-official",
-        plugin_id="starter",
-        contribution_id=f"skill-{index + 1}",
-        kind="skill",
-        content_digest=f"{index + 2:064x}",
-        content=f"instruction {index + 1}",
-    )
-    return PluginRuntimeGeneration(authority, f"sidecar-gen-{index + 1}", (contribution,))
+from sidecar.ai.plugins.runtime_registry import PluginRuntimeRegistry
 
 
 def _resource_objects() -> dict[str, object]:
     return {kind: object() for kind in RESOURCE_KINDS}
 
 
-def test_generation_withdrawal_cancels_workflows_but_not_ordinary_turn_pins() -> None:
-    registry = PluginRuntimeRegistry()
-    first = _generation(1)
-    second = _generation(2)
-    registry.publish(first)
-    pin = registry.acquire_pin(first.authority)
-    cancelled: list[str] = []
-    unregister = registry.register_workflow_cancellation(
-        first.authority, lambda: cancelled.append("withdrawn")
-    )
-
-    registry.publish(second)
-
-    assert cancelled == ["withdrawn"]
-    with pin.bind() as retained:
-        assert retained is first
-    pin.release()
-    unregister()
-
-
-def test_completed_workflow_unregisters_its_withdrawal_callback() -> None:
-    registry = PluginRuntimeRegistry()
-    first = _generation(1)
-    registry.publish(first)
-    cancelled: list[str] = []
-    unregister = registry.register_workflow_cancellation(
-        first.authority, lambda: cancelled.append("withdrawn")
-    )
-    unregister()
-
-    registry.publish(_generation(2))
-
-    assert cancelled == []
-
-
-def test_command_resolution_requires_current_leased_authority_and_exact_typed_inputs() -> None:
-    registry = PluginRuntimeRegistry()
-    authority = PluginRuntimeAuthority(7, "a" * 64, 9, "gen-stage4b")
-    prompt = PluginDeclarativeContribution(
-        "jenny-official",
-        "starter",
-        "prompt-main",
-        "prompt",
-        "b" * 64,
-        {"kind": "prompt", "template": "{{name}}", "placeholders": ["name"]},
-    )
-    command = PluginDeclarativeContribution(
-        "jenny-official",
-        "starter",
-        "command-main",
-        "command",
-        "c" * 64,
-        {
-            "kind": "command",
-            "target_kind": "prompt",
-            "target_contribution_id": "prompt-main",
-            "inputs": [
-                {
-                    "type": "string",
-                    "key": "name",
-                    "label": "Name",
-                    "default": "Jenny",
-                    "max_length": 20,
-                }
-            ],
-        },
-    )
-    generation = PluginRuntimeGeneration(
-        authority, "sidecar-stage4b", (), declarative=(prompt, command)
-    )
-    registry.publish(generation)
-    invocation = {
-        "invocation_schema_version": 2,
+def _v2_content(contribution_id: str, payload: dict[str, object]) -> tuple[str, str]:
+    value = {
+        "content_schema_version": 2,
         "publisher_id": "jenny-official",
         "plugin_id": "starter",
-        "command_id": "command-main",
-        "observed_generation_id": "gen-stage4b",
-        "observed_registry_revision": 7,
-        "inputs": [{"type": "string", "key": "name", "value": "Ada"}],
+        "contribution_id": contribution_id,
+        "payload": payload,
     }
-
-    with pytest.raises(PluginAuthorityMismatchError, match="lease"):
-        registry.resolve_command(invocation)
-    with registry.lease(authority):
-        resolved = registry.resolve_command(invocation)
-        assert resolved.target is prompt
-        assert resolved.inputs == (("name", "string", "Ada"),)
-
-        stale = {**invocation, "observed_registry_revision": 6}
-        with pytest.raises(PluginAuthorityMismatchError, match="stale"):
-            registry.resolve_command(stale)
-        wrong_type = deepcopy(invocation)
-        wrong_type["inputs"] = [{"type": "integer", "key": "name", "value": 1}]
-        with pytest.raises(PluginAuthorityMismatchError):
-            registry.resolve_command(wrong_type)
+    exact = json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+    return exact, hashlib.sha256(exact.encode()).hexdigest()
 
 
-def test_v2_apply_attests_settings_and_rechecks_workflow_tool_descriptor() -> None:
-    def v2_content(contribution_id: str, payload: dict[str, object]) -> tuple[str, str]:
-        value = {
-            "content_schema_version": 2,
-            "publisher_id": "jenny-official",
-            "plugin_id": "starter",
-            "contribution_id": contribution_id,
-            "payload": payload,
-        }
-        exact = json.dumps(value, ensure_ascii=False, separators=(",", ":"))
-        return exact, hashlib.sha256(exact.encode()).hexdigest()
-
+def _v2_spec() -> tuple[dict[str, object], list[dict[str, str]]]:
     rows = {
-        "settings-main": v2_content(
+        "settings-main": _v2_content(
             "settings-main",
             {
                 "kind": "settings_schema",
@@ -169,7 +47,7 @@ def test_v2_apply_attests_settings_and_rechecks_workflow_tool_descriptor() -> No
                 ],
             },
         ),
-        "prompt-main": v2_content(
+        "prompt-main": _v2_content(
             "prompt-main",
             {
                 "kind": "prompt",
@@ -177,45 +55,8 @@ def test_v2_apply_attests_settings_and_rechecks_workflow_tool_descriptor() -> No
                 "placeholders": ["subject"],
             },
         ),
-        "command-main": v2_content(
-            "command-main",
-            {
-                "kind": "command",
-                "target_kind": "workflow",
-                "target_contribution_id": "workflow-main",
-                "inputs": [],
-            },
-        ),
-        "workflow-main": v2_content(
-            "workflow-main",
-            {
-                "kind": "workflow",
-                "entry_node_id": "read",
-                "nodes": [
-                    {
-                        "type": "tool",
-                        "node_id": "read",
-                        "tool_id": "read_file",
-                        "bindings": [
-                            {
-                                "target": "path",
-                                "value": {
-                                    "source": "setting",
-                                    "settings_contribution_id": "settings-main",
-                                    "key": "path",
-                                },
-                            }
-                        ],
-                        "max_attempts": 1,
-                        "timeout_ms": 1000,
-                    }
-                ],
-                "edges": [],
-                "total_timeout_ms": 2000,
-            },
-        ),
     }
-    arrays = {
+    arrays: dict[str, list[dict[str, object]]] = {
         "skill_scopes": [],
         "prompts": [],
         "themes": [],
@@ -227,8 +68,6 @@ def test_v2_apply_attests_settings_and_rechecks_workflow_tool_descriptor() -> No
     for contribution_id, array_name in (
         ("settings-main", "settings_schemas"),
         ("prompt-main", "prompts"),
-        ("command-main", "commands"),
-        ("workflow-main", "workflows"),
     ):
         arrays[array_name].append(
             {
@@ -254,11 +93,7 @@ def test_v2_apply_attests_settings_and_rechecks_workflow_tool_descriptor() -> No
         settings, sort_keys=True, ensure_ascii=False, separators=(",", ":")
     )
     state_digest = hashlib.sha256(state_json.encode()).hexdigest()
-    descriptor_digest = _tool_descriptor_digest("read_file")
-    assert descriptor_digest == (
-        "f44e4a5edc1a027ab084b0f034003b145ad44b2177ae828081e7582fe3d341a9"
-    )
-    snapshot = {
+    snapshot: dict[str, object] = {
         "kind": "plugin_runtime_snapshot",
         "runtime_schema_version": 2,
         "registry_revision": 1,
@@ -266,17 +101,7 @@ def test_v2_apply_attests_settings_and_rechecks_workflow_tool_descriptor() -> No
         "commit_epoch": 1,
         "active_generation_id": "gen-stage4b",
         "declarative_content": arrays,
-        "workflow_tool_bindings": [
-            {
-                "publisher_id": "jenny-official",
-                "plugin_id": "starter",
-                "workflow_id": "workflow-main",
-                "node_id": "read",
-                "tool_id": "read_file",
-                "manifest_version": 2,
-                "descriptor_sha256": descriptor_digest,
-            }
-        ],
+        "workflow_tool_bindings": [],
         "settings_states": [
             {
                 "publisher_id": "jenny-official",
@@ -291,34 +116,59 @@ def test_v2_apply_attests_settings_and_rechecks_workflow_tool_descriptor() -> No
         {"content_digest": digest, "content_json": exact}
         for exact, digest in rows.values()
     ] + [{"state_digest": state_digest, "state_json": state_json}]
+    return snapshot, envelope
+
+
+def test_v2_apply_attests_settings_with_the_retired_arrays_empty() -> None:
+    snapshot, envelope = _v2_spec()
     registry = PluginRuntimeRegistry()
     resources = _resource_objects()
+
     publication = apply_plugin_runtime(
         registry,
         snapshot=snapshot,
         declarative_content=envelope,
         resource_provider=lambda: resources,
     )
+
     assert {item.kind for item in publication.generation.declarative} == {
         "settings_schema",
         "prompt",
-        "command",
-        "workflow",
     }
     assert publication.generation.settings[0].values == (
         ("path", "string", "README.md"),
     )
-    assert publication.generation.workflow_tool_bindings[0].tool_id == "read_file"
+    assert publication.generation.workflow_tool_bindings == ()
 
-    stale = deepcopy(snapshot)
-    stale["registry_revision"] = 2
-    stale["commit_epoch"] = 2
-    stale["active_generation_id"] = "gen-stale"
-    stale["workflow_tool_bindings"][0]["descriptor_sha256"] = "0" * 64
-    with pytest.raises(PluginRuntimeContractError, match="descriptor_stale"):
+
+@pytest.mark.parametrize("retired", ["commands", "workflows", "workflow_tool_bindings"])
+def test_v2_apply_refuses_retired_command_and_workflow_surfaces(retired: str) -> None:
+    snapshot, envelope = _v2_spec()
+    candidate = deepcopy(snapshot)
+    declarative = candidate["declarative_content"]
+    assert isinstance(declarative, dict)
+    if retired == "workflow_tool_bindings":
+        candidate[retired] = [
+            {
+                "publisher_id": "jenny-official",
+                "plugin_id": "starter",
+                "workflow_id": "workflow-main",
+                "node_id": "read",
+                "tool_id": "read_file",
+                "manifest_version": 2,
+                "descriptor_sha256": "f" * 64,
+            }
+        ]
+    else:
+        declarative[retired] = [dict(declarative["prompts"][0])]
+    resources = _resource_objects()
+
+    with pytest.raises(PluginRuntimeContractError) as error:
         apply_plugin_runtime(
-            registry,
-            snapshot=stale,
+            PluginRuntimeRegistry(),
+            snapshot=candidate,
             declarative_content=envelope,
             resource_provider=lambda: resources,
         )
+
+    assert error.value.reason_code == "runtime_surface_not_supported"

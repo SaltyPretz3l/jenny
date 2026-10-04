@@ -143,3 +143,26 @@ test('an outbox replay keeps the skill captured at queue time instead of the one
   assert.equal(live.settings.skillInvocation.id, 'bundled/mermaid');
   slash.dispose();
 });
+
+// W3 review P2-3: an accepted send consumes its skill by id even after focus moved to the other pane.
+test('clearAccepted clears the sent skill after focus moved to the other pane', () => {
+  const previous = globalThis.rendererPaneVisibilityUtils;
+  globalThis.rendererPaneVisibilityUtils = require('../renderer/chat/renderer-pane-visibility-utils');
+  try {
+    const state = { ui: { activeView: 'chat' }, currentSessionId: 'A',
+      panes: { panes: [{ paneId: 0, sessionId: 'A' }, { paneId: 1, sessionId: 'B' }], focusedPaneId: 0 } };
+    composerState.setPendingSkillInvocation(state, { id: 'sk1', name: 'Skill', command: 'skill', scope: 'user' });
+    const dispatch = createSendSlashDispatch({ state, registry: { register() {}, unregister() {}, listCommands() { return []; } } });
+    const sent = dispatch.dispatch('hello', {});
+    assert.equal(sent.settings.skillInvocation.id, 'sk1');
+    state.currentSessionId = 'B';
+    state.panes.focusedPaneId = 1;
+    assert.equal(dispatch.clearAccepted({ streamId: 's1' }, sent.settings.skillInvocation, {}), true);
+    assert.equal(composerState.peekPendingSkillInvocation(state, 'A'), null);
+    state.currentSessionId = 'A';
+    state.panes.focusedPaneId = 0;
+    assert.equal(dispatch.dispatch('second', {}).settings.skillInvocation, undefined, 'the next send carries no skill');
+  } finally {
+    globalThis.rendererPaneVisibilityUtils = previous;
+  }
+});

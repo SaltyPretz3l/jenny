@@ -51,6 +51,10 @@ class WorkspaceRetentionError(RuntimeError):
 MAX_LEDGER_BASELINE_ENTRIES = 300
 MAX_ACTIVE_USE_SECONDS = (1 << 53) - 1
 MAX_TOUCHED_CHANGE_SETS = MAX_CHANGE_SETS_PER_WORKSPACE
+# Journal ages only earn a durable rewrite per hour of active use (or on
+# reaching eligibility): the horizon is 30 days, and chat.send advances the
+# clock on nearly every turn, so per-send rewrites were pure fsync churn.
+ACTIVE_USE_WRITE_QUANTUM_SECONDS = 60 * 60
 _LEDGER_NAME = ".retention-active-use.json"
 _LEDGER_MAX_BYTES = 512 * 1024
 _OPEN_OR_RETAINED_STATES = frozenset(
@@ -151,8 +155,10 @@ def record_active_use_seconds(
                 "workspace_retention_active_use_write_failed",
                 extra={"change_set_id": change_set_id},
             )
-    ledger["journal_baselines"] = _prune_baselines(baselines, frozenset(live_ids))
-    _save_ledger(workspace_store, ledger)
+    pruned = _prune_baselines(baselines, frozenset(live_ids))
+    if pruned != ledger.get("journal_baselines"):
+        ledger["journal_baselines"] = pruned
+        _save_ledger(workspace_store, ledger)
     return tuple(touched)
 
 
@@ -171,6 +177,12 @@ def _advance_active_use(
         created,
         last,
         retention["active_age_seconds"],
+    ):
+        return None
+    if (
+        created != 0
+        and new_age < ACTIVE_RETENTION_SECONDS
+        and new_age - retention["active_age_seconds"] < ACTIVE_USE_WRITE_QUANTUM_SECONDS
     ):
         return None
     updated = copy.deepcopy(dict(record))
@@ -402,10 +414,10 @@ def run_recovery_maintenance(
         pinned_ids = store.pinned_recovery_object_ids(workspace_id)
     except (OSError, ValueError):
         pinned_ids = frozenset()
-    from sidecar.ai.tools.builtins.file_history import (  # noqa: PLC0415 - avoid a module cycle
+    from sidecar.ai.tools.builtins.file_history import (  # avoid a module cycle
         apply_backup_retention_best_effort,
     )
-    from sidecar.ai.tools.builtins.trash_maintenance import (  # noqa: PLC0415 - avoid a module cycle
+    from sidecar.ai.tools.builtins.trash_maintenance import (  # avoid a module cycle
         apply_trash_retention_best_effort,
     )
 
@@ -456,7 +468,7 @@ def _trash_entry_is_pinned(pinned_ids: frozenset[str], entry_name: str) -> bool:
 
 
 def _live_trash_names(guarded: GuardedWorkspaceStore) -> frozenset[str]:
-    from sidecar.ai.tools.builtins.trash_maintenance import (  # noqa: PLC0415
+    from sidecar.ai.tools.builtins.trash_maintenance import (
         list_trash_entries,
     )
 
@@ -552,6 +564,8 @@ def _empty_ledger() -> dict[str, Any]:
 def _record_current_active_use(guarded: GuardedWorkspaceStore, seconds: int) -> None:
     ledger = _load_ledger(guarded)
     current = _ledger_active_seconds(ledger)
+    if ledger.get("active_use_known") is True and current >= seconds:
+        return
     ledger["active_use_known"] = True
     ledger["current_active_use_seconds"] = max(current, seconds)
     _save_ledger(guarded, ledger)

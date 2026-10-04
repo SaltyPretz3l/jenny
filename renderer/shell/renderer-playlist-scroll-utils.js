@@ -1,5 +1,6 @@
-/* global ResizeObserver, cancelAnimationFrame, document, performance, requestAnimationFrame */
-/* Playlist Scroll native-v3 controller: DOM lifecycle around one shared scene simulation. */
+/* global cancelAnimationFrame, document, performance, requestAnimationFrame, window */
+/* Playlist Scroll native-v3 controller: DOM lifecycle around one shared scene simulation.
+ * Background posture: it never reacts to the model, only to the pointer. */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) {
     module.exports = factory(
@@ -16,20 +17,17 @@
 
   var CANVAS_CLASS = 'widget-playlist-scroll-canvas';
   var GHOST_ALPHA_MULTIPLIER = 0.22;
+  var GHOST_ALPHA_BOOST = 1.35;
   var ACCENT_ALPHA_FACTOR = 1.4;
+  var NOTE_ALPHA_FACTOR = 1.2;
+  var PLAYHEAD_ALPHA_FACTOR = 0.36;
   var TRAILING_CLICK_SUPPRESS_MS = 400;
-  var IDLE_TARGET_ENERGY = 0.08;
-  var ENERGY_TIME_CONSTANT_MS = 180;
-  /* Auto-composer + impulse choreography (delight pass 2026-07-22). The envelope law —
-     streaming holds at 1, settling decays over the contract's fixed ~1.2 s window, every
-     other phase zeroes it — lives in runtime.advancePhaseEnvelope, shared with
-     reactive-grid; this controller keeps only the state and the frame-loop call. */
-  var STREAM_ENERGY_SPAN = 0.38;
-  var AUTO_NOTE_RATE_MAX = 0.7;
-  var FIRST_TOKEN_FLARE_COUNT = 3;
-  var FLARE_STAGGER_MS = 90;
-  var CHORD_SIZE = 3;
-  var LANE_PICK_OFFSETS = [0, -1, 1, -2, 2, -3, 3];
+  // Frame budget: ~30 fps while nothing answers the user (and always while the
+  // window is unfocused); full display rate otherwise.
+  var IDLE_FRAME_MS = 1000 / 30;
+  var FRAME_SLACK_MS = 4;
+  var STATIC_TIMING = { dtMs: 0, longGap: false };
+  var EMPTY_STYLE = { getPropertyValue: function () { return ''; } };
   var limits = moduleCore._internals || {};
   var NOTE_MAX_CONCURRENT = limits.NOTE_MAX_CONCURRENT;
   var RIPPLE_MAX_CONCURRENT = limits.RIPPLE_MAX_CONCURRENT;
@@ -50,6 +48,12 @@
   }
   function requestFrame(callback) { return typeof requestAnimationFrame === 'function' ? requestAnimationFrame(callback) : 0; }
   function cancelFrame(handle) { if (handle && typeof cancelAnimationFrame === 'function') { cancelAnimationFrame(handle); } }
+  function withAlpha(color, alpha) {
+    return color ? { r: color.r, g: color.g, b: color.b, a: clamp(alpha, 0, 1) } : null;
+  }
+  function rgbaString(color) {
+    return color ? 'rgba(' + color.r + ',' + color.g + ',' + color.b + ',' + color.a + ')' : 'rgba(0,0,0,0)';
+  }
 
   function createPlaylistScrollController(options) {
     var opts = options || {};
@@ -60,6 +64,8 @@
       throw new Error('playlist-scroll v3 requires the shared runtime and playlist core');
     }
     var documentRef = opts.documentRef || (typeof document !== 'undefined' ? document : null);
+    var windowRef = opts.windowRef || (documentRef && documentRef.defaultView)
+      || (typeof window !== 'undefined' ? window : null);
     var reducedMotionQuery = opts.reducedMotionQuery || null;
     var effectId = opts.effectId || 'playlist-scroll';
     var launchSeed = Number.isFinite(opts.rendererLaunchSeed) ? opts.rendererLaunchSeed : 1;
@@ -70,17 +76,24 @@
     var frameHandle = 0;
     var removeVisibilityMotionListeners = function noop() {};
     var bound = false, disposed = false, staged = false;
-    var generation = 0, reducedMotion = false, documentHidden = false;
-    var scopeEpoch = null, lastImpulseSequence = -1;
-    var phase = 'idle', phaseRevision = 0;
-    var currentEnergy = IDLE_TARGET_ENERGY, targetEnergy = IDLE_TARGET_ENERGY;
-    var attentionScale = 1, accentBoost = 1, playheadBoost = 1;
-    var composeEnvelope = 0;
+    var generation = 0, reducedMotion = false, documentHidden = false, windowFocused = true;
+    var lastPaintAt = 0, lastDeviceDpr = 0;
     var activeDrag = null, trailingClickGuard = null;
     var sceneRectSnapshot = { left: 0, top: 0, width: 0, height: 0 };
     var sceneWidth = 0, sceneHeight = 0, sceneGeometrySignature = '';
     var spawnAvoidanceRects = [];
     var scene = core.createSceneState(seedForRole('chat-left'));
+    // Advance env, draw options and commit options are refilled in place: no
+    // per-frame or per-input allocation.
+    var advanceEnv = {
+      config: null, sceneWidth: 0, sceneHeight: 0, spawnAllowed: spawnAllowed,
+      timestamp: 0, dtMs: 0, longGap: false, reducedMotion: false,
+    };
+    var drawOpts = {
+      now: 0, runtime: runtime, viewportX: 0, viewportY: 0, sceneHeight: 0, settled: false,
+    };
+    var commitOpts = { spawnAllowed: spawnAllowed, timeStamp: 0, reducedMotion: false, pointX: NaN, pointY: NaN };
+    var sourcePick = null;
 
     function seedForRole(role) {
       return runtime.computeSceneSeed({
@@ -89,51 +102,54 @@
       });
     }
     function docFor(entry) { return (entry && entry.host && entry.host.ownerDocument) || documentRef; }
-    function windowFor(entry) { var doc = docFor(entry); return doc && doc.defaultView ? doc.defaultView : null; }
+    function deviceDpr() { return (windowRef && windowRef.devicePixelRatio) || 1; }
     function emptyRect() { return { left: 0, top: 0, width: 0, height: 0 }; }
+    function isDrawableEntry(entry) {
+      return Boolean(entry.host && entry.host.isConnected !== false && entry.ctx && entry.canvas
+        && entry.w > 0 && entry.h > 0);
+    }
     function makeEntry(host, role) {
       return {
         host: host, role: role, canvas: null, ctx: null,
         readyShown: false, markReadyHandle: 0,
         w: 0, h: 0, dpr: 1, hostRect: emptyRect(), paintOcclusionRects: [],
-        config: null, configSignature: '', tileCanvas: null,
+        config: null, configSignature: '',
+        tileCanvas: null, tileViewportY: NaN, maskCanvas: null, maskKey: '',
       };
     }
-    function getComputedStyleSafe(entry) {
-      var win = windowFor(entry);
+    function styleFor(entry) {
+      var doc = docFor(entry);
+      var win = (doc && doc.defaultView) || windowRef;
       if (win && typeof win.getComputedStyle === 'function') { return win.getComputedStyle(entry.host); }
-      return entry.host && entry.host.style ? entry.host.style : { getPropertyValue: function () { return ''; } };
+      return entry.host && entry.host.style ? entry.host.style : EMPTY_STYLE;
     }
     function readStyles(entry) {
-      var style = getComputedStyleSafe(entry);
-      var lineColor = runtime.readStyleToken(style, '--playlist-scroll-line-color');
-      var lineRgba = core._internals.parseRgba(lineColor) || { r: 157, g: 197, b: 255, a: 0.5 };
-      var ghostRaw = runtime.readStyleToken(style, '--playlist-scroll-ghost-color');
-      var accentRaw = runtime.readStyleToken(style, '--playlist-scroll-accent-color');
-      var withAlpha = function (color, alpha) {
-        return color ? { r: color.r, g: color.g, b: color.b, a: clamp(alpha, 0, 1) } : null;
-      };
-      var rgba = function (color) {
-        return color ? 'rgba(' + color.r + ',' + color.g + ',' + color.b + ',' + color.a + ')' : 'rgba(0,0,0,0)';
-      };
-      var ghostRgba = core._internals.parseRgba(ghostRaw)
+      var style = styleFor(entry);
+      var lineRgba = core._internals.parseRgba(runtime.readStyleToken(style, '--playlist-scroll-line-color'))
+        || { r: 157, g: 197, b: 255, a: 0.5 };
+      var ghostRgba = core._internals.parseRgba(runtime.readStyleToken(style, '--playlist-scroll-ghost-color'))
         || withAlpha(lineRgba, lineRgba.a * GHOST_ALPHA_MULTIPLIER);
-      var accentRgba = core._internals.parseRgba(accentRaw) || lineRgba;
+      var accentRgba = core._internals.parseRgba(runtime.readStyleToken(style, '--playlist-scroll-accent-color'))
+        || lineRgba;
+      var contrast = runtime.readStyleToken(style, '--playlist-scroll-contrast');
+      var barAlpha = runtime.readStyleToken(style, '--playlist-scroll-bar-alpha');
       var config = {
         laneHeight: runtime.readStyleToken(style, '--playlist-scroll-lane-height'),
         subdivisions: runtime.readStyleToken(style, '--playlist-scroll-subdivisions'),
-        barWidth: runtime.readStyleToken(style, '--playlist-scroll-bar-width'),
+        // Whole pixels, so bar lines and the tile blit stay on the pixel grid.
+        barWidth: Math.max(Math.round(runtime.readStyleToken(style, '--playlist-scroll-bar-width')), 1),
         speed: runtime.readStyleToken(style, '--playlist-scroll-speed'),
-        laneAlpha: runtime.readStyleToken(style, '--playlist-scroll-lane-alpha'),
-        barAlpha: runtime.readStyleToken(style, '--playlist-scroll-bar-alpha'),
-        subAlpha: runtime.readStyleToken(style, '--playlist-scroll-sub-alpha'),
-        bandAlpha: runtime.readStyleToken(style, '--playlist-scroll-band-alpha'),
+        contrast: contrast,
+        laneAlpha: clamp(runtime.readStyleToken(style, '--playlist-scroll-lane-alpha') * contrast, 0, 1),
+        barAlpha: clamp(barAlpha * contrast, 0, 1),
+        subAlpha: clamp(runtime.readStyleToken(style, '--playlist-scroll-sub-alpha') * contrast, 0, 1),
+        accentAlpha: clamp(barAlpha * ACCENT_ALPHA_FACTOR * contrast, 0, 1),
+        playheadAlpha: clamp(PLAYHEAD_ALPHA_FACTOR * lineRgba.a * contrast, 0, 1),
         edgeFade: runtime.readStyleToken(style, '--playlist-scroll-edge-fade'),
-        lineColor: lineColor,
-        accentAlpha: clamp(runtime.readStyleToken(style, '--playlist-scroll-bar-alpha') * ACCENT_ALPHA_FACTOR, 0, 1),
-        accentDotAlpha: clamp(runtime.readStyleToken(style, '--playlist-scroll-bar-alpha') * 2, 0, 1),
-        ghostString: rgba(ghostRgba), accentString: rgba(accentRgba),
-        lineSolidString: rgba(withAlpha(lineRgba, 1)),
+        lineString: rgbaString(withAlpha(lineRgba, 1)),
+        ghostString: rgbaString(withAlpha(ghostRgba, ghostRgba.a * GHOST_ALPHA_BOOST * contrast)),
+        accentString: rgbaString(withAlpha(accentRgba, 1)),
+        noteString: rgbaString(withAlpha(accentRgba, accentRgba.a * NOTE_ALPHA_FACTOR)),
       };
       var signature = Object.keys(config).map(function (key) { return String(config[key]); }).join('|');
       var changed = Boolean(entry.configSignature && entry.configSignature !== signature);
@@ -164,7 +180,11 @@
       else if (typeof entry.host.appendChild === 'function') { entry.host.appendChild(canvas); }
       else { return false; }
       var ctx = runtime.ensureCanvas2d(canvas);
-      if (!ctx) { return false; }
+      if (!ctx) {
+        // The runtime normally removes it; never rely on that for a dead canvas.
+        if (canvas.parentNode && typeof canvas.parentNode.removeChild === 'function') { canvas.parentNode.removeChild(canvas); }
+        entry.canvas = null; entry.ctx = null; return false;
+      }
       entry.canvas = canvas; entry.ctx = ctx; entry.readyShown = false;
       scheduleMarkReady(entry);
       return true;
@@ -175,7 +195,8 @@
         if (typeof entry.canvas.parentNode.removeChild === 'function') { entry.canvas.parentNode.removeChild(entry.canvas); }
         else if (typeof entry.canvas.remove === 'function') { entry.canvas.remove(); }
       }
-      entry.canvas = null; entry.ctx = null; entry.tileCanvas = null; entry.readyShown = false;
+      entry.canvas = null; entry.ctx = null; entry.tileCanvas = null; entry.maskCanvas = null;
+      entry.maskKey = ''; entry.readyShown = false;
     }
     function resizeCanvas(entry, forceRebuild) {
       var bounds = entry.hostRect || emptyRect();
@@ -184,10 +205,7 @@
       if (width <= 0 || height <= 0) {
         entry.w = 0; entry.h = 0; removeEntryCanvas(entry); return false;
       }
-      var win = windowFor(entry);
-      var dpr = runtime.computeEffectiveDpr({
-        deviceDpr: (win && win.devicePixelRatio) || 1, cssWidth: width, cssHeight: height,
-      });
+      var dpr = runtime.computeEffectiveDpr({ deviceDpr: deviceDpr(), cssWidth: width, cssHeight: height });
       var changed = width !== entry.w || height !== entry.h || dpr !== entry.dpr;
       entry.w = width; entry.h = height; entry.dpr = dpr;
       if (!ensureCanvas(entry)) { return false; }
@@ -200,92 +218,90 @@
       if (changed || forceRebuild) { entry.tileCanvas = null; }
       return true;
     }
+    function refreshDeviceDpr() {
+      var dpr = deviceDpr();
+      if (dpr === lastDeviceDpr) { return; }
+      lastDeviceDpr = dpr;
+      trackedHosts.forEach(function (entry) { resizeCanvas(entry, false); });
+    }
 
     function spawnAllowed(x, y) {
       return !runtime.scenePointInClientRects(spawnAvoidanceRects, sceneRectSnapshot, x, y);
     }
-    function sourceEntry() {
-      var source = null;
-      trackedHosts.forEach(function (entry) { if (!source && entry.config && entry.ctx) { source = entry; } });
+    function reportFrameFault(error) {
+      faultReporter.reportFault({ effectId: effectId, stage: 'frame', recoverable: true, error: error });
+    }
+    function collectSource(entry) {
+      if (!sourcePick && entry.config && isDrawableEntry(entry)) { sourcePick = entry; }
+    }
+    function pickSource() {
+      sourcePick = null;
+      trackedHosts.forEach(collectSource);
+      var source = sourcePick;
+      sourcePick = null;
       return source;
     }
-    function drawEntry(entry, now) {
-      if (documentHidden || !entry.ctx || !entry.canvas || entry.w <= 0 || entry.h <= 0
-          || !entry.host || entry.host.isConnected === false) { return; }
-      core.drawViewport(scene, entry, {
-        now: now, runtime: runtime, accentBoost: accentBoost, playheadBoost: playheadBoost,
-        viewportX: entry.hostRect.left - sceneRectSnapshot.left,
-        viewportY: entry.hostRect.top - sceneRectSnapshot.top,
-        sceneHeight: sceneHeight,
-      });
-      runtime.clearCanvasOcclusions(entry.ctx, entry.paintOcclusionRects, entry.dpr);
+    function paintEntry(entry) {
+      if (!isDrawableEntry(entry)) { return; }
+      try {
+        drawOpts.viewportX = entry.hostRect.left - sceneRectSnapshot.left;
+        drawOpts.viewportY = entry.hostRect.top - sceneRectSnapshot.top;
+        core.drawViewport(scene, entry, drawOpts);
+        runtime.clearCanvasOcclusions(entry.ctx, entry.paintOcclusionRects, entry.dpr);
+      } catch (error) {
+        reportFrameFault(error);
+      }
     }
-    function safeDrawEntry(entry, now) {
-      try { drawEntry(entry, now); }
-      catch (error) { faultReporter.reportFault({ effectId: effectId, stage: 'frame', recoverable: true, error: error }); }
+    function drawScene(timestamp, timing) {
+      var source = pickSource();
+      if (!source) { return; }
+      advanceEnv.config = source.config;
+      advanceEnv.sceneWidth = sceneWidth; advanceEnv.sceneHeight = sceneHeight;
+      advanceEnv.timestamp = timestamp; advanceEnv.dtMs = timing.dtMs;
+      advanceEnv.longGap = Boolean(timing.longGap); advanceEnv.reducedMotion = reducedMotion;
+      try {
+        core.advanceScene(scene, advanceEnv);
+      } catch (error) {
+        reportFrameFault(error);
+        return;
+      }
+      drawOpts.now = timestamp; drawOpts.sceneHeight = sceneHeight; drawOpts.settled = reducedMotion;
+      trackedHosts.forEach(paintEntry);
     }
-    function hasDrawableEntries() {
-      var drawable = false;
-      trackedHosts.forEach(function (entry) {
-        if (entry.host && entry.host.isConnected !== false && entry.ctx && entry.w > 0 && entry.h > 0) { drawable = true; }
-      });
-      return drawable;
+    // Hoisted counter: shouldAnimate() runs every frame, so no per-call closure.
+    var drawableScratch = 0;
+    function countDrawable(entry) { if (isDrawableEntry(entry)) { drawableScratch += 1; } }
+    function drawableEntryCount() {
+      drawableScratch = 0;
+      trackedHosts.forEach(countDrawable);
+      return drawableScratch;
     }
+    function hasDrawableEntries() { return drawableEntryCount() > 0; }
     function shouldAnimate() { return bound && !disposed && !reducedMotion && !documentHidden && hasDrawableEntries(); }
     function stopLoop() { if (frameHandle) { cancelFrame(frameHandle); frameHandle = 0; } }
     function scheduleFrame() { if (shouldAnimate() && !frameHandle) { frameHandle = requestFrame(stepFrame); } }
-    function updateActivityBoost() {
-      if (reducedMotion || phase !== 'streaming') { accentBoost = 1; playheadBoost = 1; return; }
-      var energy = clamp(currentEnergy - IDLE_TARGET_ENERGY, 0, 1);
-      accentBoost = 1 + (0.08 + energy * 0.22) * clamp(attentionScale, 0, 1);
-      playheadBoost = 1 + (0.12 + energy * 0.30) * clamp(attentionScale, 0, 1);
-    }
-    function resetComposer() { composeEnvelope = 0; core.resetAutoComposer(scene); }
-    function updateComposeEnvelope(dtMs) {
-      composeEnvelope = runtime.advancePhaseEnvelope(composeEnvelope, phase, dtMs, {
-        reducedMotion: reducedMotion,
-      });
-    }
-    function composerRate() {
-      if (composeEnvelope <= 0 || activeDrag) { return 0; }
-      var energyRatio = clamp((currentEnergy - IDLE_TARGET_ENERGY) / STREAM_ENERGY_SPAN, 0, 1);
-      return AUTO_NOTE_RATE_MAX * composeEnvelope * energyRatio * clamp(attentionScale, 0, 1);
-    }
-    function advanceScene(timing, now) {
-      var entry = sourceEntry();
-      if (!entry) { return; }
-      core.advanceScene(scene, timing, now, entry.config, sceneWidth, sceneHeight, spawnAllowed);
-      var rate = composerRate();
-      if (rate > 0) {
-        core.advanceAutoComposer(scene, entry.config, timing, now, {
-          notesPerSecond: rate, makeRng: runtime.makeRng, spawnAllowed: spawnAllowed,
-          sceneWidth: sceneWidth, sceneHeight: sceneHeight,
-        });
-      }
-    }
     function stepFrame(timestamp) {
       frameHandle = 0;
       if (!shouldAnimate()) { return; }
       var now = Number.isFinite(timestamp) ? timestamp : getNow();
+      var fullRate = windowFocused && core.isResponding(scene, now);
+      if (!fullRate && lastPaintAt && now >= lastPaintAt && now - lastPaintAt < IDLE_FRAME_MS - FRAME_SLACK_MS) {
+        frameHandle = requestFrame(stepFrame);
+        return;
+      }
+      lastPaintAt = now;
       var timing = frameClock.advance(now);
-      if (timing.longGap) { resetComposer(); }
-      currentEnergy = runtime.approachExponential(currentEnergy, targetEnergy, timing.dtMs, ENERGY_TIME_CONSTANT_MS);
-      updateComposeEnvelope(timing.dtMs > 0 ? timing.dtMs : 16.67);
-      updateActivityBoost();
-      advanceScene(timing, now);
-      trackedHosts.forEach(function (entry) { safeDrawEntry(entry, now); });
+      refreshDeviceDpr();
+      drawScene(now, timing);
+      // drawScene's fault report can dispose us synchronously (manager kill switch).
       scheduleFrame();
     }
     function drawAllStatic() {
       if (disposed || documentHidden) { return; }
-      accentBoost = 1; playheadBoost = 1;
-      var now = getNow();
-      advanceScene({ dtMs: 0, longGap: false }, now);
-      trackedHosts.forEach(function (entry) { safeDrawEntry(entry, now); });
+      refreshDeviceDpr();
+      drawScene(getNow(), STATIC_TIMING);
     }
-    function clearAllTransient(clearPreview) {
-      activeDrag = null; trailingClickGuard = null; core.clearTransient(scene, clearPreview);
-    }
+    function requestRedraw() { if (reducedMotion) { drawAllStatic(); } else { scheduleFrame(); } }
     function removeEntry(host) {
       var entry = trackedHosts.get(host);
       if (!entry) { return; }
@@ -295,15 +311,14 @@
     }
     function handleVisibilityChange(hidden) {
       documentHidden = Boolean(hidden); frameClock.reset();
-      if (documentHidden) { stopLoop(); clearAllTransient(true); resetComposer(); }
-      else {
-        trackedHosts.forEach(scheduleMarkReady);
-        if (reducedMotion) { drawAllStatic(); } else { scheduleFrame(); }
-      }
+      if (documentHidden) { stopLoop(); }
+      else { trackedHosts.forEach(scheduleMarkReady); requestRedraw(); }
     }
+    function handleFocusChange(focused) { windowFocused = Boolean(focused); scheduleFrame(); }
     function handleMotionPreferenceChange(matches) {
-      reducedMotion = Boolean(matches); frameClock.reset(); clearAllTransient(false);
-      if (reducedMotion) { resetComposer(); stopLoop(); drawAllStatic(); } else { scheduleFrame(); }
+      reducedMotion = Boolean(matches); frameClock.reset();
+      core.resetMotion(scene);
+      if (reducedMotion) { stopLoop(); drawAllStatic(); } else { scheduleFrame(); }
     }
     function applyStagedState() {
       trackedHosts.forEach(function (entry) {
@@ -314,13 +329,12 @@
         } else { scheduleMarkReady(entry); }
       });
     }
+    // Geometry keys only on what moves the grid or the ghosts: scene size, lane
+    // height, bar width and subdivisions. Spawn-avoidance rects are deliberately
+    // absent, so a growing composer never wipes and re-rolls the ghosts.
     function geometrySignature(config) {
-      return [sceneWidth, sceneHeight, scene.seed, config && config.laneHeight,
-        config && config.barWidth, config && config.subdivisions].concat(
-        spawnAvoidanceRects.map(function (rect) {
-          return [rect.left, rect.top, rect.width, rect.height].join(',');
-        }),
-      ).join('|');
+      return [sceneWidth, sceneHeight, config && config.laneHeight, config && config.barWidth,
+        config && config.subdivisions].join('|');
     }
     function applyContext(context) {
       var next = context || {};
@@ -352,18 +366,19 @@
         var styleChanged = readStyles(entry);
         resizeCanvas(entry, isNew || styleChanged);
       });
-      var entry = sourceEntry();
-      if (entry) {
-        var nextSignature = geometrySignature(entry.config);
+      var source = pickSource();
+      if (source) {
+        var nextSignature = geometrySignature(source.config);
         if (nextSignature !== sceneGeometrySignature) {
           sceneGeometrySignature = nextSignature;
-          core.resetSceneGeometry(scene, entry.config, sceneWidth, sceneHeight);
+          core.resetSceneGeometry(scene, source.config, sceneWidth, sceneHeight);
           trackedHosts.forEach(function (item) { item.tileCanvas = null; });
         }
       }
+      lastDeviceDpr = deviceDpr();
       applyStagedState();
       if (!hasDrawableEntries()) { stopLoop(); return; }
-      if (reducedMotion) { drawAllStatic(); } else { scheduleFrame(); }
+      requestRedraw();
     }
     function bind(context) {
       if (disposed) { return; }
@@ -371,9 +386,11 @@
       bound = true;
       reducedMotion = Boolean(reducedMotionQuery && reducedMotionQuery.matches);
       documentHidden = Boolean(documentRef && (documentRef.hidden || documentRef.visibilityState === 'hidden'));
+      windowFocused = !(documentRef && typeof documentRef.hasFocus === 'function') || documentRef.hasFocus();
       removeVisibilityMotionListeners = runtime.bindVisibilityAndMotionListeners({
         documentRef: documentRef, reducedMotionQuery: reducedMotionQuery,
         onVisibilityChange: handleVisibilityChange, onMotionPreferenceChange: handleMotionPreferenceChange,
+        windowRef: windowRef, onFocusChange: handleFocusChange,
       });
       applyContext(context);
     }
@@ -383,27 +400,7 @@
       trackedHosts.forEach(function (entry) { if (!match && entry.role === role) { match = entry; } });
       return match;
     }
-    function snapPosition(entry, payload) {
-      return entry ? core.snapScenePosition(scene, payload, entry.config, sceneWidth, sceneHeight) : null;
-    }
-    function updatePreview(snapped) { core.updatePreview(scene, snapped); }
-    function commitNote(entry, snapped, timeStamp) {
-      return Boolean(entry) && core.commitNote(scene, snapped, {
-        makeRng: runtime.makeRng, timeStamp: Number.isFinite(timeStamp) ? timeStamp : getNow(),
-        reducedMotion: reducedMotion, spawnAllowed: spawnAllowed,
-      });
-    }
     function pointerIdOf(payload) { return payload.pointerId == null ? 0 : payload.pointerId; }
-    function canPaintSpacing(snapped) {
-      if (!activeDrag || !activeDrag.lastPaintPoint) { return true; }
-      var dx = snapped.worldX - activeDrag.lastPaintPoint.worldX;
-      var dy = snapped.sceneY - activeDrag.lastPaintPoint.sceneY;
-      return Math.sqrt(dx * dx + dy * dy) >= Math.max(8, snapped.width * 0.72);
-    }
-    function paintAt(entry, snapped, timeStamp) {
-      if (!snapped || !canPaintSpacing(snapped) || !commitNote(entry, snapped, timeStamp)) { return; }
-      activeDrag.lastPaintPoint = { worldX: snapped.worldX, sceneY: snapped.sceneY };
-    }
     function inputTime(payload) {
       var value = Number(payload.timeStamp); return Number.isFinite(value) ? value : getNow();
     }
@@ -421,138 +418,61 @@
       } : null;
       activeDrag = null;
     }
-    function redrawAfterInput() { if (reducedMotion) { drawAllStatic(); } else { scheduleFrame(); } }
+    function fillCommitOpts(payload, snapped) {
+      commitOpts.timeStamp = inputTime(payload); commitOpts.reducedMotion = reducedMotion;
+      commitOpts.pointX = snapped.sceneX; commitOpts.pointY = snapped.sceneY;
+      return commitOpts;
+    }
+    // Paints the snapped cell, plus every cell skipped since the previous sample.
+    function paintCell(entry, payload, snapped) {
+      var cell = activeDrag.lastCell;
+      fillCommitOpts(payload, snapped);
+      if (cell.col === null) { core.commitCell(scene, snapped.col, snapped.lane, entry.config, commitOpts); }
+      else { core.commitCellRun(scene, cell, snapped, entry.config, commitOpts); }
+      cell.col = snapped.col; cell.lane = snapped.lane;
+    }
     function handleInput(payload) {
       if (!bound || disposed || !payload) { return; }
+      // A second finger or pen contact never drives hover, paint or cancel, so its
+      // cancel must not clear the primary pointer's hover either.
+      if (payload.isPrimary === false) { return; }
       var type = payload.type, pointerId = pointerIdOf(payload);
       if (type === 'click' && suppressesTrailingClick(payload)) { return; }
       if (type === 'cancel') {
         if (activeDrag && pointerId !== activeDrag.pointerId) { return; }
-        if (activeDrag) { finishActiveDrag(payload, false); }
-        clearAllTransient(true); redrawAfterInput(); return;
+        // Pointer state only: notes and rings settle by their own timers.
+        activeDrag = null; trailingClickGuard = null;
+        core.clearPointer(scene, reducedMotion); requestRedraw(); return;
       }
       var dragEvent = type === 'move' || type === 'release' || type === 'leave';
       if (activeDrag && dragEvent && pointerId !== activeDrag.pointerId) { return; }
       var entry = activeDrag && dragEvent ? activeDrag.entry : entryForRole(payload.surfaceRole);
-      if (!entry) { return; }
-      var snapped = snapPosition(entry, payload);
-      if (type === 'enter' || type === 'move') {
-        updatePreview(snapped);
-        if (type === 'move' && activeDrag) { paintAt(entry, snapped, payload.timeStamp); }
+      if (!entry || !entry.config) { return; }
+      if (type === 'enter' || type === 'move' || type === 'press' || type === 'click') {
+        var snapped = core.updatePointer(
+          scene, Number(payload.sceneX), Number(payload.sceneY), entry.config, sceneWidth, sceneHeight, reducedMotion,
+        );
+        if (type === 'move') {
+          if (activeDrag && snapped) { paintCell(entry, payload, snapped); }
+        } else if (type === 'press') {
+          if (activeDrag) { return; }
+          trailingClickGuard = null;
+          activeDrag = { pointerId: pointerId, entry: entry, lastCell: { col: null, lane: 0 } };
+          if (snapped) { paintCell(entry, payload, snapped); }
+        } else if (type === 'click' && snapped) {
+          core.commitCell(scene, snapped.col, snapped.lane, entry.config, fillCommitOpts(payload, snapped));
+        }
       } else if (type === 'leave') {
-        updatePreview(null); trailingClickGuard = null;
+        core.clearPointer(scene, reducedMotion); trailingClickGuard = null;
         if (activeDrag) { finishActiveDrag(payload, false); }
-      } else if (type === 'press') {
-        if (activeDrag) { return; }
-        trailingClickGuard = null;
-        activeDrag = { pointerId: pointerId, entry: entry, lastPaintPoint: null };
-        updatePreview(snapped); paintAt(entry, snapped, payload.timeStamp);
       } else if (type === 'release') {
         if (!activeDrag) { return; }
         finishActiveDrag(payload, true);
-      } else if (type === 'click') {
-        updatePreview(snapped); commitNote(entry, snapped, payload.timeStamp);
       }
-      redrawAfterInput();
-    }
-    function setActivity(snapshot) {
-      if (disposed || !snapshot) { return; }
-      if (scopeEpoch !== null && snapshot.scopeEpoch !== scopeEpoch) {
-        clearAllTransient(false); lastImpulseSequence = -1; resetComposer();
-      }
-      scopeEpoch = snapshot.scopeEpoch;
-      if (typeof snapshot.phase === 'string' && snapshot.phase) { phase = snapshot.phase; }
-      if (Number.isFinite(snapshot.phaseRevision)) { phaseRevision = snapshot.phaseRevision; }
-      if (Number.isFinite(snapshot.targetEnergy)) { targetEnergy = clamp(snapshot.targetEnergy, 0, 1); }
-      if (Number.isFinite(snapshot.attentionScale)) { attentionScale = clamp(snapshot.attentionScale, 0, 1); }
-      if (phase === 'failed') { clearAllTransient(false); resetComposer(); }
-      if (reducedMotion) { currentEnergy = targetEnergy; drawAllStatic(); } else { scheduleFrame(); }
-    }
-    function laneCount(config) { return Math.max(Math.floor(sceneHeight / config.laneHeight), 1); }
-    function pickLanes(baseLane, count, lanes) {
-      var seen = {}, picked = [];
-      for (var i = 0; i < LANE_PICK_OFFSETS.length && picked.length < count; i += 1) {
-        var lane = clamp(baseLane + LANE_PICK_OFFSETS[i], 0, lanes - 1);
-        if (!seen[lane]) { seen[lane] = true; picked.push(lane); }
-      }
-      return picked;
-    }
-    var laneCenterY = core.laneCenterY;
-    function lifecycleRng(sequence) {
-      return runtime.makeRng(core._internals.hashSeed((scene.seed ^ 0x00C403E0) >>> 0, sequence >>> 0));
-    }
-    function spawnChoreography(config, kind, sequence, startTime) {
-      var rng = lifecycleRng(sequence);
-      var lanes = laneCount(config);
-      var base = Math.floor(rng() * lanes);
-      if (kind === 'first-token') {
-        pickLanes(base, FIRST_TOKEN_FLARE_COUNT, lanes).forEach(function (lane, index) {
-          var sceneY = laneCenterY(config, lane);
-          if (spawnAllowed(scene.playheadX, sceneY)) {
-            core.spawnScriptedFlare(scene, sceneY, startTime + index * FLARE_STAGGER_MS);
-          }
-        });
-        return;
-      }
-      if (kind === 'tool-start') {
-        var accentLanes = pickLanes(base, 3, lanes);
-        for (var i = 0; i < accentLanes.length; i += 1) {
-          if (core.commitScriptedNote(scene, config, {
-            makeRng: runtime.makeRng, spawnAllowed: spawnAllowed, sceneHeight: sceneHeight,
-            lane: accentLanes[i], leadSteps: 1 + (sequence % 2),
-            velocityMin: 0.85, velocitySpan: 0.15, variationSeed: sequence, timeStamp: startTime,
-          })) { return; }
-        }
-        return;
-      }
-      if (kind === 'complete') {
-        var candidates = pickLanes(base, CHORD_SIZE + 2, lanes);
-        var placed = 0, flareY = -1;
-        for (var j = 0; j < candidates.length && placed < CHORD_SIZE; j += 1) {
-          if (core.commitScriptedNote(scene, config, {
-            makeRng: runtime.makeRng, spawnAllowed: spawnAllowed, sceneHeight: sceneHeight,
-            lane: candidates[j], leadSteps: 0,
-            velocityMin: 0.6, velocitySpan: 0.3, variationSeed: sequence * 8 + j, timeStamp: startTime,
-          })) {
-            placed += 1;
-            if (flareY < 0) { flareY = laneCenterY(config, candidates[j]); }
-          }
-        }
-        if (placed > 0 && spawnAllowed(scene.playheadX, flareY)) {
-          core.spawnScriptedFlare(scene, flareY, startTime);
-        }
-      }
-    }
-    function handleActivityImpulse(impulse) {
-      if (disposed || !impulse || scopeEpoch === null || impulse.scopeEpoch !== scopeEpoch) { return; }
-      var sequence = Number(impulse.sequence);
-      if (impulse.kind === 'cancel') {
-        if (Number.isFinite(sequence)) {
-          if (sequence <= lastImpulseSequence) { return; }
-          lastImpulseSequence = sequence;
-        }
-        resetComposer(); clearAllTransient(true); redrawAfterInput(); return;
-      }
-      /* Validate BEFORE the watermark: a malformed finite sequence must never
-         poison deduplication for later well-formed impulses. */
-      if (!Number.isSafeInteger(sequence) || sequence < 0) { return; }
-      if (sequence <= lastImpulseSequence) { return; }
-      lastImpulseSequence = sequence;
-      if (reducedMotion) { return; }
-      /* Envelope closure must not depend on choreography being renderable. */
-      if (impulse.kind === 'complete') { composeEnvelope = 0; }
-      var entry = sourceEntry();
-      if (entry) {
-        var startTime = Number.isFinite(impulse.timeStamp) ? impulse.timeStamp : getNow();
-        spawnChoreography(entry.config, impulse.kind, sequence, startTime);
-      }
-      redrawAfterInput();
+      requestRedraw();
     }
     function getStatus() {
-      var drawable = 0;
-      trackedHosts.forEach(function (entry) {
-        if (entry.host && entry.host.isConnected !== false && entry.ctx && entry.w > 0 && entry.h > 0) { drawable += 1; }
-      });
+      var drawable = drawableEntryCount();
       return {
         state: drawable > 0 ? 'ready' : 'dormant', hostCount: trackedHosts.size,
         drawableHostCount: drawable, reason: drawable > 0 ? '' : 'no drawable host',
@@ -572,6 +492,7 @@
           screenX: scene.preview.sceneX - viewportX, lane: scene.preview.lane, width: scene.preview.width,
         } : null,
         previewCount: scene.preview ? 1 : 0,
+        pointerFade: scene.pointer.fade,
         painting: Boolean(activeDrag && activeDrag.entry === entry),
         activePointerId: activeDrag && activeDrag.entry === entry ? activeDrag.pointerId : null,
         paintOcclusionCount: entry.paintOcclusionRects.length,
@@ -581,36 +502,22 @@
               screenX: Number((note.worldX - scene.totalScroll - viewportX).toFixed(3)),
               lane: note.lane, width: Number(note.width.toFixed(3)),
             },
-            variation: { colorIndex: note.colorIndex, velocity: Number(note.velocity.toFixed(6)) },
           };
         }),
       };
-    }
-    function countNotes(source) {
-      var count = 0;
-      scene.notes.forEach(function (note) { if (note.source === source) { count += 1; } });
-      return count;
     }
     function inspect() {
       var entries = [];
       trackedHosts.forEach(function (entry) { entries.push(inspectEntry(entry)); });
       return {
         bound: bound, disposed: disposed, staged: staged, generation: generation,
-        reducedMotion: reducedMotion, documentHidden: documentHidden,
-        scopeEpoch: scopeEpoch, phase: phase, phaseRevision: phaseRevision,
-        currentEnergy: currentEnergy, targetEnergy: targetEnergy, attentionScale: attentionScale,
-        accentBoost: accentBoost, playheadBoost: playheadBoost,
-        noteActivityScale: 1, scrollSpeedScale: 1, pendingGestureCount: 0,
-        composeEnvelope: composeEnvelope,
+        reducedMotion: reducedMotion, documentHidden: documentHidden, windowFocused: windowFocused,
         scene: {
           seed: scene.seed, width: sceneWidth, height: sceneHeight,
           totalScroll: scene.totalScroll, playheadX: scene.playheadX,
           noteCount: scene.notes.length, rippleCount: scene.ripples.length,
           crossingFlareCount: scene.crossingFlares.length, ghostCount: scene.ghostNotes.length,
-          previewCount: scene.preview ? 1 : 0,
-          autoNoteSequence: scene.autoNoteSequence, autoCredit: scene.autoCredit,
-          userNoteCount: countNotes('user'), autoNoteCount: countNotes('auto'),
-          lifecycleNoteCount: countNotes('lifecycle'),
+          previewCount: scene.preview ? 1 : 0, pointerFade: scene.pointer.fade,
         },
         entries: entries,
       };
@@ -624,7 +531,6 @@
     }
     return {
       bind: bind, refresh: refresh, dispose: dispose, handleInput: handleInput,
-      setActivity: setActivity, handleActivityImpulse: handleActivityImpulse,
       getStatus: getStatus, _internals: { inspect: inspect },
     };
   }
@@ -636,7 +542,6 @@
       hashSeed: moduleCore._internals.hashSeed,
       generateGhostNoteForBar: moduleCore._internals.generateGhostNoteForBar,
       parseRgba: moduleCore._internals.parseRgba,
-      shadeRgba: moduleCore._internals.shadeRgba,
       resolveSubdivisions: resolveSubdivisions,
     },
   };

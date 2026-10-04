@@ -1,6 +1,8 @@
 /* renderer/features/renderer-ide-confirm-dialog.js
  *
- * Promise-returning Save / Don't Save / Cancel confirm for closing dirty tabs.
+ * Promise-returning Save / Don't Save / Cancel confirm for closing dirty tabs,
+ * and the action-aware (close / reload / update-restart) window-exit prompt
+ * that also lists non-file surfaces with unsaved changes.
  * Built on the inventory help-overlay primitive (focus trap, Esc, scrim, focus
  * restoration) so this file carries no raw HTML primitives - the action buttons
  * render through the inventory action-button. A single batched prompt covers a
@@ -56,18 +58,59 @@
       return overlay;
     }
 
-    function buildBodyHtml(dirtyPaths) {
-      const count = dirtyPaths.length;
-      const message = '<p class="ide-confirm-message">'
-        + escapeHtml(jtn('ide.confirm.unsavedFilesPrompt', count, { name: basename(dirtyPaths[0]), count }, '“{name}” has unsaved changes. Save before closing?', '{count} files have unsaved changes. Save them before closing?')) + '</p>';
+    // Window-exit intents name what is about to happen; an editor-tab close
+    // (no intent) keeps the original copy. Static per-intent copy keeps every
+    // key a literal for the i18n ledger.
+    function windowExitCopy(intent, count, name) {
+      const params = { name, count };
+      if (intent === 'close') {
+        return {
+          message: jtn('ide.confirm.exitClosePrompt', count, params, '“{name}” has unsaved changes. Save before closing Jenny?', '{count} items have unsaved changes. Save before closing Jenny?'),
+          save: jt('ide.confirm.saveAndClose', 'Save and close'),
+          discard: jt('ide.confirm.closeWithoutSaving', 'Close without saving'),
+        };
+      }
+      if (intent === 'reload') {
+        return {
+          message: jtn('ide.confirm.exitReloadPrompt', count, params, '“{name}” has unsaved changes. Save before reloading Jenny?', '{count} items have unsaved changes. Save before reloading Jenny?'),
+          save: jt('ide.confirm.saveAndReload', 'Save and reload'),
+          discard: jt('ide.confirm.reloadWithoutSaving', 'Reload without saving'),
+        };
+      }
+      if (intent === 'update-restart') {
+        return {
+          message: jtn('ide.confirm.exitRestartPrompt', count, params, '“{name}” has unsaved changes. Save before restarting to update?', '{count} items have unsaved changes. Save before restarting to update?'),
+          save: jt('ide.confirm.saveAndRestart', 'Save and restart'),
+          discard: jt('ide.confirm.restartWithoutSaving', 'Restart without saving'),
+        };
+      }
+      return null;
+    }
+
+    // Items are dirty files (shown by basename, full path as the tooltip) and
+    // non-file surfaces such as "Long-term notes" (shown by label).
+    function buildBodyHtml(dirtyPaths, surfaces, intent) {
+      const items = dirtyPaths.map((path) => ({ name: basename(path), title: path }))
+        .concat(surfaces.map((surface) => ({ name: surface.label, title: surface.label })));
+      const count = items.length;
+      const name = count ? items[0].name : '';
+      const exitCopy = windowExitCopy(intent, count, name);
+      const messageText = exitCopy
+        ? exitCopy.message
+        : jtn('ide.confirm.unsavedFilesPrompt', count, { name, count }, '“{name}” has unsaved changes. Save before closing?', '{count} files have unsaved changes. Save them before closing?');
+      const message = '<p class="ide-confirm-message">' + escapeHtml(messageText) + '</p>';
       const list = count > 1
-        ? `<ul class="ide-confirm-list">${dirtyPaths
-          .map((path) => `<li title="${escapeHtml(path)}">${escapeHtml(basename(path))}</li>`)
+        ? `<ul class="ide-confirm-list">${items
+          .map((item) => `<li title="${escapeHtml(item.title)}">${escapeHtml(item.name)}</li>`)
           .join('')}</ul>`
         : '';
+      const saveLabel = exitCopy
+        ? exitCopy.save
+        : (count > 1 ? jt('ide.confirm.saveAll', 'Save All') : jt('common.save', 'Save'));
+      const discardLabel = exitCopy ? exitCopy.discard : jt('ide.confirm.dontSave', 'Don’t Save');
       const buttons = actionButton
-        ? actionButton({ label: count > 1 ? jt('ide.confirm.saveAll', 'Save All') : jt('common.save', 'Save'), variant: 'primary', dataset: { 'ide-confirm-action': 'save' } })
-          + actionButton({ label: jt('ide.confirm.dontSave', 'Don’t Save'), variant: 'danger', dataset: { 'ide-confirm-action': 'discard' } })
+        ? actionButton({ label: saveLabel, variant: 'primary', dataset: { 'ide-confirm-action': 'save' } })
+          + actionButton({ label: discardLabel, variant: 'danger', dataset: { 'ide-confirm-action': 'discard' } })
           + actionButton({ label: jt('common.cancel', 'Cancel'), variant: 'ghost', dataset: { 'ide-confirm-action': 'cancel' } })
         : '';
       return `${message}${list}<div class="ide-confirm-actions">${buttons}</div>`;
@@ -128,10 +171,14 @@
       const dirtyPaths = (payload && Array.isArray(payload.dirtyPaths) ? payload.dirtyPaths : [])
         .map((path) => String(path || ''))
         .filter(Boolean);
+      const surfaces = (payload && Array.isArray(payload.surfaces) ? payload.surfaces : [])
+        .filter((surface) => surface && surface.label)
+        .map((surface) => ({ label: String(surface.label) }));
+      const intent = payload && typeof payload.intent === 'string' ? payload.intent : '';
       return runActionDialog({
         title: jt('ide.confirm.unsavedChanges', 'Unsaved changes'),
         titleId: 'ideConfirmCloseTitle',
-        bodyHtml: buildBodyHtml(dirtyPaths),
+        bodyHtml: buildBodyHtml(dirtyPaths, surfaces, intent),
         closeLabel: jt('ide.confirm.cancelKeepEditing', 'Cancel and keep editing'),
         actions: ['save', 'discard', 'cancel'],
         onDismiss: 'cancel',

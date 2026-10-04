@@ -27,7 +27,7 @@
 .ide-test-runner-panel__empty {
   padding: 6px 2px;
   color: var(--text-secondary);
-  font-size: 12px;
+  font-size: var(--font-size-body);
 }
 
 /* ── Verification gate header: GATE · [gate select] · verdict · … · [mode] ── */
@@ -40,16 +40,14 @@
   padding: 6px 8px;
   border: 1px solid var(--line);
   border-radius: var(--radius-sm, 5px);
-  font-size: 12px;
+  font-size: var(--font-size-footnote);
 }
 
 .ide-test-runner-gate__label {
   flex: 0 0 auto;
   color: var(--text-muted);
-  font-size: 10px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
+  font-size: var(--font-size-caption);
+  font-weight: 500;
 }
 
 /* The inventory select is a stacked form field by default; in the strip it is
@@ -62,14 +60,14 @@
 
 .ide-test-runner-gate .inv-select-field-control {
   padding: 2px 8px;
-  font-size: 11px;
+  font-size: var(--font-size-body);
   line-height: 1.4;
   border-radius: var(--radius-sm, 5px);
 }
 
 .ide-test-runner-gate__verdict {
   flex: 0 0 auto;
-  font-weight: 600;
+  font-weight: 500;
   color: var(--text-primary);
   font-variant-numeric: tabular-nums;
 }
@@ -106,7 +104,7 @@
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--text-muted);
-  font-size: 11px;
+  font-size: var(--font-size-footnote);
 }
 
 .ide-test-runner-gate__spacer {
@@ -128,8 +126,7 @@
 .ide-test-runner-panel__by {
   flex: 0 0 auto;
   color: var(--text-muted);
-  font-size: 10px;
-  letter-spacing: 0.02em;
+  font-size: var(--font-size-caption);
   font-variant-numeric: tabular-nums;
 }
 
@@ -149,8 +146,8 @@
 }
 
 .ide-test-runner-panel__active-run-label {
-  font-size: 12px;
-  font-weight: 600;
+  font-size: var(--font-size-body);
+  font-weight: 500;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -175,8 +172,8 @@
 
 .ide-test-runner-panel__label {
   flex: 0 0 auto;
-  font-size: 12px;
-  font-weight: 600;
+  font-size: var(--font-size-body);
+  font-weight: 500;
   color: var(--text-primary);
 }
 
@@ -189,10 +186,8 @@
   border-radius: var(--radius-pill, 999px);
   background: var(--bg-surface-2);
   color: var(--text-muted);
-  font-size: 10px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
+  font-size: var(--font-size-caption);
+  font-weight: 500;
 }
 
 .ide-test-runner-panel__status[data-status="passed"] { color: var(--state-success); }
@@ -232,7 +227,7 @@
   text-overflow: ellipsis;
   white-space: nowrap;
   font-family: var(--font-family-mono);
-  font-size: 11px;
+  font-size: var(--font-size-code);
   color: var(--text-muted);
 }
 
@@ -250,7 +245,7 @@
   min-width: 0;
   padding: 2px 0 3px;
   color: var(--text-muted);
-  font-size: 10px;
+  font-size: var(--font-size-caption);
 }
 
 .ide-test-runner-history-strip__chart {
@@ -303,7 +298,7 @@
   margin-top: 4px;
   border-collapse: collapse;
   color: var(--text-secondary);
-  font-size: 10px;
+  font-size: var(--font-size-caption);
   font-variant-numeric: tabular-nums;
 }
 
@@ -320,7 +315,7 @@
 /* Why a save dropped the new entry (invalid or duplicate id). Hidden while empty. */
 .ide-test-runner-panel__form-note {
   color: var(--state-warning);
-  font-size: 11px;
+  font-size: var(--font-size-footnote);
 }
 
 /* ── Add-config authoring form ── */
@@ -334,10 +329,8 @@
 
 .ide-test-runner-panel__form-title {
   color: var(--text-muted);
-  font-size: 11px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
+  font-size: var(--font-size-caption);
+  font-weight: 500;
 }
 
 .ide-test-runner-panel__field {

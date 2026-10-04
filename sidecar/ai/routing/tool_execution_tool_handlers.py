@@ -189,7 +189,7 @@ def _execute_check_monitor_tool(
     )
 
 
-def _execute_delegate_synthetic_tool(  # noqa: PLR0913 - mirrors synthetic tool dispatch.
+def _execute_delegate_synthetic_tool(  # mirrors synthetic tool dispatch.
     *,
     kernel: Any,
     call: ToolCallRequest,
@@ -214,7 +214,7 @@ def _execute_delegate_synthetic_tool(  # noqa: PLR0913 - mirrors synthetic tool 
     )
 
 
-def _execute_subagent_synthetic_tool(  # noqa: PLR0913 - shared synthetic settlement fields.
+def _execute_subagent_synthetic_tool(  # shared synthetic settlement fields.
     *,
     executor: Any,
     tool_name: str,

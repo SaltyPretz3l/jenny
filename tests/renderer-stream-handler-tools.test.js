@@ -56,8 +56,6 @@ function createToolHandlerHarness(options = {}) {
     },
     releaseApprovalToastSessions() {},
     clearSessionComposerNotice() {},
-    setSessionTurnStatusPill() {},
-    clearSessionTurnStatusPill() {},
     patchSessionSummary(sessionId, patch) { sessionPatches.push({ sessionId, patch }); },
     queueSessionRender(sessionId, flags) {
       operationOrder.push('render');

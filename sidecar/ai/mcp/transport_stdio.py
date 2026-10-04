@@ -16,8 +16,8 @@ from typing import Any, NoReturn
 
 from sidecar.ai.config import MCPServerConfig
 from sidecar.ai.error_codes import CMP_MCP_PROTOCOL_FAILED, CMP_MCP_SERVER_FAILED
-from sidecar.ai.mcp.exceptions import MCPError
-from sidecar.ai.mcp.transport_base import MCPTransport
+from sidecar.ai.mcp.exceptions import MCPError, mcp_error_data_detail
+from sidecar.ai.mcp.transport_base import MCPTransport, raise_cancelled_keeping_reply
 from sidecar.ai.mcp.transport_base import raise_if_cancelled as _raise_if_cancelled
 from sidecar.ai.mcp.transport_lifecycle import (
     ProcessContainment as MCPProcessContainment,
@@ -29,7 +29,8 @@ from sidecar.ai.mcp.transport_lifecycle import (
 from sidecar.ai.mcp.transport_lifecycle import (
     validate_stdio_command as _validate_stdio_command,
 )
-from sidecar.ai.tools.sanitization import sanitize_tool_output
+from sidecar.ai.tools.sanitization import redact_error_paths, sanitize_tool_output
+from sidecar.runtime.chat_models import TerminalChatStateError
 from sidecar.runtime.diagnostics import log_event
 
 logger = logging.getLogger(__name__)
@@ -138,8 +139,6 @@ def _terminate_process(
     containment: MCPProcessContainment | None = None,
 ) -> None:
     try:
-        if process.poll() is not None:
-            return
         if containment is not None:
             try:
                 containment.terminate(process)
@@ -151,6 +150,8 @@ def _terminate_process(
                 )
             if process.poll() is not None:
                 return
+        if process.poll() is not None:
+            return
         process.terminate()
         try:
             process.wait(timeout=1.5)
@@ -242,7 +243,7 @@ class StdioMCPTransport(MCPTransport):
                 bufsize=1,
                 **spawn_kwargs,
             )
-        except Exception as error:  # noqa: BLE001
+        except Exception as error:
             raise MCPError(
                 code=CMP_MCP_SERVER_FAILED,
                 message=f"failed to spawn mcp server '{config.name}': {error}",
@@ -250,7 +251,7 @@ class StdioMCPTransport(MCPTransport):
             ) from error
         try:
             self._containment.after_spawn(self._process)
-        except Exception as error:  # noqa: BLE001
+        except Exception as error:
             self._containment.terminate(self._process)
             self._containment.close()
             raise MCPError(
@@ -303,14 +304,12 @@ class StdioMCPTransport(MCPTransport):
     def server_name(self) -> str:
         return self._config.name
 
+    is_terminated = property(lambda self: self._closed.is_set() or self._process.poll() is not None)
+
     def list_tools(self, *, cancel_handle: Any = None) -> list[dict[str, Any]]:
         self._ensure_initialized(cancel_handle=cancel_handle)
-        response = self._send_request("tools/list", {}, cancel_handle=cancel_handle)
-        result = self._require_result(response, "tools/list")
-        tools = result.get("tools")
-        if not isinstance(tools, list):
-            return []
-        return [tool for tool in tools if isinstance(tool, dict)]
+        return self._list_tool_pages(self._send_request, cancel_handle=cancel_handle,
+                                     timeout_seconds=self._request_timeout_seconds)
 
     def call_tool(
         self,
@@ -389,14 +388,10 @@ class StdioMCPTransport(MCPTransport):
         return self._require_result(response, "resources/templates/list")
 
     def _ensure_initialized(self, *, cancel_handle: Any = None) -> None:
-        if bool(getattr(self, "_initialized", False)):
+        if self._initialized:
             return
-        initialize_lock = getattr(self, "_initialize_lock", None)
-        if initialize_lock is None:
-            initialize_lock = threading.Lock()
-            self._initialize_lock = initialize_lock
-        with initialize_lock:
-            if bool(getattr(self, "_initialized", False)):
+        with self._initialize_lock:
+            if self._initialized:
                 return
             response = self._send_request(
                 "initialize",
@@ -419,14 +414,15 @@ class StdioMCPTransport(MCPTransport):
                     ),
                     retryable=False,
                 )
-            self._request_lifecycle().configure(result)
+            self._tool_lifecycle.configure(result)
             with self._request_lock:
                 self._write_line(
                     {
                         "jsonrpc": "2.0",
                         "method": "notifications/initialized",
                         "params": {},
-                    }
+                    },
+                    cancel_handle=cancel_handle,
                 )
             self._initialized = True
 
@@ -449,15 +445,13 @@ class StdioMCPTransport(MCPTransport):
         self._closed.set()
         _unregister_active_transport(self)
         _unregister_active_process(process)
+        _terminate_process(self.server_name, process, self._containment)
+        self._containment.close()
         if process.stdin is not None:
             try:
                 process.stdin.close()
             except OSError:
                 pass
-        containment = getattr(self, "_containment", None)
-        _terminate_process(self.server_name, process, containment)
-        if containment is not None:
-            containment.close()
         if process.stdout is not None:
             try:
                 process.stdout.close()
@@ -513,31 +507,9 @@ class StdioMCPTransport(MCPTransport):
             ):
                 return
 
-    def _ensure_request_routing_state(self) -> None:
-        if not hasattr(self, "_response_read_lock"):
-            self._response_read_lock = threading.Lock()
-        if not hasattr(self, "_pending_lock"):
-            self._pending_lock = threading.Lock()
-        if not hasattr(self, "_pending_responses"):
-            self._pending_responses = {}
-        if not hasattr(self, "_pending_output_callbacks"):
-            self._pending_output_callbacks = {}
-        self._request_lifecycle()
-        self._request_stderr_evidence()
-
-    def _request_lifecycle(self) -> ToolLifecycleTracker:
-        if not hasattr(self, "_tool_lifecycle"):
-            self._tool_lifecycle = ToolLifecycleTracker()
-        return self._tool_lifecycle
-
-    def _request_stderr_evidence(self) -> RequestScopedStderr:
-        if not hasattr(self, "_stderr_evidence"):
-            self._stderr_evidence = RequestScopedStderr()
-        return self._stderr_evidence
-
     @property
     def server_generation_id(self) -> str | None:
-        return self._request_lifecycle().generation_id
+        return self._tool_lifecycle.generation_id
 
     def _send_request(
         self,
@@ -554,7 +526,6 @@ class StdioMCPTransport(MCPTransport):
             else self._request_timeout_seconds
         )
         deadline = time.monotonic() + max(0.0, request_timeout_seconds)
-        self._ensure_request_routing_state()
         pending = self._dispatch_request(
             method,
             params,
@@ -568,7 +539,7 @@ class StdioMCPTransport(MCPTransport):
             with self._pending_lock:
                 self._pending_responses.pop(pending.request_id, None)
                 self._pending_output_callbacks.pop(pending.request_id, None)
-                self._request_lifecycle().finish(pending.request_id)
+                self._tool_lifecycle.finish(pending.request_id)
 
     def _dispatch_request(
         self,
@@ -581,11 +552,11 @@ class StdioMCPTransport(MCPTransport):
     ) -> _PendingRequest:
         self._acquire_request_lock(deadline=deadline, cancel_handle=cancel_handle)
         request_id = next(self._ids)
-        response_queue: queue.Queue[dict[str, Any]] = queue.Queue()
-        lifecycle = self._request_lifecycle()
-        started_event, operation_id = lifecycle.begin(request_id)
-        stderr_cursor = self._request_stderr_evidence().cursor()
+        lifecycle = self._tool_lifecycle
         try:
+            response_queue: queue.Queue[dict[str, Any]] = queue.Queue()
+            started_event, operation_id = lifecycle.begin(request_id)
+            stderr_cursor = self._stderr_evidence.cursor()
             _raise_if_cancelled(cancel_handle, message="MCP stdio request cancelled")
             payload = {
                 "jsonrpc": "2.0",
@@ -598,12 +569,8 @@ class StdioMCPTransport(MCPTransport):
                 if on_output_chunk is not None:
                     self._pending_output_callbacks[request_id] = on_output_chunk
             try:
-                self._write_line(payload)
+                self._write_line(payload, deadline=deadline, cancel_handle=cancel_handle)
             except BaseException as error:
-                with self._pending_lock:
-                    self._pending_responses.pop(request_id, None)
-                    self._pending_output_callbacks.pop(request_id, None)
-                    lifecycle.finish(request_id)
                 if (
                     isinstance(error, MCPError)
                     and method == "tools/call"
@@ -615,19 +582,25 @@ class StdioMCPTransport(MCPTransport):
                         started=False,
                     ) from error
                 raise
+            return _PendingRequest(
+                request_id=request_id,
+                method=method,
+                response_queue=response_queue,
+                deadline=deadline,
+                cancel_handle=cancel_handle,
+                on_output_chunk=on_output_chunk,
+                started_event=started_event,
+                operation_id=operation_id,
+                stderr_cursor=stderr_cursor,
+            )
+        except BaseException:
+            with self._pending_lock:
+                self._pending_responses.pop(request_id, None)
+                self._pending_output_callbacks.pop(request_id, None)
+                lifecycle.finish(request_id)
+            raise
         finally:
             self._request_lock.release()
-        return _PendingRequest(
-            request_id=request_id,
-            method=method,
-            response_queue=response_queue,
-            deadline=deadline,
-            cancel_handle=cancel_handle,
-            on_output_chunk=on_output_chunk,
-            started_event=started_event,
-            operation_id=operation_id,
-            stderr_cursor=stderr_cursor,
-        )
 
     def _await_request_result(self, pending: _PendingRequest) -> dict[str, Any]:
         try:
@@ -647,7 +620,7 @@ class StdioMCPTransport(MCPTransport):
                 error.code == CMP_MCP_PROTOCOL_FAILED and error.transport_terminated is True)
             if pending.method != "tools/call" or not lost:
                 raise
-            lifecycle = self._request_lifecycle()
+            lifecycle = self._tool_lifecycle
             raise lifecycle.classify_error(
                 error,
                 operation_id=lifecycle.operation_id(
@@ -655,12 +628,13 @@ class StdioMCPTransport(MCPTransport):
                 ),
                 started=pending.started_event.is_set(),
             ) from error
-        except _CancelObserved:
+        except (_CancelObserved, TerminalChatStateError):
             self._notify_cancelled(pending.request_id)
             cancel_deadline = min(
                 pending.deadline,
                 time.monotonic() + MCP_CANCEL_GRACE_SECONDS,
             )
+            # A reply that settled the race wins; no reply re-raises the cancellation.
             return self._await_cancel_race_result(
                 pending,
                 deadline=cancel_deadline,
@@ -693,9 +667,8 @@ class StdioMCPTransport(MCPTransport):
             ):
                 continue
             if "error" in response:
-                _raise_if_cancelled(
-                    pending.cancel_handle,
-                    message="MCP stdio request cancelled",
+                raise_cancelled_keeping_reply(
+                    pending.cancel_handle, self._raise_for_error, response
                 )
             self._raise_for_error(response)
             return response
@@ -801,7 +774,7 @@ class StdioMCPTransport(MCPTransport):
                         self.server_name,
                     )
             return True
-        if self._request_lifecycle().handle_notification(response):
+        if self._tool_lifecycle.handle_notification(response):
             return True
         logger.warning(
             "mcp response id mismatch server=%s method=%s expected=%s received=%s",
@@ -812,22 +785,43 @@ class StdioMCPTransport(MCPTransport):
         )
         return True
 
-    def _write_line(self, payload: dict[str, Any]) -> None:
-        if self._process.stdin is None:
-            raise MCPError(
-                code=CMP_MCP_SERVER_FAILED,
-                message=f"mcp server '{self.server_name}' stdin is unavailable",
-                retryable=True,
-            )
+    def _write_line(self, payload: dict[str, Any], *, deadline: float | None = None,
+                    cancel_handle: Any = None) -> None:
+        if self._closed.is_set() or self._process.stdin is None:
+            raise MCPError(code=CMP_MCP_SERVER_FAILED, retryable=True,
+                           message=f"mcp server '{self.server_name}' stdin is unavailable")
+        deadline = deadline if deadline is not None else time.monotonic() + self._request_timeout_seconds
+        finished = threading.Event()
+        errors: list[BaseException] = []
+        line = json.dumps(payload, ensure_ascii=False) + "\n"
+
+        def write() -> None:
+            try:
+                assert self._process.stdin is not None
+                self._process.stdin.write(line)
+                self._process.stdin.flush()
+            except (OSError, ValueError) as error:
+                errors.append(error)
+            finally:
+                finished.set()
+
+        writer = threading.Thread(target=write, name=f"mcp-write-{self.server_name}", daemon=True)
+        writer.start()
         try:
-            self._process.stdin.write(json.dumps(payload, ensure_ascii=False) + "\n")
-            self._process.stdin.flush()
-        except OSError as error:
-            raise MCPError(
-                code=CMP_MCP_SERVER_FAILED,
-                message=f"failed to write mcp request for '{self.server_name}': {error}",
-                retryable=True,
-            ) from error
+            while not finished.wait(timeout=min(0.05, max(0.0, deadline - time.monotonic()))):
+                _raise_if_cancelled(cancel_handle)
+                if self._closed.is_set() or time.monotonic() >= deadline:
+                    raise MCPError(code=CMP_MCP_SERVER_FAILED, retryable=True,
+                                   message=f"mcp server '{self.server_name}' write timed out")
+            # A finished write leaves the pipe intact: a Stop from here on takes the
+            # response wait's cooperative cancel path instead of killing the server.
+            if errors:
+                raise MCPError(code=CMP_MCP_SERVER_FAILED, retryable=True,
+                               message=f"failed to write mcp request for '{self.server_name}'") from errors[0]
+        except BaseException:
+            self._terminate_after_reader_failure("stdin")
+            writer.join(timeout=MCP_THREAD_JOIN_TIMEOUT_SECONDS)
+            raise
 
     def _pump_stdout(self) -> None:
         if self._process.stdout is None:
@@ -907,7 +901,7 @@ class StdioMCPTransport(MCPTransport):
                 if stderr_cursor is None
                 else stderr_cursor
             )
-            stderr_text = self._request_stderr_evidence().since(scoped_cursor)
+            stderr_text = self._stderr_evidence.since(scoped_cursor)
             if stderr_text:
                 message = f"{message}: {stderr_text}"
             # The pipe stays dead: leave the sentinel for every other pending caller.
@@ -927,8 +921,8 @@ class StdioMCPTransport(MCPTransport):
         detail = "non-object response"
         try:
             data = json.loads(item)
-        except json.JSONDecodeError as error:
-            data, detail = None, f"invalid json: {error}"
+        except (json.JSONDecodeError, RecursionError) as error:
+            data, detail = None, f"invalid json: {type(error).__name__}"
         if not isinstance(data, dict):
             # A stream that carried a non-frame can't be re-framed: end it for every caller.
             self._terminate_after_reader_failure("protocol")
@@ -944,7 +938,8 @@ class StdioMCPTransport(MCPTransport):
                         "jsonrpc": "2.0",
                         "method": CANCEL_NOTIFICATION_METHOD,
                         "params": {"requestId": request_id, "reason": "turn_cancelled"},
-                    }
+                    },
+                    deadline=time.monotonic() + MCP_CANCEL_GRACE_SECONDS,
                 )
         except MCPError:
             # Pipe already dead — the read loop surfaces the failure and the
@@ -954,7 +949,7 @@ class StdioMCPTransport(MCPTransport):
             )
 
     def _append_stderr_tail(self, line: str) -> None:
-        self._request_stderr_evidence().append(line)
+        self._stderr_evidence.append(line)
 
     def _set_reader_error(self, error: BaseException) -> None:
         if self._reader_error is None:
@@ -995,7 +990,8 @@ class StdioMCPTransport(MCPTransport):
             error_code = str(data["code"])
         if isinstance(data, dict):
             retryable = data.get("retryable") is True
-        logger.warning("mcp call failed on server=%s message=%s", self.server_name, message)
+        logged = redact_error_paths(message)  # HB-017: the log never keeps real paths.
+        logger.warning("mcp call failed on server=%s message=%s", self.server_name, logged)
         raise MCPError(
             code=error_code,
             message=message,
@@ -1009,4 +1005,5 @@ class StdioMCPTransport(MCPTransport):
             ),
             response_received=True,
             resource_cleanup=data.get("resource_cleanup") if isinstance(data, dict) else None,
+            detail=_sanitize_mcp_detail(mcp_error_data_detail(data)),
         )

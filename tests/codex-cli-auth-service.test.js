@@ -28,7 +28,25 @@ test('codex CLI auth service reports ready only for ChatGPT auth', async () => {
   assert.equal(state.commandPath, 'C:/codex/codex.exe');
   assert.equal(service.getCredentialEpoch(), 1);
   await service.getState();
-  assert.equal(service.getCredentialEpoch(), 2);
+  assert.equal(service.getCredentialEpoch(), 1);
+});
+
+test('auth authority changes on auth transitions but ignores diagnostic wording', async () => {
+  let setup = { ok: true, authType: 'chatgpt', commandPath: 'C:/codex.exe' };
+  const service = createCodexCliAuthService({ checkSetup: async () => setup });
+  await service.getState();
+  const captured = service.getCredentialEpoch();
+  setup = { ...setup, message: 'Different diagnostic wording' };
+  await service.getState();
+  assert.equal(service.getCredentialEpoch(), captured, 'unchanged auth preserves captured authority');
+  setup = { ok: false };
+  await service.getState();
+  assert.equal(service.getCredentialEpoch(), captured + 1);
+  await service.getState();
+  assert.equal(service.getCredentialEpoch(), captured + 1);
+  setup = { ok: true, authType: 'chatgpt', commandPath: 'C:/codex.exe' };
+  await service.getState();
+  assert.equal(service.getCredentialEpoch(), captured + 2);
 });
 
 test('codex CLI auth service fails closed for API key auth', async () => {

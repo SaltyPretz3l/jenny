@@ -11,7 +11,6 @@ const {
   DEFAULT_MEMORY,
   DEFAULT_SKILLS,
   DEFAULT_TELEMETRY,
-  DEFAULT_TIPS,
   DEFAULT_TOOLS,
   DEFAULT_WORKSPACE_STATE,
   SAFETY_MODES,
@@ -53,6 +52,8 @@ const {
   normalizeOpenAICompatibleSettings,
   normalizeLocalEngines,
   normalizePreferredEngineType,
+  normalizeLastChatgptModel,
+  normalizeChatgptModelsEnabled,
   normalizeCodexCliModelId,
   normalizeCodexCliSettings,
 } = require('./shell-config-engines');
@@ -118,7 +119,13 @@ const {
 } = require('./shell-config-followups-schema');
 const { normalizeCommandSandbox } = require('./shell-config-command-sandbox');
 const { normalizeSessionRuntime } = require('./shell-config-session-runtime');
-const CONFIG_VERSION = 55;
+const CONFIG_VERSION = 59;
+const RETIRED_ENGINE_TUNING_KEYS = Object.freeze([
+  'maxLoopIterations',
+  'tokenBudgetReservedForSummary',
+  'tokenBudgetToolOverhead',
+  'tokenBudgetAutoCompactRatio',
+]);
 const WORKSPACE_WRITE_DELAY_MS = 500;
 const DEFAULT_CHAT_UI = Object.freeze({
   zoomPercent: CHAT_UI_ZOOM_DEFAULT,
@@ -220,7 +227,7 @@ function migrateState(value = {}, validWorkspaceSessionIds = null) {
     }
   }
   if (version < 23) {
-    // Home dashboard config (link-tile groups + weather location).
+    // Home dashboard config (link-tile groups).
     migrated.home = normalizeHomeConfig(source.home);
   }
   if (version < 24) {
@@ -265,12 +272,10 @@ function migrateState(value = {}, validWorkspaceSessionIds = null) {
     migrated.workspaceIde = normalizeWorkspaceIde(migrated.workspaceIde || source.workspaceIde || source.workspace_ide);
   }
   if (version < 29) {
-    // Workspace IDE inline autocomplete (FIM ghost text): adds
-    // inlineSuggestEnabled (default on, still gated by the default-on
-    // workspace_inline_suggest flag), inlineSuggestModel (selected Ollama tag),
-    // and inlineSuggestUseGpu (default off => CPU-pinned). normalizeWorkspaceIde
-    // is idempotent and now fills those defaults, so one re-run off the
-    // already-migrated slice keeps all prior IDE state intact.
+    // v29 added the Workspace IDE inline-autocomplete preferences (the feature
+    // was removed 2026-10-01; normalizing now drops those keys). The step stays
+    // a plain re-normalize: normalizeWorkspaceIde is idempotent, so one re-run
+    // off the already-migrated slice keeps all prior IDE state intact.
     migrated.workspaceIde = normalizeWorkspaceIde(migrated.workspaceIde || source.workspaceIde || source.workspace_ide);
   }
   if (version < 30) {
@@ -279,7 +284,7 @@ function migrateState(value = {}, validWorkspaceSessionIds = null) {
     // legacy { text } into one seed note ("Note 1") and always emits >= 1 note,
     // so re-normalizing the already-migrated home slice BOTH seeds the new
     // multi-note shape AND leaves an already-v30 payload untouched. Base off
-    // migrated.home (set at v23) so links/weather/widgets/calendar/focusMode
+    // migrated.home (set at v23) so links/widgets/calendar/focusMode
     // survive the chain.
     migrated.home = normalizeHomeConfig(migrated.home || source.home);
   }
@@ -304,7 +309,7 @@ function migrateState(value = {}, validWorkspaceSessionIds = null) {
   if (version < 33) {
     // Overall app zoom (Electron webContents.setZoomFactor) adds the windowUi
     // slice. Old configs have no windowUi, so normalizeWindowUiSettings fills
-    // the 100% default — nothing to backfill.
+    // the current default — nothing to backfill.
     migrated.windowUi = normalizeWindowUiSettings(source.windowUi || source.window_ui, source);
   }
   if (version < 34) {
@@ -451,10 +456,9 @@ function migrateState(value = {}, validWorkspaceSessionIds = null) {
     delete migrated.feature_overrides;
   }
   if (version < 46) {
-    // Inline-completion compute placement is now selected from live engine and
-    // resource evidence. Re-normalizing drops the retired inlineSuggestUseGpu
-    // preference from both legacy flat and v37+ store shapes while preserving
-    // every remaining global preference and root-scoped IDE state.
+    // Retired the inline-autocomplete GPU opt-in. Re-normalizing drops it from
+    // both legacy flat and v37+ store shapes while preserving every remaining
+    // global preference and root-scoped IDE state.
     migrated.workspaceIde = normalizeWorkspaceIdeStore(
       migrated.workspaceIde || source.workspaceIde || source.workspace_ide
     );
@@ -504,6 +508,54 @@ function migrateState(value = {}, validWorkspaceSessionIds = null) {
   if (version < 54) migrated.sessionRuntime = normalizeSessionRuntime(source.session_runtime || source.sessionRuntime);
   if (version < 55) {
     migrated.autoApproveStreakCap = normalizeAutoApproveStreakCap(source.autoApproveStreakCap);
+  }
+  if (version < 56) {
+    // Split view: the workspace gains its pane layout (panes, focusedPaneId,
+    // splitRatio). A v55 file has none, so one pane is seeded from the active
+    // tab; openSessionIds is untouched and never grown from the panes.
+    migrated.workspace = normalizeWorkspaceState(
+      migrated.workspace || migrated.workspace_state,
+      validWorkspaceSessionIds
+    );
+  }
+  if (version < 57) {
+    // Stored 100 cannot be distinguished from an explicit choice. Flipping it
+    // is the owner's call (2026-09-29), like the v35 default flip. Compare the
+    // NORMALIZED value: a string "100" or the snake_case alias reads as 100.
+    const storedWindowUi = migrated.windowUi || migrated.window_ui;
+    if (normalizeWindowUiSettings(storedWindowUi, migrated).appZoomPercent === 100) {
+      migrated.windowUi = { ...storedWindowUi, appZoomPercent: APP_ZOOM_DEFAULT };
+    }
+  }
+  if (version < 58) {
+    // The token-budget switch and four compaction/loop tuning knobs left the
+    // Settings UI. A stored value would keep acting invisibly (an override beats
+    // JENNY_ENABLE_TOKEN_BUDGET), so drop them once and let the defaults apply.
+    const rawOverrides = migrated.featureOverrides || source.featureOverrides || source.feature_overrides;
+    const overrideSource = rawOverrides && typeof rawOverrides === 'object'
+      && !Array.isArray(rawOverrides) ? rawOverrides : {};
+    const nextOverrides = { ...overrideSource };
+    delete nextOverrides.token_budget;
+    migrated.featureOverrides = normalizeFeatureOverrides(nextOverrides);
+    delete migrated.feature_overrides;
+    for (const containerKey of ['engineTuning', 'engine_tuning']) {
+      const container = migrated[containerKey];
+      if (!container || typeof container !== 'object' || Array.isArray(container)) continue;
+      const nextTuning = { ...container };
+      for (const key of RETIRED_ENGINE_TUNING_KEYS) delete nextTuning[key];
+      migrated[containerKey] = nextTuning;
+    }
+  }
+  if (version < 59) {
+    // Home weather was retired on the owner's decision (DPR-010, 2026-10-02):
+    // it polled Open-Meteo with a saved location and no visible control.
+    // Forget any stored coordinates once; normalizeHomeConfig no longer
+    // carries the key either.
+    const home = migrated.home || source.home;
+    if (home && typeof home === 'object' && !Array.isArray(home)) {
+      const { weather: _retiredWeather, ...homeWithoutWeather } = home;
+      migrated.home = homeWithoutWeather;
+    }
   }
   migrated.version = CONFIG_VERSION;
   return migrated;
@@ -572,6 +624,9 @@ function normalizeState(value = {}, options = {}) {
     preferredEngineType: normalizePreferredEngineType(
       source.preferredEngineType ?? source.preferred_engine_type,
     ),
+    // Additive optional field with a safe default: no CONFIG_VERSION bump.
+    lastChatgptModel: normalizeLastChatgptModel(source.lastChatgptModel),
+    chatgptModelsEnabled: normalizeChatgptModelsEnabled(source.chatgptModelsEnabled),
     defaultRunMode: normalizeRunMode(source.defaultRunMode),
     uiLanguage: normalizeUiLanguage(source.uiLanguage),
     use24HourTime: source.use24HourTime === true,
@@ -582,7 +637,6 @@ function normalizeState(value = {}, options = {}) {
     companion: normalizeCompanion(source.companion),
     home: normalizeHomeConfig(source.home),
     skills: normalizeSkillSettings(source.skills),
-    tips: normalizeTipsSettings(source.tips),
     memory: normalizeMemorySettings(source.memory),
     followUps: Array.isArray(source.followUps)
       ? source.followUps.map((followUp) => normalizeFollowUp(followUp)).filter((followUp) => followUp.id)
@@ -633,6 +687,8 @@ function cloneState(state) {
     },
     localEngines: normalizeLocalEngines(state.localEngines),
     preferredEngineType: normalizePreferredEngineType(state.preferredEngineType),
+    lastChatgptModel: normalizeLastChatgptModel(state.lastChatgptModel),
+    chatgptModelsEnabled: normalizeChatgptModelsEnabled(state.chatgptModelsEnabled),
     defaultRunMode: normalizeRunMode(state.defaultRunMode),
     uiLanguage: normalizeUiLanguage(state.uiLanguage),
     use24HourTime: state.use24HourTime === true,
@@ -645,12 +701,6 @@ function cloneState(state) {
     },
     home: normalizeHomeConfig(state.home),
     skills: normalizeSkillSettings(state.skills),
-    tips: {
-      ...state.tips,
-      historyByTipId: {
-        ...state.tips.historyByTipId,
-      },
-    },
     memory: normalizeMemorySettings(state.memory),
     followUps: state.followUps.map((followUp) => ({
       ...followUp,
@@ -669,6 +719,9 @@ function cloneState(state) {
     workspace: {
       activeSessionId: state.workspace.activeSessionId,
       openSessionIds: [...state.workspace.openSessionIds],
+      panes: state.workspace.panes.map(({ paneId, sessionId }) => ({ paneId, sessionId })),
+      focusedPaneId: state.workspace.focusedPaneId,
+      splitRatio: state.workspace.splitRatio,
     },
     workspaceIde: normalizeWorkspaceIdeStore(state.workspaceIde),
   };
@@ -696,6 +749,8 @@ function serializeState(state) {
     },
     localEngines: normalizeLocalEngines(state.localEngines),
     preferredEngineType: normalizePreferredEngineType(state.preferredEngineType),
+    lastChatgptModel: normalizeLastChatgptModel(state.lastChatgptModel),
+    chatgptModelsEnabled: normalizeChatgptModelsEnabled(state.chatgptModelsEnabled),
     defaultRunMode: normalizeRunMode(state.defaultRunMode),
     uiLanguage: normalizeUiLanguage(state.uiLanguage),
     use24HourTime: state.use24HourTime === true,
@@ -708,12 +763,6 @@ function serializeState(state) {
     },
     home: normalizeHomeConfig(state.home),
     skills: normalizeSkillSettings(state.skills),
-    tips: {
-      ...state.tips,
-      historyByTipId: {
-        ...state.tips.historyByTipId,
-      },
-    },
     memory: normalizeMemorySettings(state.memory),
     followUps: state.followUps.map((followUp) => ({
       ...followUp,
@@ -732,6 +781,9 @@ function serializeState(state) {
     workspace: {
       activeSessionId: state.workspace.activeSessionId,
       openSessionIds: [...state.workspace.openSessionIds],
+      panes: state.workspace.panes.map(({ paneId, sessionId }) => ({ paneId, sessionId })),
+      focusedPaneId: state.workspace.focusedPaneId,
+      splitRatio: state.workspace.splitRatio,
     },
     workspaceIde: normalizeWorkspaceIdeStore(state.workspaceIde || state.workspace_ide),
   };
@@ -761,7 +813,6 @@ module.exports = {
   DEFAULT_SETUP_STEPS,
   DEFAULT_SKILLS,
   DEFAULT_TELEMETRY,
-  DEFAULT_TIPS,
   DEFAULT_TOOLS,
   DEFAULT_WORKSPACE_IDE,
   DEFAULT_WORKSPACE_STATE,
@@ -822,7 +873,6 @@ module.exports = {
   normalizeSkillSettings,
   normalizeTelemetrySettings,
   normalizeState,
-  normalizeTipsSettings,
   normalizeToolsSettings,
   normalizeAutoApproveStreakCap,
   normalizeSafetyMode,

@@ -51,3 +51,50 @@ test('reverting a created file whose diff is active lands the editor on the surv
   assert.equal(activated.at(-1), 'README.md', 'the surviving tab is activated in the editor, not only selected in state');
   window.close();
 });
+
+// IDE-012: a review context (snapshot text + hunks) lives only as long as its
+// diff tab. Closing the tab has no callback into this controller, so the next
+// toolbar render (the controller renders it from renderTabs after every close)
+// releases it.
+test('rendering the toolbar after a diff tab closed releases its review context', async () => {
+  const window = new JSDOM('<div id="toolbar"></div>').window;
+  const toolbar = window.document.getElementById('toolbar');
+  const ide = ideState.createIdeUiState();
+  const controller = createIdeDiffController({
+    getIde: () => ide,
+    getDom: () => ({ ideDiffToolbar: toolbar }),
+    getFileOperations: () => null,
+    editorHost: {
+      openDiffDocument: async () => true,
+      activateDocument: (id) => { ide.activeTabPath = id; },
+      isDirty: () => false,
+      hasDocument: () => false,
+    },
+    getWorkspaceFsApi: () => ({
+      readPreChange: async () => ({ found: true, content: 'a\nb\nc\n' }),
+      readFile: async () => ({ content: 'a\nB\nc\n', mtimeMs: 1 }),
+    }),
+    callbacks: { showShellErrorToast: () => {}, appendClientLog: () => {}, renderTabs: () => {} },
+  });
+
+  await controller.openChangeDiff({
+    changeId: 'change-close', path: 'src/app.js', beforeHash: 'sha256:before', status: 'modified', reviewState: 'full',
+  });
+  controller.renderToolbar();
+  assert.equal(toolbar.classList.contains('hidden'), false, 'the review toolbar shows while the diff tab is open');
+  const tab = ide.openTabs.find((entry) => entry.kind === 'diff');
+  assert.ok(tab, 'the diff tab is open');
+
+  // Close the tab (as the tabs controller does), then render once.
+  ide.openTabs = ide.openTabs.filter((entry) => entry !== tab);
+  ide.activeTabPath = '';
+  controller.renderToolbar();
+
+  // Put an entry with the same id back WITHOUT reopening the change: a retained
+  // context would resurrect the review toolbar for it.
+  ide.openTabs.push(tab);
+  ide.activeTabPath = tab.path;
+  controller.renderToolbar();
+  assert.equal(toolbar.classList.contains('hidden'), true, 'the closed tab kept no review context');
+  window.close();
+});

@@ -93,3 +93,18 @@ test('interactive bindings: Enter confirms the other-input, but the IME composit
   assert.ok(confirm, 'real Enter confirms the other-input');
   assert.deepEqual(confirm[1], ['qb_live', 'q1']);
 });
+
+test('clicking a toggle row label toggles exactly once', (t) => {
+  const { JSDOM } = require('jsdom');
+  const toggles = require('../renderer/inventory/toggle-switch');
+  const dom = new JSDOM('<div id="wrap"><div class="inv-composer-toggle-item">' + toggles.toggleSwitch({ id: 'tool-target:files', label: 'Files', checked: true }) + '</div></div>');
+  t.after(() => dom.window.close());
+  const wrap = dom.window.document.getElementById('wrap');
+  const calls = [];
+  bindInteractiveComposerEvents({ composerWrap: wrap, interactiveDelegateRoot: dom.window.document.createElement('div'),
+    registerListener: (el, type, handler, options) => el.addEventListener(type, handler, options),
+    handleComposerToggleChange: (event) => calls.push(event.detail.checked) });
+  toggles.initToggleHandlers(dom.window.document);
+  wrap.querySelector('.inv-toggle-label').click();
+  assert.deepEqual(calls, [false]);
+});

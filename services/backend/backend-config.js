@@ -157,20 +157,34 @@ function resolveLlamaServerSettings({
   fsImpl = fs,
   managed = null,
   startupModelLoad = true,
+  // The boot decision passes the active engine: only openai-compatible talks
+  // to the managed server, so any other engine skips the config autostart
+  // (a replay profile used to load 15.5 GB of weights it never used). Launch
+  // settings resolved outside the boot decision pass nothing and are ungated.
+  activeEngineType = null,
 } = {}) {
   const managedSettings = managed && typeof managed === 'object' && !Array.isArray(managed)
     ? managed
     : null;
   const managedLastUsedTag = String(managedSettings?.lastUsedTag || '').trim();
   const autostartRaw = String(env.JENNY_LLAMA_SERVER_AUTOSTART || '').trim();
+  const engineInactive = activeEngineType != null
+    && String(activeEngineType).trim().toLowerCase() !== 'openai-compatible';
+  let autostartSkipReason = '';
   let autostart = startupModelLoad !== false
     && managedSettings?.enabled === true
     && managedLastUsedTag !== '';
+  if (autostart && engineInactive) {
+    autostart = false;
+    autostartSkipReason = 'engine_not_active';
+  }
   if (autostartRaw) {
     if (isFalseish(autostartRaw)) {
       autostart = false;
+      autostartSkipReason = '';
     } else if (isTrueish(autostartRaw)) {
       autostart = true;
+      autostartSkipReason = '';
     }
   }
   const portRaw = Number(env.JENNY_LLAMA_SERVER_PORT);
@@ -209,6 +223,7 @@ function resolveLlamaServerSettings({
   });
   return {
     autostart,
+    autostartSkipReason,
     host,
     port,
     readinessTimeoutMs,

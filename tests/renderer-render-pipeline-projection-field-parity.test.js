@@ -2,8 +2,8 @@
 
 // Field-list parity between the two twin message field lists (2026-07-31).
 //
-//   list 1  buildSourceStructureSignature (renderer-render-pipeline-message-
-//           renderer.js) — gates the canonical-transcript + thread-tree rebuild
+//   list 1  buildSourceStructureSignature (renderer-render-pipeline-render-
+//           signatures.js) — gates the canonical-transcript + thread-tree rebuild
 //   list 2  buildSettledFingerprintState (renderer-message-index-utils.js) —
 //           feeds the projection CONTENT token, which keys the per-turn
 //           turnRowCache and every row.projection_fingerprint, and through that

@@ -20,12 +20,11 @@ from sidecar.ai.mcp.models import MCPToolDescriptor
 from sidecar.ai.routing.loop_events import IterationStartEvent, PhaseStartedEvent
 from sidecar.ai.routing.loop_runtime import LoopRuntime
 from sidecar.ai.tools.models import GenerationResult, ThinkingDelta, ToolCallRequest
-
 from tests.sidecar.ai.routing.test_tool_loop import (
+    _build_router,
     _StubMCPClient,
     _ToolLoopEngine,
     _ToolPlan,
-    _build_router,
 )
 
 _REQUEST_ID = "req_iteration_continuity"

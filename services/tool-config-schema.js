@@ -1,5 +1,5 @@
 const toolManifest = require('./tools/tool-manifest.json');
-const { normalizeString } = require('../renderer/shared/string-utils');
+const { normalizeString } = require('./shared/normalize');
 const { isPlainObject } = require('./value-utils');
 
 const TOOL_CONFIG_SCHEMA_VERSION = 2;

@@ -116,3 +116,22 @@ def test_never_injects_for_mcp_or_read_only() -> None:
 
 def test_injected_key_is_redacted_from_tool_observations() -> None:
     assert "_jenny_idempotency_key" in _VOLATILE_TOOL_ARGUMENT_KEYS
+
+
+def test_injects_owning_session_for_ledger_attribution() -> None:
+    # HB-003: the durable receipt records its session so the interruption
+    # overlay never shows another chat's pending operation.
+    out = inject_idempotency_key(
+        {"path": "src/foo.py", "content": "x"},
+        descriptor=_Descriptor(source_kind="builtin", side_effecting=True),
+        runtime=_Runtime(),
+        call=_call(),
+    )
+    assert out["_jenny_session_id"] == "session-1"
+    kept = inject_idempotency_key(
+        {"path": "src/foo.py", "content": "x", "_jenny_session_id": "snapshot-seam"},
+        descriptor=_Descriptor(source_kind="builtin", side_effecting=True),
+        runtime=_Runtime(),
+        call=_call(),
+    )
+    assert kept["_jenny_session_id"] == "snapshot-seam"

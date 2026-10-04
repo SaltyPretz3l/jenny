@@ -1,9 +1,12 @@
 /* renderer/shell/renderer-global-shortcuts.js – app-level keyboard shortcuts (UMD)
    Ctrl+1..5 (view tabs, order = VIEW_TAB_ORDER), Ctrl+N (new chat), Ctrl+B
-   (toggle the active view's panel).
+   (toggle the active view's panel), Ctrl+Shift+\ (split view W1-4c: open the
+   most recent other tab beside, or close the non-focused pane).
 
    Text-editing surfaces own Ctrl+1..5/N/B. The Ctrl+Shift+Space capture chord
-   is exempt by design and may fire from anywhere, including editors.
+   is exempt by design and may fire from anywhere, including editors. The
+   split chord also fires from a chat composer (.composer-input) and stands
+   down in every other editor (Monaco binds Ctrl+Shift+\ to jump-to-bracket).
    Every chord here stands down while the shared overlay manager reports an
    open overlay, with one exception: over a launcher-style overlay listed in
    deps.captureYieldingOverlayIds (the command palette) the capture chord
@@ -34,6 +37,17 @@
     return Boolean(activeEl.isContentEditable);
   }
 
+  function isForeignTextEditingSurfaceFocused(doc) {
+    if (!isTextEditingSurfaceFocused(doc)) return false;
+    return !(doc.activeElement.classList && doc.activeElement.classList.contains('composer-input'));
+  }
+
+  function isPaneSplitChord(event) {
+    return Boolean(event.ctrlKey && event.shiftKey && !event.metaKey && !event.altKey
+      && !event.defaultPrevented && !event.isComposing
+      && (event.code === 'Backslash' || event.key === '\\' || event.key === '|'));
+  }
+
   function createGlobalShortcutsController(deps) {
     const windowRef = deps.windowRef || (typeof window !== 'undefined' ? window : null);
     const documentRef = deps.documentRef || (windowRef && windowRef.document)
@@ -43,6 +57,7 @@
       newChat,
       togglePanel,
       openCapture,
+      togglePaneSplit,
       appendClientLog,
     } = deps.callbacks || {};
     const isOverlayOpen = typeof deps.isOverlayOpen === 'function'
@@ -96,6 +111,13 @@
           openCapture();
           appendClientLog?.('INFO', 'shortcuts.scratchpad_capture', { key: 'Ctrl+Shift+Space' });
         }
+        return;
+      }
+      if (isPaneSplitChord(event)) {
+        if (typeof togglePaneSplit !== 'function' || isForeignTextEditingSurfaceFocused(documentRef)) return;
+        event.preventDefault();
+        const toggled = togglePaneSplit();
+        appendClientLog?.('INFO', 'shortcuts.pane_split_toggle', { toggled: toggled === true });
         return;
       }
       if (!event.ctrlKey || event.metaKey || event.altKey || event.shiftKey) {

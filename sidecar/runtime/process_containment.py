@@ -291,7 +291,7 @@ class WindowsJobContainment:
         self._pid = int(pid)
         try:
             self._job.assign_pid(self._pid)
-        except Exception as error:  # noqa: BLE001 - normalized for the caller
+        except Exception as error:  # normalized for the caller
             raise ContainmentUnavailableError(
                 f"AssignProcessToJobObject failed for pid {self._pid}: {error}",
                 stage="assign",

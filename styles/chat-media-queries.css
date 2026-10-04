@@ -28,12 +28,10 @@
 /* UIUX-004 residual (Wave 2): priority-order pane collapse for the 701–1180
    band the 640×560 floor made reachable. Priority 1 (context panel yields
    whenever the rail opens) lives in context-panel.css
-   (.artifact-review-mode). Priority 2 is this clamp: the rail's inline
-   --artifact-review-width is only recomputed on open (no resize listener in
-   renderer-artifacts-utils.js), so a window shrink mid-session leaves a
-   stale oversized rail crushing the minmax(0,1fr) thread column. Enforce
-   the documented window bound (renderer-artifact-review-prefs.js — raised to
-   90% on 2026-08-20) continuously; the thread column keeps the remainder.
+   (.artifact-review-mode). Priority 2 is this belt-and-braces 90vw clamp.
+   The top-nav shell recomputes the stage-based rail width on resize. In the
+   open (side-by-side) state the .artifact-review-open guard in
+   context-panel.css outranks this bound; it still covers the overlay drawer.
    Below 700px the fixed-overlay block later in this file owns the rail. */
 @media (max-width: 1180px) and (min-width: 701px) {
   .chat-view > .artifact-review-panel {
@@ -60,25 +58,23 @@
   }
 
   .chat-view .hero-avatar {
-    width: calc(44px * var(--chat-zoom-factor, 1));
-    height: calc(44px * var(--chat-zoom-factor, 1));
-    /* Literal 24px (was --font-size-5xl) — keep the chat hero avatar on
-       --chat-zoom-factor only, isolated from the global --font-scale axis. */
-    font-size: calc(24px * var(--chat-zoom-factor, 1));
+    width: 44px;
+    height: 44px;
+    font-size: var(--font-size-5xl);
   }
 
   .chat-view .hero-title {
     margin-top: var(--space-2);
     font-size: clamp(
-      calc(24px * var(--chat-zoom-factor, 1)),
-      calc(7vw * var(--chat-zoom-factor, 1)),
-      calc(32px * var(--chat-zoom-factor, 1))
+      calc(24px * var(--font-scale, 1)),
+      calc(7vw * var(--font-scale, 1)),
+      calc(32px * var(--font-scale, 1))
     );
   }
 
   .chat-view .hero-subtitle {
     max-width: 420px;
-    font-size: calc(13px * var(--chat-zoom-factor, 1));
+    font-size: var(--font-size-footnote);
   }
 
   .chat-view .chat-thread-column {
@@ -132,10 +128,11 @@
   }
 
   .chat-view .composer {
-    --composer-secondary-control-size: calc(30px * var(--chat-zoom-factor, 1));
-    --composer-secondary-icon-size: calc(14px * var(--chat-zoom-factor, 1));
-    --composer-secondary-meta-height: calc(28px * var(--chat-zoom-factor, 1));
-    padding: calc(var(--space-5) * var(--chat-zoom-factor, 1));
+    --composer-secondary-control-size: 30px;
+    --composer-primary-control-size: 32px;
+    --composer-secondary-icon-size: 14px;
+    --composer-secondary-meta-height: 28px;
+    padding: var(--space-5);
   }
 
   .chat-view .composer-entry-row {
@@ -146,8 +143,8 @@
   }
 
   .chat-view .composer-input {
-    min-height: calc(54px * var(--chat-zoom-factor, 1));
-    font-size: calc(15px * var(--chat-zoom-factor, 1));
+    min-height: 54px;
+    font-size: var(--font-size-prose);
   }
 
   .chat-view .composer-toolbar {
@@ -173,20 +170,14 @@
     margin-inline-start: auto;
   }
 
-  .chat-view .composer-send {
-    width: calc(44px * var(--chat-zoom-factor, 1));
-    height: calc(44px * var(--chat-zoom-factor, 1));
+  .chat-view .composer-stop-button svg {
+    width: 14px;
+    height: 14px;
   }
 
-  /* The 44px rule above ties chat-composer.css's queue-pill rule (0,2,0) and
-   * loads later; this (0,3,0) override keeps the pill label unclipped. */
-  .chat-view .composer-send.composer-send-queue {
-    width: auto;
-  }
-
-  .chat-view .composer-stop-button {
-    width: calc(44px * var(--chat-zoom-factor, 1));
-    height: calc(44px * var(--chat-zoom-factor, 1));
+  .chat-view .composer-pause-button svg {
+    width: 13px;
+    height: 13px;
   }
 
   .chat-view .composer-meta {
@@ -262,8 +253,8 @@
   :root {
     --composer-width: min(920px, calc(100vw - var(--sidebar-current-width) - 240px));
     --context-panel-width: 360px;
-    /* Ultra-wide card cap for DEFAULT mode only. At (0,1,0) this loses to
-       :root[data-chat-width="wide"] in foundation.css, so Wide keeps 1100px. */
+    /* Ultra-wide card cap for NARROW mode only. At (0,1,0) this loses to
+       :root[data-chat-width="standard"] in foundation.css, so Standard keeps 1100px. */
     --chat-card-max-width: 820px;
   }
 
@@ -291,84 +282,27 @@
   .composer-send,
   .composer-stop-button,
   .composer-icon-button,
-  .composer-gear,
   .composer-jump-button,
-  .hero-stack,
-  .chat-thread-shell,
-  .chat-assistant-sprite,
-  .chat-hover-row,
-  .chat-copy-chip,
-  .chat-sprite-layer,
-  .tool-call-details,
-  .tool-call-header,
-  .tool-approve-btn,
-  .tool-deny-btn,
-  .chat-hover-action,
   .interactive-option-button,
   .interactive-action-button,
   .interactive-other-confirm,
   .context-panel-collapse,
   .context-section-action,
-  .context-artifact-row {
+  .context-artifact-item {
     transition: none;
   }
 
-  .chat-view.thread-transition-ready .chat-thread-shell,
-  .chat-view.thread-transition-ready.chat-active .hero-stack,
-  .chat-view.thread-transition-ready .chat-timeline > .chat-thread-node:nth-child(-n + 3) {
-    animation: none;
-  }
-
-  .reasoning-row-main.shimmer-active {
-    animation: none;
-  }
-
-  .reasoning-stream-unit.is-revealed {
-    animation: none;
-    opacity: 1;
-    filter: none;
-    transform: none;
-  }
-
-  .chat-stream-token { animation: none; opacity: 1; }
-
-  .chat-comet-svg {
-    display: none;
-  }
-
-  .chat-copy-chip {
-    animation: none;
-    opacity: 1;
-    transform: none;
-  }
-
   .composer-holo,
-  .composer-icon-button:active,
-  .composer-gear:hover,
   .composer-jump-button:hover:not(:disabled),
   .tool-approve-btn:hover,
   .tool-approve-btn:active,
   .tool-deny-btn:hover,
   .tool-deny-btn:active,
-  .chat-hover-action:hover,
-  .chat-hover-action:focus-visible,
   .interactive-option-button:hover:not(:disabled),
   .interactive-action-button:hover:not(:disabled),
   .interactive-other-confirm:hover:not(:disabled),
-  .context-artifact-row:hover,
-  .composer-send:hover,
-  .composer-stop-button:hover {
+  .composer-send:hover {
     transform: none;
-  }
-
-  .chat-assistant-sprite::before {
-    animation: none;
-  }
-
-  .chat-assistant-sprite,
-  .chat-assistant-sprite::before,
-  .chat-assistant-sprite::after {
-    will-change: auto;
   }
 
   .inv-toast,
@@ -377,8 +311,6 @@
     animation: none;
     transition: none;
   }
-
-
 }
 
 /* ---- backdrop-filter: reduced-motion and unsupported-browser fallbacks ---- */

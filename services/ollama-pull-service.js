@@ -15,6 +15,7 @@ const MODEL_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$/;
 const PROGRESS_INTERVAL_MS = 250;
 const PULL_INACTIVITY_MS = 5 * 60 * 1000;
 const TERMINATION_TIMEOUT_MS = 5_000;
+const DELETE_TIMEOUT_MS = 60_000;
 const OUTPUT_TAIL_CHARS = 4_096;
 
 function normalizeModelName(value) {
@@ -40,6 +41,7 @@ class OllamaPullService extends EventEmitter {
     fileExists,
     killProcessTreeImpl = killProcessTree,
     inactivityMs = PULL_INACTIVITY_MS,
+    deleteTimeoutMs = DELETE_TIMEOUT_MS,
     logger = null,
   } = {}) {
     super();
@@ -51,6 +53,7 @@ class OllamaPullService extends EventEmitter {
     this.fileExists = fileExists;
     this.killProcessTreeImpl = killProcessTreeImpl;
     this.inactivityMs = Math.max(1, Number(inactivityMs) || PULL_INACTIVITY_MS);
+    this.deleteTimeoutMs = Math.max(1, Number(deleteTimeoutMs) || DELETE_TIMEOUT_MS);
     this.logger = typeof logger === 'function' ? logger : null;
     this.activeByModel = new Map();
     this.activeByRequestId = new Map();
@@ -86,6 +89,7 @@ class OllamaPullService extends EventEmitter {
   }
 
   _resetInactivity(entry) {
+    if (entry.finished) return;
     if (entry.inactivityTimer) clearTimeout(entry.inactivityTimer);
     entry.inactivityTimer = setTimeout(() => {
       void this._cancelEntry(entry, 'pull_inactivity_timeout');
@@ -93,10 +97,18 @@ class OllamaPullService extends EventEmitter {
     entry.inactivityTimer.unref?.();
   }
 
-  _finish(entry, patch = {}) {
+  _retire(entry) {
+    if (entry.retired) return;
+    entry.retired = true;
+    if (this.activeByModel.get(entry.model) === entry) this.activeByModel.delete(entry.model);
+    if (this.activeByRequestId.get(entry.requestId) === entry) this.activeByRequestId.delete(entry.requestId);
+  }
+
+  _finish(entry, patch = {}, { retainChild = false } = {}) {
     if (entry.finished) return publicPullState(entry);
     entry.finished = true;
     if (entry.inactivityTimer) clearTimeout(entry.inactivityTimer);
+    entry.inactivityTimer = null;
     entry.status = patch.status || entry.status;
     entry.code = patch.code || entry.code || '';
     entry.summary = patch.summary || entry.summary;
@@ -105,8 +117,8 @@ class OllamaPullService extends EventEmitter {
     entry.exitCode = Object.hasOwn(patch, 'exitCode') ? patch.exitCode : entry.exitCode;
     entry.error = boundedError(patch.error);
     entry.terminationConfirmed = patch.terminationConfirmed === true;
-    this.activeByModel.delete(entry.model);
-    this.activeByRequestId.delete(entry.requestId);
+    // Settlement must not discard ownership of a child that may still be alive.
+    if (!retainChild) this._retire(entry);
     this._emit(entry, { terminal: true });
     entry.resolve?.(publicPullState(entry));
     entry.resolve = null;
@@ -138,6 +150,7 @@ class OllamaPullService extends EventEmitter {
       child: null, percent: 0, bytes: 0, totalBytes: 0, label: '', layers: new Map(),
       lastOutputLine: '', lastErrorLine: '', terminationConfirmed: false, lastEmitAt: 0, code: '',
       stdoutBuffer: '', stderrBuffer: '', cancelPromise: null,
+      childExited: false, retired: false,
     };
     entry.promise = new Promise((resolve) => { entry.resolve = resolve; });
     this.activeByModel.set(model, entry);
@@ -154,6 +167,7 @@ class OllamaPullService extends EventEmitter {
     }
     this._resetInactivity(entry);
     const consumeLine = (rawLine) => {
+      if (entry.finished) return;
       const line = stripAnsi(rawLine).trim();
       if (line) {
         entry.summary = boundedError(line);
@@ -176,6 +190,7 @@ class OllamaPullService extends EventEmitter {
       }
     };
     const handleData = (bufferKey) => (chunk) => {
+      if (entry.finished) return;
       this._resetInactivity(entry);
       const parts = `${entry[bufferKey]}${String(chunk || '')}`.split(/\r?\n|\r/);
       entry[bufferKey] = (parts.pop() || '').slice(-OUTPUT_TAIL_CHARS);
@@ -193,7 +208,11 @@ class OllamaPullService extends EventEmitter {
       this._finish(entry, { status: 'failed', summary: 'Ollama pull failed.', error });
     });
     entry.child?.once?.('exit', (code, signal) => {
-      if (entry.finished) return;
+      entry.childExited = true;
+      if (entry.finished) {
+        this._retire(entry);
+        return;
+      }
       if (entry.status === 'cancelling') {
         return;
       }
@@ -229,12 +248,49 @@ class OllamaPullService extends EventEmitter {
     return new Promise((resolve) => {
       let output = '';
       let settled = false;
+      let timedOut = false;
+      let timer = null;
       const append = (chunk) => { output = `${output}${stripAnsi(String(chunk || ''))}`.slice(-OUTPUT_TAIL_CHARS); };
-      const finish = (result) => { if (!settled) { settled = true; resolve(result); } };
+      const finish = (result) => {
+        if (settled) return;
+        settled = true;
+        if (timer) clearTimeout(timer);
+        resolve(result);
+      };
+      // A stalled `ollama rm` must not leave the removal pending: stop it and report
+      // a retryable failure, never a deletion.
+      timer = setTimeout(() => {
+        timedOut = true;
+        void (async () => {
+          let terminationConfirmed = false;
+          const pid = Number(child?.pid);
+          if (Number.isInteger(pid) && pid > 0) {
+            try {
+              const result = await this.killProcessTreeImpl(pid, {
+                force: true, confirmExit: true, timeoutMs: TERMINATION_TIMEOUT_MS, platform: this.platform,
+              });
+              terminationConfirmed = result?.terminated === true;
+            } catch (_error) { terminationConfirmed = false; }
+          } else {
+            try { child?.kill?.(); } catch (_error) { /* reported as unconfirmed */ }
+          }
+          finish({
+            status: 'failed',
+            code: 'delete_timeout',
+            terminationConfirmed,
+            message: t('main.ollamaPull.removalTimedOut', 'Model removal timed out. Check that Ollama is responding, then try again.'),
+          });
+        })();
+      }, this.deleteTimeoutMs);
+      timer.unref?.();
       child?.stderr?.on?.('data', append);
       child?.stdout?.on?.('data', append);
-      child?.once?.('error', () => finish({ status: 'failed', code: 'delete_failed', message: 'Model removal failed.' }));
+      child?.once?.('error', () => {
+        if (timedOut) return;
+        finish({ status: 'failed', code: 'delete_failed', message: 'Model removal failed.' });
+      });
       child?.once?.('exit', (code) => {
+        if (timedOut) return;
         if (code === 0) return finish({ status: 'deleted', model });
         const message = boundedError(output) || 'Model removal failed.';
         finish({ status: 'failed', code: /not found/i.test(message) ? 'not_found' : 'delete_failed', message });
@@ -244,14 +300,16 @@ class OllamaPullService extends EventEmitter {
   }
 
   async _cancelEntry(entry, reason = 'cancelled') {
-    if (!entry || entry.finished) return entry ? publicPullState(entry) : null;
+    if (!entry || entry.retired) return entry ? publicPullState(entry) : null;
     if (!entry.cancelPromise) {
       entry.cancelPromise = (async () => {
-        entry.status = 'cancelling';
-        entry.summary = reason === 'pull_inactivity_timeout'
-          ? 'Ollama pull stalled; stopping it.'
-          : 'Stopping Ollama model pull.';
-        this._emit(entry, { terminal: true });
+        if (!entry.finished) {
+          entry.status = 'cancelling';
+          entry.summary = reason === 'pull_inactivity_timeout'
+            ? 'Ollama pull stalled; stopping it.'
+            : 'Stopping Ollama model pull.';
+          this._emit(entry, { terminal: true });
+        }
         let terminationConfirmed = false;
         const pid = Number(entry.child?.pid);
         if (Number.isInteger(pid) && pid > 0) {
@@ -270,7 +328,7 @@ class OllamaPullService extends EventEmitter {
             summary: 'Ollama pull could not be confirmed stopped.',
             error: 'Process termination was not confirmed.',
             terminationConfirmed: false,
-          });
+          }, { retainChild: !entry.childExited });
         } else if (!entry.finished) {
           const stalled = reason === 'pull_inactivity_timeout';
           this._finish(entry, stalled
@@ -285,8 +343,10 @@ class OllamaPullService extends EventEmitter {
                 summary: 'Ollama model pull cancelled.', terminationConfirmed: true,
               });
         }
+        if (terminationConfirmed) entry.terminationConfirmed = true;
+        if (terminationConfirmed || entry.childExited) this._retire(entry);
         return publicPullState(entry);
-      })();
+      })().finally(() => { entry.cancelPromise = null; });
     }
     return entry.cancelPromise;
   }
@@ -313,7 +373,7 @@ class OllamaPullService extends EventEmitter {
 
   signalActive() {
     for (const entry of this.activeByRequestId.values()) {
-      entry.status = 'cancelling';
+      if (!entry.finished) entry.status = 'cancelling';
       try { entry.child?.kill?.(); } catch (_error) { /* emergency best effort */ }
     }
     return this.activeByRequestId.size;

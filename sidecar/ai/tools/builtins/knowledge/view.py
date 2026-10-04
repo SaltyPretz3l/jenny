@@ -203,11 +203,14 @@ def _view_rich(
             retryable=False,
         )
     # knowledge_view is a read-only projection. Rich inspectors may expose
-    # additional artifact-producing controls, so forward only the path owned
-    # by this adapter rather than arbitrary caller keys.
+    # artifact-producing controls; only PDF read pagination joins the path.
     adapter_arguments: dict[str, object] = {
         "path": resolved.relative_to(root.path).as_posix()
     }
+    if adapter_key == "pdf":
+        for key in ("pages", "cursor"):
+            if key in arguments:
+                adapter_arguments[key] = arguments[key]
     try:
         adapter_result = handler(adapter_arguments, root.guard)
     except ToolExecutionFailure:
@@ -242,7 +245,12 @@ def _merge_sources_into_adapter_result(
         payload = parsed
     else:
         payload = {"result": adapter_result.output}
-    snippet = bound_snippet(payload.get("summary") or payload.get("result") or "")
+    summary = payload.get("summary")
+    if isinstance(summary, dict) and isinstance(summary.get("continuation_hint"), str):
+        summary["continuation_hint"] = summary["continuation_hint"].replace(
+            "call read_file again", "call knowledge_view again"
+        )
+    snippet = bound_snippet(summary or payload.get("result") or "")
     payload["sources"] = build_sources([(display, snippet)])
     payload["missing_source_metadata"] = False
     return ToolHandlerResult(
@@ -250,5 +258,8 @@ def _merge_sources_into_adapter_result(
         success=adapter_result.success,
         generated_artifacts=adapter_result.generated_artifacts,
         error_code=adapter_result.error_code,
-        metadata=adapter_result.metadata,
+        metadata={
+            **adapter_result.metadata,
+            **({"summary": summary} if isinstance(summary, dict) else {}),
+        },
     )

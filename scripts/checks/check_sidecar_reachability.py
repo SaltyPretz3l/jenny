@@ -35,6 +35,7 @@ KNOWN_DYNAMIC_ENTRYPOINT_IMPORTS: Dict[str, Set[str]] = {
     # provider_registry.__getattr__ resolves each concrete engine on first
     # attribute access so importing the registry does not load every provider.
     "sidecar.ai.engines.provider_registry": {
+        "sidecar.ai.engines.chatgpt_provider_descriptor",
         "sidecar.ai.engines.codex_cli",
         "sidecar.ai.engines.ollama",
         "sidecar.ai.engines.openai_compatible",
@@ -71,9 +72,6 @@ KNOWN_DYNAMIC_ENTRYPOINT_IMPORTS: Dict[str, Set[str]] = {
 # Modules intentionally deferred from startup graph (documented explicitly below).
 DEFERRED_MODULE_STATUS: Dict[str, str] = {
     "sidecar.ai.plugins.policy": "document-deferred",
-    # The delegate V2 facade is the sole model-facing path; the former batch
-    # executor remains importable for exact-ID policy and report compatibility.
-    "sidecar.ai.routing.subagent_batch": "legacy/gate",
     # Tool-contract W8 (2026-08-29): the W0 failure_taxonomy/phase_trace "wire"
     # rows were removed once W1/W4 landed their consumers, and the apply_patch
     # machinery chain was DELETED per the recorded W8 adjudication criterion
@@ -162,7 +160,8 @@ def read_edges(modules: Dict[str, Path], known_modules: Set[str]) -> Dict[str, S
                     add_import(resolve_relative_import(base_module, alias.name))
 
         for extra_target in KNOWN_DYNAMIC_ENTRYPOINT_IMPORTS.get(importer, set()):
-            add_import(extra_target)
+            if extra_target in known_modules:
+                edges[importer].add(extra_target)
 
     return edges
 
@@ -181,6 +180,15 @@ def main() -> int:
         return 1
 
     known_modules = set(modules.keys())
+    missing_targets = sorted({
+        target for targets in KNOWN_DYNAMIC_ENTRYPOINT_IMPORTS.values()
+        for target in targets if target not in known_modules
+    })
+    if missing_targets:
+        print("FAIL: explicit dynamic sidecar targets do not exist")
+        for target in missing_targets:
+            print(f"  - {target}")
+        return 1
     edges = read_edges(modules, known_modules)
 
     reachable: Set[str] = set()

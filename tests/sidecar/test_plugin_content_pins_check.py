@@ -113,7 +113,9 @@ def test_malformed_document_is_reported(tmp_path, monkeypatch, capsys) -> None:
     assert "actual 'str'" in output
 
 
-def test_zero_pinned_documents_fails(tmp_path, monkeypatch, capsys) -> None:
+def test_zero_pinned_documents_pass(tmp_path, monkeypatch, capsys) -> None:
+    # No official plugin ships a signed panel since the ChatGPT plugin was
+    # retired (plugin platform retirement, stage 2).
     module = _load_script_module()
     repo_root = tmp_path / "repo"
     repo_root.mkdir()
@@ -122,5 +124,5 @@ def test_zero_pinned_documents_fails(tmp_path, monkeypatch, capsys) -> None:
     exit_code = module.main()
     output = capsys.readouterr().out
 
-    assert exit_code == 1
-    assert "expected at least one document declaring assets; actual 0" in output
+    assert exit_code == 0
+    assert "(0 documents, 0 assets)" in output

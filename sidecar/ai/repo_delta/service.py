@@ -92,6 +92,7 @@ DEFAULT_REFRESH_BUDGET_SECONDS: float = 1.5
 ANCHOR_LOCK_TIMEOUT_SECONDS: float = min(0.2, BACKGROUND_WRITE_TIMEOUT_SECONDS)
 
 _ANCHOR_FILENAME = "anchor.json"
+_MAX_ANCHOR_BYTES = 64 * 1024
 # ---------------------------------------------------------------------------
 # Session-scoped path resolution
 # ---------------------------------------------------------------------------
@@ -149,14 +150,18 @@ def read_repo_anchor(path: Path) -> RepoAnchor | None:
     distinguishable from "no anchor yet".
     """
     try:
-        raw = path.read_text(encoding="utf-8")
+        with path.open("rb") as handle:
+            raw = handle.read(_MAX_ANCHOR_BYTES + 1)
     except FileNotFoundError:
         return None  # bootstrap: no prior anchor -- expected, not logged
     except OSError:
         _log_anchor_read_degraded("unreadable")
         return None
+    if len(raw) > _MAX_ANCHOR_BYTES:
+        _log_anchor_read_degraded("oversized")
+        return None
     try:
-        payload = json.loads(raw)
+        payload = json.loads(raw.decode("utf-8"))
     except (TypeError, ValueError):
         _log_anchor_read_degraded("corrupt_json")
         return None

@@ -61,57 +61,32 @@ test('handler failures and oversized responses are redacted', async () => {
   assert.equal(capped.reason_code, 'bridge_response_too_large');
 });
 
-test('authorized session-provider calls use the additive frozen contract', async () => {
-  const calls = [];
+test('the retired session-provider call is rejected even from an old-style context', async () => {
   const router = new PluginViewBridgeRouter({
     resolveContext: () => ({ ...context, sessionProviderAuthorized: true }),
-    sessionProviderHandler: async (call, bound) => {
-      calls.push([call.action, bound.viewInstanceId]);
-      return { ok: true, value: { accepted: true } };
-    },
+    handlers: { get_context: async () => ({ ok: true, value: { safe: true } }) },
+    sessionProviderHandler: async () => { throw new Error('must never be reached'); },
   });
   const call = { call_schema_version: 1, request_id: 'provider_request_1',
     action: 'get_context', payload_json: '{}' };
   const result = await router.route(event, envelope('request', call));
-  assert.equal(result.status, 'succeeded');
-  assert.deepEqual(JSON.parse(result.payload_json), { accepted: true });
-  assert.deepEqual(calls, [['get_context', 'view_1']]);
-
-  const unauthorized = new PluginViewBridgeRouter({
-    resolveContext: () => context,
-    sessionProviderHandler: async () => ({ ok: true }),
-  });
-  const rejected = await unauthorized.route(event, envelope('request', call));
-  assert.equal(rejected.status, 'rejected');
-  assert.equal(rejected.reason_code, 'session_provider_call_not_allowed');
-
-  const malformed = await router.route(event, envelope('request', { ...call, action: 'unknown' }));
-  assert.equal(malformed.status, 'rejected');
-  assert.equal(malformed.reason_code, 'session_provider_call_not_allowed');
+  assert.equal(result.status, 'rejected');
+  assert.equal(result.reason_code, 'bridge_operation_not_allowed');
+  assert.equal(router.sessionProviderHandler, undefined);
 });
 
-test('session-provider routing honors bridge cancellation and response bounds', async () => {
+test('a request honors bridge cancellation', async () => {
   let release;
   const router = new PluginViewBridgeRouter({
-    resolveContext: () => ({ ...context, sessionProviderAuthorized: true }),
-    sessionProviderHandler: () => new Promise((resolve) => { release = resolve; }),
+    resolveContext: () => context,
+    handlers: { get_context: () => new Promise((resolve) => { release = resolve; }) },
   });
-  const call = { call_schema_version: 1, request_id: 'provider_request_2',
-    action: 'get_context', payload_json: '{}' };
+  const call = { call_schema_version: 5, request_id: 'request_cancel',
+    operation: 'get_context', payload_json: '{}' };
   const pending = router.route(event, envelope('request', call));
   while (!release) await new Promise((resolve) => setImmediate(resolve));
   const cancelled = await router.route(event, envelope('cancel', { request_id: call.request_id }));
   assert.equal(cancelled.status, 'cancelled');
   release({ ok: true, value: { late: true } });
   assert.equal((await pending).status, 'cancelled');
-
-  const oversized = new PluginViewBridgeRouter({
-    resolveContext: () => ({ ...context, sessionProviderAuthorized: true }),
-    sessionProviderHandler: async () => ({ ok: true, value: { value: 'x'.repeat(70 * 1024) } }),
-  });
-  const capped = await oversized.route(event, envelope('request', {
-    ...call, request_id: 'provider_request_3',
-  }));
-  assert.equal(capped.status, 'failed');
-  assert.equal(capped.reason_code, 'bridge_response_too_large');
 });

@@ -92,6 +92,33 @@
     };
   }
 
+  function isRecord(value) { return Boolean(value) && typeof value === 'object' && !Array.isArray(value); }
+  function jsonValuesEqual(left, right) {
+    if (left === right) return true;
+    if (Array.isArray(left) || Array.isArray(right)) {
+      return Array.isArray(left) && Array.isArray(right) && left.length === right.length
+        && left.every((value, index) => jsonValuesEqual(value, right[index]));
+    }
+    if (!isRecord(left) || !isRecord(right)) return false;
+    const leftKeys = Object.keys(left);
+    const rightKeys = Object.keys(right);
+    return leftKeys.length === rightKeys.length
+      && leftKeys.every((key) => Object.prototype.hasOwnProperty.call(right, key)
+        && jsonValuesEqual(left[key], right[key]));
+  }
+  function isCompleteHomeConfig(config) {
+    return isRecord(config)
+      && Array.isArray(config.links)
+      && isRecord(config.widgets)
+      && isRecord(config.scratchpad)
+      && Array.isArray(config.scratchpad.notes)
+      && typeof config.scratchpad.activeNoteId === 'string'
+      && isRecord(config.scratchpad.settings)
+      && Array.isArray(config.scratchpad.pins)
+      && isRecord(config.calendar)
+      && typeof config.focusMode === 'boolean'
+      && typeof config.showContextualTips === 'boolean';
+  }
   function createScratchpadActions(deps = {}) {
     const shell = deps.shell || null;
     const onHomeConfig = typeof deps.onHomeConfig === 'function' ? deps.onHomeConfig : noop;
@@ -127,6 +154,8 @@
     // flushSave() awaits this so a caller that serializes after it (the markdown
     // checklist toggle) reads the reconciled note, never a stale pre-echo snapshot.
     let inFlightWrite = null;
+    let inFlightSave = null;
+    let draftVersion = 0;
 
     // Resolve the current scratchpad object, tolerating a missing accessor or a
     // half-seeded state so a save never throws on a malformed snapshot.
@@ -155,37 +184,9 @@
       return { notes, activeNoteId, settings, pins };
     }
 
-    function jsonValuesEqual(left, right) {
-      if (left === right) return true;
-      if (Array.isArray(left) || Array.isArray(right)) {
-        return Array.isArray(left) && Array.isArray(right) && left.length === right.length
-          && left.every((value, index) => jsonValuesEqual(value, right[index]));
-      }
-      if (!left || !right || typeof left !== 'object' || typeof right !== 'object') return false;
-      const leftKeys = Object.keys(left);
-      const rightKeys = Object.keys(right);
-      return leftKeys.length === rightKeys.length
-        && leftKeys.every((key) => Object.prototype.hasOwnProperty.call(right, key)
-          && jsonValuesEqual(left[key], right[key]));
-    }
-
     function scratchpadEchoMatches(requested, config, currentHome) {
       const echoed = config?.scratchpad;
-      const completeHomeConfig = config
-        && typeof config === 'object'
-        && !Array.isArray(config)
-        && Array.isArray(config.links)
-        && config.weather && typeof config.weather === 'object' && !Array.isArray(config.weather)
-        && config.widgets && typeof config.widgets === 'object' && !Array.isArray(config.widgets)
-        && echoed && typeof echoed === 'object' && !Array.isArray(echoed)
-        && Array.isArray(echoed.notes)
-        && typeof echoed.activeNoteId === 'string'
-        && echoed.settings && typeof echoed.settings === 'object' && !Array.isArray(echoed.settings)
-        && Array.isArray(echoed.pins)
-        && config.calendar && typeof config.calendar === 'object' && !Array.isArray(config.calendar)
-        && typeof config.focusMode === 'boolean'
-        && typeof config.showContextualTips === 'boolean';
-      if (!completeHomeConfig) return false;
+      if (!isCompleteHomeConfig(config)) return false;
       if (currentHome && typeof currentHome === 'object' && !Array.isArray(currentHome)) {
         const expected = {
           ...currentHome,
@@ -259,6 +260,7 @@
     // `noteId` (optional) pins the save to the note the caller is editing, so an
     // active-note switch before the debounce fires can't misroute the text.
     function queueSave(text, noteId) {
+      draftVersion += 1;
       pendingText = String(text);
       pendingNoteId = noteId || readScratchpad().activeNoteId;
       if (saveTimer) {
@@ -266,11 +268,7 @@
       }
       saveTimer = setTimeoutImpl(() => {
         saveTimer = null;
-        const toSave = pendingText;
-        const target = pendingNoteId;
-        pendingText = null;
-        pendingNoteId = null;
-        void persist(toSave, target);
+        void flushSave();
       }, debounceMs);
     }
 
@@ -279,18 +277,30 @@
         clearTimeoutImpl(saveTimer);
         saveTimer = null;
       }
-      if (pendingText !== null) {
-        const toSave = pendingText;
-        const target = pendingNoteId;
-        pendingText = null;
-        pendingNoteId = null;
-        await persist(toSave, target);
-      } else if (inFlightWrite) {
-        // No queued text, but a previous fire-and-forget write may still be
-        // settling; await it so a caller serializing after flushSave reads the
-        // reconciled config echo.
-        await inFlightWrite;
+      if (inFlightSave) {
+        return (await inFlightSave) && (pendingText === null || await flushSave());
+      } else if (inFlightWrite && !await inFlightWrite) {
+        return false;
       }
+      if (pendingText === null) return true;
+      const version = draftVersion;
+      const op = (async () => {
+        const config = await persist(pendingText, pendingNoteId);
+        if (!config) return false;
+        if (draftVersion === version) {
+          pendingText = null;
+          pendingNoteId = null;
+        }
+        return true;
+      })();
+      inFlightSave = op;
+      let saved;
+      try {
+        saved = await op;
+      } finally {
+        if (inFlightSave === op) inFlightSave = null;
+      }
+      return saved && (pendingText === null || await flushSave());
     }
 
     // Append a fresh empty note and make it active. Flushes first so the
@@ -300,7 +310,9 @@
       if (!shell?.home?.updateConfig) {
         return { error: jt('dashboard.scratchpad.actions.notesUnavailable', 'Notes are unavailable.') };
       }
-      await flushSave();
+      if (!await flushSave()) {
+        return { error: jt('dashboard.scratchpad.actions.saveNoteFailed', 'Could not save the note.') };
+      }
       const current = readScratchpad();
       if (current.notes.length >= MAX_NOTES) {
         return { error: jt('dashboard.scratchpad.actions.notesLimit', 'Up to {count} notes.', { count: MAX_NOTES }) };
@@ -318,7 +330,9 @@
       if (!shell?.home?.updateConfig) {
         return { error: jt('dashboard.scratchpad.actions.notesUnavailable', 'Notes are unavailable.') };
       }
-      await flushSave();
+      if (!await flushSave()) {
+        return { error: jt('dashboard.scratchpad.actions.saveNoteFailed', 'Could not save the note.') };
+      }
       const current = readScratchpad();
       if (!current.notes.some((note) => note.id === noteId)) {
         return { error: jt('dashboard.scratchpad.actions.noteNotFound', 'Note not found.') };
@@ -338,7 +352,9 @@
       if (!shell?.home?.updateConfig) {
         return { error: jt('dashboard.scratchpad.actions.notesUnavailable', 'Notes are unavailable.') };
       }
-      await flushSave();
+      if (!await flushSave()) {
+        return { error: jt('dashboard.scratchpad.actions.saveNoteFailed', 'Could not save the note.') };
+      }
       const current = readScratchpad();
       if (current.notes.length <= 1) {
         return { error: jt('dashboard.scratchpad.actions.keepOneNote', 'Keep at least one note.') };
@@ -368,7 +384,9 @@
       if (!shell?.home?.updateConfig) {
         return { error: jt('dashboard.scratchpad.actions.notesUnavailable', 'Notes are unavailable.') };
       }
-      await flushSave();
+      if (!await flushSave()) {
+        return { error: jt('dashboard.scratchpad.actions.saveNoteFailed', 'Could not save the note.') };
+      }
       const current = readScratchpad();
       if (!current.notes.some((note) => note.id === noteId)) {
         return { error: jt('dashboard.scratchpad.actions.noteNotFound', 'Note not found.') };
@@ -390,7 +408,9 @@
       if (!shell?.home?.updateConfig) {
         return { error: jt('dashboard.scratchpad.actions.notesUnavailable', 'Notes are unavailable.') };
       }
-      await flushSave();
+      if (!await flushSave()) {
+        return { error: jt('dashboard.scratchpad.actions.saveNoteFailed', 'Could not save the note.') };
+      }
       const current = readScratchpad();
       if (!current.notes.some((note) => note.id === noteId)) {
         return { error: jt('dashboard.scratchpad.actions.noteNotFound', 'Note not found.') };
@@ -433,7 +453,9 @@
     // result so the menu can keep visible feedback on failure.
     async function updateSettings(patch = {}) {
       if (!shell?.home?.updateConfig) return { error: jt('dashboard.scratchpad.actions.settingsUnavailable', 'Scratchpad settings are unavailable.') };
-      await flushSave();
+      if (!await flushSave()) {
+        return { error: jt('dashboard.scratchpad.actions.saveNoteFailed', 'Could not save the note.') };
+      }
       const current = readScratchpad();
       const source = patch && typeof patch === 'object' && !Array.isArray(patch) ? patch : {};
       const settings = { ...(current.settings || {}) };
@@ -456,7 +478,9 @@
       if (!shell?.companion?.addFollowUp) {
         return { error: jt('dashboard.scratchpad.actions.openLoopsUnavailable', 'Open loops are unavailable.') };
       }
-      await flushSave();
+      if (!await flushSave()) {
+        return { error: jt('dashboard.scratchpad.actions.saveNoteFailed', 'Could not save the note.') };
+      }
       const firstLine = trimmed.split(/\r?\n/, 1)[0].trim();
       const label = firstLine.length > MAX_LOOP_LABEL_CHARS
         ? `${firstLine.slice(0, MAX_LOOP_LABEL_CHARS - 3).trimEnd()}...`
@@ -592,7 +616,9 @@
       }
       // Flush any in-flight pad edit first so the capture appends onto the
       // latest text (and the pending debounced save can't clobber it).
-      await flushSave();
+      if (!await flushSave()) {
+        return { error: jt('dashboard.scratchpad.actions.saveNoteFailed', 'Could not save the note.') };
+      }
       const current = readScratchpad();
       const note = current.notes.find((entry) => entry.id === current.activeNoteId) || current.notes[0];
       const stampLine = `[${hhmm(nowProvider())}] ${body}`;
@@ -637,14 +663,10 @@
         clearTimeoutImpl(saveTimer);
         saveTimer = null;
       }
-      if (pendingText === null) {
+      if (pendingText === null && !inFlightWrite && !inFlightSave) {
         return undefined;
       }
-      const toSave = pendingText;
-      const target = pendingNoteId;
-      pendingText = null;
-      pendingNoteId = null;
-      return persist(toSave, target);
+      return flushSave();
     }
 
     return {
@@ -668,5 +690,5 @@
     };
   }
 
-  return { createScratchpadActions };
+  return { createScratchpadActions, isCompleteHomeConfig, jsonValuesEqual };
 });

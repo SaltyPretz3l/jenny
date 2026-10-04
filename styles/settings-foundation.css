@@ -22,8 +22,8 @@
 .settings-group-heading {
   margin: 0;
   color: var(--text-primary);
-  font-size: var(--font-size-md);
-  font-weight: 600;
+  font-size: var(--font-size-heading);
+  font-weight: 500;
   line-height: 1.35;
 }
 
@@ -31,7 +31,7 @@
   margin: var(--space-3) 0 0;
   max-width: 62ch;
   color: var(--text-secondary);
-  font-size: var(--font-size-sm);
+  font-size: var(--font-size-body);
   line-height: 1.55;
 }
 
@@ -67,8 +67,8 @@
   margin: 0;
   color: var(--text-primary);
   font-family: var(--font-family-display, inherit);
-  font-size: var(--font-size-lg);
-  font-weight: 600;
+  font-size: var(--font-size-heading);
+  font-weight: 500;
   line-height: 1.2;
   letter-spacing: 0;
 }
@@ -157,7 +157,7 @@
    capability rows so labels share one voice across the group. */
 .settings-toggle-list .inv-toggle-label {
   color: var(--text-primary);
-  font-size: var(--font-size-base);
+  font-size: var(--font-size-body);
   line-height: 1.5;
 }
 
@@ -165,6 +165,6 @@
 .settings-requires-note {
   margin-top: var(--space-3);
   color: var(--text-muted);
-  font-size: var(--font-size-sm);
+  font-size: var(--font-size-footnote);
   line-height: 1.5;
 }

@@ -6,6 +6,7 @@ const { managedModelKey, normalizePreferredEngineType } = require('../shell-conf
 const { t } = require('../i18n-main');
 const { AI_ERROR_CODES, SIDECAR_ERROR_CODES } = require('./error-codes');
 const { getResidentModels } = require('./backend-resident-models');
+const { chatgptModelsEnabled } = require('./chatgpt-models-enabled');
 
 const MODEL_UNLOAD_SHUTDOWN_TIMEOUT_MS = 2000;
 const MODEL_LIST_CACHE_TTL_MS = 2000;
@@ -39,6 +40,7 @@ function normalizeModelListEntry(entry) {
     return null;
   }
   const normalized = { id };
+  if (typeof entry.label === 'string') normalized.label = entry.label;
   const available = entry.available;
   if (typeof available === 'boolean') {
     normalized.available = available;
@@ -207,6 +209,8 @@ async function refreshStatusSnapshot(service) {
 }
 
 function listModels(service) {
+  service.chatgptModelCatalogService?.snapshot?.();
+  const catalogEpoch = service._modelCatalogEpoch || 0;
   const now = Date.now();
   const desiredEngineType = resolveManagedModelListEngineType(service);
   const lastResult = service._modelListLastResult;
@@ -218,6 +222,11 @@ function listModels(service) {
     return service._modelListInFlightPromise;
   }
 
+  // A read with no sidecar client resolves at once to "not ready yet" and is
+  // never cached: caching it for the TTL served it to the first read after
+  // the client attached (a fast launch reaches 'ready' inside 2 s), and that
+  // is the one catalog read the renderer makes per ready transition.
+  const cacheable = Boolean(service.sidecarClient);
   const inFlightPromise = (async () => {
     const payload = await service.listModelsForEngine(desiredEngineType);
     let data = tagModelListEntries(payload.data, desiredEngineType);
@@ -238,6 +247,24 @@ function listModels(service) {
         }
       }
     }
+    // Cloud models (stage 2): signed-in ChatGPT models sit next to the local
+    // ones whatever engine runs (picking one switches through its engine tag);
+    // with ChatGPT models off none is listed, even from a ChatGPT engine.
+    const showChatgpt = chatgptModelsEnabled(service.configService);
+    let usesChatgptCatalog = desiredEngineType === 'chatgpt';
+    if (showChatgpt && !usesChatgptCatalog
+      && service.chatgptAuthService?.hasCredential?.() === true) {
+      const chatgptPayload = await service.listModelsForEngine('chatgpt').catch(() => null);
+      const chatgptData = tagModelListEntries(chatgptPayload?.data, 'chatgpt');
+      if (chatgptPayload?.available !== false && chatgptData.length > 0) {
+        data = mergeModelListEntries(data, chatgptData);
+        usesChatgptCatalog = true;
+      }
+    }
+    if (!showChatgpt) data = data.filter((entry) => entry?.engine_type !== 'chatgpt');
+    if (usesChatgptCatalog && catalogEpoch !== (service._modelCatalogEpoch || 0)) {
+      throw new Error('ChatGPT model catalog authority changed.');
+    }
     const providerData = service.providerIntegrationRegistry?.appendModelEntries?.(data, {
       engineType: desiredEngineType,
     }) || data;
@@ -255,7 +282,9 @@ function listModels(service) {
   service._modelListInFlightEngineType = desiredEngineType;
   inFlightPromise.then(
     (value) => {
-      service._modelListLastResult = { at: Date.now(), value, engineType: desiredEngineType };
+      if (cacheable && catalogEpoch === (service._modelCatalogEpoch || 0)) {
+        service._modelListLastResult = { at: Date.now(), value, engineType: desiredEngineType };
+      }
       if (service._modelListInFlightPromise === inFlightPromise) {
         service._modelListInFlightPromise = null;
       }
@@ -270,6 +299,8 @@ function listModels(service) {
 }
 
 function listModelsForEngine(service, engineType, options = {}) {
+    service.chatgptModelCatalogService?.snapshot?.();
+    const catalogEpoch = service._modelCatalogEpoch || 0;
     const desiredEngineType = String(engineType || '').trim().toLowerCase() || String(
       service.currentEngineType
       || inferEngineTypeFromModel(service.currentModel || service.defaultModel)
@@ -308,10 +339,22 @@ function listModelsForEngine(service, engineType, options = {}) {
     }
 
     const inFlightPromise = (async () => {
-      const payload = await service.sidecarClient.modelsList(desiredEngineType, { inspectModelId });
+      const catalog = desiredEngineType === 'chatgpt'
+        ? await service.chatgptModelCatalogService?.refresh?.() : null;
+      if (desiredEngineType === 'chatgpt' && catalogEpoch !== (service._modelCatalogEpoch || 0)) {
+        throw new Error('ChatGPT model catalog authority changed.');
+      }
+      const payload = await service.sidecarClient.modelsList(desiredEngineType, {
+        inspectModelId,
+        ...(catalog ? { chatgptModelCatalog: catalog.models || [] } : {}),
+      });
+      if (desiredEngineType === 'chatgpt' && catalogEpoch !== (service._modelCatalogEpoch || 0)) {
+        throw new Error('ChatGPT model catalog authority changed.');
+      }
       const models = Array.isArray(payload.models) ? payload.models : [];
       const normalized = models.map((entry) => normalizeModelListEntry(entry)).filter(Boolean);
-      const metadata = normalizeModelListMetadata(payload);
+      const metadata = normalizeModelListMetadata(catalog ? { ...payload,
+        source: catalog.source, stale: catalog.stale } : payload);
       const providerData = service.providerIntegrationRegistry?.appendModelEntries?.(normalized, {
         engineType: desiredEngineType,
       }) || normalized;
@@ -332,7 +375,9 @@ function listModelsForEngine(service, engineType, options = {}) {
     service._modelListForEngineInFlightPromises.set(cacheKey, inFlightPromise);
     inFlightPromise.then(
       (value) => {
-        service._modelListForEngineLastResults.set(cacheKey, { at: Date.now(), value });
+        if (catalogEpoch === (service._modelCatalogEpoch || 0)) {
+          service._modelListForEngineLastResults.set(cacheKey, { at: Date.now(), value });
+        }
         if (service._modelListForEngineInFlightPromises.get(cacheKey) === inFlightPromise) {
           service._modelListForEngineInFlightPromises.delete(cacheKey);
         }
@@ -402,7 +447,7 @@ async function loadModel(service, model, options = {}) {
       && perModel?.engine === 'llama-server';
     const llamaServerStatus = (!managedLoad && manager) ? (manager.getStatus?.() || {}) : null;
     const stopsManagedServer = Boolean(llamaServerStatus)
-      && (['ready', 'starting', 'crashed'].includes(llamaServerStatus.state)
+      && (['ready', 'starting', 'stopping', 'crashed'].includes(llamaServerStatus.state)
         || Boolean(llamaServerStatus.lastError));
     // Starting or stopping llama-server takes the GPU over. Doing that under a live
     // response starves the engine still generating on it (2026-09-04: Ollama fell to
@@ -416,6 +461,24 @@ async function loadModel(service, model, options = {}) {
       service.activeStreams,
       options.ownStreamId
     );
+    // A privileged local workload owns the GPU (chat-gpu-handoff.js): a load
+    // now would start an engine on a device that is about to be fully used.
+    const admission = service.exclusiveGpuCoordinator?.getState?.();
+    if (admission && admission.state !== 'chat_resident') {
+      service._emitServiceLog?.('WARN', 'backend.model_load_refused_gpu_leased', {
+        model: requestedModelName, admission: admission.state,
+      });
+      throw Object.assign(
+        new Error(t('error.gpu.busyPrivilegedWorkload',
+          'A privileged local workload is using the GPU. Wait for it to finish or cancel it.')),
+        {
+          error_code: AI_ERROR_CODES.ENGINE_CONNECTION,
+          code: 'gpu_busy_plugin',
+          category: 'model_busy',
+          retryable: true,
+        }
+      );
+    }
     if ((managedLoad || stopsManagedServer) && otherActiveStreams > 0) {
       service._emitServiceLog?.('WARN', 'backend.engine_switch_refused_stream_active', {
         active_stream_count: otherActiveStreams,
@@ -444,7 +507,21 @@ async function loadModel(service, model, options = {}) {
           service._emitServiceLog?.('WARN', 'backend.engine_switch_unload_failed', {
             from: 'ollama', model: previousModel, message: String(error?.message || error),
           });
-          if (error?.category === 'timeout' || error?.error_code === SIDECAR_ERROR_CODES.TIMEOUT) {
+          const timedOut = error?.category === 'timeout' || error?.error_code === SIDECAR_ERROR_CODES.TIMEOUT;
+          // Only a daemon that is positively down (its port refuses the
+          // connection) has nothing to evict; any other failure, a hung daemon
+          // included, may leave the old model on the GPU.
+          let daemonDown = false;
+          if (!timedOut) {
+            try {
+              daemonDown = (await service.ollamaManager?.isConfirmedDown?.()) === true;
+            } catch (_probeError) { /* an unanswered probe proves nothing */ }
+          }
+          if (daemonDown) {
+            service._emitServiceLog?.('WARN', 'backend.engine_switch_unload_skipped_daemon_unreachable', {
+              from: 'ollama', model: previousModel,
+            });
+          } else {
             throw Object.assign(
               new Error(
                 `Previous model "${previousModel}" could not be confirmed evicted; `
@@ -475,22 +552,32 @@ async function loadModel(service, model, options = {}) {
       // takes the GPU over: the managed server lives only while it is the active
       // engine. A parked launch failure is cleared too (health pill goes quiet).
       if (stopsManagedServer) {
+        let stopFailure;
         try {
           const stopped = await manager.stop();
-          if (stopped?.lastError) {
-            service._emitServiceLog?.('WARN', 'backend.engine_switch_stop_llama_server_failed', {
-              to: requestedEngineType, message: String(stopped.lastError),
-            });
-          } else {
-            service._emitServiceLog?.('INFO', 'backend.engine_switch_stop_llama_server', {
-              to: requestedEngineType,
-            });
-          }
+          stopFailure = String(stopped?.lastError || '');
         } catch (error) {
-          service._emitServiceLog?.('WARN', 'backend.engine_switch_stop_llama_server_failed', {
-            to: requestedEngineType, message: String(error?.message || error),
-          });
+          stopFailure = String(error?.message || error) || 'stop_failed';
         }
+        if (stopFailure) {
+          service._emitServiceLog?.('WARN', 'backend.engine_switch_stop_llama_server_failed', {
+            to: requestedEngineType, message: stopFailure,
+          });
+          throw Object.assign(
+            new Error(
+              'The managed llama-server could not be confirmed stopped; '
+              + 'the engine switch was aborted so the GPU is not double-loaded.'
+            ),
+            {
+              error_code: AI_ERROR_CODES.ENGINE_CONNECTION,
+              category: 'engine_switch_aborted',
+              retryable: true,
+            }
+          );
+        }
+        service._emitServiceLog?.('INFO', 'backend.engine_switch_stop_llama_server', {
+          to: requestedEngineType,
+        });
       }
     }
     await service._initializeManagedSidecar({
@@ -544,6 +631,18 @@ async function loadModel(service, model, options = {}) {
         service.configService?.updatePreferredEngineType?.('ollama');
       }
     }
+    if (requestedEngineType === 'chatgpt') {
+      // The next start boots ChatGPT with this model while the catalog still
+      // lists it (B13). Loads on any other engine leave it alone. It is a
+      // startup hint: a config write that fails must not fail a load that took.
+      try {
+        service.configService?.updateLastChatgptModel?.(requestedModelName);
+      } catch (error) {
+        service._emitServiceLog?.('WARN', 'backend.last_chatgpt_model_save_failed', {
+          message: String(error?.message || error).slice(0, 200),
+        });
+      }
+    }
 
     refreshSetupReadinessAfterModelLoad(service);
     return { status: 'ok', model: service.currentModel };
@@ -552,20 +651,6 @@ async function loadModel(service, model, options = {}) {
 function autoLoadDefaultModel(service) {
   const fallback = service._lastEngineFallback;
   if (fallback) {
-    let applyPending;
-    try {
-      applyPending = service._providerRuntimeApplyPending?.(
-        String(fallback.requested_engine || '')
-      ) === true;
-    } catch (_error) { applyPending = false; }
-    if (applyPending) {
-      service._emitServiceLog('INFO', 'backend.default_model_load_deferred', {
-        model: service.defaultModel,
-        requested_engine: fallback.requested_engine,
-        message: String(fallback.reason || 'Engine initialization failed'),
-      });
-      return;
-    }
     service._emitServiceLog('WARN', 'backend.default_model_load_failed', {
       model: service.defaultModel,
       message: String(fallback.reason || 'Engine initialization failed'),
@@ -615,14 +700,37 @@ function autoLoadDefaultModel(service) {
   });
 }
 
-async function unloadModel(service) {
+async function unloadModel(service, { stopManagedServer = false } = {}) {
+    // Jenny's own llama-server holds the model and VRAM; the sidecar unload below
+    // only clears Python bookkeeping for it. A reused (external) server is never ours to stop.
+    const manager = stopManagedServer ? service.options?.getLlamaServerManager?.() : null;
+    const serverStatus = manager?.getStatus?.() || {};
+    if (['ready', 'starting'].includes(serverStatus.state) && serverStatus.reused !== true) {
+      let stopFailure;
+      try {
+        stopFailure = String((await manager.stop())?.lastError || '');
+      } catch (error) {
+        stopFailure = String(error?.message || error) || 'stop_failed';
+      }
+      if (stopFailure) {
+        throw Object.assign(
+          new Error('The managed llama-server could not be confirmed stopped; the model may still be loaded.'),
+          { error_code: AI_ERROR_CODES.ENGINE_CONNECTION, retryable: true }
+        );
+      }
+      service._emitServiceLog?.('INFO', 'backend.model_unload_stopped_llama_server', {});
+    }
     const status = service.sidecarManager.getStatus();
     if (service.sidecarClient && status.phase === 'ready') {
       await service.sidecarClient.modelsUnload();
     }
     service.currentModel = '';
     service._managedPendingModel = '';
-    service.currentEngineType = inferEngineTypeFromModel(service.defaultModel || '');
+    // Unload frees the model, not the engine: the next turn's lazy load must
+    // relaunch the same engine (a managed GGUF goes back to llama-server, not
+    // to Ollama as a registry pull of its id; ELC-2).
+    service.currentEngineType = String(service.currentEngineType || '').trim()
+      || inferEngineTypeFromModel(service.defaultModel || '');
     service.currentStatus = service._buildManagedStatusSnapshot({
       model: '',
       model_loaded: false,

@@ -148,8 +148,14 @@
       if (!panel) return;
       panel.hidden = state.projectsOpen !== true;
       toggle?.setAttribute?.('aria-expanded', state.projectsOpen === true ? 'true' : 'false');
-      if (panel.hidden) return;
-      panel.innerHTML = state.projectsBusy && !(state.projects || []).length
+      if (panel.hidden) { this.projectFocus = null; return; }
+      const focused = panel.ownerDocument.activeElement;
+      if (panel.contains(focused)) {
+        this.projectFocus = { node: focused, selection: typeof focused.selectionStart === 'number'
+          ? [focused.selectionStart, focused.selectionEnd, focused.selectionDirection] : null };
+      } else if (focused !== panel.ownerDocument.body) this.projectFocus = null;
+      const next = panel.ownerDocument.createElement('div');
+      next.innerHTML = state.projectsBusy && !(state.projects || []).length
         ? `<p class="browser-project-note">${escapeHtml(jt('browserProjects.loading', 'Loading projects…'))}</p>`
         : `<div class="browser-project-panel-heading"><strong>${escapeHtml(jt('browserProjects.heading', 'Projects and permissions'))}</strong></div>
           ${state.projectsError ? `<p class="browser-project-error">${escapeHtml(state.projectsError)}</p>` : ''}
@@ -157,6 +163,28 @@
           <section class="browser-project-create"><h2>${escapeHtml(jt('browserProjects.createProject', 'Create project'))}</h2>${field({ id: 'browser-project-create-name', label: jt('browserProjects.projectName', 'Project name'), maxLength: 80, disabled: state.projectsBusy === true || state.mutationPending === true || state.projectStorage?.read_only === true })}${button({ id: 'project-create', label: jt('browserProjects.create', 'Create'), variant: 'secondary', size: 'sm', disabled: state.projectsBusy === true || state.mutationPending === true || state.projectStorage?.read_only === true })}</section>
           <section class="browser-project-list">${projectRows(state)}</section>
           <section class="browser-permission-list"><h2>${escapeHtml(jt('browserProjects.permissionsHeading', 'Imported permission review'))}</h2>${reviewRows(state)}</section>`;
+      for (const replacement of next.querySelectorAll('input[id], select[id]')) {
+        const mounted = panel.querySelector(`#${replacement.id}`);
+        if (!mounted || mounted.tagName !== replacement.tagName) continue;
+        if (mounted.tagName === 'SELECT') {
+          const value = mounted.value;
+          mounted.replaceChildren(...replacement.childNodes);
+          mounted.value = Array.from(mounted.options).some((option) => option.value === value) ? value : '';
+        } else {
+          const dirty = mounted.value !== mounted.defaultValue;
+          if (!dirty) mounted.value = replacement.value;
+          mounted.defaultValue = replacement.defaultValue;
+        }
+        mounted.disabled = replacement.disabled;
+        replacement.replaceWith(mounted);
+      }
+      panel.replaceChildren(...next.childNodes);
+      const active = this.projectFocus?.node;
+      if (!active || !panel.contains(active)) this.projectFocus = null;
+      else if (!active.disabled) {
+        active.focus({ preventScroll: true });
+        if (this.projectFocus.selection) active.setSelectionRange(...this.projectFocus.selection);
+      }
     }
 
     async toggle() {
@@ -200,8 +228,13 @@
       const result = await this.command(operation, { ...options, params });
       if (!this._current(generation)) return null;
       state.projectsBusy = false;
-      if (result?.ok) await this.load({ quiet: true });
-      else this.renderApp();
+      if (result?.ok) {
+        if (operation === 'projects.create') {
+          const input = this._input('browser-project-create-name');
+          if (input) input.value = '';
+        }
+        await this.load({ quiet: true });
+      } else this.renderApp();
       return result;
     }
 

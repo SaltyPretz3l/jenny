@@ -1,6 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { loadRendererApp, waitForUi } = require('./helpers/renderer-shell-harness');
+const { segmentedGroup, segmentedValue, segmentedOptions } = require('./helpers/segmented-control');
 
 async function loadRendererTestApp(t, options) {
   const app = await loadRendererApp(options);
@@ -31,8 +32,8 @@ test('renderer shell applies saved appearance preferences on boot', async (t) =>
       typographyId: 'editorial',
       motionId: 'expressive',
       threadStyleId: 'bold-graph',
-      // Retired preset id: must normalize back to 'default' rather than carry
-      // a broken/unknown id onto the root dataset.
+      // Retired timeline-style preset: must be dropped, never projected onto
+      // the root dataset.
       timelineStyleId: 'explorer-minimal',
     },
   });
@@ -42,9 +43,9 @@ test('renderer shell applies saved appearance preferences on boot', async (t) =>
   assert.equal(root.dataset.typography, 'editorial');
   assert.equal(root.dataset.motion, 'standard');
   assert.equal(root.dataset.composerHolo, 'on');
-  assert.equal(root.dataset.spriteHolo, 'off');
+  assert.equal(root.dataset.spriteHolo, undefined);
   assert.equal(root.dataset.threadStyle, 'subtle');
-  assert.equal(root.dataset.timelineStyle, 'default');
+  assert.equal(root.dataset.timelineStyle, undefined);
 });
 
 test('logs view inherits palette and typography changes across light and signal themes', async (t) => {
@@ -87,7 +88,7 @@ test('logs view inherits palette and typography changes across light and signal 
   assert.match(signalDoc.querySelector('.diagnostics-header h2')?.textContent || '', /Diagnostics/i);
 });
 
-test('settings shell renders the redesigned masthead and live appearance proof surface', async (t) => {
+test('settings shell omits the masthead and the retired appearance preview strip', async (t) => {
   const { window } = await loadRendererTestApp(t, {
     appearance: {
       paletteId: 'signal',
@@ -99,22 +100,18 @@ test('settings shell renders the redesigned masthead and live appearance proof s
   const chipRow = window.document.querySelector('.settings-content-header .settings-overview-chip-row');
   const appearanceProof = window.document.getElementById('settingsAppearanceProof');
 
-  assert.ok(masthead, 'masthead should render in the settings content header');
-  assert.match(mastheadTitle?.textContent || '', /shell settings/i);
-  assert.ok(chipRow, 'overview chip row should render');
-  assert.match(chipRow.textContent, /local-first/i);
-  assert.match(chipRow.textContent, /session-aware/i);
-  assert.match(chipRow.textContent, /file-backed/i);
-  assert.ok(appearanceProof);
-  assert.match(appearanceProof.textContent, /Chrome/);
-  assert.match(appearanceProof.textContent, /Signals/);
-  assert.equal(appearanceProof.querySelector('.settings-appearance-stage'), null);
+  assert.equal(masthead, null);
+  assert.equal(mastheadTitle, null);
+  assert.equal(chipRow, null);
+  // Owner, 2026-10-03: the whole app previews a theme live; the strip is gone.
+  assert.equal(appearanceProof, null);
   assert.equal(window.document.documentElement.dataset.palette, 'signal');
 });
 
 test('appearance controls update shell appearance without persisting session runtime preferences', async (t) => {
   const { window, shell } = await loadRendererTestApp(t);
   const paletteSelect = window.document.getElementById('appearancePaletteSelect');
+  assert.ok(paletteSelect.closest('.settings-field').classList.contains('settings-field--wide-control'), 'long palette names get the wide dropdown');
   const typographySelect = window.document.getElementById('appearanceTypographySelect');
   const holoList = window.document.getElementById('appearanceHoloList');
   const root = window.document.documentElement;
@@ -127,23 +124,27 @@ test('appearance controls update shell appearance without persisting session run
     bubbles: true, detail: { id, checked },
   }));
   fireHolo('appearanceComposerHoloToggle', false);
+  // The Appearance store serializes its writes; each settles before the next.
+  await waitForUi(window, 20);
 
   assert.equal(root.dataset.palette, 'signal');
   assert.equal(root.dataset.typography, 'technical');
   assert.equal(root.dataset.motion, 'standard');
   assert.equal(root.dataset.composerHolo, 'off');
-  assert.equal(root.dataset.spriteHolo, 'off');
+  assert.equal(root.dataset.spriteHolo, undefined);
   assert.equal(root.dataset.threadStyle, 'subtle');
-  assert.equal(root.dataset.timelineStyle, 'default');
   assert.deepEqual(shell.__state.setPreferenceCalls, []);
   assert.deepEqual(JSON.parse(window.localStorage.getItem('jenny.appearance.v2')), {
     paletteId: 'signal',
     typographyId: 'technical',
     surfaceEffectId: 'none',
     composerHoloId: 'off',
-    timelineStyleId: 'default',
-    fontScaleId: 'xlarge',
-    chatWidthId: 'default',
+    fontScaleId: 'default',
+    chatWidthId: 'standard',
+    startupAnimation: true,
+    titlebarLoad: false,
+    artifactAutoOpen: false,
+    typeScaleVersion: 3,
   });
 });
 
@@ -288,11 +289,11 @@ test('appearance bundle selector applies Lexicon and falls back to Custom after 
   assert.equal(root.dataset.motion, 'standard');
   assert.equal(root.dataset.surfaceEffect, 'none');
   assert.equal(root.dataset.composerHolo, 'on');
-  assert.equal(root.dataset.spriteHolo, 'off');
+  assert.equal(root.dataset.spriteHolo, undefined);
   assert.equal(root.dataset.threadStyle, 'subtle');
   assert.equal(chatView.hasAttribute('data-widget-modifier'), false);
-  assert.equal(appearanceBadge.textContent, 'Lexicon');
-  assert.match(appearanceStatus.textContent, /Lexicon bundle/i);
+  assert.equal(appearanceBadge, null);
+  assert.equal(appearanceStatus, null);
   assert.equal(
     Array.from(surfaceEffectSelect.options).some((option) => option.value === 'pretext-drift'),
     false
@@ -302,11 +303,14 @@ test('appearance bundle selector applies Lexicon and falls back to Custom after 
     typographyId: 'editorial',
     surfaceEffectId: 'none',
     composerHoloId: 'on',
-    timelineStyleId: 'default',
-    // Bundles carry no font-scale axis; the fresh-install Extra Large default
-    // (owner review 2026-08-19) survives a bundle apply.
-    fontScaleId: 'xlarge',
-    chatWidthId: 'default',
+    // Bundles carry no font-scale axis; the Default text size survives a
+    // bundle apply (owner review 2026-08-19).
+    fontScaleId: 'default',
+    chatWidthId: 'standard',
+    startupAnimation: true,
+    titlebarLoad: false,
+    artifactAutoOpen: false,
+    typeScaleVersion: 3,
   });
 
   paletteSelect.value = 'signal';
@@ -314,10 +318,9 @@ test('appearance bundle selector applies Lexicon and falls back to Custom after 
   await waitForUi(window, 30);
 
   assert.equal(bundleSelect.value, 'custom');
-  assert.equal(appearanceBadge.textContent, 'Custom');
 });
 
-test('Slate theme bundle keeps the flat background while restoring composer and sprite holo', async (t) => {
+test('Slate theme bundle keeps the flat background while restoring the composer holo', async (t) => {
   const { window } = await loadRendererTestApp(t);
   const doc = window.document;
   const root = doc.documentElement;
@@ -332,44 +335,45 @@ test('Slate theme bundle keeps the flat background while restoring composer and 
   assert.equal(root.dataset.typography, 'system');
   assert.equal(root.dataset.surfaceEffect, 'none');
   assert.equal(root.dataset.composerHolo, 'on');
-  assert.equal(root.dataset.spriteHolo, 'on');
+  assert.equal(root.dataset.spriteHolo, undefined);
   assert.equal(chatView.hasAttribute('data-widget-modifier'), false);
   assert.deepEqual(JSON.parse(window.localStorage.getItem('jenny.appearance.v2')), {
     paletteId: 'slate',
     typographyId: 'system',
     surfaceEffectId: 'none',
     composerHoloId: 'on',
-    timelineStyleId: 'default',
-    fontScaleId: 'xlarge',
-    chatWidthId: 'default',
+    fontScaleId: 'default',
+    chatWidthId: 'standard',
+    startupAnimation: true,
+    titlebarLoad: false,
+    artifactAutoOpen: false,
+    typeScaleVersion: 3,
   });
 });
 
-test('UIUX-028(d): switching theme bundles preserves Extra Large text size and timeline style instead of silently resetting them', async (t) => {
+test('UIUX-028(d): switching theme bundles preserves a Large text size instead of silently resetting it', async (t) => {
   const { window } = await loadRendererTestApp(t);
   const doc = window.document;
   const root = doc.documentElement;
   const bundleSelect = doc.getElementById('appearanceThemeBundleSelect');
-  const fontScaleSelect = doc.getElementById('appearanceFontScaleSelect');
 
-  // User sets Extra Large text (an accessibility preference, not a "look").
-  fontScaleSelect.value = 'xlarge';
-  fontScaleSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
+  // User sets Large text (an accessibility preference, not a "look").
+  segmentedGroup(doc, 'appearanceFontScaleSelect').querySelector('[data-value="large"]').click();
   await waitForUi(window, 30);
-  assert.equal(root.dataset.fontScale, 'xlarge');
+  assert.equal(root.dataset.fontScale, 'large');
 
-  // Switching to a theme bundle (Pewter documents no fontScaleId/timelineStyleId
-  // axis at all) must not silently reset the text size back to Default.
+  // Switching to a theme bundle (Pewter documents no fontScaleId axis at
+  // all) must not silently reset the text size back to Default.
   bundleSelect.value = 'pewter';
   bundleSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
   await waitForUi(window, 30);
 
   assert.equal(root.dataset.palette, 'pewter', 'the bundle axes it DOES document still apply');
-  assert.equal(root.dataset.fontScale, 'xlarge', 'a bundle switch must not reset Extra Large text to Default');
-  assert.equal(fontScaleSelect.value, 'xlarge');
+  assert.equal(root.dataset.fontScale, 'large', 'a bundle switch must not reset Large text to Default');
+  assert.equal(segmentedValue(doc, 'appearanceFontScaleSelect'), 'large');
   assert.equal(
     JSON.parse(window.localStorage.getItem('jenny.appearance.v2')).fontScaleId,
-    'xlarge',
+    'large',
     'the persisted preferences must also keep the font scale'
   );
 
@@ -377,7 +381,7 @@ test('UIUX-028(d): switching theme bundles preserves Extra Large text size and t
   bundleSelect.value = 'obsidian';
   bundleSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
   await waitForUi(window, 30);
-  assert.equal(root.dataset.fontScale, 'xlarge', 'a second bundle switch still preserves the font scale');
+  assert.equal(root.dataset.fontScale, 'large', 'a second bundle switch still preserves the font scale');
 });
 
 test('appearance reset restores the default shell appearance', async (t) => {
@@ -405,16 +409,15 @@ test('appearance reset restores the default shell appearance', async (t) => {
 
   assert.equal(root.dataset.palette, 'slate');
   assert.equal(root.dataset.typography, 'technical');
-  assert.equal(root.dataset.fontScale, 'xlarge');
+  assert.equal(root.dataset.fontScale, 'default');
   assert.equal(root.dataset.motion, 'standard');
   assert.equal(root.dataset.composerHolo, 'on');
-  // Sprite holo is palette-derived and resolves ON for slate (same contract
-  // the Slate-bundle test pins above).
-  assert.equal(root.dataset.spriteHolo, 'on');
+  // The sprite holo is retired: no palette writes data-sprite-holo.
+  assert.equal(root.dataset.spriteHolo, undefined);
   assert.equal(root.dataset.threadStyle, 'subtle');
 });
 
-test('appearance status reports the OS reduced-motion override and fixed standard runtime motion', async (t) => {
+test('appearance keeps fixed standard runtime motion without an idle status line', async (t) => {
   const { window } = await loadRendererTestApp(t, {
     reducedMotion: true,
     appearance: {
@@ -425,121 +428,101 @@ test('appearance status reports the OS reduced-motion override and fixed standar
   });
   const appearanceStatus = window.document.getElementById('appearanceStatus');
 
-  assert.match(appearanceStatus.textContent, /OS reduced motion is active/i);
-  assert.match(appearanceStatus.textContent, /Composer typing border/i);
-  assert.doesNotMatch(appearanceStatus.textContent, /sprite holo|chat threads/i);
+  assert.equal(appearanceStatus, null);
   assert.equal(window.document.documentElement.dataset.motion, 'standard');
 });
 
-test('renderer shell applies persisted chat zoom on boot and exposes the contextual Composer control', async (t) => {
-  const { window } = await loadRendererTestApp(t, {
-    shell: {
-      chatUi: {
-        state: {
-          zoomPercent: 115,
-        },
-      },
-    },
-  });
-
-  const root = window.document.documentElement;
-  window.document.getElementById('composerSettingsButton').click();
-  await waitForUi(window, 20);
-  const zoomSelect = window.document.getElementById('composerChatZoomSelect');
-
-  assert.equal(root.dataset.chatZoom, '115');
-  assert.equal(root.style.getPropertyValue('--chat-zoom-percent'), '115');
-  assert.equal(root.style.getPropertyValue('--chat-zoom-factor'), '1.15');
-  assert.equal(zoomSelect.value, '115');
-  assert.match(window.document.getElementById('composerChatZoomStatus').textContent, /Ctrl \+ wheel adjusts/i);
-});
-
-test('chat zoom controls and shortcuts update the global shell setting', async (t) => {
+test('retired chat zoom: a persisted value is ignored on boot and the Composer control is gone', async (t) => {
   const { window, shell } = await loadRendererTestApp(t, {
-    chatUi: {
-      state: {
-        zoomPercent: 100,
-      },
-    },
+    shell: { chatUi: { state: { zoomPercent: 115 } } },
   });
-
   const root = window.document.documentElement;
-  const chatView = window.document.getElementById('chatView');
-  window.document.getElementById('composerSettingsButton').click();
+  window.document.getElementById('composerAttachShortcut').click();
   await waitForUi(window, 20);
-  const zoomSelect = window.document.getElementById('composerChatZoomSelect');
 
-  zoomSelect.value = '125';
-  zoomSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
-  await new Promise((resolve) => window.setTimeout(resolve, 0));
-
-  assert.equal(root.dataset.chatZoom, '125');
-  assert.equal(shell.__state.chatUiState.zoomPercent, 125);
-
-  const wheelEvent = new window.WheelEvent('wheel', {
-    bubbles: true,
-    cancelable: true,
-    ctrlKey: true,
-    deltaY: -120,
-  });
-  chatView.dispatchEvent(wheelEvent);
-  await new Promise((resolve) => window.setTimeout(resolve, 0));
-
-  assert.equal(wheelEvent.defaultPrevented, true);
-  assert.equal(root.dataset.chatZoom, '130');
-  assert.equal(shell.__state.chatUiState.zoomPercent, 130);
-
-  const resetEvent = new window.KeyboardEvent('keydown', {
-    bubbles: true,
-    cancelable: true,
-    ctrlKey: true,
-    key: '0',
-  });
-  window.dispatchEvent(resetEvent);
-  await new Promise((resolve) => window.setTimeout(resolve, 0));
-
-  assert.equal(root.dataset.chatZoom, '100');
-  assert.equal(shell.__state.chatUiState.zoomPercent, 100);
+  assert.equal(window.document.getElementById('composerChatZoomSelect'), null);
+  assert.equal(root.dataset.chatZoom, undefined);
+  assert.equal(root.style.getPropertyValue('--chat-zoom-factor'), '');
+  assert.equal(shell.__state.chatUiState.zoomPercent, 115, 'the persisted value is preserved, just unused');
 });
 
+test('Ctrl+wheel in chat and Ctrl +/-/0 drive the app zoom setting', async (t) => {
+  const { window, shell } = await loadRendererTestApp(t);
+  const chatView = window.document.getElementById('chatView');
+  const tick = () => new Promise((resolve) => window.setTimeout(resolve, 0));
 
-test('Text Size scales shell typography (isolated from chat) and Overall App Zoom persists via windowUi', async (t) => {
+  // The chat's wheel-zoom listener exists only while Ctrl is held.
+  window.dispatchEvent(new window.KeyboardEvent('keydown', { bubbles: true, ctrlKey: true, key: 'Control' }));
+  const wheelEvent = new window.WheelEvent('wheel', { bubbles: true, cancelable: true, ctrlKey: true, deltaY: -120 });
+  chatView.dispatchEvent(wheelEvent);
+  await tick();
+  assert.equal(wheelEvent.defaultPrevented, true);
+  assert.equal(shell.__state.windowUiState.appZoomPercent, 125);
+
+  window.dispatchEvent(new window.KeyboardEvent('keydown', { bubbles: true, cancelable: true, ctrlKey: true, key: '=' }));
+  await tick();
+  assert.equal(shell.__state.windowUiState.appZoomPercent, 150);
+
+  window.dispatchEvent(new window.KeyboardEvent('keydown', { bubbles: true, cancelable: true, ctrlKey: true, key: '-' }));
+  await tick();
+  assert.equal(shell.__state.windowUiState.appZoomPercent, 125);
+
+  window.dispatchEvent(new window.KeyboardEvent('keydown', { bubbles: true, cancelable: true, ctrlKey: true, key: '0' }));
+  await tick();
+  assert.equal(shell.__state.windowUiState.appZoomPercent, 110);
+  assert.equal(window.document.documentElement.dataset.chatZoom, undefined, 'no chat zoom axis is written');
+
+  // A shortcut an earlier handler already consumed (the plugin view's own
+  // zoom) must not also move app zoom.
+  const handled = new window.KeyboardEvent('keydown', { bubbles: true, cancelable: true, ctrlKey: true, key: '=' });
+  handled.preventDefault();
+  window.dispatchEvent(handled);
+  await tick();
+  assert.equal(shell.__state.windowUiState.appZoomPercent, 110);
+
+  // Every shortcut step is a choice the Settings row can show.
+  for (let step = 0; step < 3; step += 1) {
+    window.dispatchEvent(new window.KeyboardEvent('keydown', { bubbles: true, cancelable: true, ctrlKey: true, key: '-' }));
+    await tick();
+  }
+  assert.equal(shell.__state.windowUiState.appZoomPercent, 80);
+  assert.equal(window.document.getElementById('appearanceAppZoomSelect').value, '80');
+});
+
+test('Text Size scales every surface through --font-scale and Overall App Zoom persists via windowUi', async (t) => {
   const { window, shell } = await loadRendererTestApp(t);
   const doc = window.document;
   const root = doc.documentElement;
-  const fontScaleSelect = doc.getElementById('appearanceFontScaleSelect');
+  const fontScaleGroup = segmentedGroup(doc, 'appearanceFontScaleSelect');
   const appZoomSelect = doc.getElementById('appearanceAppZoomSelect');
 
-  // --- Font scale: discrete ladder, default, applies to the shell root ---
-  assert.ok(fontScaleSelect, 'Text Size select exists');
+  // --- Text size: discrete ladder, rebased Default, applies to the root ---
+  assert.ok(fontScaleGroup, 'the Text size control exists');
   assert.deepEqual(
-    Array.from(fontScaleSelect.options).map((option) => option.value),
-    ['small', 'default', 'large', 'xlarge']
+    segmentedOptions(doc, 'appearanceFontScaleSelect').map((option) => option.value),
+    ['small', 'default', 'large']
   );
-  assert.equal(fontScaleSelect.value, 'xlarge');
-  assert.equal(root.dataset.fontScale, 'xlarge');
-  assert.equal(root.style.getPropertyValue('--font-scale'), '1.3');
+  assert.equal(segmentedValue(doc, 'appearanceFontScaleSelect'), 'default');
+  assert.equal(root.dataset.fontScale, 'default');
+  assert.equal(root.style.getPropertyValue('--font-scale'), '1.2');
 
-  fontScaleSelect.value = 'large';
-  fontScaleSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
+  fontScaleGroup.querySelector('[data-value="large"]').click();
   await waitForUi(window, 30);
 
   assert.equal(root.dataset.fontScale, 'large');
-  assert.equal(root.style.getPropertyValue('--font-scale'), '1.15');
+  assert.equal(root.style.getPropertyValue('--font-scale'), '1.3');
   assert.equal(
     JSON.parse(window.localStorage.getItem('jenny.appearance.v2')).fontScaleId,
     'large'
   );
-  // Font scale must NOT bleed into the chat zoom axis.
-  assert.equal(root.dataset.chatZoom, '100');
 
   // --- Overall app zoom: discrete ladder, persists through jennyShell.windowUi ---
   assert.ok(appZoomSelect, 'Overall App Zoom select exists');
   assert.deepEqual(
     Array.from(appZoomSelect.options).map((option) => option.value),
-    ['90', '100', '110', '125', '150']
+    ['80', '90', '100', '110', '125', '150']
   );
-  assert.equal(appZoomSelect.value, '100');
+  assert.equal(appZoomSelect.value, '110');
 
   appZoomSelect.value = '125';
   appZoomSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
@@ -561,7 +544,7 @@ test('UIUX-028(c): a failed Overall App Zoom write rolls back rather than report
   });
   const doc = window.document;
   const appZoomSelect = doc.getElementById('appearanceAppZoomSelect');
-  assert.equal(shell.__state.windowUiState.appZoomPercent, 100);
+  assert.equal(shell.__state.windowUiState.appZoomPercent, 110);
 
   appZoomSelect.value = '125';
   appZoomSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
@@ -569,19 +552,16 @@ test('UIUX-028(c): a failed Overall App Zoom write rolls back rather than report
 
   // Main-process state was never touched (the write rejected) -- the
   // renderer must not go on claiming 125% was applied.
-  assert.equal(shell.__state.windowUiState.appZoomPercent, 100);
-  assert.equal(appZoomSelect.value, '100', 'the select rolls back instead of showing an unapplied value');
+  assert.equal(shell.__state.windowUiState.appZoomPercent, 110);
+  assert.equal(appZoomSelect.value, '110', 'the select rolls back instead of showing an unapplied value');
 });
 
-test('UIUX-028(c): an older Overall App Zoom write settling after a newer one does not clobber it (out of order)', async (t) => {
+test('UIUX-028(c): an older Overall App Zoom write can never settle after a newer one (writes are serialized)', async (t) => {
   // NOTE: this asserts against the RENDERER's own observable state (the
-  // select's displayed value, which renderSettings() repaints from
-  // state.ui.appZoomPercent) -- not shell.__state.windowUiState. The harness
-  // mock's windowUiState is a dumb "whichever IPC call resolves last wins"
-  // bookkeeping with no ordering guard of its own (that's not production
-  // code this fix touches); the generation guard under test lives entirely
-  // in the renderer's change handler and is only observable via what it
-  // renders.
+  // select's displayed value) -- not shell.__state.windowUiState, whose mock
+  // bookkeeping has no ordering guard of its own. The windowUi adapter's
+  // coordinator sends the newer write only after the older one settles, so a
+  // stale response cannot arrive last.
   const responders = new Map();
   const { window } = await loadRendererTestApp(t, {
     shell: {
@@ -606,17 +586,57 @@ test('UIUX-028(c): an older Overall App Zoom write settling after a newer one do
   appZoomSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
   await waitForUi(window, 5);
 
-  // The newer (150) write's persist call wins the race and resolves first.
+  assert.deepEqual([...responders.keys()], [125], 'the newer write waits for the one in flight');
+  assert.equal(appZoomSelect.value, '150', 'the queued value shows while it waits');
+
+  responders.get(125)();
+  await waitForUi(window, 30);
+  assert.equal(appZoomSelect.value, '150', "the older 125% acknowledgement does not clobber the queued 150%");
+  assert.ok(responders.has(150), 'the queued write goes out once the older one settles');
+
   responders.get(150)();
   await waitForUi(window, 30);
   assert.equal(appZoomSelect.value, '150');
+});
 
-  // The OLDER (125) write's persist call resolves after -- must not
-  // reconcile the UI back to 125.
-  responders.get(125)();
+test('a select zoom save that settles late does not undo a newer Ctrl +/- step', async (t) => {
+  // Two writers share state.ui.appZoomPercent: the Settings select (windowUi
+  // adapter) and the shortcuts. Answers arrive in request order.
+  const pending = [];
+  const { window } = await loadRendererTestApp(t, {
+    shell: {
+      windowUi: {
+        async updateSettings(patch) {
+          const percent = Number(patch?.appZoomPercent);
+          return new Promise((resolve) => {
+            pending.push({ percent, release: () => resolve({ appZoomPercent: percent }) });
+          });
+        },
+      },
+    },
+  });
+  const appZoomSelect = window.document.getElementById('appearanceAppZoomSelect');
+  const shortcut = (key) => window.dispatchEvent(new window.KeyboardEvent('keydown', { bubbles: true, cancelable: true, ctrlKey: true, key }));
+
+  appZoomSelect.value = '125';
+  appZoomSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
+  await waitForUi(window, 5);
+  shortcut('=');
+  await waitForUi(window, 5);
+  assert.deepEqual(pending.map((entry) => entry.percent), [125, 150]);
+
+  pending[0].release();
   await waitForUi(window, 30);
+  assert.equal(window.__rendererState.ui.appZoomPercent, 150, 'the acknowledged 125% does not replace the newer shortcut step');
 
-  assert.equal(appZoomSelect.value, '150', "a stale 125% response must not clobber the newer 150% result");
+  shortcut('-');
+  await waitForUi(window, 5);
+  assert.deepEqual(pending.map((entry) => entry.percent), [125, 150, 125], 'the step down starts from 150%');
+  pending[1].release();
+  pending[2].release();
+  await waitForUi(window, 30);
+  assert.equal(window.__rendererState.ui.appZoomPercent, 125);
+  assert.equal(appZoomSelect.value, '125');
 });
 
 test('UIUX-028(c): two overlapping App Zoom writes BOTH failing roll back to the true baseline, never a stranded intermediate', async (t) => {
@@ -641,7 +661,7 @@ test('UIUX-028(c): two overlapping App Zoom writes BOTH failing roll back to the
   });
   const doc = window.document;
   const appZoomSelect = doc.getElementById('appearanceAppZoomSelect');
-  assert.equal(appZoomSelect.value, '100', 'true persisted baseline');
+  assert.equal(appZoomSelect.value, '110', 'true persisted baseline');
 
   appZoomSelect.value = '125';
   appZoomSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
@@ -651,17 +671,17 @@ test('UIUX-028(c): two overlapping App Zoom writes BOTH failing roll back to the
   appZoomSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
   await waitForUi(window, 5);
 
-  // The newer (150) write fails FIRST...
-  rejecters.get(150)();
-  await waitForUi(window, 30);
-  // ...then the older (125) write fails LAST.
+  // The older (125) write fails first; the queued (150) write then goes out
+  // from the acknowledged baseline and fails too.
   rejecters.get(125)();
+  await waitForUi(window, 30);
+  rejecters.get(150)();
   await waitForUi(window, 30);
 
   assert.equal(
     appZoomSelect.value,
-    '100',
-    'when every overlapping write fails, the select must return to the true persisted baseline (100%), '
+    '110',
+    'when every overlapping write fails, the select must return to the true persisted baseline (110%), '
       + 'never strand on the intermediate optimistic 125% that was never persisted'
   );
 });
@@ -671,11 +691,17 @@ test('appearance card groups its controls into labelled scopes with accessible s
   const doc = window.document;
   const card = doc.querySelector('section.settings-card[data-settings-section="appearance"]');
 
-  // Five primary field groups remain labelled regions (Theme, Typography,
-  // Chat layout, Background, Display scale); Advanced is a collapsed
-  // disclosure rather than another form region.
+  // Five primary field groups are labelled regions (Theme, Typography,
+  // Language, Chat layout, Background); Advanced is a collapsed fold that
+  // also holds the app zoom, rather than another form region.
   const groups = card.querySelectorAll('.settings-group[role="group"]');
   assert.equal(groups.length, 5);
+  assert.ok(doc.getElementById('appearanceLanguageField').closest('.settings-group').contains(doc.getElementById('appearanceLanguageHeading')), 'the Language heading sits in the group it names');
+  assert.ok(card.querySelector('details.appearance-advanced #appearanceAppZoomSelect'), 'app zoom sits in the Advanced fold');
+  const chatLayout = doc.getElementById('appearanceChatLayoutHeading').closest('.settings-group');
+  assert.ok(segmentedGroup(chatLayout, 'transcriptViewDefaultSelect'), 'the transcript view is a Chat layout row');
+  assert.ok(chatLayout.querySelector('[data-inv-toggle="appearanceArtifactAutoOpenToggle"]'), 'artifact auto-open is a Chat layout row');
+  assert.equal(doc.getElementById('appearanceHoloList').querySelector('[data-inv-toggle="appearanceArtifactAutoOpenToggle"]'), null);
   for (const group of groups) {
     assert.equal(group.getAttribute('role'), 'group');
     const headingId = group.getAttribute('aria-labelledby');
@@ -683,19 +709,26 @@ test('appearance card groups its controls into labelled scopes with accessible s
   }
 
   // Every appearance select is programmatically labelled, and the owner's
-  // font-scale / zoom ids survived the regroup (id-stable wiring).
+  // zoom id survived the regroup (id-stable wiring).
   const selectIds = [
     'appearanceThemeBundleSelect',
     'appearancePaletteSelect',
     'appearanceTypographySelect',
-    'appearanceFontScaleSelect',
-    'appearanceChatWidthSelect',
     'appearanceSurfaceEffectSelect',
     'appearanceAppZoomSelect',
   ];
   for (const id of selectIds) {
     assert.ok(card.querySelector(`#${id}`), `${id} still present`);
-    assert.ok(card.querySelector(`label.settings-field-label[for="${id}"]`), `${id} has a label[for]`);
+    assert.ok(card.querySelector(`label[for="${id}"]`), `${id} has a label[for]`);
+    assert.ok(card.querySelector(`#${id}`).getAttribute('aria-label'), `${id} carries an accessible name`);
+    assert.ok(card.querySelector(`[data-settings-field="${id}"] .settings-field-title`)?.textContent, `${id} row has a title`);
+  }
+  // Text size and Chat width (two to four choices) are named radio groups.
+  for (const id of ['appearanceFontScaleSelect', 'appearanceChatWidthSelect']) {
+    const group = segmentedGroup(card, id);
+    assert.equal(group?.getAttribute('role'), 'radiogroup', `${id} is a radio group`);
+    assert.ok(group.getAttribute('aria-label'), `${id} carries an accessible name`);
+    assert.ok(card.querySelector(`[data-settings-field="${id}"] .settings-field-title`)?.textContent, `${id} row has a title`);
   }
 
   assert.equal(doc.getElementById('appearanceMotionSelect'), null);
@@ -709,7 +742,7 @@ test('appearance card groups its controls into labelled scopes with accessible s
   assert.equal(doc.getElementById('appearanceResetButton').closest('.settings-group'), null);
 
   // The appearance status note announces politely (T9).
-  assert.equal(doc.getElementById('appearanceStatus').getAttribute('aria-live'), 'polite');
+  assert.equal(doc.getElementById('appearanceStatus'), null);
 });
 
 // Chat width (Appearance > Chat layout). One control, localStorage-backed like
@@ -718,36 +751,24 @@ test('chat width persists as a root data attribute and survives a theme-bundle s
   const { window } = await loadRendererTestApp(t);
   const doc = window.document;
   const root = doc.documentElement;
-  const widthSelect = doc.getElementById('appearanceChatWidthSelect');
+  const widthGroup = segmentedGroup(doc, 'appearanceChatWidthSelect');
 
-  assert.ok(widthSelect, 'the Chat width select is mounted in the Appearance card');
-  // The control comes from the inventory selectField primitive (index.html's
-  // raw-primitive budget only moves down), so it must carry select-shell to
-  // pick up the exact styling its sibling select rows already use.
-  assert.ok(
-    widthSelect.closest('label.select-shell'),
-    'the mounted control inherits the card select-shell grammar -- no new CSS needed'
-  );
-  assert.equal(
-    widthSelect.closest('label.select-shell').getAttribute('for'),
-    'appearanceChatWidthSelect',
-    'the wrapper label is associated with the select'
-  );
+  assert.ok(widthGroup, 'the Chat width control is mounted in the Appearance card');
+  assert.ok(widthGroup.closest('[data-setting-mount="appearanceChatWidthSelect"]'), 'inside its mount host');
   assert.deepEqual(
-    [...widthSelect.options].map((option) => option.value),
-    ['default', 'wide'],
+    segmentedOptions(doc, 'appearanceChatWidthSelect').map((option) => option.value),
+    ['narrow', 'standard'],
     'exactly two modes are offered'
   );
-  assert.equal(root.dataset.chatWidth, 'default', 'Default is the boot state');
+  assert.equal(root.dataset.chatWidth, 'standard', 'Standard is the boot state (owner, 2026-10-02)');
 
-  widthSelect.value = 'wide';
-  widthSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
+  widthGroup.querySelector('[data-value="narrow"]').click();
   await waitForUi(window, 30);
 
-  assert.equal(root.dataset.chatWidth, 'wide', 'the axis lands on <html> for the CSS to key off');
+  assert.equal(root.dataset.chatWidth, 'narrow', 'the axis lands on <html> for the CSS to key off');
   assert.equal(
     JSON.parse(window.localStorage.getItem('jenny.appearance.v2')).chatWidthId,
-    'wide',
+    'narrow',
     'the choice is persisted for the next boot'
   );
 
@@ -759,20 +780,18 @@ test('chat width persists as a root data attribute and survives a theme-bundle s
   await waitForUi(window, 30);
 
   assert.equal(root.dataset.palette, 'pewter', 'the bundle axes it does document still apply');
-  assert.equal(root.dataset.chatWidth, 'wide', 'a bundle switch must not reset Chat width');
-  assert.equal(widthSelect.value, 'wide');
+  assert.equal(root.dataset.chatWidth, 'narrow', 'a bundle switch must not reset Chat width');
+  assert.equal(segmentedValue(doc, 'appearanceChatWidthSelect'), 'narrow');
 });
 
-test('choosing Wide re-enables Reset Appearance rather than leaving it stranded as disabled', async (t) => {
+test('choosing Narrow re-enables Reset Appearance rather than leaving it stranded as disabled', async (t) => {
   const { window } = await loadRendererTestApp(t);
   const doc = window.document;
-  const widthSelect = doc.getElementById('appearanceChatWidthSelect');
   const resetButton = doc.getElementById('appearanceResetButton');
 
   assert.equal(resetButton.disabled, true, 'a pristine profile has nothing to reset');
 
-  widthSelect.value = 'wide';
-  widthSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
+  segmentedGroup(doc, 'appearanceChatWidthSelect').querySelector('[data-value="narrow"]').click();
   await waitForUi(window, 30);
 
   // isDefaultAppearancePreferences enumerates axes explicitly; omitting
@@ -780,28 +799,26 @@ test('choosing Wide re-enables Reset Appearance rather than leaving it stranded 
   assert.equal(resetButton.disabled, false, 'Chat width counts as a non-default appearance');
 });
 
-test('the JS-mounted Chat width select keeps a stable node and still gets a per-field reset button', async (t) => {
+test('the JS-mounted Chat width control keeps a stable node and carries the shared Revert', async (t) => {
   const { window } = await loadRendererTestApp(t);
   const doc = window.document;
-  const widthSelect = doc.getElementById('appearanceChatWidthSelect');
+  const widthGroup = segmentedGroup(doc, 'appearanceChatWidthSelect');
+  const narrow = widthGroup.querySelector('[data-value="narrow"]');
 
-  // Because renderSettings() mounts this control rather than index.html, two
-  // things could silently break: the per-field reset button binds to a node
-  // that must already exist when fieldReset.mount() runs, and a re-render must
-  // repopulate the LIVE select rather than replacing it (a replaced node would
-  // orphan that button's listener).
-  widthSelect.value = 'wide';
-  widthSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
+  // renderSettings() mounts this control rather than index.html, so a
+  // re-render must patch the LIVE control rather than replacing it.
+  narrow.click();
   await waitForUi(window, 30);
 
-  assert.equal(
-    doc.getElementById('appearanceChatWidthSelect'),
-    widthSelect,
-    're-rendering repopulates the live select in place instead of replacing the node'
-  );
-  assert.ok(
-    doc.querySelector('[data-action="appearanceChatWidthSelectReset"]'),
-    'the per-field reset button found the mounted select'
-  );
-  assert.equal(widthSelect.value, 'wide', 'the re-render preserves the chosen value');
+  assert.equal(segmentedGroup(doc, 'appearanceChatWidthSelect'), widthGroup, 're-rendering patches the live group in place');
+  assert.equal(widthGroup.querySelector('[data-value="narrow"]'), narrow, 'and keeps its option nodes (keyboard focus survives)');
+  assert.equal(segmentedValue(doc, 'appearanceChatWidthSelect'), 'narrow', 'the re-render preserves the chosen value');
+  const revert = doc.querySelector('[data-setting-revert="appearanceChatWidthSelect"]');
+  assert.ok(revert && !revert.hidden, 'a modified Chat width offers the shared Revert');
+
+  revert.click();
+  await waitForUi(window, 30);
+  assert.equal(segmentedValue(doc, 'appearanceChatWidthSelect'), 'standard');
+  assert.equal(doc.documentElement.dataset.chatWidth, 'standard');
+  assert.equal(segmentedGroup(doc, 'appearanceChatWidthSelect'), widthGroup);
 });

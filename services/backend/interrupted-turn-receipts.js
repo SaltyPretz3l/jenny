@@ -15,7 +15,7 @@
 // `tool_executing`, `tool_result`, `approval_requested`, `approval_resolved`,
 // `assistant_error`), not canonical `type` events, so detection keys on `kind`.
 
-const { buildCommitResult } = require('./conversation-store-port');
+const { finalizeCommit, hasDurableProof } = require('./conversation-store-port');
 const { normalizeString } = require('../shared/normalize');
 
 // Keep these three bounds in sync with sidecar/ai/context/runtime_overlays.py's
@@ -199,42 +199,22 @@ function summarizeInterruptedTurnEvents(events, { cap = DEFAULT_RECEIPTS_CAP } =
   };
 }
 
-// Discard the surviving journal partition once its receipts have been read
-// and forwarded, so the same "Previous Turn Interruption" ledger does not
-// re-render on every subsequent chat.send until the session is edited,
-// deleted, or the app relaunches (the bug this fixes).
-//
-// journal.clear() unconditionally requires a durable commit proof
-// (hasDurableProof in conversation-store-port.js) as its crash-recovery
-// safety gate -- every OTHER caller (session-turn-events.js,
-// chat-stream-terminal-coordinator.js's `_clearJournal`) only clears after a
-// real canonical-store commit succeeded durably. An interrupted turn's raw
-// events, by definition, never completed that normal persist-then-clear path
-// (the terminal commit never ran -- that is exactly why the partition still
-// exists), so there is no real store commit here to attach a proof to. We
-// deliberately construct a self-consistent commit-result stand-in to satisfy
-// the gate, accepting an AT-MOST-ONCE delivery tradeoff: if the process
-// crashes between this clear and the model actually receiving the forwarded
-// receipts (still in-flight as part of THIS chat.send), the ledger is lost
-// for good and the next turn sees a clean journal with no receipts. That is
-// strictly better than the alternative this fix replaces -- the same
-// receipts repeating forever. Failures (thrown or non-durable) are fail-soft:
-// one WARNING, and the already-built summary is still returned.
-function _clearInterruptedTurnPartition({ journal, sessionId, turnId, logger }) {
-  if (!journal || typeof journal.clear !== 'function') {
-    return;
-  }
+// A successful chat.send response acknowledges delivery. Only then clear the
+// partition, using actual canonical-store durability epochs. Failed sends and
+// cancellations leave it intact. A crash before clearing can repeat receipts;
+// a crash after delivery cannot erase evidence that was never sent.
+function acknowledgeInterruptedTurnReceipts({ journal, store, sessionId, receipts, result, logger } = {}) {
+  if (result?.status !== 'completed' && result?.status !== 'paused') return;
+  if (!receipts?.turn_id || !journal || typeof journal.clear !== 'function') return;
   try {
-    const commitResult = buildCommitResult({
-      ok: true,
-      applied: false,
-      durable: true,
-      reason: 'interrupted_turn_receipts_consumed',
-      commitEpoch: 1,
-      dirtyEpoch: 1,
-      durableEpoch: 1,
+    const commitResult = finalizeCommit(store, sessionId, {
+      accepted: Boolean(store?.getSession?.(sessionId)), durableRequested: true,
     });
-    const result = journal.clear(sessionId, turnId, { commitResult });
+    if (!hasDurableProof(commitResult)) {
+      logger?.('WARN', 'chat.interrupted_turn_receipts_clear_failed', { reason: 'durability_failed' });
+      return;
+    }
+    const result = journal.clear(sessionId, receipts.turn_id, { commitResult });
     if (!result || result.ok !== true || result.durable !== true) {
       if (typeof logger === 'function') {
         logger('WARN', 'chat.interrupted_turn_receipts_clear_failed', {
@@ -299,12 +279,6 @@ function computeInterruptedTurnReceipts({ journal, sessionId, currentTurnId, cap
     });
     const best = candidates[0];
     const summary = { ...best.receipts, turn_id: best.turnId };
-    _clearInterruptedTurnPartition({
-      journal,
-      sessionId: normalizedSessionId,
-      turnId: best.turnId,
-      logger,
-    });
     return summary;
   } catch (error) {
     if (typeof logger === 'function') {
@@ -322,6 +296,7 @@ function computeInterruptedTurnReceipts({ journal, sessionId, currentTurnId, cap
 
 module.exports = {
   DEFAULT_RECEIPTS_CAP,
+  acknowledgeInterruptedTurnReceipts,
   computeInterruptedTurnReceipts,
   summarizeInterruptedTurnEvents,
 };

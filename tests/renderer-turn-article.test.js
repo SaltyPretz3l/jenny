@@ -130,13 +130,11 @@ function createPipeline(options = {}) {
       failActivity() {},
       beginActivity() {},
       getCurrentRuntimePreferences() { return {}; },
-      syncComposerModelSelectWidth() {},
       renderComposerEnhancements() {},
       renderMarkdown(text) { return `<p>${escapeHtml(text)}</p>`; },
       renderStreamingMarkdownUnits(text) {
         return { html: `<p>${escapeHtml(text)}</p>`, units: [], fingerprints: [], changedStartIndex: -1 };
       },
-      publishLifecycleStatus() {},
       renderBackendBanner() {},
       getChatSendLifecycle() { return 'idle'; },
       getChatTimelineRowModelEnabled() { return false; },
@@ -832,7 +830,8 @@ test('context compaction notice pluralises the count and renders one body row pe
   // hardcoded English " at ".
   assert.match(rows[0].querySelector('.context-compacted-notice-value')?.textContent || '', /^Compaction 1: /);
   assert.doesNotMatch(html, / at \d/);
-  assert.match(html, /Summarizer failed; used a bounded fallback/);
+  // HB-028: a failed summary always falls back to trimming; no summary exists.
+  assert.match(html, /Compaction 3 \(latest\)[^]*Automatic summarization failed; a bounded fallback was used[^<]*Trimmed without summarizing/);
   assert.match(html, /Mid-task, inside the tool loop/);
   assert.match(html, /Folded 7 messages \/ 2,048 bytes/);
   assert.match(html, /Some older messages were omitted from the summarizer input/);

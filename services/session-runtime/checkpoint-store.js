@@ -3,13 +3,16 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { createHash } = require('node:crypto');
-const { createRuntimeStoreIO } = require('./store');
+const { createRuntimeStoreIO } = require('./store-io');
 const { MAX_CHECKPOINT_BYTES, normalizeCheckpointRef, stableJson, validId } = require('./contracts');
 const { decodeContinuation } = require('./continuation-contracts');
 const { decodeRetirement, beginRetirement, completeRetirement } = require('./checkpoint-retirement');
 
 const MAX_TOTAL_BYTES = 64 * 1024 * 1024;
 const MAX_RECORDS = 4096;
+// Retired tombstones no longer take active capacity (DLG-06), but every reader
+// still bounds the directory walk.
+const MAX_DIRECTORY_ENTRIES = MAX_RECORDS * 4;
 const MAX_DOCUMENT_BYTES = Math.ceil(MAX_CHECKPOINT_BYTES / 3) * 4 + 4096;
 
 function failure(code) {
@@ -71,9 +74,10 @@ function validatePortableCheckpointSnapshot(value) {
   if (value?.schema_version > 1) throw failure('checkpoint_snapshot_future_schema');
   if (!value || Object.keys(value).sort().join(',') !== 'records,schema_version'
     || value.schema_version !== 1 || !Array.isArray(value.records)
-    || value.records.length > MAX_RECORDS) throw failure('checkpoint_snapshot_invalid');
+    || value.records.length > MAX_DIRECTORY_ENTRIES) throw failure('checkpoint_snapshot_invalid');
   const ids = new Set();
   let totalBytes = 0;
+  let activeRecords = 0;
   const records = value.records.map((item) => {
     if (!item || Object.keys(item).sort().join(',') !== 'checkpoint_id,document'
       || !validId(item.checkpoint_id) || ids.has(item.checkpoint_id)) {
@@ -83,36 +87,12 @@ function validatePortableCheckpointSnapshot(value) {
     if (decoded.reference.checkpoint_id !== item.checkpoint_id) throw failure('checkpoint_filename_conflict');
     ids.add(item.checkpoint_id);
     if (decoded.state === 'retiring') throw failure('checkpoint_retirement_pending');
+    if (decoded.state !== 'retired' && ++activeRecords > MAX_RECORDS) throw failure('checkpoint_record_capacity');
     totalBytes += decoded.chargedBytes;
     if (totalBytes > MAX_TOTAL_BYTES) throw failure('checkpoint_body_capacity');
     return { checkpoint_id: item.checkpoint_id, document: structuredClone(decoded.document) };
   });
   return Object.freeze({ schema_version: 1, records: Object.freeze(records) });
-}
-
-function readStableJsonFile(filePath, maxBytes) {
-  let descriptor;
-  try {
-    descriptor = fs.openSync(filePath, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0));
-    const before = fs.fstatSync(descriptor);
-    if (!before.isFile() || before.nlink !== 1 || before.size > maxBytes) {
-      throw failure('checkpoint_document_invalid');
-    }
-    const bytes = Buffer.allocUnsafe(before.size);
-    let offset = 0;
-    while (offset < bytes.length) {
-      const count = fs.readSync(descriptor, bytes, offset, bytes.length - offset, offset);
-      if (!count) break;
-      offset += count;
-    }
-    const after = fs.fstatSync(descriptor);
-    if (offset !== before.size || after.size !== before.size || after.mtimeMs !== before.mtimeMs
-      || after.ctimeMs !== before.ctimeMs
-      || String(after.dev) !== String(before.dev) || String(after.ino) !== String(before.ino)) {
-      throw failure('checkpoint_document_invalid');
-    }
-    return JSON.parse(bytes.toString('utf8'));
-  } finally { if (descriptor !== undefined) fs.closeSync(descriptor); }
 }
 
 function readPortableCheckpointSnapshot(root) {
@@ -128,7 +108,7 @@ function readPortableCheckpointSnapshot(root) {
   if (!rootStat.isDirectory() || rootStat.isSymbolicLink()) throw failure('checkpoint_root_changed');
   const realRoot = fs.realpathSync.native(resolvedRoot);
   const entries = fs.readdirSync(resolvedRoot, { withFileTypes: true });
-    if (entries.length > MAX_RECORDS) throw failure('checkpoint_record_capacity');
+    if (entries.length > MAX_DIRECTORY_ENTRIES) throw failure('checkpoint_record_capacity');
     const records = entries.map((entry) => {
       const directory = path.join(resolvedRoot, entry.name);
       if (!entry.isDirectory() || !/^[a-f0-9]{64}$/u.test(entry.name)) {
@@ -144,7 +124,9 @@ function readPortableCheckpointSnapshot(root) {
         throw failure('checkpoint_entry_unresolved');
       }
       const before = fs.statSync(directory);
-      const document = readStableJsonFile(path.join(directory, 'record.json'), MAX_DOCUMENT_BYTES);
+      const read = io.readJson(path.join(directory, 'record.json'), { maxBytes: MAX_DOCUMENT_BYTES });
+      if (read.status !== 'ok') throw failure('checkpoint_document_invalid');
+      const document = read.value;
       const decoded = decodePortableDocument(document);
       if (createHash('sha256').update(decoded.reference.checkpoint_id).digest('hex') !== entry.name) {
         throw failure('checkpoint_filename_conflict');
@@ -186,8 +168,10 @@ class CheckpointStore {
       const directory = fs.opendirSync(this.root);
       try {
         let entry;
+        let entries = 0;
+        let activeRecords = 0;
         while ((entry = directory.readSync())) {
-          if (this.records.size >= MAX_RECORDS) throw failure('checkpoint_record_capacity');
+          if (++entries > MAX_DIRECTORY_ENTRIES) throw failure('checkpoint_record_capacity');
           if (!entry.isDirectory() || !/^[a-f0-9]{64}$/u.test(entry.name)) {
             throw failure('checkpoint_entry_unresolved');
           }
@@ -198,6 +182,9 @@ class CheckpointStore {
           const decoded = this._readDirectory(entryPath);
           const id = decoded.reference.checkpoint_id;
           if (this._directory(id) !== entryPath) throw failure('checkpoint_filename_conflict');
+          if (decoded.state !== 'retired' && ++activeRecords > MAX_RECORDS) {
+            throw failure('checkpoint_record_capacity');
+          }
           this.records.set(id, this._metadata(decoded));
           this.totalBytes += decoded.chargedBytes;
           if (this.totalBytes > MAX_TOTAL_BYTES) throw failure('checkpoint_body_capacity');
@@ -211,13 +198,19 @@ class CheckpointStore {
 
   snapshot() {
     return Object.freeze({ schema_version: 1, read_only: this.readOnly, reason: this.reason,
-      record_count: this.records.size, body_bytes: this.totalBytes,
+      record_count: [...this.records.values()].filter(record => record.state !== 'retired').length,
+      body_bytes: this.totalBytes,
       preparing_count: [...this.records.values()].filter(record => record.state === 'preparing').length,
       max_body_bytes: MAX_TOTAL_BYTES, max_record_bytes: MAX_CHECKPOINT_BYTES });
   }
 
   exportPortableSnapshot() {
     if (this.readOnly) throw failure(this.reason || 'checkpoint_store_read_only');
+    // An absent root holds no checkpoints, like the offline reader; registered records without it fail closed.
+    if (this._rootMissing()) {
+      if (this.records.size > 0) throw failure('checkpoint_root_changed');
+      return validatePortableCheckpointSnapshot({ schema_version: 1, records: [] });
+    }
     this._assertRoot();
     const records = [...this.records.keys()].sort().map((checkpointId) => {
       const saved = this._read(checkpointId);
@@ -251,7 +244,11 @@ class CheckpointStore {
       if (stableJson(this._metadata(saved)) !== stableJson(previous)) throw failure('checkpoint_id_conflict');
       return reference;
     }
-    if (this.records.size >= MAX_RECORDS) throw failure('checkpoint_record_capacity');
+    if (this.snapshot().record_count >= MAX_RECORDS) throw failure('checkpoint_record_capacity');
+    // Retired records keep their directories, and the startup walk and portable
+    // snapshot refuse more than MAX_DIRECTORY_ENTRIES: refuse here instead, so a
+    // store that admits a checkpoint can still reopen.
+    if (this.records.size >= MAX_DIRECTORY_ENTRIES) throw failure('checkpoint_record_capacity');
     if (this.totalBytes + body.length + canonicalBytes > MAX_TOTAL_BYTES) throw failure('checkpoint_body_capacity');
     try {
       // A single application owner serializes this synchronous publication.
@@ -478,6 +475,16 @@ class CheckpointStore {
     if (!stat.isDirectory() || stat.isSymbolicLink()
       || fs.realpathSync.native(this.root) !== this.resolvedRoot) {
       throw failure('checkpoint_root_changed');
+    }
+  }
+
+  _rootMissing() {
+    try {
+      fs.lstatSync(this.root);
+      return false;
+    } catch (error) {
+      if (error?.code === 'ENOENT') return true;
+      throw error;
     }
   }
 

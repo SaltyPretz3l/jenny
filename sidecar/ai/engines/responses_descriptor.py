@@ -6,7 +6,8 @@ from collections.abc import Callable, Mapping
 from typing import Any
 from urllib.parse import urlparse
 
-from sidecar.ai.engines.chatgpt_subscription import ChatGPTSubscriptionEngine
+from sidecar.ai.engines.chatgpt_model_catalog import normalize_chatgpt_model_catalog
+from sidecar.ai.engines.chatgpt_subscription import ChatGPTSubscriptionEngine, ModelModality
 from sidecar.ai.engines.responses_descriptor_adapters import CORE_ADAPTERS
 from sidecar.ai.exceptions import GenerationError
 
@@ -157,10 +158,12 @@ class ResponsesDescriptorEngine(ChatGPTSubscriptionEngine):
     def __init__(  # noqa: PLR0913 - provider construction is explicit and secret-safe.
         self, *, descriptor: Mapping[str, Any], model: str, access_token: str,
                  account_id: str | None, max_reasoning_items: int,
-                 authority_check: Callable[[], bool] | None = None) -> None:
+                 authority_check: Callable[[], bool] | None = None,
+                 model_catalog: Any = ()) -> None:
         admitted = validate_responses_descriptor(descriptor)
         self.provider_descriptor = admitted
         self._authority_check = authority_check
+        self.set_model_catalog(model_catalog)
         self._descriptor_context_lengths = {
             str(item["id"]): int(item["context_length"])
             for item in admitted.get("model_catalog", [])
@@ -189,7 +192,29 @@ class ResponsesDescriptorEngine(ChatGPTSubscriptionEngine):
                 raise GenerationError("ChatGPT provider authority is no longer active")
         return (yield from super().stream_with_tools(*args, **kwargs))
 
+    def set_model_catalog(self, value: Any) -> None:
+        self._catalog_profiles = {row["id"]: row for row in normalize_chatgpt_model_catalog(value)}
+
+    def _resolve_reasoning_effort(self, effort: str | None) -> str | None:
+        profile = self._catalog_profiles.get(self.model_name)
+        if profile is None:
+            return effort
+        requested = str(effort or "").strip().lower()
+        normalized = {"minimal": "low", "none": "low", "ultra": "max"}.get(requested, requested)
+        return (normalized if normalized in profile["reasoning_efforts"]
+                else str(profile["default_reasoning_effort"]))
+
+    @property
+    def supported_modalities(self) -> set[ModelModality]:
+        profile = self._catalog_profiles.get(self.model_name)
+        if profile is not None and not profile["vision"]:
+            return {ModelModality.TEXT}
+        return super().supported_modalities
+
     def get_model_context_length(self) -> int:
+        profile = self._catalog_profiles.get(self.model_name)
+        if profile is not None:
+            return int(profile["context_length"])
         return self._descriptor_context_lengths.get(
             self.model_name, super().get_model_context_length()
         )

@@ -1,11 +1,11 @@
 /* renderer/shell/renderer-settings-section-binders.js - Deferred Settings section event binders. */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) {
-    module.exports = factory();
+    module.exports = factory(require('./renderer-settings-field-binding'));
     return;
   }
-  root.rendererSettingsSectionBinders = factory();
-})(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  root.rendererSettingsSectionBinders = factory(root.rendererSettingsFieldBinding);
+})(typeof globalThis !== 'undefined' ? globalThis : this, function (fieldBinding) {
   const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   function createSettingsSectionBinders(deps) {
     const state = deps.state;
@@ -34,42 +34,96 @@
       handleWorkspaceRootChoose,
       clearWorkspaceRoot,
       renderSessions,
+      getProjectSwitcher,
+      setSidebarCollapsed,
     } = callbacks;
     const {
       TOAST_SOURCE = {},
     } = constants;
 
+    // One adapter per persisted object; both are after-ack because the owning
+    // controllers (skills, offline) apply the echoed state and repaint.
+    const confirmError = () => new Error(jt('settings.chatUi.confirmError', 'The saved setting could not be confirmed.'));
+    const fieldRegistry = fieldBinding.createSettingsAdapterRegistry({
+      log: (message) => callbacks.appendClientLog?.('WARN', 'settings.field_adapter', { message }),
+    });
+    fieldRegistry.register({
+      id: 'skills',
+      mode: 'patch',
+      optimistic: false,
+      read: () => state.skills?.settings || {},
+      normalize: (settings) => ({
+        userEnabled: settings.userEnabled === true,
+        projectEnabled: settings.projectEnabled === true,
+        autoIndex: ['auto', 'on', 'off'].includes(settings.autoIndex) ? settings.autoIndex : 'auto',
+      }),
+      // The skills controller toasts its own failure and resolves nothing then.
+      // The acknowledgement is the payload's own settings, before the
+      // controller's normalizer fills a missing key with its default.
+      write: (patch) => Promise.resolve(updateSkillsSettings(patch)).then((payload) => (payload ? payload.settings || {} : undefined)),
+      ack: (echo, patch) => {
+        Object.keys(patch).forEach((key) => { if (echo[key] !== patch[key]) throw confirmError(); });
+        return echo;
+      },
+      apply: (next, keys) => {
+        if (!state.skills?.settings) return;
+        const settings = { ...state.skills.settings };
+        keys.forEach((key) => { settings[key] = next[key]; });
+        state.skills.settings = settings;
+        renderSettings?.();
+      },
+    });
+    fieldRegistry.register({
+      id: 'offline',
+      mode: 'patch',
+      optimistic: false,
+      read: () => ({ localOnly: state.offline?.mode === 'local_only' }),
+      normalize: (value) => ({ localOnly: value.localOnly === true }),
+      write: (patch) => handleOfflineModeChange(patch.localOnly),
+      ack: (echo, patch) => {
+        if ((echo?.mode === 'local_only') !== patch.localOnly) throw confirmError();
+        return { localOnly: patch.localOnly };
+      },
+      // The offline controller owns state.offline and repaints on both paths.
+      apply: () => {},
+    });
+
     function bindSkills(registerSectionListener, finalizeSectionBindings) {
       const skillsDom = getLazySectionDom('skills');
       const section = skillsDom.skillsSettingsSection;
-      const skillsScopePatchKeys = {
-        skillsUserToggle: 'userEnabled',
-        skillsProjectToggle: 'projectEnabled',
-      };
+      fieldBinding.bindSettingFields({
+        container: section,
+        ids: ['skillsUserToggle', 'skillsProjectToggle', 'skillsAutoIndexToggle'],
+        registry: fieldRegistry,
+        registerListener: registerSectionListener,
+      });
+      // A per-skill switch writes the whole disabled list, so each write waits
+      // for the previous acknowledgement and builds on the state it left.
+      let skillWrite = null;
+      function writeSkillEnabled(skillId, enabled) {
+        const run = () => {
+          const current = Array.isArray(state.skills?.settings?.disabledSkillIds)
+            ? state.skills.settings.disabledSkillIds.map((id) => String(id || '').trim()).filter(Boolean)
+            : [];
+          const next = new Set(current);
+          if (enabled) next.delete(skillId);
+          else next.add(skillId);
+          // The skills controller toasts its own failure and resolves nothing
+          // then; the repaint returns the switch to the saved state.
+          return Promise.resolve(updateSkillsSettings({ disabledSkillIds: Array.from(next) }))
+            .then((payload) => { if (!payload) renderSettings?.(); }, () => { renderSettings?.(); });
+        };
+        const queued = skillWrite ? skillWrite.then(run) : run();
+        skillWrite = queued;
+        queued.then(() => { if (skillWrite === queued) skillWrite = null; });
+      }
       registerSectionListener(section, 'inv-toggle-change', (event) => {
         const detail = (event && event.detail) || {};
         const toggleId = String(detail.id || '');
         if (toggleId.startsWith('skillToggle:')) {
           const skillId = toggleId.slice('skillToggle:'.length);
-          if (!skillId) return;
-          const current = Array.isArray(state.skills?.settings?.disabledSkillIds)
-            ? state.skills.settings.disabledSkillIds.map((id) => String(id || '').trim()).filter(Boolean)
-            : [];
-          const next = new Set(current);
-          if (detail.checked === true) next.delete(skillId);
-          else next.add(skillId);
-          updateSkillsSettings({ disabledSkillIds: Array.from(next) });
-          return;
+          if (skillId) writeSkillEnabled(skillId, detail.checked === true);
         }
-        if (toggleId === 'skillsAutoIndexToggle') {
-          updateSkillsSettings({ autoIndex: detail.checked === true ? 'on' : 'off' });
-          return;
-        }
-        const patchKey = skillsScopePatchKeys[toggleId];
-        if (!patchKey) {
-          return;
-        }
-        updateSkillsSettings({ [patchKey]: detail.checked === true });
       });
       registerSectionListener(section, 'click', (event) => {
         const target = event.target?.closest?.('[data-skills-action]');
@@ -90,14 +144,14 @@
 
     function bindOffline(registerSectionListener, finalizeSectionBindings) {
       const offlineDom = getLazySectionDom('offline');
-      registerSectionListener(offlineDom.offlineLocalOnlyList, 'inv-toggle-change', (event) => {
-        const detail = (event && event.detail) || {};
-        if (detail.id !== 'offlineLocalOnlyToggle') {
-          return;
-        }
-        handleOfflineModeChange(detail.checked === true).catch((error) => {
-          showSessionActionError(error, jt('settings.offline.updateFailed', 'Offline Update Failed'));
-        });
+      fieldBinding.bindSettingFields({
+        container: offlineDom.offlineLocalOnlyList,
+        ids: ['offlineLocalOnlyToggle'],
+        registry: fieldRegistry,
+        registerListener: registerSectionListener,
+        onError: (_descriptor, error, shown) => {
+          if (!shown?.inline) showSessionActionError(error, jt('settings.offline.updateFailed', 'Offline Update Failed'));
+        },
       });
       registerSectionListener(offlineDom.offlineModelActions, 'click', (event) => {
         if (!event.target?.closest?.('[data-action="openOfflineModelLibrary"]')) return;
@@ -106,7 +160,6 @@
       return finalizeSectionBindings();
     }
 
-    let remoteSection = null;
     let sessionRuntimeController = null;
     function bindRuntime(_registerSectionListener, finalizeSectionBindings, context = {}) {
       const windowRef = deps.windowRef || globalThis;
@@ -123,6 +176,8 @@
           chooseWorkspaceRoot: handleWorkspaceRootChoose,
           clearWorkspaceRoot,
           renderSessions,
+          getProjectSwitcher,
+          setSidebarCollapsed,
         })
         || null;
       sessionRuntimeController?.bind?.();
@@ -131,85 +186,158 @@
       return finalizeSectionBindings();
     }
 
-    // Developer > Runtime limits: the work ledger + per-lane limits console. Its
-    // two scripts load on first bind (never at startup); a failed load leaves a
-    // retry button in the mount. Disposal during load drops the late arrival.
-    let orchestrationController = null;
-    function bindRuntimeLimits(_registerSectionListener, finalizeSectionBindings, context = {}) {
+    // Diagnostics › Runs and Settings › Developer › Runtime limits share ONE
+    // controller, so one poller serves both. Its three scripts load on first
+    // attach (never at startup); a failed load leaves a retry button in the
+    // Runs mount. A release during load drops the late arrival, and the last
+    // view to go disposes the controller.
+    const RUNTIME_CONSOLE_SCRIPTS = Object.freeze([
+      ['rendererRunsView', 'renderer/shell/renderer-runs-view.js'],
+      ['rendererRuntimeLimitsView', 'renderer/shell/renderer-runtime-limits-view.js'],
+      ['rendererOrchestrationController', 'renderer/shell/renderer-orchestration-controller.js'],
+    ]);
+    let runtimeConsole = null;
+    let runtimeConsoleLoading = null;
+    const runtimeConsoleSections = new Set();
+    function loadRuntimeConsole(windowRef) {
+      if (runtimeConsole) return Promise.resolve(runtimeConsole);
+      if (runtimeConsoleLoading) return runtimeConsoleLoading;
+      runtimeConsoleLoading = (async () => {
+        for (const [name, src] of RUNTIME_CONSOLE_SCRIPTS) {
+          const loaded = windowRef[name] || await windowRef.scriptLoaderUtils?.ensureScript?.({ src, isReady: () => Boolean(windowRef[name]) });
+          if (!loaded || !windowRef[name]) throw new Error('runtime_view_unavailable');
+        }
+        if (!runtimeConsoleSections.size) return null;
+        runtimeConsole = windowRef.rendererOrchestrationController.createController({
+          state, windowRef, openSession: callbacks.openSession, setActiveView: callbacks.setActiveView,
+          listProjects: () => windowRef.jennyShell?.projects?.list?.(),
+        });
+        runtimeConsole.bind();
+        return runtimeConsole;
+      })().finally(() => { runtimeConsoleLoading = null; });
+      return runtimeConsoleLoading;
+    }
+    // Attaches one view ('runs' or 'limits') to the shared console; returns its release.
+    function attachRuntimeConsole(kind, host) {
       const windowRef = deps.windowRef || globalThis;
-      const host = getLazySectionDom('runtimeLimits').sessionOrchestrationMount || null;
+      const token = {};
       let disposed = false;
-      let loading = false;
       const button = (config) => (typeof windowRef.inventoryActionButton === 'function' ? windowRef.inventoryActionButton(config) : '');
       async function load() {
-        if (disposed || orchestrationController || loading || !host) return;
-        loading = true;
+        if (disposed || !host) return;
         try {
-          for (const [name, src] of [
-            ['rendererOrchestrationView', 'renderer/shell/renderer-orchestration-view.js'],
-            ['rendererOrchestrationController', 'renderer/shell/renderer-orchestration-controller.js'],
-          ]) {
-            const loaded = windowRef[name] || await windowRef.scriptLoaderUtils?.ensureScript?.({ src, isReady: () => Boolean(windowRef[name]) });
-            if (disposed) return;
-            if (!loaded || !windowRef[name]) throw new Error('runtime_view_unavailable');
-          }
-          orchestrationController = windowRef.rendererOrchestrationController.createController({
-            state, windowRef, host, openSession: callbacks.openSession, setActiveView: callbacks.setActiveView,
-            isVisible: () => state.ui?.activeView === 'settings' && state.ui?.activeSettingsSection === 'runtimeLimits',
-          });
-          orchestrationController.bind();
+          const controller = await loadRuntimeConsole(windowRef);
+          if (disposed || !controller) return;
+          if (kind === 'limits') getAdvancedTuningSection(windowRef)?.render(getLazySectionDom('advanced'));
+          controller.attach(kind, host);
         } catch (_error) {
-          if (!disposed) host.innerHTML = button({ id: 'runtime-load-retry',
-            label: jt('runtime.ui.loadRetry', 'Load runtime controls'), ariaLabel: jt('runtime.ui.loadRetry', 'Load runtime controls') });
-        } finally { loading = false; }
+          const status = kind === 'limits' && host.closest('.settings-card')?.querySelector('[data-limits-status]');
+          if (!disposed && status) {
+            status.textContent = jt('runtime.limits.loadFailed', 'Limits could not be loaded. Restart Jenny to try again.');
+            status.hidden = false;
+          }
+          if (!disposed && kind !== 'limits') host.innerHTML = button({ id: 'runtime-load-retry',
+            label: jt('runtime.runs.loadRetry', 'Try loading again'), ariaLabel: jt('runtime.runs.loadRetry', 'Try loading again') });
+        }
       }
       const retry = (event) => { if (event?.target?.closest?.('[data-action="runtime-load-retry"]')) void load(); };
+      if (host) runtimeConsoleSections.add(token);
       host?.addEventListener?.('click', retry);
       void load();
-      context.addCleanup?.(() => {
+      return function releaseRuntimeConsole() {
+        if (disposed) return;
         disposed = true;
+        runtimeConsoleSections.delete(token);
         host?.removeEventListener?.('click', retry);
-        orchestrationController?.dispose?.();
-        orchestrationController = null;
-      });
+        runtimeConsole?.detach?.(kind);
+        if (!runtimeConsoleSections.size) { runtimeConsole?.dispose?.(); runtimeConsole = null; }
+      };
+    }
+    // Resume polling when the settings shell shows the section again.
+    function runtimeConsoleShown() {
+      runtimeConsole?.resume?.();
+    }
+    function bindRuntimeLimits(_registerSectionListener, finalizeSectionBindings, context = {}) {
+      const windowRef = deps.windowRef || globalThis;
+      const host = getLazySectionDom('advanced').advancedTuningFields || windowRef.document?.getElementById?.('advancedTuningFields') || null;
+      context.addCleanup?.(attachRuntimeConsole('limits', host));
       context.markSectionBound?.();
       return finalizeSectionBindings();
     }
 
-    function bindRemote(_registerSectionListener, finalizeSectionBindings, context = {}) {
-      const windowRef = deps.windowRef || globalThis;
-      remoteSection = remoteSection || windowRef.rendererSettingsRemoteSection?.createRemoteSettingsSection?.({
-        dom: { section: windowRef.document?.querySelector?.('[data-settings-section="remote"]') },
-        shell: windowRef.jennyShell,
-        callbacks: {
-          appendClientLog: typeof callbacks.appendClientLog === 'function'
-            ? callbacks.appendClientLog : function noopAppendClientLog() {},
-          getCurrentSessionId: () => state.currentSessionId,
-        },
-      });
-      context.addCleanup?.(() => remoteSection?.dispose?.());
-      context.markSectionBound?.();
-      return finalizeSectionBindings();
+    // Diagnostics › Runs (owner, 2026-10-03; moved from Settings) reaches the
+    // console through a window seam: Diagnostics has no settings binder and no
+    // openSession/setActiveView of its own. Its Runs tab calls showRuns on each
+    // paint: the first call attaches the board, later ones wake the poll (a
+    // stopped poll reads now, a running one repaints). The controller's own
+    // visibility rule stops the poll when Diagnostics or the tab goes away.
+    // A newer binder set (a settings rebind) releases the older one's board.
+    const diagnosticsRuns = { host: null, release: null };
+    function releaseDiagnosticsRuns() {
+      diagnosticsRuns.release?.();
+      diagnosticsRuns.host = null;
+      diagnosticsRuns.release = null;
+    }
+    function showDiagnosticsRuns(host) {
+      if (!host) return;
+      if (diagnosticsRuns.host === host) { runtimeConsole?.wake?.(); return; }
+      releaseDiagnosticsRuns();
+      diagnosticsRuns.host = host;
+      diagnosticsRuns.release = attachRuntimeConsole('runs', host);
+    }
+    const consoleWindow = deps.windowRef || globalThis;
+    consoleWindow.rendererRuntimeConsole?.dispose?.();
+    const runtimeConsoleSeam = Object.freeze({ showRuns: showDiagnosticsRuns, dispose: releaseDiagnosticsRuns });
+    consoleWindow.rendererRuntimeConsole = runtimeConsoleSeam;
+    // Renderer teardown: the board stops polling and the seam goes with it
+    // (unless a newer binder set already replaced it).
+    function dispose() {
+      releaseDiagnosticsRuns();
+      if (consoleWindow.rendererRuntimeConsole === runtimeConsoleSeam) consoleWindow.rendererRuntimeConsole = null;
     }
 
     // Advanced engine tuning. Built lazily on first bind so a harness that never
     // opens the section never reaches for window.jennyShell or the inventory.
     let advancedTuningSection = null;
-    function bindAdvanced(registerSectionListener, finalizeSectionBindings, context = {}) {
-      const windowRef = deps.windowRef || (typeof globalThis !== 'undefined' ? globalThis : {});
+    let advancedBoundDom = null;
+    function getAdvancedTuningSection(windowRef) {
       const factory = windowRef.rendererSettingsAdvancedSection?.createAdvancedTuningSection;
-      if (typeof factory !== 'function') return finalizeSectionBindings();
-      const advancedDom = getLazySectionDom('advanced');
+      if (typeof factory !== 'function') return null;
       if (!advancedTuningSection) {
         advancedTuningSection = factory({
           inventory: windowRef.inventory,
           getBridge: () => windowRef.jennyShell?.engineTuning || null,
+          getEngineType: () => String(state.status?.engine || state.status?.engine_type || state.modelList?.engine_type || '').toLowerCase(),
+          // Without the limits console the limits half cannot be reset, and the page must say so.
+          resetLimitsToDefaults: () => (runtimeConsole ? runtimeConsole.resetLimitsToDefaults() : Promise.resolve(false)),
         });
       }
-      advancedTuningSection.bind(advancedDom, registerSectionListener);
-      context.addCleanup?.(() => advancedTuningSection?.dispose?.());
-      // The section is lazy, so first bind is also its first paint.
-      void advancedTuningSection.refresh(advancedDom);
+      return advancedTuningSection;
+    }
+    function bindAdvanced(registerSectionListener, finalizeSectionBindings, context = {}) {
+      const windowRef = deps.windowRef || globalThis;
+      const section = getAdvancedTuningSection(windowRef);
+      const advancedDom = getLazySectionDom('advanced');
+      let disposed = false;
+      if (section) context.markSectionBound?.();
+      context.addCleanup?.(() => { disposed = true; section?.dispose?.(); });
+      // Load the existing line renderer before building the shared skeleton.
+      const ready = windowRef.rendererRuntimeLimitsView || windowRef.scriptLoaderUtils?.ensureScript?.({
+        src: 'renderer/shell/renderer-runtime-limits-view.js', isReady: () => Boolean(windowRef.rendererRuntimeLimitsView),
+      });
+      void Promise.resolve(ready).then(() => {
+        if (disposed || !section) return;
+        section.bind(advancedDom, registerSectionListener);
+        advancedBoundDom = advancedDom;
+        context.addCleanup?.(() => { advancedBoundDom = null; });
+        return section.refresh(advancedDom);
+      }).catch(() => {
+        const status = advancedDom.advancedTuningFields?.closest('.settings-card')?.querySelector('[data-limits-status]');
+        if (!disposed && status) {
+          status.textContent = jt('runtime.limits.loadFailed', 'Limits could not be loaded. Restart Jenny to try again.');
+          status.hidden = false;
+        }
+      });
       return finalizeSectionBindings();
     }
 
@@ -325,7 +453,6 @@
       skills: bindSkills,
       advanced: bindAdvanced,
       offline: bindOffline,
-      remote: bindRemote,
       personality: bindPersonality,
       memories: bindMemories,
       runtime: bindRuntime,
@@ -343,8 +470,22 @@
       return finalizeSectionBindings();
     }
 
+    // The section binds once; showing it again re-reads the engine state, so a
+    // lock taken during a reply does not outlive it (SW1-2 / F14).
+    function advancedShown() {
+      if (advancedBoundDom) void advancedTuningSection?.refresh?.(advancedBoundDom);
+    }
+    const sectionShownHandlers = Object.freeze({
+      runtimeLimits: runtimeConsoleShown, advanced: advancedShown,
+    });
+    function sectionShown(sectionId) {
+      sectionShownHandlers[String(sectionId || '').trim()]?.();
+    }
+
     return {
       bindSection,
+      sectionShown,
+      dispose,
     };
   }
 

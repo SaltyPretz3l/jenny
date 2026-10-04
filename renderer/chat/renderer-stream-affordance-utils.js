@@ -80,7 +80,6 @@
     let cleared = false;
     for (const rootNode of roots) {
       cleared = removeClass(rootNode, 'pending') || cleared;
-      cleared = removeClass(rootNode, 'stream-reveal-entry') || cleared;
       cleared = removeAttr(rootNode, 'data-streaming-message-id') || cleared;
       collectSelfAndDescendants(rootNode, '[data-streaming-row], [data-streaming-message-id]').forEach((node) => {
         cleared = removeAttr(node, 'data-streaming-row') || cleared;
@@ -88,7 +87,6 @@
       });
       collectSelfAndDescendants(rootNode, '.chat-stream-unit').forEach((unit) => {
         cleared = removeClass(unit, 'is-streaming-tail') || cleared;
-        cleared = removeClass(unit, 'is-revealed') || cleared;
         cleared = removeAttr(unit, 'data-stream-unit-index') || cleared;
       });
       // Reasoning soft-landing units: strip the live reveal marker + stagger so a

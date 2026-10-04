@@ -35,11 +35,14 @@ def inspect_server(  # noqa: PLR0911 -- explicit bounded validation/failure cont
             "ok": False,
             "failure": {"code": CMP_MCP_SSE_DISABLED, "reason": "transport_unsupported"},
         }
+    sse_enabled = params.get("mcp_sse_enabled") is True
+    if transport_kind == "sse" and not sse_enabled:
+        return {"ok": False, "failure": {"code": CMP_MCP_SSE_DISABLED, "reason": "sse_disabled"}}
     client = MCPClient(request_timeout_seconds=15.0)
     client._allow_private_addresses = bool(allow_private_addresses)
     probe_transport = None
     try:
-        parsed = _parse_mcp_servers([server], sse_enabled=transport_kind == "sse")
+        parsed = _parse_mcp_servers([server], sse_enabled=sse_enabled)
         if len(parsed) != 1:
             raise ValueError("server_invalid")
         config = replace(
@@ -47,14 +50,16 @@ def inspect_server(  # noqa: PLR0911 -- explicit bounded validation/failure cont
             request_timeout_seconds=min(parsed[0].request_timeout_seconds, 15.0),
             init_timeout_seconds=min(parsed[0].init_timeout_seconds, 15.0),
         )
-        probe_transport = client._build_transport(config, sse_enabled=transport_kind == "sse")
+        probe_transport = client._build_transport(config, sse_enabled=sse_enabled)
         raw_tools = probe_transport.list_tools(cancel_handle=cancel_handle)
         tools, malformed_count = summarize_tools(raw_tools)
         return {
             "ok": True,
             "identity": {"name": config.name},
             "transport": config.transport,
-            "tools": tools,
+            # The digest covers the full rows; the reply carries display rows only, so a
+            # large schema surface cannot exceed the Electron frame limit.
+            "tools": [{k: v for k, v in row.items() if k != "inputSchema"} for row in tools],
             "tools_digest": tools_digest(tools),
             "tool_count": len(tools),
             "malformed_tool_count": malformed_count,

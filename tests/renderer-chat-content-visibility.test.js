@@ -571,7 +571,7 @@ test('styles/chat-thread.css pins the content-visibility rule + the exemption ov
   // The paint-skip rule itself, scoped to the flag-mirror attribute selector.
   assert.match(
     css,
-    /:root\[data-chat-content-visibility="on"\]\s*#chatTimeline\[data-timeline-render-strategy="content-visibility"\]\s*\.chat-entry\s*\{[^}]*content-visibility:\s*auto;/,
+    /:root\[data-chat-content-visibility="on"\]\s*\.chat-timeline\[data-timeline-render-strategy="content-visibility"\]\s*\.chat-entry\s*\{[^}]*content-visibility:\s*auto;/,
     'expected content-visibility only under the CSS-only timeline strategy'
   );
 
@@ -591,12 +591,12 @@ test('styles/chat-thread.css pins the content-visibility rule + the exemption ov
 
   // Both exemptions resolve back to visible (undo the paint-skip).
   const exemptionBlockMatch = css.match(
-    /:root\[data-chat-content-visibility="on"\]\s*#chatTimeline\[data-timeline-render-strategy="content-visibility"\]\s*\.chat-entry\[data-cv-exempt="true"\][\s\S]{0,500}?content-visibility:\s*visible;/
+    /:root\[data-chat-content-visibility="on"\]\s*\.chat-timeline\[data-timeline-render-strategy="content-visibility"\]\s*\.chat-entry\[data-cv-exempt="true"\][\s\S]{0,500}?content-visibility:\s*visible;/
   );
   assert.ok(exemptionBlockMatch, 'expected the data-cv-exempt selector rule to set content-visibility: visible');
   assert.match(
     css,
-    /#chatTimeline\[data-timeline-render-strategy="dom-window"\]\s*\.chat-entry,[\s\S]{0,200}?#chatTimeline\[data-timeline-render-strategy="none"\]\s*\.chat-entry\s*\{[^}]*content-visibility:\s*visible;/,
+    /\.chat-timeline\[data-timeline-render-strategy="dom-window"\]\s*\.chat-entry,[\s\S]{0,200}?\.chat-timeline\[data-timeline-render-strategy="none"\]\s*\.chat-entry\s*\{[^}]*content-visibility:\s*visible;/,
     'DOM-window and fully-mounted strategies must explicitly disable CSS skipping'
   );
 });

@@ -2,8 +2,7 @@
 
 const { HOST_ERROR_CODES } = require('../backend/error-codes');
 
-const fs = require('node:fs');
-const os = require('node:os');
+const { resolveExistingRealPath, assertWorkspaceSafe } = require('../../server/config');
 const path = require('node:path');
 
 const { createAttachmentContentStore } = require('./attachment-content-store');
@@ -13,6 +12,8 @@ const { ShellConfigService } = require('../shell-config-service');
 const { buildFeatureFlags } = require('../feature-flags');
 const { createConversationToolExecutor } = require('./conversation-tool-executor');
 const { ToolPermissionStore } = require('../tools/tool-permission-store');
+const { ProcessLogWriter } = require('../process-log-writer');
+const { DiagnosticLogService } = require('../diagnostic-log-service');
 const {
   HOST_MODE_SERVER,
   createHostPorts,
@@ -71,35 +72,6 @@ function normalizeModelEndpoint(value) {
   };
 }
 
-function resolveExistingRealPath(targetPath) {
-  let current = path.resolve(targetPath);
-  const suffix = [];
-  while (true) {
-    try {
-      let resolved = fs.realpathSync.native(current);
-      for (let index = suffix.length - 1; index >= 0; index -= 1) {
-        resolved = path.join(resolved, suffix[index]);
-      }
-      return path.resolve(resolved);
-    } catch (_error) {
-      const parent = path.dirname(current);
-      if (parent === current) return path.resolve(targetPath);
-      suffix.push(path.basename(current));
-      current = parent;
-    }
-  }
-}
-
-function comparable(targetPath) {
-  const resolved = path.resolve(targetPath);
-  return process.platform === 'win32' ? resolved.toLowerCase() : resolved;
-}
-
-function sameOrWithin(parent, child) {
-  const relative = path.relative(comparable(parent), comparable(child));
-  return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
-}
-
 function normalizeWorkspaceRoot(value, options) {
   if (value === null) return null;
   if (typeof value !== 'string') {
@@ -110,25 +82,18 @@ function normalizeWorkspaceRoot(value, options) {
     throw invalidHostOption('invalid_workspace_root', 'workspaceRoot must be null or an absolute path.');
   }
   const workspaceRoot = resolveExistingRealPath(trimmed);
-  try {
-    const stat = fs.statSync(workspaceRoot);
-    if (!stat.isDirectory()) throw invalidHostOption('workspace_root_not_directory', 'workspaceRoot must be a directory.');
-  } catch (error) {
-    if (error?.code === HOST_ERROR_CODES.INVALID) throw error;
-    if (error?.code !== 'ENOENT') {
-      throw invalidHostOption('workspace_root_unreadable', 'workspaceRoot could not be inspected.');
-    }
-  }
   const sensitivePaths = [options.userDataPath, options.secretsDir]
     .filter((candidate) => typeof candidate === 'string' && candidate.trim())
     .map((candidate) => resolveExistingRealPath(candidate));
-  const home = resolveExistingRealPath(os.homedir());
-  if (sameOrWithin(home, workspaceRoot) || sameOrWithin(workspaceRoot, home)) {
-    throw invalidHostOption('workspace_root_home_overlap', 'workspaceRoot must be separate from the runtime home.');
-  }
-  if (sensitivePaths.some((candidate) => sameOrWithin(candidate, workspaceRoot)
-    || sameOrWithin(workspaceRoot, candidate))) {
-    throw invalidHostOption('workspace_root_profile_overlap', 'workspaceRoot must be separate from profile data.');
+  try { assertWorkspaceSafe(workspaceRoot, sensitivePaths); }
+  catch (error) {
+    const messages = {
+      workspace_root_not_directory: 'workspaceRoot must be a directory.',
+      workspace_root_unreadable: 'workspaceRoot could not be inspected.',
+      workspace_root_home_overlap: 'workspaceRoot must be separate from the runtime home.',
+      workspace_root_profile_overlap: 'workspaceRoot must be separate from profile data.',
+    };
+    throw invalidHostOption(error.reason, messages[error.reason] || error.message);
   }
   return workspaceRoot;
 }
@@ -177,6 +142,28 @@ function createHostedBackend(options = {}) {
   configureWorkspaceRoot(configService, options);
   const configuredWorkspaceRoot = configService.getToolsWorkspaceRoot();
 
+  const processLogPath = path.join(userDataPath, 'logs', 'shell.log');
+  let logStore;
+  const log = (level, event, details = {}) => logStore?.append({
+    layer: 'electron',
+    component: 'electron.main',
+    level,
+    event: String(event || 'electron.main.event').trim() || 'electron.main.event',
+    details,
+    data: details,
+    message: String(details && details.message || '').trim()
+      || String(details && details.error || '').trim()
+      || (details && typeof details.line === 'string' ? details.line.trim() : '')
+      || String(event || '').trim() || 'main event',
+    status: String(details && details.status || '').trim() || 'ok',
+  }, { broadcast: false, persist: true });
+  const processLogWriter = new ProcessLogWriter({
+    filePath: processLogPath, fileMinLevel: 'INFO', stream: null, logger: log,
+  });
+  logStore = new DiagnosticLogService({
+    writer: processLogWriter, filePath: processLogPath, onEntry: () => {},
+  });
+
   const attachmentAssetStore = new AttachmentAssetStore({
     rootDir: path.join(userDataPath, 'attachments'),
     nativeImage: null,
@@ -200,6 +187,7 @@ function createHostedBackend(options = {}) {
     hostMode: hostPorts.mode,
     credentialService: hostPorts.credentialService,
     configService,
+    shellLogStore: logStore,
     attachmentAssetStore,
     historyAttachmentHydrator: createAttachmentContentStore(userDataPath).hydrateHistory,
     toolExecutor,
@@ -216,27 +204,56 @@ function createHostedBackend(options = {}) {
   });
 
   backend.hostExecutionBroker = options.executionBroker || null;
+  backend.hostExecutionStagingRoot = options.executionStagingRoot || null;
+
+  const onServiceLog = (entry) => log(entry.level || 'INFO', entry.event || 'backend.service', entry.details || {});
+  const onDiagnosticEntry = (entry) => {
+    if (entry?.event === 'sidecar.diagnostics.oversized_record') {
+      logStore.recordDrop('sidecar', Number(entry?.data?.dropped_count) || 1);
+    }
+    logStore.append(entry, { broadcast: false, persist: true });
+  };
+  const onDiagnosticDrop = (drop) => logStore.recordDrop(drop?.source, drop?.count);
+  backend.on('service-log', onServiceLog);
+  backend.on('diagnostic-entry', onDiagnosticEntry);
+  backend.on('diagnostic-drop', onDiagnosticDrop);
 
   let disposed = false;
   let stopPromise = null;
+  let disposePromise = null;
   const start = (startOptions = {}) => {
     if (disposed || stopPromise) return Promise.reject(new Error('Hosted backend lifecycle has ended.'));
     return backend.start(startOptions);
   };
   const stop = (stopOptions = {}) => {
     if (disposed) return Promise.resolve(null);
-    stopPromise ||= backend.stop(stopOptions);
+    stopPromise ||= (async () => {
+      let result;
+      let logFlush;
+      try { result = await backend.stop(stopOptions); }
+      finally { logFlush = await processLogWriter.flush(); }
+      return { ...result, logFlush };
+    })();
     return stopPromise;
   };
   const dispose = () => {
-    if (disposed) return;
+    if (disposed) return disposePromise;
     disposed = true;
     backend.dispose();
+    backend.off('service-log', onServiceLog);
+    backend.off('diagnostic-entry', onDiagnosticEntry);
+    backend.off('diagnostic-drop', onDiagnosticDrop);
+    disposePromise = (async () => {
+      if (stopPromise) await stopPromise.catch(() => null);
+      return processLogWriter.flush();
+    })();
+    return disposePromise;
   };
 
   return {
     backend,
     configService,
+    logStore,
     start,
     stop,
     dispose,

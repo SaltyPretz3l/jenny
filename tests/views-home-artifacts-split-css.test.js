@@ -124,16 +124,17 @@ test('no gradients, elevation shadows, or side accent bars survive on Home', () 
   }
 });
 
-test('Home runs one heading system: uppercase tracked eyebrow plus a hairline rule', () => {
+test('Home runs one heading system: a sentence-case caption eyebrow plus a hairline rule', () => {
   const dashboardCss = readRepoFile('styles/views-home-dashboard.css');
   const boardCss = readRepoFile('styles/views-home-board.css');
   const quietEyebrow = /color-mix\(in srgb, var\(--text-secondary\) 75%, var\(--text-primary\)\)/;
 
   const titleRule = dashboardCss.match(/\n\.dashboard-card__title \{[\s\S]*?\n\}/)?.[0] || '';
   assert.match(titleRule, quietEyebrow);
-  assert.match(titleRule, /font-size:\s*var\(--font-size-lg\);/);
-  assert.match(titleRule, /letter-spacing:\s*var\(--tracking-kicker-lg\);/);
-  assert.match(titleRule, /text-transform:\s*uppercase;/);
+  // Type scale 2026-09-28: section labels are caption 12/500, no uppercase or tracking.
+  assert.match(titleRule, /font-size:\s*var\(--font-size-caption\);/);
+  assert.match(titleRule, /font-weight:\s*500;/);
+  assert.doesNotMatch(titleRule, /letter-spacing|text-transform/);
 
   const ruleAfter = dashboardCss.match(/\n\.dashboard-card__header::after \{[\s\S]*?\n\}/)?.[0] || '';
   assert.match(ruleAfter, /flex:\s*1 1 auto;/);
@@ -142,8 +143,8 @@ test('Home runs one heading system: uppercase tracked eyebrow plus a hairline ru
 
   const h3Rule = boardCss.match(/\n\.home-panel--board h3 \{[\s\S]*?\n\}/)?.[0] || '';
   assert.match(h3Rule, quietEyebrow, 'board headings conform to the eyebrow style');
-  assert.match(h3Rule, /font-size:\s*var\(--font-size-lg\);/);
-  assert.match(h3Rule, /text-transform:\s*uppercase;/);
+  assert.match(h3Rule, /font-size:\s*var\(--font-size-caption\);/);
+  assert.doesNotMatch(h3Rule, /text-transform/);
 });
 
 test('retired Home pill chrome and orphaned base-less rules stay deleted', () => {
@@ -202,8 +203,8 @@ test('the hero ask block is width-capped, right-aligned, and draws ONE rule', ()
   assert.match(controlRule, /border:\s*0;/, 'the control draws no box of its own');
   assert.match(controlRule, /background:\s*transparent;/, 'and no fill at rest');
   // F6: the old field was <input> at --font-size-base (12px) against the chat
-  // composer's 16px. One step below the composer, not four.
-  assert.match(controlRule, /font-size:\s*var\(--font-size-lg\);/);
+  // composer's 16px. Type scale 2026-09-28: the ask box is the composer role.
+  assert.match(controlRule, /font-size:\s*var\(--font-size-prose\);/);
 
   // F7: the chip lane is gone with the chip. Nothing reserves a quarter of the
   // typing width any more, and the tokens that declared it are deleted.

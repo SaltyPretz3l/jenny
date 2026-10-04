@@ -5,10 +5,10 @@
       require('./renderer-chat-event-settings-bindings'),
       require('./renderer-chat-event-interactive-bindings'),
       require('./renderer-chat-backend-recovery-utils'),
-      require('./renderer-window-controls-utils'),
       require('./renderer-render-pipeline-thread-state'),
       require('../shared/async-fence'),
-      require('./renderer-enter-keydown-utils')
+      require('./renderer-enter-keydown-utils'),
+      require('./renderer-chat-ctrl-wheel-gate')
     );
     return;
   }
@@ -17,20 +17,20 @@
     root.rendererChatEventSettingsBindings,
     root.rendererChatEventInteractiveBindings,
     root.rendererChatBackendRecoveryUtils,
-    root.rendererWindowControlsUtils,
     root.rendererRenderPipelineThreadStateUtils,
     root.rendererAsyncFence,
-    root.rendererEnterKeydownUtils
+    root.rendererEnterKeydownUtils,
+    root.rendererChatCtrlWheelGate
   );
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (
   transcriptBindingsFactory,
   settingsBindingsFactory,
   interactiveBindingsFactory,
   backendRecoveryUtils,
-  windowControlsUtils,
   threadStateUtils,
   asyncFence,
-  enterKeydownUtils
+  enterKeydownUtils,
+  ctrlWheelGate
 ) {
   const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   const motionHeightUtils = (typeof globalThis !== 'undefined' && globalThis.rendererMotionHeightUtils)
@@ -61,6 +61,15 @@
 
   function createChatEventBindings(deps) {
     const { state } = deps;
+    // Split view W1-4b: the session this composer's pane holds; built standalone with no
+    // context module (browser-shaped tests), it reads the focused session as before.
+    const paneSessionContextUtils = globalThis.rendererPaneSessionContext
+      || (typeof require === 'function' ? require('./renderer-pane-session-context') : null);
+    const sessionContext = deps.sessionContext
+      || paneSessionContextUtils?.createPaneSessionContext?.({ state, paneId: deps.paneId })
+      || { getSessionId: () => state.currentSessionId };
+    // Split view W2-3: a second pane binds its own composer, scroll and timeline only (document-level stays pane 0's).
+    const documentLevel = (sessionContext.paneId ?? 0) === 0;
 
     const {
       TOAST_SOURCE,
@@ -83,16 +92,13 @@
       toastViewport,
       composerModelSelect,
       composerEffortSelect,
-      composerSettingsButton,
-      openComposerSettingsViewButton,
-      composerCommandPopover,
-      artifactReviewPanel,
+      composerCommandPopover, composerRunModeSlot,
+      artifactReviewPanel, chatSelectionOverlayHost,
     } = deps.dom;
 
     const {
       setActivityChangeListener,
       handleActivityChange,
-      renderHeader,
       renderAll,
       setToolCallExpansion = function noopSetToolCallExpansion() {},
       renderLogs,
@@ -102,12 +108,11 @@
       getRendererElapsedMs,
       loadSessions,
       refreshSnapshots,
-      refreshApprovedMemories,
+      refreshApprovedMemories, refreshComposerToolToggles = async () => {},
       resetArtifactsState,
       resetMemorySuggestionState,
       resetAttachmentQueue,
       closeComposerPopover,
-      openComposerPopover,
       closeCommandPopover,
       openCommandPopover,
       hideAssistantSprite,
@@ -148,7 +153,6 @@
       handleEditCancel,
       handleFollowUpMessage,
       setReasoningPhaseExpandedPreference,
-      setReasoningPhaseExpandedPreferences,
       syncThinkingBlockNode,
       dismissToast,
       showShellErrorToast,
@@ -160,7 +164,7 @@
       failActivity,
       getRuntimePreferenceSnapshot,
       runRuntimePreferenceActivity,
-      getCurrentRuntimePreferences,
+      getCurrentRuntimePreferences, getRuntimePreferencesFromSession,
       handleSaveProactiveSuggestionMessage,
       handleLaterProactiveSuggestionMessage,
       handleUseProactiveSuggestionMessage,
@@ -318,6 +322,7 @@
         return;
       }
       const expanded = Boolean(nextExpanded);
+      const wasCollapsing = toolHeader.getAttribute('aria-expanded') !== 'true';
       toolHeader.setAttribute('aria-expanded', expanded ? 'true' : 'false');
       const restoreFocus = document?.activeElement === toolHeader;
       const rowKey = String(toolHeader.dataset?.toolRowKey || '').trim();
@@ -348,8 +353,15 @@
       if (!detailsEl) {
         return;
       }
+      const transitioning = toolDetailsTimers.has(detailsEl);
       clearToolDetailsTimer(detailsEl);
       const transitionMs = getToolDetailsTransitionMs();
+      if (transitionMs === 0) {
+        detailsEl.hidden = !expanded;
+        detailsEl.classList.toggle('expanded', expanded);
+        detailsEl.style.maxHeight = expanded ? 'none' : '';
+        return;
+      }
       let measuredHeight = Math.max(detailsEl.scrollHeight || 0, detailsEl.offsetHeight || 0);
       const _pretextUtils = typeof rendererPretextUtils !== 'undefined' ? rendererPretextUtils : null;
       if (measuredHeight === 0 && expanded && _pretextUtils && _pretextUtils.isEnabled(state)) {
@@ -375,15 +387,13 @@
 
       if (expanded) {
         detailsEl.hidden = false;
-        motionHeightUtils.pinHeightForTransition(detailsEl, 0);
+        motionHeightUtils.pinHeightForTransition(detailsEl, transitioning && wasCollapsing
+          ? motionHeightUtils.readCurrentMaxHeightPx(detailsEl, window) : 0);
         detailsEl.classList.add('expanded');
         requestAnimationFrame(() => {
+          if (toolHeader.getAttribute('aria-expanded') !== 'true') return;
           detailsEl.style.maxHeight = `${Math.max(detailsEl.scrollHeight || measuredHeight || 0, 0)}px`;
         });
-        if (transitionMs === 0) {
-          detailsEl.style.maxHeight = 'none';
-          return;
-        }
         const timerId = window.setTimeout(() => {
           if (toolHeader.getAttribute('aria-expanded') === 'true') {
             detailsEl.style.maxHeight = 'none';
@@ -394,16 +404,14 @@
         return;
       }
 
-      motionHeightUtils.pinHeightForTransition(detailsEl, Math.max(motionHeightUtils.resolveCollapseStartPx(detailsEl), measuredHeight));
+      motionHeightUtils.pinHeightForTransition(detailsEl, transitioning
+        ? motionHeightUtils.readCurrentMaxHeightPx(detailsEl, window)
+        : Math.max(motionHeightUtils.resolveCollapseStartPx(detailsEl), measuredHeight));
       requestAnimationFrame(() => {
+        if (toolHeader.getAttribute('aria-expanded') !== 'false') return;
         detailsEl.classList.remove('expanded');
         detailsEl.style.maxHeight = '0px';
       });
-      if (transitionMs === 0) {
-        detailsEl.hidden = true;
-        detailsEl.style.maxHeight = '';
-        return;
-      }
       const timerId = window.setTimeout(() => {
         if (toolHeader.getAttribute('aria-expanded') !== 'true') {
           detailsEl.hidden = true;
@@ -441,6 +449,8 @@
       ? transcriptBindingsFactory.createTranscriptEventBindings({
           chatTimeline,
           state,
+          getSessionId: sessionContext.getSessionId, // the pane's session for the transcript view control
+          ownsFileDiffRegistry: documentLevel, // W2-3: pane 1's dispose must not clear pane 0's registry
           thinkingController,
           handleCopyMessage,
           handleRegenerateMessage,
@@ -455,12 +465,12 @@
           handleBranchMessage,
           handleErrorRecoveryAction,
           handleArtifactAction,
+          handleStopActiveStream,
           handleCodeReviewAction, handleOpenChangeDiff,
           toggleInteractiveRoundRecap,
           toggleContextCompactionDetails,
           toggleThreadBranch,
           setReasoningPhaseExpandedPreference,
-          setReasoningPhaseExpandedPreferences,
           syncThinkingBlockNode,
           appendClientLog,
           showComposerActionError,
@@ -489,8 +499,6 @@
           toastViewport,
           composerModelSelect,
           composerEffortSelect,
-          composerSettingsButton,
-          openComposerSettingsViewButton,
           state,
           TOAST_SOURCE,
           ACTIVITY_SCOPE,
@@ -507,11 +515,8 @@
           failModelSwitch,
           getRuntimePreferenceSnapshot,
           runRuntimePreferenceActivity,
-          getCurrentRuntimePreferences,
+          getCurrentRuntimePreferences, getRuntimePreferencesFromSession,
           showComposerActionError,
-          closeComposerPopover,
-          openComposerPopover,
-          setActiveView,
           setComposerStatusNotice,
           clearComposerStatusNotice,
           toastActionHandlers,
@@ -534,10 +539,11 @@
       bound = false;
       transitionGate.bump();
       transitionFence.dispose();
-      globalThis.rendererContextMeterDetails?.dispose?.();
-      window.rendererPlanUsageMeter?.dispose?.();
+      if (documentLevel) globalThis.rendererContextMeterDetails?.dispose?.();
+      if (documentLevel) window.rendererPlanUsageMeter?.dispose?.();
       chatAccessibility = null; transcriptBindings.dispose?.();
-      setActivityChangeListener(null);
+      if (documentLevel) setActivityChangeListener(null);
+      if (documentLevel) ctrlWheelGate.releaseCtrlKeyTracker(window);
       if (bindAbortController) {
         bindAbortController.abort();
         bindAbortController = null;
@@ -564,11 +570,12 @@
     function clearSignedOutRendererState() {
       globalThis.rendererMultiStreamController?.dispose?.();
       state.sessions = [];
-      state.currentSessionId = '';
+      state.currentSessionId = ''; deps.callbacks?.resetPanes?.(); // split view W1-4c: back to one blank pane
       state.messagesBySession.clear();
       state.turnEventsBySession?.clear?.();
       state.sessionMessageAccessOrder?.clear?.();
       state.pendingStreams.clear();
+      state.streamDeltaKindByStream?.clear?.();
       state.streamThinkingStatusByStream.clear();
       state.toolCallsByStream.clear();
       state.pendingToolApprovals.clear();
@@ -646,152 +653,139 @@
         if (typeof detachScrollCoordinator === 'function') addCleanup(detachScrollCoordinator);
       }
 
-      setActivityChangeListener((scope) => {
-        handleActivityChange(scope);
-      });
-
-      addCleanup(window.jennyShell.system.onStats((payload) => {
-        state.systemStats = payload;
-        // Only the titlebar meters consume system stats; no settings section
-        // renders state.systemStats, so re-rendering the whole settings panel on
-        // every stats tick (now every 2s) is wasted work. renderHeader() — which
-        // owns the CPU/RAM/VRAM display — is the only repaint this needs.
-        renderHeader();
-      }));
-      addCleanup(window.rendererPlanUsageMeter?.install?.({ shell: window.jennyShell, state, onChange: renderAll }) || (() => {}));
-
-      let logRenderRafId = 0;
-      let logRenderPendingWhileHidden = false;
-      const requestRenderFrame = (cb) => (typeof window.requestAnimationFrame === 'function'
-        ? window.requestAnimationFrame(cb)
-        : window.setTimeout(() => cb(), 16));
-      const cancelRenderFrame = (id) => {
-        if (typeof window.cancelAnimationFrame === 'function') { window.cancelAnimationFrame(id); }
-        else { window.clearTimeout(id); }
-      };
-      /* Coalesce a burst of appends into a single rAF-aligned render, and skip
-         rendering entirely while the window is hidden -- flush once it returns. */
-      function scheduleLogRender() {
-        if (typeof document !== 'undefined' && document.hidden) {
-          logRenderPendingWhileHidden = true;
-          return;
-        }
-        if (logRenderRafId) { return; }
-        logRenderRafId = requestRenderFrame(() => {
-          logRenderRafId = 0;
-          renderLogs();
+      if (documentLevel) {
+        setActivityChangeListener((scope) => {
+          handleActivityChange(scope);
         });
-      }
-      function flushPendingLogRenderOnVisible() {
-        if (logRenderPendingWhileHidden && !document.hidden) {
-          logRenderPendingWhileHidden = false;
-          if (state.ui.activeView === 'logs') { scheduleLogRender(); }
-        }
-      }
-      if (typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
-        document.addEventListener('visibilitychange', flushPendingLogRenderOnVisible);
-        addCleanup(() => document.removeEventListener('visibilitychange', flushPendingLogRenderOnVisible));
-      }
-      addCleanup(() => {
-        if (logRenderRafId) {
-          cancelRenderFrame(logRenderRafId);
-          logRenderRafId = 0;
-        }
-      });
-      const subscribeDiagnostics = window.jennyShell.diagnostics?.logs?.onEntry
-        || window.jennyShell.logs.onAppend;
-      addCleanup(subscribeDiagnostics((entry) => {
-        pushIncomingLog(entry);
-        forwardOllamaTrayConflictLogEntry(entry);
-        if (state.ui.activeView === 'logs') {
-          scheduleLogRender();
-        }
-      }));
 
-      addCleanup(window.jennyShell.backend.onStatus(async (payload) => {
-        const transitionToken = beginTransition();
-        state.backend = payload;
-        syncBackendActivityFromStatus(payload);
-        handleLifecycleBackendStatus(payload);
-        recoverInflightSendsForUnusableBackend(payload);
-        if (!payload || payload.phase !== 'ready') { state.backendReadyLoadHandled = false; } // #9: re-arm dedupe guard
-        if (payload && payload.phase === 'ready') {
-          appendClientLog('INFO', 'renderer.backend_ready', { elapsedMs: getRendererElapsedMs(), startupStage: payload.startupStage || '', startupMs: Number(payload.startupMs || 0) });
-          const authSnapshot = await window.jennyShell.auth.getState();
-          if (!isCurrentTransition(transitionToken)) return;
-          state.auth = authSnapshot;
-          if (state.auth.authenticated) {
-            // #9: only one of (this push listener, the bootstrap pull) loads per ready transition.
-            if (!state.backendReadyLoadHandled) {
-              state.backendReadyLoadHandled = true;
-              await loadSessions();
-              if (shouldStopAuthenticatedTransition(transitionToken)) return;
-              await refreshSnapshots();
+        // System stats: the header controller owns that subscription (it
+        // repaints only the title-bar read-out's text nodes per tick).
+        addCleanup(window.rendererPlanUsageMeter?.install?.({ shell: window.jennyShell, state, onChange: renderAll }) || (() => {}));
+
+        let logRenderRafId = 0;
+        let logRenderPendingWhileHidden = false;
+        const requestRenderFrame = (cb) => (typeof window.requestAnimationFrame === 'function'
+          ? window.requestAnimationFrame(cb)
+          : window.setTimeout(() => cb(), 16));
+        const cancelRenderFrame = (id) => {
+          if (typeof window.cancelAnimationFrame === 'function') { window.cancelAnimationFrame(id); }
+          else { window.clearTimeout(id); }
+        };
+        /* Coalesce a burst of appends into a single rAF-aligned render, and skip
+           rendering entirely while the window is hidden -- flush once it returns. */
+        function scheduleLogRender() {
+          if (typeof document !== 'undefined' && document.hidden) {
+            logRenderPendingWhileHidden = true;
+            return;
+          }
+          if (logRenderRafId) { return; }
+          logRenderRafId = requestRenderFrame(() => {
+            logRenderRafId = 0;
+            renderLogs();
+          });
+        }
+        function flushPendingLogRenderOnVisible() {
+          if (logRenderPendingWhileHidden && !document.hidden) {
+            logRenderPendingWhileHidden = false;
+            if (state.ui.activeView === 'logs') { scheduleLogRender(); }
+          }
+        }
+        if (typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
+          document.addEventListener('visibilitychange', flushPendingLogRenderOnVisible);
+          addCleanup(() => document.removeEventListener('visibilitychange', flushPendingLogRenderOnVisible));
+        }
+        addCleanup(() => {
+          if (logRenderRafId) {
+            cancelRenderFrame(logRenderRafId);
+            logRenderRafId = 0;
+          }
+        });
+        const subscribeDiagnostics = window.jennyShell.diagnostics?.logs?.onEntry
+          || window.jennyShell.logs.onAppend;
+        addCleanup(subscribeDiagnostics((entry) => {
+          pushIncomingLog(entry);
+          forwardOllamaTrayConflictLogEntry(entry);
+          if (state.ui.activeView === 'logs') {
+            scheduleLogRender();
+          }
+        }));
+
+        addCleanup(window.jennyShell.backend.onStatus(async (payload) => {
+          const transitionToken = beginTransition();
+          state.backend = payload;
+          syncBackendActivityFromStatus(payload);
+          handleLifecycleBackendStatus(payload);
+          recoverInflightSendsForUnusableBackend(payload);
+          if (!payload || payload.phase !== 'ready') { state.backendReadyLoadHandled = false; } // #9: re-arm dedupe guard
+          if (payload && payload.phase === 'ready') {
+            appendClientLog('INFO', 'renderer.backend_ready', { elapsedMs: getRendererElapsedMs(), startupStage: payload.startupStage || '', startupMs: Number(payload.startupMs || 0) });
+            Promise.resolve(refreshComposerToolToggles()).catch(() => {}); // Tools row: built from the sidecar's tools_status, which exists only once ready (the boot read runs first) and changes on each re-init (root switch)
+            const authSnapshot = await window.jennyShell.auth.getState();
+            if (!isCurrentTransition(transitionToken)) return;
+            state.auth = authSnapshot;
+            if (state.auth.authenticated) {
+              // #9: only one of (this push listener, the bootstrap pull) loads per ready transition.
+              if (!state.backendReadyLoadHandled) {
+                state.backendReadyLoadHandled = true;
+                await loadSessions();
+                if (shouldStopAuthenticatedTransition(transitionToken)) return;
+                await refreshSnapshots();
+                if (shouldStopAuthenticatedTransition(transitionToken)) return;
+              }
+              try {
+                await refreshApprovedMemories({ force: true });
+              } catch (err) {
+                if (shouldStopAuthenticatedTransition(transitionToken)) return;
+                appendClientLog('WARN', 'chat.refresh_memories_failed', { message: String(err?.message || err) });
+                /* EH-W10: deduped warning toast when intake routing is on. */
+                reportError?.({ message: jt('chat.events.approvedMemoriesRefreshFailed', 'Approved memories could not be refreshed.'), options: { source: TOAST_SOURCE.memory, dedupeKey: 'settings-refresh:memories' } }, { origin: 'settings-refresh' });
+              }
               if (shouldStopAuthenticatedTransition(transitionToken)) return;
             }
+          }
+          if (!isCurrentTransition(transitionToken)) return;
+          renderAll();
+        }));
+
+        if (window.jennyShell.lifecycle) {
+          addCleanup(window.jennyShell.lifecycle.onProgress((payload) => {
+            handleLifecycleProgress(payload);
+          }));
+        }
+
+        addCleanup(window.jennyShell.auth.onState(async (payload) => {
+          const transitionToken = beginTransition();
+          state.auth = payload;
+          if (payload.authenticated) {
+            await loadSessions();
+            if (shouldStopAuthenticatedTransition(transitionToken)) return;
+            await refreshSnapshots();
+            if (shouldStopAuthenticatedTransition(transitionToken)) return;
             try {
               await refreshApprovedMemories({ force: true });
             } catch (err) {
               if (shouldStopAuthenticatedTransition(transitionToken)) return;
-              appendClientLog('WARN', 'chat.refresh_memories_failed', { message: String(err?.message || err) });
-              /* EH-W10: deduped warning toast when intake routing is on. */
+              appendClientLog('WARN', 'chat.auth_refresh_memories_failed', { message: String(err?.message || err) });
               reportError?.({ message: jt('chat.events.approvedMemoriesRefreshFailed', 'Approved memories could not be refreshed.'), options: { source: TOAST_SOURCE.memory, dedupeKey: 'settings-refresh:memories' } }, { origin: 'settings-refresh' });
             }
             if (shouldStopAuthenticatedTransition(transitionToken)) return;
+          } else {
+            clearSignedOutRendererState();
           }
-        }
-        if (!isCurrentTransition(transitionToken)) return;
-        renderAll();
-      }));
-
-      if (window.jennyShell.lifecycle) {
-        addCleanup(window.jennyShell.lifecycle.onProgress((payload) => {
-          handleLifecycleProgress(payload);
+          if (!isCurrentTransition(transitionToken)) return;
+          renderAll();
         }));
+
+        registerListener(homeNavButton, 'click', () => {
+          setActiveView('home');
+        }, listenerOptions);
+
+        registerListener(newChatButton, 'click', () => {
+          handleCreateSession().catch((error) => {
+            showSessionActionError(error, jt('chat.events.createSessionFailedTitle', 'Create Session Failed'));
+          });
+        }, listenerOptions);
       }
-
-      addCleanup(window.jennyShell.auth.onState(async (payload) => {
-        const transitionToken = beginTransition();
-        state.auth = payload;
-        if (payload.authenticated) {
-          await loadSessions();
-          if (shouldStopAuthenticatedTransition(transitionToken)) return;
-          await refreshSnapshots();
-          if (shouldStopAuthenticatedTransition(transitionToken)) return;
-          try {
-            await refreshApprovedMemories({ force: true });
-          } catch (err) {
-            if (shouldStopAuthenticatedTransition(transitionToken)) return;
-            appendClientLog('WARN', 'chat.auth_refresh_memories_failed', { message: String(err?.message || err) });
-            reportError?.({ message: jt('chat.events.approvedMemoriesRefreshFailed', 'Approved memories could not be refreshed.'), options: { source: TOAST_SOURCE.memory, dedupeKey: 'settings-refresh:memories' } }, { origin: 'settings-refresh' });
-          }
-          if (shouldStopAuthenticatedTransition(transitionToken)) return;
-        } else {
-          clearSignedOutRendererState();
-        }
-        if (!isCurrentTransition(transitionToken)) return;
-        renderAll();
-      }));
-
-      registerListener(homeNavButton, 'click', () => {
-        setActiveView('home');
-      }, listenerOptions);
-
-      windowControlsUtils?.bindWindowControlEvents?.({
-        documentRef: document,
-        windowRef: window,
-        shell: window.jennyShell,
-        registerListener,
-        listenerOptions,
-        addCleanup,
-        appendClientLog,
-      });
-
-      registerListener(newChatButton, 'click', () => {
-        handleCreateSession().catch((error) => {
-          showSessionActionError(error, jt('chat.events.createSessionFailedTitle', 'Create Session Failed'));
-        });
-      }, listenerOptions);
 
       registerListener(sendButton, 'click', () => {
         handleSend().catch((error) => {
@@ -805,17 +799,19 @@
         });
       }, listenerOptions);
 
-      registerListener(jumpToTopButton, 'click', () => {
-        handleJumpToTop();
-      }, listenerOptions);
+      if (documentLevel) {
+        registerListener(jumpToTopButton, 'click', () => {
+          handleJumpToTop();
+        }, listenerOptions);
 
-      registerListener(jumpToLastPromptButton, 'click', () => {
-        handleJumpToLastPrompt();
-      }, listenerOptions);
+        registerListener(jumpToLastPromptButton, 'click', () => {
+          handleJumpToLastPrompt();
+        }, listenerOptions);
 
-      registerListener(jumpToBottomButton, 'click', () => {
-        handleJumpToBottom();
-      }, listenerOptions);
+        registerListener(jumpToBottomButton, 'click', () => {
+          handleJumpToBottom();
+        }, listenerOptions);
+      }
 
       registerListener(chatInput, 'keydown', (event) => {
         if (globalThis.rendererPlanModeShortcut?.handleRunModeCycleShortcut?.(event, document)) return;
@@ -831,7 +827,8 @@
 
       registerListener(chatInput, 'input', () => {
         syncComposerInputHeight(); syncComposerVisualState(); renderComposerState();
-        globalThis.rendererComposerSessionStateController?.captureActive(state.currentSessionId, 'input');
+        if (documentLevel) globalThis.rendererComposerSessionStateController?.captureActive(sessionContext.getSessionId(), 'input'); // reads #chatInput
+        else globalThis.rendererComposerSessionStateController?.capturePaneDraft(sessionContext.getSessionId(), chatInput);
       }, listenerOptions);
 
       registerListener(chatInput, 'paste', (event) => {
@@ -855,22 +852,24 @@
           : null,
       });
 
-      registerListener(composerCommandPopover, 'click', (event) => {
-        const btn = event.target.closest('[data-command-name]');
-        if (!btn) return;
-        if (btn.getAttribute('aria-disabled') === 'true' || btn.dataset.commandAvailable === 'false') {
-          showToastMessage(btn.dataset.commandReason || jt('chat.events.commandUnavailable', 'That command is unavailable.'), {
-            title: jt('chat.events.commandUnavailableTitle', 'Command unavailable'),
-            tone: 'warning',
-          });
-          return;
-        }
-        handleSlashCommandSelection(btn.dataset.commandName, btn.dataset.commandAction === 'run' ? 'run' : 'insert');
-        closeCommandPopover();
-        chatInput.focus();
-        syncComposerInputHeight();
-        syncComposerVisualState();
-      }, listenerOptions);
+      if (documentLevel) {
+        registerListener(composerCommandPopover, 'click', (event) => {
+          const btn = event.target.closest('[data-command-name]');
+          if (!btn) return;
+          if (btn.getAttribute('aria-disabled') === 'true' || btn.dataset.commandAvailable === 'false') {
+            showToastMessage(btn.dataset.commandReason || jt('chat.events.commandUnavailable', 'That command is unavailable.'), {
+              title: jt('chat.events.commandUnavailableTitle', 'Command unavailable'),
+              tone: 'warning',
+            });
+            return;
+          }
+          handleSlashCommandSelection(btn.dataset.commandName, btn.dataset.commandAction === 'run' ? 'run' : 'insert');
+          closeCommandPopover();
+          chatInput.focus();
+          syncComposerInputHeight();
+          syncComposerVisualState();
+        }, listenerOptions);
+      }
 
       if (!chatScrollCoordinator?.attach) {
         let pendingLegacyScrollFrame = 0;
@@ -887,48 +886,51 @@
         });
       }
 
-      const wheelListenerOptions = bindAbortController
-        ? { signal: bindAbortController.signal, passive: false }
-        : { passive: false };
-
-      registerListener(chatView, 'wheel', (event) => {
-        if (!event.ctrlKey || isChatWheelBlocked(event)) {
-          return;
-        }
-        const deltaY = Number(event.deltaY || 0);
-        if (deltaY === 0) {
-          return;
-        }
-        event.preventDefault();
-        Promise.resolve(adjustChatZoomPercent(deltaY < 0 ? 1 : -1)).catch((error) => {
-          appendClientLog('WARN', 'chat.zoom_wheel_failed', {
-            message: error?.message || String(error || 'Could not adjust chat zoom.'),
+      // Ctrl+wheel zoom (timeline-perf 2026-09-30): renderer-chat-ctrl-wheel-gate.js
+      // attaches this non-passive listener only while Ctrl is held, so wheel
+      // scrolling never waits on the main thread while a turn streams.
+      ctrlWheelGate.bindCtrlGatedWheelZoom({
+        chatView, windowRef: window, documentLevel, registerListener, listenerOptions, addCleanup, bindAbortController,
+        onWheel: (event) => {
+          if (!event.ctrlKey || isChatWheelBlocked(event)) {
+            return;
+          }
+          const deltaY = Number(event.deltaY || 0);
+          if (deltaY === 0) {
+            return;
+          }
+          event.preventDefault();
+          Promise.resolve(adjustChatZoomPercent(deltaY < 0 ? 1 : -1)).catch((error) => {
+            appendClientLog('WARN', 'app.zoom_wheel_failed', {
+              message: error?.message || String(error || 'Could not adjust app zoom.'),
+            });
           });
-        });
-      }, wheelListenerOptions);
+        },
+      });
 
-      registerListener(window, 'keydown', (event) => {
-        const key = String(event.key || '').trim();
-        const code = String(event.code || '').trim();
-        if (
-          !event.ctrlKey
-          || !(
-            key === '0'
-            || code === 'Digit0'
-            || code === 'Numpad0'
-          )
-          || state.ui?.activeView !== 'chat'
-          || isTargetInsideArtifactReview(event.target)
-        ) {
-          return;
-        }
-        event.preventDefault();
-        Promise.resolve(resetChatZoomPercent()).catch((error) => {
-          appendClientLog('WARN', 'chat.zoom_reset_failed', {
-            message: error?.message || String(error || 'Could not reset chat zoom.'),
+      if (documentLevel) {
+        // Ctrl+0 / Ctrl+= / Ctrl+- drive app zoom (the one magnification axis;
+        // Text size lives in Settings). Artifact review keeps its own Ctrl+0.
+        registerListener(window, 'keydown', (event) => {
+          if (event.defaultPrevented || !event.ctrlKey || event.altKey || event.metaKey
+            || isTargetInsideArtifactReview(event.target)) {
+            return;
+          }
+          const key = String(event.key || '').trim();
+          const code = String(event.code || '').trim();
+          const reset = key === '0' || code === 'Digit0' || code === 'Numpad0';
+          const zoomIn = key === '=' || key === '+' || code === 'Equal' || code === 'NumpadAdd';
+          const zoomOut = key === '-' || key === '_' || code === 'Minus' || code === 'NumpadSubtract';
+          if (!reset && !zoomIn && !zoomOut) return;
+          event.preventDefault();
+          const pending = reset ? resetChatZoomPercent() : adjustChatZoomPercent(zoomIn ? 1 : -1);
+          Promise.resolve(pending).catch((error) => {
+            appendClientLog('WARN', 'app.zoom_shortcut_failed', {
+              message: error?.message || String(error || 'Could not change app zoom.'),
+            });
           });
-        });
-      }, listenerOptions);
+        }, listenerOptions);
+      }
 
       registerListener(composerWrap, 'click', (event) => {
         const commandShortcut = event.target.closest('#composerTerminalShortcut');
@@ -959,22 +961,26 @@
         handleInteractiveSkipAll,
         handleInteractiveOtherInputChange,
         handleComposerToggleChange,
+        openSettingsSection,
         showComposerActionError,
         state,
       });
 
       // C3 Stage A: chatTimeline click / keydown / audio listeners live in the transcript sibling.
-      transcriptBindings.bindTranscriptEvents(registerListener, listenerOptions, bindAbortController);
+      // A second pane's transcript binds inside its own root (the sibling mounts the transcript view control in that pane's own utility cluster via rendererTranscriptViewUtils.mountTranscriptViewControl).
+      const transcriptRegister = documentLevel ? registerListener : (target, ...rest) => { if (chatView?.contains?.(target)) registerListener(target, ...rest); };
+      transcriptBindings.bindTranscriptEvents(transcriptRegister, listenerOptions, bindAbortController);
 
       // C3 Stage B: toast / model / preference / composer-popover listeners live in the settings sibling.
-      settingsBindings.bindSettingsEvents(registerListener, listenerOptions);
+      if (documentLevel) settingsBindings.bindSettingsEvents(registerListener, listenerOptions);
+      else settingsBindings.bindComposerRailEvents?.({ registerListener: transcriptRegister, listenerOptions, dom: { composerModelSelect, composerEffortSelect, composerRunModeSlot }, getSessionId: sessionContext.getSessionId }); // W2-2a: pane 1's own rail
 
       // Track E/F/B: keyboard focus, help/search overlays, virtualizer, and message actions.
-      chatAccessibility = globalThis.rendererChatKeyboardUtils?.wireChatAccessibility?.({
-        state, chatTimeline, chatThreadScroll, chatView, document, registerListener, listenerOptions, addCleanup,
+      chatAccessibility = globalThis.rendererChatAccessibilityWiring?.wireChatAccessibility?.({
+        state, chatTimeline, chatThreadScroll, chatView, document, registerListener, listenerOptions, addCleanup, documentLevel, selectionOverlayHost: chatSelectionOverlayHost, getSessionId: sessionContext.getSessionId,
         timelineVirtualizer, chatScrollCoordinator,
         messageEditController, messageBranchController, selectionController, bulkActionsController, unreadOrientationController,
-        getCurrentSessionMessages, getSessionTurnEventState, renderAll, scrollMessageIntoView, viewportReveal, focusEntryByMessageId, appendClientLog,
+        getCurrentSessionMessages, getSessionMessages, getSessionTurnEventState, renderAll, scrollMessageIntoView, viewportReveal, focusEntryByMessageId, appendClientLog,
         getActiveView: () => state.ui?.activeView || '',
       }) || null;
     }

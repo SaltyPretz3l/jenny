@@ -44,14 +44,8 @@
     sat: 6, saturday: 6,
   };
 
-  function escapeHtml(value) {
-    return String(value || '')
-      .replaceAll('&', '&amp;')
-      .replaceAll('<', '&lt;')
-      .replaceAll('>', '&gt;')
-      .replaceAll('"', '&quot;')
-      .replaceAll("'", '&#39;');
-  }
+  const escapeHtml = ((typeof globalThis !== 'undefined' && globalThis.stringUtils)
+    || (typeof require === 'function' ? require('../shared/string-utils') : null)).escapeHtml;
 
   function resolveActionButton(deps) {
     if (typeof deps?.actionButton === 'function') {
@@ -202,7 +196,7 @@
       + `<span class="cal-agenda__title">${escapeHtml(title)}</span>`
       + '<span class="cal-agenda__meta">'
       + attributionChip(instance)
-      + '<span class="cal-agenda__badge" title="' + escapeHtml(jt('dashboard.calendar.agenda.reminderManualNudges', 'Reminder — nudges are manual')) + '">reminder</span>'
+      + '<span class="cal-agenda__badge" title="' + escapeHtml(jt('dashboard.calendar.agenda.reminderAutomatic', 'Reminder fires automatically while Jenny is running.')) + '">reminder</span>'
       + '<span class="cal-agenda__reminder-actions">'
       + undoAffordance(actionButton, journalEntry, title)
       + actionButton({
@@ -312,7 +306,7 @@
         trustedHtml: ''
           + '<span class="cal-agenda__time"></span>'
           + '<span class="cal-agenda__dot" aria-hidden="true"></span>'
-          + '<span class="cal-agenda__title">Open</span>'
+          + '<span class="cal-agenda__title">' + escapeHtml(jt('dashboard.calendar.agenda.openSlotTitle', 'Open')) + '</span>'
           + '<span class="cal-agenda__meta cal-agenda__open-hint">' + escapeHtml(jt('dashboard.calendar.agenda.addEventHint', 'add an event')) + '</span>',
       })
       + '</li>';
@@ -408,7 +402,7 @@
       const countLabel = rows.length
         ? jtn('dashboard.calendar.agenda.eventCount', eventCount, { count: eventCount }, '{count} event', '{count} events')
           + (reminderCount ? jtn('dashboard.calendar.agenda.reminderCountSuffix', reminderCount, { count: reminderCount }, ' · {count} reminder', ' · {count} reminders') : '')
-        : '—';
+        : '';
       groups.push('<div class="cal-agenda__group" data-cal-agenda-day="' + escapeHtml(dayKey) + '">'
         + `<div class="${headClasses}" role="heading" aria-level="3">`
         + `<span class="cal-agenda__day-label">${escapeHtml(dayLabel)}</span>`

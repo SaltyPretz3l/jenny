@@ -10,9 +10,11 @@ import time
 from typing import Any
 
 from sidecar.ai.error_codes import (
+    CMP_TOOL_COMMAND_ABORTED,
     CMP_TOOL_PYTHON_EXECUTION_FAILED,
     CMP_TOOL_PYTHON_NOT_AVAILABLE,
 )
+from sidecar.ai.tools.builtins import cancellation
 from sidecar.ai.tools.builtins.python_runtime.interpreter import (
     bootstrap_phase_label,
     configured_bootstrap_budget_seconds,
@@ -22,7 +24,10 @@ from sidecar.ai.tools.builtins.python_runtime.interpreter import (
     redact_paths,
 )
 from sidecar.ai.tools.builtins.python_runtime.output import format_python_output
-from sidecar.ai.tools.builtins.python_runtime.sandbox import execute_sandboxed
+from sidecar.ai.tools.builtins.python_runtime.sandbox import (
+    SandboxExecutionCancelled,
+    execute_sandboxed,
+)
 from sidecar.ai.tools.contracts import ToolExecutionFailure, ToolHandlerResult
 from sidecar.ai.tools.workspace import WorkspaceGuard
 from sidecar.runtime.diagnostics import log_event
@@ -115,6 +120,7 @@ def python_execute_tool(
             timeout_seconds=configured_timeout_seconds(config),
             memory_limit_mb=configured_memory_limit_mb(config),
             working_directory=workspace_root,
+            abort_event=cancellation.current_abort_event(),
         )
         payload, trusted_attachments = format_python_output(
             sandbox_result.payload,
@@ -128,13 +134,26 @@ def python_execute_tool(
         )
     except ToolExecutionFailure:
         raise
+    except SandboxExecutionCancelled as error:
+        # Distinct from timeout: the user cancelled the turn. Say so plainly
+        # when the child's exit or its scratch cleanup could not be confirmed.
+        raise ToolExecutionFailure(
+            code=CMP_TOOL_COMMAND_ABORTED,
+            message=(
+                "python execution aborted by user cancellation"
+                if error.cleanup_confirmed
+                else "python execution aborted by user cancellation; "
+                "cleanup could not be confirmed"
+            ),
+            retryable=False,
+        ) from error
     except subprocess.TimeoutExpired as error:
         raise ToolExecutionFailure(
             code=CMP_TOOL_PYTHON_EXECUTION_FAILED,
             message=f"python execution timed out after {configured_timeout_seconds(config)}s",
             retryable=True,
         ) from error
-    except Exception as error:  # noqa: BLE001
+    except Exception as error:
         failed_phase = str(getattr(error, "failed_phase", "") or "").strip()
         phase_label = bootstrap_phase_label(failed_phase)
         # Redact here, not only in the phase context: a lock timeout, a

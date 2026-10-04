@@ -372,7 +372,7 @@
     const duration = formatDuration(entry);
     if (duration) parts.push(`<span class="cal-chat__duration">${escapeHtml(duration)}</span>`);
     if (entry.kind === 'reminder') {
-      parts.push(`<span class="cal-chat__badge" title="${escapeHtml(jt("dashboard.calendar.agenda.reminderManualNudges", "Reminder — nudges are manual"))}">${escapeHtml(jt("calendarChatBlock.reminderBadge", "reminder"))}</span>`);
+      parts.push(`<span class="cal-chat__badge" title="${escapeHtml(jt("dashboard.calendar.agenda.reminderAutomatic", "Reminder fires automatically while Jenny is running."))}">${escapeHtml(jt("calendarChatBlock.reminderBadge", "reminder"))}</span>`);
     } else {
       if (entry.source === 'feed') parts.push(`<span class="cal-chat__badge" title="${escapeHtml(jt("dashboard.calendar.agenda.subscribedFeedEvent", "Subscribed feed event"))}">${escapeHtml(jt("calendarChatBlock.feedBadge", "feed"))}</span>`);
       if (entry.tz_approx) parts.push(`<span class="cal-chat__badge" title="${escapeHtml(jt("dashboard.calendar.agenda.approximateFeedTime", "Approximate time (unrecognized feed time zone)"))}">~tz</span>`);
@@ -545,7 +545,7 @@
       parts.push(`<span class="cal-chat__badge">${escapeHtml(receipt.category)}</span>`);
     }
     if (receipt.kind === 'reminder') {
-      parts.push(`<span class="cal-chat__badge" title="${escapeHtml(jt("dashboard.calendar.agenda.reminderManualNudges", "Reminder — nudges are manual"))}">${escapeHtml(jt("calendarChatBlock.reminderBadge", "reminder"))}</span>`);
+      parts.push(`<span class="cal-chat__badge" title="${escapeHtml(jt("dashboard.calendar.agenda.reminderAutomatic", "Reminder fires automatically while Jenny is running."))}">${escapeHtml(jt("calendarChatBlock.reminderBadge", "reminder"))}</span>`);
     }
     if (receipt.op === 'delete') parts.push('<span class="cal-chat__badge">deleted</span>');
     parts.push(`<span class="cal-chat__jenny" title="${escapeHtml(jt("dashboard.calendar.agenda.addedByJenny", "Added by jenny"))}">${escapeHtml(jt("calendarChatBlock.jennyBadge", "jenny"))}</span>`);

@@ -334,8 +334,6 @@ function createToolHandlersHarness(overrides = {}) {
     createNormalizedMessage: (role, content, extra = {}) => ({ id: extra.id || `${role}_msg`, role, content, ...extra }),
     releaseApprovalToastSessions: () => {},
     clearSessionComposerNotice: () => {},
-    setSessionTurnStatusPill: () => {},
-    clearSessionTurnStatusPill: () => {},
     queueSessionRender: () => {},
     scheduleLiveToolPatch: () => false,
     showApprovalToast: () => {},
@@ -400,7 +398,6 @@ function createRuntimeHarness(overrides = {}) {
     appendClientLog: () => {},
     setChatSendLifecycle: (sessionId, lifecycle) => events.push({ type: 'lifecycle', sessionId, lifecycle }),
     clearSessionComposerNotice: () => {},
-    clearSessionTurnStatusPill: () => {},
     getQueuedSend: () => null,
     ...overrides,
   });

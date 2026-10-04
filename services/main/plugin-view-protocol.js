@@ -55,8 +55,7 @@ function response(body, status, mediaType = 'text/plain; charset=utf-8') {
   });
 }
 
-function createPluginViewProtocolHandler({ resolveAsset, resolveAttachment = null,
-  log = () => {} } = {}) {
+function createPluginViewProtocolHandler({ resolveAsset, log = () => {} } = {}) {
   if (typeof resolveAsset !== 'function') throw new TypeError('plugin view protocol requires resolveAsset');
   return async function handle(request) {
     let url;
@@ -69,10 +68,7 @@ function createPluginViewProtocolHandler({ resolveAsset, resolveAttachment = nul
     }
     let asset;
     try {
-      const ticketMatch = /^__attachment\/([0-9a-f]{64})$/.exec(assetPath);
-      asset = ticketMatch && typeof resolveAttachment === 'function'
-        ? await resolveAttachment({ artifactDigest, token: ticketMatch[1] })
-        : await resolveAsset({ artifactDigest, path: assetPath });
+      asset = await resolveAsset({ artifactDigest, path: assetPath });
     } catch (_error) {
       log('plugin.view.asset_failed', { reason_code: 'asset_resolution_failed' });
       return response('Unavailable', 503);
@@ -94,7 +90,10 @@ function createPluginViewProtocolHandler({ resolveAsset, resolveAttachment = nul
 async function installPluginViewProtocol(session, options) {
   if (!session?.protocol?.handle) throw new TypeError('plugin view session protocol unavailable');
   if (typeof session.protocol.isProtocolHandled === 'function'
-    && await session.protocol.isProtocolHandled(PLUGIN_VIEW_SCHEME)) return;
+    && await session.protocol.isProtocolHandled(PLUGIN_VIEW_SCHEME)) {
+    if (typeof session.protocol.unhandle !== 'function') throw new TypeError('plugin view protocol replacement unavailable');
+    await session.protocol.unhandle(PLUGIN_VIEW_SCHEME);
+  }
   await session.protocol.handle(PLUGIN_VIEW_SCHEME, createPluginViewProtocolHandler(options));
 }
 

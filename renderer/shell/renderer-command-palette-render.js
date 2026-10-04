@@ -149,7 +149,7 @@
     function buildHeader(groupName) {
       const header = el('div', 'command-palette-group-label');
       header.setAttribute('aria-hidden', 'true');
-      const text = el('span', 'kicker kicker--md');
+      const text = el('span', 'kicker');
       text.textContent = groupName;
       header.append(text);
       return header;

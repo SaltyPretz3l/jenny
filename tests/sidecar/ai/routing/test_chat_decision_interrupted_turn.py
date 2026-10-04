@@ -141,7 +141,7 @@ def test_depth_zero_turn_threads_mcp_client_to_overlay(monkeypatch: Any) -> None
         approvals_pre_granted=True,
     )
     assert len(calls) == 1
-    assert calls[0]["mcp_client"] is router._mcp_client  # noqa: SLF001
+    assert calls[0]["mcp_client"] is router._mcp_client
 
 
 def test_sub_agent_turn_does_not_invoke_overlay(monkeypatch: Any) -> None:

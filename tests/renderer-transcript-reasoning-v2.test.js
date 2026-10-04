@@ -1,5 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { JSDOM } = require('jsdom');
 
 const {
   clearReasoningStreamStateCache,
@@ -152,6 +153,34 @@ test('compaction chip keeps a stable label while each variant sentence moves int
       new RegExp(`context-compacted-notice-key">How<\\/span><span class="context-compacted-notice-value">${variant.sentence}`)
     );
   }
+});
+
+test('a summary source that dropped messages shows the omitted-input line once (CMC-008)', () => {
+  const renderer = makeTranscriptThinkingRenderer();
+  const omitted = /Some older messages were omitted from the summarizer input/g;
+  const render = (entry) => renderer.renderContextCompactedNotice({ context_compacted: entry });
+
+  const droppedOnly = render({ summaryStatus: 'created', inputComplete: true, summarySourceDroppedMessages: 12 });
+  const both = render({ summaryStatus: 'created', inputComplete: false, summarySourceDroppedMessages: 12 });
+  const clean = render({ summaryStatus: 'created', inputComplete: true, summarySourceDroppedMessages: 0 });
+
+  assert.equal((droppedOnly.match(omitted) || []).length, 1);
+  assert.equal((both.match(omitted) || []).length, 1);
+  assert.doesNotMatch(clean, omitted);
+});
+
+test('a failed summarizer How row says no summary was made (HB-028)', () => {
+  const html = makeTranscriptThinkingRenderer().renderContextCompactedNotice({
+    context_compacted: {
+      summaryStatus: 'failed', strategy: 'micro', phase: 'preflight',
+      reasonCode: 'summary_generation_failed', tokensBefore: 180016, tokensAfter: 41730,
+    },
+  });
+  const how = html.match(/context-compacted-notice-key">How<\/span><span class="context-compacted-notice-value">([^<]*)</)?.[1] || '';
+
+  assert.match(how, /Trimmed without summarizing/);
+  assert.doesNotMatch(how, /Summarizer failed; used a bounded fallback/, 'the fallback sentence is not repeated as the tier');
+  assert.doesNotMatch(html, /context-compacted-notice-key">Summary</);
 });
 
 test('compaction notice renders the separator hairline and an optional escaped Summary row', () => {
@@ -498,26 +527,6 @@ test('renderThinkingWidget surfaces tokens_per_second meta from phase metadata',
   assert.ok(html.includes('18 tok/s'));
 });
 
-// "Thought for Xs" is a response_loop_display_v2 surface; the renderer reads the
-// flag off document.documentElement.dataset (reflected by the render pipeline).
-// These unit tests have no jsdom, so stub a minimal document for the flag state.
-function withResponseLoopDisplayV2(value, fn) {
-  const had = Object.prototype.hasOwnProperty.call(global, 'document');
-  const prev = global.document;
-  global.document = {
-    documentElement: { dataset: { responseLoopDisplay: value ? 'true' : 'false' } },
-  };
-  try {
-    return fn();
-  } finally {
-    if (had) {
-      global.document = prev;
-    } else {
-      delete global.document;
-    }
-  }
-}
-
 function settledDurationMessage() {
   return buildMessage({
     reasoningPhases: [
@@ -533,25 +542,14 @@ function settledDurationMessage() {
   });
 }
 
-test('renderThinkingWidget shows "Thought for Xs" duration for a settled phase (flag on)', () => {
+test('renderThinkingWidget shows "Thought for Xs" duration for a settled phase', () => {
   const r = makeV2Renderer();
   // id mismatch with the latest assistant id => never the streaming tail.
-  const html = withResponseLoopDisplayV2(true, () => r.renderThinkingWidget(settledDurationMessage(), 'msg_other'));
+  const html = r.renderThinkingWidget(settledDurationMessage(), 'msg_other');
   // Quiet grammar: the duration IS the row name ("Thought for 3.4s"), so the
   // cluster meta is intentionally empty for a single settled phase.
   assert.ok(html.includes('reasoning-row-name'));
   assert.ok(html.includes('Thought for 3.4s'));
-});
-
-test('renderThinkingWidget hides "Thought for Xs" when response_loop_display_v2 is off', () => {
-  const r = makeV2Renderer();
-  // Same settled phase + same timing, flag OFF: the duration label is suppressed
-  // and the pre-feature tok/s secondary meta is shown instead. Locks the
-  // flag-isolation gap so the Phase-2 label can never leak when the flag is off.
-  const html = withResponseLoopDisplayV2(false, () => r.renderThinkingWidget(settledDurationMessage(), 'msg_other'));
-  assert.ok(!html.includes('Thought for'), 'duration label must not render with the flag off');
-  assert.ok(html.includes('reasoning-row-name">Thought<'), 'settled row without a duration is named Thought');
-  assert.ok(html.includes('18 tok/s'), 'flag-off falls back to the tok/s secondary meta');
 });
 
 test('renderThinkingWidget keeps tok/s (not duration) while the tail is streaming', () => {
@@ -637,6 +635,7 @@ test('renderThinkingWidget renders reasoning markdown with mermaid:plain on both
   assert.equal(streamingCalls.length, 1, 'streaming tail uses renderStreamingMarkdownUnits');
   assert.deepEqual(streamingCalls[0], {
     mermaid: 'plain',
+    allowTailRewrite: true,
     previousUnits: [],
     previousStreamState: null,
   }, 'streaming reasoning must render fences plain with an empty initial stream state');
@@ -760,6 +759,37 @@ test('renderPhase derives the header label from entries when the sidecar sends t
     !html.includes('>Reasoning through the turn<'),
     'the generic constant is fallback-only'
   );
+});
+
+test('renderPhase derives the header from the prettified reasoning body', (t) => {
+  const message = buildMessage({
+    entries: [{ text: 'Okay the user wants the cache fixed.Let me check the loader.So we start there.', thinkingId: 'tid_1' }],
+  });
+  const dom = new JSDOM(makeV2Renderer().renderThinkingWidget(message, 'msg_1'));
+  t.after(() => dom.window.close());
+  assert.equal(dom.window.document.querySelector('.reasoning-row-main').textContent, 'Okay the user wants the cache fixed.');
+});
+
+test('renderPhase opts into tail rewrites and reports the message stream identity', (t) => {
+  const observations = [];
+  const previousMetrics = globalThis.rendererStreamClientMetricsModule;
+  globalThis.rendererStreamClientMetricsModule = {
+    getShared: () => ({ noteReasoningBodyRender: (observation) => observations.push(observation) }),
+  };
+  t.after(() => {
+    if (previousMetrics === undefined) delete globalThis.rendererStreamClientMetricsModule;
+    else globalThis.rendererStreamClientMetricsModule = previousMetrics;
+  });
+  const { calls, renderer } = makeStreamingRendererSpy();
+  const message = buildMessage({
+    status: 'streaming',
+    reasoningStatus: 'streaming',
+    entries: [{ id: 'entry_1', text: 'First paragraph.\n\nTail.', thinkingId: 'phase_1' }],
+  });
+  message.streamId = 'stream_A';
+  renderer.renderThinkingWidget(message, 'msg_1');
+  assert.equal(observations[0].streamId, 'stream_A');
+  assert.equal(calls[0].options.allowTailRewrite, true);
 });
 
 test('renderPhase keeps a non-generic sidecar summary as the header label', () => {

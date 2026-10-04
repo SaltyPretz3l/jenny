@@ -1,6 +1,6 @@
 'use strict';
 
-const { HOST_ERROR_CODES } = require('../backend/error-codes');
+const { hostFailure } = require('../../server/api-contract');
 
 const fs = require('node:fs');
 const os = require('node:os');
@@ -82,16 +82,9 @@ function hasImageSignature(buffer, type) {
 }
 
 function errorResult(kind, reason, extra = {}) {
-  return {
-    ok: false,
-    error: {
-      code: HOST_ERROR_CODES.INVALID,
-      kind,
-      reason,
-      retryable: kind === 'unavailable' || kind === 'persistence',
-      ...extra,
-    },
-  };
+  const result = hostFailure(kind, reason, '', kind === 'unavailable' || kind === 'persistence');
+  Object.assign(result.error, { kind, ...extra });
+  return result;
 }
 
 function publicAttachment(attachment) {

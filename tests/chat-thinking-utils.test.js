@@ -9,6 +9,7 @@ const {
   groupReasoningPhaseMetadata,
   joinReasoningEntriesMarkdown,
   shouldShowThinkingToggle,
+  summaryFromEntries,
 } = require('../renderer/chat/chat-thinking-utils');
 const { prettifyReasoningMarkdown } = require('../renderer/chat/reasoning-prettify-utils');
 
@@ -391,5 +392,84 @@ test('incremental reasoning prettify stays byte-equal across 50 random chunkings
         `seed ${seed}, prefix length ${growingText.length}`,
       );
     }
+  }
+});
+
+const STREAM_CONTEXT_FIXTURES = [
+  { name: 'closed backtick fence', raw: '```js\nstart();\n\n' + 'x '.repeat(450) + 'run().Then(done); misses.Let me;\n```', code: 'run().Then(done); misses.Let me;' },
+  { name: 'open backtick fence', raw: '```js\nstart();\n\n' + 'x '.repeat(450) + 'run().Then(done); misses.Let me;', code: 'run().Then(done); misses.Let me;' },
+  { name: 'closed tilde fence', raw: '~~~python\nstart();\n\n' + 'x '.repeat(450) + 'run().Then(done); misses.Let me;\n~~~', code: 'run().Then(done); misses.Let me;' },
+  { name: 'open tilde fence', raw: '~~~python\nstart();\n\n' + 'x '.repeat(450) + 'run().Then(done); misses.Let me;', code: 'run().Then(done); misses.Let me;' },
+  { name: 'odd quote run', raw: 'The quote opens "here\n\n' + 'x '.repeat(450) + 'end."So we check the loader.' },
+  { name: 'unfinished inline span', raw: 'Intro\n\n' + 'x'.repeat(80) + ' `React.Component misses.Let me', code: '`React.Component misses.Let me' },
+  // Quote parity is per prose segment: the quote inside the inline code must
+  // not balance the open prose quote before the paragraph break.
+  { name: 'quote inside inline code before the boundary', raw: '`"` said "hi\n\n' + 'x '.repeat(450) + 'Done."Then more' },
+  // A tilde fence marker inside a backtick fence is literal; the later ~~~
+  // opens a fence that swallows the boundary, so no memo split is safe.
+  { name: 'fence marker inside the other fence kind', raw: 'A ```x ~~~``` b ~~~ c\n\nHello. ' + 'x '.repeat(450) + 'World is here.Now what' },
+];
+
+test('summaryFromEntries skips fence lines and filler-only lines of a prettified body', () => {
+  assert.equal(summaryFromEntries([{ text: '```js\nfunction a() {}\n```\n\nthen more text' }]), 'function a() {}');
+  assert.equal(summaryFromEntries([{ text: 'Okay.\n\nSo the plan is clear.' }]), 'So the plan is clear.');
+  assert.equal(summaryFromEntries([{ text: 'Okay.' }]), 'Okay.');
+  assert.equal(summaryFromEntries([{ text: 'Okay the user wants the cache fixed.\n\nLet me check.' }]), 'Okay the user wants the cache fixed.');
+});
+
+for (const { name, raw, code } of STREAM_CONTEXT_FIXTURES) {
+  test(`incremental prettify preserves ${name} across 50-character chunks`, () => {
+    let out = '';
+    for (let length = 50; length < raw.length + 50; length += 50) {
+      const text = raw.slice(0, length);
+      out = joinReasoningEntriesMarkdown([{ id: name, text }]);
+      assert.equal(out, prettifyReasoningMarkdown(text).trim(), `${name}: prefix ${text.length}`);
+    }
+    assert.equal(out, prettifyReasoningMarkdown(raw).trim(), `${name}: settled bytes`);
+    if (code) assert.ok(out.includes(code), `${name}: code bytes`);
+    assert.equal(prettifyReasoningMarkdown(out), out, `${name}: idempotence`);
+    const hadDocument = Object.prototype.hasOwnProperty.call(globalThis, 'document');
+    const priorDocument = globalThis.document;
+    globalThis.document = { documentElement: { dataset: { reasoningPrettify: 'false' } } };
+    try {
+      assert.equal(joinReasoningEntriesMarkdown([{ id: name, text: raw }]), raw, `${name}: flag-off bytes`);
+    } finally {
+      if (hadDocument) globalThis.document = priorDocument;
+      else delete globalThis.document;
+    }
+  });
+}
+
+test('prettify memo retains 24 phases and separates message scopes', () => {
+  const modulePath = require.resolve('../renderer/chat/chat-thinking-utils');
+  const priorModule = require.cache[modulePath];
+  const hadUtils = Object.prototype.hasOwnProperty.call(globalThis, 'reasoningPrettifyUtils');
+  const priorUtils = globalThis.reasoningPrettifyUtils;
+  let calls = 0;
+  globalThis.reasoningPrettifyUtils = {
+    ...require('../renderer/chat/reasoning-prettify-utils'),
+    prettifyReasoningMarkdown(text) {
+      calls += 1;
+      return prettifyReasoningMarkdown(text);
+    },
+  };
+  delete require.cache[modulePath];
+  try {
+    const { joinReasoningEntriesMarkdown: join } = require(modulePath);
+    const entries = Array.from({ length: 24 }, (_, index) => ({ id: `phase_${index}`, text: `phase ${index} end.Next thought.` }));
+    assert.equal(join(entries, { scope: 'm1' }), fullPrettifiedJoin(entries));
+    assert.equal(calls, 24);
+    calls = 0;
+    assert.equal(join(entries, { scope: 'm1' }), fullPrettifiedJoin(entries));
+    assert.equal(calls, 0, 'second pass makes zero prettify calls');
+    join(entries, { scope: 'm2' });
+    assert.equal(calls, 24, 'a second scope has independent cache keys');
+    calls = 0;
+    join(entries, { scope: 'm1' });
+    assert.equal(calls, 0, 'the first scope remains cached');
+  } finally {
+    require.cache[modulePath] = priorModule;
+    if (hadUtils) globalThis.reasoningPrettifyUtils = priorUtils;
+    else delete globalThis.reasoningPrettifyUtils;
   }
 });

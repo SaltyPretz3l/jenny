@@ -454,14 +454,8 @@ test('managed BackendService persists sequential tool results in notification or
   );
 });
 
-test('managed cancellation interrupts the current tool, blocks later activity, and cancels pending executor work', async () => {
-  const cancelCalls = [];
-  const toolExecutor = {
-    cancelPendingForStream(streamId) {
-      cancelCalls.push(streamId);
-    },
-  };
-  const { service, sessionId } = await createManagedBackend({ toolExecutor });
+test('managed cancellation interrupts the current tool and blocks later activity', async () => {
+  const { service, sessionId } = await createManagedBackend();
   const events = chatEvents(service);
   const firstToolStarted = deferred();
   installChatSend(service, async (_params, options) => {
@@ -499,7 +493,6 @@ test('managed cancellation interrupts the current tool, blocks later activity, a
   const terminal = await terminalPromise;
   const persisted = await service.getSessionMessages(sessionId);
 
-  assert.deepEqual(cancelCalls, [stream.streamId]);
   assert.deepEqual(
     persisted.data
       .filter((message) => message.kind === 'tool_use' || message.kind === 'tool_result')
@@ -508,9 +501,10 @@ test('managed cancellation interrupts the current tool, blocks later activity, a
         message.tool_call?.call_id || message.tool_result?.call_id,
         message.tool_call?.status || message.tool_result?.metadata?.terminal_state,
       ]),
+    // A user Stop settles its running tool as cancelled, not interrupted (gate F3).
     [
-      ['tool_use', 'call_interrupted', 'interrupted'],
-      ['tool_result', 'call_interrupted', 'interrupted'],
+      ['tool_use', 'call_interrupted', 'cancelled'],
+      ['tool_result', 'call_interrupted', 'cancelled'],
     ]
   );
   assert.equal(persisted.data.some((message) => JSON.stringify(message).includes('call_must_not_run')), false);
@@ -530,7 +524,7 @@ test('managed cancellation interrupts the current tool, blocks later activity, a
 
 test('managed mixed text and tool calls retain the preamble before final answer text', async () => {
   const { service, sessionId } = await createManagedBackend({
-    featureFlags: { response_loop_display_v2: true },
+    featureFlags: {},
   });
   const events = chatEvents(service);
   installChatSend(service, async (_params, { onNotification }) => {

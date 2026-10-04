@@ -45,7 +45,7 @@ class _CommitFailOnceConnection:
 
 
 def _insert_retention_rows(store: MemoryStore, *, old_at: str, fresh_at: str) -> None:
-    store._connection.executemany(  # noqa: SLF001
+    store._connection.executemany(
         """
         INSERT INTO memory_extraction_runs (
             session_id, request_id, status, attempt_count, started_at,
@@ -57,7 +57,7 @@ def _insert_retention_rows(store: MemoryStore, *, old_at: str, fresh_at: str) ->
             ("session-fresh", "run-fresh", fresh_at, fresh_at, fresh_at, fresh_at),
         ),
     )
-    store._connection.executemany(  # noqa: SLF001
+    store._connection.executemany(
         """
         INSERT INTO pending_memory_candidates (
             session_id, source_request_id, title, lesson_text, lesson_kind,
@@ -96,7 +96,7 @@ def _insert_retention_rows(store: MemoryStore, *, old_at: str, fresh_at: str) ->
             ),
         ),
     )
-    store._connection.executemany(  # noqa: SLF001
+    store._connection.executemany(
         """
         INSERT INTO memories (
             session_id, title, lesson_text, lesson_kind, confidence,
@@ -133,7 +133,7 @@ def _insert_retention_rows(store: MemoryStore, *, old_at: str, fresh_at: str) ->
             ),
         ),
     )
-    store._connection.commit()  # noqa: SLF001
+    store._connection.commit()
 
 
 def _run_maintenance_now(
@@ -143,15 +143,15 @@ def _run_maintenance_now(
     max_rows_per_table: int,
     max_db_bytes: int,
 ) -> dict[str, object]:
-    with store._lock:  # noqa: SLF001
-        report = store._perform_maintenance(  # noqa: SLF001
+    with store._lock:
+        report = store._perform_maintenance(
             max_age_days=max_age_days,
             max_rows_per_table=max_rows_per_table,
             max_db_bytes=max_db_bytes,
             apply_age_retention=True,
         )
-        store._successful_mutations = 0  # noqa: SLF001
-        store._last_maintenance_monotonic = time.monotonic()  # noqa: SLF001
+        store._successful_mutations = 0
+        store._last_maintenance_monotonic = time.monotonic()
         return report
 
 
@@ -161,7 +161,7 @@ def test_write_transaction_rolls_back_commit_failure_and_allows_next_write(
     store = MemoryStore(tmp_path / "memory.db")
     try:
         timestamp = datetime.now(timezone.utc).isoformat()
-        store._connection.execute(  # noqa: SLF001
+        store._connection.execute(
             """
             INSERT INTO pending_memory_candidates (
                 session_id, source_request_id, title, lesson_text, lesson_kind,
@@ -182,9 +182,9 @@ def test_write_transaction_rolls_back_commit_failure_and_allows_next_write(
                 timestamp,
             ),
         )
-        store._connection.commit()  # noqa: SLF001
-        proxy = _CommitFailOnceConnection(store._connection)  # noqa: SLF001
-        store._connection = proxy  # type: ignore[assignment]  # noqa: SLF001
+        store._connection.commit()
+        proxy = _CommitFailOnceConnection(store._connection)
+        store._connection = proxy  # type: ignore[assignment]
 
         with pytest.raises(MemoryStoreError, match="failed to save memory"):
             store.save_memory(
@@ -237,10 +237,10 @@ def test_maintenance_removes_only_old_derived_rows_and_keeps_approved(
             "pending_memory_candidates": 1,
         }
         for table in report["removed"]:
-            assert store._connection.execute(  # noqa: SLF001
+            assert store._connection.execute(
                 f"SELECT COUNT(*) FROM {table}"
             ).fetchone()[0] == 1
-        assert store._connection.execute(  # noqa: SLF001
+        assert store._connection.execute(
             "SELECT COUNT(*) FROM memories"
         ).fetchone()[0] == 2
     finally:
@@ -248,7 +248,7 @@ def test_maintenance_removes_only_old_derived_rows_and_keeps_approved(
 def test_maintenance_count_cap_evicts_oldest_rows_first(tmp_path: Path) -> None:
     store = MemoryStore(tmp_path / "memory.db")
     try:
-        store._connection.executemany(  # noqa: SLF001
+        store._connection.executemany(
             """
             INSERT INTO memory_extraction_runs (
                 session_id, request_id, status, attempt_count, started_at,
@@ -261,7 +261,7 @@ def test_maintenance_count_cap_evicts_oldest_rows_first(tmp_path: Path) -> None:
                 ("newest", *("2026-01-03T00:00:00+00:00",) * 4),
             ),
         )
-        store._connection.commit()  # noqa: SLF001
+        store._connection.commit()
 
         report = _run_maintenance_now(
             store,
@@ -271,7 +271,7 @@ def test_maintenance_count_cap_evicts_oldest_rows_first(tmp_path: Path) -> None:
         )
 
         assert report["removed"]["memory_extraction_runs"] == 1
-        rows = store._connection.execute(  # noqa: SLF001
+        rows = store._connection.execute(
             "SELECT request_id FROM memory_extraction_runs ORDER BY created_at ASC"
         ).fetchall()
         assert rows == [("middle",), ("newest",)]
@@ -285,7 +285,7 @@ def test_interrupted_maintenance_rolls_back_and_next_sweep_succeeds(
     store = MemoryStore(tmp_path / "memory.db")
     try:
         old_at = (datetime.now(timezone.utc) - timedelta(days=181)).isoformat()
-        store._connection.execute(  # noqa: SLF001
+        store._connection.execute(
             """
             INSERT INTO memory_extraction_runs (
                 session_id, request_id, status, attempt_count, started_at,
@@ -294,9 +294,9 @@ def test_interrupted_maintenance_rolls_back_and_next_sweep_succeeds(
             """,
             ("old", old_at, old_at, old_at, old_at),
         )
-        store._connection.commit()  # noqa: SLF001
-        proxy = _CommitFailOnceConnection(store._connection)  # noqa: SLF001
-        store._connection = proxy  # type: ignore[assignment]  # noqa: SLF001
+        store._connection.commit()
+        proxy = _CommitFailOnceConnection(store._connection)
+        store._connection = proxy  # type: ignore[assignment]
 
         with pytest.raises(MemoryStoreError, match="failed to maintain memory database"):
             _run_maintenance_now(
@@ -332,7 +332,7 @@ def test_byte_ceiling_evicts_ephemeral_tables_before_approved_memories(
         def _simulated_live_bytes() -> int:
             ephemeral_rows = sum(
                 int(
-                    store._connection.execute(  # noqa: SLF001
+                    store._connection.execute(
                         f"SELECT COUNT(*) FROM {table}"
                     ).fetchone()[0]
                 )
@@ -354,7 +354,7 @@ def test_byte_ceiling_evicts_ephemeral_tables_before_approved_memories(
         assert report["removed"]["memory_extraction_runs"] == 2
         assert report["removed"]["pending_memory_candidates"] == 2
         assert "memories" not in report["removed"]
-        assert store._connection.execute(  # noqa: SLF001
+        assert store._connection.execute(
             "SELECT COUNT(*) FROM memories"
         ).fetchone()[0] == 2
     finally:
@@ -378,7 +378,7 @@ def test_maintenance_runs_at_startup_mutation_count_and_elapsed_operation(
         assert len(calls) == 1
         assert calls[0]["apply_age_retention"] is False
 
-        store._successful_mutations = 99  # noqa: SLF001
+        store._successful_mutations = 99
         store.save_memory(
             session_id="session",
             title="Tea",
@@ -389,7 +389,7 @@ def test_maintenance_runs_at_startup_mutation_count_and_elapsed_operation(
         )
         assert len(calls) == 2
 
-        store._last_maintenance_monotonic -= MEMORY_MAINTENANCE_SECONDS + 1  # noqa: SLF001
+        store._last_maintenance_monotonic -= MEMORY_MAINTENANCE_SECONDS + 1
         store.get_all_memories()
         assert len(calls) == 2
         store.save_memory(
@@ -428,7 +428,7 @@ def test_recall_scores_at_most_bounded_sql_candidates(
             )
             for index in range(MAX_ALL_MEMORIES_LIMIT + 100)
         ]
-        store._connection.executemany(  # noqa: SLF001
+        store._connection.executemany(
             """
             INSERT INTO memories (
                 session_id, title, lesson_text, lesson_kind, confidence,
@@ -438,7 +438,7 @@ def test_recall_scores_at_most_bounded_sql_candidates(
             """,
             rows,
         )
-        store._connection.commit()  # noqa: SLF001
+        store._connection.commit()
         scored = 0
 
         def _score(*_args: object, **_kwargs: object) -> float:
@@ -451,19 +451,19 @@ def test_recall_scores_at_most_bounded_sql_candidates(
         # 100 ms recall deadline. Keep CPU contention from expiring the deadline
         # before the first instrumented score call under the full xdist gate.
         monkeypatch.setattr(memory_store_approved_module, "RECALL_DEADLINE_SECONDS", 5.0)
-        store._recall_index_available = False  # noqa: SLF001
+        store._recall_index_available = False
         assert store.recall_memories("green tea") == []
         assert 0 < scored <= MAX_ALL_MEMORIES_LIMIT
         if scored < MAX_ALL_MEMORIES_LIMIT:
-            assert store._last_recall_partial is True  # noqa: SLF001
+            assert store._last_recall_partial is True
         assert len(
-            store._candidate_rows_for_recall(  # noqa: SLF001
+            store._candidate_rows_for_recall(
                 normalized_query="green tea",
                 query_tokens={"green", "tea"},
             )
         ) == MAX_ALL_MEMORIES_LIMIT
 
-        plan = store._connection.execute(  # noqa: SLF001
+        plan = store._connection.execute(
             "EXPLAIN QUERY PLAN SELECT id FROM memories "
             "WHERE project_id = ? ORDER BY updated_at DESC, id DESC LIMIT ?",
             ("project_general", MAX_ALL_MEMORIES_LIMIT),
@@ -588,8 +588,8 @@ def test_malformed_row_is_quarantined_without_hiding_valid_rows(tmp_path: Path) 
             confidence=0.9,
             source_excerpt="tea",
         )
-        store._connection.execute("PRAGMA ignore_check_constraints=ON")  # noqa: SLF001
-        store._connection.execute(  # noqa: SLF001
+        store._connection.execute("PRAGMA ignore_check_constraints=ON")
+        store._connection.execute(
             """
             INSERT INTO memories (
                 session_id, title, lesson_text, lesson_kind, confidence,
@@ -603,12 +603,12 @@ def test_malformed_row_is_quarantined_without_hiding_valid_rows(tmp_path: Path) 
                 "2026-01-01T00:00:00+00:00", "2026-01-01T00:00:00+00:00",
             ),
         )
-        store._connection.commit()  # noqa: SLF001
+        store._connection.commit()
 
         assert [memory.id for memory in store.get_all_memories()] == [valid.id]
         status = store.status_snapshot()
         assert status["operational_counts"]["quarantined"] == 1
-        payload = store._connection.execute(  # noqa: SLF001
+        payload = store._connection.execute(
             "SELECT raw_payload FROM memory_quarantine LIMIT 1"
         ).fetchone()[0]
         assert "broken" not in payload
@@ -627,8 +627,8 @@ def test_recall_quarantines_malformed_candidate_and_returns_valid_match(tmp_path
             confidence=0.9,
             source_excerpt="tea",
         )
-        store._connection.execute("PRAGMA ignore_check_constraints=ON")  # noqa: SLF001
-        store._connection.execute(  # noqa: SLF001
+        store._connection.execute("PRAGMA ignore_check_constraints=ON")
+        store._connection.execute(
             """
             INSERT INTO memories (
                 session_id, title, lesson_text, lesson_kind, confidence,
@@ -642,7 +642,7 @@ def test_recall_quarantines_malformed_candidate_and_returns_valid_match(tmp_path
                 "2026-01-01T00:00:00+00:00", "2026-01-01T00:00:00+00:00",
             ),
         )
-        store._connection.commit()  # noqa: SLF001
+        store._connection.commit()
 
         assert [memory.id for memory in store.recall_memories("tea")] == [valid.id]
         assert store.status_snapshot()["operational_counts"]["quarantined"] == 1
@@ -658,13 +658,13 @@ def test_quarantine_retains_only_the_bounded_newest_rows(
     store = MemoryStore(tmp_path / "memory.db")
     try:
         for row_id in ("oldest", "middle", "newest"):
-            store._quarantine_malformed_row(  # noqa: SLF001
+            store._quarantine_malformed_row(
                 source_table="legacy_rows",
                 row=(row_id, "private content"),
                 reason_code="invalid_row",
             )
 
-        rows = store._connection.execute(  # noqa: SLF001
+        rows = store._connection.execute(
             "SELECT source_row_id FROM memory_quarantine ORDER BY id"
         ).fetchall()
         assert [row[0] for row in rows] == ["middle", "newest"]
@@ -736,7 +736,7 @@ def test_fts_recalls_only_relevant_memory_when_it_is_older_than_500_rows(
                     timestamp,
                 )
             )
-        store._connection.executemany(  # noqa: SLF001
+        store._connection.executemany(
             """
             INSERT INTO memories (
                 session_id, title, lesson_text, lesson_kind, confidence,
@@ -746,7 +746,7 @@ def test_fts_recalls_only_relevant_memory_when_it_is_older_than_500_rows(
             """,
             rows,
         )
-        store._connection.commit()  # noqa: SLF001
+        store._connection.commit()
 
         recalled = store.recall_memories("heliotrope zebra", limit=1)
         assert len(recalled) == 1

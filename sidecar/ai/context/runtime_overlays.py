@@ -17,6 +17,8 @@ from sidecar.ai.context import (
     request_fingerprint,
     runtime_message_markers,
 )
+from sidecar.ai.context.builder_skills import request_skill_authority
+from sidecar.ai.context.turn_context import trailing_turn_context_enabled
 from sidecar.ai.host_policy import host_policy_is_enforced
 from sidecar.ai.memory.service import MemoryService
 from sidecar.runtime.diagnostics import log_event
@@ -39,13 +41,14 @@ class RuntimeOverlayLogContext:
 # Engine types that run local inference; the skill index is opt-in there.
 _LOCAL_INFERENCE_ENGINE_TYPES = frozenset({"ollama", "vllm", "openai-compatible"})
 
-def build_dynamic_system_messages(
+def build_dynamic_system_messages(  # noqa: PLR0913
     *,
     context_builder: ContextBuilder,
     config: Any,
     tool_statuses: Iterable[Any] | None = None,
     personality_rendered: bool = False,
     skill_invocation: dict[str, str] | None = None,
+    execution_context: Any | None = None,
 ) -> list[dict[str, object]]:
     """Build cache-unstable personality and skill overlays for a request.
 
@@ -56,6 +59,10 @@ def build_dynamic_system_messages(
     block — no workspace, or a turn that omitted it — the bare heading plus
     name/precedence line is emitted here so the model always knows its name.
     The ChatGPT minimal profile emits neither.
+
+    With an *execution_context* the skill index, the invoked skill and the
+    auto-index policy come from that request's skill authority; without one
+    they come from the builder's startup scopes and *config*.
     """
     messages: list[dict[str, object]] = []
     if not personality_rendered and not config_models.uses_minimal_system_prompt(config):
@@ -71,8 +78,13 @@ def build_dynamic_system_messages(
         )
 
     statuses = list(tool_statuses) if tool_statuses is not None else None
+    authority = request_skill_authority(config, execution_context)
+    # Duck-typed builders in tests do not accept the keyword; pass it only when set.
+    skill_kwargs: dict[str, Any] = {} if authority is None else {"skill_authority": authority}
     # Missing attribute = legacy caller without a policy: keep rendering.
-    raw_policy = getattr(config, "skills_auto_index", None)
+    raw_policy = (
+        getattr(config, "skills_auto_index", None) if authority is None else authority.auto_index
+    )
     policy = "on" if raw_policy is None else raw_policy
     if policy not in {"auto", "on", "off"}:
         policy = "auto"
@@ -81,14 +93,16 @@ def build_dynamic_system_messages(
         policy == "auto" and engine_type not in _LOCAL_INFERENCE_ENGINE_TYPES
     )
     skills_message = (
-        context_builder.build_skills_system_message(tool_statuses=statuses)
+        context_builder.build_skills_system_message(tool_statuses=statuses, **skill_kwargs)
         if auto_index_enabled
         else ""
     )
     if skills_message:
         messages.append({"role": "system", "content": skills_message})
     invoked_builder = getattr(context_builder, "build_invoked_skill_system_message", None)
-    invoked_skill_message = invoked_builder(skill_invocation) if callable(invoked_builder) else ""
+    invoked_skill_message = (
+        invoked_builder(skill_invocation, **skill_kwargs) if callable(invoked_builder) else ""
+    )
     if invoked_skill_message:
         messages.append({"role": "system", "content": invoked_skill_message})
     delegated_overlay_builder = getattr(
@@ -149,13 +163,30 @@ def build_prompt_memory_recall_system_message(
     return context_builder.build_memory_recall_system_message(memories)
 
 
-def append_repository_delta_runtime_system_message(
+def repo_delta_workspace_root(
+    config: Any, context_builder: Any, execution_context: Any | None
+) -> Path | str | None:
+    """The root repository-delta reads and anchor writes use for one request.
+
+    Same precedence as the session-environment block: hosted policy hides the
+    root (``None``); a captured request authority wins, including an explicitly
+    unbound root (``None``); otherwise the builder's startup root.
+    """
+    if host_policy_is_enforced(config):
+        return None
+    if execution_context is not None:
+        return execution_context.root_path
+    return context_builder.workspace_root
+
+
+def append_repository_delta_runtime_system_message(  # noqa: PLR0913
     runtime_system_messages: list[str],
     *,
     config: Any,
     context_builder: ContextBuilder,
     session_id: str | None,
     log_context: RuntimeOverlayLogContext,
+    execution_context: Any | None = None,
 ) -> None:
     """Append the one-shot ``<repository-delta>`` overlay when the repo moved.
 
@@ -164,16 +195,20 @@ def append_repository_delta_runtime_system_message(
     attribute failure here also degrades to a no-op so a resume-orientation
     signal can never break a turn. The service is imported lazily so this
     module's static import fan-out (and the flag-off hot path) stays unchanged.
+    The root is the request's (:func:`repo_delta_workspace_root`); no root, no delta.
     """
     if not getattr(config, "repo_delta_resume_enabled", False):
         return
     try:
+        workspace_root = repo_delta_workspace_root(config, context_builder, execution_context)
+        if workspace_root is None:
+            return
         from sidecar.ai.repo_delta.service import build_repository_delta_block
 
         block = build_repository_delta_block(
             config=config,
             session_id=session_id,
-            workspace_root=context_builder.workspace_root,
+            workspace_root=workspace_root,
         )
     except Exception as error:  # noqa: BLE001
         log_event(
@@ -384,6 +419,14 @@ def _render_session_environment_block(
     return "\n".join(lines)
 
 
+def runtime_clock_line() -> str:
+    """The current local time sentence for 24-hour-time users."""
+    from datetime import datetime
+
+    now = datetime.now().astimezone()
+    return f"Current runtime local time: {now:%Y-%m-%d %H:%M %Z} (UTC offset {now:%z})."
+
+
 def append_session_environment_runtime_system_message(  # noqa: PLR0913
     runtime_system_messages: list[str],
     *,
@@ -403,14 +446,11 @@ def append_session_environment_runtime_system_message(  # noqa: PLR0913
     """
     time_preference = ""
     if getattr(config, "use_24_hour_time", False) is True:
-        from datetime import datetime
-
-        now = datetime.now().astimezone()
-        time_preference = (
-            "Time display preference: use 24-hour time (00:00–23:59) in replies. "
-            f"Current runtime local time: {now:%Y-%m-%d %H:%M %Z} "
-            f"(UTC offset {now:%z})."
-        )
+        time_preference = "Time display preference: use 24-hour time (00:00–23:59) in replies."
+        # The clock changes every minute; a trailing turn-context row carries it
+        # so this leading overlay stays byte-stable across turns.
+        if not trailing_turn_context_enabled(config):
+            time_preference += f" {runtime_clock_line()}"
     if not getattr(config, "session_environment_overlay_enabled", True):
         if time_preference:
             runtime_system_messages.append(

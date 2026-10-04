@@ -75,6 +75,7 @@
     const turnTreeProjectorUtils = resolveModule('rendererTurnTreeProjector', './renderer-turn-tree-projector');
     const turnRowProjectorUtils = resolveModule('rendererTurnRowProjector', './renderer-turn-row-projector');
     const timelineVisibilityUtils = resolveModule('rendererTimelineVisibilityUtils', './renderer-timeline-visibility-utils');
+    const paneVisibilityUtils = resolveModule('rendererPaneVisibilityUtils', './renderer-pane-visibility-utils');
     const { state } = deps;
     const { MESSAGE_STATUS, ACTIVITY_SCOPE } = deps.constants;
     const {
@@ -83,7 +84,6 @@
       chatThreadColumn, chatSpriteLayer, chatAssistantSprite,
       heroAvatar, heroTitle, heroSubtitle, heroRuntimeHint, chatInput,
       stopStreamButton, sendButton, composer, composerModelSelect, composerEffortSelect,
-      composerSettingsButton,
       jumpToTopButton, jumpToBottomButton, jumpToLastPromptButton,
       composerModelSelectShell, composerEffortSelectShell,
       chatSurfaceEffects, chatSurfaceEffectLeft,
@@ -95,16 +95,18 @@
       shouldShowThinkingToggle, renderMessageAttachments, renderToolCallBlock,
       buildInteractiveRecapViewModel, renderInteractiveRoundRecap, renderProactiveSuggestionBlock, renderSlashCommandOutput,
       renderThinkingWidget, renderAgentStatusWidget = function noopRenderAgentStatusWidget() { return ''; }, renderAssistantFailureNotice, renderContextCompactedNotice = function noopRenderContextCompactedNotice() { return ''; }, renderMessageHoverRow,
-      getCurrentSessionMessages, getCurrentVisibleMessages, getVisibleSessionMessages,
+      getCurrentSessionMessages, getCurrentVisibleMessages, getVisibleSessionMessages: _getVisibleSessionMessages,
+      getSessionMessages: _getSessionMessages,
       isSendBusy, isSessionStreaming, hasPendingToolApprovalForSession,
       isSendPreflightPending, updateTokenDisplay, syncTurnElapsedClock,
       isInteractiveRoundRecapExpanded, pruneInteractiveRoundRecapExpansionState,
       setFollowLatest, scheduleMessageViewportSync,
+      isFollowingLatest, // this pane's follow intent; absent, each consumer's own default (state.ui.followLatest)
       getPendingQuestionBatch, hasStalePendingQuestionBatch, buildInteractiveBatchRowMarkup,
       buildPlanProposalRowMarkup = function noopBuildPlanProposalRowMarkup() { return ''; },
       getActivitySnapshot, getMostRecentActivity, isActivityBusy, applyActivityAttributes,
       renderComposerInteractivePanel, closeComposerPopover, syncComposerInputHeight,
-      setComposerHoloState, setSpriteHoloState, updateComposerSafeOffset, renderSessions,
+      setComposerHoloState, updateComposerSafeOffset, renderSessions,
       renderWorkspaceChrome, renderSettings, renderIde = noop, layoutIdeEditor = noop,
       reconcileChatDockHost = function noopReconcileChatDockHost() { return false; },
       renderArtifactReviewPanel,
@@ -112,9 +114,9 @@
       renderContextPanel, renderPinnedNotes, renderHomePanel, shouldRenderHomePanel = function noopShouldRenderHomePanel() { return false; }, renderAttachmentTray,
       renderComposerStatusNotice, setComposerStatusNotice, clearComposerStatusNotice, renderToastViewport, renderComposerPopover, renderCommandPopover,
       clearActivity, failActivity,
-      beginActivity, getCurrentRuntimePreferences, syncComposerModelSelectWidth,
+      beginActivity, getCurrentRuntimePreferences, getRuntimePreferencesFromSession = null,
       renderComposerEnhancements, onSurfaceLifecycleSync,
-      renderMarkdown, renderStreamingMarkdownUnits, publishLifecycleStatus: _publishLifecycleStatus, renderTurnStatusPill: _renderTurnStatusPill, syncBackendNotice: _syncBackendNotice,
+      renderMarkdown, renderStreamingMarkdownUnits, syncBackendNotice: _syncBackendNotice,
       syncPersistedReasoningPhaseExpansionState = function noopSyncPersistedReasoningPhaseExpansionState() {},
       getChatSendLifecycle = function noopGetChatSendLifecycle() { return 'idle'; },
       getChatTimelineRowModelEnabled = function noopGetChatTimelineRowModelEnabled() { return false; },
@@ -141,7 +143,39 @@
       ? turnRowProjectorUtils.projectTurn
       : null;
     const { thinkingController, reducedMotionQuery, thinkingIndicator, scrollCoordinator } = deps.controllers;
+    // renderThinkingWidget is one shared renderer closed over the app-level reasoning
+    // controller; hand it THIS pane's, so a split pane's disclosures read its own state.
+    const renderPaneThinkingWidget = typeof renderThinkingWidget === 'function'
+      ? (message, latestAssistantMessageId, options) => renderThinkingWidget(message, latestAssistantMessageId, { ...options, thinkingController })
+      : renderThinkingWidget;
     const { uiRuntime, spriteRuntime } = deps.runtime;
+    // Split view W1-4a: the session THIS pane shows (renderer-pane-visibility-utils.js
+    // resolvePaneSessionId). A bag without an integer paneId is pane 0, as in
+    // createPaneRuntime; a blank layout makes pane 0 exactly currentSessionId.
+    const paneId = Number.isInteger(uiRuntime?.paneId) && uiRuntime.paneId >= 0 ? uiRuntime.paneId : 0;
+    const getPaneSessionId = typeof paneVisibilityUtils?.resolvePaneSessionId === 'function'
+      ? () => paneVisibilityUtils.resolvePaneSessionId(state, paneId)
+      : () => String(state.currentSessionId || '').trim();
+    // Transcript view (answers | thinking | everything) of the session THIS pane
+    // shows (renderer-transcript-view-utils.js). Threaded through render
+    // options because the row builders are shared single instances and two
+    // panes can show two views; absent-safe so a missing module renders
+    // 'thinking', today's behaviour.
+    const getPaneTranscriptView = () => {
+      const utils = globalThis.rendererTranscriptViewUtils;
+      return typeof utils?.resolveTranscriptView === 'function'
+        ? utils.resolveTranscriptView(state, getPaneSessionId())
+        : 'thinking';
+    };
+    // Split view W3-1: this pane renders selection chrome only while it owns the mode.
+    // (renderer-chat-selection-utils.js: state.ui.selectionModePaneId, null = off).
+    const isPaneSelecting = () => state.ui?.selectionModePaneId === paneId;
+    // Per-session message getters, read with getPaneSessionId(); a composition
+    // that injects only the current-session getters keeps working unchanged.
+    const getVisibleSessionMessages = typeof _getVisibleSessionMessages === 'function'
+      ? _getVisibleSessionMessages : () => (typeof getCurrentVisibleMessages === 'function' ? getCurrentVisibleMessages() : []);
+    const getSessionMessages = typeof _getSessionMessages === 'function'
+      ? _getSessionMessages : () => (typeof getCurrentSessionMessages === 'function' ? getCurrentSessionMessages() : []);
 
     // Recap models, thread-collapse state, and recap-expansion accessors moved
     // into renderer/chat/renderer-render-pipeline-thread-state.js. Late-bound callbacks let
@@ -151,6 +185,7 @@
     const threadStatePipeline = threadStatePipelineUtils.createThreadStatePipeline({
       state,
       callbacks: {
+        getPaneSessionId,
         buildInteractiveRecapViewModel,
         isInteractiveRoundRecapExpanded,
         pruneInteractiveRoundRecapExpansionState,
@@ -188,6 +223,7 @@
       },
       runtime: { uiRuntime },
       callbacks: {
+        getPaneSessionId,
         getChatSendLifecycle,
         isSendPreflightPending,
         isSessionStreaming,
@@ -207,6 +243,7 @@
     } = surfaceStatePipeline;
     const streamRevealController = (globalThis.rendererStreamRevealUtils || {}).createStreamRevealController?.({
       windowRef: window,
+      getSessionId: getPaneSessionId,
       chatTimeline,
       reducedMotionQuery,
       renderStreamingMarkdownUnits,
@@ -217,7 +254,7 @@
     const {
       resetState: resetStreamRevealState = () => {},
       buildTimelineStructureSignature = () => '',
-      buildStreamingBubbleMarkup = (message) => ({ bubbleInnerHtml: renderMarkdown(message && message.content), entryReveal: false }),
+      buildStreamingBubbleMarkup = (message) => ({ bubbleInnerHtml: renderMarkdown(message && message.content) }),
       commitFullRender: commitStreamRevealFullRender = () => {},
       replayReasoningHandoff: replayStreamRevealHandoff = () => {},
       canPatchMessage: canPatchStreamRevealMessage = () => false,
@@ -261,15 +298,15 @@
         chatSpriteLayer,
         chatAssistantSprite,
       },
-      controllers: { thinkingIndicator, thinkingController },
+      controllers: { thinkingIndicator, thinkingController, getRuntimeSendController: deps.controllers.getRuntimeSendController },
       runtime: { spriteRuntime },
       callbacks: {
+        getPaneSessionId,
         getCurrentSessionMessages,
+        getSessionMessages,
         getLatestUserMessageId,
         getLatestAssistantMessageId,
         escapeSelectorValue,
-        isSendPreflightPending,
-        setSpriteHoloState,
       },
     }) || {};
     const turnShellRenderer = turnShellUtils?.createTurnShellRenderer?.({ escapeHtml }) || null;
@@ -285,7 +322,7 @@
         renderInteractiveRoundRecap,
         renderProactiveSuggestionBlock,
         renderSlashCommandOutput,
-        renderThinkingWidget,
+        renderThinkingWidget: renderPaneThinkingWidget,
         renderToolCallBlock,
         renderAgentStatusWidget,
         renderAgentProgressRow: (function resolveRenderAgentProgressRow() {
@@ -347,7 +384,6 @@
         composer,
         composerModelSelect,
         composerEffortSelect,
-        composerSettingsButton,
         jumpToTopButton,
         jumpToBottomButton,
         jumpToLastPromptButton,
@@ -355,6 +391,7 @@
         sendButton,
         composerModelSelectShell,
         composerEffortSelectShell,
+        chatTimeline,
       },
       controllers: {
         logRenderer: deps.controllers?.logRenderer || null,
@@ -365,8 +402,6 @@
         renderMessages: (...a) => renderMessages(...a),
         applySurfaceEffect: (...a) => applySurfaceEffect(...a),
         syncBackendNotice: (...a) => syncBackendNotice(...a),
-        publishLifecycleStatus: (...a) => _publishLifecycleStatus(...a),
-        renderTurnStatusPill: (...a) => (typeof _renderTurnStatusPill === 'function' ? _renderTurnStatusPill(...a) : undefined),
         renderSettings: (...a) => renderSettings(...a),
         renderIde: (...a) => renderIde(...a),
         layoutIdeEditor: (...a) => layoutIdeEditor(...a),
@@ -386,9 +421,11 @@
         renderWorkspaceChrome: (...a) => renderWorkspaceChrome(...a),
         renderSessions: (...a) => renderSessions(...a),
         renderArtifactReviewPanel: (...a) => renderArtifactReviewPanel?.(...a),
+        getPaneSessionId,
+        isFollowingLatest,
         getVisibleSessionMessages,
-        getCurrentVisibleMessages,
         getCurrentRuntimePreferences,
+        getRuntimePreferencesFromSession,
         isSendBusy,
         isSessionStreaming,
         hasPendingToolApprovalForSession,
@@ -398,7 +435,6 @@
         getMostRecentActivity,
         isActivityBusy,
         applyActivityAttributes,
-        syncComposerModelSelectWidth,
         renderComposerInteractivePanel,
         closeComposerPopover,
         syncComposerInputHeight,
@@ -422,6 +458,7 @@
       dom: { chatTimeline },
       runtime: { uiRuntime },
       callbacks: {
+        getPaneSessionId,
         appendClientLog,
         getChatTimelineRowModelEnabled,
         recordChatTimelineRolloutSignal,
@@ -454,6 +491,8 @@
       dom: { chatTimeline },
       controllers: { reducedMotionQuery },
       callbacks: {
+        getPaneSessionId,
+        getPaneTranscriptView,
         projectTurnTree,
         projectTurnRows,
         projectTurn,
@@ -472,6 +511,7 @@
       buildHydratedProjectionDigest,
       resolveThreadRootMessageId,
       isLiveRowModelEnabledForSession,
+      isTurnStreamLive,
       getLiveProjectionStateForSession,
       overlayProjectedRows,
       resolveProjectionStreamingRowTarget,
@@ -487,6 +527,9 @@
       state,
       constants: { MESSAGE_STATUS },
       callbacks: {
+        getPaneSessionId,
+        isTurnStreamLive,
+        getPaneTranscriptView,
         escapeHtml,
         renderToolCallBlock,
         // Ht-E: the article path's wired trace-row builder, reused by the
@@ -545,6 +588,9 @@
       dom: { chatTimeline, chatThreadColumn },
       controllers: { reducedMotionQuery },
       callbacks: {
+        getPaneSessionId,
+        getPaneTranscriptView,
+        isPaneSelecting,
         buildToolEntryInnerMarkup,
         resolveProjectedPrimaryRow,
         resolveArticlePredictionCacheKey,
@@ -569,7 +615,7 @@
         combineMessageMetaLabels: contextUsageUtils?.combineMessageMetaLabels,
         renderAgentStatusWidget,
         renderContextCompactedNotice,
-        renderThinkingWidget,
+        renderThinkingWidget: renderPaneThinkingWidget,
         renderAssistantFailureNotice,
         renderMessageAttachments,
         renderMessageHoverRow,
@@ -678,7 +724,7 @@
       },
       rebuild() {
         if (!virtualizer) return;
-        virtualizer.rebuild(getTimelineEntryWeight(getCurrentVisibleMessages()));
+        virtualizer.rebuild(getTimelineEntryWeight(getVisibleSessionMessages(getPaneSessionId())));
         const longThreadBudgetStats = {
           ...(state.ui?.longThreadBudgetStats || {}),
           ...(uiRuntime.longThreadBudgetStats || {}),
@@ -700,16 +746,18 @@
     // IntersectionObserver). If future sub-pipelines (chrome,
     // render-effects, etc.) need teardown, register them here so app-level
     function disposeRenderPipeline() {
+      try { streamRevealController?.dispose?.(); } catch (_e) { /* defensive */ }
       try { subagentMonitorController?.dispose?.(); } catch (_e) { /* defensive */ }
       try { disposeThreadDomPipeline?.(); } catch (_e) { /* defensive */ }
       try { renderEffectsPipeline?.dispose?.(); } catch (_e) { /* defensive */ }
       try { virtualizer?.dispose?.(); } catch (_e) { /* defensive */ }
       uiRuntime.longThreadBudgetStats = null;
-      if (state.ui && typeof state.ui === 'object') {
+      if (paneId === 0 && state.ui && typeof state.ui === 'object') { // W1-4c: pane 1's dispose leaves the shared stats
         state.ui.longThreadBudgetStats = null;
       }
       try { thinkingPipeline?.dispose?.(); } catch (_e) { /* defensive */ }
       try { surfaceStatePipeline?.dispose?.(); } catch (_e) { /* defensive */ }
+      try { chromePipeline?.dispose?.(); } catch (_e) { /* defensive */ }
     }
 
     // Render orchestration is delegated to renderer-render-pipeline-render-effects.js; renderMessages remains in this factory.
@@ -718,6 +766,9 @@
       dom: { chatTimeline },
       runtime: { uiRuntime },
       callbacks: {
+        getPaneSessionId,
+        getPaneTranscriptView,
+        isPaneSelecting,
         buildMessageArticleMarkup,
         schedulePredictedHeightCleanup,
         syncPatchedArticlePrediction,
@@ -756,7 +807,6 @@
       runPostTimelineRenderEffects,
       renderLiveThinkingChip,
       hideAssistantSprite,
-      applyAssistantSprite,
       updateAssistantSpritePosition,
       renderLayout,
     } = renderEffectsPipeline;
@@ -793,7 +843,11 @@
         computeDerivedMessageState,
         computeStructureHash,
         deriveTimelineTimeDividers,
+        getPaneSessionId,
+        getPaneTranscriptView,
+        isPaneSelecting,
         getCurrentVisibleMessages,
+        getVisibleSessionMessages,
         getForcedOpenStreamingMessageId,
         hideAssistantSprite,
         isSendBusy,
@@ -814,6 +868,7 @@
         runPostTimelineRenderEffects,
         scheduleThreadTransitionCleanup,
         setFollowLatest,
+        isFollowingLatest,
         shouldShowThinkingToggle,
         shouldShowThreadToggle,
         syncChatState,
@@ -827,13 +882,25 @@
     });
     const monitorDocument = chatTimeline?.ownerDocument || null;
     const monitorWindow = monitorDocument?.defaultView || null;
-    subagentMonitorController = globalThis.rendererSubagentMonitorController?.createSubagentMonitorController?.({
+    // Split view W3-2: one monitor per pane, each showing its pane's session.
+    // In Chat the monitor is the artifact panel's `subagents` rail mode; the
+    // pane thread stage's own aside (pane 0's #subagentInspector, the
+    // template's for pane 1) hosts it only in the IDE dock. A trigger belongs
+    // to the pane whose root holds it (pane 0's when docked in the IDE), so the
+    // two monitors' document-level listeners never both handle one click.
+    const subagentInspector = chatThreadStage?.querySelector?.(':scope > [data-chat-node="subagentInspector"]') || null;
+    subagentMonitorController = paneId !== 0 && !subagentInspector ? null : globalThis.rendererSubagentMonitorController?.createSubagentMonitorController?.({
       state,
       documentRef: monitorDocument,
       windowRef: monitorWindow,
-      inspector: monitorDocument?.getElementById?.('subagentInspector'),
-      chatView,
-      getMessages: () => getCurrentSessionMessages(),
+      inspector: subagentInspector,
+      idSuffix: paneId === 0 ? '' : `-pane${paneId}`,
+      getSessionId: getPaneSessionId,
+      ownsTrigger: (trigger) => {
+        const paneRoot = trigger?.closest?.('.chat-pane[data-pane-id]');
+        return (paneRoot ? Number(paneRoot.dataset.paneId) : 0) === paneId;
+      },
+      getMessages: () => getSessionMessages(getPaneSessionId()),
       appendClientLog,
     }) || null;
     subagentMonitorController?.bind?.();
@@ -863,6 +930,15 @@
       syncBackendActivityFromStatus,
     } = chromeDelegatesUtils.createChromeDelegates({ chromePipeline, clearActivity, failActivity, beginActivity, ACTIVITY_SCOPE });
 
+    // Split view W1-4c: `callbacks.syncPaneLayout(kind)` runs first at the three
+    // exported entry points (the layout controller reconciles the legacy
+    // currentSessionId writers there). Internal calls stay unwrapped; absent, the
+    // entry points are the bare functions.
+    const syncPaneLayout = typeof deps.callbacks.syncPaneLayout === 'function' ? deps.callbacks.syncPaneLayout : null;
+    const withPaneSync = (kind, render) => (syncPaneLayout
+      ? function renderAfterPaneSync(...args) { syncPaneLayout(kind); return render(...args); }
+      : render);
+
     return {
       formatSessionDate,
       formatLogTimestamp,
@@ -871,18 +947,17 @@
       syncChatState,
       escapeSelectorValue,
       hideAssistantSprite,
-      applyAssistantSprite,
       updateAssistantSpritePosition,
       renderLayout,
-      renderHeader,
-      renderMessages,
+      renderHeader: withPaneSync('header', renderHeader),
+      renderMessages: withPaneSync('messages', renderMessages),
       renderHero,
       syncBackendNotice,
       renderLogs,
       syncComposerVisualState,
       renderComposerJumpControls,
       renderComposerState,
-      renderAll,
+      renderAll: withPaneSync('all', renderAll),
       applySurfaceEffect,
       syncBackendActivityFromStatus,
       renderLiveThinkingChip,
@@ -899,6 +974,7 @@
       maybePredictTurnHeight,
       resolveTurnArticleMessageId,
       getCurrentProjectionContext,
+      getPaneSessionId,
       toggleThreadBranch,
       timelineVirtualizer: virtualizer,
       dispose: disposeRenderPipeline,

@@ -93,7 +93,7 @@ def test_main_terminates_transport_after_framing_desynchronization(monkeypatch) 
         "_SUBPROCESS_MANAGER",
         SimpleNamespace(close=lambda **_kwargs: _drained_subprocess_result()),
     )
-    monkeypatch.setattr(type(server._BRAIN_CONTAINER), "close", lambda _self: None)  # noqa: SLF001
+    monkeypatch.setattr(type(server._BRAIN_CONTAINER), "close", lambda _self: None)
     monkeypatch.setattr(server, "shutdown_sidecar_logging", lambda **_kwargs: None)
 
     server.main()
@@ -133,7 +133,7 @@ def test_main_rejects_invalid_envelope_before_dispatch_and_continues(monkeypatch
         "_SUBPROCESS_MANAGER",
         SimpleNamespace(close=lambda **_kwargs: _drained_subprocess_result()),
     )
-    monkeypatch.setattr(type(server._BRAIN_CONTAINER), "close", lambda _self: None)  # noqa: SLF001
+    monkeypatch.setattr(type(server._BRAIN_CONTAINER), "close", lambda _self: None)
     monkeypatch.setattr(server, "shutdown_sidecar_logging", lambda **_kwargs: None)
 
     server.main()
@@ -187,7 +187,7 @@ def test_main_absorbs_transport_backpressure_from_request_routing_without_exitin
         "_SUBPROCESS_MANAGER",
         SimpleNamespace(close=lambda **_kwargs: _drained_subprocess_result()),
     )
-    monkeypatch.setattr(type(server._BRAIN_CONTAINER), "close", lambda _self: None)  # noqa: SLF001
+    monkeypatch.setattr(type(server._BRAIN_CONTAINER), "close", lambda _self: None)
     monkeypatch.setattr(server, "shutdown_sidecar_logging", lambda **_kwargs: None)
 
     with caplog.at_level("WARNING"):

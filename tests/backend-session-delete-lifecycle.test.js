@@ -19,13 +19,19 @@ function harness(patch = {}) {
   };
   return { service, session, calls, deletionHandle };
 }
-for (const [patch, reason] of [[{ plugin_session: {} }, 'plugin_session'], [{ pending_question_batch: {} }, 'session_busy'], [{ active_turn: {} }, 'session_busy'], [{ updated_at: 'new' }, 'activity_changed']]) {
+for (const [patch, reason] of [[{ pending_question_batch: {} }, 'session_busy'], [{ active_turn: {} }, 'session_busy'], [{ updated_at: 'new' }, 'activity_changed']]) {
   test(`idle-only deletion refuses ${reason} before cancellation`, async () => {
     const h = harness(patch);
     const result = await deleteSessionWithQuiescence(h.service, 'a', { onlyIfIdle: true, expectedUpdatedAt: 'old' });
     assert.equal(result.deleted, false); assert.equal(result.reason, reason); assert.deepEqual(h.calls, []);
   });
 }
+test('a saved plugin session (old image chat) is no longer refused as a plugin session', async () => {
+  const h = harness({ session_type: 'plugin', plugin_session: { schema_version: 1 } });
+  h.service.sessionRuntime = { hasSessionWork: () => true };
+  const result = await deleteSessionWithQuiescence(h.service, 'a', { onlyIfIdle: true, expectedUpdatedAt: 'old' });
+  assert.equal(result.reason, 'runtime_work_active', 'it reaches the ordinary idle checks');
+});
 test('activity is checked again at commit after async quiescence', async () => {
   const h = harness();
   h.service.sessionTurnActors.awaitQuiescence = async () => { h.session.updated_at = 'new'; return { ok: true }; };

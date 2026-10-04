@@ -1,10 +1,9 @@
 /**
  * renderer/shell/renderer-settings-field-reset.js
  *
- * Resettable appearance keys are paletteId, typographyId, fontScaleId, and
- * surfaceEffectId. Theme bundles are composite across multiple appearance
- * keys, and app zoom is an Electron window preference, so neither has a
- * per-field reset. Section confirmation permits only one in-flight reset.
+ * The guarded two-step "Reset Appearance" section reset (arm, then confirm
+ * within 5 s; one reset in flight). Per-field Revert belongs to the shared
+ * Settings binding (renderer-settings-field-binding.js).
  */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) {
@@ -18,21 +17,6 @@
   var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   var DEFAULT_ARM_TIMEOUT_MS = 5000;
 
-  // Appearance-preference-backed selects eligible for per-field reset. See
-  // the module header for what is excluded and why.
-  var APPEARANCE_FIELD_MAP = [
-    { id: 'appearancePaletteSelect', key: 'paletteId', label: jt('settings.fieldReset.palette', 'Palette') },
-    { id: 'appearanceTypographySelect', key: 'typographyId', label: jt('settings.fieldReset.typography', 'Typography') },
-    { id: 'appearanceFontScaleSelect', key: 'fontScaleId', label: jt('settings.fieldReset.textSize', 'Text size') },
-    { id: 'appearanceChatWidthSelect', key: 'chatWidthId', label: jt('settings.fieldReset.chatWidth', 'Chat width') },
-    { id: 'appearanceSurfaceEffectSelect', key: 'surfaceEffectId', label: jt('settings.fieldReset.backgroundEffect', 'Background effect') },
-  ];
-
-  // Not reset-eligible itself (see header), but its change can shift several
-  // of the fields above at once -- watched so their reset buttons re-sync.
-  var WATCH_ONLY_SELECT_IDS = ['appearanceThemeBundleSelect'];
-
-  function noop() {}
   function noopLog() {}
 
   function describeError(error) {
@@ -54,15 +38,6 @@
       || null;
   }
 
-  function firstElementFromHtml(documentRef, html) {
-    if (!documentRef || !html || typeof documentRef.createElement !== 'function') {
-      return null;
-    }
-    var holder = documentRef.createElement('div');
-    holder.innerHTML = html;
-    return holder.firstElementChild || null;
-  }
-
   function childElementsFromHtml(documentRef, html) {
     if (!documentRef || !html || typeof documentRef.createElement !== 'function') {
       return [];
@@ -75,20 +50,11 @@
   /**
    * @param {object} deps
    * @param {Document} deps.documentRef
-   * @param {{ appearance?: object, zoom?: object }} deps.adapters - settings
-   *   adapters (createSettingsAdapter shape). Only `adapters.appearance` is
-   *   read by v1 per-field reset (see module header for scope).
-   * @param {object} [deps.appearanceUtils] - unused directly today (the
-   *   appearance adapter already wraps it); accepted for interface parity
-   *   with the other Tier C settings modules and future per-field growth.
-   * @param {object} [deps.chatZoomUtils] - unused directly today; zoom
-   *   selects are out of v1 per-field scope (see module header).
-   * @param {{ appearance?: function, chatZoom?: function }} [deps.resetActions] -
-   *   the exact pre-existing section-reset callbacks (each returns a value
-   *   or a Promise). Confirm invokes `resetActions[key]()` verbatim.
-   * @param {function} [deps.onAfterReset] - called after a successful
-   *   per-field write and after a settled section-reset action (matches the
-   *   pre-existing renderSettings() call site in both cases).
+   * @param {{ appearance?: function }} [deps.resetActions] - the section-reset
+   *   callbacks (each returns a value or a Promise). Confirm invokes
+   *   `resetActions[key]()` verbatim.
+   * @param {function} [deps.onAfterReset] - called after a settled
+   *   section-reset action.
    * @param {function} [deps.log]
    * @param {number} [deps.armTimeoutMs] - test seam, defaults to 5000.
    * @param {function} [deps.setTimeoutFn] - test seam (fake timers).
@@ -99,9 +65,7 @@
   function createSettingsFieldReset(deps) {
     var d = deps || {};
     var documentRef = d.documentRef || null;
-    var adapters = d.adapters && typeof d.adapters === 'object' ? d.adapters : {};
-    var appearanceAdapter = adapters.appearance || null;
-    var onAfterReset = typeof d.onAfterReset === 'function' ? d.onAfterReset : noop;
+    var onAfterReset = typeof d.onAfterReset === 'function' ? d.onAfterReset : function noop() {};
     var log = typeof d.log === 'function' ? d.log : noopLog;
     var resetActions = d.resetActions && typeof d.resetActions === 'object' ? d.resetActions : {};
     var armTimeoutMs = typeof d.armTimeoutMs === 'number' && d.armTimeoutMs >= 0 ? d.armTimeoutMs : DEFAULT_ARM_TIMEOUT_MS;
@@ -110,114 +74,7 @@
     var actionButton = resolveActionButton(d);
 
     var mounted = false;
-    var fieldEntries = [];
     var sectionEntries = [];
-    var watchDisposers = [];
-
-    // ── per-field reset ──────────────────────────────────────────────────
-
-    function currentAppearance() {
-      if (!appearanceAdapter) return {};
-      try {
-        return appearanceAdapter.normalize(appearanceAdapter.read()) || {};
-      } catch (_error) {
-        return typeof appearanceAdapter.getDefault === 'function' ? appearanceAdapter.getDefault() || {} : {};
-      }
-    }
-
-    function defaultAppearance() {
-      if (!appearanceAdapter || typeof appearanceAdapter.getDefault !== 'function') return {};
-      return appearanceAdapter.getDefault() || {};
-    }
-
-    function buildFieldResetHtml(fieldDef) {
-      if (!actionButton) return '';
-      return actionButton({
-        id: fieldDef.id + 'Reset',
-        label: jt('settings.fieldReset.resetButton', '↺ Reset'),
-        plain: true,
-        className: 'settings-field-reset',
-        ariaLabel: jt('settings.fieldReset.resetFieldAria', 'Reset {label} to default', { label: fieldDef.label }),
-        title: jt('settings.fieldReset.resetToDefault', 'Reset to default'),
-      });
-    }
-
-    function mountFieldEntry(fieldDef) {
-      if (!documentRef || typeof documentRef.getElementById !== 'function') return null;
-      var selectEl = documentRef.getElementById(fieldDef.id);
-      if (!selectEl) return null;
-      var shell = typeof selectEl.closest === 'function' ? selectEl.closest('.select-shell') : null;
-      // Preferred mount: the title line of the row's text column, right after
-      // the label, so the affordance uses the empty space beside the title and
-      // never pushes the control. Fallback: after the select (legacy markup).
-      var row = typeof selectEl.closest === 'function' ? selectEl.closest('.settings-field-row') : null;
-      var textColumn = row ? row.querySelector('.settings-field-row-text') : null;
-      var container = textColumn || (shell && shell.parentElement) || selectEl.parentElement;
-      if (!container) return null;
-      var buttonEl = container.querySelector('[data-action="' + fieldDef.id + 'Reset"]');
-      if (!buttonEl) {
-        buttonEl = firstElementFromHtml(documentRef, buildFieldResetHtml(fieldDef));
-        if (!buttonEl) return null;
-        var labelEl = textColumn ? textColumn.querySelector('.settings-field-label') : null;
-        if (labelEl && labelEl.parentElement === textColumn && labelEl.nextSibling) {
-          textColumn.insertBefore(buttonEl, labelEl.nextSibling);
-        } else {
-          container.appendChild(buttonEl);
-        }
-      }
-      var entry = { def: fieldDef, selectEl: selectEl, buttonEl: buttonEl, busy: false };
-      var onClick = function () { handleFieldReset(entry); };
-      var onChange = function () { syncFieldVisibility(entry); };
-      buttonEl.addEventListener('click', onClick);
-      selectEl.addEventListener('change', onChange);
-      entry._dispose = function () {
-        buttonEl.removeEventListener('click', onClick);
-        selectEl.removeEventListener('change', onChange);
-      };
-      return entry;
-    }
-
-    function syncFieldVisibility(entry) {
-      if (!entry || !entry.buttonEl || !appearanceAdapter) return;
-      var current = currentAppearance();
-      var defaults = defaultAppearance();
-      entry.buttonEl.hidden = current[entry.def.key] === defaults[entry.def.key];
-    }
-
-    function syncAllVisibility() {
-      fieldEntries.forEach(syncFieldVisibility);
-    }
-
-    function handleFieldReset(entry) {
-      if (!appearanceAdapter || entry.busy) return;
-      entry.busy = true;
-      var current = currentAppearance();
-      var defaults = defaultAppearance();
-      var next = {};
-      Object.keys(current).forEach(function (k) { next[k] = current[k]; });
-      next[entry.def.key] = defaults[entry.def.key];
-      Promise.resolve(appearanceAdapter.write(next))
-        .then(function () {
-          syncAllVisibility();
-          onAfterReset();
-        })
-        .catch(function (error) {
-          log('settings field-reset "' + entry.def.id + '" write failed: ' + describeError(error));
-        })
-        .then(
-          function settleOk() { entry.busy = false; },
-          function settleErr() { entry.busy = false; }
-        );
-    }
-
-    function mountWatchOnly(selectId) {
-      if (!documentRef || typeof documentRef.getElementById !== 'function') return null;
-      var selectEl = documentRef.getElementById(selectId);
-      if (!selectEl) return null;
-      var onChange = function () { syncAllVisibility(); };
-      selectEl.addEventListener('change', onChange);
-      return function dispose() { selectEl.removeEventListener('change', onChange); };
-    }
 
     // ── two-step inline section reset ───────────────────────────────────
 
@@ -345,37 +202,27 @@
     function mount() {
       if (mounted) return;
       mounted = true;
-      fieldEntries = APPEARANCE_FIELD_MAP.map(mountFieldEntry).filter(Boolean);
-      watchDisposers = WATCH_ONLY_SELECT_IDS.map(mountWatchOnly).filter(Boolean);
       sectionEntries = [
         mountSectionEntry('appearance', 'appearanceResetButton'),
       ].filter(Boolean);
-      syncAllVisibility();
     }
 
     function dispose() {
       if (!mounted) return;
       mounted = false;
-      fieldEntries.forEach(function (entry) { if (entry._dispose) entry._dispose(); });
       sectionEntries.forEach(function (entry) { if (entry._dispose) entry._dispose(); });
-      watchDisposers.forEach(function (fn) { fn(); });
-      fieldEntries = [];
       sectionEntries = [];
-      watchDisposers = [];
     }
 
     return {
       mount: mount,
       dispose: dispose,
-      syncVisibility: syncAllVisibility,
-      // Test/debug seams.
-      getFieldEntries: function () { return fieldEntries.slice(); },
+      // Test/debug seam.
       getSectionEntries: function () { return sectionEntries.slice(); },
     };
   }
 
   return {
     createSettingsFieldReset: createSettingsFieldReset,
-    APPEARANCE_FIELD_MAP: APPEARANCE_FIELD_MAP,
   };
 });

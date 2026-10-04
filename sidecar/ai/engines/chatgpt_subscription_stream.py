@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
-from collections.abc import Generator, Iterable
+from collections.abc import Callable, Generator, Iterable
 from typing import Any, NoReturn
 
 from sidecar.ai.engines.chatgpt_subscription_request import (
@@ -179,6 +179,10 @@ class _CompletionShape:
 
     def __init__(self) -> None:
         self.finalized_text_parts: dict[tuple[int, int], str] = {}
+        self.tool_call_count = 0
+        self.terminal_event_type = ""
+        self.terminal_text_source = "none"
+        self.finish_reason = "error"
         self.output_text_delta_count = 0
         self.output_text_delta_chars = 0
         self.output_text_done_count = 0
@@ -666,13 +670,27 @@ def _iter_decoded_events(
     response: Any,
     cancel_handle: Any,
     completion_shape: _CompletionShape,
+    on_first_chunk: Callable[[], None] | None = None,
+    on_usage: Callable[[dict[str, Any]], None] | None = None,
 ) -> Generator[dict[str, Any], None, None]:
+    first_chunk = True
     for line in iter_cancel_aware_sse_lines(response, cancel_handle):
+        if first_chunk:
+            first_chunk = False
+            if on_first_chunk is not None:
+                on_first_chunk()
         event, undecodable = _decode_event_line(line)
         if event is None:
             if undecodable:
                 completion_shape.record_undecodable_line()
             continue
+        event_type = event.get("type")
+        if event_type in {"response.completed", "response.incomplete", "response.failed"}:
+            completion_shape.terminal_event_type = event_type
+        body = event.get("response")
+        usage = body.get("usage") if isinstance(body, dict) else None
+        if isinstance(usage, dict) and on_usage is not None:
+            on_usage(usage)
         yield event
 
 
@@ -690,18 +708,16 @@ def _unhandled_event_chunks(
     return ()
 
 
-def stream_response_events(
-    response: Any,
+def _parse_response_events(
+    events: Iterable[dict[str, Any]],
     *,
     model: str,
-    cancel_handle: Any,
-    reasoning_sink: dict[str, dict[str, Any]] | None = None,
-    completion_diagnostics_sink: dict[str, Any] | None = None,
+    reasoning_sink: dict[str, dict[str, Any]] | None,
+    completion_shape: _CompletionShape,
 ) -> Generator[StreamChunk, None, GenerationResult]:
     content_parts: list[str] = []
     thinking_parts: list[str] = []
     tool_calls: list[ToolCallRequest] = []
-    completion_shape = _CompletionShape()
     deduper = _FunctionCallDeduper(completion_shape)
     pending_reasoning_item: dict[str, Any] | None = None
     citation_normalizer = _CitationNormalizer()
@@ -711,13 +727,8 @@ def stream_response_events(
     def _finish(finish_reason: str, event: dict[str, Any]) -> GenerationResult:
         content, terminal_text_source = completion_shape.resolve_text(content_parts)
         resolved_finish_reason = "tool_calls" if tool_calls else finish_reason
-        completion_shape.write_diagnostics(
-            completion_diagnostics_sink,
-            tool_call_count=len(tool_calls),
-            terminal_event_type=str(event.get("type") or ""),
-            terminal_text_source=terminal_text_source,
-            finish_reason=resolved_finish_reason,
-        )
+        completion_shape.finish_reason = resolved_finish_reason
+        completion_shape.terminal_text_source = terminal_text_source
         return GenerationResult(
             content=content,
             thinking_text="".join(thinking_parts),
@@ -726,15 +737,11 @@ def stream_response_events(
             usage=_parse_usage(event.get("response"), model=model),
         )
 
-    for event in _iter_decoded_events(response, cancel_handle, completion_shape):
+    for event in events:
         event_type = event.get("type")
         if event_type == "response.output_text.delta":
             completion_shape.record_delta(event)
-            yield from _normalized_output_text_events(
-                event,
-                citation_normalizer,
-                content_parts,
-            )
+            yield from _normalized_output_text_events(event, citation_normalizer, content_parts)
             continue
         if event_type == "response.output_text.done":
             completion_shape.record_done(event)
@@ -766,6 +773,7 @@ def stream_response_events(
                 pending_reasoning_item=pending_reasoning_item,
                 deduper=deduper,
             )
+            completion_shape.tool_call_count = len(tool_calls)
             yield from output_events
             continue
         if event_type == "response.failed":
@@ -777,7 +785,52 @@ def stream_response_events(
             )
             return _finish(finish_reason, event)
         yield from _unhandled_event_chunks(event_type, completion_shape)
+    completion_shape.finish_reason = "incomplete"
     raise GenerationError("ChatGPT stream ended before completion")
+
+
+def stream_response_events(  # noqa: PLR0913 - transport and diagnostic callback contract.
+    response: Any,
+    *,
+    model: str,
+    cancel_handle: Any,
+    reasoning_sink: dict[str, dict[str, Any]] | None = None,
+    completion_diagnostics_sink: dict[str, Any] | None = None,
+    on_first_chunk: Callable[[], None] | None = None,
+    on_usage: Callable[[dict[str, Any]], None] | None = None,
+    on_visible_output: Callable[[str], None] | None = None,
+) -> Generator[StreamChunk, None, GenerationResult]:
+    completion_shape = _CompletionShape()
+    events = _iter_decoded_events(
+        response, cancel_handle, completion_shape, on_first_chunk, on_usage,
+    )
+    stream = _parse_response_events(
+        events, model=model, reasoning_sink=reasoning_sink, completion_shape=completion_shape,
+    )
+    saw_visible_output = False
+    try:
+        while True:
+            try:
+                chunk = next(stream)
+            except StopIteration as stop:
+                result = stop.value
+                if result.content and not saw_visible_output and on_visible_output is not None:
+                    on_visible_output(result.content)
+                return result
+            if isinstance(chunk, StreamingEvent) and chunk.kind == "content" and chunk.text:
+                saw_visible_output = True
+                if on_visible_output is not None:
+                    on_visible_output(chunk.text)
+            yield chunk
+    finally:
+        stream.close()
+        completion_shape.write_diagnostics(
+            completion_diagnostics_sink,
+            tool_call_count=completion_shape.tool_call_count,
+            terminal_event_type=completion_shape.terminal_event_type,
+            terminal_text_source=completion_shape.terminal_text_source,
+            finish_reason=completion_shape.finish_reason,
+        )
 
 
 __all__ = [

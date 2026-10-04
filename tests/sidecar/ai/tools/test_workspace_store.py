@@ -71,7 +71,7 @@ def test_jenny_dir_trailing_re_strips_trailing_dots_and_spaces() -> None:
     # name, so this is the only place that can prove the stripping logic
     # itself is correct rather than incidentally masked by OS resolution.
     def normalize(segment: str) -> str:
-        return store_module._JENNY_DIR_TRAILING_RE.sub("", segment).lower()  # noqa: SLF001
+        return store_module._JENNY_DIR_TRAILING_RE.sub("", segment).lower()
 
     assert normalize(".jenny.") == ".jenny"
     assert normalize(".JENNY...") == ".jenny"
@@ -307,7 +307,7 @@ def test_store_root_lock_is_not_evicted_while_a_store_is_live(tmp_path: Path) ->
 
     second = GuardedWorkspaceStore(tmp_path)
 
-    assert first._lock is second._lock  # noqa: SLF001
+    assert first._lock is second._lock
 
 
 def test_store_cache_identity_changes_when_the_workspace_object_changes(
@@ -453,13 +453,13 @@ def test_top_level_jenny_link_branch_is_deterministically_quarantined(
     unsafe = jenny / "artifacts" / "old.txt"
     unsafe.parent.mkdir(parents=True)
     unsafe.write_text("outside-shaped bytes", encoding="utf-8")
-    unsafe_identity = store_module._node_identity(jenny)  # noqa: SLF001
+    unsafe_identity = store_module._node_identity(jenny)
     real_is_link_object = store_module.is_link_object
 
     def mark_original_jenny(path: Path) -> bool:
         if path == jenny:
             try:
-                return store_module._node_identity(path).same_object(unsafe_identity)  # noqa: SLF001
+                return store_module._node_identity(path).same_object(unsafe_identity)
             except ToolExecutionFailure:
                 return False
         return real_is_link_object(path)
@@ -485,13 +485,13 @@ def test_quarantine_link_branch_is_deterministically_repaired(
     quarantine = tmp_path / ".jenny" / "quarantine"
     quarantine.mkdir(parents=True)
     (quarantine / "keep.txt").write_text("outside-shaped bytes", encoding="utf-8")
-    unsafe_identity = store_module._node_identity(quarantine)  # noqa: SLF001
+    unsafe_identity = store_module._node_identity(quarantine)
     real_is_link_object = store_module.is_link_object
 
     def mark_original_quarantine(path: Path) -> bool:
         if path == quarantine:
             try:
-                return store_module._node_identity(path).same_object(unsafe_identity)  # noqa: SLF001
+                return store_module._node_identity(path).same_object(unsafe_identity)
             except ToolExecutionFailure:
                 return False
         return real_is_link_object(path)

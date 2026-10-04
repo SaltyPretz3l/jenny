@@ -15,8 +15,6 @@ function buildHarness(t, { currentEffort, modelListData = [] }) {
       <option value="gpt-5.5" data-engine-type="chatgpt">GPT-5.5</option>
     </select>
     <select id="composerEffortSelect"><option value="default">Use default</option></select>
-    <button id="composerSettingsButton"></button>
-    <button id="openComposerSettingsViewButton"></button>
     <div id="composerRunModeSlot"></div>
   </body>`);
   const previousDocument = global.document;
@@ -31,8 +29,6 @@ function buildHarness(t, { currentEffort, modelListData = [] }) {
     toastViewport: doc.getElementById('toastViewport'),
     composerModelSelect: doc.getElementById('composerModelSelect'),
     composerEffortSelect: doc.getElementById('composerEffortSelect'),
-    composerSettingsButton: doc.getElementById('composerSettingsButton'),
-    openComposerSettingsViewButton: doc.getElementById('openComposerSettingsViewButton'),
     state: { ui: {}, modelList: { data: modelListData } },
     TOAST_SOURCE: { memory: 'memory', composerAction: 'composer' },
     ACTIVITY_SCOPE: { composerPreferredModel: 'model', composerReasoningEffort: 'effort', composerRunMode: 'run' },
@@ -59,6 +55,7 @@ function buildHarness(t, { currentEffort, modelListData = [] }) {
   }, {});
   return {
     patches,
+    bindings,
     switchModel(value, { omitEngineType = false } = {}) {
       const select = doc.getElementById('composerModelSelect');
       select.value = value;
@@ -110,4 +107,33 @@ test('model swap resolves a missing option engine type from the model catalog', 
     reasoningEffort: 'default',
   });
   assert.deepEqual(harness.patches[0].scopes, ['model', 'effort']);
+});
+
+// Split view gate §D side finding: with the catalog unavailable pane 1's model
+// carrier held only "" (Default), so a change naming any model read '' and was
+// saved as Default. A value no option holds is not a choice; neither pane saves it.
+test('a model change with no matching option (catalog unavailable) saves nothing, on pane 0 and on a second pane', (t) => {
+  const harness = buildHarness(t, { currentEffort: 'default' });
+  harness.switchModel('qwen3.5:4b');
+  assert.equal(harness.patches.length, 0, 'pane 0: no Default written over the saved model');
+
+  const doc = global.document;
+  const paneSelect = doc.createElement('select');
+  paneSelect.append(new doc.defaultView.Option('Use default', ''));
+  harness.bindings.bindComposerRailEvents({
+    registerListener: (element, type, handler) => { element?.addEventListener?.(type, handler); },
+    listenerOptions: {},
+    dom: { composerModelSelect: paneSelect, composerEffortSelect: null, composerRunModeSlot: null },
+    getSessionId: () => 's-pane-1',
+  });
+  paneSelect.value = 'qwen3.5:4b';
+  assert.equal(paneSelect.selectedIndex, -1, 'the value names no option');
+  paneSelect.dispatchEvent(new doc.defaultView.Event('change', { bubbles: true }));
+  assert.equal(harness.patches.length, 0, 'pane 1: nothing saved');
+
+  paneSelect.value = '';
+  paneSelect.dispatchEvent(new doc.defaultView.Event('change', { bubbles: true }));
+  assert.equal(harness.patches.length, 1, 'a real Default choice still saves');
+  assert.deepEqual(harness.patches[0].patch, { preferredModel: '' });
+  assert.equal(harness.patches[0].sessionId, 's-pane-1');
 });

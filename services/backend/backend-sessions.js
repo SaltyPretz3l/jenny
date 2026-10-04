@@ -1,3 +1,4 @@
+const { isDeepStrictEqual } = require('node:util');
 const { createSessionId } = require('./electron-session-store');
 const { validateImageAttachmentsForManagedSend, createSessionWithImageAdmission } = require('./managed-sidecar-attachments');
 const {
@@ -11,10 +12,12 @@ const {
   readStoreMessages,
 } = require('./backend-session-reference-scan');
 const { hydrateMessagesWithTerminalRepairs } = require('./terminal-repair-service');
+const { purgeSessionTodoList } = require('./session-todo-list-purge');
 const { resolveCanonicalTextMessageOwners } = require('./canonical-text-message-ownership');
 const { editUserMessageAndTruncate } = require('./backend-session-truncate');
 const { normalizeLinkedTaskId } = require('./session-store-migrations');
 const { normalizeRunMode } = require('./session-preferences-patch');
+const { resolveSessionToolDenyList } = require('./backend-service-utils');
 const { resolveDefaultSessionProjectId } = require('../projects/workspace-project-provisioner');
 const {
   MAX_FOLLOW_UP_BODY_CHARS,
@@ -70,28 +73,20 @@ async function createSession(service, {
     }
     const wantsPluginSession = providerAuthority != null
       || ['plugin', 'image'].includes(String(sessionType || '').trim().toLowerCase());
-    let pluginSession = null;
     if (wantsPluginSession) {
-      if (!providerAuthority || !service._pluginSessionProviderBroker) {
-        throw new Error('Plugin sessions require an enabled session provider.');
-      }
-      const resolved = await service._pluginSessionProviderBroker
-        .resolveCreationBinding(providerAuthority);
-      if (!resolved?.ok || !resolved.pluginSession) {
-        const error = new Error('The requested plugin session provider is unavailable.');
-        error.code = resolved?.reason || 'session_provider_unavailable';
-        throw error;
-      }
-      pluginSession = resolved.pluginSession;
+      // Session providers are retired: saved plugin sessions stay readable but
+      // no new one can be created.
+      const error = new Error('Plugin sessions are no longer available.');
+      error.code = 'session_provider_unavailable';
+      throw error;
     }
     if (draftImageAttachments !== undefined && (!Array.isArray(draftImageAttachments)
-      || draftImageAttachments.length > 8 || pluginSession
+      || draftImageAttachments.length > 8
       || draftImageAttachments.some(image => image?.kind !== 'image'))) throw new TypeError('session_draft_images_invalid');
     const createOptions = {
       title,
       preferences: normalizedPreferences,
-      sessionType: pluginSession ? 'plugin' : 'chat',
-      pluginSession,
+      sessionType: 'chat',
       ...(composerDraft ? { composerDraft } : {}),
       ...(normalizedLinkedTaskId ? { linkedTaskId: normalizedLinkedTaskId } : {}),
       projectId: authority.project_id,
@@ -334,10 +329,13 @@ async function cleanupDeletedSession(
       sessionId,
       cleanupErrors,
       'attachment_assets',
-      async () => service.attachmentAssetStore.pruneAssetPaths(
-        deletedAssetPaths,
-        collectRemainingReferencedAssetPaths(service, sessionId)
-      )
+      async () => {
+        const pruned = await service.attachmentAssetStore.pruneAssetPaths(
+          deletedAssetPaths,
+          collectRemainingReferencedAssetPaths(service, sessionId)
+        );
+        if (pruned?.failedCount > 0) throw new Error('attachment files could not be removed');
+      }
     );
   }
 
@@ -377,6 +375,19 @@ async function cleanupDeletedSession(
           () => collectRemainingSessionIds(service, sessionId)
         );
       }
+    });
+  }
+
+  if (service.options?.userDataPath) {
+    await runDeleteCleanupStep(service, sessionId, cleanupErrors, 'todo_list', async () => {
+      purgeSessionTodoList(service.options.userDataPath, sessionId);
+    });
+  }
+
+  if (typeof service.sessionStore?.purgeSessionRecoveryCopies === 'function') {
+    await runDeleteCleanupStep(service, sessionId, cleanupErrors, 'recovery_copies', async () => {
+      const result = service.sessionStore.purgeSessionRecoveryCopies(sessionId);
+      if (result?.failed > 0) throw new Error('recovery copies could not be removed');
     });
   }
 
@@ -515,6 +526,26 @@ async function getSessionMessages(service, sessionId) {
     };
 }
 
+function pushSessionToolPreferences(service, sessionId, streamId, previous, stored) {
+  if (typeof service.sessionExecutionAuthority?.disableToolsForSession !== 'function') return;
+  const catalog = service.currentStatus?.tools_status;
+  const denyList = resolveSessionToolDenyList(stored, catalog);
+  const previousDenies = new Set(resolveSessionToolDenyList(previous, catalog));
+  const deniedTools = new Set(denyList);
+  service.sessionExecutionAuthority.disableToolsForSession(sessionId, denyList);
+  let pendingApprovalsDenied = 0;
+  for (const [approvalId, pending] of service.pendingToolApprovals || []) {
+    if (pending.sessionId !== sessionId || !deniedTools.has(pending.toolName)) continue;
+    if (service.denyToolCall(approvalId)) pendingApprovalsDenied += 1;
+  }
+  service._emitServiceLog?.('INFO', 'session.tool_preferences_pushed', {
+    sessionId,
+    streamId,
+    newlyDeniedToolCount: denyList.filter(name => !previousDenies.has(name)).length,
+    pendingApprovalsDenied,
+  });
+}
+
 async function setSessionPreferences(service, sessionId, preferences = {}) {
   if (!sessionId) {
     return null;
@@ -529,11 +560,14 @@ async function setSessionPreferences(service, sessionId, preferences = {}) {
     ? ['run_mode', 'plan_mode'].filter((key) => stored[key] !== previous?.[key])
     : [];
   const modeChanged = changedKeys.length > 0;
-  const activeTurn = modeChanged ? service.sessionStore.getActiveTurn?.(sessionId) : null;
+  const toolPreferencesChanged = stored && ['tool_category_overrides', 'tool_connection_overrides']
+    .some(key => !isDeepStrictEqual(stored[key], previous?.[key]));
+  const activeTurn = modeChanged || toolPreferencesChanged
+    ? service.sessionStore.getActiveTurn?.(sessionId) : null;
   const streamId = String(activeTurn?.stream_id || activeTurn?.request_id || '').trim();
   const hasActiveStream = Boolean(streamId && service.activeStreams?.has?.(streamId));
   if (
-    hasActiveStream
+    modeChanged && hasActiveStream
     && typeof service.sidecarClient?.notifySessionRunModeUpdated === 'function'
   ) {
     const runMode = String(stored.run_mode || '').trim().toLowerCase();
@@ -556,6 +590,9 @@ async function setSessionPreferences(service, sessionId, preferences = {}) {
       sessionId,
       changedKeys,
     });
+  }
+  if (toolPreferencesChanged && hasActiveStream) {
+    pushSessionToolPreferences(service, sessionId, streamId, previous, stored);
   }
   return updated;
 }

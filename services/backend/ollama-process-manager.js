@@ -1,6 +1,5 @@
 const path = require('path');
 const { spawn } = require('child_process');
-const http = require('http');
 
 const { FileJsonStore } = require('./file-json-store');
 const { pipeChildLogs } = require('./child-process-logging');
@@ -16,6 +15,8 @@ const {
   forceKillAnyRemainingLocalOllamaVerifiedSync,
   listLocalOllamaProcessesSync,
 } = require('./ollama-shutdown');
+const { probeOllamaHealth, probeOllamaRefused } = require('./ollama-health-probe');
+const { killOwnedChildRunners, snapshotOwnedChildPids } = require('./ollama-orphan-runners');
 const { buildSanitizedOllamaEnv } = require('./ollama-env');
 const { classifyOllamaCrash } = require('./ollama-crash-diagnostics');
 const { resolveOllamaOutputLevel } = require('./ollama-stderr-level');
@@ -71,7 +72,7 @@ class OllamaProcessManager {
     port = OLLAMA_PORT,
     healthTimeoutMs = HEALTH_TIMEOUT_MS,
     postExitProbeDelayMs = POST_EXIT_PROBE_DELAY_MS,
-    resolveMaxLoadedModels,
+    resolveChatEngineType,
     detectTrayConflictImpl,
     onEngineActivity,
     engineActivityThrottleMs = ENGINE_ACTIVITY_THROTTLE_MS,
@@ -85,6 +86,13 @@ class OllamaProcessManager {
     this._everOwnedProcess = false;
     this._ownedPid = 0;
     this._postExitProbeTimer = null;
+    // Start/stop are serialized on one chain. Every stop() bumps the generation,
+    // which invalidates any queued or in-flight start; a start flight is only
+    // shared by callers of the same generation.
+    this._lifecycleGeneration = 0;
+    this._lifecycleChain = Promise.resolve();
+    this._startFlight = null;
+    this._startFlightGeneration = -1;
     // Rolling tail of the most recent spawn's stderr, used to diagnose a code-1
     // startup crash. Reset on each start().
     this._recentStderr = [];
@@ -132,13 +140,8 @@ class OllamaProcessManager {
     this._postExitProbeDelayMs = Number(postExitProbeDelayMs) >= 0
       ? Number(postExitProbeDelayMs)
       : POST_EXIT_PROBE_DELAY_MS;
-    // Optional thunk: returns the desired OLLAMA_MAX_LOADED_MODELS ceiling for
-    // this spawn (e.g. 2 when inline autocomplete needs a FIM model to coexist
-    // with the chat model), or null/undefined to keep the anti-thrash default of
-    // 1. Called at start() time so it sees live config; a user-set env var still
-    // wins inside buildSanitizedOllamaEnv.
-    this._resolveMaxLoadedModels =
-      typeof resolveMaxLoadedModels === 'function' ? resolveMaxLoadedModels : null;
+    this._resolveChatEngineType =
+      typeof resolveChatEngineType === 'function' ? resolveChatEngineType : null;
     // Throttled engine-liveness heartbeat sink (see ENGINE_ACTIVITY_LINE_PATTERNS).
     this._onEngineActivity = typeof onEngineActivity === 'function' ? onEngineActivity : null;
     this._engineActivityThrottleMs = Number(engineActivityThrottleMs) >= 0
@@ -176,7 +179,33 @@ class OllamaProcessManager {
     }
   }
 
-  async start() {
+  start() {
+    const generation = this._lifecycleGeneration;
+    if (this._startFlight && this._startFlightGeneration === generation) {
+      return this._startFlight;
+    }
+    const flight = this._serializeLifecycle(() => this._startFlightRun(generation));
+    this._startFlight = flight;
+    this._startFlightGeneration = generation;
+    const release = () => {
+      if (this._startFlight === flight) this._startFlight = null;
+    };
+    flight.then(release, release);
+    return flight;
+  }
+
+  // Each task waits for the previous one to settle (same idiom as serialize()
+  // in services/main/llama-server-manager.js).
+  _serializeLifecycle(task) {
+    const run = this._lifecycleChain.then(task);
+    this._lifecycleChain = run.catch(() => {});
+    return run;
+  }
+
+  async _startFlightRun(generation) {
+    const cancelled = { started: false, external: false, cancelled: true };
+    const isCurrent = () => this._lifecycleGeneration === generation;
+    if (!isCurrent()) return cancelled;
     // A (re)start supersedes any pending post-exit crash probe; otherwise a
     // stale probe could fire after the new process is up, see the port alive,
     // and wrongly mark our freshly-owned process as an external instance.
@@ -193,6 +222,17 @@ class OllamaProcessManager {
     const trayCheckDone = this._runTrayConflictCheck();
     const ownership = this._readOwnedState();
 
+    // A start() that begins after an earlier flight finished finds the record
+    // naming this manager's own live child. A healthy one is kept, not killed
+    // as stale; one that stopped answering falls through to kill-and-respawn.
+    if (ownership && this._ownedProcess && Number(this._process?.pid) === ownership.pid
+      && this._isProcessAlive(ownership.pid) && await this._isRunning()) {
+      await trayCheckDone;
+      if (!isCurrent()) return cancelled;
+      this._log('INFO', 'ollama.already_running', { port: this._port, owned: true });
+      return { started: false, external: false, ready: true };
+    }
+    if (!isCurrent()) return cancelled;
     if (ownership && this._isProcessAlive(ownership.pid)) {
       // F2c: the persisted pid may have been recycled onto an unrelated
       // process; kill only what still matches the command we recorded.
@@ -226,9 +266,11 @@ class OllamaProcessManager {
     }
 
     const running = await this._isRunning();
+    if (!isCurrent()) return cancelled;
     // Join the overlapped tray detection: its WARN and _trayConflict snapshot
     // must exist before any return or spawn (2026-07-02 incident contract).
     await trayCheckDone;
+    if (!isCurrent()) return cancelled;
     if (running) {
       this._log('INFO', 'ollama.already_running', { port: this._port });
       this._ownedProcess = false;
@@ -237,6 +279,7 @@ class OllamaProcessManager {
     }
 
     const command = await this._resolveCommand();
+    if (!isCurrent()) return cancelled;
     if (!command) {
       this._log('WARN', 'ollama.not_found', {
         message: 'ollama executable not found on PATH; skipping auto-start',
@@ -251,22 +294,12 @@ class OllamaProcessManager {
     }
 
     this._log('INFO', 'ollama.starting', { command });
-    let maxLoadedModels = null;
-    try {
-      const resolved = Number(this._resolveMaxLoadedModels?.());
-      if (Number.isInteger(resolved) && resolved > 1) {
-        maxLoadedModels = resolved;
-      }
-    } catch (_error) {
-      // best effort — fall back to the default ceiling
-    }
-    if (maxLoadedModels) {
-      this._log('INFO', 'ollama.max_loaded_models_raised', {
-        maxLoadedModels,
-        reason: 'inline_suggest_coexistence',
-      });
-    }
-    const spawnEnv = buildSanitizedOllamaEnv({ maxLoadedModels });
+    let chatEngineType = '';
+    try { chatEngineType = String(this._resolveChatEngineType?.() || ''); } catch (_error) { /* keep defaults */ }
+    const spawnEnv = buildSanitizedOllamaEnv({ chatEngineType });
+    this._log('INFO', 'ollama.keep_alive_default', {
+      chatEngineType, keepAlive: spawnEnv.env.OLLAMA_KEEP_ALIVE || 'ollama_default',
+    });
     if (spawnEnv.warning) {
       this._log('WARN', 'ollama.models_dir_ignored', {
         configuredPath: spawnEnv.configuredPath,
@@ -277,13 +310,15 @@ class OllamaProcessManager {
         message: spawnEnv.warning.message,
       });
     }
-    this._process = this._spawn(command, ['serve'], {
+    if (!isCurrent()) return cancelled;
+    const spawnedProcess = this._spawn(command, ['serve'], {
       stdio: ['ignore', 'pipe', 'pipe'],
       detached: false,
       windowsHide: true,
       env: spawnEnv.env,
     });
-    pipeChildLogs(this._process, {
+    this._process = spawnedProcess;
+    pipeChildLogs(spawnedProcess, {
       logger: this._log,
       prefix: 'ollama',
       resolveLevel: resolveOllamaOutputLevel,
@@ -300,7 +335,8 @@ class OllamaProcessManager {
     });
     this._ownedProcess = true;
     this._everOwnedProcess = true;
-    this._ownedPid = Number(this._process && this._process.pid) || 0;
+    this._ownedPid = Number(spawnedProcess && spawnedProcess.pid) || 0;
+    const attemptPid = this._ownedPid;
     this._writeOwnedState({
       pid: this._ownedPid,
       command,
@@ -308,7 +344,9 @@ class OllamaProcessManager {
       app_owned: true,
     });
 
-    this._process.on('error', (error) => {
+    // A late error/exit from an older child must not reset a newer child's
+    // ownership: only the manager's current child may clear it.
+    spawnedProcess.on('error', (error) => {
       const message = String(error.message || error);
       this._log('ERROR', 'ollama.spawn_error', { message });
       this._lastFailure = {
@@ -316,12 +354,13 @@ class OllamaProcessManager {
         likelyCause: null,
         remediation: `Could not launch the ollama process: ${message}`,
       };
-      this._resetLiveOwnership();
-      this._clearOwnedState();
+      if (this._process === spawnedProcess) {
+        this._resetLiveOwnership();
+        this._clearOwnedState();
+      }
     });
 
-    const spawnedProcess = this._process;
-    this._process.on('exit', (code, signal) => {
+    spawnedProcess.on('exit', (code, signal) => {
       const pid = Number(spawnedProcess?.pid || 0) || 0;
       const expected = pid > 0 && this._expectedExitPids.has(pid);
       if (expected) {
@@ -374,8 +413,10 @@ class OllamaProcessManager {
         } : {}),
         ...(stderrTail ? { stderrTail } : {}),
       });
-      this._resetLiveOwnership();
-      this._clearOwnedState();
+      if (this._process === spawnedProcess) {
+        this._resetLiveOwnership();
+        this._clearOwnedState();
+      }
       if (isCrash) {
         // Crash exit: non-zero code OR a terminating signal (SIGKILL/SIGSEGV/
         // OOM-killer). Both are logged ERROR above and warrant a recovery probe.
@@ -383,7 +424,11 @@ class OllamaProcessManager {
       }
     });
 
-    const ready = await this._waitForReady(spawnedProcess);
+    const ready = await this._waitForReady(spawnedProcess, isCurrent);
+    if (!isCurrent()) {
+      await this._cleanupFailedStartup('cancelled', attemptPid);
+      return cancelled;
+    }
     if (!ready) {
       const failure = this._buildStartupFailure();
       // Reason-aware fallback so an unclassified crash is not mislabelled as a
@@ -399,7 +444,7 @@ class OllamaProcessManager {
         ...(failure.stderrTail ? { stderrTail: failure.stderrTail } : {}),
         message: failure.remediation || fallbackMessage,
       });
-      await this._cleanupFailedStartup(failure.reason);
+      await this._cleanupFailedStartup(failure.reason, attemptPid);
       return { started: false, external: false, failure };
     }
 
@@ -559,7 +604,14 @@ class OllamaProcessManager {
     };
   }
 
-  async stop(options = {}) {
+  stop(options = {}) {
+    // Invalidate every queued or in-flight start first, then run behind it so
+    // stop() never returns while a start that began earlier can still spawn.
+    this._lifecycleGeneration += 1;
+    return this._serializeLifecycle(() => this._stopRun(options));
+  }
+
+  async _stopRun(options = {}) {
     // A deliberate stop supersedes any pending post-exit crash probe.
     this._clearPostExitProbe();
     // Every restart goes through stop(); forget the memoized command so the next
@@ -606,8 +658,15 @@ class OllamaProcessManager {
       return;
     }
 
+    // Parent links vanish once the root dies, so record its children first.
+    const preStopChildPids = snapshotOwnedChildPids({
+      ownedPid,
+      platform: this._platform,
+      logger: this._log,
+      listProcesses: this._listLocalOllamaProcesses,
+    });
     await this._stopOwnedPid(ownedPid);
-    await this._killOrphanedRunners(ownedPid).catch(() => null);
+    await this._killOrphanedRunners(ownedPid, preStopChildPids).catch(() => null);
 
     // F2d: clear ownership only on a CONFIRMED exit; else retain for retry.
     this._finalizeOwnedStop(ownedPid);
@@ -690,57 +749,23 @@ class OllamaProcessManager {
     return this._resolveCommandPromise;
   }
 
-  async _isRunning() {
-    return new Promise((resolve) => {
-      const url = `http://${this._host}:${this._port}/api/tags`;
-      let settled = false;
-      const finish = (value) => {
-        if (settled) {
-          return;
-        }
-        settled = true;
-        resolve(value);
-      };
-      try {
-        const request = http.get(url, { timeout: this._healthTimeoutMs }, (response) => {
-          const statusCode = response.statusCode || 0;
-          if (statusCode < 200 || statusCode >= 300) {
-            response.resume();
-            finish(false);
-            return;
-          }
-          let body = '';
-          response.setEncoding('utf8');
-          response.on('data', (chunk) => {
-            body += String(chunk || '');
-            if (body.length > 1024 * 1024) {
-              request.destroy();
-              finish(false);
-            }
-          });
-          response.on('end', () => {
-            try {
-              const payload = JSON.parse(body);
-              finish(Boolean(payload && Array.isArray(payload.models)));
-            } catch (_error) {
-              finish(false);
-            }
-          });
-        });
-        request.on('timeout', () => {
-          request.destroy();
-          finish(false);
-        });
-        request.on('error', () => finish(false));
-      } catch (_error) {
-        finish(false);
-      }
+  _isRunning() {
+    return probeOllamaHealth({
+      host: this._host,
+      port: this._port,
+      timeoutMs: this._healthTimeoutMs,
     });
   }
 
-  async _waitForReady(spawnedProcess) {
+  // True only when nothing listens on the Ollama port (connection refused).
+  isConfirmedDown() {
+    return probeOllamaRefused({ host: this._host, port: this._port, timeoutMs: this._healthTimeoutMs });
+  }
+
+  async _waitForReady(spawnedProcess, isCurrent = () => true) {
     const deadline = Date.now() + STARTUP_MAX_WAIT_MS;
     while (Date.now() < deadline) {
+      if (!isCurrent()) return false;
       // Fast-fail: if our spawned process already died (crash or spawn error),
       // the exit/error handler has nulled this._process. Stop blind-polling the
       // dead port for the full timeout and surface the captured crash reason.
@@ -826,7 +851,9 @@ class OllamaProcessManager {
     if (normalizedOwnedPid && liveHandlePid === normalizedOwnedPid) {
       this._expectedExitPids.add(normalizedOwnedPid);
     }
-    this._resetLiveOwnership();
+    if (!liveHandlePid || liveHandlePid === normalizedOwnedPid) {
+      this._resetLiveOwnership();
+    }
 
     // Windows taskkill without /F only posts WM_CLOSE, which a windowless
     // `ollama serve` never handles, so the grace wait always ran out.
@@ -843,8 +870,11 @@ class OllamaProcessManager {
     }
   }
 
-  async _cleanupFailedStartup(reason) {
-    const ownedPid = this._getOwnedPid();
+  // Acts only on the failed attempt's own pid. Ownership and the owned-state
+  // record are released only while the manager still tracks that pid.
+  async _cleanupFailedStartup(reason, attemptPid = this._getOwnedPid()) {
+    const ownedPid = Number(attemptPid) || 0;
+    const tracksAttempt = this._getOwnedPid() === ownedPid;
     try {
       if (ownedPid && this._isProcessAlive(ownedPid)) {
         await this._stopOwnedPid(ownedPid);
@@ -856,9 +886,13 @@ class OllamaProcessManager {
         message: String(error && error.message || error),
       });
     } finally {
-      this._resetLiveOwnership();
+      if (tracksAttempt) {
+        this._resetLiveOwnership();
+      }
       if (!ownedPid || !this._isProcessAlive(ownedPid)) {
-        this._clearOwnedState();
+        if (tracksAttempt) {
+          this._clearOwnedState();
+        }
       } else {
         this._log('WARN', 'ollama.cleanup_unconfirmed', {
           reason: String(reason || 'startup_failed'), pid: ownedPid, confirmed: false, retained: true,
@@ -914,50 +948,19 @@ class OllamaProcessManager {
     });
   }
 
-  // POSIX orphans are reparented to pid 1, which remains alive, so that pid
-  // must count as orphaned. Confirm the live command line before signalling
-  // because a listed pid may have been reused or may be an external server.
-  // Older ollama_llama_server binaries are not listed here and are out of scope.
-  async _killOrphanedRunners(parentPid) {
-    try {
-      if (this._platform === 'win32') {
-        const orphanPids = this._listLocalOllamaProcesses({
-          platform: this._platform,
-          logger: this._log,
-        })
-          .filter((entry) => entry.parentPid === parentPid || !this._isProcessAlive(entry.parentPid))
-          .map((entry) => entry.pid);
-        for (const pid of orphanPids) {
-          this._log('INFO', 'ollama.killing_orphaned_runner', { pid, parentPid });
-          await this._killProcessTree(pid, { force: true }).catch(() => null);
-        }
-        return;
-      }
-      const entries = this._listLocalOllamaProcesses({
-        platform: this._platform,
-        logger: this._log,
-      });
-      for (const entry of entries) {
-        const pid = entry.pid;
-        if (!Number.isInteger(pid) || pid <= 0 || pid === parentPid
-          || !(entry.parentPid === parentPid || entry.parentPid === 1
-            || !this._isProcessAlive(entry.parentPid))) continue;
-        let commandLine;
-        try {
-          commandLine = this._getProcessCommandLineSync(pid, { platform: this._platform });
-        } catch (_error) {
-          commandLine = '';
-        }
-        if (!/\brunner\b/.test(commandLine)) {
-          this._log('DEBUG', 'ollama.orphan_runner_identity_unconfirmed', { pid, parentPid });
-          continue;
-        }
-        this._log('INFO', 'ollama.killing_orphaned_runner', { pid, parentPid });
-        await this._killProcessTree(pid, { force: true }).catch(() => null);
-      }
-    } catch (_error) {
-      // best effort only
-    }
+  // Kills only what is proven to descend from the owned root (see
+  // ollama-orphan-runners.js). `preStopChildPids` is the listing taken before
+  // the root was stopped.
+  _killOrphanedRunners(parentPid, preStopChildPids = []) {
+    return killOwnedChildRunners({
+      ownedPid: parentPid,
+      preStopChildPids,
+      platform: this._platform,
+      logger: this._log,
+      listProcesses: this._listLocalOllamaProcesses,
+      killProcessTree: this._killProcessTree,
+      getProcessCommandLineSync: this._getProcessCommandLineSync,
+    });
   }
 
 }

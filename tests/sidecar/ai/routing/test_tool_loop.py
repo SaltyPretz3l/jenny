@@ -23,8 +23,8 @@ from sidecar.ai.feature_flags import FEATURE_TOKEN_BUDGET
 from sidecar.ai.mcp.models import MCPToolDescriptor
 from sidecar.ai.routing import mutation_change_set_lifecycle as lifecycle_module
 from sidecar.ai.routing.loop_events import (
-    ContextCompactionStartedEvent,
     ContextCompactedEvent,
+    ContextCompactionStartedEvent,
     StreamResetEvent,
     TokenDeltaEvent,
     ToolExecutingEvent,
@@ -274,6 +274,35 @@ def test_tool_loop_compaction_passes_the_turn_prompt_as_task_content(
     compact_tool_loop_context(loop, num_tools=0)
 
     assert compact_kwargs["task_content"] == "current prompt"
+
+
+def test_tool_loop_compaction_event_carries_summary_source_omissions(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    events: list[object] = []
+    loop = _tool_loop_compaction_fixture(events, [])
+    monkeypatch.setattr(
+        "sidecar.ai.routing.tool_loop_compaction.estimate_messages_tokens",
+        lambda *_args: 100,
+    )
+    monkeypatch.setattr(
+        "sidecar.ai.routing.tool_loop_compaction.compact_context",
+        lambda *_args, **_kwargs: CompactionResult(
+            messages=[{"role": "user", "content": "compacted"}],
+            strategy="full",
+            tokens_before=100,
+            tokens_after=60,
+            summary_status="created",
+            summary_input_dropped_messages=5,
+        ),
+    )
+
+    compact_tool_loop_context(loop, num_tools=0)
+
+    compacted_event = next(
+        event for event in events if isinstance(event, ContextCompactedEvent)
+    )
+    assert compacted_event.summary_source_dropped_messages == 5
 
 
 def test_tool_loop_compaction_event_carries_summary_and_coverage(
@@ -1444,7 +1473,8 @@ def test_tool_call_budget_is_cumulative_across_generations() -> None:
         if result.error_code == CMP_TOOL_CAP_EXCEEDED
     ]
     assert [result.call_id for result in capped] == ["call-over-budget"]
-    assert engine.requests[-1]["tools"] == []
+    # F15: the post-cap leg keeps the same tool list so the prompt prefix holds.
+    assert engine.requests[-1]["tools"] == engine.requests[0]["tools"]
 
 
 def test_tool_call_budget_caps_batch_before_approval_plan_scan() -> None:
@@ -3343,7 +3373,7 @@ def test_quota_block_guidance_web_reassures_network_available() -> None:
 
 
 def test_quota_block_guidance_covers_other_scopes() -> None:
-    assert "session's tool budget" in _quota_block_guidance("session_tool_budget", 200)
+    assert "chat's tool budget" in _quota_block_guidance("session_tool_budget", 200)
     assert "cooldown" in _quota_block_guidance("tool_cooldown", 1)
     assert "resets on your next reply" in _quota_block_guidance(
         "code_intelligence_per_turn", 16
@@ -4629,4 +4659,4 @@ def test_tool_batch_from_an_incomplete_stream_is_not_dispatched() -> None:
     assert mcp_client.executions == []
     assert not decision.tool_results
     assert decision.terminal_error_code == CMP_STREAM_INCOMPLETE
-    assert "cut off before it finished" in decision.response_text
+    assert "connection to the model server closed" in decision.response_text

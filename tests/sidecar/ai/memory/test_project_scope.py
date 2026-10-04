@@ -81,7 +81,7 @@ def test_pending_and_page_anchors_do_not_cross_projects(tmp_path: Path) -> None:
         now = datetime.now(timezone.utc).isoformat()
         for project_id, title in ((PROJECT_ALPHA, "Alpha"), (PROJECT_BETA, "Beta")):
             lesson = f"{title} preference."
-            store._connection.execute(  # noqa: SLF001
+            store._connection.execute(
                 """
                 INSERT INTO pending_memory_candidates (
                     session_id, source_request_id, title, lesson_text, lesson_kind,
@@ -99,7 +99,7 @@ def test_pending_and_page_anchors_do_not_cross_projects(tmp_path: Path) -> None:
                     project_id,
                 ),
             )
-        store._connection.commit()  # noqa: SLF001
+        store._connection.commit()
 
         alpha_rows, alpha_cursor = store.get_pending_candidates_page(
             limit=1, project_id=PROJECT_ALPHA
@@ -199,7 +199,7 @@ def test_recall_filters_project_before_bounded_candidates(
                 PROJECT_BETA,
             )
         )
-        store._connection.executemany(  # noqa: SLF001
+        store._connection.executemany(
             """
             INSERT INTO memories (
                 session_id, title, lesson_text, lesson_kind, confidence,
@@ -209,8 +209,8 @@ def test_recall_filters_project_before_bounded_candidates(
             """,
             rows,
         )
-        store._connection.commit()  # noqa: SLF001
-        store._recall_index_available = use_fts  # noqa: SLF001
+        store._connection.commit()
+        store._recall_index_available = use_fts
 
         recalled = store.recall_memories(
             "needle beta target", limit=3, project_id=PROJECT_BETA

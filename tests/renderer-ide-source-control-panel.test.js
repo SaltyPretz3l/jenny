@@ -508,3 +508,75 @@ test('a generated message resolving after resetForRoot is discarded, not applied
     'a post-reset generation result must be discarded'
   );
 });
+
+test('the commit textarea survives a git status re-render: same element, focus, caret and draft kept (bug-pass #2)', () => {
+  const snapshot = repo();
+  const { panelEl, panel, doc } = setup(snapshot);
+  const input = panelEl.querySelector('[data-ide-scm-input="commit"]');
+  input.focus();
+  input.value = 'half a message';
+  input.dispatchEvent(new doc.defaultView.Event('input', { bubbles: true }));
+  input.setSelectionRange(4, 4);
+  // A status change (fs event / git refresh) re-renders the list.
+  snapshot.files = snapshot.files.concat([{ path: 'src/b.js', state: 'modified', staged: false, worktree: 'M', index: ' ' }]);
+  panel.renderSourceControlPanel();
+  assert.ok(panelEl.querySelector('[data-ide-scm-path="src/b.js"]'), 'the list region repainted');
+  const after = panelEl.querySelector('[data-ide-scm-input="commit"]');
+  assert.equal(after, input, 'the textarea is the same element instance');
+  assert.equal(doc.activeElement, input, 'focus stays in the textarea');
+  assert.equal(after.value, 'half a message');
+  assert.equal(after.selectionStart, 4, 'caret untouched');
+  // A staged-count change patches the buttons in place without recreating the box.
+  snapshot.files = snapshot.files.filter((file) => !file.staged);
+  panel.renderSourceControlPanel();
+  assert.equal(panelEl.querySelector('[data-ide-scm-input="commit"]'), input);
+  assert.equal(panelEl.querySelector('[data-ide-scm-action="commit"]').disabled, true, 'Commit disables in place');
+  assert.equal(panelEl.querySelectorAll('.ide-scm').length, 1);
+  assert.equal(panelEl.querySelectorAll('.ide-scm-group').length, 1, 'the stale Ready-to-commit group is gone');
+});
+
+test('a hint appears and clears in place on the stable commit box (bug-pass #2)', async () => {
+  const { panelEl, doc } = setup(repo());
+  const input = panelEl.querySelector('[data-ide-scm-input="commit"]');
+  panelEl.querySelector('[data-ide-scm-action="commit"]').click();
+  await settle();
+  assert.equal(panelEl.querySelector('[data-ide-scm-input="commit"]'), input);
+  assert.match(panelEl.querySelector('.ide-scm-commit-hint').textContent, /Enter a commit message/);
+  input.value = 'x';
+  input.dispatchEvent(new doc.defaultView.Event('input', { bubbles: true }));
+  panelEl.querySelector('[data-ide-scm-action="commit"]').click();
+  await settle();
+  assert.equal(panelEl.querySelector('.ide-scm-commit-hint'), null, 'hint removed after a successful commit');
+  assert.equal(input.value, '', 'the same textarea is cleared after commit');
+});
+
+test('an open IME composition is never overwritten by a re-render (bug-pass #2)', () => {
+  const snapshot = repo();
+  const { panelEl, panel, doc } = setup(snapshot);
+  const input = panelEl.querySelector('[data-ide-scm-input="commit"]');
+  input.focus();
+  input.dispatchEvent(new doc.defaultView.Event('compositionstart', { bubbles: true }));
+  input.value = 'にほ';
+  snapshot.branch = 'feature';
+  panel.renderSourceControlPanel();
+  assert.equal(panelEl.querySelector('[data-ide-scm-input="commit"]'), input);
+  assert.equal(input.value, 'にほ', 'composition text left alone');
+  input.dispatchEvent(new doc.defaultView.Event('compositionend', { bubbles: true }));
+  snapshot.branch = 'feature-2';
+  panel.renderSourceControlPanel();
+  assert.equal(input.value, 'にほ', 'the committed composition is the draft');
+});
+
+test('the draft survives a panel switch (host repainted by another panel) (bug-pass #2)', () => {
+  const snapshot = repo();
+  const { panelEl, panel, doc } = setup(snapshot);
+  const input = panelEl.querySelector('[data-ide-scm-input="commit"]');
+  input.value = 'keep me';
+  input.dispatchEvent(new doc.defaultView.Event('input', { bubbles: true }));
+  panelEl.innerHTML = '<div class="other-panel"></div>';
+  panelEl.__jennyIdeRailMarkup = 'other';
+  panel.renderSourceControlPanel();
+  const fresh = panelEl.querySelector('[data-ide-scm-input="commit"]');
+  assert.ok(fresh && !panelEl.querySelector('.other-panel'), 'the panel repaints fully');
+  assert.equal(fresh.value, 'keep me');
+});

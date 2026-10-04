@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import difflib
 import hashlib
 import json
 import logging
@@ -12,6 +13,11 @@ from typing import Any
 
 from sidecar.runtime.diagnostics import log_event
 
+MAX_DIFF_INPUT_CHARS = 1_000_000
+# Budgets for the changed middle after the common prefix and suffix are
+# trimmed, so an ordinary edit to a large file still gets real hunks (BLT-06).
+MAX_DIFF_INPUT_LINES = 20_000
+MAX_DIFF_MATCH_WORK = 16_000_000
 MAX_DIFF_BYTES = 32 * 1024
 MAX_DIFF_HUNKS = 64
 MAX_DIFF_LINES = 200
@@ -65,9 +71,22 @@ def compute_structured_diff(  # noqa: PLR0913
         resolved_status = _resolve_status(status, normalized_old)
         old_tokens = _line_tokens(normalized_old)
         new_tokens = _line_tokens(normalized_new)
-        groups = _grouped_opcodes(old_tokens, new_tokens, caps.context_lines)
-        additions, deletions = _count_group_changes(groups)
-        truncation_reason = _preflight_truncation_reason(groups, old_tokens, new_tokens, caps)
+        changed_new, changed_old = _changed_span(old_tokens, new_tokens)
+        input_limit = (
+            "byte_limit" if len(normalized_old) + len(normalized_new) > MAX_DIFF_INPUT_CHARS
+            else "line_limit" if (
+                changed_old + changed_new > MAX_DIFF_INPUT_LINES
+                or changed_old * changed_new > MAX_DIFF_MATCH_WORK
+            ) else None
+        )
+        groups = [] if input_limit else _grouped_opcodes(old_tokens, new_tokens, caps.context_lines)
+        additions, deletions = (
+            _count_changed_tokens(normalized_old, normalized_new)
+            if input_limit else _count_group_changes(groups)
+        )
+        truncation_reason = input_limit or _preflight_truncation_reason(
+            groups, old_tokens, new_tokens, caps
+        )
         hunks = (
             []
             if truncation_reason
@@ -91,6 +110,7 @@ def compute_structured_diff(  # noqa: PLR0913
             "after_hash": None if resolved_status == "deleted" else sha256_text(normalized_new),
             "hash_kind": _normalize_text_field(hash_kind) or "diff_input_text",
             "hunks": [] if truncated else hunks,
+            **({"change_count_kind": "replacement_span"} if input_limit else {}),
         }
     except Exception as error:  # noqa: BLE001
         log_diff_failure(logger, file_path, error)
@@ -230,15 +250,41 @@ def _line_tokens(value: str) -> list[str]:
     return value.splitlines(keepends=True)
 
 
+class _ShiftedOpcodes:
+    """Opcodes for the whole file from a match over the trimmed middle only."""
+
+    def __init__(self, old_tokens: list[str], new_tokens: list[str]) -> None:
+        added, deleted = _changed_span(old_tokens, new_tokens)
+        prefix = 0
+        limit = min(len(old_tokens), len(new_tokens))
+        while prefix < limit and old_tokens[prefix] == new_tokens[prefix]:
+            prefix += 1
+        old_end, new_end = prefix + deleted, prefix + added
+        matcher = SequenceMatcher(
+            a=old_tokens[prefix:old_end], b=new_tokens[prefix:new_end], autojunk=False
+        )
+        codes: list[Opcode] = [("equal", 0, prefix, 0, prefix)] if prefix else []
+        codes += [(tag, a1 + prefix, a2 + prefix, b1 + prefix, b2 + prefix)
+                  for tag, a1, a2, b1, b2 in matcher.get_opcodes()]
+        if old_end < len(old_tokens):
+            codes.append(("equal", old_end, len(old_tokens), new_end, len(new_tokens)))
+        self._codes = codes
+
+    def get_opcodes(self) -> list[Opcode]:
+        return list(self._codes)
+
+
 def _grouped_opcodes(
     old_tokens: list[str],
     new_tokens: list[str],
     context_lines: int,
 ) -> list[list[Opcode]]:
-    matcher = SequenceMatcher(a=old_tokens, b=new_tokens, autojunk=False)
+    # Matching runs on the changed middle only, so a long shared prefix or
+    # suffix in a repetitive file costs linear time (BLT-06); difflib groups.
+    shifted = _ShiftedOpcodes(old_tokens, new_tokens)
     return [
         list(group)
-        for group in matcher.get_grouped_opcodes(n=context_lines)
+        for group in difflib.SequenceMatcher.get_grouped_opcodes(shifted, n=context_lines)  # type: ignore[arg-type]
         if group and not all(tag == "equal" for tag, *_rest in group)
     ]
 
@@ -321,17 +367,23 @@ def _count_group_changes(
 
 
 def _count_changed_tokens(old_text: str, new_text: str) -> tuple[int, int]:
-    old_tokens = _line_tokens(old_text)
-    new_tokens = _line_tokens(new_text)
-    additions = 0
-    deletions = 0
-    matcher = SequenceMatcher(a=old_tokens, b=new_tokens, autojunk=False)
-    for tag, old_start, old_end, new_start, new_end in matcher.get_opcodes():
-        if tag in {"insert", "replace"}:
-            additions += new_end - new_start
-        if tag in {"delete", "replace"}:
-            deletions += old_end - old_start
-    return additions, deletions
+    return _changed_span(_line_tokens(old_text), _line_tokens(new_text))
+
+
+def _changed_span(old_tokens: list[str], new_tokens: list[str]) -> tuple[int, int]:
+    """(added, deleted) line counts of the one span left after trimming the common prefix
+    and suffix: linear even for repetitive files, and an upper bound on the real counts."""
+    prefix = 0
+    end_old, end_new = len(old_tokens), len(new_tokens)
+    while prefix < min(end_old, end_new) and old_tokens[prefix] == new_tokens[prefix]:
+        prefix += 1
+    while (
+        end_old > prefix and end_new > prefix
+        and old_tokens[end_old - 1] == new_tokens[end_new - 1]
+    ):
+        end_old -= 1
+        end_new -= 1
+    return end_new - prefix, end_old - prefix
 
 
 def _resolve_truncation_reason(hunks: list[dict[str, Any]], caps: DiffCaps) -> str | None:

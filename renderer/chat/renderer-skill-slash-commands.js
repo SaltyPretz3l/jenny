@@ -83,11 +83,18 @@
     const registry = options.registry;
     const getSkillsState = options.getSkillsState;
     const onChanged = options.onChanged;
+    // Chat-scoped catalogs: the key names the chat the registry was last asked
+    // for; a pushed snapshot is the open Workspace's view, so it only triggers
+    // a refetch of the chat's own scope.
+    const getScopeKey = typeof options.getScopeKey === 'function' ? options.getScopeKey : null;
     const log = typeof options.log === 'function' ? options.log : function noop() {};
     const owned = new Map();
     let disposed = false;
     let revision = 0;
     let unsubscribe = null;
+    let requestedScope = null;
+    let requestedAt = -Infinity;
+    const now = typeof options.now === 'function' ? options.now : () => Date.now();
 
     function warnCollision(command, firstId, secondId) {
       log('WARN', 'slash.skill_command_collision', { command, firstId, secondId });
@@ -144,7 +151,9 @@
     async function refresh(snapshot) {
       const refreshRevision = ++revision;
       try {
-        const next = snapshot && typeof snapshot === 'object'
+        const pushed = snapshot && typeof snapshot === 'object';
+        if (!pushed && getScopeKey) { requestedScope = getScopeKey(); requestedAt = now(); }
+        const next = pushed
           ? snapshot
           : await Promise.resolve(typeof getSkillsState === 'function' ? getSkillsState() : null);
         if (disposed || refreshRevision !== revision) return [];
@@ -155,8 +164,20 @@
       }
     }
 
+    // Refetch when the focused chat changed, or when the last read is older
+    // than maxAgeMs: the chat's project can be re-bound under the same session
+    // id (projects.assignSession), which no renderer key observes reliably.
+    // Null when the registry already reflects a fresh read.
+    function ensureScope({ maxAgeMs = Infinity } = {}) {
+      if (disposed || !getScopeKey) return null;
+      if (getScopeKey() === requestedScope && now() - requestedAt <= maxAgeMs) return null;
+      return refresh();
+    }
+
     if (typeof onChanged === 'function') {
-      unsubscribe = onChanged((snapshot) => { refresh(snapshot).catch(function noop() {}); });
+      unsubscribe = onChanged((snapshot) => {
+        refresh(getScopeKey ? undefined : snapshot).catch(function noop() {});
+      });
     }
     refresh().catch(function noop() {});
 
@@ -169,7 +190,7 @@
       owned.clear();
     }
 
-    return { refresh, dispose };
+    return { refresh, ensureScope, dispose };
   }
 
   function createSendSlashDispatch(deps) {
@@ -180,12 +201,40 @@
     const syncComposerInputHeight = options.syncComposerInputHeight || function noop() {};
     const syncComposerVisualState = options.syncComposerVisualState || function noop() {};
     const renderComposerState = options.renderComposerState || function noop() {};
+    const sessionContext = options.sessionContext || null;
+    // The chat this composer sends to and the project its summary names; main
+    // resolves the canonical binding (project_id only counts for a draft).
+    function skillsScope() {
+      const sessionId = String(sessionContext?.getSessionId?.() ?? state?.currentSessionId ?? '').trim();
+      const summary = sessionId && Array.isArray(state?.sessions)
+        ? state.sessions.find((session) => String(session?.id || '').trim() === sessionId) : null;
+      const projectId = String(summary?.project_id || '').trim();
+      return { ...(sessionId ? { session_id: sessionId } : {}), ...(projectId ? { project_id: projectId } : {}) };
+    }
+    const scoped = typeof options.getSkillsState === 'function';
     const skillCommands = createSkillSlashCommands({
       registry,
-      getSkillsState: options.getSkillsState,
+      getSkillsState: scoped ? () => options.getSkillsState(skillsScope()) : undefined,
+      getScopeKey: scoped ? () => JSON.stringify(skillsScope()) : undefined,
       onChanged: options.onSkillsChanged,
       log: options.log,
+      now: options.now,
     });
+    // Composer focus and opening the "/" menu re-read this chat's skills (at
+    // most once per freshness window), so a chat switch or a project re-bind
+    // of the same chat reaches the picker before it is read.
+    const SKILLS_FRESH_MS = 1000;
+    const syncSkillsScope = (event) => {
+      if (event?.type === 'input' && !/^\/[a-z0-9_-]*$/i.test(String(chatInput?.value || ''))) {
+        skillCommands.ensureScope()?.catch(function noop() {});
+        return;
+      }
+      skillCommands.ensureScope({ maxAgeMs: SKILLS_FRESH_MS })?.catch(function noop() {});
+    };
+    if (scoped && typeof chatInput?.addEventListener === 'function') {
+      chatInput.addEventListener('focus', syncSkillsScope);
+      chatInput.addEventListener('input', syncSkillsScope);
+    }
 
     function getPending() {
       return stateUtilsRef()?.getPendingSkillInvocation?.(state) || null;
@@ -217,6 +266,9 @@
       if (!trimmed.startsWith('/') || !registry) {
         return { handled: false, prompt, settings: nextSettings };
       }
+      // A command typed right after a chat switch matches THAT chat's skills.
+      const scopeSync = skillCommands.ensureScope({ maxAgeMs: SKILLS_FRESH_MS });
+      if (scopeSync) return scopeSync.then(() => dispatch(prompt, rawSettings));
       const originDraft = String(chatInput?.value || '');
       const receipt = typeof registry.execute === 'function'
         ? registry.execute(trimmed)
@@ -254,7 +306,8 @@
       const accepted = Boolean(result?.streamId)
         || (result?.durable === true && result?.ok === true && Boolean(result?.work_id));
       if (!accepted || settings?.editedMessageId || !invocation?.id) return false;
-      const pending = getPending();
+      // By id, not focus (split view W3-1): the send may settle after focus moved to the other pane.
+      const pending = stateUtilsRef()?.ensureComposerV2State?.(state)?.pendingSkillInvocation || null;
       if (!pending || pending.id !== invocation.id) return false;
       const cleared = stateUtilsRef()?.clearPendingSkillInvocation?.(state) === true;
       if (cleared) {
@@ -266,8 +319,17 @@
 
     const autocompleteUtils = options.autocompleteUtils
       || (typeof globalThis !== 'undefined' ? globalThis.rendererSlashAutocomplete : null);
+    // Split view: each pane's send path owns the menu on ITS composer. A
+    // second pane's textarea is not #chatInput: its menu binds that textarea,
+    // keys on its session and leaves pane 0's Commands button alone.
+    const ownsDocumentComposer = !chatInput || chatInput === chatInput.ownerDocument?.getElementById?.('chatInput');
     const autocomplete = autocompleteUtils?.createSlashAutocomplete?.({
       document: chatInput?.ownerDocument,
+      getInput: chatInput ? () => chatInput : undefined,
+      getButton: ownsDocumentComposer ? undefined : () => null,
+      getSessionId: !ownsDocumentComposer && typeof sessionContext?.getSessionId === 'function'
+        ? () => sessionContext.getSessionId()
+        : undefined,
       registry,
       state,
       onAccept() {
@@ -280,6 +342,8 @@
 
     function dispose() {
       autocomplete?.dispose?.();
+      chatInput?.removeEventListener?.('focus', syncSkillsScope);
+      chatInput?.removeEventListener?.('input', syncSkillsScope);
       skillCommands.dispose();
     }
 

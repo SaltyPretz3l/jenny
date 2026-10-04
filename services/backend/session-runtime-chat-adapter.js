@@ -47,6 +47,20 @@ function selectedEngine(service, request) {
   return hinted || (['chatgpt', 'codex-cli'].includes(inferred) ? inferred : current);
 }
 
+// One sidecar stack serves one model: a turn on another engine or model
+// re-initializes it (backend-chat-model-resolution.js lazy load) under a live
+// stream, whose reply then comes from the wrong model under the right label.
+function turnModelKey(service, context) {
+  const request = context?.request || {};
+  const model = String(request.runtimePreferredModel || request.normalizedPreferences?.preferred_model
+    || service.currentModel || '').trim();
+  return `${String(context?.route?.engine_type || '')}\n${model}`;
+}
+
+function isAdmittedContext(context) {
+  return Boolean(context && (context.initialInferenceLease || context.lease || context.checkpointResume));
+}
+
 function terminalStatus(value) {
   return TERMINAL_STATUSES.has(value) ? value : 'failed';
 }
@@ -107,10 +121,14 @@ class SessionRuntimeChatAdapter {
       this.service,
       session,
       { requestedEngine: route.engine_type, requestedModel: copy.runtimePreferredModel },
-      normalizeManagedToolPreferences(copy.toolPreferences)
+      normalizeManagedToolPreferences(copy.toolPreferences, { catalog: this.service.currentStatus?.tools_status })
     );
     copy.toolPreferences = lockdown.toolPreferences;
     copy.runtimePreferredEngineType = route.engine_type;
+    // Owner D3: the safety policy is captured with the logical turn and rides its
+    // durable request, so a checkpoint resume keeps the policy the turn started with.
+    const chatUi = this.service.configService?.getChatUiState?.();
+    if (chatUi) copy.safetyPolicy = { safety_mode: chatUi.safetyMode, auto_approve_streak_cap: chatUi.autoApproveStreakCap };
     const cancellation = options?.cancellation || null;
     const executionOptions = executionOptionsFor(this.service, copy, images, cancellation);
     const binding = this.service.sessionExecutionAuthority.captureSession(sessionId,
@@ -121,6 +139,8 @@ class SessionRuntimeChatAdapter {
       throw new Error('session_runtime_execution_authority_invalid');
     }
     const durableRequest = cloneJson(copy);
+    // Client timing is this Send's click time: live start only, never a replay's.
+    delete durableRequest.clientTiming;
     durableRequest.attachments = attachments.map((entry) => {
       const saved = { ...entry };
       delete saved.bytes;
@@ -333,6 +353,7 @@ class SessionRuntimeChatAdapter {
         code: 'runtime_submission_acknowledgement_pending', retryable: true,
       });
     }
+    if (work.status !== 'running' && !context.lease) this.assertModelAdmission(work, context);
     if (context.cancelled) {
       const error = new Error('runtime_cancellation_requested');
       error.code = 'runtime_cancellation_requested';
@@ -385,6 +406,20 @@ class SessionRuntimeChatAdapter {
     context.resumeHydration = resumeHydration;
     context.checkpointResume = checkpointResume;
     return true;
+  }
+
+  // A turn on a different engine or model than an admitted turn waits; that
+  // turn's settlement pumps the scheduler again (notifyLaneAvailability).
+  assertModelAdmission(work, context) {
+    const own = turnModelKey(this.service, context);
+    for (const [workId, other] of this.contexts) {
+      if (workId === work.work_id || !isAdmittedContext(other)) continue;
+      if (turnModelKey(this.service, other) !== own) {
+        throw Object.assign(new Error('runtime_model_switch_busy'), {
+          code: 'runtime_model_switch_busy', retryable: true, blocking_session_id: other.sessionId,
+        });
+      }
+    }
   }
 
   releaseInitialInference(context) {
@@ -502,12 +537,21 @@ class SessionRuntimeChatAdapter {
     let managedStarted = false;
     let managedOutcome = null;
     let lateSettlementPromise = null;
+    // Set when the turn settled while a tool's cleanup was still unconfirmed:
+    // the work is already terminal, so the late confirmation only frees the
+    // settlement handler that carried the tool's late cleanup proof.
+    let turnSettledWithToolCleanupPending = false;
     const confirmLateIfReady = () => {
       if (!gateway) return;
       const inference = gateway.snapshot();
       if (!managedOutcome?.canonicalSettled || !TERMINAL_STATUSES.has(managedOutcome.status) || !inference.closed
         || inference.active !== 0 || inference.quarantined !== 0
         || lateSettlementPromise || typeof confirmLateSettlement !== 'function') return;
+      if (turnSettledWithToolCleanupPending) {
+        lateSettlementPromise = Promise.resolve(null);
+        controller?._runtimeSettlementUnregister?.();
+        return;
+      }
       const outcome = { status: terminalStatus(managedOutcome.status),
         producerSettled: true, canonicalSettled: true };
       lateSettlementPromise = Promise.resolve(confirmLateSettlement(outcome)).then((result) => {
@@ -563,7 +607,21 @@ class SessionRuntimeChatAdapter {
       const beforeClose = gateway.snapshot();
       const providerSettled = managed.producerSettled === true
         && beforeClose.active === 0 && beforeClose.quarantined === 0;
+      // The chat turn (and its lane) waits for the model side only. A tool
+      // whose cleanup is unconfirmed stays quarantined in the resource broker,
+      // which fences conflicting workspace work on its own; holding the lane
+      // for it wedged the session and, on the one-turn local lane, every
+      // local-model session (dogfood HB-009).
+      const turnSettled = managed.producerSettled === true && beforeClose.active === 0
+        && (beforeClose.inference?.quarantined ?? beforeClose.quarantined) === 0;
+      const toolCleanupPending = turnSettled && !providerSettled && managed.status !== 'paused';
       gateway.close({ producerSettled: providerSettled });
+      if (toolCleanupPending) {
+        turnSettledWithToolCleanupPending = true;
+        this.service._emitServiceLog?.('WARN', 'session_runtime.tool_cleanup_pending', {
+          work_id: work.work_id, quarantined: beforeClose.tools?.quarantined ?? beforeClose.quarantined,
+        });
+      }
       if (providerSettled && managed.canonicalSettled === true) {
         controller._runtimeSettlementUnregister?.();
       } else {
@@ -571,7 +629,7 @@ class SessionRuntimeChatAdapter {
       }
       return pausedOutcome(managed, providerSettled) || {
         status: terminalStatus(managed.status),
-        producerSettled: providerSettled,
+        producerSettled: providerSettled || toolCleanupPending,
         canonicalSettled: managed.canonicalSettled === true,
       };
     } catch (error) {

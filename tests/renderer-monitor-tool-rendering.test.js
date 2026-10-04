@@ -109,3 +109,11 @@ test('monitor view model exposes monitor metadata for message_updated refreshes'
   assert.equal(viewModel.metadata.monitor.state, 'completed');
   assert.equal(viewModel.metadata.monitor.events.length, 2);
 });
+
+test('MON-13 the dropped count includes lines Electron trimmed for retention', () => {
+  const { normalizeMonitorMetadata } = require('../renderer/chat/renderer-monitor-tool-utils');
+  const monitor = normalizeMonitorMetadata({ monitor_id: 'm', dropped_event_count: 2,
+    display_dropped_event_count: 5, events: [] });
+  assert.equal(monitor.droppedEventCount, 7);
+  assert.equal(normalizeMonitorMetadata({ monitor_id: 'm', events: [] }).droppedEventCount, 0);
+});

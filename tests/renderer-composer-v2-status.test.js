@@ -197,3 +197,36 @@ test('composer status preserves warning tone for paste and attachment notices', 
 
   assert.equal(state.ui.composerStatusNoticeTone, 'warning');
 });
+
+test('split view W3-1: a notice records the session it belongs to; unkeyed and cleared notices carry none', () => {
+  const state = { currentSessionId: 'session-1', attachments: {}, ui: {}, pendingToolApprovals: new Map() };
+  const controller = createComposerV2StatusController({
+    state,
+    callbacks: { appendClientLog() {}, getRendererElapsedMs() { return 0; } },
+  });
+  controller.setComposerStatusNotice('Large paste added.', { tone: 'warning', owner: 'composer:paste-size', sessionId: ' session-2 ' });
+  assert.equal(state.ui.composerStatusNoticeSessionId, 'session-2');
+  controller.setComposerStatusNotice('Compacting context…', { owner: 'compaction:session-1' });
+  assert.equal(state.ui.composerStatusNoticeSessionId, '', 'a writer that names no session stays unkeyed (pane 0\'s)');
+  controller.setComposerStatusNotice('Large paste added.', { owner: 'composer:paste-size', sessionId: 'session-2' });
+  controller.clearComposerStatusNotice();
+  assert.equal(state.ui.composerStatusNoticeSessionId, '');
+});
+
+test('split view W3-1: setting or dropping a keyed notice routes a composer sync to its session', () => {
+  const synced = [];
+  const state = { currentSessionId: 'session-1', attachments: {}, ui: {}, pendingToolApprovals: new Map() };
+  const controller = createComposerV2StatusController({
+    state,
+    callbacks: { appendClientLog() {}, getRendererElapsedMs() { return 0; }, renderSessionComposer: (id) => synced.push(id) },
+  });
+  controller.setComposerStatusNotice('Paste is too large.', { owner: 'composer:paste-size', sessionId: 'session-2' });
+  assert.deepEqual(synced, ['session-2'], 'the pane showing session-2 paints the notice now');
+  controller.setComposerStatusNotice('Compacting context…', { owner: 'compaction:session-1' });
+  assert.deepEqual(synced, ['session-2', 'session-2'], 'an unkeyed replacement clears it from that pane');
+  controller.clearComposerStatusNotice();
+  assert.deepEqual(synced, ['session-2', 'session-2'], 'nothing keyed, nothing routed');
+  controller.setComposerStatusNotice('Paste is too large.', { owner: 'composer:paste-size', sessionId: 'session-2' });
+  controller.clearComposerStatusNotice({ owner: 'composer:paste-size' });
+  assert.deepEqual(synced, ['session-2', 'session-2', 'session-2', 'session-2']);
+});

@@ -3,19 +3,7 @@
 const { runActivationOperation } = require('../lifecycle/activation-operation');
 const { readCommittedState } = require('../lifecycle/commit-sequence');
 const { compileCurrentRuntimeSnapshot } = require('./declarative-compiler');
-
-function runtimeEnvelope(compiled) {
-  return {
-    envelope: {
-      mode: 'plugin_runtime',
-      plugin_runtime: {
-        snapshot: compiled.snapshot,
-        declarative_content: compiled.declarative_content,
-      },
-    },
-    snapshot: compiled.snapshot,
-  };
-}
+const { runtimeEnvelope } = require('./runtime-envelope');
 
 function requiresReconciliation(outcome) {
   return outcome?.requiresReconciliation === true
@@ -46,8 +34,6 @@ function createControlPlaneRuntime({
   verifyPackage,
   runtimeCoordinator,
   now,
-  remoteMcpRuntime = null,
-  privilegedRuntime = null,
 } = {}) {
   const compileCandidate = ({ generation, pointer, phase }) => compileCurrentRuntimeSnapshot({
     facade,
@@ -56,8 +42,6 @@ function createControlPlaneRuntime({
     pointer,
     verifyPackage,
     now: now(),
-    remoteMcpRuntime,
-    compilePrivileged: privilegedRuntime?.compile,
     phase,
   });
 
@@ -92,20 +76,6 @@ function createControlPlaneRuntime({
       ...options,
       compileCandidate,
       runtimeCoordinator,
-      ...(options.candidatePluginsFactory || !remoteMcpRuntime
-        ? {}
-        : {
-          candidatePluginsFactory: (snapshot) => remoteMcpRuntime.prepareCandidatePlugins({
-            snapshot,
-            operation: options.operation,
-            publisherId: options.publisherId,
-            pluginId: options.pluginId,
-            generationId: options.generationId,
-            commitEpoch: (snapshot.pointer?.commit_epoch || 0) + 1,
-            dependencyMap: options.dependencyMap,
-            stage: options.stage,
-          }),
-        }),
     });
   }
 

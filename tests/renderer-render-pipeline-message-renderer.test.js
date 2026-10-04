@@ -527,7 +527,7 @@ test('the active-turn tail fingerprint sees a send_failure annotation', () => {
 });
 
 // Audit M1: entering inline edit / selection mode sets AMBIENT state.ui fields
-// (editingMessageId / selectionMode / selected-id set) that are consumed by
+// (editingMessageId / selectionModePaneId / selected-id set) that are consumed by
 // article rendering but were absent from the content-only render signature. On a
 // settled timeline the whole-transcript no-op guard therefore held and the full
 // render — the only path that swaps in the edit textarea / selection handles —
@@ -549,7 +549,7 @@ function createFullRenderCountingHarness(initialMessages) {
       animateNextChatActivation: false,
       chatMode: 'thread',
       editingMessageId: '',
-      selectionMode: false,
+      selectionModePaneId: null,
       selectedMessageIdsBySession: new Map(),
     },
   };
@@ -643,7 +643,7 @@ test('M1: selection mode + membership changes bust the no-op guard', () => {
   assert.equal(counts.fullRender, 1);
 
   // Enter selection mode.
-  state.ui.selectionMode = true;
+  state.ui.selectionModePaneId = 0; // pane 0 (the default pane) owns the mode
   renderer.renderMessages();
   assert.equal(counts.fullRender, 2, 'entering selection mode must full-render to mount handles');
 
@@ -722,6 +722,93 @@ test('a streaming-article rebuild replays the reasoning hand-off before re-stamp
 
   assert.equal(timeline.querySelector('article p')?.textContent, 'new', 'the streaming article was rebuilt in place');
   assert.deepEqual(calls, ['commit', 'replay', 'stamp']);
+});
+
+
+// HB-006: under turn_activity_envelope one article hosts the whole turn's row
+// list. When the dispatcher answers the rebuild with a compat stub (the anchor
+// moved) the old legacy branch wrote ONLY the streaming segment's reasoning
+// into the host, collapsing the timeline until a later full render.
+function createStreamingArticleRewriteHarness({ articleHtml, articleMarkup, followLatest }) {
+  const dom = new JSDOM(`<main><section id="scroll"><div id="timeline">${articleHtml}</div></section></main>`);
+  const timeline = dom.window.document.getElementById('timeline');
+  const calls = [];
+  const streamingMessage = { id: 'assistant_seg2', role: 'assistant', status: 'streaming', content: 'x' };
+  let visibleMessages = [{ id: 'assistant_seg0', role: 'assistant', status: 'complete', content: 'a' }, streamingMessage];
+  const renderer = createRenderPipelineMessageRenderer({
+    state: {
+      currentSessionId: 'session-hb006',
+      auth: { authenticated: true },
+      backend: { phase: 'ready' },
+      ui: { animateNextChatActivation: false, chatMode: 'thread', followLatest },
+      features: { featureFlags: {} },
+    },
+    dom: { chatTimeline: timeline, chatThreadScroll: dom.window.document.getElementById('scroll') },
+    runtime: { uiRuntime: {} },
+    callbacks: {
+      getCurrentVisibleMessages() { return visibleMessages; },
+      buildCanonicalTranscriptMessages(messages) { return messages; },
+      computeDerivedMessageState() {
+        return {
+          latestAssistantMessageId: 'assistant_seg2',
+          latestReplyAssistantMessageId: '',
+          thinkingMessageIds: [],
+          streamingMessage,
+          idToIndex: new Map(visibleMessages.map((message, index) => [message.id, index])),
+        };
+      },
+      computeMessageFingerprintList(messages) { return messages.map((message) => `${message.id}:${message.content}`); },
+      renderSignatureFromFingerprints(list) { return list.join('|'); },
+      resolveVisibleTurnArticleTarget() { return timeline.querySelector('.chat-entry'); },
+      buildMessageArticleMarkup() { return articleMarkup; },
+      buildMessageInnerMarkup() {
+        return { innerHtml: '<div class="reasoning-only">Reasoning</div>', pending: true, status: 'streaming', finalizedAt: '' };
+      },
+      buildMessageArticleInnerHtml(_message, innerHtml) { return innerHtml; },
+      noteScrollProgrammaticWrite(reason) { calls.push(`note:${reason}`); },
+      commitStreamRevealFullRender() {},
+      performFullMessageRender() { calls.push('full'); },
+    },
+  });
+  renderer.renderMessages({ forceFullRender: true });
+  calls.length = 0;
+  // A structure change the surgical patch refuses routes the next render
+  // through the streaming-article rebuild (canPatch defaults to false).
+  visibleMessages = [{ id: 'user_1', role: 'user', status: 'complete', content: 'q' }, ...visibleMessages];
+  renderer.renderMessages({});
+  return { calls, timeline };
+}
+
+const ROW_MODEL_ARTICLE = `<article class="chat-entry assistant" data-message-id="assistant_seg0">
+  <div data-turn-row-list="true">
+    <div class="chat-row" data-row-id="r1" data-row-kind="reasoning"></div>
+    <div class="chat-row" data-row-id="r2" data-row-kind="tool_call"></div>
+    <div class="chat-row" data-row-id="r3" data-row-kind="reasoning"></div>
+  </div>
+</article>`;
+
+test('a row-model turn article is never rewritten by the legacy innerHTML branch', () => {
+  for (const articleMarkup of [
+    '<div class="chat-row chat-row-thread-compat"><span data-message-id="assistant_seg0" data-thread-compat-anchor="true"></span></div>',
+    '<article class="chat-entry assistant" data-message-id="assistant_seg0"><div class="reasoning-only">Reasoning</div></article>',
+  ]) {
+    const { calls, timeline } = createStreamingArticleRewriteHarness({
+      articleHtml: ROW_MODEL_ARTICLE, articleMarkup, followLatest: true,
+    });
+    assert.equal(timeline.querySelectorAll('[data-turn-row-list] .chat-row').length, 3, 'every row of the turn survives');
+    assert.equal(timeline.querySelector('.reasoning-only'), null, 'the segment markup never replaced the row list');
+    assert.deepEqual(calls, ['note:structural_rewrite', 'full'], 'the refusal renders the timeline instead');
+  }
+});
+
+test('a rebuild whose article message fell out of the transcript renders the timeline', () => {
+  const { calls, timeline } = createStreamingArticleRewriteHarness({
+    articleHtml: '<article class="chat-entry assistant" data-message-id="assistant_gone"><p>kept</p></article>',
+    articleMarkup: '',
+    followLatest: false,
+  });
+  assert.equal(timeline.querySelector('article p')?.textContent, 'kept');
+  assert.deepEqual(calls, ['full'], 'a detached reader gets no follow re-pin marker');
 });
 
 

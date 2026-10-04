@@ -76,6 +76,22 @@ test('buildTaskRows filters non-agent rows and sorts the current-session task fi
   assert.equal(rows[0].isCurrentSessionTask, true);
 });
 
+test('buildTaskRows hides loops inside the delete-undo window', () => {
+  const board = {
+    active: [task({ followUpId: 'task-kept', title: 'Kept' }), task({ followUpId: 'task-pending', title: 'Pending' })],
+    deferred: [],
+    recentResolved: [task({ followUpId: 'task-done', title: 'Done', status: 'resolved' })],
+    archived: [],
+  };
+  const rows = buildTaskRows({
+    companion: { openLoopsBoard: board },
+    ui: { pendingLoopDeleteIds: ['task-pending', 'task-done'] },
+  });
+  assert.deepEqual(rows.map((row) => row.followUpId), ['task-kept']);
+  const unfiltered = buildTaskRows({ companion: { openLoopsBoard: board }, ui: {} });
+  assert.equal(unfiltered.length, 3);
+});
+
 function todoResult(todos, overrides = {}) {
   return {
     kind: 'tool_result',
@@ -190,7 +206,9 @@ test('task rail renders checklist groups per filter and keeps checklist rows rea
     { content: 'Finished item', status: 'completed' },
   ], updatedAt: '2026-09-21T09:00:00.000Z' };
   const openHtml = renderTaskRailSurface(rows, { filter: 'open' }, { checklist });
-  assert.match(openHtml, /<b class="task-rail-title-text">Tasks<\/b><span class="task-rail-summary">1 of 3 done &middot; 1 follow-up open<\/span>/);
+  // The panel header carries the title (area 3); the rail keeps only the summary.
+  assert.match(openHtml, /<header class="task-rail-header"><span class="task-rail-summary">1 of 3 done &middot; 1 follow-up open<\/span>/);
+  assert.doesNotMatch(openHtml, /task-rail-title-text/);
   assert.match(openHtml, /<b>This conversation<\/b><span>Jenny&#39;s checklist<\/span>/);
   assert.match(openHtml, /data-check-status="pending"[\s\S]*?Pending item/);
   assert.match(openHtml, /data-check-status="in_progress"[\s\S]*?Working item[\s\S]*?class="task-rail-check-meta">in progress/);

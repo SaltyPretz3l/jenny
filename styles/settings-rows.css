@@ -1,0 +1,586 @@
+/* The Settings row standard (Wave 2, docs/plans/settings-cohesion/WAVE2_SPEC.md
+ * section 3). One row for every setting: name and help at the start, the
+ * control at the end, every control on one edge (settings-page-grid.css lays the
+ * groups out). Loaded late so it settles the older row idioms (toggle list, tools
+ * rows, tuning and limits layouts). No boxes, no side bars, hairlines only. */
+
+.settings-view {
+  /* Sized for their text at the Default text size (1.2), so they follow it:
+     at Large a long dropdown name still fits. */
+  --settings-row-control-width: calc(164px * var(--font-scale, 1.2) / 1.2);
+  --settings-row-control-wide: calc(260px * var(--font-scale, 1.2) / 1.2);
+  --settings-row-hairline: color-mix(in srgb, var(--settings-shell-muted-border) 55%, transparent);
+  /* The least a row's text gets before its control wraps under it. */
+  --settings-row-text-basis: max(15rem, 46%);
+}
+
+/* ── Group: a heading over one hairline ─────────────────────────────────── */
+.settings-card .settings-group-heading {
+  padding-bottom: var(--space-5);
+  border-bottom: 1px solid var(--settings-shell-muted-border);
+  color: var(--text-primary);
+  font-size: var(--font-size-heading);
+  font-weight: 700;
+  letter-spacing: 0;
+  line-height: 1.3;
+  text-transform: none;
+}
+
+.settings-card .settings-group-copy {
+  margin-top: var(--space-5);
+  color: var(--text-muted);
+  font-size: var(--font-size-body);
+  line-height: 1.5;
+}
+
+/* ── The row ────────────────────────────────────────────────────────────── */
+/* One hairline above every row, wherever the row is mounted (straight in its
+   list, in a mount host, in a controller's own host), except the first row
+   under a group heading: the heading's rule is already there. */
+/* The row wraps rather than squeezing: the text keeps at least
+   --settings-row-text-basis, and a control that does not fit beside it drops
+   under the text, still on the row's end edge. */
+.settings-field--row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  column-gap: 28px;
+  row-gap: var(--space-4);
+  min-height: 52px;
+  margin-top: 0;
+  padding: 13px 0;
+  border: 0;
+  border-top: 1px solid var(--settings-row-hairline);
+  border-radius: 0;
+  background: none;
+  box-shadow: none;
+}
+
+.settings-field--row:hover {
+  border-color: transparent;
+  border-top-color: var(--settings-row-hairline);
+  background: none;
+  box-shadow: none;
+}
+
+:is(.settings-group-heading, .settings-group-copy, summary) + .settings-field--row,
+:is(.settings-group-heading, .settings-group-copy, summary) + :not(.settings-field) > .settings-field--row:first-child,
+:is(.settings-group-heading, .settings-group-copy, summary) + :not(.settings-field) > :not(.settings-field):first-child > .settings-field--row:first-child {
+  border-top-color: transparent;
+}
+
+.settings-field--row > .settings-field-text {
+  flex: 1 1 var(--settings-row-text-basis);
+  min-width: 0;
+  gap: var(--space-2);
+}
+
+.settings-field--row .settings-field-title-row {
+  align-items: center;
+  gap: var(--space-2) var(--space-4);
+}
+
+.settings-field--row .settings-field-title {
+  color: var(--text-primary);
+  font-size: var(--font-size-body);
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.settings-field--row label.settings-field-title {
+  cursor: pointer;
+}
+
+.settings-field--row .settings-field-help {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--font-size-footnote);
+  line-height: 1.45;
+  max-width: 56ch;
+}
+
+.settings-field--row > .settings-field-control {
+  position: relative;
+  justify-content: flex-end;
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 100%;
+  margin-inline-start: auto;
+  gap: var(--space-5);
+}
+
+/* The reason a save failed is one line of text under the help, never a box. */
+.settings-field--row > .settings-field-error {
+  flex: 1 0 100%;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: none;
+}
+
+/* A row that only matters while the row above is on. Its full-width control
+   (a key or URL field) starts under its indented title. */
+.settings-field--sub > .settings-field-text,
+.settings-field--sub.settings-field--block > .settings-field-control {
+  padding-inline-start: 22px;
+}
+
+.settings-field[data-setting-parent-off="true"] > .settings-field-text,
+.settings-field[data-setting-parent-off="true"] > .settings-field-control {
+  opacity: 0.55;
+}
+
+/* Nothing in a row whose parent is off takes focus, its "?" included. */
+.settings-field[data-setting-parent-off="true"] .settings-field-detail {
+  visibility: hidden;
+}
+
+/* A control too wide for the slot takes the full row under the text. */
+.settings-field--row.settings-field--block {
+  row-gap: var(--space-5);
+}
+
+.settings-field--row.settings-field--block > .settings-field-text,
+.settings-field--row.settings-field--block > .settings-field-control {
+  flex-basis: 100%;
+}
+
+.settings-field--row.settings-field--block > .settings-field-control {
+  justify-content: stretch;
+}
+
+.settings-field--row.settings-field--block > .settings-field-control > * {
+  flex: 1 1 auto;
+}
+
+/* A control that is a stack of lines (Limits & budgets) reads from the top. */
+.settings-field--row.settings-field--stack {
+  align-items: flex-start;
+}
+
+.settings-field-stack {
+  display: grid;
+  gap: var(--space-4);
+  justify-items: end;
+}
+
+.settings-field-stack-line {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-5);
+}
+
+.settings-field-side {
+  min-width: 38px;
+  color: var(--text-secondary);
+  font-size: var(--font-size-footnote);
+  text-align: end;
+}
+
+/* What this machine does to a value ("capped at 2 by this machine"). Small
+   text: the warning hue leans further into the text colour than the shared
+   warning token does, so it stays readable on the light palettes. */
+.settings-field-stack > .settings-field-note {
+  margin: 0;
+  color: color-mix(in srgb, var(--state-warning) 45%, var(--text-primary));
+  font-size: var(--font-size-caption);
+}
+
+.settings-field-stack > .settings-field-note[hidden] {
+  display: none;
+}
+
+/* ── Detail behind a "?" ────────────────────────────────────────────────── */
+.settings-field-detail {
+  position: relative;
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 1px solid var(--text-muted);
+  border-radius: 50%;
+  background: none;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: var(--font-size-caption);
+  font-weight: 700;
+  line-height: 1;
+  cursor: help;
+}
+
+/* The ring is small on purpose; the hit area is not. */
+.settings-field-detail::after {
+  content: "";
+  position: absolute;
+  inset: -5px;
+}
+
+.settings-field-detail:hover {
+  border-color: var(--text-primary);
+  color: var(--text-primary);
+}
+
+.settings-field-detail:focus-visible {
+  outline: var(--focus-ring-width) solid var(--focus-ring-color);
+  outline-offset: var(--focus-ring-offset);
+}
+
+/* ── Changed value: Modified, and a button that names the default ───────── */
+.settings-field--row .settings-field-meta-modified {
+  color: var(--text-link);
+  font-size: var(--font-size-caption);
+  font-weight: 600;
+}
+
+.settings-field--row .settings-field-meta-modified[hidden] {
+  display: none;
+}
+
+.settings-field-revert-slot {
+  display: inline-flex;
+  flex: none;
+}
+
+.settings-field-revert-slot:empty {
+  display: none;
+}
+
+/* The ↺ glyph alone; its tooltip and accessible name say the default. */
+.settings-field-revert-slot .settings-field-reset {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  min-width: 20px;
+  height: 20px;
+  min-height: 20px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: none;
+  color: var(--text-link);
+  font-size: var(--font-size-footnote);
+  font-weight: 700;
+  line-height: 1;
+}
+
+/* The glyph is small on purpose; the hit area is not. */
+.settings-field-revert-slot .settings-field-reset::after {
+  content: "";
+  position: absolute;
+  inset: -5px;
+}
+
+.settings-field-revert-slot .settings-field-reset:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--text-link) 16%, transparent);
+}
+
+.settings-field-revert-slot .settings-field-reset:focus-visible {
+  outline: var(--focus-ring-width) solid var(--focus-ring-color);
+  outline-offset: var(--focus-ring-offset);
+}
+
+/* "Modified" and its Revert stay together on the title line. */
+.settings-field--row .settings-field-title-tail {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-3);
+  white-space: nowrap;
+}
+
+/* A row's segmented options are never cut: a control too wide for the row's
+   end wraps under the text instead (the row rule above). */
+.settings-field--row .inv-segmented-option {
+  max-width: none;
+}
+
+.settings-field-revert-slot .settings-field-reset:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
+/* ── Controls: one width for dropdowns and numbers ──────────────────────── */
+.settings-field--row .select-shell,
+.settings-field--row .inv-select-field,
+.settings-field--row .inv-select-field-control {
+  width: var(--settings-row-control-width);
+  min-width: 0;
+  max-width: none;
+}
+
+.settings-field--row.settings-field--wide-control .select-shell,
+.settings-field--row.settings-field--wide-control .inv-select-field,
+.settings-field--row.settings-field--wide-control .inv-select-field-control {
+  width: var(--settings-row-control-wide);
+}
+
+.settings-field--row.settings-field--block .inv-select-field,
+.settings-field--row.settings-field--block .inv-select-field-control {
+  width: 100%;
+}
+
+/* The number: centred, its unit inside the box at the end, the same padding
+   on both sides so the value stays centred whatever the unit is. Stepper
+   arrows are hidden (arrow keys still step). */
+.settings-field-number {
+  position: relative;
+  display: inline-flex;
+  flex: none;
+  width: var(--settings-row-control-width);
+}
+
+.settings-field-number .inv-number-input {
+  width: 100%;
+}
+
+.settings-field-number .inv-number-input-control {
+  position: relative;
+  display: flex;
+  gap: 0;
+  width: 100%;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface-2);
+}
+
+.settings-field-number .inv-number-input-control:focus-within {
+  z-index: 3;
+  outline: 2px solid var(--focus-outline);
+  outline-offset: 1px;
+}
+
+.settings-field[data-state="error"] .settings-field-number .inv-number-input-control {
+  border-color: var(--state-danger);
+}
+
+.settings-field-number .inv-number-input input {
+  width: 100%;
+  min-height: 32px;
+  padding: 0 2.75rem;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  color: var(--text-primary);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+  appearance: textfield;
+}
+
+.settings-field-number .inv-number-input input::placeholder {
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+.settings-field-number .inv-number-input input:focus-visible {
+  outline: none;
+}
+
+.settings-field-number .inv-number-input input::-webkit-outer-spin-button,
+.settings-field-number .inv-number-input input::-webkit-inner-spin-button {
+  margin: 0;
+  appearance: none;
+}
+
+.settings-field-number .inv-number-input-suffix {
+  position: absolute;
+  top: 50%;
+  inset-inline-end: var(--space-5);
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+
+/* Quick picks: joined under the field at the same width, shown only while the
+   field (or a pick) has focus, over the row below like an open dropdown. */
+.settings-field-number .settings-field-picks {
+  position: absolute;
+  z-index: 2;
+  top: 100%;
+  inset-inline: 0;
+  display: none;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(0, 1fr);
+  overflow: hidden;
+  border: 1px solid var(--border-default);
+  border-top: 0;
+  border-radius: 0 0 var(--radius-sm) var(--radius-sm);
+  background: var(--bg-surface-2);
+}
+
+.settings-field-number:focus-within .settings-field-picks {
+  display: grid;
+}
+
+.settings-field-number:focus-within:has(.settings-field-picks) .inv-number-input-control {
+  border-end-start-radius: 0;
+  border-end-end-radius: 0;
+}
+
+/* ── Page furniture ─────────────────────────────────────────────────────── */
+/* One status line under the lede (Tools: the workspace). */
+.settings-page-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-5);
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: var(--font-size-body);
+}
+
+.settings-page-status-dot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--text-muted);
+}
+
+.settings-page-status[data-state="ready"] .settings-page-status-dot {
+  background: var(--state-success);
+}
+
+.settings-page-status[data-state="blocked"] .settings-page-status-dot {
+  background: var(--state-warning);
+}
+
+.settings-page-status-label {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.settings-page-status-value {
+  min-width: 0;
+  color: var(--text-primary);
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-footnote);
+  overflow-wrap: anywhere;
+}
+
+.settings-page-status-note:empty,
+.settings-page-status-note[hidden] {
+  display: none;
+}
+
+/* As a page's status line it keeps clear of the first group under it. */
+.settings-card > .settings-page-status {
+  margin-block-end: var(--space-12);
+}
+
+/* The same dot and word inside a row's control slot (an add-on's state). */
+.settings-field-control > .settings-page-status {
+  flex-wrap: nowrap;
+  font-size: var(--font-size-footnote);
+  white-space: nowrap;
+}
+
+/* What a row opens under itself: a disclosure, progress, a confirm step. */
+.settings-field-block {
+  display: grid;
+  gap: var(--space-5);
+  padding-block-end: 13px;
+}
+
+.settings-field-block:empty {
+  display: none;
+}
+
+/* One line a row reports under itself (a connection test result). */
+.settings-field + .settings-field-note {
+  margin: 0;
+  padding-block-end: var(--space-5);
+  padding-inline-start: 22px;
+  color: var(--text-secondary);
+  font-size: var(--font-size-caption);
+}
+
+.settings-field + .settings-field-note:empty {
+  display: none;
+}
+
+/* Text links that close a group ("Open Personality"). */
+.settings-row-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3) var(--space-12);
+  margin: var(--space-7) 0 0;
+}
+
+.settings-row-link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text-link);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.settings-row-link:hover {
+  text-decoration: underline;
+}
+
+.settings-row-link:focus-visible {
+  outline: var(--focus-ring-width) solid var(--focus-ring-color);
+  outline-offset: var(--focus-ring-offset);
+}
+
+/* The fold for rarely needed rows. */
+.settings-fold > summary {
+  color: var(--text-primary);
+  font-size: var(--font-size-heading);
+  font-weight: 700;
+  line-height: 1.3;
+  cursor: pointer;
+}
+
+.settings-fold > summary:focus-visible {
+  outline: var(--focus-ring-width) solid var(--focus-ring-color);
+  outline-offset: var(--focus-ring-offset);
+}
+
+.settings-fold-count {
+  margin-inline-start: var(--space-4);
+  color: var(--text-link);
+  font-size: var(--font-size-caption);
+  font-weight: 600;
+}
+
+/* ── Actions: primary, secondary pill, accent link ──────────────────────── */
+/* A bare text button beside a pill read as a label ("Clear" next to "Save"),
+   so in Settings a text ghost button takes the secondary pill. Icon-only
+   ghosts (refresh, the card menu) and the number quick picks stay bare;
+   navigation is a .settings-row-link. */
+.settings-view .btn--ghost:not(.settings-tuning-preset, .model-library-section-refresh, .model-card-action--menu) {
+  --btn-bg: color-mix(in srgb, var(--widget-button-secondary-bg) 92%, transparent);
+  --btn-border: color-mix(in srgb, var(--widget-button-secondary-border) 92%, transparent);
+  --btn-color: var(--widget-button-secondary-color);
+}
+
+/* ── Type roles for text that fell through to the 16px default ──────────── */
+/* Settings text uses the type-scale roles only: page heading, group heading,
+   body, footnote, caption. */
+.settings-view .settings-field-row-text > strong,
+.settings-view .settings-row-link {
+  font-size: var(--font-size-body);
+}
+
+/* A group that folds (Editor › Advanced) titles itself like a group heading. */
+.settings-view details.settings-group > summary {
+  font-size: var(--font-size-heading);
+  font-weight: 700;
+}
+
+.settings-view .plugins-drop-zone {
+  font-size: var(--font-size-footnote);
+}
+
+/* A form mounted under a group's copy keeps the copy's distance from it. */
+.settings-group-copy + #localProfileSettingsMount {
+  margin-block-start: var(--space-7);
+}

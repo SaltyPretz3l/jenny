@@ -23,7 +23,6 @@ from sidecar.ai.context.builder_shared import (
 )
 from sidecar.ai.context.builder_shared import (
     MAX_WORKSPACE_CONTEXT_PROMPT_BYTES,
-    REASONING_STATUS_BLOCK_LEGACY,
     REASONING_STATUS_BLOCK_V2,
 )
 from sidecar.ai.context.builder_shared import (
@@ -65,13 +64,22 @@ from sidecar.ai.context.builder_shared import (
 from sidecar.ai.context.builder_shared import (
     looks_like_source_architecture_request as looks_like_source_architecture_request,
 )
-from sidecar.ai.context.builder_skills import _BuilderSkillsMixin
+from sidecar.ai.context.builder_skills import SkillAuthority, _BuilderSkillsMixin
+from sidecar.ai.context.builder_skills import (
+    request_skill_config_fields as request_skill_config_fields,
+)
 from sidecar.ai.context.builder_workspace_files import _BuilderWorkspaceFilesMixin
 from sidecar.ai.context.context_io import (
     bound_workspace_context_sources,
 )
+from sidecar.ai.context.turn_context import (
+    TURN_SECTION_NAMES,
+    fold_runtime_messages,
+    is_trailing_runtime_message,
+    is_turn_context_row,
+)
 from sidecar.ai.host_policy import host_policy_is_enforced
-from sidecar.runtime.diagnostics import log_event  # noqa: F401
+from sidecar.runtime.diagnostics import log_event
 
 if TYPE_CHECKING:
     from sidecar.ai.context.prompt_cache import StructuredSystemPrompt
@@ -113,10 +121,7 @@ class ContextBuilder(_BuilderSkillsMixin, _BuilderWorkspaceFilesMixin, _BuilderR
         self._runtime_overlay_provider = runtime_overlay_provider
         self._cached_bootstrap_blocks: list[str] | None = None
         self._cached_bootstrap_mtime: str | None = None
-        self._cached_skill_entries = None
-        self._cached_skill_dir_mtime: str | None = None
-        self._cached_skill_file_mtimes: dict[str, int] | None = None
-        self._cached_skill_at_monotonic: float | None = None
+        self._skill_cache: dict[Any, Any] = {}  # keyed by SkillAuthority (None = startup)
         self._cached_workspace_instruction_block: str | None = None
         self._cached_workspace_instruction_mtime: str | None = None
         self._cache_lock = threading.RLock()
@@ -170,18 +175,20 @@ class ContextBuilder(_BuilderSkillsMixin, _BuilderWorkspaceFilesMixin, _BuilderR
         learned_lessons: list[LearnedLesson] | None = None,
         include_reasoning_status_markers: bool = False,
         *,
-        reasoning_status_v2: bool = False,
         cache_aware: bool = False,
         session_start_date: str | None = None,
         current_date: str | None = None,
         tool_statuses: list[RuntimeToolStatus] | tuple[RuntimeToolStatus, ...] | None = None,
         latest_user_content: str = "",
         engine_type: str = "",
+        native_tool_schemas: bool = False,
         include_skills: bool = True,
         include_bootstrap: bool = True,
         workspace_manifest_enabled: bool = False,
         task_capsule_enabled: bool = False,
         request_workspace_root: Any = _UNSET_ROOT,
+        defer_turn_context: bool = False,
+        skill_authority: SkillAuthority | None = None,
     ) -> str | "StructuredSystemPrompt":
         """Build the system prompt from workspace content.
 
@@ -192,14 +199,27 @@ class ContextBuilder(_BuilderSkillsMixin, _BuilderWorkspaceFilesMixin, _BuilderR
 
         *request_workspace_root* is the request authority's root
         (``ExecutionContext.root_path``); ``None`` means explicitly unbound.
-        See :meth:`_effective_workspace_root`.
+        See :meth:`_effective_workspace_root`. *skill_authority* is the request's
+        skill sources (``None`` = the startup scopes).
+
+        *native_tool_schemas* is ``True`` when the engine receives the tool
+        schemas natively; the ``## Executable Tools`` digest then lists names
+        only instead of repeating each description.
+
+        *defer_turn_context* leaves out the sections rendered from the latest
+        user message or live workspace state (``turn_context.TURN_SECTION_NAMES``);
+        the caller carries them in the trailing turn-context row instead.
         """
         workspace_root = self._effective_workspace_root(request_workspace_root)
         bootstrap_blocks = (
             self._load_bootstrap_blocks(workspace_root) if include_bootstrap else []
         )
         current_date_block = self._render_pinned_current_date_block(current_date)
-        skills_block = self._render_skills(tool_statuses=tool_statuses) if include_skills else ""
+        skills_block = (
+            self._render_skills(tool_statuses=tool_statuses, skill_authority=skill_authority)
+            if include_skills
+            else ""
+        )
         workspace_instruction_block = self._load_workspace_instruction_block(workspace_root)
         bounded_context = bound_workspace_context_sources(
             bootstrap_blocks,
@@ -220,13 +240,23 @@ class ContextBuilder(_BuilderSkillsMixin, _BuilderWorkspaceFilesMixin, _BuilderR
         prompt_blocks.extend(bootstrap_blocks)
         if current_date_block:
             prompt_blocks.append(current_date_block)
-        executable_tools_block = self._render_executable_tools(tool_statuses)
+        executable_tools_block = self._render_executable_tools(
+            tool_statuses, native_tool_schemas=native_tool_schemas
+        )
         if executable_tools_block:
             prompt_blocks.append(executable_tools_block)
-        requested_tool_block = self._render_requested_tool_availability(
-            tool_statuses=tool_statuses,
-            latest_user_content=latest_user_content,
+        turn_sections = (
+            {}
+            if defer_turn_context
+            else self._turn_section_blocks(
+                tool_statuses=tool_statuses,
+                latest_user_content=latest_user_content,
+                workspace_root=workspace_root,
+                workspace_manifest_enabled=workspace_manifest_enabled,
+                task_capsule_enabled=task_capsule_enabled,
+            )
         )
+        requested_tool_block = turn_sections.get("requested_tool_availability", "")
         if requested_tool_block:
             prompt_blocks.append(requested_tool_block)
         tool_format_hint = self._render_tool_calling_format_hint(engine_type, tool_statuses)
@@ -242,37 +272,20 @@ class ContextBuilder(_BuilderSkillsMixin, _BuilderWorkspaceFilesMixin, _BuilderR
             prompt_blocks.append(skills_block)
         if workspace_instruction_block:
             prompt_blocks.append(workspace_instruction_block)
-        workspace_manifest_block = self._render_workspace_manifest_block(
-            enabled=workspace_manifest_enabled,
-            workspace_root=workspace_root,
-        )
+        workspace_manifest_block = turn_sections.get("workspace_manifest", "")
         if workspace_manifest_block:
             prompt_blocks.append(workspace_manifest_block)
-        task_capsule_block = self._render_task_capsule_block(
-            enabled=task_capsule_enabled,
-            workspace_root=workspace_root,
-            latest_user_content=latest_user_content,
-            tool_statuses=tool_statuses,
-        )
+        task_capsule_block = turn_sections.get("task_capsule", "")
         if task_capsule_block:
             prompt_blocks.append(task_capsule_block)
-        current_info_block = self._render_current_info_guidance(
-            tool_statuses=tool_statuses,
-            latest_user_content=latest_user_content,
-        )
+        current_info_block = turn_sections.get("current_info_guidance", "")
         if current_info_block:
             prompt_blocks.append(current_info_block)
-        workspace_source_block = self._render_workspace_source_guidance(
-            tool_statuses=tool_statuses,
-            latest_user_content=latest_user_content,
-            workspace_root=workspace_root,
-        )
+        workspace_source_block = turn_sections.get("workspace_source_guidance", "")
         if workspace_source_block:
             prompt_blocks.append(workspace_source_block)
         if include_reasoning_status_markers:
-            prompt_blocks.append(
-                self._reasoning_status_block(reasoning_status_v2=reasoning_status_v2)
-            )
+            prompt_blocks.append(REASONING_STATUS_BLOCK_V2)
         learned_lessons_block = self._render_learned_lessons(learned_lessons or [])
         if learned_lessons_block:
             prompt_blocks.append(learned_lessons_block)
@@ -387,9 +400,7 @@ class ContextBuilder(_BuilderSkillsMixin, _BuilderWorkspaceFilesMixin, _BuilderR
             sections.append(
                 CacheSection(
                     name="reasoning_status",
-                    content=self._reasoning_status_block(
-                        reasoning_status_v2=reasoning_status_v2
-                    ),
+                    content=REASONING_STATUS_BLOCK_V2,
                     cacheable=True,
                 )
             )
@@ -407,11 +418,60 @@ class ContextBuilder(_BuilderSkillsMixin, _BuilderWorkspaceFilesMixin, _BuilderR
             current_date=current_date or "",
         )
 
-    @staticmethod
-    def _reasoning_status_block(*, reasoning_status_v2: bool = False) -> str:
-        if reasoning_status_v2:
-            return REASONING_STATUS_BLOCK_V2
-        return REASONING_STATUS_BLOCK_LEGACY
+    def _turn_section_blocks(
+        self,
+        *,
+        tool_statuses: list[RuntimeToolStatus] | tuple[RuntimeToolStatus, ...] | None,
+        latest_user_content: str,
+        workspace_root: Path | None,
+        workspace_manifest_enabled: bool,
+        task_capsule_enabled: bool,
+    ) -> dict[str, str]:
+        """Render the per-turn sections, keyed by ``TURN_SECTION_NAMES``."""
+        return {
+            "requested_tool_availability": self._render_requested_tool_availability(
+                tool_statuses=tool_statuses,
+                latest_user_content=latest_user_content,
+            ),
+            "workspace_manifest": self._render_workspace_manifest_block(
+                enabled=workspace_manifest_enabled,
+                workspace_root=workspace_root,
+            ),
+            "task_capsule": self._render_task_capsule_block(
+                enabled=task_capsule_enabled,
+                workspace_root=workspace_root,
+                latest_user_content=latest_user_content,
+                tool_statuses=tool_statuses,
+            ),
+            "current_info_guidance": self._render_current_info_guidance(
+                tool_statuses=tool_statuses,
+                latest_user_content=latest_user_content,
+            ),
+            "workspace_source_guidance": self._render_workspace_source_guidance(
+                tool_statuses=tool_statuses,
+                latest_user_content=latest_user_content,
+                workspace_root=workspace_root,
+            ),
+        }
+
+    def build_turn_context_sections(
+        self,
+        *,
+        tool_statuses: list[RuntimeToolStatus] | tuple[RuntimeToolStatus, ...] | None = None,
+        latest_user_content: str = "",
+        workspace_manifest_enabled: bool = False,
+        task_capsule_enabled: bool = False,
+        request_workspace_root: Any = _UNSET_ROOT,
+    ) -> tuple[str, ...]:
+        """The sections ``build_system_prompt(defer_turn_context=True)`` leaves out."""
+        blocks = self._turn_section_blocks(
+            tool_statuses=tool_statuses,
+            latest_user_content=latest_user_content,
+            workspace_root=self._effective_workspace_root(request_workspace_root),
+            workspace_manifest_enabled=workspace_manifest_enabled,
+            task_capsule_enabled=task_capsule_enabled,
+        )
+        return tuple(blocks[name] for name in TURN_SECTION_NAMES if blocks.get(name))
 
     @staticmethod
     def is_skills_system_message(content: Any) -> bool:
@@ -439,12 +499,33 @@ class ContextBuilder(_BuilderSkillsMixin, _BuilderWorkspaceFilesMixin, _BuilderR
                 and self.is_runtime_system_message(message.get("content"))
             )
         ]
+        # A trailing turn-context row takes the per-turn overlays (memory
+        # recall, repo delta, pressure advisory); the rest stay leading.
+        turn_row_index = next(
+            (i for i, message in enumerate(filtered_messages) if is_turn_context_row(message)),
+            None,
+        )
+        if turn_row_index is not None:
+            filtered_messages[turn_row_index] = fold_runtime_messages(
+                filtered_messages[turn_row_index],
+                [
+                    str(message["content"])
+                    for message in overlay_messages
+                    if is_trailing_runtime_message(message["content"])
+                ],
+            )
+            overlay_messages = [
+                message
+                for message in overlay_messages
+                if not is_trailing_runtime_message(message["content"])
+            ]
         if not overlay_messages:
             return filtered_messages
 
         insertion_index = len(filtered_messages)
         for index, message in enumerate(filtered_messages):
-            if str(message.get("role") or "").strip().lower() != "system":
+            role = str(message.get("role") or "").strip().lower()
+            if role != "system" or index == turn_row_index:
                 insertion_index = index
                 break
         return [

@@ -418,10 +418,12 @@ const BASE_CASES = [
       fs.writeFileSync(path.join(rootDir, 'evil'), 'inside', 'utf8');
       return requested;
     },
+    // The versioned editor authority refuses the alias outright (IDE-014):
+    // Win32 would strip the trailing dot/space and address a different entry.
     expected: {
       'tool-path-policy': 'allow',
       'root-operation': 'allow',
-      'versioned-file': 'allow',
+      'versioned-file': 'reject',
     },
     universal: 'never_escape',
   })),

@@ -1,5 +1,6 @@
 const { budgetAttachmentEntries, isTextAttachment } = require('../attachment-service');
 const { createReasoningEntry } = require('./backend-service-utils');
+const { isCompactionSummaryMessage } = require('./session-compaction-snapshot');
 const {
   normalizeContextPreferences,
 } = require('./context-preferences');
@@ -409,6 +410,7 @@ function isPlainUserAnchorMessage(message) {
 
 function selectRecentTurnGroups(messages, maxGroups = RECENT_TURN_GROUP_LIMIT) {
   const groups = [];
+  const leadingSummaries = [];
   let currentGroup = [];
 
   for (const message of Array.isArray(messages) ? messages : []) {
@@ -420,10 +422,15 @@ function selectRecentTurnGroups(messages, maxGroups = RECENT_TURN_GROUP_LIMIT) {
       continue;
     }
     // Messages before the first plain user anchor are intentionally
-    // dropped in 'recent' mode. System/personality context is re-injected
-    // fresh on each send, so only user-anchored turn groups are retained.
+    // dropped in 'recent' mode, except compaction-summary rows: a persisted
+    // snapshot replaces the older history with that summary, so dropping it
+    // would leave the model with neither. System/personality context is
+    // re-injected fresh on each send, so nothing else before the first
+    // anchor is retained.
     if (currentGroup.length) {
       currentGroup.push(message);
+    } else if (isCompactionSummaryMessage(message)) {
+      leadingSummaries.push(message);
     }
   }
 
@@ -431,7 +438,7 @@ function selectRecentTurnGroups(messages, maxGroups = RECENT_TURN_GROUP_LIMIT) {
     groups.push(currentGroup);
   }
 
-  return groups.slice(-Math.max(0, Number(maxGroups) || 0)).flat();
+  return [...leadingSummaries, ...groups.slice(-Math.max(0, Number(maxGroups) || 0)).flat()];
 }
 
 function selectContextHistoryMessages(messages, contextPreferences) {

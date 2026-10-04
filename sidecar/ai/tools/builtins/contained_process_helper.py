@@ -194,7 +194,7 @@ def run_workspace_test_helper(
             env=env,
             abort_event=abort_event,
         )
-    except BaseException:
+    except BaseException:  # noqa: BLE001  # boundary
         return 3
     if result.aborted:
         status = "aborted"

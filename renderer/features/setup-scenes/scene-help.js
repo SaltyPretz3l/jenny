@@ -80,7 +80,7 @@
       rootEl.innerHTML = sceneUtils && sceneUtils.renderStepModalHtml ? sceneUtils.renderStepModalHtml({
         id: 'setup-help',
         title: jt('setup.help.title', 'Help'),
-        eyebrow: jt('setup.help.eyebrow', 'Companion Home'),
+        eyebrow: jt('setup.help.homeEyebrow', 'Home'),
         summary: jt('setup.help.summary', 'Guidance starts with the next unresolved setup step or current failure.'),
         bodyHtml: buildBodyHtml(setupState),
         actions: [

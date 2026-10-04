@@ -12,6 +12,14 @@
   pointer-events: none;
 }
 
+/* Split view (gate §C/D14, 2026-09-26): with two panes the stack starts below
+ * pane 1's kicker row, so a sticky toast never covers its close glyph. The
+ * toast controller measures the kicker into --toast-split-top on each render;
+ * the constant is the fallback. Other views (IDE, Settings) keep the default. */
+:root[data-active-view="chat"]:has(#chatView[data-pane-count="2"]) .toast-viewport {
+  top: var(--toast-split-top, calc(var(--titlebar-height) + var(--space-8) + 32px));
+}
+
 .toast-viewport:empty {
   display: none;
 }
@@ -64,15 +72,14 @@
 .inv-toast__eyebrow {
   margin: 0 0 var(--space-1);
   color: color-mix(in srgb, var(--text-secondary) 75%, var(--text-primary));
-  font-size: var(--font-size-sm);
-  letter-spacing: var(--tracking-kicker-md);
-  text-transform: uppercase;
+  font-size: var(--font-size-caption);
+  font-weight: 500;
 }
 
 .inv-toast__message {
   margin: 0;
   color: var(--text-primary);
-  font-size: var(--font-size-md);
+  font-size: var(--font-size-body);
   line-height: 1.45;
   overflow-wrap: anywhere;
 }
@@ -92,7 +99,7 @@
   border-radius: var(--radius-xs);
   background: none;
   color: var(--text-muted);
-  font-size: var(--font-size-lg);
+  font-size: var(--font-size-body);
   line-height: 1;
   cursor: pointer;
   transition: color var(--transition-fast);
@@ -122,7 +129,7 @@
   background: none;
   color: color-mix(in srgb, var(--text-secondary) 75%, var(--text-primary));
   font: inherit;
-  font-size: var(--font-size-base);
+  font-size: var(--font-size-footnote);
   cursor: pointer;
   transition:
     color var(--transition-fast),
@@ -154,7 +161,7 @@
   padding-top: var(--space-4);
   border-top: 1px solid var(--border-subtle);
   color: var(--text-muted);
-  font-size: var(--font-size-base);
+  font-size: var(--font-size-footnote);
   text-align: end;
 }
 

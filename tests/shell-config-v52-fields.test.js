@@ -71,8 +71,8 @@ test('v52 defaults and migration preserve valid forward values', () => {
   assert.equal(defaults.unattendedGuardMinutes, 0);
 
   const migrated = normalizeState({ version: 51 });
-  assert.equal(migrated.version, 55);
-  assert.equal(CONFIG_VERSION, 55);
+  assert.equal(migrated.version, 59);
+  assert.equal(CONFIG_VERSION, 59);
   assert.equal(migrated.uiLanguage, 'en');
   assert.equal(migrated.safetyMode, 'normal');
   assert.equal(migrated.unattendedGuardMinutes, 0);
@@ -110,7 +110,8 @@ test('ShellConfigService persists and exposes v52 chat UI settings idempotently'
   t.after(() => fs.rmSync(userDataPath, { recursive: true, force: true }));
   const service = new ShellConfigService({ userDataPath });
   const reasons = [];
-  service.on('changed', (_state, meta) => reasons.push(meta.reason));
+  const reasonLists = [];
+  service.on('changed', (_state, meta) => { reasons.push(meta.reason); reasonLists.push(meta.reasons); });
 
   service.updateChatUiSettings({
     uiLanguage: 'PT-br',
@@ -120,6 +121,7 @@ test('ShellConfigService persists and exposes v52 chat UI settings idempotently'
   assert.equal(service.getUiLanguage(), 'pt-BR');
   assert.deepEqual(service.getChatUiState(), {
     zoomPercent: 100,
+    transcriptViewDefault: 'thinking',
     use24HourTime: false,
     defaultRunMode: 'ask',
     uiLanguage: 'pt-BR',
@@ -127,18 +129,20 @@ test('ShellConfigService persists and exposes v52 chat UI settings idempotently'
     autoApproveStreakCap: 50,
     unattendedGuardMinutes: 30,
   });
-  assert.deepEqual(reasons, [
+  // One commit per patch (Settings cohesion F-5): the specific reasons ride in meta.reasons.
+  assert.deepEqual(reasons, ['chat_ui_settings_updated']);
+  assert.deepEqual(reasonLists, [[
     'ui_language_updated',
     'safety_mode_updated',
     'unattended_guard_minutes_updated',
-  ]);
+  ]]);
 
   service.updateChatUiSettings({
     uiLanguage: 'pt-BR',
     safetyMode: 'strict',
     unattendedGuardMinutes: 30,
   });
-  assert.equal(reasons.length, 3);
+  assert.equal(reasons.length, 1, 'an unchanged patch commits nothing');
 });
 
 test('setup acknowledgement fields normalize and serialize camel and snake input', () => {
@@ -179,4 +183,22 @@ test('setup acknowledgement fields normalize and serialize camel and snake input
       capabilities: 'pending',
     },
   });
+});
+
+test('ShellConfigService round-trips the transcript view default and normalizes an invalid value to thinking', (t) => {
+  const userDataPath = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-shell-config-transcript-view-'));
+  t.after(() => fs.rmSync(userDataPath, { recursive: true, force: true }));
+  const service = new ShellConfigService({ userDataPath });
+  assert.equal(service.getChatUiState().transcriptViewDefault, 'thinking');
+
+  service.updateChatUiSettings({ transcriptViewDefault: 'answers' });
+  assert.equal(service.getChatUiState().transcriptViewDefault, 'answers');
+  assert.equal(new ShellConfigService({ userDataPath }).getChatUiState().transcriptViewDefault, 'answers', 'persisted across a reload');
+
+  service.updateChatUiSettings({ transcriptViewDefault: 'everything' });
+  assert.equal(service.getChatUiState().transcriptViewDefault, 'everything');
+
+  service.updateChatUiSettings({ transcriptViewDefault: 'verbose' });
+  assert.equal(service.getChatUiState().transcriptViewDefault, 'thinking');
+  assert.equal(new ShellConfigService({ userDataPath }).getChatUiState().transcriptViewDefault, 'thinking');
 });

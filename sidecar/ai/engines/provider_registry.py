@@ -26,6 +26,12 @@ _ENGINE_IMPORTS = {
     ),
     "ReplayEngine": ("sidecar.ai.engines.replay", "ReplayEngine"),
     "VLLMEngine": ("sidecar.ai.engines.vllm_engine", "VLLMEngine"),
+    # Not an engine: the core ChatGPT descriptor, lazily exported here so the
+    # factory stays inside its import fan-out cap.
+    "CORE_CHATGPT_PROVIDER_DESCRIPTOR": (
+        "sidecar.ai.engines.chatgpt_provider_descriptor",
+        "CORE_CHATGPT_PROVIDER_DESCRIPTOR",
+    ),
 }
 
 

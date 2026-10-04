@@ -13,6 +13,11 @@ function sameAttempt(left, right) {
 // producers is gone, so an entry whose producer already returned an unproven
 // outcome can never confirm late. Retire it and release its quarantined lane;
 // a producer that has not returned yet is left alone and reported as retained.
+// Work parked in needs_attention with a pause or cancel intent keeps that
+// status, as a new process keeps it (store _pauseUnfinishedAfterRestart): the
+// checkpoint it may have published is recovered by the caller, so only its lane
+// and entry are released here and it is reported with status needs_attention.
+// Quarantined lane leases that no remaining active entry owns are confirmed too.
 function reclaimAbandonedWork(scheduler, { reason = 'backend_restart' } = {}) {
   const normalizedReason = normalizeReason(reason, 'backend_restart');
   const reclaimed = [];
@@ -29,7 +34,9 @@ function reclaimAbandonedWork(scheduler, { reason = 'backend_restart' } = {}) {
         throw new Error('runtime_attempt_stale');
       }
       let status = current.status;
-      if (!TERMINAL.has(status)) {
+      const awaitsRecovery = status === 'needs_attention'
+        && ['pause', 'cancel'].includes(current.control_request?.kind);
+      if (!TERMINAL.has(status) && !awaitsRecovery) {
         status = current.control_request?.kind === 'cancel' ? 'cancelled' : 'failed';
         scheduler.store.transition(id, { expectedRevision: current.revision,
           expectedAttempt: entry.attempt, to: status, reason: normalizedReason });
@@ -44,8 +51,20 @@ function reclaimAbandonedWork(scheduler, { reason = 'backend_restart' } = {}) {
         reason: String(error?.message || 'runtime_reclaim_failed') }));
     }
   }
-  if (reclaimed.length) scheduler.notifyLaneAvailability();
-  return Object.freeze({ reclaimed: Object.freeze(reclaimed), retained: Object.freeze(retained) });
+  // A lease can also be quarantined with no active entry: a turn lease after an
+  // uncertain canonical claim or an unconfirmed auxiliary (compaction) cleanup,
+  // an inference lease of a retired attempt or an auxiliary request. The old
+  // process's settlement handlers are gone, so nothing could ever confirm it,
+  // and the local lane's single slot blocked every later send. A retained
+  // entry keeps its turn lease and the inference leases it owns (the initial
+  // reservation under its work id, gateway operations under its stream id).
+  const retainedEntries = [...scheduler.active.values()];
+  const held = { heldLeases: new Set(retainedEntries.map(entry => entry.lease)),
+    heldOwners: new Set(retainedEntries.flatMap(entry => [entry.work.work_id, entry.attempt.stream_id])) };
+  const leasesConfirmed = scheduler._mutateLanes(() => scheduler.lanes.confirmOrphaned(held));
+  if (reclaimed.length || leasesConfirmed) scheduler.notifyLaneAvailability();
+  return Object.freeze({ reclaimed: Object.freeze(reclaimed), retained: Object.freeze(retained),
+    leases_confirmed: leasesConfirmed });
 }
 
-module.exports = { reclaimAbandonedWork };
+module.exports = { reclaimAbandonedWork, sameAttempt };

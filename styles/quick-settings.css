@@ -65,8 +65,8 @@
   margin: 0;
   color: var(--text-primary);
   font-family: var(--font-family-display);
-  font-size: var(--font-size-md);
-  font-weight: 600;
+  font-size: var(--font-size-heading);
+  font-weight: 500;
 }
 
 .quick-settings-close {
@@ -79,7 +79,7 @@
   border-radius: var(--radius-sm);
   background: transparent;
   color: var(--text-muted);
-  font-size: var(--font-size-md);
+  font-size: var(--font-size-body);
   line-height: 1;
   cursor: pointer;
   transition:
@@ -128,10 +128,8 @@
 .quick-settings-slot-title {
   margin: 0;
   color: var(--text-muted);
-  font-size: var(--font-size-xs);
-  font-weight: 700;
-  letter-spacing: var(--tracking-kicker-lg, 0.08em);
-  text-transform: uppercase;
+  font-size: var(--font-size-caption);
+  font-weight: 500;
 }
 
 /* Rows inside a slot: label left, control right; stacks under pressure. */
@@ -145,7 +143,7 @@
 
 .quick-settings-row-label {
   color: var(--text-primary);
-  font-size: var(--font-size-base);
+  font-size: var(--font-size-body);
   line-height: 1.4;
   min-width: 0;
   overflow: hidden;
@@ -201,7 +199,7 @@
   background: transparent;
   color: var(--text-secondary);
   font: inherit;
-  font-size: var(--font-size-sm);
+  font-size: var(--font-size-body);
   cursor: pointer;
   transition:
     color var(--motion-duration-fast) var(--motion-ease-standard),

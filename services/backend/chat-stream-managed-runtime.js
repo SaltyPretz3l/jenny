@@ -91,7 +91,7 @@ function createManagedChatStreamRuntime({
   turnEventCollector = null,
   turnMetrics = null,
   canonicalBridge = false,
-  turnLease = null, runtimeAdmission = null, getSuspendedDecision = null,
+  turnLease = null, runtimeAdmission = null, getSuspendedDecision = null, isUserStop = null,
 }) {
   turnMetrics = turnMetrics && typeof turnMetrics.recordCanonicalEvent === 'function'
     ? turnMetrics
@@ -841,7 +841,7 @@ function createManagedChatStreamRuntime({
   // Extracted handlers share these closure bindings through accessors, so moved and
   // factory-kept functions mutate the SAME closure bindings by reference.
   const ctx = {
-    turnId, getSuspendedDecision,
+    turnId, getSuspendedDecision, isUserStop,
     service,
     adapter,
     streamId,
@@ -855,6 +855,7 @@ function createManagedChatStreamRuntime({
     exchangeTitle,
     unfinishedToolRepairs: [],
     unfinishedToolRepairFailure: '',
+    compactionDiagnostics: null, // FG-008 recorder, created at the first context.compacted
     terminalCoordinatorHandled: false,
     canonicalBridgeEnabled,
     emitChatStream,
@@ -995,6 +996,7 @@ function createManagedChatStreamRuntime({
     getDiagnosticToolEvents() {
       return diagnosticToolEvents.map((entry) => ({ ...entry }));
     },
+    getDiagnosticCompactions: () => ctx.compactionDiagnostics?.forDump() ?? null,
     isVisibleCompletionEmitted() {
       return visibleCompletionEmitted;
     },

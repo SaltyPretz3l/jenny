@@ -197,3 +197,26 @@ test('cancelling during readiness drains without inventing cleanup uncertainty',
   assert.equal(broker.receipt.pending, null);
   assert.equal(broker.blocked, false);
 });
+
+test('project input root is submitted and invalid roots never contact the worker', async (t) => {
+  let state = ready();
+  const calls = [];
+  const broker = new ExecutionBroker({ userDataPath: fixture(t), request: async (operation, fields) => {
+    calls.push({ operation, fields });
+    if (operation === 'submit') state = ready(state.incarnation === OLD ? NEXT : OLD,
+      { ...terminal(fields.job_id), incarnation: state.incarnation });
+    return state;
+  } });
+  await broker.prepare();
+  for (const inputRoot of [undefined, 'projects/a']) {
+    await broker.execute({ command: 'true', ...(inputRoot === undefined ? {} : { inputRoot }) });
+    assert.equal(calls.findLast(call => call.operation === 'submit').fields.input_root, inputRoot ?? '.');
+  }
+  const count = calls.length;
+  for (const inputRoot of ['..', 'a/../b', '/abs', 'a\\b', '', 'c:x', 'a//b', 'a/./b',
+    'x'.repeat(1025), Array(33).fill('a').join('/'), 'a\0b', null]) {
+    assert.throws(() => broker.execute({ command: 'true', inputRoot }),
+      error => error.reason === 'sandbox_input_root_invalid');
+  }
+  assert.equal(calls.length, count);
+});

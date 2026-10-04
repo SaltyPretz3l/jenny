@@ -1,6 +1,6 @@
 'use strict';
 
-const { normalizeString } = require('../renderer/shared/string-utils');
+const { normalizeString } = require('./shared/normalize');
 const {
   SCHEDULED_TASKS_SCHEMA_VERSION,
 } = require('./scheduler-schema-version');

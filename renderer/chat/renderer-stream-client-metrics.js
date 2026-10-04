@@ -57,6 +57,14 @@
           // render. Bounded by the fixed reason vocabulary the renderer
           // passes, so this can never grow with transcript size.
           fullRenderReasons: Object.create(null),
+          // Timeline-perf 2026-09-30: the whole-turn row-list morph counts
+          // as a 'patch' above, which hid a per-delta rebuild of 119 rows
+          // behind 37K "patches applied". These name the bail-out and the
+          // rows it cost. Same bound as the reasoning-body histogram.
+          rowListMorphs: 0,
+          rowListRowsReused: 0,
+          rowListRowsRebuilt: 0,
+          rowListMorphReasons: Object.create(null),
         };
         byStreamId.set(streamId, entry);
         if (byStreamId.size > MAX_TRACKED_STREAMS) {
@@ -103,8 +111,9 @@
       entry.mailboxDropped = Math.max(entry.mailboxDropped, Number(dropped) || 0);
     }
 
-    function noteReasoningBodyRender({ mode, fallbackReason, durationMs, entryChars } = {}) {
-      const entry = lastDeltaStreamId ? byStreamId.get(lastDeltaStreamId) : null;
+    function noteReasoningBodyRender({ streamId, mode, fallbackReason, durationMs, entryChars } = {}) {
+      const normalizedStreamId = normalizeId(streamId) || lastDeltaStreamId;
+      const entry = normalizedStreamId ? byStreamId.get(normalizedStreamId) : null;
       if (!entry) return;
       entry.reasoningBodyRenders += 1;
       if (mode === 'full') entry.reasoningBodyFullRenders += 1;
@@ -185,6 +194,27 @@
       }
     }
 
+    // One row-list morph (the keyed fallback that rebuilds a row-model turn's
+    // rows when the surgical patch declined). `reason` is the bail-out name
+    // from the stream-reveal ladder; rowsReused/rowsRebuilt are top-level row
+    // counts, not node counts. Intra-patch cost marker: never a paint event,
+    // never advances firstPaintAtMs. Ignored without a live tracked stream.
+    function noteRowListMorph(sessionId, { reason, rowsReused, rowsRebuilt } = {}) {
+      const streamId = streamIdBySessionId.get(normalizeId(sessionId));
+      const entry = streamId ? byStreamId.get(streamId) : null;
+      if (!entry) return;
+      entry.rowListMorphs += 1;
+      const reused = Number(rowsReused);
+      const rebuilt = Number(rowsRebuilt);
+      if (Number.isFinite(reused) && reused > 0) entry.rowListRowsReused += Math.floor(reused);
+      if (Number.isFinite(rebuilt) && rebuilt > 0) entry.rowListRowsRebuilt += Math.floor(rebuilt);
+      const name = normalizeId(reason).slice(0, MAX_REASONING_FALLBACK_REASON_LENGTH);
+      if (name && (entry.rowListMorphReasons[name]
+          || Object.keys(entry.rowListMorphReasons).length < MAX_REASONING_FALLBACK_REASONS)) {
+        entry.rowListMorphReasons[name] = (entry.rowListMorphReasons[name] || 0) + 1;
+      }
+    }
+
     function take(streamId) {
       const normalizedStreamId = normalizeId(streamId);
       const entry = byStreamId.get(normalizedStreamId);
@@ -226,6 +256,10 @@
         mailbox_peak_queued_bytes: entry.mailboxPeakQueuedBytes,
         mailbox_dropped: entry.mailboxDropped,
         full_render_reasons: { ...entry.fullRenderReasons },
+        row_list_morphs: entry.rowListMorphs,
+        row_list_rows_reused: entry.rowListRowsReused,
+        row_list_rows_rebuilt: entry.rowListRowsRebuilt,
+        row_list_morph_reasons: Object.assign(Object.create(null), entry.rowListMorphReasons),
       };
     }
 
@@ -268,6 +302,7 @@
       noteRenderForSession,
       noteMailbox,
       noteReasoningBodyRender,
+      noteRowListMorph,
       take,
       reportTerminal,
     });

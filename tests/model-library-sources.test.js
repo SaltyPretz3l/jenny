@@ -185,7 +185,32 @@ test('model library source normalizes installed entries and diagnostics fields',
     port: 8033,
     accelerationMode: 'mtp',
     reused: true,
+    identityRetained: false,
   });
+});
+
+test('model library source flags a read taken before the managed sidecar was ready as pending', async () => {
+  const notReady = { available: false, reason: 'Managed sidecar is not ready yet.', data: [] };
+  const early = sourceHarness({
+    models: { async list() { return notReady; }, async listOllamaTags() { return notReady; } },
+    offline: { async getDiagnostics() { return { hardwareProfile: null, managedSidecar: { ready: false } }; } },
+  });
+  const pending = await early.source.load({});
+  assert.equal(pending.backendPending, true);
+  assert.equal(pending.hardwarePending, true);
+  assert.equal(pending.hardware, null);
+
+  // Ready but the probe still came back empty: a real "not detected", no retry.
+  const noProfile = sourceHarness({
+    offline: { async getDiagnostics() { return { hardwareProfile: null, managedSidecar: { ready: true } }; } },
+  });
+  const detectedNothing = await noProfile.source.load({});
+  assert.equal(detectedNothing.backendPending, false);
+  assert.equal(detectedNothing.hardwarePending, false);
+
+  const ready = await sourceHarness().source.load({});
+  assert.equal(ready.backendPending, false);
+  assert.equal(ready.hardwarePending, false);
 });
 
 test('model library source treats a missing llamaServer namespace as normal unavailability', async () => {

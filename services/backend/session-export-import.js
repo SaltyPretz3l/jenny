@@ -12,6 +12,7 @@ const {
   normalizeSession,
   normalizeMessage,
   createSessionId,
+  TURN_EVENT_LOG_VERSION,
 } = require('./electron-session-store');
 const {
   normalizeBranchOrigin,
@@ -218,10 +219,26 @@ function exportSession(sessionStore, sessionId, attachmentStore = null, options 
       context_preferences: session.context_preferences,
       branch_origin: normalizeBranchOrigin(session.branch_origin),
       messages: messagesWithAssets,
+      ...(options.includeTurnEvents === true ? {
+        turn_events: session.turn_events,
+        turn_event_log_version: Number(session.turn_event_log_version || 0),
+      } : {}),
     },
   };
 
   return JSON.stringify(payload, null, 2);
+}
+
+// Canonical turn events come back only from Jenny's own archive, together with
+// the log version the renderer needs to use them. A log written by a newer
+// build is dropped and the chat is rebuilt from its messages.
+function trustedTurnEventLog(source, options) {
+  const version = Number(source.turn_event_log_version || 0);
+  if (options.trustedArchive !== true || !Array.isArray(source.turn_events)
+    || !Number.isInteger(version) || version < 0 || version > TURN_EVENT_LOG_VERSION) {
+    return { turn_events: [], turn_event_log_version: 0 };
+  }
+  return { turn_events: source.turn_events, turn_event_log_version: version };
 }
 
 /**
@@ -274,6 +291,10 @@ function validateSessionImportPayload(jsonPayload) {
   if (typeof parsed.session !== 'object' || Array.isArray(parsed.session)
     || (parsed.session.messages !== undefined && !Array.isArray(parsed.session.messages))) {
     throw createImportError('format_mismatch', 'Session payload is malformed.');
+  }
+  if (parsed.session.turn_events !== undefined && (!Array.isArray(parsed.session.turn_events)
+    || parsed.session.turn_events.some((event) => !event || typeof event !== 'object' || Array.isArray(event)))) {
+    throw createImportError('format_mismatch', 'Session turn events are malformed.');
   }
   for (const message of parsed.session.messages || []) {
     if (!message || typeof message !== 'object' || Array.isArray(message)
@@ -386,6 +407,7 @@ function importSession(sessionStore, jsonPayload, attachmentStore, options = {})
       created_at: preserveIdentity ? source.created_at : new Date().toISOString(),
       updated_at: preserveIdentity ? source.updated_at : new Date().toISOString(),
       messages: restoredMessages,
+      ...trustedTurnEventLog(source, options),
     });
 
     return persistSessionWithShadow(sessionStore, session, {

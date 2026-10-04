@@ -102,6 +102,7 @@
     const textField = resolveModule('inventoryTextField', '../inventory/text-field');
     const documents = new Map();
     const generations = new Map();
+    let generationCounter = 0;
     // Candidate records: parsed but not yet committed over the live record.
     const pending = new Map();
 
@@ -205,7 +206,7 @@
     }
 
     function nextGeneration(path) {
-      const generation = (generations.get(path) || 0) + 1;
+      const generation = ++generationCounter;
       generations.set(path, generation);
       return generation;
     }
@@ -365,6 +366,8 @@
 
     function discardPending(record, failure) {
       if (pending.get(record.path) === record) pending.delete(record.path);
+      // A vetoed first open leaves no token behind; a newer load keeps its own.
+      if (generations.get(record.path) === record.generation && !documents.has(record.path)) generations.delete(record.path);
       destroyRecord(record);
       return failure;
     }
@@ -435,11 +438,11 @@
         modules = await loadPdfjs();
       } catch (error) {
         safeLog('warn', 'ide.pdf.engine_load_failed', { message: String(error?.message || error) });
-        if (!isCurrent(record)) return discardPending(record, makeLoadFailure('document_engine_unavailable'));
+        if (!isCurrent(record)) return discardPending(record, makeLoadFailure('document_stale'));
         return removeFailedRecord(record, makeLoadFailure('document_engine_unavailable'));
       }
       if (!isCurrent(record)) {
-        return discardPending(record, makeLoadFailure('document_engine_unavailable'));
+        return discardPending(record, makeLoadFailure('document_stale'));
       }
 
       const { pdfjs, viewer } = modules;
@@ -456,11 +459,11 @@
         });
         record.pdfDocument = await record.loadingTask.promise;
       } catch (error) {
-        if (!isCurrent(record)) return discardPending(record, makeLoadFailure('document_engine_unavailable'));
+        if (!isCurrent(record)) return discardPending(record, makeLoadFailure('document_stale'));
         return removeFailedRecord(record, classifyDocumentError(error));
       }
       if (!isCurrent(record)) {
-        return discardPending(record, makeLoadFailure('document_engine_unavailable'));
+        return discardPending(record, makeLoadFailure('document_stale'));
       }
       if ((Number(record.pdfDocument.numPages) || 0) > MAX_PDF_PAGES) {
         return removeFailedRecord(record, makeLoadFailure('document_too_large'));
@@ -537,12 +540,12 @@
         record.pdfViewer.setDocument(record.pdfDocument);
         record.linkService.setDocument(record.pdfDocument, null);
         await pagesInit;
-        if (!isCurrent(record)) return makeLoadFailure('document_engine_unavailable');
+        if (!isCurrent(record)) return makeLoadFailure('document_stale');
         // Defer scale measurement until show(): this candidate is still hidden.
         record.state.scale = 'page-width';
       } catch (error) {
         safeLog('warn', 'ide.pdf.viewer_init_failed', { message: String(error?.message || error) });
-        if (!isCurrent(record)) return makeLoadFailure('document_engine_unavailable');
+        if (!isCurrent(record)) return makeLoadFailure('document_stale');
         return removeFailedRecord(record, makeLoadFailure('document_engine_unavailable'));
       }
 
@@ -604,7 +607,10 @@
     }
 
     function close(path) {
-      nextGeneration(path);
+      generations.delete(path);
+      // A pending candidate is not in `documents`: cancel its parse here too.
+      const candidate = pending.get(path);
+      if (candidate) discardPending(candidate, null);
       const record = documents.get(path);
       if (!record) {
         return;
@@ -741,9 +747,11 @@
     function dispose() {
       if (disposed) return;
       disposed = true;
+      for (const candidate of [...pending.values()]) discardPending(candidate, null);
       for (const path of [...documents.keys()]) {
         close(path);
       }
+      generations.clear();
       paneEl?.removeEventListener('click', handleClick);
       paneEl?.removeEventListener('keydown', handleKeydown);
       paneEl?.remove();

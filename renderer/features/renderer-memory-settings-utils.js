@@ -187,12 +187,24 @@
       restoreControlFocus(dom, focusSnapshot);
     }
 
+    // The source chat by its title, never a raw session id (N5, 2026-09-27
+    // gate); a chat that is gone or untitled reads as plain "Chat".
+    function sourceChatLabel(sessionId) {
+      const id = String(sessionId || '').trim();
+      if (!id) return '';
+      const sessions = Array.isArray(state?.sessions) ? state.sessions : [];
+      const title = String(sessions.find((row) => row && (row.id === id || row.session_id === id))?.title || '').trim().slice(0, 80);
+      return title
+        ? jt('memory.provenance.chatTitled', 'Chat: {title}', { title })
+        : jt('memory.provenance.chat', 'Chat');
+    }
+
     function provenanceMarkup(memory, { allowRemove = false, identity = '' } = {}) {
       if (memory.provenance === 'source_removed') {
         return '<p class="memory-provenance memory-provenance--removed">' + escapeHtml(jt('memory.provenance.sourceRemoved', 'Source removed; memory retained.')) + '</p>';
       }
       const excerpt = String(memory.source_excerpt || '').slice(0, 240);
-      const session = String(memory.session_id || '').slice(0, 80);
+      const session = sourceChatLabel(memory.session_id);
       const date = String(memory.updated_at || memory.created_at || '').slice(0, 64);
       if (!excerpt && !session && !date) return '';
       const panelId = `memory-source-${safeDomId(identity || memory.id || memory.content_fingerprint)}`;
@@ -202,7 +214,7 @@
         : '';
       const content = '<div class="memory-provenance-meta">'
         + `<span>${escapeHtml(date || jt('memory.provenance.dateUnavailable', 'Date unavailable'))}</span>`
-        + (session ? `<span>${escapeHtml(jt('memory.provenance.session', 'Session {session}', { session }))}</span>` : '')
+        + (session ? `<span>${escapeHtml(session)}</span>` : '')
         + '</div>'
         + (excerpt ? `<q>${escapeHtml(excerpt)}</q>` : '')
         + (allowRemove ? button({ id: `remove-provenance-${safeDomId(memory.id)}`, label: jt('memory.actions.removeSource', 'Remove source'), variant: 'ghost', size: 'sm', dataset: { 'memory-action': 'remove-provenance', 'memory-id': String(memory.id) } }) : '');
@@ -301,7 +313,14 @@
         : allListsUnavailable
           ? jt('memory.settings.dataUnavailable', 'Memory data is unavailable.')
           : jt('memory.settings.countSummary', '{approved} approved · {pending} pending{availability}', { approved, pending, availability: listUnavailable ? jt('memory.settings.partiallyAvailableSuffix', ' · partially available') : status?.available ? '' : jt('memory.settings.healthUnavailableSuffix', ' · health details unavailable') });
-      if (typeof settingsSupport.renderStatusRowContainer === 'function') {
+      // A healthy, loaded summary only repeated the header badge and the
+      // per-list count badges, so it shows only while it says something more
+      // (loading, partial, unavailable or degraded).
+      const summaryRedundant = !loading && Boolean(status?.available) && !degraded;
+      if (dom.memorySummary) dom.memorySummary.hidden = summaryRedundant;
+      if (summaryRedundant) {
+        if (dom.memorySummary) dom.memorySummary.innerHTML = '';
+      } else if (typeof settingsSupport.renderStatusRowContainer === 'function') {
         settingsSupport.renderStatusRowContainer(dom.memorySummary, settingsSupport.buildSettingsSummaryModel({
           tone, label: jt('memory.settings.summaryLabel', 'Memory'), message, badgeText: status?.available ? (degraded ? 'Degraded' : 'Ready') : 'Unavailable', spinner: loading,
         }), escapeHtml);
@@ -372,10 +391,28 @@
       const filtered = filteredAll.slice(0, approvedLimit);
       const pending = pendingAll.slice(0, pendingLimit);
       renderStatus(dom, memories.length, pendingAll.length);
-      if (dom.approvedMemoryStatus) dom.approvedMemoryStatus.textContent = state.memoryManager.loading ? jt('memory.settings.loadingApproved', 'Loading approved memories…') : state.memoryManager.unavailable ? state.memoryManager.status : memories.length && !filtered.length ? jt('memory.settings.noApprovedMatches', 'No approved memories match these filters.') : state.memoryManager.status;
-      if (dom.pendingMemoryStatus) dom.pendingMemoryStatus.textContent = state.memoryManager.pendingLoading ? jt('memory.settings.loadingPending', 'Loading pending review…') : state.memoryManager.pendingStatus;
-      if (dom.approvedMemoryList) dom.approvedMemoryList.innerHTML = filtered.length ? filtered.map(approvedMarkup).join('') : `<div class="memory-page-empty" role="listitem">${jt('memory.settings.noApproved', 'No approved memories to show.')}</div>`;
-      if (dom.pendingMemoryList) dom.pendingMemoryList.innerHTML = pending.length ? pending.map(pendingMarkup).join('') : `<div class="memory-page-empty" role="listitem">${jt('memory.settings.noPending', 'No pending candidates to review.')}</div>`;
+      // One empty message per list: the list's live status line carries it and
+      // the list itself stays empty (no second, centered placeholder row).
+      const approvedIdleMessage = state.memoryManager.loaded && !memories.length
+        ? jt('memory.status.noApproved', 'No approved memories saved yet.')
+        : state.memoryManager.status;
+      const pendingIdleMessage = state.memoryManager.pendingLoaded && !pendingAll.length
+        ? jt('memory.status.noPending', 'No pending memory candidates are waiting right now.')
+        : state.memoryManager.pendingStatus;
+      if (dom.approvedMemoryStatus) dom.approvedMemoryStatus.textContent = state.memoryManager.loading ? jt('memory.settings.loadingApproved', 'Loading approved memories…') : state.memoryManager.unavailable ? state.memoryManager.status : memories.length && !filtered.length ? jt('memory.settings.noApprovedMatches', 'No approved memories match these filters.') : approvedIdleMessage;
+      if (dom.pendingMemoryStatus) dom.pendingMemoryStatus.textContent = state.memoryManager.pendingLoading ? jt('memory.settings.loadingPending', 'Loading pending review…') : state.memoryManager.pendingUnavailable ? state.memoryManager.pendingStatus : pendingIdleMessage;
+      if (dom.approvedMemoryList) {
+        dom.approvedMemoryList.innerHTML = filtered.map(approvedMarkup).join('');
+        dom.approvedMemoryList.hidden = !filtered.length;
+      }
+      if (dom.pendingMemoryList) {
+        dom.pendingMemoryList.innerHTML = pending.map(pendingMarkup).join('');
+        dom.pendingMemoryList.hidden = !pending.length;
+      }
+      // Sort and filter controls only help once a list has items to act on.
+      if (dom.pendingMemorySortHost) dom.pendingMemorySortHost.hidden = !pendingAll.length;
+      const approvedFiltersHost = dom.memoryProjectFilterHost?.closest?.('.memory-page-filters');
+      if (approvedFiltersHost) approvedFiltersHost.hidden = !memories.length;
       if (dom.approvedMemoryMoreHost) dom.approvedMemoryMoreHost.innerHTML = filtered.length < filteredAll.length
         ? button({ id: 'show-more-approved-memories', label: jt('memory.settings.showMore', 'Show {count} more', { count: Math.min(MAX_RENDERED_MEMORIES, filteredAll.length - filtered.length) }), variant: 'secondary', dataset: { 'memory-page-action': 'show-more-approved' } }) : '';
       if (dom.pendingMemoryMoreHost) dom.pendingMemoryMoreHost.innerHTML = pending.length < pendingAll.length

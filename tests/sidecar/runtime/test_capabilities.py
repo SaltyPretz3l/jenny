@@ -32,7 +32,6 @@ def test_build_provider_capabilities_exposes_local_runtime_engines_plus_codex_cl
         "openai-compatible",
         "codex-cli",
         "chatgpt",
-        "plugin_host",
         "replay",
         "mock",
     }
@@ -43,31 +42,10 @@ def test_build_provider_capabilities_exposes_local_runtime_engines_plus_codex_cl
     assert "disabled" in str(capabilities["codex-cli"].reason)
     assert capabilities["chatgpt"].available is False
     assert "not signed in" in str(capabilities["chatgpt"].reason)
-    assert capabilities["plugin_host"].available is False
-    assert capabilities["plugin_host"].reason == "plugin host engine unavailable"
     assert capabilities["mock"].available is True
     assert capabilities["vllm"].reasoning_effort_support == "supported"
     assert capabilities["openai-compatible"].reasoning_effort_support == "supported"
     assert capabilities["ollama"].reasoning_effort_support == "supported"
-
-
-def test_plugin_host_capability_requires_an_active_generation_binding() -> None:
-    configured = RuntimeConfig(engine_type="plugin_host", model="plugin:publisher/plugin/engine")
-    assert build_provider_capabilities(configured)["plugin_host"].available is True
-    listed = models_list_result(
-        {
-            "engine_type": "plugin_host",
-            "_plugin_engine_models": ["plugin:publisher/plugin/engine"],
-        },
-        models_for_engine=lambda _engine: [],
-    )
-    assert listed == {
-        "engine_type": "plugin_host",
-        "models": ["plugin:publisher/plugin/engine"],
-        "stale": False,
-        "available": True,
-        "reason": None,
-    }
 
 
 def test_initialize_response_exposes_active_model_reasoning_capabilities() -> None:
@@ -979,7 +957,6 @@ def test_initialize_response_provider_capabilities_unchanged() -> None:
         "openai-compatible",
         "codex-cli",
         "chatgpt",
-        "plugin_host",
         "replay",
         "mock",
     }
@@ -1029,3 +1006,9 @@ def test_initialize_response_omits_profiles_when_stack_lacks_attribute() -> None
     )
 
     assert response["result"]["provider_capability_profiles"] == []
+
+
+def test_retired_plugin_host_engine_is_not_a_provider_capability() -> None:
+    assert "plugin_host" not in build_provider_capabilities(
+        RuntimeConfig(engine_type="plugin_host", model="plugin:publisher/plugin/engine")
+    )

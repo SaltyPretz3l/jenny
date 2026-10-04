@@ -330,7 +330,7 @@ def test_hosted_intent_is_latched_before_initialize_build_and_survives_null_stac
 
     def fake_initialize_response(*_args, **_kwargs):
         assert container.host_policy_enforced is True
-        assert container._stack is None  # noqa: SLF001
+        assert container._stack is None
         return {"result": {}}
 
     monkeypatch.setattr(request_dispatch, "initialize_response", fake_initialize_response)

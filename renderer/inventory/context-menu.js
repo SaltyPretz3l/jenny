@@ -21,6 +21,7 @@
   var _cleanups = [];
   var _restoreFocusEl = null;
   var _onHide = null;
+  var _descriptionSeq = 0;
 
   function _cleanup() {
     for (var i = 0; i < _cleanups.length; i++) _cleanups[i]();
@@ -81,18 +82,46 @@
 
       var btn = doc.createElement('button');
       btn.type = 'button';
-      btn.className = 'inv-context-menu-item' + (item.danger ? ' inv-context-menu-item--danger' : '');
-      btn.setAttribute('role', 'menuitem');
+      var checked = typeof item.checked === 'boolean' ? item.checked : null;
+      btn.className = 'inv-context-menu-item' + (item.danger ? ' inv-context-menu-item--danger' : '')
+        + (checked === true ? ' inv-context-menu-item--checked' : '');
+      // A boolean `checked` makes the item a radio row (one of a closed set).
+      btn.setAttribute('role', checked === null ? 'menuitem' : 'menuitemradio');
+      if (checked !== null) btn.setAttribute('aria-checked', checked ? 'true' : 'false');
       btn.disabled = !!item.disabled;
 
       var labelSpan = doc.createElement('span');
       labelSpan.textContent = item.label || '';
-      btn.appendChild(labelSpan);
+      if (item.description) {
+        var textWrap = doc.createElement('span');
+        textWrap.className = 'inv-context-menu-text';
+        var descriptionSpan = doc.createElement('span');
+        descriptionSpan.className = 'inv-context-menu-description';
+        descriptionSpan.textContent = item.description;
+        // Described, not named: the label alone is the accessible name.
+        descriptionSpan.id = 'inv-context-menu-description-' + (++_descriptionSeq);
+        descriptionSpan.setAttribute('aria-hidden', 'true');
+        btn.setAttribute('aria-describedby', descriptionSpan.id);
+        textWrap.appendChild(labelSpan);
+        textWrap.appendChild(descriptionSpan);
+        btn.appendChild(textWrap);
+      } else {
+        btn.appendChild(labelSpan);
+      }
 
-      if (item.shortcutHint) {
+      // A single-character accessKey picks the item while the menu is open;
+      // it doubles as the shortcut hint unless the caller gives one.
+      var accessKey = typeof item.accessKey === 'string' && item.accessKey.length === 1 ? item.accessKey : '';
+      if (accessKey) {
+        btn.setAttribute('data-access-key', accessKey);
+        btn.setAttribute('aria-keyshortcuts', accessKey);
+      }
+      var shortcutHint = item.shortcutHint || accessKey;
+      if (shortcutHint) {
         var hintSpan = doc.createElement('span');
         hintSpan.className = 'inv-context-menu-shortcut';
-        hintSpan.textContent = item.shortcutHint;
+        hintSpan.textContent = shortcutHint;
+        if (!item.shortcutHint) hintSpan.setAttribute('aria-hidden', 'true');
         btn.appendChild(hintSpan);
       }
 
@@ -141,6 +170,16 @@
     /* Keyboard navigation. */
     function handleKeydown(e) {
       if (e.key === 'Escape') { e.preventDefault(); hide(); return; }
+      // Keys typed outside the menu (focus moved to a composer or field)
+      // belong to that field; a Tab leaving the menu dismisses it (APG menu button).
+      // Body-targeted keys still drive the menu: a click on its padding or a
+      // separator drops focus to body, and nothing else owns them.
+      if (!_menuEl || (!_menuEl.contains(e.target) && e.target !== doc.body)) return;
+      if (e.key === 'Tab') { hide(); return; }
+      if (typeof e.key === 'string' && e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        var keyed = _getEnabledItems().filter(function (item) { return item.getAttribute('data-access-key') === e.key; })[0];
+        if (keyed) { e.preventDefault(); keyed.click(); return; }
+      }
       if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
         e.preventDefault();
         var items = _getEnabledItems();
@@ -149,14 +188,16 @@
         var idx = items.indexOf(focused);
         var next = e.key === 'ArrowDown'
           ? (idx + 1) % items.length
-          : (idx - 1 + items.length) % items.length;
+          : (idx <= 0 ? items.length : idx) - 1;
         items[next].focus();
       }
     }
 
-    /* Click-outside dismissal. */
+    /* Click-outside dismissal. The anchor is left to its own click handler,
+       so a trigger can close its open menu instead of dismiss-then-reopen. */
+    var anchorEl = opts.anchorEl && typeof opts.anchorEl.contains === 'function' ? opts.anchorEl : null;
     function handleOutside(e) {
-      if (_menuEl && !_menuEl.contains(e.target)) hide();
+      if (_menuEl && !_menuEl.contains(e.target) && !(anchorEl && anchorEl.contains(e.target))) hide();
     }
 
     doc.addEventListener('keydown', handleKeydown, true);

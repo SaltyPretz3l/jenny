@@ -2,7 +2,7 @@
 // UIUX-014: the headless spawn primitive for "Run scripts" tasks. Each task
 // is its OWN child process (not the shared interactive terminal session), so
 // completion is the real 'close' event - never text scanned out of stdout.
-// Covers: explicit shell selection (matches workspace-terminal-service.js),
+// Covers: explicit shell selection (PowerShell on win32, bash elsewhere),
 // live streaming onData, real exit code -> 'exited', spawn failure -> 'error'
 // + SPAWN_FAILED, and process-tree kill via the injected killProcessTree.
 
@@ -156,6 +156,55 @@ test('an unconfirmed kill still settles (never hangs the caller) and reports ter
   });
   const outcome = await kill();
   assert.equal(outcome.terminated, false);
+});
+
+test('P08: concurrent kills share one attempt outcome, and a later kill retries until termination is confirmed', async () => {
+  const fc = makeFakeChild();
+  let confirming = false;
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  let terminatorCalls = 0;
+  const { done, kill } = startRunTask({
+    command: 'node x.js', cwd: '/work', platform: 'linux', spawnImpl: () => fc.child,
+    killProcessTree: async () => {
+      terminatorCalls += 1;
+      if (terminatorCalls === 1) await gate;
+      return { terminated: confirming };
+    },
+  });
+  const first = kill();
+  const second = kill();
+  release();
+  assert.deepEqual(await first, { terminated: false });
+  assert.deepEqual(await second, { terminated: false }, 'a concurrent caller gets the real outcome, never a blanket true');
+  assert.equal(terminatorCalls, 1, 'concurrent callers share one termination attempt');
+  assert.equal((await done).terminationConfirmed, false);
+
+  assert.deepEqual(await kill(), { terminated: false }, 'a later kill while still unconfirmed is a real retry, not a success');
+  assert.equal(terminatorCalls, 2);
+
+  confirming = true;
+  assert.deepEqual(await kill(), { terminated: true });
+  assert.equal(terminatorCalls, 3, 'the retry invoked the terminator again');
+  assert.deepEqual(await kill(), { terminated: true }, 'once confirmed, later calls do not terminate again');
+  assert.equal(terminatorCalls, 3);
+  assert.equal((await done).terminationConfirmed, false, 'done resolved once, with the first attempt outcome');
+});
+
+test('a retried kill on win32 never targets the pid of a shell that has already exited', async () => {
+  const fc = makeFakeChild();
+  const killedPids = [];
+  const { kill } = startRunTask({
+    command: 'node x.js', cwd: 'C:/work', platform: 'win32', spawnImpl: () => fc.child,
+    killProcessTree: async (ownedChild) => { killedPids.push(ownedChild.pid); return { terminated: false }; },
+  });
+  assert.deepEqual(await kill(), { terminated: false });
+  assert.deepEqual(killedPids, [4242]);
+
+  // The shell ends on its own; Windows may now reuse pid 4242 for another process.
+  fc.child.exitCode = 1;
+  assert.deepEqual(await kill(), { terminated: true }, 'an exited shell is released, not killed by pid again');
+  assert.deepEqual(killedPids, [4242], 'no second tree kill against a pid that may have been reused');
 });
 
 test('real POSIX cancellation terminates the detached run-task process group', {

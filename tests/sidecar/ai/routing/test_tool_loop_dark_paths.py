@@ -7,7 +7,6 @@ test for tight failure isolation.
 
 from __future__ import annotations
 
-from dataclasses import replace
 from types import SimpleNamespace
 from typing import Any
 
@@ -19,34 +18,33 @@ from sidecar.ai.error_codes import (
 )
 from sidecar.ai.routing.loop_events import TokenDeltaEvent
 from sidecar.ai.routing.loop_runtime import LoopRuntime
+from sidecar.ai.routing.loop_stop import StopDecision, StopReason
 from sidecar.ai.routing.tool_loop import (
     _available_tool_names,
     _bind_missing_approval_call_id,
+    _build_stopped_tool_loop_result,
     _current_info_unavailability_response,
+    _emit_deterministic_response_tokens,
     _empty_post_tool_context_response,
     _failed_tool_context_response,
     _invalid_tool_output,
     _is_unknown_tool_call,
     _looks_like_generic_greeting_only,
     _looks_like_post_tool_empty_chat_menu,
-    _post_tool_invalid_response_reason,
+    _mark_buffer_flushed,
     _post_tool_invalid_log_data,
+    _post_tool_invalid_response_reason,
     _quota_blocked_groups,
     _quota_burst_key,
     _should_issue_tool_nudge,
     _successful_tool_context_response,
-    _web_search_unavailability_reason,
-    _emit_deterministic_response_tokens,
-    _mark_buffer_flushed,
-    _build_stopped_tool_loop_result,
     _summarize_failed_tool_outcomes,
     _summarize_successful_tool_outcomes,
+    _web_search_unavailability_reason,
 )
-from sidecar.ai.routing.loop_stop import StopDecision, StopReason
 from sidecar.ai.tools.contracts import ToolExecutionFailure
 from sidecar.ai.tools.models import ToolCallRequest
 from sidecar.ai.tools.policy import tool_policy_call_key
-
 
 # ---------------------------------------------------------------------------
 # Minimal outcome stub (duck-typed, no real ToolExecutionOutcome needed)

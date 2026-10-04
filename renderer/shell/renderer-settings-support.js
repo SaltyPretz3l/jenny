@@ -67,10 +67,7 @@
     return { state, text };
   }
 
-  // --- Web search provider section (Tools > Optional capabilities) ---------
-  // Renders INTO the existing toolsConfigFieldList container (index.html owns
-  // no dedicated container for this group this wave), appended after the
-  // toggle-field rows. Visible only behind the web_search_providers flag.
+  // Web provider rows follow the Web tools switch in toolsWebList.
   const WEB_SEARCH_PROVIDERS = Object.freeze([
     Object.freeze({ value: 'duckduckgo', label: jt('settings.tools.webSearch.provider.duckDuckGo', 'DuckDuckGo (default, no key)') }),
     Object.freeze({ value: 'searxng', label: jt('settings.tools.webSearch.provider.searxng', 'SearXNG (self-hosted URL)') }),
@@ -105,8 +102,7 @@
     return typeof fn === 'function' ? fn : null;
   }
 
-  // Builds the "Web search provider" group markup. Returns '' when the flag is
-  // off (zero DOM output) or required inventory primitives aren't loaded.
+  // Provider-specific credentials remain masked and use the secret bridge.
   function buildWebSearchSectionMarkup(options) {
     const source = isPlainObject(options) ? options : {};
     if (source.visible !== true) {
@@ -122,33 +118,65 @@
     const actionButtonFn = typeof source.actionButton === 'function'
       ? source.actionButton
       : getInventoryFn('actionButton', 'inventoryActionButton');
-    if (typeof selectFieldFn !== 'function' || typeof textFieldFn !== 'function') {
+    const settingsField = source.settingsField || getInventoryFn('settingsField', 'inventorySettingsField');
+    if (!settingsField || typeof selectFieldFn !== 'function' || typeof textFieldFn !== 'function') {
       return '';
     }
     const webSearch = normalizeWebSearchState(source.webSearch);
     const configured = isPlainObject(source.secretStatus?.configured) ? source.secretStatus.configured : {};
-    const parts = [];
-    parts.push(selectFieldFn({
+    const disabled = source.parentOff === true;
+    const dataset = disabled ? { 'setting-parent-off': 'true' } : {};
+    const testButton = typeof actionButtonFn === 'function' ? actionButtonFn({
+      id: 'webSearchConnectionTest',
+      label: jt('settings.tools.webSearch.testConnection', 'Test'),
+      variant: 'secondary',
+      size: 'sm',
+      disabled,
+      dataset: { 'web-search-test': 'true' },
+    }) : '';
+    const parts = [settingsField({
+      // The row carries its descriptor's id, so a refused save lands in its alert slot.
       id: 'webSearchProviderSelect',
+      variant: 'row',
+      // Provider names run long ("Google Programmable Search"): the wide dropdown.
+      className: 'settings-field--sub settings-field--wide-control',
+      dataset,
       label: jt('settings.tools.webSearch.providerLabel', 'Search provider'),
-      value: webSearch.provider,
-      options: WEB_SEARCH_PROVIDERS.map((entry) => ({ value: entry.value, label: entry.label })),
-      ariaLabel: jt('settings.tools.webSearch.providerAriaLabel', 'Web search provider'),
-      dataset: { 'web-search-field': 'provider' },
-    }));
+      labelFor: 'webSearchProviderSelect',
+      help: jt('settings.tools.webSearch.providerHelp', 'DuckDuckGo needs no setup.'),
+      controlHtml: testButton + selectFieldFn({
+        id: 'webSearchProviderSelect',
+        value: webSearch.provider,
+        disabled,
+        options: WEB_SEARCH_PROVIDERS.map((entry) => ({ value: entry.value, label: entry.label })),
+        ariaLabel: jt('settings.tools.webSearch.providerAriaLabel', 'Web search provider'),
+        dataset: { 'web-search-field': 'provider' },
+      }),
+    }), '<p class="settings-field-note" data-web-search-test-status aria-live="polite"></p>'];
     if (webSearch.provider === 'searxng') {
-      parts.push(textFieldFn({
+      const label = jt('settings.tools.webSearch.searxngUrlLabel', 'SearXNG instance URL');
+      parts.push(settingsField({
         id: 'webSearchSearxngUrlField',
-        label: jt('settings.tools.webSearch.searxngUrlLabel', 'SearXNG instance URL'),
-        value: webSearch.searxngUrl,
-        placeholder: jt('settings.tools.webSearch.searxngUrlPlaceholder', 'https://searx.example.com'),
-        ariaLabel: jt('settings.tools.webSearch.searxngUrlLabel', 'SearXNG instance URL'),
-        dataset: { 'web-search-field': 'searxngUrl' },
+        variant: 'row',
+        className: 'settings-field--sub settings-field--block',
+        label,
+        labelFor: 'webSearchSearxngUrlField',
+        dataset,
+        controlHtml: textFieldFn({
+          id: 'webSearchSearxngUrlField',
+          value: webSearch.searxngUrl,
+          disabled,
+          ariaLabel: label,
+          placeholder: jt('settings.tools.webSearch.searxngUrlPlaceholder', 'https://searx.example.com'),
+          dataset: { 'web-search-field': 'searxngUrl' },
+        }),
       }));
     }
     if (WEB_SEARCH_KEY_PROVIDERS.includes(webSearch.provider)) {
       parts.push(buildWebSearchKeyFieldMarkup({
         keyId: webSearch.provider,
+        settingsField,
+        disabled,
         label: jt('settings.tools.webSearch.apiKeyLabel', 'API key'),
         configured: configured[webSearch.provider] === true,
         textField: textFieldFn,
@@ -158,6 +186,8 @@
       if (webSearch.provider === 'google_pse') {
         parts.push(buildWebSearchKeyFieldMarkup({
           keyId: 'google_pse_cx',
+          settingsField,
+          disabled,
           label: jt('settings.tools.webSearch.searchEngineIdLabel', 'Search engine ID (cx)'),
           configured: configured.google_pse_cx === true,
           textField: textFieldFn,
@@ -166,23 +196,7 @@
         }));
       }
     }
-    const helpText = jt('settings.tools.webSearch.providerHelp', 'DuckDuckGo needs no configuration; other providers apply only when selected.');
-    const testButton = typeof actionButtonFn === 'function' ? actionButtonFn({
-      id: 'webSearchConnectionTest',
-      label: jt('settings.tools.webSearch.testConnection', 'Test connection'),
-      variant: 'secondary',
-      size: 'sm',
-      dataset: { 'web-search-test': 'true' },
-    }) : '';
-    return `
-      <div class="settings-group settings-group--flush" role="group" aria-labelledby="toolsWebSearchHeading" data-web-search-section="true">
-        <h4 class="settings-group-heading" id="toolsWebSearchHeading">${escapeHtmlFn(jt('settings.tools.webSearch.heading', 'Web search provider'))}</h4>
-        ${parts.join('')}
-        <div class="settings-actions">${testButton}</div>
-        <div class="settings-note" data-web-search-test-status aria-live="polite"></div>
-        <div class="settings-note tools-config-field-help">${escapeHtmlFn(helpText)}</div>
-      </div>
-    `;
+    return '<div data-web-search-section="true">' + parts.join('') + '</div>';
   }
 
   // One key field row: password-masked input + inline Save button + a subtle
@@ -194,16 +208,19 @@
     const fieldId = `webSearchKeyField-${keyId}`.replace(/[^A-Za-z0-9_-]/g, '-');
     const fieldMarkup = source.textField({
       id: fieldId,
-      label: source.label,
+      disabled: source.disabled,
       value: '',
       type: 'password',
-      placeholder: source.configured === true ? jt('settings.tools.webSearch.configuredPlaceholder', 'Configured (hidden)') : jt('settings.tools.webSearch.enterApiKeyPlaceholder', 'Enter API key'),
+      // The search engine ID is not a key, so its empty field does not ask for one.
+      placeholder: source.configured === true ? jt('settings.tools.webSearch.configuredPlaceholder', 'Configured (hidden)')
+        : keyId === 'google_pse_cx' ? '' : jt('settings.tools.webSearch.enterApiKeyPlaceholder', 'Enter API key'),
       ariaLabel: source.label,
       dataset: { 'web-search-key-field': keyId },
     });
     const saveButtonMarkup = typeof source.actionButton === 'function'
       ? source.actionButton({
         id: `webSearchKeySave-${keyId}`,
+        disabled: source.disabled,
         label: jt('settings.tools.webSearch.saveKey', 'Save key'),
         variant: 'secondary',
         size: 'sm',
@@ -213,31 +230,17 @@
       })
       : '';
     const hint = source.configured === true
-      ? `<span class="settings-note tools-config-field-help" data-web-search-key-hint="${escapeHtmlFn(keyId)}">${escapeHtmlFn(jt('common.configured', 'Configured'))}</span>`
+      ? `<span class="settings-field-note" data-web-search-key-hint="${escapeHtmlFn(keyId)}">${escapeHtmlFn(jt('common.configured', 'Configured'))}</span>`
       : '';
-    return `
-      <div class="tools-config-field-row" data-web-search-key-row="${escapeHtmlFn(keyId)}">
-        ${fieldMarkup}
-        <div class="settings-actions">${saveButtonMarkup}</div>
-        ${hint}
-      </div>
-    `;
-  }
-
-  // Resolves a native 'change' event bubbling out of the web-search section
-  // container into a normalized { field, value } pair, or null if unrelated.
-  function resolveWebSearchFieldChangeEvent(event) {
-    const target = event?.target && typeof event.target.closest === 'function'
-      ? event.target.closest('[data-web-search-field]')
-      : null;
-    if (!target) {
-      return null;
-    }
-    const field = normalizeString(target.getAttribute('data-web-search-field'));
-    if (!field) {
-      return null;
-    }
-    return { field, value: String(target.value == null ? '' : target.value) };
+    return source.settingsField({
+      id: `webSearchKeyRow-${keyId}`,
+      variant: 'row',
+      className: 'settings-field--sub settings-field--block',
+      label: source.label,
+      labelFor: fieldId,
+      controlHtml: fieldMarkup + saveButtonMarkup + hint,
+      dataset: { 'web-search-key-row': keyId, ...(source.disabled ? { 'setting-parent-off': 'true' } : {}) },
+    });
   }
 
   // Resolves a delegated click on a "Save key" button into { keyId } or null.
@@ -252,28 +255,11 @@
     return keyId ? { keyId } : null;
   }
 
-  // Resolves the additive custom summarization guidance field only.
-  function resolveCompactionFieldChangeEvent(event) {
-    const target = event?.target && typeof event.target.closest === 'function'
-      ? event.target.closest('[data-compaction-field]')
-      : null;
-    if (!target) {
-      return null;
-    }
-    const field = normalizeString(target.getAttribute('data-compaction-field'));
-    if (field !== 'customPrompt') {
-      return null;
-    }
-    return { field, value: String(target.value == null ? '' : target.value) };
-  }
-
   const TOOL_CONFIG_TOGGLE_ID_PREFIX = 'settings-tool-config-';
+  // Dependent row (or row set) -> the tool switch it follows. While the parent is
+  // off the dependent row is marked parent-off and locked, and its stored value is kept.
+  const TOOL_DEPENDENTS = Object.freeze({ richFiles: 'fileTools', commandSandbox: 'bash', webSearch: 'web' });
   const RUN_MODES = Object.freeze(['ask', 'auto', 'plan']);
-  const RUN_MODE_HELP = Object.freeze({
-    ask: jt('settings.runMode.help.ask', 'Jenny asks before running tools that change things.'),
-    auto: jt('runMode.help.auto', 'Tools run without asking. Python and explicit denies still ask; blocked commands are refused.'),
-    plan: jt('settings.runMode.help.plan', 'Read-only: Jenny plans first and presents it before acting.'),
-  });
   const UI_LANGUAGE_TAGS = Object.freeze(['en', 'es', 'fr', 'de', 'it', 'pt-BR', 'nl', 'pl', 'ru', 'uk', 'tr', 'ar', 'hi', 'id', 'vi', 'ja', 'ko', 'zh-CN', 'zh-TW']);
   const UI_LANGUAGE_LABELS = Object.freeze([
     jt('settings.language.option.en', 'English'), jt('settings.language.option.es', 'Español (Spanish)'), jt('settings.language.option.fr', 'Français (French)'), jt('settings.language.option.de', 'Deutsch (German)'),
@@ -284,105 +270,86 @@
     jt('settings.language.option.zhTw', '繁體中文 (Traditional Chinese)'),
   ]);
   const SAFETY_MODES = Object.freeze(['normal', 'strict', 'paranoid']);
-  const SAFETY_MODE_LABELS = Object.freeze({
-    normal: jt('settings.safetyMode.option.normal', 'Normal'),
-    strict: jt('settings.safetyMode.option.strict', 'Strict'),
-    paranoid: jt('settings.safetyMode.option.paranoid', 'Paranoid'),
-  });
+  // The switch copy (label, help, detail) is written once, on the descriptors
+  // (settings-tool-config-<key>); every reader of these fields still finds it here.
+  const toolDescriptors = globalThis.rendererSettingsFieldDescriptors || (typeof require === 'function' ? require('./renderer-settings-field-descriptors.js') : null);
   const DEFAULT_TOOL_CONFIG_FIELDS = Object.freeze([
-    Object.freeze({
-      key: 'imageRead',
-      label: jt('settings.tools.imageRead.label', 'Image and PDF reads'),
-      fieldType: 'toggle',
-      storage: 'config',
-      default: false,
-      helpText: jt('settings.tools.imageRead.description', 'Allow read_file to expose image and PDF page-read affordances.'),
-      addonNote: jt('settings.tools.imageRead.pdfAddonNote', 'PDF pages need the PDF reading add-on.'),
-      configFlag: 'tools_image_read_enabled',
-      toolIds: Object.freeze(['read_file']),
-    }),
-    Object.freeze({
+    {
       key: 'fileTools',
-      label: jt('settings.tools.fileTools.label', 'File tools'),
       fieldType: 'toggle',
       storage: 'config',
       default: true,
-      helpText: jt('settings.tools.fileTools.description', 'Allow workspace file tools. Availability still requires a workspace root.'),
       configFlag: '',
       toolIds: Object.freeze(['read_file', 'write_file', 'edit_file', 'delete_file', 'glob_files', 'grep_search', 'list_dir', 'create_artifact']),
-    }),
-    Object.freeze({
+    },
+    {
       key: 'richFiles',
-      label: jt('settings.tools.richFiles.label', 'Rich file tools'),
       fieldType: 'toggle',
       storage: 'config',
       default: true,
-      helpText: jt('settings.tools.richFiles.description', 'Allow read_file to return bounded structured inspection for PDF, spreadsheet, document, presentation, and notebook files.'),
-      addonNote: jt('settings.tools.richFiles.pdfAddonNote', 'PDFs need the PDF reading add-on.'),
       configFlag: 'tools_rich_files_enabled',
       toolIds: Object.freeze(['read_file']),
-    }),
-    Object.freeze({
-      key: 'web',
-      label: jt('settings.tools.web.label', 'Web tools'),
+    },
+    {
+      key: 'imageRead',
       fieldType: 'toggle',
       storage: 'config',
       default: false,
-      helpText: jt('settings.tools.web.description', 'Enable web_search and fetch_url for live web lookup.'),
+      configFlag: 'tools_image_read_enabled',
+      toolIds: Object.freeze(['read_file']),
+    },
+    {
+      key: 'web',
+      fieldType: 'toggle',
+      storage: 'config',
+      default: false,
       configFlag: 'tools_web_enabled',
       toolIds: Object.freeze(['web_search', 'fetch_url']),
-    }),
-    Object.freeze({
-      key: 'pythonRuntime',
-      label: jt('settings.tools.pythonRuntime.label', 'Python execution'),
-      fieldType: 'toggle',
-      storage: 'config',
-      default: false,
-      helpText: jt('settings.tools.pythonRuntime.description', 'Enable resource-bounded local Python execution. It is not a filesystem or network sandbox and always requires approval.'),
-      configFlag: 'tools_python_runtime_enabled',
-      toolIds: Object.freeze(['python_execute']),
-    }),
-    Object.freeze({
-      key: 'worktree',
-      label: jt('settings.tools.worktree.label', 'Worktree tools'),
-      fieldType: 'toggle',
-      storage: 'config',
-      default: false,
-      helpText: jt('settings.tools.worktree.description', 'Enable Electron-local Git worktree setup tools.'),
-      configFlag: 'tools_worktree_enabled',
-      toolIds: Object.freeze(['worktree_list', 'worktree_create', 'worktree_select', 'worktree_delete']),
-    }),
-    Object.freeze({
-      key: 'subagents',
-      label: jt('settings.tools.subagents.label', 'Delegated repository research'),
-      fieldType: 'toggle',
-      storage: 'config',
-      default: true,
-      helpText: jt('settings.tools.subagents.description', 'Bounded read-only repository research that may add model cost and latency.'),
-      configFlag: 'tools_subagents_enabled',
-      toolIds: Object.freeze(['delegate']),
-    }),
-    Object.freeze({
+    },
+    {
       key: 'bash',
-      label: jt('settings.tools.bash.label', 'Terminal commands'),
       fieldType: 'toggle',
       storage: 'config',
       default: true,
-      helpText: jt('settings.tools.bash.description', 'Allow shell commands. Availability still requires a workspace root.'),
       configFlag: '',
       toolIds: Object.freeze(['run_command', 'run_temp_script', 'check_background_job', 'stop_background_job']),
-    }),
-    Object.freeze({
-      key: 'lsp',
-      label: jt('settings.tools.lsp.label', 'LSP code intelligence'),
+    },
+    {
+      key: 'pythonRuntime',
       fieldType: 'toggle',
       storage: 'config',
       default: false,
-      helpText: jt('settings.tools.lsp.description', 'Enable read-only language-server diagnostics, symbols, definitions, and references.'),
+      configFlag: 'tools_python_runtime_enabled',
+      toolIds: Object.freeze(['python_execute']),
+    },
+    {
+      key: 'lsp',
+      fieldType: 'toggle',
+      storage: 'config',
+      default: false,
       configFlag: 'tools_lsp_enabled',
       toolIds: Object.freeze(['lsp']),
-    }),
-  ]);
+    },
+    {
+      key: 'worktree',
+      fieldType: 'toggle',
+      storage: 'config',
+      default: false,
+      configFlag: 'tools_worktree_enabled',
+      toolIds: Object.freeze(['worktree_list', 'worktree_create', 'worktree_select', 'worktree_delete']),
+    },
+    {
+      key: 'subagents',
+      fieldType: 'toggle',
+      storage: 'config',
+      default: true,
+      configFlag: 'tools_subagents_enabled',
+      toolIds: Object.freeze(['delegate']),
+    },
+  ].map((field) => {
+    const copy = toolDescriptors.getSettingDescriptor('settings-tool-config-' + field.key).copy;
+    return Object.freeze(Object.assign(field, { label: copy.label, helpText: copy.description, detail: copy.detail }));
+  }));
 
   function isPlainObject(value) {
     return Boolean(value && typeof value === 'object' && !Array.isArray(value));
@@ -432,7 +399,6 @@
       storage: field.storage,
       default: field.default === true,
       helpText: field.helpText,
-      addonNote: field.addonNote || '',
       configFlag: field.configFlag,
       toolIds: [...(field.toolIds || [])],
     };
@@ -476,7 +442,6 @@
       storage,
       default: rawField.default === true,
       helpText: normalizeString(readMetadataField(rawField, ['helpText', 'help_text'])),
-      addonNote: DEFAULT_TOOL_CONFIG_FIELDS.find((entry) => entry.key === key)?.addonNote || '', // Renderer-owned copy (F24).
       configFlag: normalizeString(readMetadataField(rawField, ['configFlag', 'config_flag'])),
       toolIds: normalizeToolIds(readMetadataField(rawField, ['toolIds', 'tool_ids'])),
     };
@@ -507,16 +472,6 @@
     return fields.map(cloneToolConfigField);
   }
 
-  function getToggleSwitchRenderer(toggleSwitchRenderer) {
-    if (typeof toggleSwitchRenderer === 'function') {
-      return toggleSwitchRenderer;
-    }
-    // The inventory barrel exposes toggleSwitch as the render function directly.
-    const fromBarrel =
-      typeof globalThis !== 'undefined' ? globalThis.inventory?.toggleSwitch : null;
-    return typeof fromBarrel === 'function' ? fromBarrel : null;
-  }
-
   function normalizeRunMode(value, { planModeFallback = false } = {}) {
     const token = typeof value === 'string' ? value.trim().toLowerCase() : '';
     return RUN_MODES.includes(token) ? token : (planModeFallback === true ? 'plan' : 'ask');
@@ -541,116 +496,37 @@
   }
   const normalizeUnattendedGuardMinutes = (value) => normalizeBoundedCount(value, 120, 0);
   const normalizeAutoApproveStreakCap = (value) => normalizeBoundedCount(value, 500, 50);
+  // Settings cohesion S3: the chatUi builders are shims over the shared descriptor
+  // row (renderer-settings-field-binding.js); renderer-settings-event-utils.js binds them.
+  function renderDescriptorRow(id, value, options, extra) {
+    const source = isPlainObject(options) ? options : {};
+    const binding = globalThis.rendererSettingsFieldBinding || (typeof require === 'function' ? require('./renderer-settings-field-binding.js') : null);
+    const descriptors = globalThis.rendererSettingsFieldDescriptors || (typeof require === 'function' ? require('./renderer-settings-field-descriptors.js') : null);
+    const descriptor = descriptors?.getSettingDescriptor?.(id);
+    if (!descriptor || typeof binding?.renderSettingRow !== 'function') return '';
+    return binding.renderSettingRow(descriptor, descriptors.normalizeSettingValue(descriptor, value),
+      { inventory: source, ...extra });
+  }
   function buildUiLanguageFieldMarkup(options) {
     const source = isPlainObject(options) ? options : {};
-    const selectField = typeof source.selectField === 'function' ? source.selectField : getInventoryFn('selectField', 'inventorySelectField');
-    if (typeof selectField !== 'function') return '';
-    const copy = getFieldCopy('uiLanguageSelect');
-    const hint = jt('settings.language.hint', 'Applies after you restart Jenny. Translations other than English are machine-drafted previews; report anything odd.');
     const tags = Array.isArray(globalThis.jennyI18n?.SUPPORTED_TAGS) ? globalThis.jennyI18n.SUPPORTED_TAGS : UI_LANGUAGE_TAGS;
-    return selectField({ id: 'uiLanguageSelect', label: copy?.label || jt('settings.language.label', 'Language'),
-      value: normalizeUiLanguageTag(source.value), options: tags.map((tag, index) => ({ value: tag, label: UI_LANGUAGE_LABELS[index] || tag })),
-      hint, ariaLabel: copy?.label || jt('settings.language.label', 'Language'), title: hint, tooltip: hint, dataset: { 'ui-language': 'true' } })
-      + selectField({ id: 'use24HourTimeSelect', label: jt('settings.timeFormat.label', '24-hour time'),
-        hint: jt('settings.timeFormat.description', 'Use 00:00–23:59 throughout Jenny and in the time context given to the model.'),
-        value: source.use24HourTime === true ? 'true' : 'false',
-        options: [{ value: 'false', label: jt('common.off', 'Off') }, { value: 'true', label: jt('common.on', 'On') }] });
+    const uiLanguages = tags.map((tag, index) => ({ value: tag, label: UI_LANGUAGE_LABELS[index] || tag }));
+    // Registered, so the row's revert names the language ("English") and not its tag.
+    (globalThis.rendererSettingsFieldDescriptors || (typeof require === 'function' ? require('./renderer-settings-field-descriptors.js') : null))?.registerOptionSource?.('uiLanguages', uiLanguages);
+    return renderDescriptorRow('uiLanguageSelect', normalizeUiLanguageTag(source.value), source, {
+      help: jt('settings.language.hint', 'Applies after you restart Jenny. Translations other than English are machine-drafted previews; report anything odd.') })
+      + '<div class="settings-toggle-list">' + renderDescriptorRow('use24HourTime', source.use24HourTime === true, source) + '</div>';
   }
-
-  function buildSafetyModeFieldMarkup(options) {
-    const source = isPlainObject(options) ? options : {};
-    const selectField = typeof source.selectField === 'function' ? source.selectField : getInventoryFn('selectField', 'inventorySelectField');
-    if (typeof selectField !== 'function') return '';
-    const copy = getFieldCopy('safetyModeSelect');
-    const hint = jt('settings.safetyMode.hint', 'Normal: the run mode decides which tools ask. Strict: also removes web search and browsing tools. Paranoid: every tool call asks, even in Auto. Applies from the next turn.');
-    return `<div class="settings-group settings-group--flush" data-safety-mode-field>${selectField({ id: 'safetyModeSelect', label: copy?.label || jt('settings.safetyMode.label', 'Safety mode'),
-      value: normalizeSafetyMode(source.value), options: SAFETY_MODES.map((mode) => ({ value: mode, label: SAFETY_MODE_LABELS[mode] })),
-      hint, ariaLabel: copy?.label || jt('settings.safetyMode.label', 'Safety mode'), title: hint, tooltip: hint, dataset: { 'safety-mode': 'true' } })}</div>`;
-  }
-
-  function buildUnattendedGuardFieldMarkup(options) {
-    const source = isPlainObject(options) ? options : {};
-    const numberInput = typeof source.numberInput === 'function' ? source.numberInput : getInventoryFn('numberInput', 'inventoryNumberInput');
-    if (typeof numberInput !== 'function') return '';
-    const selectField = source.selectField || getInventoryFn('selectField', 'inventorySelectField');
-    const minutes = normalizeUnattendedGuardMinutes(source.value);
-    const copy = getFieldCopy('unattendedGuardMinutesInput');
-    const label = copy?.label || jt('settings.unattendedGuard.label', 'Pause Auto mode when you step away (minutes)');
-    const hint = jt('settings.unattendedGuard.optInHint', 'Off by default: Auto keeps working while you are away. When enabled, keyboard or mouse inactivity makes the next action ask for approval. Unanswered approvals stop the turn after a separate 10 minutes. Disabling prevents future inactivity pauses. An already-paused turn stays in Ask until you change its run mode or resume it after it stops; pending actions still require approval.');
-    const mode = typeof selectField === 'function' ? selectField({ id: 'unattendedGuardModeSelect', label: jt('settings.unattendedGuard.modeLabel', 'Pause Auto when inactive'),
-      value: minutes > 0 ? 'on' : 'off', options: [{ value: 'off', label: jt('common.off', 'Off') }, { value: 'on', label: jt('common.on', 'On') }],
-      dataset: { 'unattended-guard-mode': 'true' } }) : '';
-    return '<div class="settings-group settings-group--flush" data-unattended-guard-field>' + mode + numberInput({ id: 'unattendedGuardMinutesInput', label, value: minutes || 10, disabled: minutes === 0, min: 1, max: 120,
-      step: 1, fallback: 10, hint, ariaLabel: label, title: hint, tooltip: hint, dataset: { 'unattended-guard-minutes': 'true' } })
-      + `<span class="inv-number-input-hint">${defaultEscapeHtml(hint)}</span></div>`;
-  }
-  function buildAutoApproveStreakCapFieldMarkup(options) {
-    const source = isPlainObject(options) ? options : {}, numberInput = source.numberInput || getInventoryFn('numberInput', 'inventoryNumberInput');
-    if (typeof numberInput !== 'function') return '';
-    const copy = getFieldCopy('autoApproveStreakCapInput'), label = copy?.label || jt('settings.autoApproveStreakCap.label', 'Auto-approval streak cap'), hint = copy?.description || jt('settings.autoApproveStreakCap.description', 'In Auto mode, ask once after this many consecutive automatic approvals in a turn. 0 turns the cap off.');
-    return `<div class="settings-group settings-group--flush">${numberInput({ id: 'autoApproveStreakCapInput', label, value: normalizeAutoApproveStreakCap(source.value), min: 0, max: 500, step: 1, fallback: 50, hint, ariaLabel: label, title: hint, tooltip: hint, dataset: { 'auto-approve-streak-cap': 'true' } })}<span class="inv-number-input-hint">${defaultEscapeHtml(hint)}</span></div>`;
-  }
-  function buildDefaultRunModeFieldMarkup(options) {
-    const source = isPlainObject(options) ? options : {};
-    const selectField = typeof source.selectField === 'function'
-      ? source.selectField
-      : getInventoryFn('selectField', 'inventorySelectField');
-    if (typeof selectField !== 'function') return '';
-    const copy = getFieldCopy('defaultRunModeSelect');
-    const hint = RUN_MODES.map((mode) => `${mode[0].toUpperCase()}${mode.slice(1)}: ${RUN_MODE_HELP[mode]}`)
-      .concat(jt('settings.runMode.appliesToNewChats', 'Applies to new chats; the composer switcher changes the current chat.'))
-      .join(' ');
-    return `<div class="settings-group settings-group--flush" data-default-run-mode-field>${selectField({
-      id: 'defaultRunModeSelect',
-      label: copy ? copy.label : jt('settings.runMode.defaultLabel', 'Default run mode for new sessions'),
-      value: normalizeDefaultRunMode(source.value),
-      options: RUN_MODES.map((mode) => ({
-        value: mode,
-        label: `${mode[0].toUpperCase()}${mode.slice(1)}`,
-      })),
-      hint,
-      ariaLabel: copy ? copy.label : jt('settings.runMode.defaultLabel', 'Default run mode for new sessions'),
-      dataset: { 'default-run-mode': 'true' },
-    })}</div>`;
-  }
-
-  function resolveDefaultRunModeChangeEvent(event) {
-    const target = event?.target && typeof event.target.closest === 'function'
-      ? event.target.closest('[data-default-run-mode]')
-      : null;
-    if (!target) return null;
-    const value = typeof target.value === 'string' ? target.value.trim().toLowerCase() : '';
-    return RUN_MODES.includes(value) ? { value } : null;
-  }
-
-  function resolveUiLanguageChangeEvent(event) {
-    const target = event?.target?.closest?.('[data-ui-language]');
-    if (!target) return null;
-    const value = normalizeUiLanguageTag(target.value);
-    return UI_LANGUAGE_TAGS.includes(target.value) ? { value } : null;
-  }
-
-  function resolveSafetyModeChangeEvent(event) {
-    const target = event?.target?.closest?.('[data-safety-mode]');
-    if (!target) return null;
-    const value = normalizeSafetyMode(target.value);
-    return SAFETY_MODES.includes(String(target.value).trim().toLowerCase()) ? { value } : null;
-  }
-
-  function resolveUnattendedGuardChangeEvent(event) {
-    const mode = event?.target?.closest?.('[data-unattended-guard-mode]');
-    if (mode) {
-      if (!['on', 'off'].includes(mode.value)) return null;
-      const duration = mode.closest('[data-unattended-guard-field]')?.querySelector('[data-unattended-guard-minutes]');
-      return { value: mode.value === 'off' ? 0 : normalizeUnattendedGuardMinutes(duration?.value) || 10 };
-    }
-    const target = event?.target?.closest?.('[data-unattended-guard-minutes]');
-    return target && !target.disabled ? { value: normalizeUnattendedGuardMinutes(target.value) } : null;
-  }
-  const resolveAutoApproveStreakCapChangeEvent = (event) => { const target = event?.target?.closest?.('[data-auto-approve-streak-cap]'); return target ? { value: normalizeAutoApproveStreakCap(target.value) } : null; };
 
   function encodeToolConfigToggleKey(key) {
     return encodeURIComponent(String(key || ''));
+  }
+
+  // The row and its DOM ids are tokens; the switch still reports the encoded backend id.
+  // Every character outside letters, digits and "-" becomes "_<hex>_" (the underscore
+  // too), so two different keys can never land on the same row id.
+  function toolConfigRowId(toggleId) {
+    return String(toggleId || '').replace(/[^A-Za-z0-9-]/g, (ch) => '_' + ch.charCodeAt(0).toString(16) + '_');
   }
 
   function decodeToolConfigToggleKey(key) {
@@ -661,93 +537,118 @@
     }
   }
 
+  // The help line of a tool row. The PDF add-on rewrites the two PDF rows with it when
+  // its state changes, so the row and the add-on can never word it differently.
+  function composeToolHelp(field, state) {
+    const s = isPlainObject(state) ? state : {};
+    const help = [field.helpText];
+    if (s.pdfAddonNeeded === true && ['richFiles', 'imageRead'].includes(field.key)) {
+      help.push(jt('settings.tools.needsPdfAddon', 'Needs the PDF reading add-on.'));
+    }
+    if (s.blocked === true) help.push(jt('settings.tools.blockedByRuntime', 'Currently blocked by runtime availability.'));
+    return help.join(' ');
+  }
+
   function buildToolConfigFieldListMarkup(options) {
     const source = isPlainObject(options) ? options : {};
-    const escapeHtml = typeof source.escapeHtml === 'function'
-      ? source.escapeHtml
-      : defaultEscapeHtml;
-    const renderToggle = getToggleSwitchRenderer(source.toggleSwitch);
-    if (!renderToggle) {
-      return `<div class="settings-note">${escapeHtml(jt('settings.tools.controlsUnavailable', 'Tool controls are unavailable right now.'))}</div>`;
-    }
+    const binding = globalThis.rendererSettingsFieldBinding || (typeof require === 'function' ? require('./renderer-settings-field-binding.js') : null);
     const tools = isPlainObject(source.tools) ? source.tools : {};
     const availability = isPlainObject(source.availability) ? source.availability : {};
     const fields = normalizeToolConfigFields(source.fields);
-    if (!fields.length) {
-      return `<div class="settings-note">${escapeHtml(jt('settings.tools.noConfiguredCapabilities', 'No optional tool capabilities are configured.'))}</div>`;
-    }
+    const knownKeys = DEFAULT_TOOL_CONFIG_FIELDS.map((field) => field.key);
+    fields.sort((a, b) => (knownKeys.includes(a.key) ? knownKeys.indexOf(a.key) : knownKeys.length)
+      - (knownKeys.includes(b.key) ? knownKeys.indexOf(b.key) : knownKeys.length));
     return fields.map((field) => {
       const id = `${TOOL_CONFIG_TOGGLE_ID_PREFIX}${encodeToolConfigToggleKey(field.key)}`;
-      const copy = getFieldCopy(id);
-      const metadata = isPlainObject(availability[field.key]) ? availability[field.key] : {};
-      const checked = Object.prototype.hasOwnProperty.call(tools, field.key)
-        ? tools[field.key] === true
-        : field.default === true;
-      const disabled = metadata.enabled === false;
-      const noteParts = [];
-      if (field.helpText) {
-        noteParts.push(field.helpText);
-      }
-      if (disabled) {
-        noteParts.push(jt('settings.tools.blockedByRuntime', 'Currently blocked by runtime availability.'));
-      }
-      const addonNote = field.addonNote ? ` <span class="tools-config-field-addon-note">${escapeHtml(field.addonNote)}</span>` : '';
-      const noteMarkup = noteParts.length
-        ? `<div class="settings-note tools-config-field-help">${escapeHtml(noteParts.join(' '))}${addonNote}</div>`
-        : '';
-      return `
-        <article class="tools-config-field-row" data-tool-config-key="${escapeHtml(field.key)}">
-          ${renderToggle({
-            id,
-            label: field.label,
-            tooltip: copy ? copy.tooltip : '',
-            checked,
-            disabled,
-            className: 'settings-tool-config-toggle',
-          })}
-          ${noteMarkup}
-        </article>
-      `;
+      const copy = DEFAULT_TOOL_CONFIG_FIELDS.find((entry) => entry.key === field.key) || field;
+      const checked = Object.prototype.hasOwnProperty.call(tools, field.key) ? tools[field.key] === true : field.default === true;
+      const disabled = availability[field.key]?.enabled === false;
+      const parentKey = TOOL_DEPENDENTS[field.key];
+      const parentOff = Boolean(parentKey) && (Object.prototype.hasOwnProperty.call(tools, parentKey)
+        ? tools[parentKey] !== true : fields.find((entry) => entry.key === parentKey)?.default === false);
+      const rowId = toolConfigRowId(id);
+      return binding.renderToggleRow({
+        id: rowId,
+        controlId: rowId,
+        toggleId: id,
+        label: copy.label,
+        help: composeToolHelp(copy, { pdfAddonNeeded: source.pdfAddonNeeded === true, blocked: disabled }),
+        detail: copy.detail,
+        checked,
+        disabled,
+        sub: Boolean(parentKey),
+        parentOff,
+        inventory: source,
+      });
     }).join('');
   }
 
-  // Generic inventory-switch list builder: turns a flat field spec into a
-  // vertical stack of toggleSwitch rows so every settings section can drive
-  // switches the same way the Tools capability list does (zero raw-HTML budget).
+  // Patches the dependent rows under `root` (#toolsConfigFieldList) in place to the
+  // state a fresh render gives. It runs after every Tools render, because the patch
+  // guard holds the lists while focus or an unsaved key is inside them.
+  function syncToolDependents(root, options) {
+    const source = isPlainObject(options) ? options : {};
+    const toolOn = typeof source.toolOn === 'function' ? source.toolOn : () => true;
+    const availability = isPlainObject(source.availability) ? source.availability : {};
+    const setSwitchDisabled = source.inventory?.toggleSwitch?.setDisabled;
+    const markParentOff = (row, off) => {
+      if (off) row.setAttribute('data-setting-parent-off', 'true');
+      else row.removeAttribute('data-setting-parent-off');
+    };
+    // The same lock setRowDisabled applies; a write or test in flight keeps its busy lock.
+    const setUnavailable = (control, unavailable) => {
+      control.toggleAttribute('data-setting-unavailable', unavailable);
+      if (typeof setSwitchDisabled === 'function' && control.hasAttribute('data-inv-toggle')) setSwitchDisabled(control, unavailable);
+      control.disabled = unavailable || control.hasAttribute('data-setting-busy');
+    };
+    const richFiles = root?.querySelector?.(`[data-inv-toggle="${TOOL_CONFIG_TOGGLE_ID_PREFIX}richFiles"]`);
+    if (richFiles) {
+      const parentOff = !toolOn(TOOL_DEPENDENTS.richFiles);
+      const row = richFiles.closest('.settings-field');
+      if (row) markParentOff(row, parentOff);
+      setUnavailable(richFiles, parentOff || availability.richFiles?.enabled === false);
+    }
+    const webSection = root?.querySelector?.('[data-web-search-section]');
+    if (webSection) {
+      const parentOff = !toolOn(TOOL_DEPENDENTS.webSearch);
+      webSection.querySelectorAll('.settings-field').forEach((row) => markParentOff(row, parentOff));
+      webSection.querySelectorAll('select, input, button').forEach((control) => setUnavailable(control, parentOff));
+    }
+    const commandSandbox = globalThis.rendererSettingsCommandSandboxUtils
+      || (typeof require === 'function' ? require('./renderer-settings-command-sandbox.js') : null);
+    commandSandbox?.onParentChange?.(toolOn(TOOL_DEPENDENTS.commandSandbox));
+  }
+
+  // Generic inventory-switch list builder: turns a flat field spec into a stack
+  // of standard switch rows, the same way the Tools capability list does.
   function buildSettingsToggleListMarkup(options) {
     const source = isPlainObject(options) ? options : {};
-    const escapeHtml = typeof source.escapeHtml === 'function'
-      ? source.escapeHtml
-      : defaultEscapeHtml;
-    const renderToggle = getToggleSwitchRenderer(source.toggleSwitch);
+    const binding = globalThis.rendererSettingsFieldBinding || (typeof require === 'function' ? require('./renderer-settings-field-binding.js') : null);
     const fields = Array.isArray(source.fields) ? source.fields : [];
-    if (!renderToggle) {
-      return `<div class="settings-note">${escapeHtml(jt('settings.shell.controlsUnavailable', 'Controls are unavailable right now.'))}</div>`;
-    }
     return fields
       .filter((field) => isPlainObject(field) && normalizeString(field.id))
       .map((field) => {
         const id = normalizeString(field.id);
-        // A field that omits label/description inherits the plain-English
-        // baseline from renderer-settings-field-copy.js; call-site values
-        // (dynamic, state-dependent text) win.
+        // A field that omits label/description/detail inherits the baseline from
+        // renderer-settings-field-copy.js; call-site (dynamic) text wins.
         const copy = getFieldCopy(id);
-        return renderToggle({
+        return binding.renderToggleRow({
           id,
+          controlId: id,
           label: field.label || (copy ? copy.label : ''),
-          description: field.description || (copy ? copy.description : ''),
-          tooltip: field.tooltip || (copy ? copy.tooltip : ''),
+          help: field.description || (copy ? copy.description : ''),
+          detail: field.detail || (copy ? copy.detail : ''),
           checked: field.checked === true,
           disabled: field.disabled === true,
+          inventory: source,
         });
       })
       .join('');
   }
 
   // Context section: two switch lists, keyed by persistence path. "sources" are
-  // session runtime preferences (runRuntimePreferenceActivity); "runtime" are
-  // managed feature flags (applyFeatureSettings). The ids are stable so the
-  // delegated inv-toggle-change handler can route each back to the right call.
+  // session runtime preferences; "runtime" are managed feature flags. The ids
+  // are descriptor controlIds, so the shared field binding routes each switch.
   function buildContextToggleListsMarkup(options) {
     const source = isPlainObject(options) ? options : {};
     const prefs = isPlainObject(source.contextPreferences) ? source.contextPreferences : {};
@@ -766,7 +667,6 @@
       runtime: buildSettingsToggleListMarkup({
         ...shared,
         fields: [
-          { id: 'contextTokenBudgetToggle', checked: flags.token_budget === true, disabled: flagsDisabled },
           { id: 'contextCompactionToggle', checked: flags.context_compaction === true, disabled: flagsDisabled },
         ],
       }),
@@ -779,44 +679,21 @@
   function buildCompactionTuningMarkup(options) {
     const source = isPlainObject(options) ? options : {};
     const escapeHtmlFn = typeof source.escapeHtml === 'function' ? source.escapeHtml : defaultEscapeHtml;
-    const textFieldFn = typeof source.textField === 'function'
-      ? source.textField
-      : getInventoryFn('textField', 'inventoryTextField');
-    const actionButtonFn = typeof source.actionButton === 'function'
-      ? source.actionButton
-      : getInventoryFn('actionButton', 'inventoryActionButton');
-    if (typeof textFieldFn !== 'function') {
+    const row = renderDescriptorRow('compactionPromptField', source.customPromptValue || '', source, {
+      multiline: true,
+      rowClassName: 'settings-field--block',
+      disabled: source.disabled === true,
+      // The draft guard in the shell controller finds the field by this attribute.
+      dataset: { 'compaction-field': 'customPrompt' },
+      placeholder: jt('settings.context.customSummarizationPromptPlaceholder', 'Leave empty to use the built-in prompt'),
+    });
+    if (!row) {
       return '';
     }
-    const disabled = source.disabled === true;
-    const promptCopy = getFieldCopy('compactionPromptField');
-    const parts = [];
-    parts.push(textFieldFn({
-      id: 'compactionPromptField',
-      label: promptCopy ? promptCopy.label : jt('settings.context.customSummarizationPromptLabel', 'Custom summarization prompt'),
-      value: source.customPromptValue || '',
-      placeholder: jt('settings.context.customSummarizationPromptPlaceholder', 'Leave empty to use the built-in prompt'),
-      multiline: true,
-      hint: promptCopy ? promptCopy.description : '',
-      ariaLabel: promptCopy ? promptCopy.label : jt('settings.context.customSummarizationPromptLabel', 'Custom summarization prompt'),
-      disabled,
-      dataset: { 'compaction-field': 'customPrompt' },
-    }));
-    if (typeof actionButtonFn === 'function') {
-      parts.push('<div class="settings-inline-actions">' + actionButtonFn({
-        id: 'reset-compaction-prompt',
-        label: jt('settings.context.resetGuidance', 'Reset guidance'),
-        variant: 'secondary',
-        disabled: disabled || !String(source.customPromptValue || '').trim(),
-      }) + '</div>');
-    }
     const statusMessage = String(source.statusMessage || '').trim();
-    if (statusMessage) {
-      parts.push(`<div class="settings-note" id="compactionTuningStatus" data-compaction-status="${escapeHtmlFn(source.statusTone || 'info')}">${escapeHtmlFn(statusMessage)}</div>`);
-    } else {
-      parts.push('<div class="settings-note" id="compactionTuningStatus"></div>');
-    }
-    return parts.join('');
+    return row + (statusMessage
+      ? `<div class="settings-note" id="compactionTuningStatus" data-compaction-status="${escapeHtmlFn(source.statusTone || 'info')}">${escapeHtmlFn(statusMessage)}</div>`
+      : '<div class="settings-note" id="compactionTuningStatus"></div>');
   }
 
   function resolveToolConfigToggleEvent(event, fields) {
@@ -969,18 +846,18 @@
     resolveReasoningEffortSupport,
     resolveModelBadge,
     TOOL_CONFIG_TOGGLE_ID_PREFIX,
+    TOOL_DEPENDENTS,
     DEFAULT_TOOL_CONFIG_FIELDS,
     normalizeToolConfig,
     encodeToolConfigToggleKey,
     decodeToolConfigToggleKey,
+    toolConfigRowId,
     getToolConfigFieldsForRender,
     UI_LANGUAGE_TAGS,
     buildUiLanguageFieldMarkup,
-    buildSafetyModeFieldMarkup,
-    buildUnattendedGuardFieldMarkup,
-    buildAutoApproveStreakCapFieldMarkup,
-    buildDefaultRunModeFieldMarkup,
     buildToolConfigFieldListMarkup,
+    composeToolHelp,
+    syncToolDependents,
     buildSettingsToggleListMarkup,
     buildContextToggleListsMarkup,
     buildCompactionTuningMarkup,
@@ -991,11 +868,6 @@
     normalizeSafetyMode,
     normalizeUnattendedGuardMinutes,
     normalizeAutoApproveStreakCap,
-    resolveUiLanguageChangeEvent,
-    resolveSafetyModeChangeEvent,
-    resolveUnattendedGuardChangeEvent,
-    resolveAutoApproveStreakCapChangeEvent,
-    resolveDefaultRunModeChangeEvent,
     normalizeFeatureState,
     normalizeWorkspaceRootState,
     getStatusRowRenderer,
@@ -1007,8 +879,6 @@
     WEB_SEARCH_SECRET_KEY_IDS,
     normalizeWebSearchState,
     buildWebSearchSectionMarkup,
-    resolveWebSearchFieldChangeEvent,
     resolveWebSearchKeySaveClickEvent,
-    resolveCompactionFieldChangeEvent,
   };
 });

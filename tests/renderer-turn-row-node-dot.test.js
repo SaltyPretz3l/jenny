@@ -64,7 +64,7 @@ test('node-dot guard: blank assistant_text row with only an SR-only phase kicker
 
   const html = renderer.buildTurnRowListMarkup([row], [
     { id: 'assistant_blank', role: 'assistant', status: 'complete' },
-  ], { responseLoopDisplayV2: true });
+  ], {});
 
   assert.match(html, /data-row-kind="assistant_text"/);
   assert.doesNotMatch(html, /chat-row-node-dot/);

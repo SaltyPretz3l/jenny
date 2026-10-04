@@ -40,7 +40,10 @@ from sidecar.ai.tools.builtins.shell_background import (
     start_background_job,
     stop_background_job,
 )
-from sidecar.ai.tools.builtins.shell_command_split import split_compound_command
+from sidecar.ai.tools.builtins.shell_command_split import (
+    cmd_exe_multiline_refusal,
+    split_compound_command,
+)
 from sidecar.ai.tools.builtins.shell_security import (
     CommandVerdict,
     classify_command,
@@ -478,6 +481,15 @@ def run_command_tool(  # noqa: PLR0915 - linear tool-result assembly is intentio
         )
 
     command = _parse_command(arguments)
+    # run_temp_script shares _parse_command for its multi-line script body, so
+    # the single-line cmd.exe rule (HB-013) lives here, before any process.
+    multiline_refusal = cmd_exe_multiline_refusal(command)
+    if multiline_refusal is not None:
+        raise ToolExecutionFailure(
+            code=CMP_TOOL_COMMAND_BLOCKED,
+            message=multiline_refusal,
+            retryable=False,
+        )
     cwd = _resolve_cwd(arguments, workspace)
     display_cwd = _display_cwd(cwd, workspace)
     timeout_seconds = _parse_timeout(arguments)
@@ -587,6 +599,13 @@ def run_command_tool(  # noqa: PLR0915 - linear tool-result assembly is intentio
             retryable=False,
         )
     if getattr(completed, "timed_out", False):
+        # A time limit, not a glitch: the transient class CMP_TOOL_IO_FAILED
+        # carries told the model to retry unchanged, which times out again.
+        timeout_fix = (
+            f"The command timed out after {timeout_seconds:g} seconds and was stopped. "
+            f"Retry with a larger timeout_seconds (up to {MAX_TIMEOUT_SECONDS:g}) or "
+            "run_in_background=true; the same arguments will time out again."
+        )
         timeout_payload: dict[str, object] = {
             "command": command,
             "cwd": display_cwd,
@@ -596,6 +615,7 @@ def run_command_tool(  # noqa: PLR0915 - linear tool-result assembly is intentio
             "shell": _shell_name(),
             "timed_out": True,
             "timeout_seconds": timeout_seconds,
+            "message": timeout_fix,
         }
         if output_counters is not None:
             timeout_payload["output_counters"] = output_counters
@@ -610,6 +630,8 @@ def run_command_tool(  # noqa: PLR0915 - linear tool-result assembly is intentio
                 "resource_cleanup": resource_cleanup,
                 "timed_out": True,
                 "timeout_seconds": timeout_seconds,
+                "failure_class": "limit_exceeded",
+                "remediation": timeout_fix,
                 **({"output_counters": output_counters} if output_counters is not None else {}),
                 **({"output_truncated": True} if output_truncated else {}),
             },
@@ -695,10 +717,32 @@ def run_command_tool(  # noqa: PLR0915 - linear tool-result assembly is intentio
     metadata: dict[str, object] = {
         "shell": _shell_name(),
         "resource_cleanup": resource_cleanup,
+        # The tool row's "(exit N)" label and the stored result's exit_code
+        # read this; the JSON payload alone left both empty (dogfood HB-035).
+        "exit_code": exit_code,
     }
     if expected_exit_codes is not None:
         metadata["expected_exit_codes"] = list(expected_exit_codes)
         metadata["expectation_met"] = expectation_met
+    if not is_ok:
+        # The command ran; its exit status is its own result. The code's
+        # default class (internal_error, never retry) made a model report a
+        # requested failing test as an internal error (dogfood HB-035).
+        metadata["failure_class"] = "precondition_unmet"
+        if expected_exit_codes is not None:
+            metadata["remediation"] = (
+                f"The command ran and exited with code {exit_code}, which is not one of the "
+                f"expected exit codes {list(expected_exit_codes)}. That is the command's own "
+                "result, not a tool failure: read stdout and stderr, fix the cause and run "
+                "it again."
+            )
+        else:
+            metadata["remediation"] = (
+                f"The command ran and exited with code {exit_code}. That is the command's own "
+                "result, not a tool failure: read stdout and stderr. If a non-zero exit was "
+                "the outcome you wanted (for example a test meant to fail), carry on; "
+                "otherwise fix the cause and run it again."
+            )
     if classification_meta is not None:
         metadata["classification"] = classification_meta
     if full_path is not None:

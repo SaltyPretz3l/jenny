@@ -144,18 +144,18 @@ const engineTuningMethods = Object.freeze({
   },
 
   /* Clear every override, or only those on one segmented pane. Scope filtering
-   * uses the schema so `shared` fields clear from either pane. */
+   * uses the schema so `shared` fields clear from either pane. A field marked
+   * retainOnReset has no control on any page, so no reset clears it: only an
+   * explicit update of that key does. */
   resetEngineTuning(scope = null) {
     const current = this.getEngineTuning();
     const normalizedScope = String(scope || '').trim();
     const next = {};
-    if (normalizedScope) {
-      for (const [key, value] of Object.entries(current)) {
-        const field = getFieldDefinition(key);
-        if (!field) continue;
-        if (field.scope === normalizedScope || field.scope === 'shared') continue;
-        next[key] = value;
-      }
+    for (const [key, value] of Object.entries(current)) {
+      const field = getFieldDefinition(key);
+      if (!field) continue;
+      if (!field.retainOnReset && (!normalizedScope || field.scope === normalizedScope || field.scope === 'shared')) continue;
+      next[key] = value;
     }
     if (JSON.stringify(next) === JSON.stringify(current)) return current;
     return cloneEngineTuning(this._writeState(

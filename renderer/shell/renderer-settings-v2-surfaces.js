@@ -22,6 +22,7 @@
     endpoint: 'Endpoint',
     personality: 'Personality',
     skills: 'Skills',
+    capabilities: jt('settings.setup.capabilities', 'Tools and permissions'),
   });
   // Map scene-utils tones (success/danger/pending/muted) to status-dot CSS
   // classes (--ok/--error/--warn/--muted). Keep the mapping at the boundary
@@ -64,7 +65,13 @@
         <span class="settings-progress-status">${escapeHtml(meta.label)}</span>
       </li>`;
     }).join('');
-    const summary = setup.setupComplete
+    // The headline follows the same current-health rule as the Setup row in
+    // Account (renderer-settings-core-renderers.js), never the persisted
+    // setupComplete flag, which stays true after a required step regresses.
+    const complete = sceneUtils && typeof sceneUtils.computeSetupHealth === 'function'
+      ? sceneUtils.computeSetupHealth(setup).state === 'complete'
+      : done === total;
+    const summary = complete
       ? jt('settings.setup.completeSummary', 'Setup is complete. Re-run any step to refine your settings.')
       : jt('settings.setup.stepsComplete', '{done} of {total} steps complete.', { done, total });
     return `<div class="settings-progress-card" data-component="settings-setup-progress">

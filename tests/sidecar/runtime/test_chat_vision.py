@@ -11,7 +11,6 @@ from sidecar.ai.engines.vision_input import VisionImage
 from sidecar.runtime import chat_vision
 from sidecar.runtime.chat_models import ChatRequestError
 
-
 BudgetCheck = Callable[..., tuple[list[dict[str, Any]], Any, Any]]
 
 

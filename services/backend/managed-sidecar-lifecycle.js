@@ -62,6 +62,7 @@ function disposeSidecarClient(service) {
   const client = service.sidecarClient;
   detachSidecarClientErrorListener(service, client);
   service.sidecarClient = null;
+  service._managedInitializedProcess = null;
   service._sidecarClientErrorListener = null;
   service._sidecarClientLateNotificationListener = null;
   service._sidecarClientMonitorNotificationListener = null;
@@ -174,6 +175,13 @@ async function initializeManagedSidecar(
     void service.sessionRuntime?.recoverPausedCancellations?.().then(result => {
       if (result.requested) service._emitServiceLog('INFO', 'session_runtime.paused_cancellation_recovery', result);
     }).catch(() => service._emitServiceLog('ERROR', 'session_runtime.paused_cancellation_recovery_failed', {}));
+    // A project delete whose memory move was never answered is finished now
+    // that a sidecar can answer (project-delete-operation.js).
+    void Promise.resolve(service.projectApplicationService?.reconcilePendingProjectDeletes?.()).then(result => {
+      if (result?.settled || result?.discarded || result?.pending) {
+        service._emitServiceLog('INFO', 'projects.delete_memory_move_recovery', result);
+      }
+    }).catch(() => service._emitServiceLog('ERROR', 'projects.delete_memory_move_recovery_failed', {}));
   }
   return applyResult ? applyManagedInitializePayload(service, payload) : payload;
 }
@@ -285,6 +293,8 @@ async function restartManagedSidecar(service, reason) {
   service._emitServiceLog('INFO', 'sidecar.restart_requested', { reason });
   try {
     service.currentStatus = null;
+    // The respawned process reads 'ready' only once it is initialized.
+    service._managedInitializedProcess = null;
     service._modelLifecycle = {
       ...(service._modelLifecycle || {}),
       state: 'unloaded',
@@ -331,6 +341,20 @@ async function refreshManagedConfig(service, reason = 'config_updated', {
     });
     return null;
   }
+  // While a privileged workload holds the GPU lease the chat engine is parked
+  // (chat-gpu-handoff.js): a stack rebuild now would bind a key-less or dead
+  // endpoint under the turn that is waiting to resume on the parked one.
+  const admission = service.exclusiveGpuCoordinator?.getState?.();
+  if (admission && admission.state !== 'chat_resident') {
+    // Remembered, not dropped: the handoff replays one refresh after release.
+    service.deferredConfigRefreshReason = String(reason);
+    service._emitServiceLog('INFO', 'sidecar.config_refresh_deferred', {
+      reason,
+      activeStreams: service.activeStreams?.size || 0,
+      scope: 'gpu_lease_held',
+    });
+    return null;
+  }
   service._emitServiceLog('INFO', 'sidecar.config_refresh_requested', { reason });
   // Snapshot state before the RPC so we can roll back on failure.
   const prevModel = service.currentModel;
@@ -340,6 +364,7 @@ async function refreshManagedConfig(service, reason = 'config_updated', {
   const prevEngineFallback = service._lastEngineFallback;
   const prevPendingModel = service._managedPendingModel;
   const prevModelLifecycle = service._modelLifecycle;
+  const refreshProcess = service.sidecarManager?.process || null;
   try {
     const payload = await service._initializeManagedSidecar({
       reason,
@@ -356,6 +381,17 @@ async function refreshManagedConfig(service, reason = 'config_updated', {
     });
     return payload;
   } catch (error) {
+    // A restart (or exit) replaced the process while this refresh was pending:
+    // the snapshot describes a process that is gone, so neither restore nor
+    // publish it. Whoever replaced the process owns the state now.
+    if (refreshProcess && service.sidecarManager?.process !== refreshProcess) {
+      service._emitServiceLog('WARN', 'sidecar.config_refresh_failed', {
+        reason,
+        message: String(error && error.message || error),
+        superseded: true,
+      });
+      throw error;
+    }
     // Restore previous state so a failed refresh does not leave the
     // service in a half-applied configuration.
     service.currentModel = prevModel;
@@ -369,6 +405,13 @@ async function refreshManagedConfig(service, reason = 'config_updated', {
       reason,
       message: String(error && error.message || error),
     });
+    // The failed initialize already pushed its own status (model_unavailable).
+    // Push the restored one, or the renderer keeps showing the failure while
+    // turns run on the model that never went away (dogfood HB-033). Lazy
+    // require: local-engine-status.js requires this module.
+    if (!service._disposed && !service._stopping && typeof service.emit === 'function') {
+      service.emit('backend-status', require('./local-engine-status').buildObservedBackendStatus(service));
+    }
     throw error;
   }
 }

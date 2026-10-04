@@ -32,6 +32,7 @@ from sidecar.ai.routing import tool_resource_deferral as _tool_resource_deferral
 from sidecar.ai.routing import tool_restored_inputs as _tool_restored_inputs
 from sidecar.ai.tools import assembly as _tools_assembly
 from sidecar.ai.tools import plan_artifact_policy as _plan_artifact_policy
+from sidecar.ai.tools import sanitization as _sanitization
 from sidecar.ai.tools import schema_examples as _tools_schema_examples
 from sidecar.ai.tools import tool_actions as _tool_actions
 from sidecar.ai.tools.builtins import shell_security as _shell_security
@@ -73,9 +74,7 @@ from sidecar.runtime.tool_execution_support import (
     scan_tool_arguments,
     validate_tool_arguments,
 )
-from sidecar.runtime.turn_state import (
-    current_live_run_mode_state,
-)
+from sidecar.runtime.turn_state import current_live_run_mode_state
 
 if TYPE_CHECKING:
     from sidecar.runtime.tool_execution_support import ApprovalRequest, ToolExecutionOutcome
@@ -135,10 +134,6 @@ def _router() -> Any:
 
         _router_module = _mod
     return _router_module
-
-
-def _is_paranoid_safety_mode(config: Any) -> bool:
-    return str(getattr(config, "safety_mode", "normal")).lower() == "paranoid"
 
 
 logger = logging.getLogger(__name__)
@@ -400,7 +395,10 @@ def approval_if_needed(
             call,
             descriptor_name=descriptor.name,
         )
-        paranoid_mode = _is_paranoid_safety_mode(kernel._config)
+        request_safety = _route_policy_runtime.current_request_safety()
+        paranoid_mode = (
+            _route_policy_runtime.resolve_safety_mode(request_safety, kernel._config) == "paranoid"
+        )
         if shell_classification is not None:
             if shell_classification.verdict is CommandVerdict.BLOCKED:
                 raise ToolExecutionFailure(
@@ -503,7 +501,9 @@ def approval_if_needed(
             )
         if auto_run:
             streak_request = _route_policy_runtime.streak_cap_request(
-                live_run_mode, kernel._config.auto_approve_streak_cap, call, descriptor, mode
+                live_run_mode,
+                _route_policy_runtime.resolve_streak_cap(request_safety, kernel._config),
+                call, descriptor, mode,
             )
             if streak_request is not None:
                 return streak_request
@@ -649,8 +649,8 @@ def inject_dispatch_trace_id(
         call_id = str(call.call_id or "").strip()
         if trace_id and call_id:
             tool_arguments["_jenny_trace_id"] = f"{trace_id}.{call_id}"
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 - diagnostic
+        logger.debug("dispatch trace id not injected", exc_info=True)
     return tool_arguments
 
 
@@ -901,7 +901,8 @@ def execute_tool(
                 "tool": call.tool_id,
                 "code": failure_code,
                 "mcp_code": str(error.code or ""),
-                "error_message": error.message,
+                # HB-017: the model keeps real paths; the log never does.
+                "error_message": _sanitization.redact_error_paths(error.message),
                 "request_id": request_id,
                 **error.to_metadata(),
             },

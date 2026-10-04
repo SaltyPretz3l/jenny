@@ -15,17 +15,6 @@ if str(ROOT) not in sys.path:
 from scripts.checks.check_plugin_boundary import inspect_javascript  # noqa: E402
 
 EXPECTED = {
-    "network": {
-        "metadata_document_max_bytes": 2_097_152,
-        "refresh_total_max_bytes": 16_777_216,
-        "redirect_max": 5,
-        "dns_answers_per_hop_max": 16,
-        "connect_timeout_ms": 10_000,
-        "first_byte_timeout_ms": 15_000,
-        "total_timeout_ms": 120_000,
-        "tuf_refresh_timeout_ms": 60_000,
-        "git_fetch_timeout_ms": 120_000,
-    },
     "distribution": {
         "solver_nodes_max": 64,
         "dependencies_per_node_max": 16,
@@ -33,50 +22,15 @@ EXPECTED = {
         "solver_decisions_max": 4_096,
         "solver_incompatibilities_max": 8_192,
         "solver_timeout_ms": 2_000,
-        "tuf_root_updates_max": 32,
-        "tuf_delegated_roles_max": 64,
-        "tuf_targets_max": 10_000,
         "cache_max_bytes": 536_870_912,
         "installed_store_max_bytes": 4_294_967_296,
         "installed_plugin_max_bytes": 536_870_912,
         "prior_generations_per_plugin": 2,
         "data_snapshots_per_plugin": 2,
     },
-    "remote_mcp": {
-        "descriptors_max": 64,
-        "tools_per_descriptor_max": 64,
-        "active_contributions_max": 256,
-        "schema_item_max_bytes": 65_536,
-        "discovery_max_bytes": 4_194_304,
-        "inflight_global_max": 4,
-        "inflight_per_descriptor_max": 1,
-        "queue_global_max": 16,
-        "queue_per_descriptor_max": 4,
-        "response_max_bytes": 8_388_608,
-        "sse_line_max_bytes": 65_536,
-        "sse_events_max": 10_000,
-    },
-    "authorization": {
-        "response_max_bytes": 65_536,
-        "scopes_max": 32,
-        "flow_ttl_ms": 600_000,
-        "flows_global_max": 4,
-        "flows_per_resource_max": 1,
-        "step_up_attempts_max": 2,
-        "access_token_cache_max": 64,
-    },
 }
 
 RUNTIME_DECLARATIONS = {
-    "services/plugins/network/bounded-http-client.js": {
-        "DEFAULT_LIMITS": {
-            "max_redirects": 5,
-            "connect_timeout_ms": 10_000,
-            "first_byte_timeout_ms": 15_000,
-            "total_timeout_ms": 120_000,
-        },
-    },
-    "services/plugins/network/dns-pinning.js": {"MAX_DNS_ANSWERS": 16},
     "services/plugins/distribution/distribution-limits.js": {
         "LIMITS": {
             "solverNodes": 64,
@@ -85,24 +39,6 @@ RUNTIME_DECLARATIONS = {
             "cacheBytes": 536_870_912,
             "retainedGenerations": 3,
         },
-    },
-    "services/plugins/remote-mcp/operation-scheduler.js": {
-        "DEFAULT_LIMITS": {
-            "global_inflight": 4,
-            "descriptor_inflight": 1,
-            "global_queue": 16,
-            "descriptor_queue": 4,
-        },
-    },
-    "services/plugins/remote-mcp/transport.js": {"RESPONSE_MAX_BYTES": 8_388_608},
-    "services/plugins/remote-mcp/sse-parser.js": {
-        "DEFAULT_LIMITS": {"max_line_bytes": 65_536, "max_events": 10_000},
-    },
-    "services/plugins/auth/oauth-flow-service.js": {
-        "FLOW_TTL_MS": 600_000,
-        "MAX_FLOWS": 4,
-        "MAX_STEP_UP_ATTEMPTS": 2,
-        "MAX_SCOPES": 32,
     },
 }
 

@@ -7,12 +7,19 @@
   root.rendererSettingsEventUtils = factory(root.rendererAsyncFence);
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (asyncFenceModule) {
   const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
-  const CHAT_UI_ERROR_TITLES = Object.freeze({
+  const FIELD_ERROR_TITLES = Object.freeze({
     use24HourTime: jt('settings.timeFormat.updateFailed', 'Time Format Update Failed'),
     uiLanguage: jt('settings.uiLanguage.updateFailed', 'Language Update Failed'),
     safetyMode: jt('settings.safetyMode.updateFailed', 'Safety Mode Update Failed'),
     unattendedGuardMinutes: jt('settings.unattendedGuard.updateFailed', 'Unattended Guard Update Failed'),
     autoApproveStreakCap: jt('settings.autoApproveStreakCap.updateFailed', 'Auto-approval Streak Cap Update Failed'),
+    transcriptViewDefault: jt('settings.transcriptView.updateFailed', 'Transcript View Update Failed'),
+    defaultRunMode: jt('settings.runMode.updateFailed', 'Default Run Mode Update Failed'),
+    startupModelLoad: jt('settings.models.startupLoad.updateFailed', 'Startup Load Update Failed'),
+    appZoomPercent: jt('settings.appearance.appZoomUpdateFailed', 'App Zoom Update Failed'),
+    'featureFlags.text_spellcheck': jt('settings.editor.spellCheckUpdateFailed', 'Spell Check Update Failed'),
+    'webSearch.provider': jt('settings.tools.webSearch.providerUpdateFailed', 'Web Search Provider Update Failed'),
+    'webSearch.searxngUrl': jt('settings.tools.webSearch.searxngUrlUpdateFailed', 'SearXNG URL Update Failed'),
   });
   const settingsCoreRenderers = (typeof globalThis !== 'undefined' && globalThis.rendererSettingsCoreRenderers)
     || (typeof require === 'function' ? require('./renderer-settings-core-renderers') : null)
@@ -23,25 +30,12 @@
   const settingsSectionBinders = (typeof globalThis !== 'undefined' && globalThis.rendererSettingsSectionBinders)
     || (typeof require === 'function' ? require('./renderer-settings-section-binders') : null)
     || {};
-  const settingsPersistenceAdapters = (typeof globalThis !== 'undefined' && globalThis.rendererSettingsPersistenceAdapters)
-    || (typeof require === 'function' ? require('./renderer-settings-persistence-adapters') : null)
-    || {};
   const {
     getToolConfigFieldsForRender = function fallbackGetToolConfigFieldsForRender() { return []; },
     resolveToolConfigToggleEvent = function fallbackResolveToolConfigToggleEvent() { return null; },
-    normalizeDefaultRunMode = function fallbackNormalizeDefaultRunMode() { return 'ask'; },
-    resolveDefaultRunModeChangeEvent = function fallbackResolveDefaultRunModeChangeEvent() { return null; },
-    normalizeUiLanguageTag = function fallbackNormalizeUiLanguageTag() { return 'en'; },
-    normalizeSafetyMode = function fallbackNormalizeSafetyMode() { return 'normal'; },
-    normalizeUnattendedGuardMinutes = function fallbackNormalizeUnattendedGuardMinutes() { return 0; },
-    normalizeAutoApproveStreakCap = function fallbackNormalizeAutoApproveStreakCap() { return 50; },
-    resolveUiLanguageChangeEvent = function fallbackResolveUiLanguageChangeEvent() { return null; },
-    resolveSafetyModeChangeEvent = function fallbackResolveSafetyModeChangeEvent() { return null; },
-    resolveUnattendedGuardChangeEvent = function fallbackResolveUnattendedGuardChangeEvent() { return null; },
-    resolveAutoApproveStreakCapChangeEvent = function fallbackResolveAutoApproveStreakCapChangeEvent() { return null; },
-    resolveWebSearchFieldChangeEvent = function fallbackResolveWebSearchFieldChangeEvent() { return null; },
+    toolConfigRowId = function fallbackToolConfigRowId(id) { return id; },
+    normalizeFeatureState = function fallbackNormalizeFeatureState(payload) { return payload || {}; },
     resolveWebSearchKeySaveClickEvent = function fallbackResolveWebSearchKeySaveClickEvent() { return null; },
-    resolveCompactionFieldChangeEvent = function fallbackResolveCompactionFieldChangeEvent() { return null; },
     WEB_SEARCH_SECRET_KEY_IDS = ['brave', 'tavily', 'serper', 'google_pse', 'google_pse_cx'],
   } = settingsSupport;
 
@@ -49,36 +43,11 @@
     const { state } = deps;
     const webSearchSecretStatusGate = asyncFenceModule.createGenerationGate();
 
-    // UIUX-028(c) + audit hardening: the overall-app-zoom path predates
-    // createSettingsAdapter and writes state.ui.appZoomPercent directly, so
-    // it shares the adapters' settle-group tracker: the newest write
-    // reconciles immediately; rollback DEFERS to group close, targeting the
-    // true pre-group baseline -- never a prior overlapping write's
-    // un-persisted optimistic value (the audited double-failure strand).
-    const appZoomWriteGroup = typeof settingsPersistenceAdapters.createWriteGroup === 'function'
-      ? settingsPersistenceAdapters.createWriteGroup()
-      : { open: () => 0, isNewest: () => true, settle: () => null };
-    function reconcileAppZoomGroupClose(closed) {
-      if (closed && (Number(state.ui.appZoomPercent) || 100) !== closed.value) {
-        state.ui.appZoomPercent = closed.value;
-        renderSettings();
-      }
-    }
-
     const {
       settingsView,
-      appearanceThemeBundleSelect,
-      appearancePaletteSelect,
-      appearanceTypographySelect,
-      appearanceFontScaleSelect,
-      appearanceChatWidthMount,
-      appearanceSurfaceEffectSelect,
-      appearanceHoloList,
-      appearanceSpellcheckList,
-      composerChatZoomSelect,
-      appearanceAppZoomSelect,
+      appearanceSettingsSection,
       toolsWorkspaceChooseButton,
-      contextHistoryScopeSelect,
+      contextSettingsSection,
       contextSourcesList,
       contextRuntimeList,
       modelStartupLoadList,
@@ -87,15 +56,15 @@
       toolsApprovalRulesList,
       editorSettingsFieldList,
       homeSettingsFieldList,
+      notificationsSettingsSection,
+      notificationsStatus,
       getSectionDom,
     } = deps.dom;
 
     const {
       renderAll,
       renderSettings,
-      renderComposerPopover,
       applyAppearancePreferences,
-      applyChatZoomPercent,
       appearanceUtils,
       applySurfaceEffect,
       activateSurfaceEffect,
@@ -142,7 +111,7 @@
     let bound = false;
     let listenerOptions = undefined;
     let ensureSectionBindings = function noopEnsureSectionBindings() {};
-    const chatUiWriteVersions = Object.create(null);
+    let sectionShown = function noopSectionShown() {};
     const cleanupFns = [];
     const boundSections = new Set();
 
@@ -169,36 +138,257 @@
       return true;
     }
 
-    function persistChatUiSetting({ key, value, normalize }) {
-      const api = (typeof window !== 'undefined' && window.jennyShell?.chatUi) || null;
-      const errorTitle = key === 'defaultRunMode'
-        ? jt('settings.runMode.updateFailed', 'Default Run Mode Update Failed')
-        : CHAT_UI_ERROR_TITLES[key];
-      if (!api || typeof api.updateSettings !== 'function') {
-        renderSettings();
-        showSessionActionError(new Error('Chat settings are unavailable.'), errorTitle);
-        return Promise.resolve();
+    // Settings cohesion: one adapter per persisted object (chatUi, features,
+    // engines, runtimePreferences, appearance, windowUi), registered once and
+    // applied after the owner acknowledges the save; each delegated container
+    // binds its descriptor ids.
+    const fieldBinding = globalThis.rendererSettingsFieldBinding
+      || (typeof require === 'function' ? require('./renderer-settings-field-binding') : null);
+    const fieldDescriptors = globalThis.rendererSettingsFieldDescriptors
+      || (typeof require === 'function' ? require('./renderer-settings-field-descriptors') : null);
+    const settingsRegistry = typeof fieldBinding?.createSettingsAdapterRegistry === 'function'
+      ? fieldBinding.createSettingsAdapterRegistry({ log: appendClientLog })
+      : null;
+    const confirmError = () => new Error(jt('settings.chatUi.confirmError', 'The saved setting could not be confirmed.'));
+    function createChatUiAdapter() {
+      const owned = fieldDescriptors.listSettingDescriptors({ adapterId: 'chatUi' });
+      const byKey = new Map(owned.map((descriptor) => [descriptor.key, descriptor]));
+      const normalizeKey = (key, value) => (byKey.has(key) ? fieldDescriptors.normalizeSettingValue(byKey.get(key), value) : value);
+      return {
+        id: 'chatUi',
+        mode: 'patch',
+        optimistic: false,
+        read: () => Object.fromEntries(owned.map((descriptor) => [descriptor.key, state[descriptor.key]])),
+        normalize: (source) => Object.fromEntries(Object.keys(source || {}).map((key) => [key, normalizeKey(key, source[key])])),
+        // The transcript view default saves through its controller, which resets
+        // the sessions that inherit it once the save is confirmed.
+        write: (patch) => {
+          const { transcriptViewDefault: view, ...rest } = patch;
+          const api = (typeof window !== 'undefined' && window.jennyShell?.chatUi) || null;
+          const controller = globalThis.rendererTranscriptViewController;
+          const hasRest = Object.keys(rest).length > 0;
+          if ((hasRest && typeof api?.updateSettings !== 'function') || (view !== undefined && typeof controller?.setDefault !== 'function')) {
+            throw new Error('Chat settings are unavailable.');
+          }
+          return Promise.all([hasRest ? api.updateSettings(rest) : {}, view === undefined ? undefined : controller.setDefault(view)])
+            .then(([snapshot, confirmed]) => (view === undefined ? snapshot : { ...snapshot, transcriptViewDefault: confirmed ?? state.transcriptViewDefault }));
+        },
+        ack: (snapshot, patch, composed) => {
+          const next = { ...composed };
+          Object.keys(patch).forEach((key) => {
+            if (!Object.prototype.hasOwnProperty.call(snapshot || {}, key) || normalizeKey(key, snapshot[key]) !== patch[key]) throw confirmError();
+            next[key] = normalizeKey(key, snapshot[key]);
+          });
+          return next;
+        },
+        apply: (next, keys) => {
+          if (!bound) return;
+          keys.forEach((key) => { state[key] = next[key]; });
+          if (keys.includes('use24HourTime')) {
+            globalThis.jennyI18n?.setTimeFormat?.(state.use24HourTime);
+            renderAll();
+          }
+          renderSettings();
+        },
+        // Side effects of a confirmed save only (apply also runs on rollback).
+        onSettled: (ok, keys) => {
+          if (!ok || !bound) return;
+          if (keys.includes('defaultRunMode') && !state.currentSessionId && state.runtimeDraft) state.runtimeDraft.runMode = state.defaultRunMode;
+          if (!keys.includes('uiLanguage')) return;
+          try { window.localStorage.setItem('jenny.ui.language', state.uiLanguage); } catch (_error) { /* best effort */ }
+          if (typeof showToastMessage === 'function') showToastMessage(jt('settings.language.savedToast', 'Language saved. Restart Jenny to switch the interface.'), { tone: 'info', dedupeKey: 'settings:ui-language' });
+        },
+      };
+    }
+    // Feature settings: toolConfig.<key> reads the tool switches (manifest fields)
+    // and writes `tools`; featureFlags.<flag> writes `featureOverrides`.
+    // refreshFeatureState makes the one bridge call and folds the payload into
+    // state.features (with its side effects), so apply only re-renders.
+    const FEATURE_PATCH_GROUPS = { toolConfig: 'tools', featureFlags: 'featureOverrides' };
+    function projectFeatures(features) {
+      const source = features && typeof features === 'object' ? features : {};
+      const tools = source.tools || {};
+      return { ...source, toolConfig: Object.fromEntries(getToolConfigFieldsForRender(source).map((field) => [field.key, Object.prototype.hasOwnProperty.call(tools, field.key) ? tools[field.key] === true : field.default])) };
+    }
+    function createFeaturesAdapter() {
+      return {
+        id: 'features',
+        mode: 'patch',
+        optimistic: false,
+        read: () => projectFeatures(state.features),
+        normalize: (source) => source || {},
+        write: (payload) => {
+          const current = projectFeatures(state.features);
+          const patch = {};
+          const changed = [];
+          Object.keys(payload).forEach((group) => Object.keys(payload[group] || {}).forEach((name) => {
+            if (payload[group][name] === current[group]?.[name]) return;
+            if (group === 'toolConfig' && state.features?.availability?.tools?.[name]?.enabled === false) {
+              throw new Error(jt('settings.tools.blockedByRuntime', 'Currently blocked by runtime availability.'));
+            }
+            const target = FEATURE_PATCH_GROUPS[group] || group;
+            patch[target] = { ...patch[target], [name]: payload[group][name] };
+            changed.push([group, name]);
+          }));
+          return Promise.resolve(refreshFeatureState(patch)).then((result) => ({ result, changed }));
+        },
+        ack: ({ result, changed }, payload) => {
+          if (result === undefined) throw confirmError();
+          const next = projectFeatures(normalizeFeatureState(result));
+          changed.forEach(([group, name]) => { if (next[group]?.[name] !== payload[group][name]) throw confirmError(); });
+          return next;
+        },
+        apply: () => { if (bound) renderSettings(); },
+      };
+    }
+    function createEnginesAdapter() {
+      return {
+        id: 'engines',
+        mode: 'patch',
+        optimistic: false,
+        read: () => ({ ...state.localEngines }),
+        normalize: (source) => source || {},
+        write: (patch) => window.jennyShell.engines.updateSettings(patch),
+        ack: (result, patch) => {
+          Object.keys(patch).forEach((key) => { if (result?.localEngines?.[key] !== patch[key]) throw confirmError(); });
+          return { ...result.localEngines };
+        },
+        apply: (next) => {
+          if (!bound) return;
+          state.localEngines = next;
+          renderSettings();
+        },
+      };
+    }
+    // Context preferences: runRuntimePreferenceActivity owns the activity row and
+    // the undo snapshot; the acknowledgement is the re-read preference state.
+    function createRuntimePreferencesAdapter() {
+      return {
+        id: 'runtimePreferences',
+        mode: 'patch',
+        optimistic: false,
+        read: () => ({ contextPreferences: { ...getCurrentRuntimePreferences().contextPreferences } }),
+        normalize: (source) => source || {},
+        write: (patch) => Promise.resolve(runRuntimePreferenceActivity({
+          patch,
+          scopes: [ACTIVITY_SCOPE.settingsContextPreferences],
+          previousValue: getRuntimePreferenceSnapshot(),
+          failureMessage: () => jt('settings.context.preferencesSaveFailed', 'Could not save context preferences.'),
+          successMessage: '',
+        })).then(() => getCurrentRuntimePreferences()),
+        ack: (preferences, patch) => {
+          const saved = preferences?.contextPreferences || {};
+          Object.keys(patch.contextPreferences).forEach((key) => { if (saved[key] !== patch.contextPreferences[key]) throw confirmError(); });
+          return { contextPreferences: { ...saved } };
+        },
+        apply: () => { if (bound) renderSettings(); },
+      };
+    }
+    // Appearance (renderer-local store, jenny.appearance.v2). The view carries
+    // the Composer border as a boolean and the theme bundle its axes match
+    // ('custom' when none does); a bundle id composed onto it is a bundle choice.
+    const appearanceModel = (typeof appearanceUtils?.normalizeAppearancePreferences === 'function' && appearanceUtils)
+      || globalThis.appearanceUtils
+      || (typeof require === 'function' ? require('../shared/appearance-utils') : null);
+    function createAppearanceAdapter() {
+      const storedOf = (view) => appearanceModel.normalizeAppearancePreferences({ ...view, composerHoloId: view?.composerHoloId === false ? 'off' : view?.composerHoloId });
+      const bundleIdOf = (preferences) => appearanceModel.detectActiveThemeBundle(preferences)?.id || 'custom';
+      return {
+        id: 'appearance',
+        mode: 'object',
+        optimistic: false,
+        read: () => state.ui.appearance,
+        normalize: (source) => {
+          const stored = storedOf(source);
+          const chosen = typeof source?.themeBundleId === 'string' && source.themeBundleId;
+          return { ...stored, composerHoloId: stored.composerHoloId !== 'off', themeBundleId: chosen || bundleIdOf(stored) };
+        },
+        write: (view) => {
+          const current = appearanceModel.normalizeAppearancePreferences(state.ui.appearance);
+          let next = storedOf(view);
+          // A bundle owns palette, typography, surface and the Composer border:
+          // Text size and Chat width survive a bundle switch.
+          const bundle = view.themeBundleId !== bundleIdOf(current) ? appearanceModel.resolveThemeBundle(view.themeBundleId) : null;
+          if (bundle) next = appearanceModel.normalizeAppearancePreferences({ ...next, ...appearanceModel.pickThemeBundleAxes(bundle.preferences) });
+          // 'custom', an unknown bundle or an unchanged view writes nothing.
+          if (JSON.stringify(next) === JSON.stringify(current)) return { applied: current, written: next };
+          return { applied: applyAppearancePreferences(next), written: next };
+        },
+        // applyAppearancePreferences returns the previous preferences when the
+        // store refuses the write, so every written axis must come back.
+        ack: ({ applied, written }) => {
+          const saved = appearanceModel.normalizeAppearancePreferences(applied);
+          if (!applied || Object.keys(written).some((key) => saved[key] !== written[key])) throw confirmError();
+          return saved;
+        },
+        apply: (next, keys) => {
+          if (!bound) return;
+          if (keys.includes('surfaceEffectId') || keys.includes('themeBundleId')) {
+            applySurfaceEffect();
+            activateSurfaceEffect(next.surfaceEffectId || 'none');
+          }
+          // The title-bar load read-out lives in the header, which renderAll repaints.
+          if (keys.includes('titlebarLoad')) renderAll(); else renderSettings();
+        },
+      };
+    }
+    // Overall app zoom persists and applies in the main process
+    // (webContents.setZoomFactor); the echoed value is the acknowledgement.
+    // The Ctrl +/- shortcuts write the same value on their own
+    // (renderer-lifecycle-appearance-utils.js): a settle replaces only what a
+    // select edit put in state, never a shortcut step taken since.
+    function createWindowUiAdapter() {
+      let own = null;
+      return {
+        id: 'windowUi',
+        mode: 'patch',
+        optimistic: true,
+        read: () => ({ appZoomPercent: Number(state.ui.appZoomPercent) || 110 }), // APP_ZOOM_DEFAULT (services/shell-config-zoom-state.js)
+        normalize: (source) => source || {},
+        write: (patch) => {
+          const api = (typeof window !== 'undefined' && window.jennyShell?.windowUi) || null;
+          if (typeof api?.updateSettings !== 'function') throw confirmError();
+          return api.updateSettings({ appZoomPercent: patch.appZoomPercent });
+        },
+        ack: (result, patch) => {
+          const echoed = Number(result?.appZoomPercent);
+          if (!Number.isFinite(echoed) || echoed !== patch.appZoomPercent) throw confirmError();
+          return { appZoomPercent: echoed };
+        },
+        apply: (next, _keys, phase) => {
+          if (!bound) return;
+          if (!phase?.settled || Number(state.ui.appZoomPercent) === own) {
+            state.ui.appZoomPercent = next.appZoomPercent;
+            own = next.appZoomPercent;
+          }
+          renderSettings();
+        },
+      };
+    }
+    function fieldErrorTitle(descriptor) {
+      if (FIELD_ERROR_TITLES[descriptor.key]) return FIELD_ERROR_TITLES[descriptor.key];
+      if (descriptor.adapterId === 'runtimePreferences') return jt('settings.context.updateFailed', 'Context Update Failed');
+      if (descriptor.key.startsWith('featureFlags.')) return jt('settings.context.featureUpdateFailed', 'Context Feature Update Failed');
+      if (descriptor.key.startsWith('toolConfig.')) return jt('settings.tools.toggleUpdateFailed', '{label} Update Failed', { label: fieldBinding.resolveSettingCopy(descriptor).label });
+      return jt('settings.chatUi.updateFailed', 'Setting Update Failed');
+    }
+    function bindDescriptorFields(container, ids, onApplied) {
+      if (!settingsRegistry || !fieldDescriptors || typeof fieldBinding?.bindSettingFields !== 'function') return null;
+      if (!settingsRegistry.has('chatUi')) {
+        [createChatUiAdapter, createFeaturesAdapter, createEnginesAdapter, createRuntimePreferencesAdapter, createAppearanceAdapter, createWindowUiAdapter]
+          .forEach((create) => settingsRegistry.register(create()));
       }
-      const version = (chatUiWriteVersions[key] || 0) + 1;
-      chatUiWriteVersions[key] = version;
-      return Promise.resolve(api.updateSettings({ [key]: value })).then((snapshot) => {
-        if (!bound || version !== chatUiWriteVersions[key]) return undefined;
-        if (!Object.prototype.hasOwnProperty.call(snapshot || {}, key) || normalize(snapshot[key]) !== value) {
-          throw new Error(key === 'defaultRunMode' ? 'The saved run mode could not be confirmed.' : jt('settings.chatUi.confirmError', 'The saved setting could not be confirmed.'));
-        }
-        state[key] = normalize(snapshot[key]);
-        if (key === 'use24HourTime') {
-          globalThis.jennyI18n?.setTimeFormat?.(state[key]);
-          renderAll();
-        }
-        if (key === 'defaultRunMode' && !state.currentSessionId && state.runtimeDraft) state.runtimeDraft.runMode = state[key];
-        renderSettings();
-        return state[key];
-      }).catch((error) => {
-        if (!bound || version !== chatUiWriteVersions[key]) return undefined;
-        renderSettings();
-        showSessionActionError(error, errorTitle);
-        return undefined;
+      return fieldBinding.bindSettingFields({
+        container,
+        ids,
+        registry: settingsRegistry,
+        registerListener,
+        listenerOptions,
+        onApplied,
+        // The reason shows on the row or under the switch; a toast only when it has no place on the page.
+        onError: (descriptor, error, shown) => {
+          if (bound && !shown?.inline) showSessionActionError(error, fieldErrorTitle(descriptor));
+        },
       });
     }
 
@@ -258,6 +448,18 @@
         listenerOptions,
       });
 
+      // Notifications: each switch writes the whole windowUi.notifications
+      // object and adopts the acknowledged copy (logic in the section module).
+      const notificationsSection = typeof globalThis !== 'undefined' ? globalThis.rendererSettingsNotificationsSection : null;
+      notificationsSection?.bindNotificationsSection?.({
+        container: notificationsSettingsSection,
+        status: notificationsStatus,
+        state,
+        renderSettings,
+        registerListener,
+        listenerOptions,
+      });
+
       // Tools > Approval rules: Remove clears a per-tool policy or deletes a
       // path-scoped rule through tools.*, then refetches the list.
       settingsCoreRenderers.bindApprovalRules?.({
@@ -280,6 +482,19 @@
         }
       }
       function openControlTowerAction(controlTowerAction) {
+        if (controlTowerAction?.dataset?.settingsControlAction === 'resume-setup' && typeof handleRunSetupAgain === 'function') {
+          Promise.resolve().then(() => handleRunSetupAgain()).catch((error) => {
+            showSessionActionError(error, jt('settings.shell.setupRunAgainFailed', 'Setup Run Again Failed'));
+          });
+          return;
+        }
+        const chooseRoot = deps.callbacks?.handleWorkspaceRootChoose;
+        if (controlTowerAction?.dataset?.settingsControlAction === 'choose-workspace' && typeof chooseRoot === 'function') {
+          Promise.resolve().then(() => chooseRoot()).catch((error) => {
+            showSessionActionError(error, jt('settings.controlTower.chooseFolderFailed', 'Could not choose a folder'));
+          });
+          return;
+        }
         const sectionId = String(controlTowerAction?.dataset?.settingsControlSection || '').trim();
         if (sectionId === '__diagnostics') {
           setActiveView?.('logs');
@@ -326,9 +541,19 @@
           renderLogs,
           openSession,
           setActiveView,
+          // Settings > Projects: the Workspace folder pick / close, the chat
+          // list repaint, the Chats panel reveal and the project switcher.
+          handleWorkspaceRootChoose: deps.callbacks.handleWorkspaceRootChoose,
+          clearWorkspaceRoot: deps.callbacks.clearWorkspaceRoot,
+          renderSessions: deps.callbacks.renderSessions,
+          setSidebarCollapsed: deps.callbacks.setSidebarCollapsed,
+          getProjectSwitcher: deps.callbacks.getProjectSwitcher,
         },
       }) || null;
+      // Diagnostics › Runs attaches through this binder set, so its poll ends with it.
+      addCleanup(() => sectionBinders?.dispose?.());
 
+      sectionShown = (sectionId) => sectionBinders?.sectionShown?.(sectionId);
       ensureSectionBindings = function ensureSectionBindings(sectionId) {
         const normalizedSectionId = String(sectionId || '').trim();
         if (!bound || !normalizedSectionId || boundSections.has(normalizedSectionId)) {
@@ -360,78 +585,13 @@
         return finalizeSectionBindings();
       };
 
-      registerListener(contextHistoryScopeSelect, 'change', () => {
-        const previousValue = getRuntimePreferenceSnapshot();
-        runRuntimePreferenceActivity({
-          patch: {
-            contextPreferences: {
-              ...getCurrentRuntimePreferences().contextPreferences,
-              historyScope: contextHistoryScopeSelect.value,
-            },
-          },
-          scopes: [ACTIVITY_SCOPE.settingsContextPreferences],
-          previousValue,
-          failureMessage: () => jt('settings.context.historyScopeSaveFailed', 'Could not save context history scope.'),
-          successMessage: '',
-        }).catch((error) => {
-          showSessionActionError(error, jt('settings.context.updateFailed', 'Context Update Failed'));
-        });
-      }, listenerOptions);
-
-      // Context toggles are inventory switches rendered into two delegated
-      // containers. Route each inv-toggle-change back to its persistence path:
-      // "sources" are session runtime preferences; "runtime" are feature flags.
-      const CONTEXT_PREF_TOGGLES = {
-        contextIncludePersonalityToggle: 'includePersonality',
-        contextIncludeMemoryToggle: 'includeMemory',
-      };
-      const CONTEXT_FLAG_TOGGLES = {
-        contextTokenBudgetToggle: 'token_budget',
-        contextCompactionToggle: 'context_compaction',
-      };
-      function handleContextToggleChange(event) {
-        const id = String(event?.detail?.id || '');
-        const checked = Boolean(event?.detail?.checked);
-        const prefKey = CONTEXT_PREF_TOGGLES[id];
-        if (prefKey) {
-          const previousValue = getRuntimePreferenceSnapshot();
-          runRuntimePreferenceActivity({
-            patch: {
-              contextPreferences: {
-                ...getCurrentRuntimePreferences().contextPreferences,
-                [prefKey]: checked,
-              },
-            },
-            scopes: [ACTIVITY_SCOPE.settingsContextPreferences],
-            previousValue,
-            failureMessage: () => jt('settings.context.preferencesSaveFailed', 'Could not save context preferences.'),
-            successMessage: '',
-          }).catch((error) => {
-            showSessionActionError(error, jt('settings.context.updateFailed', 'Context Update Failed'));
-          });
-          return;
-        }
-        const flagKey = CONTEXT_FLAG_TOGGLES[id];
-        if (flagKey) {
-          applyFeatureSettings({
-            featureOverrides: { [flagKey]: checked },
-          }, jt('settings.context.featureUpdateFailed', 'Context Feature Update Failed'));
-        }
-      }
-      registerListener(contextSourcesList, 'inv-toggle-change', handleContextToggleChange, listenerOptions);
-      registerListener(contextRuntimeList, 'inv-toggle-change', handleContextToggleChange, listenerOptions);
-      registerListener(modelStartupLoadList, 'inv-toggle-change', (event) => {
-        if (event?.detail?.id !== 'modelStartupLoadToggle') return;
-        Promise.resolve().then(() => window.jennyShell.engines.updateSettings({
-          startupModelLoad: Boolean(event.detail.checked),
-        })).then((result) => {
-          state.localEngines = result.localEngines || state.localEngines;
-          renderSettings();
-        }).catch((error) => {
-          showSessionActionError(error, jt('settings.models.startupLoad.updateFailed', 'Startup Load Update Failed'));
-          renderSettings();
-        });
-      }, listenerOptions);
+      // History scope shares the runtimePreferences adapter with the two switches
+      // (one write path for contextPreferences, so a queued write never carries a
+      // stale scope); its row is mounted by renderSettings, so the card delegates.
+      bindDescriptorFields(contextSettingsSection, ['contextHistoryScopeSelect']);
+      bindDescriptorFields(contextSourcesList, ['contextIncludePersonalityToggle', 'contextIncludeMemoryToggle']);
+      bindDescriptorFields(contextRuntimeList, ['contextCompactionToggle']);
+      bindDescriptorFields(modelStartupLoadList, ['modelStartupLoadToggle']);
 
       // Compaction tuning fields (Compaction Tunability + Manual Compact):
       // logic lives in the section module (extraction pattern shared with the
@@ -443,68 +603,28 @@
         renderSettings,
         registerListener,
         listenerOptions,
-        resolveCompactionFieldChangeEvent,
         showSessionActionError,
       });
 
+      // Tools: the chatUi scalars, the tool switches and the web-search fields.
+      const toolsFields = bindDescriptorFields(toolsConfigFieldList, (fieldDescriptors?.listSettingDescriptors({ sectionId: 'tools' }) || [])
+        .filter((descriptor) => descriptor.adapterId === 'chatUi' || descriptor.adapterId === 'features').map((descriptor) => descriptor.id),
+      (descriptor) => { if (descriptor.key === 'webSearch.provider') ensureWebSearchSecretStatus(); });
+      // Manifest tool fields without a descriptor bind through one derived from
+      // a described tool switch (queued descriptor amendment).
       registerListener(toolsConfigFieldList, 'inv-toggle-change', (event) => {
-        const resolvedToggle = resolveToolConfigToggleEvent(
-          event,
-          getToolConfigFieldsForRender(state.features)
-        );
-        if (!resolvedToggle) {
-          return;
-        }
-        if (state.features?.availability?.tools?.[resolvedToggle.key]?.enabled === false) {
-          renderSettings();
-          return;
-        }
-        applyFeatureSettings({
-          tools: {
-            [resolvedToggle.key]: resolvedToggle.checked,
-          },
-        }, jt('settings.tools.toggleUpdateFailed', '{label} Update Failed', { label: resolvedToggle.label || jt('common.tool', 'Tool') }));
+        const id = String(event.detail?.id || '');
+        const tool = resolveToolConfigToggleEvent(event, getToolConfigFieldsForRender(state.features));
+        if (!tool || !toolsFields || fieldDescriptors.getSettingDescriptorByControlId(id)) return;
+        void toolsFields.commit({ ...fieldDescriptors.getSettingDescriptor('settings-tool-config-web'), id: toolConfigRowId(id), controlId: id, key: `toolConfig.${tool.key}`, copy: { label: tool.label, description: '' } }, tool.checked);
       }, listenerOptions);
-
-      registerListener(toolsConfigFieldList, 'change', (event) => {
-        const safetyMode = resolveSafetyModeChangeEvent(event);
-        if (safetyMode) {
-          persistChatUiSetting({ key: 'safetyMode', value: safetyMode.value, normalize: normalizeSafetyMode });
-          return;
-        }
-        const resolved = resolveDefaultRunModeChangeEvent(event);
-        if (resolved) {
-          persistChatUiSetting({ key: 'defaultRunMode', value: resolved.value, normalize: normalizeDefaultRunMode });
-          return;
-        }
-        const unattended = resolveUnattendedGuardChangeEvent(event);
-        if (unattended) {
-          persistChatUiSetting({ key: 'unattendedGuardMinutes', value: unattended.value, normalize: normalizeUnattendedGuardMinutes });
-          return;
-        }
-        const streakCap = resolveAutoApproveStreakCapChangeEvent(event);
-        if (streakCap) persistChatUiSetting({ key: 'autoApproveStreakCap', value: streakCap.value, normalize: normalizeAutoApproveStreakCap });
-      }, listenerOptions);
-
-      registerListener(settingsView, 'change', (event) => {
-        if (event.target?.id === 'use24HourTimeSelect') {
-          persistChatUiSetting({ key: 'use24HourTime', value: event.target.value === 'true', normalize: (value) => value === true });
-          return;
-        }
-        const resolved = resolveUiLanguageChangeEvent(event);
-        if (!resolved) return;
-        persistChatUiSetting({ key: 'uiLanguage', value: resolved.value, normalize: normalizeUiLanguageTag }).then((persisted) => {
-          if (persisted !== resolved.value) return;
-          try { window.localStorage.setItem('jenny.ui.language', persisted); } catch (_error) { /* best effort */ }
-          if (typeof showToastMessage === 'function') showToastMessage(jt('settings.language.savedToast', 'Language saved. Restart Jenny to switch the interface.'), { tone: 'info', dedupeKey: 'settings:ui-language' });
-        });
-      }, listenerOptions);
+      bindDescriptorFields(settingsView, ['use24HourTime', 'uiLanguageSelect', 'transcriptViewDefaultSelect']);
 
       // Web search provider section: renders inside the same toolsConfigFieldList
-      // container (no dedicated index.html host this wave). Provider/URL fields
-      // route through the existing applyFeatureSettings -> features.updateSettings
-      // path; the per-provider key fields go straight to the dedicated secret IPC
-      // (never persisted through the general feature-settings patch).
+      // container, in toolsWebList. Provider/URL fields
+      // are descriptor fields bound above (features adapter); the per-provider
+      // key fields go straight to the dedicated secret IPC (never persisted
+      // through the general feature-settings patch).
       function webSearchApi() {
         return (typeof window !== 'undefined' && window.jennyShell && window.jennyShell.features) || null;
       }
@@ -574,24 +694,14 @@
       if (state.features?.featureFlags?.web_search_providers === true) {
         ensureWebSearchSecretStatus();
       }
-      registerListener(toolsConfigFieldList, 'change', (event) => {
-        const resolved = resolveWebSearchFieldChangeEvent(event);
-        if (!resolved) {
-          return;
-        }
-        if (resolved.field === 'provider') {
-          ensureWebSearchSecretStatus();
-          applyFeatureSettings({ webSearch: { provider: resolved.value } }, jt('settings.tools.webSearch.providerUpdateFailed', 'Web Search Provider Update Failed'));
-          return;
-        }
-        if (resolved.field === 'searxngUrl') {
-          applyFeatureSettings({ webSearch: { searxngUrl: resolved.value } }, jt('settings.tools.webSearch.searxngUrlUpdateFailed', 'SearXNG URL Update Failed'));
-        }
-      }, listenerOptions);
       registerListener(toolsConfigFieldList, 'click', (event) => {
         const testButton = event.target?.closest?.('[data-web-search-test]');
         if (testButton) {
+          if (testButton.disabled) return;
           const status = toolsConfigFieldList.querySelector('[data-web-search-test-status]');
+          // A busy lock, like a settings write: the Web tools sync leaves it alone, and the
+          // release below re-reads availability so a test cannot unlock a parent-off row.
+          testButton.setAttribute('data-setting-busy', '');
           testButton.disabled = true;
           if (status) status.textContent = jt('settings.shell.webSearchTesting', 'Testing the selected provider…');
           Promise.resolve(window.jennyShell?.harness?.inspect?.({ web_search_probe: true }))
@@ -604,7 +714,10 @@
             .catch(() => {
               if (status) status.textContent = jt('settings.shell.webSearchTestUnavailable', 'Connection test unavailable. Local chat is unaffected.');
             })
-            .finally(() => { testButton.disabled = false; });
+            .finally(() => {
+              testButton.removeAttribute('data-setting-busy');
+              testButton.disabled = testButton.hasAttribute('data-setting-unavailable');
+            });
           return;
         }
         const resolved = resolveWebSearchKeySaveClickEvent(event);
@@ -613,7 +726,7 @@
         }
         const input = toolsConfigFieldList.querySelector(`[data-web-search-key-field="${resolved.keyId}"]`);
         const api = webSearchApi();
-        if (!input || !api || typeof api.setWebSearchSecret !== 'function') {
+        if (!input || input.disabled || !api || typeof api.setWebSearchSecret !== 'function') {
           return;
         }
         const value = String(input.value || '');
@@ -732,131 +845,17 @@
         }
       }, listenerOptions);
 
-      registerListener(appearanceThemeBundleSelect, 'change', () => {
-        var bundleId = String(appearanceThemeBundleSelect?.value || '').trim().toLowerCase();
-        if (!bundleId || bundleId === 'custom') {
-          renderSettings();
-          return;
-        }
-        var appearanceUtilsRef = appearanceUtils && typeof appearanceUtils === 'object' ? appearanceUtils : null;
-        var bundle = appearanceUtilsRef?.resolveThemeBundle?.(bundleId);
-        if (!bundle || !bundle.preferences) {
-          renderSettings();
-          return;
-        }
-        // A theme bundle owns only palette, typography, surface, and the
-        // Composer effect. Applying
-        // bundle.preferences wholesale (it is always fully normalized, so it
-        // ALWAYS carries a fontScaleId/timelineStyleId even though no bundle
-        // defines one) silently reset Extra Large text back to Default on
-        // every bundle switch. Merge only the bundle's own axes onto the
-        // CURRENT preferences instead of replacing them outright.
-        var bundleAxes = appearanceUtilsRef?.pickThemeBundleAxes?.(bundle.preferences) || bundle.preferences;
-        var appliedPreferences = applyAppearancePreferences({ ...state.ui.appearance, ...bundleAxes }) || state.ui.appearance;
-        applySurfaceEffect();
-        activateSurfaceEffect(appliedPreferences.surfaceEffectId || 'none');
-        renderSettings();
-      }, listenerOptions);
-
-      registerListener(appearancePaletteSelect, 'change', () => {
-        applyAppearancePreferences({
-          ...state.ui.appearance,
-          paletteId: appearancePaletteSelect.value,
-        });
-        renderSettings();
-      }, listenerOptions);
-
-      registerListener(appearanceTypographySelect, 'change', () => {
-        applyAppearancePreferences({
-          ...state.ui.appearance,
-          typographyId: appearanceTypographySelect.value,
-        });
-        renderSettings();
-      }, listenerOptions);
-
-      registerListener(appearanceFontScaleSelect, 'change', () => {
-        applyAppearancePreferences({
-          ...state.ui.appearance,
-          fontScaleId: appearanceFontScaleSelect.value,
-        });
-        renderSettings();
-      }, listenerOptions);
-
-      // Delegated: the select is mounted by renderSettings(), so there is no
-      // stable node to capture at bootstrap. `change` bubbles from it.
-      registerListener(appearanceChatWidthMount, 'change', (event) => {
-        const target = event && event.target;
-        if (!target || target.id !== 'appearanceChatWidthSelect') return;
-        applyAppearancePreferences({
-          ...state.ui.appearance,
-          chatWidthId: target.value,
-        });
-        renderSettings();
-      }, listenerOptions);
-
-      registerListener(appearanceSurfaceEffectSelect, 'change', () => {
-        var appliedPreferences = applyAppearancePreferences({
-          ...state.ui.appearance,
-          surfaceEffectId: appearanceSurfaceEffectSelect.value,
-        }) || state.ui.appearance;
-        applySurfaceEffect();
-        activateSurfaceEffect(appliedPreferences.surfaceEffectId || 'none');
-        renderSettings();
-      }, listenerOptions);
-
-      registerListener(appearanceHoloList, 'inv-toggle-change', (event) => {
-        const detail = (event && event.detail) || {};
-        if (detail.id !== 'appearanceComposerHoloToggle') return;
-        applyAppearancePreferences({
-          ...state.ui.appearance,
-          composerHoloId: detail.checked === true ? 'on' : 'off',
-        });
-        renderSettings();
-      }, listenerOptions);
-
-      registerListener(appearanceSpellcheckList, 'inv-toggle-change', (event) => {
-        const detail = (event && event.detail) || {};
-        if (detail.id !== 'appearanceSpellcheckToggle') return;
-        applyFeatureSettings({
-          featureOverrides: { text_spellcheck: detail.checked === true },
-        }, jt('settings.editor.spellCheckUpdateFailed', 'Spell Check Update Failed'));
-      }, listenerOptions);
-
-      registerListener(composerChatZoomSelect, 'change', () => {
-        applyChatZoomPercent(Number(composerChatZoomSelect.value))
-          .then(() => {
-            renderSettings();
-            renderComposerPopover();
-          })
-          .catch((error) => {
-            showSessionActionError(error, jt('settings.appearance.chatZoomUpdateFailed', 'Chat Zoom Update Failed'));
-          });
-      }, listenerOptions);
-
-      registerListener(appearanceAppZoomSelect, 'change', () => {
-        // Overall app zoom persists + applies in the main process
-        // (webContents.setZoomFactor); we optimistically reflect the chosen
-        // value, then reconcile with the normalized value main returns.
-        // UIUX-028(c): failure rollback + stale-response suppression run
-        // through the settle group (see reconcileAppZoomGroupClose above).
-        var requestedPercent = Number(appearanceAppZoomSelect.value) || 100;
-        var myAppZoomToken = appZoomWriteGroup.open(() => Number(state.ui.appZoomPercent) || 100);
-        state.ui.appZoomPercent = requestedPercent;
-        Promise.resolve(window.jennyShell?.windowUi?.updateSettings?.({ appZoomPercent: requestedPercent }))
-          .then((nextWindowUi) => {
-            var appliedPercent = Number(nextWindowUi?.appZoomPercent);
-            var finalPercent = Number.isFinite(appliedPercent) ? appliedPercent : requestedPercent;
-            if (appZoomWriteGroup.isNewest(myAppZoomToken)) {
-              state.ui.appZoomPercent = finalPercent;
-              renderSettings();
-            }
-            reconcileAppZoomGroupClose(appZoomWriteGroup.settle(myAppZoomToken, true, finalPercent));
-          })
-          .catch((error) => {
-            reconcileAppZoomGroupClose(appZoomWriteGroup.settle(myAppZoomToken, false));
-            showSessionActionError(error, jt('settings.appearance.appZoomUpdateFailed', 'App Zoom Update Failed'));
-          });
-      }, listenerOptions);
+      // Appearance: the mounted selects, the Advanced switches and spellcheck
+      // delegate from the card (the language row binds with settingsView above).
+      const appearanceFields = bindDescriptorFields(appearanceSettingsSection, (fieldDescriptors?.listSettingDescriptors({ sectionId: 'appearance' }) || [])
+        .filter((descriptor) => descriptor.adapterId !== 'chatUi').map((descriptor) => descriptor.id));
+      // The health popover's "Show load in title bar" action writes the same switch.
+      if (typeof document !== 'undefined') {
+        registerListener(document, 'jenny:titlebar-load-toggle', (event) => {
+          const descriptor = fieldDescriptors?.getSettingDescriptor('appearanceTitlebarLoadToggle');
+          if (appearanceFields && descriptor) void appearanceFields.commit(descriptor, event?.detail?.enabled === true);
+        }, listenerOptions);
+      }
 
       // The Appearance reset is guarded by renderer-settings-field-reset.js.
     }
@@ -866,6 +865,10 @@
       dispose,
       ensureSectionBindings(...args) {
         return ensureSectionBindings(...args);
+      },
+      // A section became visible (the shell's section refresher).
+      sectionShown(sectionId) {
+        sectionShown(sectionId);
       },
     };
   }

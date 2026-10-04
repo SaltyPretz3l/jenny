@@ -83,7 +83,7 @@ test('health pill hides the ready label while preserving an accessible name', as
   await controller.refresh({ silent: true });
   let readyButton = slot.querySelector('#workbenchHealthPillButton');
   assert.equal(Boolean(readyButton.querySelector('.workbench-health-pill-label')), false);
-  assert.equal(readyButton.getAttribute('aria-label'), 'Engine ready — runtime health');
+  assert.equal(readyButton.getAttribute('aria-label'), 'Ready');
 
   snapshot = makeSnapshot({
     runtime: {
@@ -111,50 +111,6 @@ test('health pill includes active model acquisition percent in the busy label', 
   acquiring.runtime.lifecycle.model_acquisition.stage = 'acquiring';
   acquiring.runtime.lifecycle.model_acquisition.percent = 0;
   assert.equal(combineHealthSignal(acquiring, {}).label, 'Downloading model');
-});
-
-test('health pill appends a neutral Remote segment only while reachable with singular/plural devices', () => {
-  const snapshot = makeSnapshot();
-  assert.deepEqual(combineHealthSignal(snapshot, {
-    deriveRuntimeHealthState,
-    remoteStatus: { reachable: false, devices: [{ connected: true }] },
-  }).segments, []);
-  assert.deepEqual(combineHealthSignal(snapshot, {
-    deriveRuntimeHealthState,
-    remoteStatus: { reachable: true, devices: [{ connected: true }, { connected: false }] },
-  }).segments, [{ tone: 'neutral', label: 'Remote · 1 device' }]);
-  assert.deepEqual(combineHealthSignal(snapshot, {
-    deriveRuntimeHealthState,
-    remoteStatus: { reachable: true, devices: [{ connected: true }, { connected: true }] },
-  }).segments, [{ tone: 'neutral', label: 'Remote · 2 devices' }]);
-});
-
-test('health pill follows the remote state subscription and unsubscribes on dispose', async () => {
-  const dom = new JSDOM('<!doctype html><body><div id="slot"></div></body>');
-  const { window } = dom;
-  let updateRemote = null;
-  let unsubscribed = 0;
-  window.jennyShell = {
-    diagnostics: { getJennyStatus: async () => makeSnapshot() },
-    remote: {
-      getState: async () => ({ reachable: false, devices: [] }),
-      onStateChanged(callback) {
-        updateRemote = callback;
-        return () => { unsubscribed += 1; };
-      },
-    },
-  };
-  const controller = createHealthPillController({
-    window,
-    document: window.document,
-    slot: window.document.getElementById('slot'),
-    deriveRuntimeHealthState,
-  });
-  await controller.refresh({ silent: true });
-  updateRemote({ reachable: true, devices: [{ connected: true }] });
-  assert.match(window.document.getElementById('slot').textContent, /Remote .* 1 device/);
-  controller.dispose();
-  assert.equal(unsubscribed, 1);
 });
 
 test('health pill dispose removes open-popover listeners', () => {

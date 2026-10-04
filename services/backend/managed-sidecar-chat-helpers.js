@@ -57,6 +57,9 @@ function resolveChatStreamCeilings(
 // keep a turn alive forever. Starts on the local ceilings; applyEngineType()
 // re-resolves them (and re-arms both timers) once the turn's engine is known.
 // pauseForApproval() pauses both clocks; human response time is not model work.
+// Its resume({ freshBudget: true }) renews the absolute backstop to a full
+// budget for a plan-build approval, mirroring the sidecar's _fresh_build_budget
+// (dogfood HB-026: the build leg outlived a backstop armed at the original send).
 function createChatStreamWatchdog({
   isAborted,
   onTimeout,
@@ -70,6 +73,7 @@ function createChatStreamWatchdog({
   // ask_user wait already holds the clocks, and the inner resume must not
   // restart them while the outer human wait is still pending.
   let approvalPauseDepth = 0;
+  let freshBudgetOnResume = false;
   let ceilings = resolveChatStreamCeilings('', localMaxLoopWallSeconds);
   function pauseIdle() {
     if (idleTimer) {
@@ -129,18 +133,21 @@ function createChatStreamWatchdog({
     }
     approvalPauseDepth += 1;
     let resumed = false;
-    return function resumeAfterApproval() {
+    return function resumeAfterApproval({ freshBudget = false } = {}) {
       if (resumed || isAborted()) {
         return;
       }
       resumed = true;
+      freshBudgetOnResume = freshBudgetOnResume || freshBudget === true;
       if (approvalPauseDepth > 0) {
         approvalPauseDepth -= 1;
       }
       if (approvalPauseDepth > 0) {
         return;
       }
-      armAbsolute({ reset: false });
+      // A full reset never shortens: the leftover is at most the full ceiling.
+      armAbsolute({ reset: freshBudgetOnResume });
+      freshBudgetOnResume = false;
       noteActivity();
     };
   }
@@ -151,6 +158,7 @@ function createChatStreamWatchdog({
       absoluteTimer = null;
     }
     approvalPauseDepth = 0;
+    freshBudgetOnResume = false;
   }
   return {
     noteActivity,

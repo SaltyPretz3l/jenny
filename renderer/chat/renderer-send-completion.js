@@ -8,6 +8,8 @@
   const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   function createSendCompletion(deps) {
     const { state, navigationIntent, sendReceipts, constants, callbacks, helpers } = deps;
+    // Split view W1-4b: the session this send's pane holds (renderer-pane-session-context.js).
+    const sessionContext = deps.sessionContext || (globalThis.rendererPaneSessionContext || require('./renderer-pane-session-context')).createPaneSessionContext({ state, paneId: deps.paneId });
 
     async function completeAcceptedSend(result, context) {
       const {
@@ -123,14 +125,14 @@
         optimisticSessionId: String(optimisticSessionId || '').slice(0, 30),
         resolvedSessionId: String(resolvedSessionId || '').slice(0, 30),
         previousSessionId: String(previousSessionId || '').slice(0, 30),
-        currentSessionId: String(state.currentSessionId || '').slice(0, 30),
+        currentSessionId: sessionContext.getSessionId().slice(0, 30),
         createdOptimisticSession,
         activeView: state.ui?.activeView,
       });
       callbacks.multiStreamController?.registerStream?.(resolvedSessionId, result.streamId);
       callbacks.setChatSendLifecycle(resolvedSessionId, 'streaming');
       if (!preserveCurrentSessionOnDispatch && navigationIntent.isCurrent(sendNavigationToken)) {
-        state.currentSessionId = resolvedSessionId;
+        sessionContext.setSessionId(resolvedSessionId);
       }
       if (pendingBatchSnapshot) {
         callbacks.clearInteractiveDraft(resolvedSessionId);
@@ -154,15 +156,15 @@
         flushedCount: bufferedFlushResult?.flushedCount || 0,
         terminal: bufferedFlushResult?.terminal || false,
       });
-      if (state.currentSessionId !== resolvedSessionId
+      if (!sessionContext.isCurrent(resolvedSessionId)
         && !preserveCurrentSessionOnDispatch
         && navigationIntent.isCurrent(sendNavigationToken)) {
         callbacks.appendClientLog('WARN', 'chat.send_session_desync', {
           expected: String(resolvedSessionId || '').slice(0, 30),
-          actual: String(state.currentSessionId || '').slice(0, 30),
+          actual: sessionContext.getSessionId().slice(0, 30),
         });
-        state.currentSessionId = resolvedSessionId;
-      } else if (state.currentSessionId !== resolvedSessionId && !preserveCurrentSessionOnDispatch) {
+        sessionContext.setSessionId(resolvedSessionId);
+      } else if (!sessionContext.isCurrent(resolvedSessionId) && !preserveCurrentSessionOnDispatch) {
         await navigationIntent.navigateOrNotify(sendNavigationToken, resolvedSessionId, {
           navigate: (sessionId) => callbacks.activateWorkspaceSession(sessionId, { silent: true }),
           showToastMessage: callbacks.showToastMessage,
@@ -272,9 +274,9 @@
           message_count: rollbackMessages.length,
           last_message_preview: helpers.summarizeDurableFailurePreview(visiblePrompt, failureMessage),
         });
-        if (navigationIntent.isCurrent(sendNavigationToken)) state.currentSessionId = rollbackSessionId;
+        if (navigationIntent.isCurrent(sendNavigationToken)) sessionContext.setSessionId(rollbackSessionId);
       } else if (navigationIntent.isCurrent(sendNavigationToken)) {
-        state.currentSessionId = previousSessionId;
+        sessionContext.setSessionId(previousSessionId);
       }
       if (pendingBatchSnapshot) {
         callbacks.patchSessionSummary(

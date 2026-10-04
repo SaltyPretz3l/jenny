@@ -13,7 +13,7 @@
     inset 0 1px 2px rgba(0, 0, 0, 0.1);
   outline: none;
   font-family: inherit;
-  font-size: var(--font-size-sm);
+  font-size: var(--font-size-body);
   cursor: pointer;
   transition:
     border-color var(--motion-duration-fast) var(--motion-ease-standard),
@@ -37,12 +37,6 @@
 }
 
 /* ── Custom range input styling inside Comet Playground ── */
-.settings-setup-divider {
-  height: 1px;
-  background: color-mix(in srgb, var(--text-secondary) 14%, transparent);
-  margin: var(--space-6) 0 var(--space-5);
-}
-
 .settings-setup-row {
   display: flex;
   align-items: center;
@@ -65,15 +59,6 @@
 
 .settings-setup-actions .settings-overflow {
   text-align: end;
-}
-
-.settings-setup-row-title {
-  margin: 0 0 var(--space-2);
-  font-size: var(--font-size-md);
-  font-weight: 700;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  color: var(--text-secondary);
 }
 
 /* ── Prefers Reduced Motion ── */

@@ -11,6 +11,7 @@ const { AttachmentAssetStore } = require('../services/attachment-asset-store');
 const { ElectronSessionStore } = require('../services/backend/electron-session-store');
 const { cleanupJennyData } = require('../services/data-lifecycle/cleanup-service');
 const { DataLifecycleService } = require('../services/data-lifecycle/data-lifecycle-service');
+const { detectRunningJenny } = require('../services/data-lifecycle/profile-in-use');
 const { UNINSTALL_EXIT_CODES } = require('../services/data-lifecycle/uninstall-contract');
 const { ShellConfigService } = require('../services/shell-config-service');
 
@@ -18,6 +19,7 @@ const GENERATED_ROOT_NAMES = Object.freeze(['node_modules', 'dist', 'release', '
 // Current shortcut name first, then the pre-1.0 "Jenny Shell" name so an
 // uninstall after the rename still clears the shortcut an older build wrote.
 const WINDOWS_SHORTCUT_NAMES = Object.freeze(['Jenny.lnk', 'Jenny Shell.lnk']);
+const JENNY_RUNNING_MESSAGE = 'Jenny is still running. Close Jenny, then run the uninstall again.';
 const JENNY_REPOSITORY_PATTERN = /(?:^|[:/])SaltyPretz3l\/jenny(?:-src)?(?:\.git)?$/i;
 
 function samePath(left, right) {
@@ -235,7 +237,7 @@ function createTerminalService({ profilePath, documentsPath, homeDir = os.homedi
     sessionStore,
     attachmentStore: new AttachmentAssetStore({ rootDir: path.join(profilePath, 'attachments'), nativeImage: null }),
     shellConfigService: new ShellConfigService({ userDataPath: profilePath, resourcesPath: process.resourcesPath }),
-    prepareForRemoval: async ({ choice, removeWorkspaceData, workspaceRoot }) => {
+    prepareForRemoval: async ({ choice, removeWorkspaceData, workspaceRemovalScope, workspaceRoot }) => {
       await sessionStore.flushAsync();
       if (choice === 'app_only') return { ok: true, status: 'data_preserved' };
       return cleanupJennyData({
@@ -243,6 +245,7 @@ function createTerminalService({ profilePath, documentsPath, homeDir = os.homedi
         runtimePath,
         workspaceRoot,
         removeWorkspaceData,
+        workspaceRemovalScope,
         includeUserData: false,
       });
     },
@@ -344,6 +347,7 @@ async function runCli({
   launchAssistant = launchGraphicalAssistant,
   createService = createTerminalService,
   cleanupData = cleanupJennyData,
+  detectRunning = detectRunningJenny,
   prompter = createPrompter(),
   output = process.stdout,
 } = {}) {
@@ -352,19 +356,30 @@ async function runCli({
   let exitCode = terminalRequested ? null : launchAssistant(rootPath);
   try {
     if (terminalRequested || exitCode === null) {
-      const service = createService({
-        profilePath,
-        documentsPath: resolveDocumentsPath(),
-      });
-      ({ exitCode } = await runTerminalFlow({ prompter, service, output }));
+      if (detectRunning(profilePath).inUse) {
+        output.write(`${JENNY_RUNNING_MESSAGE}\n`);
+        exitCode = UNINSTALL_EXIT_CODES.HELPER_FAILURE;
+      } else {
+        const service = createService({
+          profilePath,
+          documentsPath: resolveDocumentsPath(),
+        });
+        ({ exitCode } = await runTerminalFlow({ prompter, service, output }));
+      }
     }
     if ([UNINSTALL_EXIT_CODES.ARCHIVE_AND_REMOVE, UNINSTALL_EXIT_CODES.PERMANENT].includes(exitCode)) {
-      const cleanup = await cleanupData({
-        userDataPath: profilePath,
-        runtimePath: path.join(os.homedir(), '.companion'),
-      });
-      if (!cleanup.ok) exitCode = UNINSTALL_EXIT_CODES.HELPER_FAILURE;
-      for (const warning of cleanup.warnings || []) output.write(`Warning: ${String(warning)}\n`);
+      // Re-check: Jenny may have started while the prompts or the graphical assistant ran.
+      if (detectRunning(profilePath).inUse) {
+        output.write(`${JENNY_RUNNING_MESSAGE}\n`);
+        exitCode = UNINSTALL_EXIT_CODES.HELPER_FAILURE;
+      } else {
+        const cleanup = await cleanupData({
+          userDataPath: profilePath,
+          runtimePath: path.join(os.homedir(), '.companion'),
+        });
+        if (!cleanup.ok) exitCode = UNINSTALL_EXIT_CODES.HELPER_FAILURE;
+        for (const warning of cleanup.warnings || []) output.write(`Warning: ${String(warning)}\n`);
+      }
     }
     if ([UNINSTALL_EXIT_CODES.APP_ONLY, UNINSTALL_EXIT_CODES.ARCHIVE_AND_REMOVE, UNINSTALL_EXIT_CODES.PERMANENT].includes(exitCode)) {
       removeVerifiedCloneShortcut(rootPath);

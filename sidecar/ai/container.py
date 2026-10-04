@@ -20,6 +20,7 @@ from sidecar.ai.container_mcp_servers import (  # noqa: F401 - _argv_safe_url is
     _default_mcp_servers,
 )
 from sidecar.ai.context.builder import ContextBuilder, SkillScope
+from sidecar.ai.context.builder_skills import resolve_skill_scopes
 from sidecar.ai.engines.base import BaseEngine
 from sidecar.ai.engines.factory import create_engine
 from sidecar.ai.execution_policy import (
@@ -215,23 +216,7 @@ def _sub_agent_slot_allocator_for_config(config: RuntimeConfig) -> SubAgentSlotA
 
 
 def _resolve_skill_scopes(config: RuntimeConfig) -> tuple[SkillScope, ...]:
-    scopes: list[SkillScope] = []
-    candidates = (
-        ("bundled", config.skills_bundled_root, config.skills_bundled_enabled),
-        ("user", config.skills_user_root, config.skills_user_enabled),
-        ("project", config.skills_project_root, config.skills_project_enabled),
-    )
-    for scope_name, raw_root, enabled in candidates:
-        if raw_root is None:
-            continue
-        scopes.append(
-            SkillScope(
-                scope=scope_name,
-                root=Path(raw_root).expanduser(),
-                enabled=enabled,
-            )
-        )
-    return tuple(scopes)
+    return resolve_skill_scopes(config)
 
 
 def _apply_context_length_override(
@@ -255,6 +240,24 @@ def _canonical_model_id(value: str) -> str:
         return ""
     last_segment = normalized.rsplit("/", 1)[-1]
     return normalized if ":" in last_segment else f"{normalized}:latest"
+
+
+def _sync_engine_with_effective_config(engine: Any, config: RuntimeConfig) -> None:
+    """Hand the loaded engine the limits that resolve only after it loaded.
+
+    The app profile resolves from the model the engine actually loaded, and the
+    context override follows it, so the engine was built before either existed
+    (HB-016: Bonsai 2's output limits never reached llama-server).
+    """
+    set_context_length = getattr(engine, "set_configured_context_length", None)
+    if callable(set_context_length):
+        set_context_length(config.context_length)
+    set_output_limits = getattr(engine, "set_profile_output_limits", None)
+    if callable(set_output_limits):
+        set_output_limits(
+            max_output_tokens=config.resolved_app_profile_max_output_tokens,
+            thinking_headroom=config.resolved_app_profile_thinking_token_headroom,
+        )
 
 
 def _generation_profile_model_key(value: str, *, engine_type: str) -> str:
@@ -505,14 +508,7 @@ class BrainContainer:
         registry = self._plugin_runtime_registry
         if registry is None:
             return ()
-        return (
-            *registry.build_turn_tool_descriptors(),
-            *registry.build_turn_native_tool_descriptors(),
-        )
-
-    def _plugin_engine_model_ids(self) -> tuple[str, ...]:
-        registry = self._plugin_runtime_registry
-        return registry.current_engine_ids() if registry is not None else ()
+        return tuple(registry.build_turn_tool_descriptors())
 
     def assert_request_boundary(
         self,
@@ -589,45 +585,16 @@ class BrainContainer:
         # and `provider_capability_profiles_payload` -- exposed through the
         # `initialize` response and `harness.inspect` -- always returned [].
         provider_capability_profiles = ProviderCapabilityProfileStore()
-        plugin_registry = self._plugin_registry()
-        provider_binding = plugin_registry.current_provider_binding("chatgpt")
-        provider_descriptor = provider_binding.descriptor if provider_binding else None
-        provider_authority_check = (
-            (lambda: plugin_registry.is_provider_binding_current(provider_binding))
-            if provider_binding is not None else None
-        )
-        engine_binding = plugin_registry.current_engine_binding(config.model)
-        plugin_host_binding = ({
-            **engine_binding.descriptor,
-            "authority": {
-                "registry_revision": engine_binding.authority.registry_revision,
-                "dependency_graph_hash": engine_binding.authority.dependency_graph_hash,
-                "commit_epoch": engine_binding.authority.commit_epoch,
-                "active_generation_id": engine_binding.authority.active_generation_id,
-            },
-        } if engine_binding else None)
-        plugin_host_authority_check = (
-            (lambda: plugin_registry.is_engine_binding_current(engine_binding))
-            if engine_binding is not None else None
-        )
         engine_selection = (
             create_engine(
                 config,
                 capability_profile_store=provider_capability_profiles,
-                provider_descriptor=provider_descriptor,
-                provider_authority_check=provider_authority_check,
-                plugin_host_binding=plugin_host_binding,
-                plugin_host_authority_check=plugin_host_authority_check,
             )
             if progress_callback is None
             else create_engine(
                 config,
                 progress_callback=progress_callback,
                 capability_profile_store=provider_capability_profiles,
-                provider_descriptor=provider_descriptor,
-                provider_authority_check=provider_authority_check,
-                plugin_host_binding=plugin_host_binding,
-                plugin_host_authority_check=plugin_host_authority_check,
             )
         )
         staged.callback(_close_candidate_engine, engine_selection.engine)
@@ -699,13 +666,7 @@ class BrainContainer:
             model=engine_selection.model,
             system_prompt=system_prompt,
         )
-        set_engine_context_length = getattr(
-            engine_selection.engine,
-            "set_configured_context_length",
-            None,
-        )
-        if callable(set_engine_context_length):
-            set_engine_context_length(effective_config.context_length)
+        _sync_engine_with_effective_config(engine_selection.engine, effective_config)
         memory_store, memory_service = _open_memory_service(
             effective_config,
             staged,

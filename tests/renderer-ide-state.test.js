@@ -246,7 +246,7 @@ test('ide state dirty tracking and persisted-subset round-trip', () => {
   assert.equal(hostile.railWidth, 300);
   assert.equal(hostile.showGenerated, false);
   assert.equal(hostile.wordWrap, 'off');
-  assert.equal(hostile.fontSize, 13);
+  assert.equal(hostile.fontSize, 0, 'invalid reads as Match text size');
   assert.equal(hostile.tabSize, 2);
   assert.equal(hostile.minimap, true);
   assert.equal(hostile.lineNumbers, 'on');

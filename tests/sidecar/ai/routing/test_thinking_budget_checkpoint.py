@@ -17,6 +17,10 @@ from sidecar.ai.routing.loop_events import PhaseStartedEvent
 from sidecar.ai.routing.loop_runtime import LoopRuntime
 from sidecar.ai.routing.provider_tool_limits import MAX_TOOL_CALL_ARGUMENT_BYTES
 from sidecar.ai.routing.router import ChatRouter, ToolExecutionOutcome
+from sidecar.ai.routing.thinking_checkpoint import (
+    build_checkpoint_messages,
+    checkpoint_stalled,
+)
 from sidecar.ai.routing.tool_loop_finalize import _FinalResponseMixin
 from sidecar.ai.tools.models import GenerationResult, GenerationUsage, ThinkingDelta
 from tests.sidecar.ai.engines.test_thinking_budget_abort import (
@@ -42,6 +46,11 @@ _NUDGE = (
     "You hit a thinking-budget checkpoint. Your reasoning so far is preserved above. "
     "Act now - emit your tool calls or your final answer. Be decisive; do not restart "
     "your analysis."
+)
+_HIDDEN_REASONING_NUDGE = (
+    "You hit a thinking-budget checkpoint: this step's whole output budget went to "
+    "reasoning and none of it was kept. Do not restart your analysis. Keep any further "
+    "thinking to a few sentences, then emit your next tool call or your final answer now."
 )
 
 
@@ -188,6 +197,34 @@ def test_checkpoint_continues_instead_of_failing(
     ]
 
 
+def test_checkpoint_continuations_do_not_spend_the_iteration_budget(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """TR-005: a continuation resumes the same step; it is not an agent step.
+
+    Three checkpoints in a 3-iteration budget used to leave the third on the
+    last iteration (no continuation, CMP-STREAM-INCOMPLETE). Each continuation
+    now widens the budget, so the real answer still gets its iteration.
+    """
+    decision, run, _runtime, engine = _run_results(
+        monkeypatch,
+        [
+            _result("thinking_budget", thinking_text="reasoning one"),
+            _result("thinking_budget", thinking_text="reasoning two"),
+            _result("thinking_budget", thinking_text="reasoning three"),
+            _result("stop", content="Finished answer."),
+        ],
+        max_iterations=3,
+    )
+
+    assert decision.response_text == "Finished answer."
+    assert decision.terminal_error_code is None
+    assert run.thinking_budget_checkpoints == 3
+    assert len(engine.calls) == 4
+    assert run.max_iterations == 3 + 3
+    assert run.iteration_total == 3 + 3
+
+
 def test_checkpoint_exhaustion_winds_down_with_the_model(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -235,23 +272,84 @@ def test_checkpoint_exhaustion_fallback_names_cause_and_remedy(
     assert "turning thinking off" in decision.response_text
 
 
-def test_last_iteration_never_checkpoints(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Out of iterations is a turn-budget stop, not a thinking-budget one.
+def test_reasoning_only_stop_answers_from_the_reasoning(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """EOS inside the reasoning ("stop", no text) winds down instead of canned text."""
+    decision, run, _runtime, engine = _run_results(
+        monkeypatch,
+        [
+            _result("stop", thinking_text="The answer is 42 because of the premise."),
+            _result("stop", content="The answer is 42."),
+        ],
+        max_iterations=4,
+    )
 
-    The checkpoint ladder is untouched here, so the existing retryable terminal
-    stands rather than the thinking-budget wind-down.
+    assert decision.response_text == "The answer is 42."
+    assert decision.terminal_error_code is None
+    assert len(engine.calls) == 2
+    assert engine.calls[-1]["reasoning_effort"] == "none"
+    assert engine.calls[-1]["tools"] == []
+    carries = [
+        message
+        for message in run.working_messages
+        if message.get("role") == "assistant"
+        and "stopped without an answer" in str(message.get("content", ""))
+    ]
+    assert len(carries) == 1
+    assert str(carries[0]["content"]).endswith("The answer is 42 because of the premise.")
+
+
+def test_reasoning_only_stop_fallback_names_cause_and_remedy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    decision, _run, _runtime, _engine = _run_results(
+        monkeypatch,
+        [
+            _result("stop", thinking_text="Still weighing the options."),
+            _result("stop", content="  "),
+        ],
+        max_iterations=4,
+    )
+
+    assert decision.response_text != _CANNED_FALLBACK
+    assert "while still reasoning" in decision.response_text
+    assert "turning thinking off" in decision.response_text
+
+
+def test_empty_stop_without_reasoning_keeps_the_canned_reply(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    decision, _run, _runtime, engine = _run_results(
+        monkeypatch,
+        [_result("stop")],
+        max_iterations=4,
+    )
+
+    assert decision.response_text == _CANNED_FALLBACK
+    assert len(engine.calls) == 1
+
+
+def test_last_iteration_checkpoint_still_continues(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A checkpoint on the final permitted step continues the same step (TR-005).
+
+    The continuation widens the iteration budget itself, so the last step no
+    longer ends in a retryable CMP-STREAM-INCOMPLETE mid-thought.
     """
     decision, run, _runtime, engine = _run_results(
         monkeypatch,
-        [_result("thinking_budget", thinking_text="last iteration")],
+        [
+            _result("thinking_budget", thinking_text="last iteration"),
+            _result("stop", content="Finished answer."),
+        ],
         max_iterations=1,
     )
 
-    assert decision.terminal_error_code == "CMP-STREAM-INCOMPLETE"
-    assert decision.terminal_error_retryable is True
-    assert run.thinking_budget_checkpoints == 0
-    assert len(engine.calls) == 1
-    assert _checkpoint_messages(run) == []
+    assert decision.terminal_error_code is None
+    assert decision.response_text == "Finished answer."
+    assert run.thinking_budget_checkpoints == 1
+    assert len(engine.calls) == 2
+    assert run.iteration_total == 1 + 1
 
 
 def test_no_progress_stall_winds_down_naming_the_repetition(
@@ -717,17 +815,21 @@ def test_length_cut_tool_call_after_a_preamble_reaches_the_continuation(
     assert len(sequence.calls) == 2
     assert decision.response_text == "Decisive answer."
     assert decision.terminal_error_code is None
+    # The byte cap, not the token limit, dropped this call (sweep W3-B1).
     assert any(
         message.get("role") == "system"
-        and "cut off at the output-token limit" in str(message.get("content", ""))
+        and f"{MAX_TOOL_CALL_ARGUMENT_BYTES:,}-byte per-call argument limit"
+        in str(message.get("content", ""))
         for message in run.working_messages
     )
 
 
 @pytest.mark.parametrize(
     ("max_iterations", "continuation_enabled"),
-    [(1, True), (4, False)],
-    ids=["last_iteration", "continuation_disabled"],
+    # A checkpoint on the last iteration now continues (TR-005), so only the
+    # kill switch leaves a checkpoint that cannot continue.
+    [(4, False)],
+    ids=["continuation_disabled"],
 )
 def test_length_cut_tool_call_that_cannot_continue_fails_retryably(
     monkeypatch: pytest.MonkeyPatch,
@@ -754,3 +856,126 @@ def test_length_cut_tool_call_that_cannot_continue_fails_retryably(
     assert decision.terminal_error_code == "CMP-STREAM-INCOMPLETE"
     assert decision.terminal_error_retryable is True
     assert decision.response_text != preamble
+
+
+_DRAFT_NUDGE = (
+    "Your reasoning above already drafts code. Do not re-derive it: write it to disk "
+    "now with write_file/edit_file in pieces of at most ~150 lines, then continue."
+)
+
+
+@pytest.mark.parametrize(
+    "reasoning",
+    [
+        "Plan:\n```python\nx = 1\n```\nThen wire it.",
+        "def parse(row):\n    return row\n\nclass Report:\n    pass\n",
+        "Sketch:\n    def load(path):\n        ...\n    def save(path):\n        ...\n",
+    ],
+)
+def test_checkpoint_with_drafted_code_uses_the_write_it_now_nudge(reasoning: str) -> None:
+    messages = build_checkpoint_messages(reasoning, allow_write_draft=True)
+
+    assert messages[-1] == {"role": "system", "content": _DRAFT_NUDGE}
+    assert _NUDGE not in [message["content"] for message in messages]
+
+
+@pytest.mark.parametrize(
+    "reasoning",
+    [
+        "I should read the parser first and then decide.",
+        "The helper def parse is used once, so keep it.",
+    ],
+)
+def test_checkpoint_without_code_keeps_the_decisive_nudge(reasoning: str) -> None:
+    messages = build_checkpoint_messages(reasoning, allow_write_draft=True)
+
+    assert messages[-1] == {"role": "system", "content": _NUDGE}
+
+
+# Astra B5 review: a plan, a review of quoted code, or a tool-less chat turn
+# must never be told to write its draft to disk. The tool loop opts in only
+# for an approved-plan build with write tools available.
+def test_checkpoint_draft_nudge_requires_write_permission() -> None:
+    reasoning = "def parse(row):\n    return row\n\nclass Report:\n    pass\n"
+
+    assert build_checkpoint_messages(reasoning)[-1] == {"role": "system", "content": _NUDGE}
+    assert build_checkpoint_messages(reasoning, allow_write_draft=False)[-1] == {
+        "role": "system",
+        "content": _NUDGE,
+    }
+
+
+# Dogfood TR-018: a model whose reasoning the engine hides (or drops) ends a long
+# think with ``length`` and an empty carry. That is not a repeat: the first such
+# stop gets one continuation that keeps the tools; a second one winds down.
+
+
+def test_length_cap_with_hidden_reasoning_gets_one_tool_keeping_leg(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    decision, run, _runtime, engine = _run_results(
+        monkeypatch,
+        [
+            _result("length", usage=_usage(70_000, 8_192)),
+            _result("stop", content="Edited."),
+        ],
+        max_iterations=4,
+    )
+
+    assert decision.response_text == "Edited."
+    assert run.thinking_budget_checkpoints == 1
+    assert len(engine.calls) == 2
+    assert engine.calls[1]["reasoning_effort"] != "none"
+    assert len(engine.calls[1]["tools"]) == len(engine.calls[0]["tools"]) > 0
+    assert _checkpoint_messages(run) == [{"role": "system", "content": _HIDDEN_REASONING_NUDGE}]
+
+
+def test_hidden_reasoning_leg_is_bounded_then_winds_down(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    decision, run, _runtime, engine = _run_results(
+        monkeypatch,
+        [
+            _result("length", usage=_usage(70_000, 8_192)),
+            _result("length", usage=_usage(70_000, 8_192)),
+            _result("stop", content="Summary of where the work stands."),
+        ],
+        max_iterations=4,
+    )
+
+    assert run.thinking_budget_checkpoints == 1
+    assert len(engine.calls) == 3
+    assert engine.calls[-1]["tools"] == []
+    assert engine.calls[-1]["reasoning_effort"] == "none"
+    assert decision.response_text == "Summary of where the work stands."
+
+
+def _stall_loop(*, tools: bool = True, cap_stripped: bool = False) -> SimpleNamespace:
+    return SimpleNamespace(
+        tool_payload=[{"type": "function"}] if tools else [],
+        tool_cap_tools_stripped=cap_stripped,
+        runtime=SimpleNamespace(tool_call_limit=0, remaining_tool_calls=0),
+    )
+
+
+def test_checkpoint_stalled_rules() -> None:
+    hidden = _result("length")
+    # First empty carry with tools on offer: hidden reasoning, not a stall.
+    assert checkpoint_stalled(_stall_loop(), None, "", hidden) is False
+    # A second empty carry, no tools, or a spent tool cap keep the stall.
+    assert checkpoint_stalled(_stall_loop(), "", "", hidden) is True
+    assert checkpoint_stalled(_stall_loop(tools=False), None, "", hidden) is True
+    assert checkpoint_stalled(_stall_loop(cap_stripped=True), None, "", hidden) is True
+    # Unchanged rules: a dropped tool call with no reasoning continues, a repeat stalls,
+    # fresh reasoning continues.
+    dropped = _result("length", tool_call_truncated=True)
+    assert checkpoint_stalled(_stall_loop(tools=False), "", "", dropped) is False
+    assert checkpoint_stalled(_stall_loop(), "same reasoning again", "same reasoning again", hidden) is True
+    assert checkpoint_stalled(_stall_loop(), None, "fresh reasoning", hidden) is False
+
+
+def test_hidden_reasoning_nudge_never_claims_a_preserved_carry() -> None:
+    assert build_checkpoint_messages("") == [{"role": "system", "content": _HIDDEN_REASONING_NUDGE}]
+    assert "preserved above" not in _HIDDEN_REASONING_NUDGE
+    # A dropped tool call keeps the decisive nudge plus its own note.
+    assert build_checkpoint_messages("", tool_call_truncated=True)[0] == {"role": "system", "content": _NUDGE}

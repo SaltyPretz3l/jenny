@@ -46,6 +46,7 @@
     }),
   } = composerV2Model || {};
   const PASTE_NOTICE_OWNER = 'composer:paste-size';
+  const SEND_SIZE_NOTICE_OWNER = 'composer:send-size';
 
   function createComposerV2FlowController(deps) {
     const {
@@ -74,11 +75,14 @@
       windowRef,
     } = deps;
     const now = typeof deps.now === 'function' ? deps.now : () => Date.now();
+    // Split view W1-4b: the session this composer's pane holds (renderer-pane-session-context.js).
+    const sessionContext = deps.sessionContext || (globalThis.rendererPaneSessionContext || require('./renderer-pane-session-context')).createPaneSessionContext({ state, paneId: deps.paneId });
     const startPromptSend = async (prompt, options) => {
       const runModeControl = globalThis.rendererRunModeControl;
+      const sessionId = sessionContext.getSessionId();
       if (
-        runModeControl?.currentRunMode?.() === 'auto'
-        && !await runModeControl.confirmAutoRun?.()
+        runModeControl?.currentRunMode?.(sessionId) === 'auto'
+        && !await runModeControl.confirmAutoRun?.(sessionId)
       ) return;
       return rawStartPromptSend(prompt, options);
     };
@@ -118,6 +122,7 @@
           setComposerStatusNotice(jt('composer.paste.tooLarge', 'Paste is too large. Keep pasted text under 1 MB.'), {
             tone: 'warning',
             owner: PASTE_NOTICE_OWNER,
+            sessionId: sessionContext.getSessionId(), // W3-1: renders under the pasting pane
           });
         }
         return makePasteResult(false, sizeBytes, true);
@@ -131,6 +136,7 @@
           setComposerStatusNotice(jt('composer.paste.largeAdded', 'Large paste added. Jenny may take longer to respond.'), {
             tone: 'warning',
             owner: PASTE_NOTICE_OWNER,
+            sessionId: sessionContext.getSessionId(), // W3-1: renders under the pasting pane
           });
         }
         return makePasteResult(true, sizeBytes, true);
@@ -195,9 +201,26 @@
 
     async function handleSend() {
       const prompt = chatInput.value.trim();
+      const paneSessionId = sessionContext.getSessionId();
       const activeSession = (Array.isArray(state?.sessions) ? state.sessions : [])
-        .find((session) => session?.id === state.currentSessionId);
+        .find((session) => session?.id === paneSessionId);
       if (activeSession?.session_type === 'plugin') return;
+      // Gate §D: the paste guard is per paste, so typing or several pastes can
+      // pass it. A draft over the same 1 MB cap is refused here, before the
+      // optimistic row renders (and sanitizes) megabytes of markdown: a 9.6 MB
+      // draft kept the renderer busy for minutes. The draft stays in place.
+      const sizeBytes = getTextByteLength(prompt);
+      if (sizeBytes >= PASTE_REJECT_BYTES) {
+        appendClientLog('WARN', 'composer.send_rejected_size', { sizeBytes, limitBytes: PASTE_REJECT_BYTES });
+        if (typeof setComposerStatusNotice === 'function') {
+          setComposerStatusNotice(jt('composer.send.tooLarge', 'Message is too large to send. Keep it under 1 MB.'), {
+            tone: 'warning',
+            owner: SEND_SIZE_NOTICE_OWNER,
+            sessionId: paneSessionId, // renders under the sending pane
+          });
+        }
+        return;
+      }
       await startPromptSend(prompt, { restoreInputOnError: true });
     }
 
@@ -429,8 +452,8 @@
         return;
       }
 
-      if (state.currentSessionId !== sessionId) {
-        state.currentSessionId = sessionId;
+      if (!sessionContext.isCurrent(sessionId)) {
+        sessionContext.setSessionId(sessionId);
       }
 
       await persistInteractiveFallbackRequest(sessionId, normalizedBatch.round_index);

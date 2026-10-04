@@ -226,6 +226,18 @@ test('exportTurnEventJson scopes events to the selected message ids', async () =
   }
 });
 
+test('every transcript export asks the save boundary to anonymise paths (HB-012)', async () => {
+  const ctx = makeDeps();
+  await ctx.controller.exportMarkdown();
+  await ctx.controller.exportPlainText();
+  await ctx.controller.exportTurnEventJson();
+  await ctx.controller.exportSessionJsonPortable();
+  assert.deepEqual(
+    ctx.saveFileCalls.map((payload) => [payload.format, payload.anonymizePaths]),
+    [['markdown', true], ['plain', true], ['json', true], ['session-json', true]]
+  );
+});
+
 test('saveFile cancellation flows through without firing a success toast', async () => {
   const ctx = makeDeps({
     jennyShellDialog: { saveFile: async () => ({ canceled: true, path: '', bytesWritten: 0 }) },

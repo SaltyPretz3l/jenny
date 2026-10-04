@@ -231,7 +231,7 @@ def test_agent_name_is_normalized_and_clamped() -> None:
 
 def test_agent_name_that_explodes_on_access_still_renders_the_default_name() -> None:
     class ExplodingStr(str):
-        def strip(self, *_args, **_kwargs):  # noqa: ANN001, ANN202
+        def strip(self, *_args, **_kwargs):
             raise ValueError("malformed identity payload")
 
     message = build_personality_system_message(ExplodingStr("bad"), "")

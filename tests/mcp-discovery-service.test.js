@@ -250,8 +250,203 @@ test('inspection normalization drops plaintext credential fields from downstream
       return { ok: true, tools_digest: 'a'.repeat(64) };
     } },
   } });
-  service._loadConfig = () => ({ mcp_servers: [server] });
+  service.backendService.featureFlags = { mcp_http_transport: true };
+  service._loadConfig = () => ({ mcp_sse_enabled: true, mcp_servers: [server] });
   assert.equal((await service.testServer({ name: 'remote' })).ok, true);
   assert.deepEqual(inspected.auth, { kind: 'oauth_client_credentials',
     token_url: 'https://auth.example.test/token', client_id: 'client', scope: 'read' });
+});
+
+for (const [documentGate, electronGate] of [[false, false], [false, true], [true, false], [true, true]]) {
+  test(`SSE inspection honors the Electron kill switch, not the document gate (${documentGate}, ${electronGate})`, async () => {
+    const directory = userData();
+    const server = { name: 'remote', transport: 'sse', url: 'https://example.test/sse',
+      auth: { kind: 'bearer', secret_ref: 'mcp:remote' } };
+    writeConfig(directory, [approvedServer(server)], { mcp_sse_enabled: documentGate });
+    let requests = 0;
+    let secretReads = 0;
+    let params;
+    const service = new McpDiscoveryService({ userDataPath: directory, backendService: {
+      featureFlags: { mcp_http_transport: electronGate },
+      secureStore: { getMcpAuthToken() { secretReads += 1; return 'secret'; } },
+      sidecarClient: { connected: true, async request(_method, value) {
+        requests += 1; params = value;
+        return { ok: true, tools_digest: 'b'.repeat(64) };
+      } },
+    } });
+    const result = await service.testServer({ name: 'remote' });
+    if (electronGate) {
+      assert.equal(result.ok, true);
+      assert.equal(params.mcp_sse_enabled, true);
+      assert.equal(requests, 1);
+      assert.equal(secretReads, 1);
+    } else {
+      assert.equal(result.ok, false);
+      assert.equal(result.error.code, 'CMP-MCP-0002');
+      assert.equal(requests, 0);
+      assert.equal(secretReads, 0);
+    }
+  });
+}
+
+for (const operation of ['disable', 'remove']) {
+  test(`runtime refresh failure reports pending application after ${operation}`, async () => {
+    const directory = userData();
+    const server = { name: 'docs', transport: 'stdio', command: 'node', args: [] };
+    writeConfig(directory, [approvedServer(server)]);
+    const service = new McpDiscoveryService({ userDataPath: directory, backendService: {
+      currentStatus: { mcp_servers_connected: ['docs'] },
+      async refreshManagedConfig() { throw new Error('initialize failed'); },
+    } });
+    const result = operation === 'remove' ? await service.removeServer({ name: 'docs' })
+      : await service.setServerEnabled({ name: 'docs', enabled: false });
+    assert.equal(result.ok, false);
+    assert.equal(result.saved, true);
+    assert.equal(result.runtimeApplied, false);
+    assert.equal(result.error.code, 'CMP-MCP-0004');
+    assert.match(result.error.message, /previous runtime configuration may still be active/);
+    const document = JSON.parse(fs.readFileSync(path.join(directory, 'mcp-servers.json'), 'utf8'));
+    assert.equal(operation === 'remove' ? document.mcp_servers.length : document.mcp_servers[0].enabled,
+      operation === 'remove' ? 0 : false);
+  });
+}
+
+test('enabling an approved SSE server turns on the document gate atomically', async () => {
+  const directory = userData();
+  const server = { name: 'remote', transport: 'sse', url: 'https://example.test/sse' };
+  writeConfig(directory, [approvedServer(server, { enabled: false })]);
+  const service = new McpDiscoveryService({ userDataPath: directory });
+  assert.equal((await service.setServerEnabled({ name: 'remote', enabled: true })).ok, true);
+  const document = JSON.parse(fs.readFileSync(path.join(directory, 'mcp-servers.json'), 'utf8'));
+  assert.equal(document.mcp_sse_enabled, true);
+  assert.equal(document.mcp_servers[0].enabled, true);
+  assert.equal(service.getSidecarConfig().mcp_servers, undefined);
+  assert.equal(service.getSidecarConfig({ httpTransportEnabled: true }).mcp_servers.length, 1);
+});
+
+test('server edits preserve omitted credentials and initialization timeout', async () => {
+  const directory = userData();
+  const server = { name: 'remote', transport: 'sse', url: 'https://example.test/sse',
+    init_timeout_seconds: 45, auth: { kind: 'bearer', secret_ref: 'mcp:remote' } };
+  writeConfig(directory, [approvedServer(server)]);
+  const service = new McpDiscoveryService({ userDataPath: directory });
+  assert.equal((await service.updateServer({ name: 'remote', server: {
+    name: 'remote', transport: 'sse', url: server.url, auth: { kind: 'bearer' },
+  } })).ok, true);
+  let row = service.configStore.getState().document.mcp_servers[0];
+  assert.equal(row.auth.secret_ref, 'mcp:remote');
+  assert.equal(row.init_timeout_seconds, 45);
+  assert.equal((await service.updateServer({ name: 'remote', server: {
+    name: 'remote', transport: 'sse', url: server.url,
+  } })).ok, true);
+  row = service.configStore.getState().document.mcp_servers[0];
+  assert.equal(row.auth.secret_ref, 'mcp:remote');
+  assert.equal((await service.updateServer({ name: 'remote', server: {
+    name: 'remote', transport: 'sse', url: server.url, auth: null,
+  } })).ok, true);
+  assert.equal(service.configStore.getState().document.mcp_servers[0].auth, undefined);
+});
+
+test('a stored credential does not follow a new auth kind or destination', async () => {
+  const server = { name: 'remote', transport: 'sse', url: 'https://example.test/sse',
+    auth: { kind: 'bearer', secret_ref: 'mcp:remote' } };
+  const edits = [
+    { url: 'https://other.test/sse' },
+    { url: server.url, auth: { kind: 'oauth_client_credentials', secret_ref: 'mcp:remote',
+      token_url: 'https://auth.example.test/token', client_id: 'client' } },
+  ];
+  for (const edit of edits) {
+    const directory = userData();
+    writeConfig(directory, [approvedServer(server)]);
+    const service = new McpDiscoveryService({ userDataPath: directory });
+    assert.equal((await service.updateServer({ name: 'remote', server: {
+      name: 'remote', transport: 'sse', ...edit } })).ok, true);
+    const row = service.configStore.getState().document.mcp_servers[0];
+    assert.equal(row.auth?.secret_ref, undefined, JSON.stringify(edit));
+  }
+});
+
+test('builtin discovery row is identified as built-in', () => {
+  const service = new McpDiscoveryService({ userDataPath: userData() });
+  const row = service.getState().servers.find((server) => server.name === 'jenny_local_tools');
+  assert.equal(row.builtin, true);
+  assert.equal(row.enabled, true);
+});
+
+test('confirmed stdio arguments survive the real Python parsing boundary', async () => {
+  const { spawnSync } = require('node:child_process');
+  const directory = userData();
+  const args = ['--label', '', '  ', '--mode', 'safe'];
+  const server = { name: 'docs', transport: 'stdio', command: 'node', args };
+  writeConfig(directory, [approvedServer(server)]);
+  let inspected;
+  const service = new McpDiscoveryService({ userDataPath: directory, backendService: {
+    sidecarClient: { connected: true, async request(_method, params) {
+      inspected = params.server;
+      return { ok: true, tools_digest: 'a'.repeat(64) };
+    } },
+  } });
+  assert.deepEqual((await service.testServer({ name: 'docs' })).args, args);
+  assert.equal((await service.testServer({ name: 'docs', confirmed: true })).ok, true);
+  const python = process.platform === 'win32'
+    ? path.join(__dirname, '..', '.venv', 'Scripts', 'python.exe') : 'python3';
+  const result = spawnSync(python, ['-c',
+    'import json,sys; from sidecar.ai.config_parsing import _parse_mcp_servers; '
+      + 'print(json.dumps(list(_parse_mcp_servers([json.load(sys.stdin)], sse_enabled=False)[0].args)))'],
+  { cwd: path.join(__dirname, '..'), input: JSON.stringify(inspected), encoding: 'utf8', timeout: 10000 });
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(JSON.parse(result.stdout), args);
+});
+
+test('creating, approving, or disabling an SSE server does not enable its transport gate', async () => {
+  const directory = userData();
+  const service = new McpDiscoveryService({ userDataPath: directory });
+  const server = { name: 'remote', transport: 'sse', url: 'https://example.test/sse' };
+  assert.equal((await service.createServer(server)).ok, true);
+  assert.equal(service.configStore.getState().document.mcp_sse_enabled, false);
+  service.lastInspections.set('remote', {
+    configurationDigest: configurationDigest(server), toolsDigest: 'a'.repeat(64),
+  });
+  assert.equal((await service.approveServer({ name: 'remote' })).ok, true);
+  assert.equal(service.configStore.getState().document.mcp_sse_enabled, false);
+  assert.equal((await service.setServerEnabled({ name: 'remote', enabled: false })).ok, true);
+  assert.equal(service.configStore.getState().document.mcp_sse_enabled, false);
+});
+
+test('explicit credential replacement is kept by server edits', async () => {
+  const directory = userData();
+  const server = { name: 'remote', transport: 'sse', url: 'https://example.test/sse',
+    auth: { kind: 'bearer', secret_ref: 'mcp:old' } };
+  writeConfig(directory, [approvedServer(server)]);
+  const service = new McpDiscoveryService({ userDataPath: directory });
+  assert.equal((await service.updateServer({ name: 'remote', server: {
+    ...server, auth: { kind: 'bearer', secret_ref: 'mcp:new' },
+  } })).ok, true);
+  assert.equal(service.configStore.getState().document.mcp_servers[0].auth.secret_ref, 'mcp:new');
+});
+
+test('server updates still reject an empty editable definition', async () => {
+  const directory = userData();
+  const server = { name: 'docs', transport: 'stdio', command: 'node', args: [] };
+  writeConfig(directory, [approvedServer(server)]);
+  const service = new McpDiscoveryService({ userDataPath: directory });
+  assert.equal((await service.updateServer({ name: 'docs', server: {} })).ok, false);
+  assert.equal(service.configStore.getState().document.mcp_servers[0].enabled, true);
+});
+
+
+test('runtime-only discovery preserves empty auth and non-secret summaries', () => {
+  const { buildDiscoveryState } = require('../services/mcp-discovery-service');
+  const state = buildDiscoveryState({ backendStatus: { mcp_servers: [
+    { name: 'empty', transport: 'sse', auth: {} },
+    { name: 'secrets', transport: 'sse', auth: { token: 'hidden', client_secret: 'hidden' } },
+    { name: 'blank', transport: 'sse', auth: { kind: ' ', secret_ref: ' ' } },
+    { name: 'remote', transport: 'sse', auth: { kind: ' BEARER ', secret_ref: ' mcp:remote ', token: 'hidden' } },
+  ] } });
+  for (const name of ['empty', 'secrets', 'blank']) {
+    assert.equal(state.servers.find((row) => row.name === name).auth, null);
+  }
+  assert.deepEqual(state.servers.find((row) => row.name === 'remote').auth,
+    { kind: 'bearer', secretRef: 'mcp:remote', token_url: '', client_id: '', scope: '' });
+  assert.equal(JSON.stringify(state).includes('hidden'), false);
 });

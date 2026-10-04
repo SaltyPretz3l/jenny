@@ -20,6 +20,8 @@
 
   function createViewportThinkingPanelUtils(deps) {
     const { state } = deps;
+    // The pane's own follow intent; default is the single-pane state.ui.followLatest.
+    const followState = deps.followState || { get: () => state?.ui?.followLatest };
     const { chatTimeline } = deps.dom || {};
     const {
       thinkingController,
@@ -46,6 +48,9 @@
     const thinkingPanelGrowthPending = new WeakMap();
     const thinkingPanelGenerationByPanel = new WeakMap();
     const thinkingPanelLastHeight = new WeakMap();
+    // User collapses in flight; dispose finishes them so a panel that outlives
+    // this controller is not left half-collapsed under data-collapsing.
+    const collapsingPanels = new Set();
     const { settleThinkingPanelNow, SETTLED_CLASS = 'reasoning-row-panel--settled' } = thinkingPanelSettleUtils;
 
     function getThinkingPanelGenerationGate(panel) {
@@ -162,7 +167,7 @@
           if (
             !growthPending
             || isDisposed()
-            || state?.ui?.followLatest === false
+            || followState.get() === false
             || typeof thinkingController?.shouldAutoScroll !== 'function'
             || !thinkingController.shouldAutoScroll()
           ) {
@@ -192,6 +197,7 @@
             if (panel.style.maxHeight !== 'none') panel.style.maxHeight = 'none';
             return;
           }
+          if (panel.classList.contains(SETTLED_CLASS) && !panel.style.maxHeight && !thinkingPanelGrowthPending.get(panel)) return;
           const expandedHeight = resolveThinkingPanelExpandedHeight(panel);
           const newMaxHeight = reducedMotionQuery.matches
             ? 'none'
@@ -276,6 +282,9 @@
       }
       const panelGenerationGate = getThinkingPanelGenerationGate(panel);
       panelGenerationGate.bump();
+      const toggleToken = panelGenerationGate.capture();
+      const wasCollapsing = panel.dataset.collapsing === 'true';
+      collapsingPanels.delete(panel);
       // The reader's toggle wins over an in-flight auto-collapse: abandon it
       // here so its deferred frame/finish cannot hide the panel underneath us,
       // and forget the panel so a later rebuild cannot replay the collapse.
@@ -288,12 +297,16 @@
       } else if (expanded) {
         panel.hidden = false;
         panel.classList.add('expanded');
-        if (reducedMotionQuery.matches) {
+        clearThinkingPanelSettle(panel);
+        if (reducedMotionQuery.matches || block?.getAttribute('data-reasoning-status') === 'streaming') {
           panel.style.maxHeight = 'none';
         } else {
-          motionHeightUtils.pinHeightForTransition(panel, 0);
+          motionHeightUtils.pinHeightForTransition(panel, wasCollapsing
+            ? motionHeightUtils.readCurrentMaxHeightPx(panel, panel.ownerDocument?.defaultView) : 0);
           scheduleTransientViewportFrame(() => {
+            if (!panelGenerationGate.isCurrent(toggleToken)) return;
             try {
+              if (block?.getAttribute('data-reasoning-status') === 'streaming') { panel.style.maxHeight = 'none'; return; }
               const newMaxHeight = `${resolveThinkingPanelExpandedHeight(panel)}px`;
               const maxHeightChanged = panel.style.maxHeight !== newMaxHeight;
               panel.style.maxHeight = newMaxHeight;
@@ -308,11 +321,15 @@
         panel.hidden = true;
         panel.style.maxHeight = '';
       } else {
-        motionHeightUtils.pinHeightForTransition(panel, resolveThinkingPanelExpandedHeight(panel)); clearThinkingPanelSettle(panel);
+        panel.dataset.collapsing = 'true';
+        collapsingPanels.add(panel);
+        motionHeightUtils.pinHeightForTransition(panel, wasCollapsing || thinkingPanelCleanupByPanel.has(panel)
+          ? motionHeightUtils.readCurrentMaxHeightPx(panel, panel.ownerDocument?.defaultView)
+          : resolveThinkingPanelExpandedHeight(panel)); clearThinkingPanelSettle(panel);
         const collapseToken = panelGenerationGate.capture();
         scheduleTransientViewportFrame(() => {
+          if (!panelGenerationGate.isCurrent(collapseToken)) return;
           try {
-            panel.classList.remove('expanded');
             panel.style.maxHeight = '0px';
           } catch (error) {
             appendClientLog('ERROR', 'viewport.thinking_collapse_error', { message: String(error?.message || '') });
@@ -324,14 +341,19 @@
             const phaseExpanded = thinkingController.isPhaseExpanded
               ? thinkingController.isPhaseExpanded(messageId, phaseKey, defaultExpanded)
               : thinkingController.isExpanded(messageId);
+            delete panel.dataset.collapsing;
+            collapsingPanels.delete(panel);
             if (!phaseExpanded) {
+              panel.classList.remove('expanded');
               panel.hidden = true;
+              panel.style.maxHeight = '';
             }
           } catch (_) { /* best-effort cleanup */ }
         }, getThinkingPanelTransitionMs(0));
       }
 
       scheduleTransientViewportFrame(() => {
+        if (!panelGenerationGate.isCurrent(toggleToken)) return;
         schedulePostLayoutViewportSync({
           syncOptions: {
             preserveFollowLatest: true,
@@ -356,6 +378,13 @@
         try { cleanup(); } catch (_error) { /* best-effort */ }
       }
       thinkingPanelCleanupByPanel.clear();
+      for (const panel of collapsingPanels) {
+        delete panel.dataset.collapsing;
+        panel.classList.remove('expanded');
+        panel.hidden = true;
+        panel.style.maxHeight = '';
+      }
+      collapsingPanels.clear();
     }
 
     return {

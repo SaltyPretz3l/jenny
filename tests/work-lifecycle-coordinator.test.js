@@ -270,6 +270,15 @@ test('isAgentStatusSurfaceEnabled returns false when featureFlags is empty', () 
   assert.equal(isAgentStatusSurfaceEnabled({ featureFlags: {} }), false);
 });
 
+test('isAgentStatusSurfaceEnabled passes delegate child progress without the agent_executor flag', () => {
+  const service = { featureFlags: {} };
+  for (const source of ['delegate', 'subagent_run', 'subagent_batch']) {
+    assert.equal(isAgentStatusSurfaceEnabled(service, { taskType: 'sub_agent', source }), true, source);
+  }
+  assert.equal(isAgentStatusSurfaceEnabled(service, { taskType: 'build', source: 'delegate' }), false);
+  assert.equal(isAgentStatusSurfaceEnabled(service, { taskType: 'sub_agent', source: 'local_agent' }), false);
+});
+
 // ---------------------------------------------------------------------------
 // coordinateWorkLifecycle
 // ---------------------------------------------------------------------------

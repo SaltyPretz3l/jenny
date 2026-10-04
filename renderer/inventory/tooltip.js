@@ -15,6 +15,10 @@
  *
  * Elements with the `inv-tooltip-pin` class opt into delegated click-to-pin:
  * click toggles the pin; clicking elsewhere or pressing Escape unpins.
+ *
+ * An anchor inside `[data-tooltip-suppressed]` (an open popover whose own
+ * rows already show what a tooltip would, e.g. the collapsed composer's
+ * settings list) gets no delegated tooltip; a delayed show re-checks it.
  */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) {
@@ -33,7 +37,6 @@
   var _showTimer = 0;
   var _currentAnchor = null;
   var _pinnedAnchor = null;
-  var _idCounter = 0;
 
   function _ensureTooltipEl(doc) {
     if (_tooltipEl && _tooltipEl.ownerDocument === doc) return _tooltipEl;
@@ -61,10 +64,13 @@
     var tw = tipRect.width;
     var th = tipRect.height;
 
-    /* Default: above the anchor. */
+    /* Default: above the anchor. An anchor with data-tooltip-placement="below"
+     * gets below while it fits in the viewport. */
     var top = rect.top - th - TOOLTIP_GAP;
     var placeBelow = false;
-    if (top < 4) {
+    var wantsBelow = anchorEl.getAttribute('data-tooltip-placement') === 'below'
+      && rect.bottom + TOOLTIP_GAP + th <= vh - 4;
+    if (wantsBelow || top < 4) {
       top = rect.bottom + TOOLTIP_GAP;
       placeBelow = true;
     }
@@ -92,6 +98,9 @@
 
   function show(anchorEl, text) {
     if (!anchorEl || !text) return;
+    if (_currentAnchor && _currentAnchor !== anchorEl) {
+      _updateDescribedBy(_currentAnchor, TOOLTIP_ID, false);
+    }
     var doc = anchorEl.ownerDocument || document;
     var el = _ensureTooltipEl(doc);
 
@@ -99,9 +108,7 @@
     _position(anchorEl, el);
 
     /* Accessibility link. */
-    _idCounter += 1;
-    el.id = TOOLTIP_ID + '-' + _idCounter;
-    _updateDescribedBy(anchorEl, el.id, true);
+    _updateDescribedBy(anchorEl, TOOLTIP_ID, true);
     el.setAttribute('aria-hidden', 'false');
 
     /* Trigger enter animation on next frame. */
@@ -120,7 +127,7 @@
       _tooltipEl.setAttribute('aria-hidden', 'true');
     }
     if (_currentAnchor) {
-      _updateDescribedBy(_currentAnchor, _tooltipEl.id, false);
+      _updateDescribedBy(_currentAnchor, TOOLTIP_ID, false);
       _currentAnchor = null;
     }
   }
@@ -179,6 +186,18 @@
     return null;
   }
 
+  function _suppressed(el) {
+    return Boolean(el && typeof el.closest === 'function' && el.closest('[data-tooltip-suppressed]'));
+  }
+
+  function _scheduleShow(target, text) {
+    hide();
+    _showTimer = setTimeout(function () {
+      _showTimer = 0;
+      if (!_suppressed(target)) show(target, text);
+    }, SHOW_DELAY_MS);
+  }
+
   function _migrateTitle(el) {
     if (el.hasAttribute('title')) {
       var val = el.getAttribute('title');
@@ -207,8 +226,8 @@
         return;
       }
       if (_pinnedAnchor) return;
-      hide();
-      _showTimer = setTimeout(function () { show(target, text); }, SHOW_DELAY_MS);
+      if (_suppressed(target)) { hide(); return; }
+      _scheduleShow(target, text);
     }, true);
 
     rootEl.addEventListener('mouseleave', function (e) {
@@ -229,8 +248,8 @@
         return;
       }
       if (_pinnedAnchor) return;
-      hide();
-      _showTimer = setTimeout(function () { show(target, text); }, SHOW_DELAY_MS);
+      if (_suppressed(target)) { hide(); return; }
+      _scheduleShow(target, text);
     }, true);
 
     rootEl.addEventListener('focusout', function (e) {

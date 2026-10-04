@@ -12,6 +12,8 @@ import logging
 import queue
 import threading
 import time
+from collections.abc import Callable
+from contextlib import suppress
 from contextvars import copy_context
 from dataclasses import dataclass, replace
 from typing import Any
@@ -57,6 +59,9 @@ ENGINE_EVENT_TOOL_CALL_DELTA = _engine_events.ENGINE_EVENT_TOOL_CALL_DELTA
 ThinkingRepetitionGuard = _thinking_guard.ThinkingRepetitionGuard
 resolve_thinking_budget_chars = _thinking_guard.resolve_thinking_budget_chars
 thinking_budget_abort_enabled = _thinking_guard.thinking_budget_abort_enabled
+THINKING_STATUS_EVENT_KIND = _thinking_guard.THINKING_STATUS_EVENT_KIND
+REPETITION_HIDDEN_STATUS_TEXT = _thinking_guard.REPETITION_HIDDEN_STATUS_TEXT
+BUDGET_HIDDEN_STATUS_TEXT = _thinking_guard.BUDGET_HIDDEN_STATUS_TEXT
 KIND_MODEL_REASONING_DELTA = _tool_observation.KIND_MODEL_REASONING_DELTA
 KIND_MODEL_VISIBLE_TEXT_DELTA = _tool_observation.KIND_MODEL_VISIBLE_TEXT_DELTA
 ThinkingEvent = _loop_events.ThinkingEvent
@@ -170,6 +175,9 @@ class _StreamReader:
             maxsize=_STREAM_READER_QUEUE_MAXSIZE
         )
         self._stream = stream
+        # Closes the provider transport (cancels the stream-scoped handle);
+        # generator.close() cannot interrupt a thread inside next(stream).
+        self.abort_transport: Callable[[], None] | None = None
         self._stop = threading.Event()
         # A reader's lifetime IS a generation's flight time, so it carries the
         # engine-liveness generation accounting (the deferral is only sound
@@ -224,6 +232,7 @@ class _StreamReader:
             if not self._stop.is_set():
                 self._put(_StreamFailure(error=error))
         finally:
+            self.close()
             quarantine_name = _reader_quarantine_name(threading.current_thread())
             with _zombie_reader_count_lock:
                 _quarantined_reader_names.discard(quarantine_name)
@@ -269,7 +278,22 @@ def _reader_quarantine_name(thread: threading.Thread) -> str:
 
 def _close_stream_reader(reader: _StreamReader, *, runtime: Any, reason: str) -> None:
     reader.close()
+    # Unblock a reader parked inside next(stream) by closing its transport. Off
+    # this thread: a provider callback that blocks must not outlast the grace.
+    abort_thread = None
+    if reader.abort_transport is not None:
+        try:
+            abort_thread = threading.Thread(
+                target=reader.abort_transport, name="router-stream-abort", daemon=True
+            )
+            abort_thread.start()
+        except Exception:  # noqa: BLE001 - still join and account for the reader.
+            abort_thread = None
     reader.join(timeout_seconds=_STREAM_READER_SHUTDOWN_GRACE_SECONDS)
+    if abort_thread is not None:
+        abort_thread.join(timeout=_STREAM_READER_SHUTDOWN_GRACE_SECONDS)
+        if abort_thread.is_alive():
+            mark_provider_cleanup_uncertain()  # a blocked abort callback is unconfirmed cleanup
     if reader.thread.is_alive() and reader.mark_quarantined_once():
         mark_provider_cleanup_uncertain()
         quarantine_name = _reader_quarantine_name(reader.thread)
@@ -282,24 +306,57 @@ def _close_stream_reader(reader: _StreamReader, *, runtime: Any, reason: str) ->
             with _zombie_reader_count_lock:
                 _quarantined_reader_names.discard(quarantine_name)
                 quarantined_reader_total = len(_quarantined_reader_names)
-        logger.warning(
-            "Provider stream reader did not stop within the cleanup grace.",
-            extra={
-                "event": "generation.stream_reader_cleanup_incomplete",
-                "request_id": str(getattr(runtime, "request_id", "") or ""),
-                "reason": reason,
-                "grace_seconds": _STREAM_READER_SHUTDOWN_GRACE_SECONDS,
-                "zombie_reader_count": zombie_reader_total,
-                "quarantined_reader_count": quarantined_reader_total,
-                "reader_name": quarantine_name,
-            },
-        )
+        try:
+            logger.warning(
+                "Provider stream reader did not stop within the cleanup grace.",
+                extra={
+                    "event": "generation.stream_reader_cleanup_incomplete",
+                    "request_id": str(getattr(runtime, "request_id", "") or ""),
+                    "reason": reason,
+                    "grace_seconds": _STREAM_READER_SHUTDOWN_GRACE_SECONDS,
+                    "zombie_reader_count": zombie_reader_total,
+                    "quarantined_reader_count": quarantined_reader_total,
+                    "reader_name": quarantine_name,
+                },
+            )
+        except Exception:  # noqa: BLE001 - logging must not replace the owner's error.
+            pass
 
 
 def stream_generate_with_tools(
     kernel: Any,
     *,
     runtime: Any,
+    **kwargs: Any,
+) -> tuple[GenerationResult, set[str]]:
+    # The provider gets a child of the turn's handle so reader cleanup can
+    # close its transport without cancelling the turn (a watchdog timeout is
+    # not a user cancellation); a parent cancel still propagates to the child.
+    parent: Any = getattr(runtime, "cancel_handle", None)
+    create_child = getattr(parent, "create_child", None)
+    if not callable(create_child):
+        return _stream_generate_with_tools(
+            kernel, runtime=runtime, provider_cancel_handle=parent, **kwargs
+        )
+    stream_cancel = create_child(request_id=getattr(parent, "request_id", ""))
+    try:
+        return _stream_generate_with_tools(
+            kernel,
+            runtime=runtime,
+            provider_cancel_handle=stream_cancel,
+            abort_transport=lambda: stream_cancel.cancel(reason="provider_stream_closed"),
+            **kwargs,
+        )
+    finally:
+        parent.detach_child(stream_cancel)
+
+
+def _stream_generate_with_tools(
+    kernel: Any,
+    *,
+    runtime: Any,
+    provider_cancel_handle: Any,
+    abort_transport: Callable[[], Any] | None = None,
     latest_user_content: str,
     prompt_messages: list[Any],
     max_tokens: int,
@@ -465,6 +522,17 @@ def stream_generate_with_tools(
             transition_phase(None)
             thinking_has_content = False
 
+    def emit_thinking_status(text: str) -> None:
+        runtime.emit(
+            ThinkingEvent(
+                thinking_id=thinking_id,
+                delta=text,
+                kind=CHAT_THINKING_KIND_STATUS,
+                persist=False,
+            )
+        )
+        emitted_event_types.add("chat.thinking")
+
     def emit_thinking(delta: str, *, persist: bool) -> None:
         nonlocal pending_phase_summary, thinking_budget_aborted, thinking_has_content
         nonlocal thinking_suppression_logged
@@ -477,6 +545,9 @@ def stream_generate_with_tools(
         if not delta.strip() and not thinking_has_content:
             return
         if thinking_guard.feed(delta):
+            # Either trip ends the generation when the abort is on, so the
+            # checkpoint continuation runs instead of a silent row (HB-004).
+            abort = thinking_guard.tripped_for_abort() and thinking_budget_abort_enabled()
             if not thinking_suppression_logged:
                 _gr_hub.log_event(
                     logger,
@@ -487,24 +558,23 @@ def stream_generate_with_tools(
                     status="degraded",
                     data={
                         "provider": getattr(kernel._config, "engine_type", ""),
-                        "model": getattr(kernel._config, "model", ""),
                         "reason": thinking_guard.stop_reason,
+                        "abort": abort,
+                        **thinking_guard.verdict_data(),
+                        "model": getattr(kernel._config, "model", ""),
                     },
                     request_id=getattr(runtime, "request_id", ""),
                 )
-                if thinking_guard.stop_reason == "repetition":
-                    runtime.emit(
-                        ThinkingEvent(
-                            thinking_id=thinking_id,
-                            delta="Reasoning hidden - repetition detected",
-                            kind=CHAT_THINKING_KIND_STATUS,
-                            persist=False,
-                        )
-                    )
-                    emitted_event_types.add("chat.thinking")
                 thinking_suppression_logged = True
-            if thinking_guard.tripped_on_budget() and thinking_budget_abort_enabled():
+            if abort:
                 thinking_budget_aborted = True
+            elif thinking_guard.claim_hidden_notice():
+                # Abort off: either trip hides the rest while generation runs on.
+                emit_thinking_status(
+                    REPETITION_HIDDEN_STATUS_TEXT
+                    if thinking_guard.first_trip_reason == "repetition"
+                    else BUDGET_HIDDEN_STATUS_TEXT
+                )
             return
         if current_phase is None or current_phase.get("phase_kind") != "reasoning":
             phase_summary = pending_phase_summary
@@ -563,7 +633,7 @@ def stream_generate_with_tools(
         ),
         messages=prompt_messages,
         response_format=response_format,
-        cancel_handle=getattr(runtime, "cancel_handle", None),
+        cancel_handle=provider_cancel_handle,
         wall_clock_deadline=getattr(runtime, "wall_clock_deadline", None),
     )
     inactivity_limit = runtime.chunk_inactivity_seconds
@@ -608,324 +678,338 @@ def stream_generate_with_tools(
         flush_content()
         transition_phase(None)
         return GenerationResult(content=synthetic, finish_reason="error"), emitted_event_types
-    stream_queue = stream_reader.queue
-    received_first_chunk = False
-    silence_started = time.monotonic()
-    next_watchdog_at = silence_started + model_load_grace
-    liveness_deferrals = 0
-    while True:
-        try:
-            runtime.raise_if_interrupted(
-                message="turn working-time limit exceeded during provider generation",
-            )
-        except Exception:
-            record_unflushed_content(getattr(runtime.cancel_handle, "reason", "timeout"))
-            transition_phase(None)
-            _close_stream_reader(stream_reader, runtime=runtime, reason="request_interrupted")
-            raise
-        base_window = inactivity_limit if received_first_chunk else model_load_grace
-        # Once deferring, re-check on the short interval so a subsequently-dead
-        # engine is still detected promptly and the ceiling stays accurate.
-        current_timeout = (
-            _ENGINE_LIVENESS_RECHECK_SECONDS if liveness_deferrals else base_window
-        )
-        now = time.monotonic()
-        wait_timeout = max(0.001, next_watchdog_at - now)
-        remaining_deadline = runtime.remaining_wall_clock_seconds(now=now)
-        if remaining_deadline is not None:
-            wait_timeout = min(wait_timeout, max(0.001, remaining_deadline))
-        if getattr(runtime, "cancel_handle", None) is not None:
-            wait_timeout = min(wait_timeout, _STREAM_CANCEL_POLL_SECONDS)
-        try:
-            chunk = stream_queue.get(timeout=wait_timeout)
-        except queue.Empty:
+    cleanup_reason = "provider_exit"
+    try:
+        stream_reader.abort_transport = abort_transport
+        stream_queue = stream_reader.queue
+        received_first_chunk = False
+        silence_started = time.monotonic()
+        next_watchdog_at = silence_started + model_load_grace
+        liveness_deferrals = 0
+        while True:
             try:
                 runtime.raise_if_interrupted(
                     message="turn working-time limit exceeded during provider generation",
                 )
             except Exception:
-                record_unflushed_content(getattr(runtime.cancel_handle, "reason", "timeout"))
-                transition_phase(None)
-                _close_stream_reader(
-                    stream_reader,
-                    runtime=runtime,
-                    reason="request_interrupted",
-                )
+                cleanup_reason = "request_interrupted"
+                with suppress(Exception):  # Preserve interruption if cleanup emission fails.
+                    record_unflushed_content(getattr(runtime.cancel_handle, "reason", "timeout"))
+                    transition_phase(None)
                 raise
+            base_window = inactivity_limit if received_first_chunk else model_load_grace
+            # Once deferring, re-check on the short interval so a subsequently-dead
+            # engine is still detected promptly and the ceiling stays accurate.
+            current_timeout = (
+                _ENGINE_LIVENESS_RECHECK_SECONDS if liveness_deferrals else base_window
+            )
             now = time.monotonic()
-            if now < next_watchdog_at:
-                continue
-            silent_for = now - silence_started
-            engine_age = _engine_liveness.seconds_since_engine_activity()
-            if (
-                engine_age is not None
-                and engine_age <= _ENGINE_ACTIVITY_FRESH_SECONDS
-                and silent_for < _ENGINE_SILENCE_CEILING_SECONDS
-                # The activity clock is process-wide, so it only ATTRIBUTES to
-                # this generation when it is the sole one in flight — with a
-                # concurrent generation running (e.g. a background.run worker),
-                # a healthy sibling's telemetry must not mask THIS request
-                # being wedged. Ambiguity falls back to the fixed window.
-                and _engine_liveness.active_generation_count() <= 1
-                ):
-                liveness_deferrals += 1
-                next_watchdog_at = now + _ENGINE_LIVENESS_RECHECK_SECONDS
-                if liveness_deferrals == 1 or liveness_deferrals % 8 == 0:
-                    logger.info(
-                        "Stream silent %.0fs but the managed engine reported "
-                        "activity %.1fs ago; deferring the stall verdict "
-                        "(deferral %d)",
-                        silent_for,
-                        engine_age,
-                        liveness_deferrals,
-                        extra={
-                            "event": "generation.stall_deferred_engine_active",
-                            "silent_seconds": round(silent_for, 1),
-                            "engine_activity_age_seconds": round(engine_age, 1),
-                            "deferral_count": liveness_deferrals,
-                        },
-                    )
-                continue
-            stall_phase = "inactivity" if received_first_chunk else "model_load"
-            if stall_phase == "model_load":
-                stall_reason = (
-                    f"Model load stalled (no output for {current_timeout:.0f}s "
-                    "while loading the model)"
-                )
-                synthetic = "Generation timed out while loading the model."
-            else:
-                stall_reason = f"Engine stalled (no output for {current_timeout:.0f}s)"
-                synthetic = "Generation timed out due to engine inactivity."
-            if liveness_deferrals:
-                stall_reason += (
-                    f" after {silent_for:.0f}s of silence"
-                    f" ({liveness_deferrals} engine-liveness deferrals)"
-                )
-            # Record the phase so ``tool_loop`` builds a phase-accurate user
-            # message, and whether the engine was provably still working while
-            # the stream was silent -- blaming the machine is wrong when it
-            # was. Never let a diagnostics write break the turn.
+            wait_timeout = max(0.001, next_watchdog_at - now)
+            remaining_deadline = runtime.remaining_wall_clock_seconds(now=now)
+            if remaining_deadline is not None:
+                wait_timeout = min(wait_timeout, max(0.001, remaining_deadline))
+            if getattr(runtime, "cancel_handle", None) is not None:
+                wait_timeout = min(wait_timeout, _STREAM_CANCEL_POLL_SECONDS)
             try:
-                runtime.stall_phase = stall_phase
-                runtime.stall_engine_was_active = bool(liveness_deferrals)
-            except Exception:  # noqa: BLE001 - diagnostics are best-effort
-                pass
-            runtime.emit(
-                _loop_events.StopEvent(
-                    reason=stall_reason,
-                    code=CMP_LOOP_ENGINE_STALLED,
-                )
-            )
-            buffer_content(synthetic)
-            flush_content()
-            transition_phase(None)
-            _close_stream_reader(stream_reader, runtime=runtime, reason="provider_stalled")
-            return GenerationResult(
-                content=synthetic,
-                finish_reason="timeout",
-            ), emitted_event_types
-        # Any item (delta, tool boundary, terminal, or failure) means the model
-        # is alive: every subsequent wait reverts to the inactivity window.
-        received_first_chunk = True
-        silence_started = time.monotonic()
-        next_watchdog_at = silence_started + inactivity_limit
-        liveness_deferrals = 0
-        try:
-            runtime.raise_if_interrupted(
-                message="turn working-time limit exceeded during provider generation",
-            )
-        except Exception:
-            record_unflushed_content(getattr(runtime.cancel_handle, "reason", "cancelled"))
-            transition_phase(None)
-            _close_stream_reader(stream_reader, runtime=runtime, reason="request_interrupted")
-            raise
-        if isinstance(chunk, _StreamFailure):
-            record_unflushed_content("stream_failure")
-            _close_stream_reader(stream_reader, runtime=runtime, reason="provider_failure")
-            raise chunk.error
-        if isinstance(chunk, _StreamTerminal):
-            stream_reader.join(timeout_seconds=_STREAM_READER_SHUTDOWN_GRACE_SECONDS)
-            if stream_reader.thread.is_alive():
-                _close_stream_reader(stream_reader, runtime=runtime, reason="provider_terminal")
-            result = _gr_hub._to_generation_result(chunk.result)
-            final_thinking = str(result.thinking_text or "").strip()
-            if final_thinking and not thinking_parts:
-                # No budget-abort break here: this is the provider's clean
-                # terminal, so generation is already over and the result may
-                # carry tool calls that must dispatch (mirrors the engine
-                # guards, which gate their aborts on ``not chunk_done``).
-                emit_thinking(final_thinking, persist=True)
-            if str(result.content or "") and not content_parts:
-                buffer_content(str(result.content))
-            if content_parts and not str(result.content or ""):
-                result = replace(
-                    result,
-                    content="".join(content_parts).strip(),
-                )
-            if thinking_parts and not final_thinking:
-                result = replace(
-                    result,
-                    thinking_text="".join(thinking_parts).strip(),
-                )
-            if result.tool_calls:
-                canonical_calls, coerced_aliases, coalesced_count = (
-                    _tool_call_canonicalization.canonicalize_tool_calls(
-                        result.tool_calls
+                chunk = stream_queue.get(timeout=wait_timeout)
+            except queue.Empty:
+                try:
+                    runtime.raise_if_interrupted(
+                        message="turn working-time limit exceeded during provider generation",
+                    )
+                except Exception:
+                    cleanup_reason = "request_interrupted"
+                    with suppress(Exception):  # Preserve the original interruption.
+                        record_unflushed_content(
+                            getattr(runtime.cancel_handle, "reason", "timeout")
+                        )
+                        transition_phase(None)
+                    raise
+                now = time.monotonic()
+                if now < next_watchdog_at:
+                    continue
+                silent_for = now - silence_started
+                engine_age = _engine_liveness.seconds_since_engine_activity()
+                if (
+                    engine_age is not None
+                    and engine_age <= _ENGINE_ACTIVITY_FRESH_SECONDS
+                    and silent_for < _ENGINE_SILENCE_CEILING_SECONDS
+                    # The activity clock is process-wide, so it only ATTRIBUTES to
+                    # this generation when it is the sole one in flight — with a
+                    # concurrent generation running (e.g. a background.run worker),
+                    # a healthy sibling's telemetry must not mask THIS request
+                    # being wedged. Ambiguity falls back to the fixed window.
+                    and _engine_liveness.active_generation_count() <= 1
+                    ):
+                    liveness_deferrals += 1
+                    next_watchdog_at = now + _ENGINE_LIVENESS_RECHECK_SECONDS
+                    if liveness_deferrals == 1 or liveness_deferrals % 8 == 0:
+                        logger.info(
+                            "Stream silent %.0fs but the managed engine reported "
+                            "activity %.1fs ago; deferring the stall verdict "
+                            "(deferral %d)",
+                            silent_for,
+                            engine_age,
+                            liveness_deferrals,
+                            extra={
+                                "event": "generation.stall_deferred_engine_active",
+                                "silent_seconds": round(silent_for, 1),
+                                "engine_activity_age_seconds": round(engine_age, 1),
+                                "deferral_count": liveness_deferrals,
+                            },
+                        )
+                    continue
+                stall_phase = "inactivity" if received_first_chunk else "model_load"
+                if stall_phase == "model_load":
+                    stall_reason = (
+                        f"Model load stalled (no output for {current_timeout:.0f}s "
+                        "while loading the model)"
+                    )
+                    synthetic = "Generation timed out while loading the model."
+                else:
+                    stall_reason = f"Engine stalled (no output for {current_timeout:.0f}s)"
+                    synthetic = "Generation timed out due to engine inactivity."
+                if liveness_deferrals:
+                    stall_reason += (
+                        f" after {silent_for:.0f}s of silence"
+                        f" ({liveness_deferrals} engine-liveness deferrals)"
+                    )
+                # Record the phase so ``tool_loop`` builds a phase-accurate user
+                # message, and whether the engine was provably still working while
+                # the stream was silent -- blaming the machine is wrong when it
+                # was. Never let a diagnostics write break the turn.
+                try:
+                    runtime.stall_phase = stall_phase
+                    runtime.stall_engine_was_active = bool(liveness_deferrals)
+                except Exception:  # noqa: BLE001 - diagnostics are best-effort
+                    pass
+                cleanup_reason = "provider_stalled"
+                runtime.emit(
+                    _loop_events.StopEvent(
+                        reason=stall_reason,
+                        code=CMP_LOOP_ENGINE_STALLED,
                     )
                 )
-                if canonical_calls != result.tool_calls:
+                buffer_content(synthetic)
+                flush_content()
+                transition_phase(None)
+                return GenerationResult(
+                    content=synthetic,
+                    finish_reason="timeout",
+                ), emitted_event_types
+            # Any item (delta, tool boundary, terminal, or failure) means the model
+            # is alive: every subsequent wait reverts to the inactivity window.
+            received_first_chunk = True
+            silence_started = time.monotonic()
+            next_watchdog_at = silence_started + inactivity_limit
+            liveness_deferrals = 0
+            try:
+                runtime.raise_if_interrupted(
+                    message="turn working-time limit exceeded during provider generation",
+                )
+            except Exception:
+                cleanup_reason = "request_interrupted"
+                with suppress(Exception):  # Preserve interruption if cleanup emission fails.
+                    record_unflushed_content(getattr(runtime.cancel_handle, "reason", "cancelled"))
+                    transition_phase(None)
+                raise
+            if isinstance(chunk, _StreamFailure):
+                cleanup_reason = "provider_failure"
+                with suppress(Exception):  # Diagnostics cannot replace the provider error.
+                    record_unflushed_content("stream_failure")
+                raise chunk.error
+            if isinstance(chunk, _StreamTerminal):
+                cleanup_reason = "provider_terminal"
+                result = _gr_hub._to_generation_result(chunk.result)
+                final_thinking = str(result.thinking_text or "").strip()
+                if final_thinking and not thinking_parts:
+                    # No budget-abort break here: this is the provider's clean
+                    # terminal, so generation is already over and the result may
+                    # carry tool calls that must dispatch (mirrors the engine
+                    # guards, which gate their aborts on ``not chunk_done``).
+                    emit_thinking(final_thinking, persist=True)
+                if str(result.content or "") and not content_parts:
+                    buffer_content(str(result.content))
+                if content_parts and not str(result.content or ""):
                     result = replace(
                         result,
-                        tool_calls=canonical_calls,
+                        content="".join(content_parts).strip(),
                     )
-                if coerced_aliases or coalesced_count:
-                    _gr_hub.log_event(
-                        logger,
-                        logging.INFO,
-                        component="ai.router",
-                        event="ai.router.tool_calls_canonicalized",
-                        message="Canonicalized model tool calls before dispatch.",
-                        status="recovered",
-                        data={
-                            "aliases": coerced_aliases,
-                            "coalesced_count": coalesced_count,
-                            "remaining_count": len(result.tool_calls),
-                        },
-                        request_id=getattr(runtime, "request_id", ""),
+                if thinking_parts and not final_thinking:
+                    result = replace(
+                        result,
+                        thinking_text="".join(thinking_parts).strip(),
                     )
-            # Two terminal-shape fail-closed signals: ``finish_reason ==
-            # "tool_calls"`` with no parsed tool_calls (the normalizer
-            # suppressed them as malformed), and reasoning-only completions
-            # (thinking only, no content, no tool). Either short-circuits
-            # the visible-text flush.
-            finish_reason_lower = str(result.finish_reason or "").strip().lower()
-            has_visible = bool(content_parts) or bool(
-                str(result.content or "").strip()
-            )
-            has_tool_calls = bool(result.tool_calls)
-            has_thinking = bool(thinking_parts) or bool(final_thinking)
-            if finish_reason_lower == "tool_calls" and not has_tool_calls:
-                record_unflushed_content("malformed_tool_arguments")
-                runtime.emit(
-                    _loop_events.StopEvent(
-                        reason="tool_call arguments could not be parsed",
-                        code=CMP_LOOP_INVALID_TOOL_CALL,
+                if result.tool_calls:
+                    canonical_calls, coerced_aliases, coalesced_count = (
+                        _tool_call_canonicalization.canonicalize_tool_calls(
+                            result.tool_calls
+                        )
                     )
+                    if canonical_calls != result.tool_calls:
+                        result = replace(
+                            result,
+                            tool_calls=canonical_calls,
+                        )
+                    if coerced_aliases or coalesced_count:
+                        _gr_hub.log_event(
+                            logger,
+                            logging.INFO,
+                            component="ai.router",
+                            event="ai.router.tool_calls_canonicalized",
+                            message="Canonicalized model tool calls before dispatch.",
+                            status="recovered",
+                            data={
+                                "aliases": coerced_aliases,
+                                "coalesced_count": coalesced_count,
+                                "remaining_count": len(result.tool_calls),
+                            },
+                            request_id=getattr(runtime, "request_id", ""),
+                        )
+                # Two terminal-shape fail-closed signals: ``finish_reason ==
+                # "tool_calls"`` with no parsed tool_calls (the normalizer
+                # suppressed them as malformed), and reasoning-only completions
+                # (thinking only, no content, no tool). Either short-circuits
+                # the visible-text flush.
+                finish_reason_lower = str(result.finish_reason or "").strip().lower()
+                has_visible = bool(content_parts) or bool(
+                    str(result.content or "").strip()
                 )
-                transition_phase(None)
-                return result, emitted_event_types
-            if (
-                not has_visible
-                and not has_tool_calls
-                and has_thinking
-                # A reasoning-only shape with a bad stream terminal is surfaced
-                # by the tool-loop fence as retryable CMP-STREAM-INCOMPLETE.
-                # This non-retryable stop is reserved for clean terminals.
-                and finish_reason_lower
-                not in ("incomplete", "error", "thinking_budget", "length")
-            ):
-                runtime.emit(
-                    _loop_events.StopEvent(
-                        reason=(
-                            "Reasoning-only completion (no visible text "
-                            "and no tool call)"
-                        ),
-                        code=CMP_STREAM_REASONING_ONLY,
+                has_tool_calls = bool(result.tool_calls)
+                has_thinking = bool(thinking_parts) or bool(final_thinking)
+                if finish_reason_lower == "tool_calls" and not has_tool_calls:
+                    record_unflushed_content("malformed_tool_arguments")
+                    runtime.emit(
+                        _loop_events.StopEvent(
+                            reason="tool_call arguments could not be parsed",
+                            code=CMP_LOOP_INVALID_TOOL_CALL,
+                        )
                     )
-                )
-                transition_phase(None)
-                return result, emitted_event_types
-            # Visible text always surfaces as ``chat.token`` before the loop
-            # dispatches tool calls, whether it streamed mid-flight or arrived
-            # only in the terminal result; the tool loop's stream reset clears
-            # the provisional preamble when the loop continues past the tools.
-            flush_content()
-            transition_phase(None)
-            return result, emitted_event_types
-
-        if isinstance(chunk, EngineEvent):
-            kind = str(chunk.kind or "").strip().lower()
-            if kind == ENGINE_EVENT_TEXT_DELTA:
-                buffer_content(str(chunk.text or ""))
+                    transition_phase(None)
+                    return result, emitted_event_types
+                if (
+                    not has_visible
+                    and not has_tool_calls
+                    and has_thinking
+                    # A reasoning-only shape with a bad stream terminal is surfaced
+                    # by the tool-loop fence as retryable CMP-STREAM-INCOMPLETE.
+                    # This non-retryable stop is reserved for clean terminals.
+                    and finish_reason_lower
+                    not in ("incomplete", "error", "thinking_budget", "length")
+                ):
+                    runtime.emit(
+                        _loop_events.StopEvent(
+                            reason=(
+                                "Reasoning-only completion (no visible text "
+                                "and no tool call)"
+                            ),
+                            code=CMP_STREAM_REASONING_ONLY,
+                        )
+                    )
+                    transition_phase(None)
+                    return result, emitted_event_types
+                # Visible text always surfaces as ``chat.token`` before the loop
+                # dispatches tool calls, whether it streamed mid-flight or arrived
+                # only in the terminal result; the tool loop's stream reset clears
+                # the provisional preamble when the loop continues past the tools.
                 flush_content()
+                transition_phase(None)
+                return result, emitted_event_types
+
+            if isinstance(chunk, EngineEvent):
+                kind = str(chunk.kind or "").strip().lower()
+                if kind == ENGINE_EVENT_TEXT_DELTA:
+                    buffer_content(str(chunk.text or ""))
+                    flush_content()
+                    continue
+                if kind == ENGINE_EVENT_REASONING_DELTA:
+                    emit_thinking(str(chunk.text or ""), persist=bool(chunk.is_complete))
+                    if thinking_budget_aborted:
+                        break
+                    continue
+                if kind == ENGINE_EVENT_TOOL_CALL_BOUNDARY:
+                    end_reasoning_phase()
+                    if content_parts:
+                        flush_content()
+                    continue
+                if kind == ENGINE_EVENT_TOOL_CALL_DELTA:
+                    end_reasoning_phase()
+                    runtime.emit(
+                        _loop_events.ToolCallDeltaEvent(
+                            call_id=str(chunk.tool_call_id or ""),
+                            tool_name=chunk.tool_name,
+                            arguments_delta=str(chunk.arguments_delta or ""),
+                            sequence=int(chunk.sequence),
+                        )
+                    )
+                    continue
+                if kind == ENGINE_EVENT_TOOL_CALL_COMPLETED:
+                    end_reasoning_phase()
+                    runtime.emit(
+                        _loop_events.ToolCallCompletedEvent(
+                            call_id=str(chunk.tool_call_id or ""),
+                            tool_name=str(chunk.tool_name or ""),
+                            arguments=dict(chunk.arguments),
+                            sequence=int(chunk.sequence),
+                        )
+                    )
+                    continue
+                if kind == ENGINE_EVENT_FAILED:
+                    runtime.emit(
+                        _loop_events.StopEvent(
+                            reason=str(chunk.text or "Engine stream failed."),
+                            code=CMP_LOOP_GENERATION_FAILED,
+                        )
+                    )
+                    continue
+                if kind == ENGINE_EVENT_DONE:
+                    continue
                 continue
-            if kind == ENGINE_EVENT_REASONING_DELTA:
-                emit_thinking(str(chunk.text or ""), persist=bool(chunk.is_complete))
-                if thinking_budget_aborted:
-                    break
-                continue
-            if kind == ENGINE_EVENT_TOOL_CALL_BOUNDARY:
+
+            if isinstance(chunk, ToolCallRequest):
+                # Mid-stream tool boundary: flush pre-boundary text so it
+                # surfaces before the tool-call signal reaches the loop.
                 end_reasoning_phase()
                 if content_parts:
                     flush_content()
                 continue
-            if kind == ENGINE_EVENT_TOOL_CALL_DELTA:
-                end_reasoning_phase()
-                runtime.emit(
-                    _loop_events.ToolCallDeltaEvent(
-                        call_id=str(chunk.tool_call_id or ""),
-                        tool_name=chunk.tool_name,
-                        arguments_delta=str(chunk.arguments_delta or ""),
-                        sequence=int(chunk.sequence),
-                    )
-                )
-                continue
-            if kind == ENGINE_EVENT_TOOL_CALL_COMPLETED:
-                end_reasoning_phase()
-                runtime.emit(
-                    _loop_events.ToolCallCompletedEvent(
-                        call_id=str(chunk.tool_call_id or ""),
-                        tool_name=str(chunk.tool_name or ""),
-                        arguments=dict(chunk.arguments),
-                        sequence=int(chunk.sequence),
-                    )
-                )
-                continue
-            if kind == ENGINE_EVENT_FAILED:
-                runtime.emit(
-                    _loop_events.StopEvent(
-                        reason=str(chunk.text or "Engine stream failed."),
-                        code=CMP_LOOP_GENERATION_FAILED,
-                    )
-                )
-                continue
-            if kind == ENGINE_EVENT_DONE:
-                continue
-            continue
-
-        if isinstance(chunk, ToolCallRequest):
-            # Mid-stream tool boundary: flush pre-boundary text so it
-            # surfaces before the tool-call signal reaches the loop.
-            end_reasoning_phase()
-            if content_parts:
-                flush_content()
-            continue
-        if isinstance(chunk, ThinkingDelta):
-            emit_thinking(str(chunk.text or ""), persist=chunk.is_complete)
-            if thinking_budget_aborted:
-                break
-            continue
-        if isinstance(chunk, StreamingEvent):
-            kind = str(chunk.kind or "content").strip().lower()
-            if kind == "thinking":
-                emit_thinking(str(chunk.text or ""), persist=True)
+            if isinstance(chunk, ThinkingDelta):
+                emit_thinking(str(chunk.text or ""), persist=chunk.is_complete)
                 if thinking_budget_aborted:
                     break
                 continue
-            if kind == "content":
-                buffer_content(str(chunk.text or ""))
-                flush_content()
+            if isinstance(chunk, StreamingEvent):
+                kind = str(chunk.kind or "content").strip().lower()
+                if kind == "thinking":
+                    emit_thinking(str(chunk.text or ""), persist=True)
+                    if thinking_budget_aborted:
+                        break
+                    continue
+                if kind == "content":
+                    buffer_content(str(chunk.text or ""))
+                    flush_content()
+                    continue
+                if kind == STREAMING_EVENT_KIND_TOOL_ARGUMENTS_PROGRESS:
+                    end_reasoning_phase()
+                elif kind == THINKING_STATUS_EVENT_KIND and str(chunk.text or "").strip():
+                    # The engine's guard hid the rest of the reasoning without
+                    # ending the generation: say so on the live row.
+                    emit_thinking_status(str(chunk.text))
                 continue
-            if kind == STREAMING_EVENT_KIND_TOOL_ARGUMENTS_PROGRESS:
-                end_reasoning_phase()
-            continue
-        buffer_content(str(chunk or ""))
-        flush_content()
+            buffer_content(str(chunk or ""))
+            flush_content()
 
-    _close_stream_reader(stream_reader, runtime=runtime, reason="thinking_budget")
-    transition_phase(None)
-    return GenerationResult(
-        content="".join(content_parts).strip(),
-        finish_reason="thinking_budget",
-        thinking_text="".join(thinking_parts).strip(),
-    ), emitted_event_types
+        cleanup_reason = "thinking_budget"
+        transition_phase(None)
+        return GenerationResult(
+            content="".join(content_parts).strip(),
+            finish_reason="thinking_budget",
+            thinking_text="".join(thinking_parts).strip(),
+        ), emitted_event_types
+    finally:
+        # Retire or quarantine the producer before the wrapper detaches its child.
+        # A terminal producer is finishing on its own: join before aborting it.
+        if cleanup_reason == "provider_terminal":
+            stream_reader.join(timeout_seconds=_STREAM_READER_SHUTDOWN_GRACE_SECONDS)
+        if cleanup_reason != "provider_terminal" or stream_reader.thread.is_alive():
+            _close_stream_reader(stream_reader, runtime=runtime, reason=cleanup_reason)

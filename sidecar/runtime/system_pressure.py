@@ -9,7 +9,7 @@ from typing import Any
 
 try:  # pragma: no cover - exercised through monkeypatched module in tests.
     import psutil  # type: ignore[import-not-found, import-untyped]
-except Exception:  # pragma: no cover - fail-open when optional probe is unavailable.
+except Exception:  # noqa: BLE001  # pragma: no cover - fail-open when optional probe is unavailable.
     psutil = None  # type: ignore[assignment]
 
 DEFAULT_MIN_FREE_BYTES = 2 * 1024 * 1024 * 1024

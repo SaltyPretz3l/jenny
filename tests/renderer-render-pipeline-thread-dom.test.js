@@ -653,6 +653,70 @@ test('measureThreadRailExtentsNow is a no-op after dispose', (t) => {
   assert.equal(styleWritesAfter, styleWritesBefore, 'measureThreadRailExtentsNow must no-op after dispose');
 });
 
+test('the thread toggle dot aligns with the first landmark that has a box, skipping a hidden one', (t) => {
+  const env = buildEnvironment();
+  t.after(() => env.restore());
+
+  function makeStyle() {
+    return {
+      _props: new Map(),
+      setProperty(name, value) { this._props.set(name, value); },
+      removeProperty(name) { this._props.delete(name); },
+    };
+  }
+  function makeLandmark(top, height, visible) {
+    return {
+      offsetParent: visible ? {} : null,
+      getClientRects() { return visible ? [{ top, height }] : []; },
+      getBoundingClientRect() {
+        return visible
+          ? { top, left: 0, right: 100, bottom: top + height, width: 100, height }
+          : { top: 0, left: 0, right: 0, bottom: 0, width: 0, height: 0 };
+      },
+    };
+  }
+  // A settled reasoning row hidden by the answers stylesheet (display:none)
+  // precedes the visible tool header in the same article.
+  const hiddenLandmark = makeLandmark(0, 0, false);
+  const visibleLandmark = makeLandmark(140, 20, true);
+  const landmarkSelector = '.reasoning-row-block, .reasoning-row-header, .tool-call-header, .tool-run-toggle, .chat-bubble, .interactive-card, .proactive-suggestion-block, .slash-command-output';
+  const article = {
+    querySelector(selector) { return selector === landmarkSelector ? hiddenLandmark : null; },
+    querySelectorAll(selector) { return selector === landmarkSelector ? [hiddenLandmark, visibleLandmark] : []; },
+  };
+  const row = {
+    querySelector(selector) { return selector === '.chat-thread-node-article' ? article : null; },
+    getBoundingClientRect() { return { top: 100, left: 0, right: 100, bottom: 200, width: 100, height: 100 }; },
+  };
+  const threadNode = { dataset: { threadNodeKind: 'tool' } };
+  const toggleDot = {
+    offsetParent: {},
+    offsetHeight: 12,
+    style: makeStyle(),
+    closest(selector) {
+      if (selector === '.chat-thread-node-row') return row;
+      if (selector === '.chat-thread-node') return threadNode;
+      return null;
+    },
+    getBoundingClientRect() { return { top: 100, left: 0, right: 12, bottom: 112, width: 12, height: 12 }; },
+  };
+  const root = {
+    style: makeStyle(),
+    getBoundingClientRect() { return { top: 0, left: 0, right: 100, bottom: 300, width: 100, height: 300 }; },
+    querySelectorAll(selector) { return selector === '.chat-thread-toggle' ? [toggleDot] : []; },
+  };
+  const chatTimeline = {
+    querySelectorAll(selector) { return selector === '.chat-thread-root' ? [root] : []; },
+  };
+  const pipeline = createThreadDomPipeline({ dom: { chatTimeline } });
+
+  pipeline.measureThreadRailExtentsNow();
+
+  // Centre-aligned on the visible landmark: 140 + 20/2 - 100 (row top) - 12/2 (dot half).
+  assert.equal(toggleDot.style._props.get('top'), '44px', 'the hidden landmark must not park the dot at the article top');
+  pipeline.dispose();
+});
+
 test('F7: renderThreadTree inserts time-gap divider markup before the target message row', () => {
   const pipeline = createThreadDomPipeline({
     callbacks: {
@@ -800,6 +864,26 @@ test('envelope compat-only subtrees drop the thread toggle; subtrees with visibl
   assert.match(html, /data-thread-toggle="compat_collapsed"/);
   // Real-article nodes are untouched.
   assert.match(html, /data-thread-toggle="anchor"/);
+
+  // HB-023: the same compat-only nodes are stamped so CSS can take them out
+  // of layout (each otherwise costs one --thread-node-gap slot of blank band).
+  const compatOnlyOf = (id) => new RegExp(
+    `data-thread-message-id="${id}"[^>]*data-thread-compat-only="true"`
+  );
+  assert.match(html, compatOnlyOf('compat_leafy'));
+  assert.match(html, compatOnlyOf('compat_leaf'));
+  assert.doesNotMatch(html, compatOnlyOf('compat_parent_of_visible'));
+  assert.doesNotMatch(html, compatOnlyOf('compat_collapsed'));
+  assert.doesNotMatch(html, compatOnlyOf('anchor'));
+  assert.doesNotMatch(html, compatOnlyOf('visible_child'));
+});
+
+test('compat-only thread nodes are removed from layout by the rail stylesheet (HB-023)', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const css = fs.readFileSync(path.join(__dirname, '..', 'styles', 'chat-thread-rail.css'), 'utf8');
+  const rule = /\.chat-thread-node\[data-thread-compat-only="true"\]\s*\{[^}]*display:\s*none;[^}]*\}/;
+  assert.match(css, rule, 'compat-only nodes must not take a flex-gap slot in .chat-thread-children');
 });
 
 test('thread child container ids are collision-free across case, punctuation, and Unicode', () => {

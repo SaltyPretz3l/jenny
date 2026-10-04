@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const test = require('node:test');
-const { ROOT, waitFor, createBackend } = require('../helpers/session-runtime-stdio-fixture');
+const { ROOT, waitFor, createBackend, stopReleasingHolds } = require('../helpers/session-runtime-stdio-fixture');
 
 function holdToolCapacity(runtime, target) {
   const broker = runtime.resourceBroker;
@@ -42,15 +42,16 @@ test('real Electron wait restarts twice without executing the pending producer o
     } });
     return backend;
   };
-  let backend = make(); let workId;
+  let backend = make(); let workId; let held = null;
   try {
     await backend.start();
     const sessionId = (await backend.createSession({ title: 'Electron resource suffix' })).data.id;
     const projects = backend.projectApplicationService;
-    const project = projects.createProject({ name: 'Electron workspace' }).project;
-    assert.equal(projects.bindProjectRoot({ project_id: project.id, root_path: workspace, expected_root_revision: project.root_revision }).ok, true);
+    // The Workspace folder is already a project (provisioned by createSession);
+    // bindRoot refuses a second owner, so the fixture uses that project.
+    const project = backend.ensureWorkspaceProject(workspace, 'test_fixture').project;
     assert.equal(projects.assignSessionProject({ session_id: sessionId, project_id: project.id }).ok, true);
-    holdToolCapacity(backend.sessionRuntime, 2);
+    held = holdToolCapacity(backend.sessionRuntime, 2);
     const sent = await backend.runtimeApplicationService.submit({ session_id: sessionId,
       prompt: 'Read first.txt then report Jenny status.', idempotency_key: 'electron_resource_fixture' });
     assert.equal(sent.ok, true); workId = sent.work_id;
@@ -61,7 +62,7 @@ test('real Electron wait restarts twice without executing the pending producer o
     assert.equal(checkpoint.base_schema_version, 8);
     const before = backend.sessionStore.getSession(sessionId).turn_events.filter(e => e.kind === 'tool_result');
     assert.equal(before.length, 1);
-    await backend.stop(); backend.dispose(); backend = make(); await backend.start();
+    await stopReleasingHolds(backend, held); held = null; backend.dispose(); backend = make(); await backend.start();
     const release = holdToolCapacity(backend.sessionRuntime, 1);
     let saved = backend.sessionRuntime.store.get(workId);
     assert.equal(backend.runtimeApplicationService.resume({ work_id: workId, expected_revision: saved.revision }).ok, true);
@@ -82,5 +83,5 @@ test('real Electron wait restarts twice without executing the pending producer o
     t.diagnostic(JSON.stringify({ work: workId ? backend.sessionRuntime.store.get(workId) : null,
       errors: seen.filter(row => row.type === 'error'), logs: logs.filter(row => /resource|capture|stderr|error/i.test(JSON.stringify(row))).slice(-12) }));
     throw error;
-  } finally { await backend.stop(); backend.dispose(); }
+  } finally { await stopReleasingHolds(backend, held); backend.dispose(); }
 });

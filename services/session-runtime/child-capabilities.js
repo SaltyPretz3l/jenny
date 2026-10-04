@@ -4,7 +4,7 @@ const { stableJson, validId } = require('./contracts');
 const { exact, fail } = require('./lineage-contracts');
 const { resolveChildLineage } = require('./runtime-work-authority');
 const { getTrustedExecutionBinding } = require('../backend/session-execution-authority');
-const { TOOL_ERROR_CODES } = require('../backend/error-codes');
+const { RUNTIME_ERROR_CODES, TOOL_ERROR_CODES } = require('../backend/error-codes');
 
 const CAPABILITIES = new WeakMap();
 function registerRuntimeChildCapability({ binding, gateway, runtime, work, assertCurrent }) {
@@ -44,8 +44,9 @@ function readChild(entry, args) {
     status: child.status, result, truncated: body.length > 32768 };
 }
 async function executeRuntimeChildTool(binding, toolName, args, callId) {
+  let entry;
   try {
-    const entry = currentCapability(binding);
+    entry = currentCapability(binding);
     if (!validId(callId)) fail('runtime_child_call_id_required');
     let result;
     if (toolName === 'session_spawn') result = await entry.gateway.children.spawn(args, callId);
@@ -53,9 +54,25 @@ async function executeRuntimeChildTool(binding, toolName, args, callId) {
     else fail('runtime_child_tool_invalid');
     currentCapability(binding);
     return { content: JSON.stringify(result), isError: false };
-  } catch (_error) {
-    return { content: 'This child operation is unavailable for the current request.',
-      isError: true, errorCode: TOOL_ERROR_CODES.DISABLED };
+  } catch (error) {
+    const reason = error?.code;
+    const capacity = ['lineage_descendant_capacity', 'lineage_root_capacity', 'runtime_child_publication_capacity',
+      'budget_exhausted', 'budget_root_capacity', 'pending_capacity'].includes(reason);
+    const invalid = ['runtime_child_arguments_invalid', 'runtime_child_call_id_required', 'runtime_child_tool_invalid',
+      'lineage_spawn_conflict', 'lineage_parent_invalid'].includes(reason);
+    const policy = ['runtime_child_capability_required', 'runtime_child_capability_expired',
+      'runtime_child_parent_not_current', 'runtime_child_root_grant_required', 'runtime_child_result_unavailable',
+      'lineage_root_cancelled', 'lineage_restored_authority_required', 'runtime_child_session_changed'].includes(reason);
+    const publicReason = capacity || invalid || policy ? reason : 'runtime_child_operation_failed';
+    const errorCode = capacity ? RUNTIME_ERROR_CODES.RESOURCE_EXCEEDED
+      : invalid ? RUNTIME_ERROR_CODES.INVALID_REQUEST : policy ? TOOL_ERROR_CODES.POLICY_DENIED
+      : TOOL_ERROR_CODES.EXECUTION_FAILED;
+    try { entry?.runtime.chatAdapter?.service?._emitServiceLog?.('WARN', 'runtime.child_operation_failed', {
+      work_id: entry.work.work_id, call_id: validId(callId) ? callId : null,
+      tool_name: ['session_spawn', 'session_wait', 'session_result'].includes(toolName) ? toolName : null,
+      reason: publicReason, errorCode,
+    }); } catch (_error) { /* Diagnostics cannot change the tool result. */ }
+    return { content: JSON.stringify({ reason: publicReason }), isError: true, errorCode };
   }
 }
 

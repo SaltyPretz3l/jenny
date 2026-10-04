@@ -23,8 +23,13 @@ from sidecar.ai.context.token_budget import (
     tool_schema_cap_for_budget_level,
 )
 from sidecar.ai.feature_flags import FEATURE_TOKEN_BUDGET, is_feature_flag_enabled
-from sidecar.ai.routing.system_messages import build_request_system_messages
+from sidecar.ai.routing.system_messages import (
+    build_request_system_messages,
+    render_turn_context_row,
+    trailing_turn_context_enabled,
+)
 from sidecar.ai.tools import assembly as _tool_assembly
+from sidecar.ai.tools import build_turn_tools as _build_turn_tools
 from sidecar.ai.tools import tool_families as _tool_families
 from sidecar.ai.tools import tool_search as _tool_search
 from sidecar.runtime.chat_models import ChatRequestContext
@@ -72,6 +77,8 @@ class ToolBudgetFilterInput:
     has_active_background_jobs: bool = False
     has_active_monitors: bool = False
     has_pending_operations: bool = False
+    # Electron context blocks that ride the trailing turn-context row.
+    trailing_context_blocks: tuple[Any, ...] = ()
 
 
 _CONTINUATION_RE = re.compile(
@@ -114,6 +121,9 @@ def build_system_prompt_for_statuses(
         "tool_statuses": list(tool_statuses),
         "latest_user_content": context.latest_user_content,
         "engine_type": kernel._config.engine_type,
+        "native_tool_schemas": _tool_assembly.engine_receives_native_tool_schemas(
+            getattr(kernel, "_engine", None)
+        ),
         "include_skills": False,
         "include_bootstrap": not uses_minimal_system_prompt(kernel._config),
         "workspace_manifest_enabled": bool(
@@ -122,6 +132,7 @@ def build_system_prompt_for_statuses(
         "task_capsule_enabled": bool(
             getattr(kernel._config, "tools_task_capsule_enabled", False)
         ),
+        "defer_turn_context": trailing_turn_context_enabled(kernel._config),
     }
     # The request authority's root (None = explicitly unbound) governs every
     # workspace-derived prompt block; see request_workspace_root_kwargs.
@@ -139,6 +150,24 @@ def build_system_prompt_for_statuses(
             kernel._config.system_prompt,
             **kwargs,
         )
+    )
+
+
+def build_turn_context_row_for_statuses(
+    context: ToolBudgetFilterInput,
+    tool_statuses: tuple[Any, ...],
+) -> dict[str, object] | None:
+    """The trailing turn-context row for this request, or ``None`` when off."""
+    kernel = context.kernel
+    return render_turn_context_row(
+        kernel._context_builder,
+        kernel._config,
+        tool_statuses=tool_statuses,
+        latest_user_content=context.latest_user_content,
+        trailing_context_blocks=context.trailing_context_blocks,
+        root_kwargs=request_workspace_root_kwargs(
+            kernel._config, getattr(context.request_context, "execution_context", None)
+        ),
     )
 
 
@@ -289,9 +318,11 @@ def _budget_pressure_for_tool_filter(
         base_system_prompt=str(system_prompt),
         tool_statuses=result.tool_statuses,
         runtime_system_messages=context.runtime_overlay_messages,
+        context_block_messages=context.context_block_messages,
+        history=context.semantic_history,
+        turn_context_row=build_turn_context_row_for_statuses(context, result.tool_statuses),
+        execution_context=getattr(context.request_context, "execution_context", None),
     )
-    working_messages.extend(context.context_block_messages)
-    working_messages.extend(context.semantic_history)
     num_tools = (
         count_full_tool_schemas(result.tool_payload)
         if context.kernel._config.tools_enabled
@@ -364,6 +395,15 @@ def _budget_mandatory_tool_names(
             or name in un_deferred
         ):
             names.append(name)
+    # HB-029: history un-deferrals can fill the cap on their own; a build turn's
+    # typed file tools ride with them. Candidates only, so never a blocked tool.
+    names.extend(
+        name
+        for name in _build_turn_tools.build_turn_floor_names(
+            context.request_context, _budget_relevance_text(context)
+        )
+        if name in candidate_set
+    )
     return ordered_unique_names(names)
 
 

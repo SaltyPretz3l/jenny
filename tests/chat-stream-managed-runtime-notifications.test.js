@@ -363,7 +363,6 @@ test('chat.stream_reset discards persisted segments, clears accrued state, and e
 
 test('chat.stream_reset reason=tool_continuation preserves segments + captured events when the display flag is on', () => {
   const ctx = makeCtx();
-  ctx.service.featureFlags.response_loop_display_v2 = true;
   ctx.assistantText = 'partial';
   ctx.currentSegmentText = 'partial';
   ctx.streamSawText = true;
@@ -441,7 +440,6 @@ for (const resetReason of ['model_winddown']) {
 // tests/chat-stream-durable-settlement.test.js.
 test('chat.stream_reset reason=deterministic_replacement discards earlier segments (fabricated text must not survive)', () => {
   const ctx = makeCtx();
-  ctx.service.featureFlags.response_loop_display_v2 = true;
   ctx.assistantText = 'pseudo-search text';
   ctx.currentSegmentText = 'pseudo-search text';
   ctx.hasPersistedSegments = true;
@@ -459,21 +457,9 @@ test('chat.stream_reset reason=deterministic_replacement discards earlier segmen
   assert.equal(ctx.assistantText, '');
 });
 
-test('chat.stream_reset reason=tool_continuation still discards when the display flag is off (default)', () => {
-  const ctx = makeCtx();
-  handleNotification(
-    ctx,
-    { method: 'chat.stream_reset', params: { reason: 'tool_continuation' } },
-    { toolContext: {}, handleToolNotification: makeHandleToolNotification(ctx) },
-  );
-  assert.equal(callsOf(ctx, 'discardPersistedTextSegmentsForReset').length, 1);
-  assert.equal(callsOf(ctx, 'discardCapturedEvents').length, 1);
-});
-
 for (const resetReason of ['nudge_retry', 'provider_retry', 'reflexive_retry']) {
   test(`chat.stream_reset reason=${resetReason} discards even when the display flag is on`, () => {
     const ctx = makeCtx();
-    ctx.service.featureFlags.response_loop_display_v2 = true;
     ctx.assistantText = 'discard this failed attempt';
     ctx.currentSegmentText = 'discard this failed attempt';
     ctx.reasoningEntries = [{ id: 'r0', text: 'discard reasoning', timestamp: 't' }];
@@ -495,9 +481,8 @@ test('chat.stream_reset reason=tool_continuation preserves even when the canonic
   // default-config multi-tool turn discard its interim commentary/reasoning
   // from the store and the turn-event log — the terminal reconcile then
   // deleted the live rows the user had watched stream. tool_continuation
-  // preservation now keys off response_loop_display_v2 alone.
+  // preservation now keys off the reason alone.
   const ctx = makeCtx({ canonicalBridgeEnabled: false });
-  ctx.service.featureFlags.response_loop_display_v2 = true;
   ctx.hasPersistedSegments = true;
   handleNotification(
     ctx,
@@ -511,7 +496,6 @@ test('chat.stream_reset reason=tool_continuation preserves even when the canonic
 
 test('chat.stream_reset forwards the sidecar reason to the renderer payload', () => {
   const ctx = makeCtx();
-  ctx.service.featureFlags.response_loop_display_v2 = true;
   handleNotification(
     ctx,
     { method: 'chat.stream_reset', params: { reason: 'tool_continuation' } },
@@ -665,6 +649,25 @@ test('turn.event tool_input_delta folds a burst into one control event per 100 m
   assert.equal(calls[1].payload.sequence, 3);
 });
 
+test('turn.event tool_input_delta forwards a whole checklist so the row keeps counting past 4 KB (FG-006)', () => {
+  const ctx = makeCtx();
+  let nowMs = 1000;
+  ctx.now = () => nowMs;
+  const send = (toolName, delta, toolCallId) => handleNotification(ctx, {
+    method: 'turn.event',
+    params: canonicalEvent('tool_input_delta', { tool_name: toolName, arguments_delta: delta, sequence: 1 }, { tool_call_id: toolCallId }),
+  }, { toolContext: {}, handleToolNotification: makeHandleToolNotification(ctx) });
+  const items = Array.from({ length: 60 }, (_v, index) => `{"content":"Step ${index} ${'x'.repeat(80)}","status":"pending"}`);
+  const todoArguments = `{"todos":[${items.join(',')}]}`;
+  assert.ok(todoArguments.length > 4096);
+  send('todo_write', todoArguments, 'call-todo');
+  nowMs = 1100;
+  send('write_file', 'y'.repeat(9000), 'call-write');
+  const calls = callsOf(ctx, 'emitChatStream');
+  assert.equal(calls[0].payload.argumentsDelta, todoArguments, 'checklist arguments arrive whole');
+  assert.equal(calls[1].payload.argumentsDelta.length, 4096, 'other tools keep the 4 KB preview');
+});
+
 test('context.compacted emits and collects one context_compacted event with a summary excerpt', () => {
   const ctx = makeCtx();
   const collected = [];
@@ -745,20 +748,6 @@ test('context.usage is a known method and never trips the unknown-method warning
 
   const warns = callsOf(ctx, 'serviceLog').filter((l) => l.code === 'chat.unknown_notification_method');
   assert.equal(warns.length, 0);
-});
-
-test('context.usage is dropped when the context_usage_live kill switch is off', () => {
-  const ctx = makeCtx();
-  ctx.service.featureFlags = { context_usage_live: false };
-  handleNotification(
-    ctx,
-    { method: 'context.usage', params: { ...CONTEXT_USAGE_PARAMS } },
-    { toolContext: {}, handleToolNotification: makeHandleToolNotification(ctx) }
-  );
-
-  assert.equal(callsOf(ctx, 'emitChatStream').length, 0);
-  const warns = callsOf(ctx, 'serviceLog').filter((l) => l.code === 'chat.unknown_notification_method');
-  assert.equal(warns.length, 0, 'a deliberate flag-off drop is not protocol drift');
 });
 
 test('chat.done with usage and a successful stop reason captures usage, settles tools, and begins finalization', () => {

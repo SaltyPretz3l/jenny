@@ -46,7 +46,6 @@ function createFakeIpcMain() {
 }
 
 const invokeChannel = (methodPath) => getBridgeChannel(methodPath, 'invoke');
-const sendChannel = (methodPath) => getBridgeChannel(methodPath, 'send');
 
 function createTrustedSenderHarness() {
   const url = pathToFileURL(path.resolve(__dirname, '..', 'index.html')).href;
@@ -124,8 +123,8 @@ describe('registerWorkspaceFsIpcHandlers', () => {
 
     const noWatcher = createFakeIpcMain();
     registerWorkspaceFsIpcHandlers(noWatcher, proxy, { watcher: null });
-    // 15 legacy service channels + 5 versioned channels + watchStart/Stop.
-    assert.equal(noWatcher.invoke.size, 22);
+    // 14 legacy service channels + 5 versioned channels + watchStart/Stop.
+    assert.equal(noWatcher.invoke.size, 21);
     assert.deepEqual(await noWatcher.invoke.get(invokeChannel('workspaceFs.watchStart'))(), {
       watching: false,
     });
@@ -144,8 +143,8 @@ describe('registerWorkspaceFsIpcHandlers', () => {
       { __from: 'listAllFiles', args: [{ maxDirectories: 12, maxDurationMs: 250 }] }
     );
     // Spot-checking three channels left the other mappings free to be wrong --
-    // `readFileBase64` could forward to `readFile` and nothing would notice.
-    for (const method of ['readFileBase64', 'stat', 'writeFile', 'listDirectory', 'createFile',
+    // `stat` could forward to `readFile` and nothing would notice.
+    for (const method of ['stat', 'writeFile', 'listDirectory', 'createFile',
       'createDirectory', 'rename', 'delete', 'searchInFiles', 'revealInFolder',
       'openInDefaultApp', 'readPreChange']) {
       const payload = { probe: `fs-${method}` };
@@ -325,7 +324,7 @@ describe('registerWorkspaceRootIpcHandlers', () => {
 });
 
 describe('registerWorkspaceTerminalShutdownTask', () => {
-  test('prefers the awaited main lifecycle task hook and disposes both terminal services', async () => {
+  test('prefers the awaited main lifecycle task hook and disposes the PTY terminal service', async () => {
     const calls = [];
     const lifecycle = {
       registerShutdownTask(task) {
@@ -339,13 +338,8 @@ describe('registerWorkspaceTerminalShutdownTask', () => {
           calls.push(['app-once']);
         },
       },
-      workspaceTerminalService: {
-        async dispose() {
-          calls.push(['terminal']);
-        },
-      },
       workspacePtyService: {
-        dispose() {
+        async dispose() {
           calls.push(['pty']);
         },
       },
@@ -355,7 +349,7 @@ describe('registerWorkspaceTerminalShutdownTask', () => {
     assert.equal(calls.length, 1);
     assert.equal(calls[0][0], 'registered');
     await calls[0][1]();
-    assert.deepEqual(calls.map(([kind]) => kind), ['registered', 'terminal', 'pty']);
+    assert.deepEqual(calls.map(([kind]) => kind), ['registered', 'pty']);
   });
 
   test('falls back to injected app will-quit when no lifecycle task hook exists', async () => {
@@ -369,11 +363,6 @@ describe('registerWorkspaceTerminalShutdownTask', () => {
           willQuit = handler;
         },
       },
-      workspaceTerminalService: {
-        dispose() {
-          calls.push(['terminal']);
-        },
-      },
       workspacePtyService: {
         dispose() {
           calls.push(['pty']);
@@ -384,23 +373,19 @@ describe('registerWorkspaceTerminalShutdownTask', () => {
     assert.equal(mode, 'will-quit');
     assert.deepEqual(calls, [['once', 'will-quit']]);
     await willQuit();
-    assert.deepEqual(calls.map(([kind]) => kind), ['once', 'terminal', 'pty']);
+    assert.deepEqual(calls.map(([kind]) => kind), ['once', 'pty']);
   });
 });
 
 describe('registerGuidanceIpcHandlers', () => {
-  test('wires skills + tips channels', async () => {
+  test('wires skills channels and no retired tips channel', async () => {
     const ipc = createFakeIpcMain();
     const skillService = {
       getState: () => 'skills-state',
       updateSettings: (patch) => ({ updated: patch }),
       openScopeFolder: (scope) => ({ opened: scope }),
     };
-    const tipService = {
-      getState: () => 'tips-state',
-      updateSettings: (patch) => ({ tip: patch }),
-    };
-    registerGuidanceIpcHandlers(ipc, skillService, tipService);
+    registerGuidanceIpcHandlers(ipc, skillService);
 
     assert.equal(await ipc.invoke.get(invokeChannel('skills.getState'))(), 'skills-state');
     assert.deepEqual(await ipc.invoke.get(invokeChannel('skills.updateSettings'))({}, { x: 1 }), {
@@ -409,10 +394,8 @@ describe('registerGuidanceIpcHandlers', () => {
     assert.deepEqual(await ipc.invoke.get(invokeChannel('skills.openScopeFolder'))({}, 'user'), {
       opened: 'user',
     });
-    assert.equal(await ipc.invoke.get(invokeChannel('tips.getState'))(), 'tips-state');
-    assert.deepEqual(await ipc.invoke.get(invokeChannel('tips.updateSettings'))({}, { y: 2 }), {
-      tip: { y: 2 },
-    });
+    assert.equal(ipc.invoke.has('tips:get-state'), false);
+    assert.equal(ipc.invoke.has('tips:update-settings'), false);
   });
 });
 
@@ -451,8 +434,6 @@ describe('registerMainIpcHandlers', () => {
         return target[prop];
       },
     });
-    const setOverlayCalls = [];
-    const cometToggleCalls = [];
     const deps = {
       app: { getPath: () => '/tmp/userData' },
       ipcMain: createFakeIpcMain(),
@@ -486,7 +467,6 @@ describe('registerMainIpcHandlers', () => {
       },
       companionService: {},
       skillsService: { getState: () => ({}), updateSettings: () => ({}), openScopeFolder: () => ({}) },
-      tipsService: { getState: () => ({}), updateSettings: () => ({}) },
       suggestionCache: {},
       offlineIntelligenceService: {},
       applyFeatureSettingsPatch: (patch) => ({ patched: patch }),
@@ -505,7 +485,6 @@ describe('registerMainIpcHandlers', () => {
       ollamaInstallService: {},
       mcpDiscoveryService: {},
       schedulerService: {},
-      weatherService: {},
       linkStatusService: {},
       calendarService: {},
       chatStreamBridge: {},
@@ -515,17 +494,6 @@ describe('registerMainIpcHandlers', () => {
       refreshGpuMemorySample: async () => null,
       getCurrentSystemStatsPayload: () => ({ cpu: 0 }),
       buildFeatureStatePayload: () => ({ flags: {} }),
-      getOverlayRef: () => null,
-      setOverlayRef: (ref) => {
-        setOverlayCalls.push(ref);
-      },
-      isCometOverlayEnabled: () => false,
-      createCometOverlay: () => null,
-      handleCometOverlayToggle: (args) => {
-        cometToggleCalls.push(args);
-        return { overlay: 'next' };
-      },
-      normalizeCometOverlayPresencePayload: (payload) => payload,
       getProcessLogWriter: () => null,
       getLogRedactionPrefixes: () => [],
       sendBridgeEvent: () => {},
@@ -533,7 +501,7 @@ describe('registerMainIpcHandlers', () => {
       authorizeWorkspaceSender: () => true,
       ...overrides,
     };
-    return { deps, backendCalls: backend.calls, setOverlayCalls, cometToggleCalls };
+    return { deps, backendCalls: backend.calls };
   }
 
   test('registers the full IPC surface without throwing (every path is a valid bridge descriptor)', () => {
@@ -546,7 +514,7 @@ describe('registerMainIpcHandlers', () => {
       'workspaceGit.getStatus',
       'workspaceRoot.getState',
       'workspaceRoot.respondExternalTransition',
-      'workspaceTerminal.start',
+      'workspacePty.spawn',
       'skills.getState',
       'features.getState',
       'backend.getStatus',
@@ -555,6 +523,7 @@ describe('registerMainIpcHandlers', () => {
       'status.get',
       'system.getStats',
       'system.refreshStats',
+      'system.setStatsWatch',
       'logs.list',
       'updates.getState',
       'personality.getState',
@@ -566,9 +535,8 @@ describe('registerMainIpcHandlers', () => {
         `expected channel for ${methodPath}`
       );
     }
-    // The comet overlay relay uses send-channel `.on` handlers.
-    assert.equal(deps.ipcMain.send.has(sendChannel('comet.sendOverlayState')), true);
-    assert.equal(deps.ipcMain.send.has(sendChannel('comet.toggleOverlay')), true);
+    // The comet overlay relay was removed (sweep S9): no comet send channel survives.
+    assert.equal([...deps.ipcMain.send.keys()].some((channel) => String(channel).startsWith('comet:')), false);
   });
 
   test('applies the session spellcheck controller and registers its shutdown teardown', () => {
@@ -932,6 +900,21 @@ describe('registerMainIpcHandlers', () => {
     assert.deepEqual(refreshArgs, [[]]);
   });
 
+  test('system.setStatsWatch forwards a bounded source and boolean to the watch cadence', async () => {
+    const calls = [];
+    const { deps } = buildDeps({
+      getSystemStats: () => ({ watchCadence: { setWatched: (source, watched) => { calls.push([source, watched]); return watched; } } }),
+    });
+    registerMainIpcHandlers(deps);
+    const handler = deps.ipcMain.invoke.get(invokeChannel('system.setStatsWatch'));
+    assert.deepEqual(await handler({}, { source: 'titlebar', watched: true }), { watched: true });
+    assert.deepEqual(await handler({}, { source: 'x'.repeat(80), watched: 'yes' }), { watched: false });
+    assert.deepEqual(calls, [['titlebar', true], ['x'.repeat(32), false]]);
+    const none = buildDeps({});
+    registerMainIpcHandlers(none.deps);
+    assert.deepEqual(await none.deps.ipcMain.invoke.get(invokeChannel('system.setStatsWatch'))({}, { source: 'popover', watched: true }), { watched: false }, 'no monitor: a harmless no');
+  });
+
   test('system.refreshStats awaits a forced manual refresh and returns a fresh payload', async () => {
     const events = [];
     const refreshArgs = [];
@@ -995,15 +978,6 @@ describe('registerMainIpcHandlers', () => {
     registerMainIpcHandlers(okDeps.deps);
     await okDeps.deps.ipcMain.invoke.get(invokeChannel('backend.retryStart'))();
     assert.equal(started2, 1);
-  });
-
-  test('comet.toggleOverlay relays through the toggle handler and stores the next overlay ref', () => {
-    const { deps, cometToggleCalls, setOverlayCalls } = buildDeps();
-    registerMainIpcHandlers(deps);
-    const handler = deps.ipcMain.send.get(sendChannel('comet.toggleOverlay'));
-    handler({}, { enabled: true });
-    assert.equal(cometToggleCalls.length, 1);
-    assert.deepEqual(setOverlayCalls[setOverlayCalls.length - 1], { overlay: 'next' });
   });
 });
 

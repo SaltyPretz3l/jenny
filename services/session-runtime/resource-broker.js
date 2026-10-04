@@ -164,6 +164,28 @@ class ResourceBroker {
     return this._canAcquire(normalizeResources(resources, this._limits));
   }
 
+  // What a request for these resources is waiting behind, for display only:
+  // the blocked class and the leases in its way. It conveys no lease and
+  // authorizes nothing; admission still goes through tryAcquire / acquire.
+  describeWait(resources) {
+    const normalized = normalizeResources(resources, this._limits);
+    const resourceClass = this._blockingResource(normalized);
+    if (!resourceClass) return Object.freeze({ resource_class: resourceClass, holders: Object.freeze([]) });
+    const holders = [];
+    for (const record of this._leases.values()) {
+      const inTheWay = resourceClass === 'filesystem'
+        ? normalized.some((requested) => requested.type === 'filesystem'
+          && record.resources.some((held) => held.type === 'filesystem'
+            && physicalPathsConflict(requested.identity, held.identity)))
+        : record.resources.some((held) => held.type === 'capacity' && held.key === resourceClass);
+      if (inTheWay) {
+        holders.push(Object.freeze({ session_id: record.sessionId || null, status: record.status,
+          quarantined_at: record.quarantinedAt }));
+      }
+    }
+    return Object.freeze({ resource_class: resourceClass, holders: Object.freeze(holders) });
+  }
+
   onAvailabilityChange(listener) {
     if (typeof listener !== 'function') throw new TypeError('resource_observer_invalid');
     if (this._availabilityObservers.size >= 8) throw new Error('resource_observer_capacity');
@@ -206,7 +228,13 @@ class ResourceBroker {
     });
   }
 
-  tryAcquire({ ownerId, resources, signal = null, validate = null, includeWaitingResource = false } = {}) {
+  // `sessionId` is a presentation label only (which chat holds this lease, for
+  // a waiting reply's "waiting for ..." line); it never takes part in admission.
+  // `restartReclaimable` marks a lease whose producer runs inside the sidecar:
+  // a backend restart ends that process tree, so it is cleanup proof for this
+  // lease only. Electron, sandbox-worker and in-process leases never set it.
+  tryAcquire({ ownerId, resources, signal = null, validate = null, includeWaitingResource = false,
+    sessionId = null, restartReclaimable = false } = {}) {
     const owner = boundedToken(ownerId, MAX_OWNER_CHARS);
     if (!owner) throw new Error('Resource owner identity is invalid.');
     const normalized = normalizeResources(resources, this._limits);
@@ -240,7 +268,8 @@ class ResourceBroker {
       acquired_at: this._now() });
     const holder = { state: 'active', signal, abortListener: null };
     const record = { id, owner, resources: normalized, status: 'active', waiter: holder,
-      lease, quarantinedAt: null };
+      lease, quarantinedAt: null, sessionId: boundedToken(sessionId, MAX_OWNER_CHARS) || null,
+      restartReclaimable: restartReclaimable === true };
     if (signal && typeof signal.addEventListener === 'function') {
       holder.abortListener = () => {
         if (this._recordForLease(lease) !== record) return;
@@ -275,14 +304,17 @@ class ResourceBroker {
     return this._recordForLease(lease) != null;
   }
 
-  // Backend-restart proof: a quarantined lease's owner already released it
-  // without settlement proof, and the process tree that ran the operation is
-  // gone. An app restart starts this in-memory broker empty anyway; an in-app
-  // backend restart gets the same clean slate for those leases only.
-  confirmQuarantinedCleanup() {
+  // Owner-confirmed lease tokens prove cleanup. A backend restart also proves
+  // it for sidecar-produced leases (B3D-1), never for an Electron operation or
+  // an external worker, which may still be running.
+  confirmQuarantinedCleanup(cleanupLeases = [], { backendRestart = false } = {}) {
+    const records = new Set(cleanupLeases.map((lease) => this._recordForLease(lease)));
+    if (backendRestart === true) {
+      for (const record of this._leases.values()) if (record.restartReclaimable) records.add(record);
+    }
     let confirmed = 0;
-    for (const record of [...this._leases.values()]) {
-      if (record.status !== 'quarantined') continue;
+    for (const record of records) {
+      if (!record || record.status !== 'quarantined') continue;
       this._deleteLease(record);
       confirmed += 1;
     }

@@ -715,7 +715,7 @@ def test_workspace_guard_rejects_mutation_parent_that_revalidates_outside_root(
     outside_dir.mkdir()
     original_resolve = Path.resolve
 
-    def _resolve_with_swapped_parent(self: Path, *args, **kwargs):  # noqa: ANN002, ANN003
+    def _resolve_with_swapped_parent(self: Path, *args, **kwargs):
         if self == safe_dir:
             return outside_dir
         return original_resolve(self, *args, **kwargs)
@@ -735,7 +735,7 @@ def test_windows_reparse_detection_fails_closed_on_stat_error(
     target = tmp_path / "notes.txt"
     target.write_text("hello\n", encoding="utf-8")
 
-    def _raise_stat(self: Path, *args, **kwargs):  # noqa: ANN002, ANN003
+    def _raise_stat(self: Path, *args, **kwargs):
         if self == target and kwargs.get("follow_symlinks") is False:
             raise OSError("metadata unavailable")
         return original_stat(self, *args, **kwargs)
@@ -1240,7 +1240,7 @@ def test_read_file_pdf_without_text_layer_uses_ocr(
         def __init__(self, parent: object) -> None:
             self.parent = parent
 
-        def extractWORDS(self, *args: object, **kwargs: object):  # noqa: N802
+        def extractWORDS(self, *args: object, **kwargs: object):
             return ocr_textpage.extractWORDS(*args, **kwargs)
 
     def _stub_ocr(page: object, *, tessdata_dir: Path) -> _BorrowedTextPage:

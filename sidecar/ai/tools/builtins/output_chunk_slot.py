@@ -19,14 +19,14 @@ _writer: Callable[[dict[str, object]], None] | None = None
 
 def begin_tool_call(writer: Callable[[dict[str, object]], None] | None) -> None:
     """Register the live-output writer for the in-flight call."""
-    global _writer
+    global _writer  # noqa: PLW0603  # slot
     with _lock:
         _writer = writer
 
 
 def end_tool_call() -> None:
     """Clear the slot once the in-flight call has produced its response."""
-    global _writer
+    global _writer  # noqa: PLW0603  # slot
     with _lock:
         _writer = None
 

@@ -62,9 +62,6 @@
     if (engineType === 'openai-compatible') {
       return { key: 'openai-compatible', label: jt('composer.modelPicker.openAiCompatibleGroup', 'OpenAI-compatible'), order: 25 };
     }
-    if (engineType === 'plugin_host') {
-      return { key: 'plugins', label: jt('composer.modelPicker.pluginsGroup', 'Plugins'), order: 60 };
-    }
     // Name heuristic only when the catalog did not say which engine serves
     // the model: gpt-oss:20b on Ollama must stay in the Ollama group.
     if (/^gpt-/i.test(id)) {

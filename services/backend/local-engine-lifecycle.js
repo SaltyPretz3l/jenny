@@ -117,6 +117,7 @@ async function attemptAutoReconnect(service, failedStatus) {
 
 function markManagedSidecarInitialized(service) {
   service._managedReadyOnce = true;
+  service._managedInitializedProcess = service.sidecarManager.process ?? null;
   const status = service.sidecarManager.getStatus();
   service._emitServiceLog('INFO', 'backend.managed_sidecar_initialized', {
     baseUrl: String(status?.baseUrl || ''),
@@ -181,9 +182,13 @@ function isCurrentStart(service, generation) {
     && !service._disposed && !service._stopping;
 }
 
+// Null when the runtime reopened synchronously; a promise when reclaimed work
+// is recovered first (backend-runtime-lifecycle.js). It rejects as a refused
+// reopen throws.
 function reopenRuntimeAfterStart(service, generation) {
-  if (!isCurrentStart(service, generation)) return;
-  reopenBackendRuntimeAfterStart(service);
+  if (!isCurrentStart(service, generation)) return null;
+  return reopenBackendRuntimeAfterStart(service,
+    { stillCurrent: () => isCurrentStart(service, generation) });
 }
 
 async function startBackendService(service, options) {
@@ -192,6 +197,7 @@ async function startBackendService(service, options) {
   service._autoReconnectAttempted = false;
   service._autoReconnectPending = false;
   service._managedReadyOnce = false;
+  service._managedInitializedProcess = null;
   service._stopping = false;
   service.currentStatus = null;
   setModelLifecycle(service, {
@@ -206,9 +212,12 @@ async function startBackendService(service, options) {
     started_at: null,
     ready_at: null,
   }, { emit: false });
-  const onProgress = typeof (options || {}).onProgress === 'function'
-    ? options.onProgress : () => {};
+  const reportProgress = typeof (options || {}).onProgress === 'function' ? options.onProgress : () => {};
   const startedAt = Date.now();
+  // Phase keys and facts only: the renderer owns every word the user reads.
+  const onProgress = (phase, facts = {}) => reportProgress(phase, {
+    modelId: String(service.currentModel || service.defaultModel || ''), elapsedMs: Math.max(Date.now() - startedAt, 0), ...facts,
+  });
   service._emitServiceLog('INFO', 'backend.start_requested', {
     mode: service.hostMode === 'server' ? 'server' : 'managed-dev',
     defaultModelConfigured: Boolean(service.defaultModel),
@@ -244,7 +253,7 @@ async function startBackendService(service, options) {
     });
   }
   if (engineUsesOllamaDaemon) {
-    onProgress('ollama_start', 'Starting Ollama...');
+    onProgress('ollama_start');
     localEngineReadyPromise = service.ollamaManager.start().catch((error) => {
       service._emitServiceLog('WARN', 'ollama.auto_start_failed', {
         message: String(error.message || error),
@@ -268,8 +277,7 @@ async function startBackendService(service, options) {
   }
 
   // Join the overlapped local-server starts just before the sidecar handshake
-  // needs it. emit ollama_ready here (after sidecar_ready) so progress stays
-  // monotonic; see STARTUP_STEP_INDEX ordering in runtime-shutdown.js.
+  // needs it. ollama_ready is emitted here, after sidecar_spawned.
   const joinLocalEngineReady = async () => {
     const ollamaReadyPromise = localEngineReadyPromise;
     const reportOllamaReady = engineUsesOllamaDaemon && Boolean(ollamaReadyPromise);
@@ -291,9 +299,7 @@ async function startBackendService(service, options) {
       const ready = result?.failed !== true
         && (result?.started === true || result?.external === true
           || result?.ready === true || result?.skipped === true);
-      onProgress('ollama_ready', ready
-        ? 'Ollama is ready'
-        : 'Ollama is unavailable; continuing with the configured runtime');
+      onProgress('ollama_ready', { available: ready });
     }
   };
 
@@ -310,11 +316,12 @@ async function startBackendService(service, options) {
       if (!isCurrentStart(service, lifecycleGeneration)) {
         return buildObservedBackendStatus(service, status);
       }
-      onProgress('sidecar_spawned', 'Sidecar process spawned');
+      onProgress('sidecar_spawned');
       try {
+        await service._awaitChatgptStartupCatalog?.(); // bounded B13 catalog prime
         await service._initializeManagedSidecar({ reason: 'startup' });
         markManagedSidecarInitialized(service);
-        onProgress('model_ready', 'Model ready');
+        onProgress('model_ready');
         service._autoLoadDefaultModel();
       } catch (error) {
         const modelInitializationFailed = (
@@ -329,7 +336,7 @@ async function startBackendService(service, options) {
         }
         modelUnavailable = true;
         markManagedSidecarInitialized(service);
-        onProgress('model_unavailable', 'Model unavailable');
+        onProgress('model_unavailable');
         service._emitServiceLog('WARN', 'backend.start_model_unavailable', {
           model: String(service._modelLifecycle?.requested_model || service.defaultModel || ''),
           message: String(error?.message || error),
@@ -347,10 +354,16 @@ async function startBackendService(service, options) {
       if (!isCurrentStart(service, lifecycleGeneration)) {
         return buildObservedBackendStatus(service, status);
       }
-      reopenRuntimeAfterStart(service, lifecycleGeneration);
+      const reopening = reopenRuntimeAfterStart(service, lifecycleGeneration);
+      if (reopening) {
+        await reopening;
+        if (!isCurrentStart(service, lifecycleGeneration)) {
+          return buildObservedBackendStatus(service, status);
+        }
+      }
     }
     if (!modelUnavailable) {
-      onProgress('ready', 'Jenny is ready');
+      onProgress('ready');
     }
     const observedStatus = buildObservedBackendStatus(service, status);
     // Push the settled observed status: during the init flight every emission
@@ -377,9 +390,9 @@ async function startBackendService(service, options) {
   };
 
   try {
-    onProgress('sidecar_spawn', 'Spawning sidecar...');
+    onProgress('sidecar_spawn');
     const status = await service.sidecarManager.start();
-    onProgress('sidecar_spawned', 'Sidecar process spawned');
+    onProgress('sidecar_spawned');
     return await finalizeStart(status);
   } catch (error) {
     if (!isCurrentStart(service, lifecycleGeneration) || service.sidecarManager.isStopping) {
@@ -396,7 +409,7 @@ async function startBackendService(service, options) {
       phase: 'retrying',
       detail: 'Backend failed to start, retrying once.',
     });
-    onProgress('sidecar_spawn', 'Retrying sidecar...');
+    onProgress('sidecar_spawn', { retrying: true });
     const status = await service.sidecarManager.retryStart();
     return await finalizeStart(status, { retried: true });
   }
@@ -546,6 +559,7 @@ async function retryStartBackendService(service) {
   service._autoReconnectAttempted = false;
   service._stopping = false;
   service.currentStatus = null;
+  service._managedInitializedProcess = null; // sticky _managedReadyOnce kept
   setModelLifecycle(service, {
     state: 'unloaded',
     requested_model: service.defaultModel || service.currentModel || '',
@@ -575,11 +589,20 @@ async function retryStartBackendService(service) {
     if (!isCurrentStart(service, lifecycleGeneration)) {
       return buildObservedBackendStatus(service, status);
     }
-    reopenRuntimeAfterStart(service, lifecycleGeneration);
+    const reopening = reopenRuntimeAfterStart(service, lifecycleGeneration);
+    if (reopening) {
+      await reopening;
+      if (!isCurrentStart(service, lifecycleGeneration)) {
+        return buildObservedBackendStatus(service, status);
+      }
+    }
+    // Settled push after init, like finalizeStart (a retry after a failed
+    // start has no later lifecycle transition to leave 'sidecar_spawned').
+    const observedStatus = buildObservedBackendStatus(service, status);
+    service.emit('backend-status', observedStatus);
+    return observedStatus;
   }
-  return status.phase === 'ready'
-    ? buildObservedBackendStatus(service, status)
-    : status;
+  return status;
 }
 
 module.exports = {

@@ -477,3 +477,93 @@ test('reasoning that resumes after a completed reasoning phase starts a new entr
   assert.deepEqual(ctx.reasoningEntries.map((entry) => entry.text), ['First thought.', 'Second thought.']);
   assert.notEqual(ctx.reasoningEntries[0].id, ctx.reasoningEntries[1].id);
 });
+
+test('delegate child agent.progress reaches the renderer with the agent_executor flag off', () => {
+  const ctx = makeCtx();
+  ctx.service.featureFlags.agent_executor = false;
+  handleNotification(
+    ctx,
+    {
+      method: 'agent.progress',
+      params: {
+        request_id: 'stream-1',
+        session_id: 'session-1',
+        task_id: 'delegate:request:call-1',
+        task_type: 'sub_agent',
+        source: 'delegate',
+        tool_call_id: 'call-1',
+        child_task_id: 'delegate:request:call-1:task:1',
+        child_ordinal: 1,
+        child_count: 1,
+        status: 'running',
+        stage: 'gathering_context',
+      },
+    },
+    { toolContext: {}, handleToolNotification: makeHandleToolNotification(ctx) }
+  );
+
+  const emits = callsOf(ctx, 'emitChatStream');
+  assert.equal(emits.length, 1, 'the subagent monitor ships with delegate, not with the executor rollout');
+  assert.equal(emits[0].options.channel, 'control');
+  assert.equal(emits[0].payload.type, 'agent_status');
+  assert.equal(emits[0].payload.toolCallId, 'call-1');
+  assert.equal(emits[0].payload.childTaskId, 'delegate:request:call-1:task:1');
+});
+
+test('context.compacted forwards summary_source_dropped_messages to the event, the collector and the diagnostics', () => {
+  const ctx = makeCtx();
+  const collected = [];
+  ctx.transcriptCollector.noteContextCompaction = (entry) => collected.push(entry);
+  const recorded = [];
+  ctx.compactionDiagnostics = { record: (params) => recorded.push(params) };
+  const send = (params) => handleNotification(ctx, { method: 'context.compacted', params }, {
+    toolContext: {}, handleToolNotification: makeHandleToolNotification(ctx),
+  });
+  send({
+    strategy: 'full', tokens_before: 5000, tokens_after: 1200, input_complete: true,
+    summary_source_dropped_messages: 7,
+  });
+  send({ strategy: 'full', tokens_before: 5000, tokens_after: 1200, summary_source_dropped_messages: -2 });
+  send({ strategy: 'full', tokens_before: 5000, tokens_after: 1200 });
+
+  const events = callsOf(ctx, 'emitChatStream').map((call) => call.payload);
+  assert.deepEqual(events.map((event) => event.summarySourceDroppedMessages), [7, 0, 0]);
+  assert.equal(events[0].inputComplete, true, 'input_complete keeps its ingress meaning');
+  assert.deepEqual(collected.map((entry) => entry.summarySourceDroppedMessages), [7, 0, 0]);
+  assert.equal(recorded[0].summary_source_dropped_messages, 7);
+});
+
+// GIP-1: an Electron-run tool's artifacts reach the canonical event without a
+// local path (the sidecar strips it), and the persisted turn-event normalizer
+// drops a path-less artifact, so the journal held `generated_artifacts: []`.
+test('canonical tool_execution_completed restores the Electron-stashed artifact path before capture', () => {
+  const { normalizeTurnEvent } = require('../services/backend/message-normalization');
+  const sidecarArtifact = {
+    artifact_id: 'img-1', artifact_kind: 'image', title: 'Generated image', file_name: 'img-1.png',
+    display_path: '.jenny/artifacts/session-1/img-1.png', mime_type: 'image/png', width: 1024, height: 1024,
+    status: 'available', editable: false,
+  };
+  const capture = (stash) => {
+    const ctx = makeCtx();
+    if (stash) ctx.service._electronToolGeneratedArtifactsByCall = stash;
+    handleNotification(ctx, {
+      method: 'turn.event',
+      params: canonicalEvent('tool_execution_completed', {
+        tool_call_id: 'call-img', tool_name: 'image_generate', success: true, tool_output_summary: 'Generated.',
+        generated_artifacts: [sidecarArtifact],
+      }, { tool_call_id: 'call-img' }),
+    }, { toolContext: {}, handleToolNotification: makeHandleToolNotification(ctx, false) });
+    const captured = callsOf(ctx, 'noteEvent')[0].params;
+    return normalizeTurnEvent({ event_id: 'e1', turn_id: 'turn-1', kind: 'tool_result', tool_call_id: 'call-img',
+      payload: captured.payload }).payload.generated_artifacts;
+  };
+
+  const restored = capture(new Map([['stream-1|call-img', [{ ...sidecarArtifact, absolute_path: 'C:/ws/.jenny/artifacts/session-1/img-1.png' }]]]));
+  assert.equal(restored.length, 1);
+  assert.equal(restored[0].artifact_id, 'img-1');
+  assert.equal(restored[0].absolute_path, '[redacted:path]');
+
+  // No stash entry: the event passes through unchanged (and the normalizer
+  // still refuses a path-less artifact, which is the contract this works with).
+  assert.deepEqual(capture(null), []);
+});

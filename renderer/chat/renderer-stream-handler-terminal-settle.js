@@ -27,11 +27,35 @@
       dropReasoningStream = () => {},
       rawHandleComplete = async () => ({ buffered: false, terminal: false }),
       rawHandleError = async () => ({ buffered: false, terminal: false }),
+      // Desktop notifications: told about every settled terminal, after cleanup.
+      onTerminal = () => {},
     } = deps || {};
 
     function cleanupTerminalStreamState(streamId) {
       clearTerminalStreamState(streamId);
       dropReasoningStream(streamId);
+    }
+
+    // The raw handlers finalize the stream (state.pendingStreams loses it), so
+    // the stream's message id is read BEFORE they run and handed to onTerminal.
+    function readTerminalMessageId(payload) {
+      try {
+        const streamId = normalizeId(payload?.streamId);
+        return streamId ? normalizeId(state?.pendingStreams?.get?.(streamId)) : '';
+      } catch (_error) {
+        return '';
+      }
+    }
+
+    function notifyTerminal(kind, payload, result, messageId) {
+      try {
+        onTerminal({ kind, payload, result, messageId });
+      } catch (error) {
+        appendClientLog('WARN', 'stream.terminal_notify_failed', {
+          streamId: String(payload?.streamId || '').slice(0, 30),
+          message: String(error?.message || error || '').slice(0, 200),
+        });
+      }
     }
 
     function settleTerminalStreamAffordances(payload) {
@@ -88,10 +112,14 @@
       settleTerminalReasoningPhases(payload);
       try { applyLiveTurnPayload(payload); } catch (_e) { /* defensive */ }
       settleTerminalStreamAffordances(payload);
+      const terminalMessageId = readTerminalMessageId(payload);
+      let result;
       try {
-        return await rawHandleComplete(payload);
+        result = await rawHandleComplete(payload);
+        return result;
       } finally {
         cleanupTerminalStreamState(payload?.streamId);
+        notifyTerminal('complete', payload, result, terminalMessageId);
       }
     }
 
@@ -100,10 +128,14 @@
       settleTerminalReasoningPhases(payload);
       try { applyLiveTurnPayload(payload); } catch (_e) { /* defensive */ }
       settleTerminalStreamAffordances(payload);
+      const terminalMessageId = readTerminalMessageId(payload);
+      let result;
       try {
-        return await rawHandleError(payload);
+        result = await rawHandleError(payload);
+        return result;
       } finally {
         cleanupTerminalStreamState(payload?.streamId);
+        notifyTerminal('error', payload, result, terminalMessageId);
       }
     }
 

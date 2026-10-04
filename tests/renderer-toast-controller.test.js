@@ -336,3 +336,28 @@ test('action handlers stay wired to the ids the click delegation looks up', (t) 
   app.dismissToast(toastId);
   assert.equal(app.toastActionHandlers.has(toastId), false, 'handlers are released with the toast');
 });
+
+// Split view gate D14 (2026-09-26): with two panes on the chat view the stack starts below pane 1's
+// kicker, measured on render (the kicker's position follows the font scale); anywhere else the
+// CSS default holds (styles/toast.css reads --toast-split-top).
+test('two panes on the chat view: the toast stack is placed below pane 1\'s kicker', (t) => {
+  const ctx = mount();
+  t.after(() => ctx.dispose());
+  const doc = ctx.window.document;
+  doc.documentElement.dataset.activeView = 'chat';
+  doc.body.insertAdjacentHTML('afterbegin', '<main id="chatView" data-pane-count="2">'
+    + '<section class="chat-pane" data-pane-id="0"><div class="chat-pane-kicker"></div></section>'
+    + '<section class="chat-pane" data-pane-id="1"><div class="chat-pane-kicker"></div></section></main>');
+  doc.querySelector('.chat-pane[data-pane-id="1"] > .chat-pane-kicker').getBoundingClientRect = () => ({ bottom: 172.4 });
+  ctx.showToastMessage('Saved', { tone: 'info' });
+  assert.equal(ctx.toastViewport.style.getPropertyValue('--toast-split-top'), '181px', 'kicker bottom (ceil) + 8px');
+
+  doc.documentElement.dataset.activeView = 'ide';
+  ctx.showToastMessage('Another', { tone: 'info' });
+  assert.equal(ctx.toastViewport.style.getPropertyValue('--toast-split-top'), '', 'other views keep the CSS default');
+
+  doc.documentElement.dataset.activeView = 'chat';
+  doc.getElementById('chatView').dataset.paneCount = '1';
+  ctx.showToastMessage('One pane', { tone: 'info' });
+  assert.equal(ctx.toastViewport.style.getPropertyValue('--toast-split-top'), '', 'one pane keeps the CSS default');
+});

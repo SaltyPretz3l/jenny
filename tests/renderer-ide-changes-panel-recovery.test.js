@@ -128,7 +128,7 @@ function createApi(overrides = {}) {
   };
 }
 
-function createHarness(t, { api = createApi(), confirm = async () => true } = {}) {
+function createHarness(t, { api = createApi(), confirm = async () => true, getWorkspaceId = () => 'root_test' } = {}) {
   const dom = new JSDOM('<div id="rail"></div>');
   const rail = dom.window.document.getElementById('rail');
   const confirmCalls = [];
@@ -138,7 +138,7 @@ function createHarness(t, { api = createApi(), confirm = async () => true } = {}
     isActivePanel: () => true,
     getChangeLedger: () => ({ changes: [] }),
     getDirtyPaths: () => [],
-    getWorkspaceId: () => 'root_test',
+    getWorkspaceId,
     getWorkspaceRecoveryApi: () => api,
     confirmDialog: {
       async confirm(config) {
@@ -409,4 +409,68 @@ test('a failed Recent batches request offers Retry, and Retry re-requests from t
   assert.equal(api.calls.list.length, 2, 'Retry re-requests the list');
   assert.equal(harness.rail.querySelector('[data-ide-changeset-retry]'), null);
   assert.ok(harness.rail.querySelector('[data-ide-changeset-undo]'), 'rows render once the retried list succeeds');
+});
+
+// Gate N1: the sidecar serves the workspace_recovery family ONE request at a
+// time. A workspace switch while a list was in flight fired a second list at
+// once; the sidecar rejected it ("too many active workspace.list_change_sets
+// requests") and the panel kept that as a persistent danger row.
+test('a workspace switch mid-list never overlaps a second list; the queued one runs after it settles', async (t) => {
+  const api = createApi();
+  const pending = [];
+  let inFlight = 0;
+  let maxInFlight = 0;
+  api.listChangeSets = (payload) => {
+    api.calls.list.push(payload);
+    inFlight += 1;
+    maxInFlight = Math.max(maxInFlight, inFlight);
+    return new Promise((resolve) => {
+      pending.push((result) => { inFlight -= 1; resolve(result); });
+    });
+  };
+  let workspaceId = 'root_old';
+  const harness = createHarness(t, { api, getWorkspaceId: () => workspaceId });
+  harness.panel.renderChangesPanel();
+  assert.equal(api.calls.list.length, 1, 'the old workspace list is in flight');
+
+  workspaceId = 'root_new';
+  harness.panel.renderChangesPanel();
+  harness.panel.renderChangesPanel();
+  assert.equal(api.calls.list.length, 1, 'no second list while the first still holds the slot');
+
+  pending.shift()({ ok: true, change_sets: [changeSet({ change_set_id: SECOND_CHANGE_SET_ID })] });
+  await settle();
+  assert.equal(api.calls.list.length, 2, 'the queued list for the new workspace follows');
+  assert.equal(harness.rail.querySelector(`[data-ide-changeset-id="${SECOND_CHANGE_SET_ID}"]`), null, 'the stale old-workspace result is dropped');
+
+  pending.shift()({ ok: true, change_sets: [changeSet()] });
+  await settle();
+  harness.panel.renderChangesPanel();
+  assert.ok(harness.rail.querySelector(`[data-ide-changeset-id="${CHANGE_SET_ID}"]`), 'the new workspace rows render');
+  assert.equal(maxInFlight, 1, 'never more than one list in flight');
+});
+
+test('a family-cap rejection is transient: no sticky error row, the next render re-lists', async (t) => {
+  const api = createApi();
+  const listChangeSets = api.listChangeSets.bind(api);
+  let busy = true;
+  api.listChangeSets = async (payload) => {
+    if (!busy) return listChangeSets(payload);
+    busy = false;
+    api.calls.list.push(payload);
+    return {
+      ok: false, reason: 'too_many_workspace_recovery_requests',
+      message: 'too many active workspace.list_change_sets requests',
+    };
+  };
+  const harness = createHarness(t, { api });
+  harness.panel.renderChangesPanel();
+  await settle();
+  assert.doesNotMatch(harness.rail.textContent, /too many active/, 'the busy rejection is not shown as an error');
+  assert.equal(harness.rail.querySelector('[data-ide-changeset-retry]'), null);
+
+  harness.panel.renderChangesPanel();
+  await settle();
+  assert.equal(api.calls.list.length, 2, 'the next ordinary render re-lists');
+  assert.ok(harness.rail.querySelector('[data-ide-changeset-undo]'), 'rows render once the slot is free');
 });

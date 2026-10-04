@@ -28,5 +28,6 @@ volumes:
   jenny_control:
   jenny_profile:
   jenny_workspace:
+  jenny_staging:
   jenny_config:
   jenny_secrets:

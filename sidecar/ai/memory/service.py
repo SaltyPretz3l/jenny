@@ -201,6 +201,21 @@ class MemoryService:
     def close(self) -> None:
         self._store.close()
 
+    def move_project_memories(
+        self,
+        *,
+        source_project_id: str,
+        target_project_id: str,
+    ) -> dict[str, int]:
+        """Desktop project delete: move one project's memory rows to another."""
+
+        if isinstance(self._store, UnavailableMemoryStore):
+            raise MemoryStoreError(self._store.reason_code, "memory is unavailable")
+        return cast(MemoryStore, self._store).move_project_memories(
+            source_project_id=source_project_id,
+            target_project_id=target_project_id,
+        )
+
     def recall_for_prompt(
         self,
         query: str,

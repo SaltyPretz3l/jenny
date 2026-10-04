@@ -191,7 +191,7 @@ class StopController:
                 request_id=self._runtime.request_id,
                 limit=SEMANTIC_STUCK_LOOP_WINDOW,
             )
-        except Exception:
+        except Exception:  # noqa: BLE001  # telemetry
             return
         self._semantic_hint_sequence = max(
             (event.sequence for event in recent),
@@ -214,7 +214,7 @@ class StopController:
                     if event.sequence > self._semantic_hint_sequence
                 )
             finding = detect_stuck_loop(recent, window=SEMANTIC_STUCK_LOOP_WINDOW)
-        except Exception:
+        except Exception:  # noqa: BLE001  # telemetry
             return None
         if finding is None:
             return None

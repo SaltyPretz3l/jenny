@@ -28,9 +28,8 @@
   border: 1px solid var(--settings-shell-muted-border);
   background: color-mix(in srgb, var(--settings-shell-muted-bg) 64%, transparent);
   color: var(--text-secondary);
-  font-size: var(--font-size-xs);
-  font-weight: 600;
-  letter-spacing: 0.02em;
+  font-size: var(--font-size-caption);
+  font-weight: 500;
   line-height: 1.2;
   white-space: nowrap;
   transition:
@@ -90,8 +89,8 @@
   background: transparent;
   color: var(--text-muted);
   font: inherit;
-  font-size: var(--font-size-xs);
-  font-weight: 600;
+  font-size: var(--font-size-caption);
+  font-weight: 500;
   line-height: 1;
   white-space: nowrap;
   cursor: pointer;
@@ -134,8 +133,8 @@
 
 .settings-reset-confirm-label {
   color: var(--state-warning);
-  font-size: var(--font-size-xs);
-  font-weight: 600;
+  font-size: var(--font-size-caption);
+  font-weight: 500;
   white-space: nowrap;
 }
 
@@ -163,8 +162,8 @@
   align-items: center;
   gap: var(--space-1) var(--space-3);
   color: var(--text-muted);
-  font-size: var(--font-size-xs);
-  font-weight: 600;
+  font-size: var(--font-size-caption);
+  font-weight: 500;
   line-height: 1.4;
 }
 

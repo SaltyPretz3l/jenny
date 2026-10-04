@@ -430,7 +430,7 @@ class PrioritizedMessageWriter:
                         self._write_frame_body(frame.body)
                     elif frame.message is not None:
                         self._write_message(frame.message)
-                except BaseException as error:  # noqa: BLE001
+                except BaseException as error:
                     self._logger.exception("sidecar output writer failed")
                     remaining_frames = batch.frames[index:]
                     with self._buffer_lock:

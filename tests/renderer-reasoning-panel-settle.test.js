@@ -33,6 +33,34 @@ test.afterEach(() => {
 
 // --- Pure helper unit tests (no DOM timing dependency) --------------------
 
+test('settleThinkingPanelNow leaves a collapsing panel and its pin alone', () => {
+  const dom = trackRevealDom(new JSDOM('<div class="reasoning-row-panel expanded" data-collapsing="true" style="max-height: 90px"></div>'));
+  const panel = dom.window.document.querySelector('.reasoning-row-panel');
+  settleThinkingPanelNow(panel, false);
+  assert.equal(panel.classList.contains(SETTLED_CLASS), false, 'a collapsing panel must not settle');
+  assert.equal(panel.style.maxHeight, '90px');
+});
+
+test('armed settle leaves an auto-collapse pin alone on transitionend and timeout', () => {
+  for (const viaTimer of [false, true]) {
+    const dom = trackRevealDom(new JSDOM('<div class="reasoning-row-panel expanded" style="max-height: 90px"></div>'));
+    const panel = dom.window.document.querySelector('.reasoning-row-panel');
+    const timer = stubWindowTimeout(dom);
+    let settled = 0;
+    armThinkingPanelSettle(panel, { transitionMs: 260, onSettled: () => { settled += 1; } });
+    panel.dataset.collapsing = 'true';
+    if (viaTimer) timer.get()();
+    else {
+      const event = new dom.window.Event('transitionend');
+      Object.defineProperty(event, 'propertyName', { value: 'max-height' });
+      panel.dispatchEvent(event);
+    }
+    assert.equal(panel.classList.contains(SETTLED_CLASS), false);
+    assert.equal(panel.style.maxHeight, '90px');
+    assert.equal(settled, 0);
+  }
+});
+
 test('settleThinkingPanelNow adds the settled class unless reduced motion is active', () => {
   const dom = trackRevealDom(new JSDOM('<div class="reasoning-row-panel expanded"></div>'));
   const panel = dom.window.document.querySelector('.reasoning-row-panel');

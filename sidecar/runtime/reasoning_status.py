@@ -29,7 +29,6 @@ _VISIBLE_STATUS_RE: Final = re.compile(
 )
 REASONING_STATUS_MIN_WORDS: Final[int] = 2
 REASONING_STATUS_MAX_WORDS: Final[int] = 6
-_LEGACY_MAX_WORDS: Final[int] = 8
 _MAX_TAIL_BYTES: Final[int] = 256
 
 _SENTENCE_SPLIT_RE: Final = re.compile(r"(?<=[.!?\n])\s+")
@@ -43,12 +42,11 @@ _SYNTH_CHAR_THRESHOLD: Final[int] = 120
 class ReasoningStatusExtractor:
     """Stream-safe extractor for ⟨STATUS:⟩ reasoning markers."""
 
-    __slots__ = ("_tail", "_prev_status", "_v2_enabled")
+    __slots__ = ("_tail", "_prev_status")
 
-    def __init__(self, *, v2_enabled: bool = False) -> None:
+    def __init__(self) -> None:
         self._tail: str = ""
         self._prev_status: str = ""
-        self._v2_enabled = v2_enabled
 
     def feed(self, chunk: str) -> tuple[str, str | None]:
         """Process one reasoning chunk and return cleaned text plus a new status."""
@@ -72,15 +70,7 @@ class ReasoningStatusExtractor:
             nonlocal latest_status
             payload = match.group(1).strip()
             words = payload.split()
-            if self._v2_enabled:
-                valid_word_count = (
-                    REASONING_STATUS_MIN_WORDS
-                    <= len(words)
-                    <= REASONING_STATUS_MAX_WORDS
-                )
-            else:
-                valid_word_count = bool(words) and len(words) <= _LEGACY_MAX_WORDS
-            if not valid_word_count:
+            if not REASONING_STATUS_MIN_WORDS <= len(words) <= REASONING_STATUS_MAX_WORDS:
                 return match.group(0)
             latest_status = payload
             return ""
@@ -109,22 +99,17 @@ class ReasoningStatusExtractor:
 class ReasoningStatusSynthesizer:
     """Synthesize status updates from reasoning text when no ⟨STATUS:⟩ markers appear."""
 
-    __slots__ = ("_buffer", "_prev_status", "_chars_since_emit", "_organic_seen", "_v2_enabled")
+    __slots__ = ("_buffer", "_prev_status", "_chars_since_emit")
 
-    def __init__(self, *, v2_enabled: bool = False) -> None:
+    def __init__(self) -> None:
         self._buffer: str = ""
         self._prev_status: str = ""
         self._chars_since_emit: int = 0
-        self._organic_seen: bool = False
-        self._v2_enabled = v2_enabled
 
     def mark_organic(self) -> None:
-        """Disable legacy synthesis or reset the V2 silence window."""
-        if self._v2_enabled:
-            self._buffer = ""
-            self._chars_since_emit = 0
-            return
-        self._organic_seen = True
+        """Reset the silence window after an organic status marker."""
+        self._buffer = ""
+        self._chars_since_emit = 0
 
     @property
     def reason(self) -> str:
@@ -133,8 +118,6 @@ class ReasoningStatusSynthesizer:
 
     def feed(self, text: str) -> str | None:
         """Feed reasoning text; return a synthesized status or None."""
-        if self._organic_seen:
-            return None
         self._buffer += text
         self._chars_since_emit += len(text)
         if self._chars_since_emit < _SYNTH_CHAR_THRESHOLD:
@@ -168,9 +151,7 @@ class ReasoningStatusSynthesizer:
         if result and not result[-1].isalnum():
             result = result.rstrip(".,;:!?-–—…")
         result = result[:60].strip() if result else ""
-        if self._v2_enabled and not (
-            REASONING_STATUS_MIN_WORDS <= len(result.split()) <= REASONING_STATUS_MAX_WORDS
-        ):
+        if not REASONING_STATUS_MIN_WORDS <= len(result.split()) <= REASONING_STATUS_MAX_WORDS:
             return ""
         return result
 

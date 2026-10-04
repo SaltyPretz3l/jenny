@@ -145,7 +145,10 @@ def render_lines(
     start: int = 1,
     max_chars: int,
 ) -> tuple[str, int]:
-    """Render as many whole numbered lines as fit the character budget."""
+    """Render whole lines, or a bounded prefix of an oversized first line.
+
+    ``excerpt_fields`` identifies that prefix as nonrecoverable truncation.
+    """
 
     if start < 1:
         raise ValueError("start must be positive")
@@ -156,8 +159,10 @@ def render_lines(
     for line in lines[start_index:]:
         candidate = f"{line.number}: {line.text}"
         candidate_length = len(candidate) + (1 if rendered else 0)
-        if rendered and len("\n".join(rendered)) + candidate_length > max_chars:
-            return "\n".join(rendered), line.number
+        if len("\n".join(rendered)) + candidate_length > max_chars:
+            if rendered:
+                return "\n".join(rendered), line.number
+            return candidate[:max_chars], line.number + 1 if line.number < len(lines) else 0
         rendered.append(candidate)
     return "\n".join(rendered), 0
 
@@ -227,10 +232,8 @@ def excerpt_fields(
 ) -> dict[str, object]:
     """Model-visible fields for one page excerpt emitted by ``render_lines``.
 
-    ``excerpt`` holds consecutive whole lines from ``start``, so the first
-    omitted line is always ``lines_to + 1`` -- the same value ``fit_excerpts``
-    reports -- which lets one function serve both budget measurement and the
-    final payload.
+    Complete lines count toward ``lines_to``. An oversized first line is
+    identified separately; its clipped suffix cannot be recovered by cursor.
     """
 
     emitted = excerpt.count("\n") + 1 if excerpt else 0
@@ -242,8 +245,17 @@ def excerpt_fields(
         "lines_from": lines_from,
         "lines_to": lines_to,
     }
-    if lines_to < len(lines):
-        next_line = lines_to + 1
+    next_line = start + emitted
+    if emitted and excerpt.rsplit("\n", maxsplit=1)[-1] != (
+        f"{lines[lines_to - 1].number}: {lines[lines_to - 1].text}"
+    ):
+        fields["text_truncated"] = True
+        fields["nonrecoverable_truncation"] = True
+        fields["incomplete_line"] = lines_to
+        fields["truncation_reason"] = "PDF line exceeds the excerpt character limit."
+        fields["lines_from"] = start if emitted > 1 else 0
+        fields["lines_to"] = lines_to - 1 if emitted > 1 else 0
+    if next_line <= len(lines):
         fields["text_truncated"] = True
         fields["next_line"] = next_line
         fields["continue_cursor"] = encode_cursor(digest=digest, page=page, line=next_line)
@@ -254,11 +266,18 @@ def continuation_summary(pages: Sequence[dict[str, object]]) -> dict[str, object
     """Top-level continuation fields: the first truncated page's cursor + hint."""
 
     summary: dict[str, object] = {"text_format": "numbered_lines"}
+    incomplete = any(page.get("nonrecoverable_truncation") for page in pages)
+    if incomplete:
+        summary["nonrecoverable_truncation"] = True
     for page in pages:
         cursor = page.get("continue_cursor")
         if isinstance(cursor, str):
             summary["cursor"] = cursor
-            summary["continuation_hint"] = CONTINUATION_HINT.format(cursor=cursor)
+            summary["continuation_hint"] = (
+                "A PDF line was clipped; its suffix cannot be recovered. "
+                f"To read the remaining lines, call read_file again with cursor={cursor}."
+                if incomplete else CONTINUATION_HINT.format(cursor=cursor)
+            )
             break
     return summary
 

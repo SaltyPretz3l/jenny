@@ -16,7 +16,9 @@ OAuth client secret never appear in any log, error message, or repr.
 from __future__ import annotations
 
 import logging
+import re
 import threading
+import time
 from itertools import count
 from typing import Any
 
@@ -32,6 +34,7 @@ from sidecar.ai.mcp.sse_http_client import SSEHttpError, post_jsonrpc, post_noti
 from sidecar.ai.mcp.transport_base import MCPTransport
 from sidecar.ai.mcp.transport_base import raise_if_cancelled as _raise_if_cancelled
 from sidecar.ai.tools.builtins.web_http import validate_public_url
+from sidecar.ai.tools.sanitization import sanitize_tool_output
 
 logger = logging.getLogger(__name__)
 
@@ -53,10 +56,12 @@ def _clamp_timeout(seconds: float) -> float:
 
 
 def _bounded_server_message(text: object) -> str:
-    message = str(text or "").strip()
-    if len(message) > _MAX_SERVER_MESSAGE_CHARS:
-        return message[:_MAX_SERVER_MESSAGE_CHARS] + "...(truncated)"
+    message = sanitize_tool_output(str(text or ""), max_chars=_MAX_SERVER_MESSAGE_CHARS,
+                                   tool_name="mcp_http").strip()
+    if "authorization" in message.lower() or ("://" in message and "@" in message):
+        return "mcp server returned an error"
     return message
+
 
 
 class SSEMCPTransport(MCPTransport):
@@ -117,12 +122,8 @@ class SSEMCPTransport(MCPTransport):
     # -- ABC methods -------------------------------------------------------
 
     def list_tools(self, *, cancel_handle: Any = None) -> list[dict[str, Any]]:
-        response = self._request("tools/list", {}, cancel_handle=cancel_handle)
-        result = self._require_result(response, "tools/list")
-        tools = result.get("tools")
-        if not isinstance(tools, list):
-            return []
-        return [tool for tool in tools if isinstance(tool, dict)]
+        return self._list_tool_pages(self._request, cancel_handle=cancel_handle,
+                                     timeout_seconds=self._request_timeout(None))
 
     def call_tool(
         self,
@@ -131,7 +132,7 @@ class SSEMCPTransport(MCPTransport):
         *,
         timeout_seconds: float | None = None,
         cancel_handle: Any = None,
-        on_output_chunk: Any = None,  # noqa: ARG002 - stdio-only live tail
+        on_output_chunk: Any = None,  # stdio-only live tail
     ) -> dict[str, Any]:
         _raise_if_cancelled(cancel_handle, message="MCP HTTP request cancelled")
         response = self._request(
@@ -231,33 +232,50 @@ class SSEMCPTransport(MCPTransport):
             return configured
         return min(configured, max(0.001, float(self._request_timeout_seconds)))
 
-    def _headers(self, *, allow_remint: bool = True) -> dict[str, str]:
+    def _headers(self, *, allow_remint: bool = True, deadline: float | None = None,
+                 cancel_handle: Any = None) -> dict[str, str]:
         headers = {
             "Content-Type": "application/json",
             "Accept": "application/json, text/event-stream",
             "MCP-Protocol-Version": MCP_PROTOCOL_VERSION,
         }
-        token = self._resolve_bearer(allow_remint=allow_remint)
+        token = self._resolve_bearer(allow_remint=allow_remint, deadline=deadline,
+                                     cancel_handle=cancel_handle)
         if token:
             headers["Authorization"] = f"Bearer {token}"
         if self._session_id:
             headers["Mcp-Session-Id"] = self._session_id
         return headers
 
-    def _resolve_bearer(self, *, allow_remint: bool) -> str | None:
+    def _resolve_bearer(self, *, allow_remint: bool, deadline: float | None = None,
+                        cancel_handle: Any = None) -> str | None:
         auth = self._config.auth
         if auth is None:
             return None
         if self._token_source is not None:
             del allow_remint  # mint-on-demand; caller controls invalidation
-            return self._token_source.token()
+            return self._token_source.token(deadline=deadline, cancel_handle=cancel_handle)
         token = str(auth.token or "").strip()
         return token or None
 
-    def _ensure_initialized(self, *, cancel_handle: Any = None) -> None:
+    def _acquire_request_lock(self, *, deadline: float, cancel_handle: Any) -> None:
+        while True:
+            _raise_if_cancelled(cancel_handle)
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise MCPError(code=CMP_MCP_SERVER_FAILED, retryable=True,
+                               message="MCP HTTP request timed out")
+            if self._request_lock.acquire(timeout=min(0.05, remaining)):
+                return
+
+    def _ensure_initialized(
+        self, *, cancel_handle: Any = None, deadline: float | None = None,
+    ) -> None:
         if self._initialized:
             return
-        with self._request_lock:
+        deadline = deadline if deadline is not None else time.monotonic() + self._init_timeout()
+        self._acquire_request_lock(deadline=deadline, cancel_handle=cancel_handle)
+        try:
             if self._initialized:
                 return
             params = {
@@ -271,7 +289,7 @@ class SSEMCPTransport(MCPTransport):
             response = self._send(
                 "initialize",
                 params,
-                timeout_seconds=self._init_timeout(),
+                timeout_seconds=min(self._init_timeout(), max(0.0, deadline - time.monotonic())),
                 cancel_handle=cancel_handle,
             )
             result = response.get("result")
@@ -288,8 +306,11 @@ class SSEMCPTransport(MCPTransport):
                 "notifications/initialized",
                 {},
                 cancel_handle=cancel_handle,
+                timeout_seconds=max(0.0, deadline - time.monotonic()),
             )
             self._initialized = True
+        finally:
+            self._request_lock.release()
 
     def _request(
         self,
@@ -300,15 +321,18 @@ class SSEMCPTransport(MCPTransport):
         cancel_handle: Any = None,
     ) -> dict[str, Any]:
         _raise_if_cancelled(cancel_handle, message="MCP HTTP request cancelled")
-        self._ensure_initialized(cancel_handle=cancel_handle)
-        timeout = self._request_timeout(timeout_seconds)
-        with self._request_lock:
+        deadline = time.monotonic() + self._request_timeout(timeout_seconds)
+        self._ensure_initialized(cancel_handle=cancel_handle, deadline=deadline)
+        self._acquire_request_lock(deadline=deadline, cancel_handle=cancel_handle)
+        try:
             response = self._send(
                 method,
                 params,
-                timeout_seconds=timeout,
+                timeout_seconds=max(0.0, deadline - time.monotonic()),
                 cancel_handle=cancel_handle,
             )
+        finally:
+            self._request_lock.release()
         _raise_if_cancelled(cancel_handle, message="MCP HTTP request cancelled")
         return response
 
@@ -350,10 +374,11 @@ class SSEMCPTransport(MCPTransport):
         timeout_seconds: float,
         cancel_handle: Any = None,
     ) -> dict[str, Any]:
+        deadline = time.monotonic() + timeout_seconds
         try:
             post_kwargs: dict[str, Any] = {
-                "headers": self._headers(),
-                "timeout_seconds": timeout_seconds,
+                "headers": self._headers(deadline=deadline, cancel_handle=cancel_handle),
+                "timeout_seconds": max(0.0, deadline - time.monotonic()),
                 "pinned_ip": self._pinned_ip,
             }
             if cancel_handle is not None:
@@ -369,7 +394,7 @@ class SSEMCPTransport(MCPTransport):
                 return self._handle_401(
                     payload,
                     method=method,
-                    timeout_seconds=timeout_seconds,
+                    timeout_seconds=max(0.0, deadline - time.monotonic()),
                     cancel_handle=cancel_handle,
                 )
             raise self._map_http_error(error) from error
@@ -384,6 +409,7 @@ class SSEMCPTransport(MCPTransport):
         timeout_seconds: float,
         cancel_handle: Any = None,
     ) -> dict[str, Any]:
+        deadline = time.monotonic() + timeout_seconds
         # A minted client-credentials token may have expired: invalidate + re-mint
         # ONCE, and replay only non-side-effecting requests. tools/call is never
         # replayed by the transport -- the client's side-effect-aware retry policy
@@ -392,8 +418,8 @@ class SSEMCPTransport(MCPTransport):
             self._token_source.invalidate()
             try:
                 retry_kwargs: dict[str, Any] = {
-                    "headers": self._headers(),
-                    "timeout_seconds": timeout_seconds,
+                    "headers": self._headers(deadline=deadline, cancel_handle=cancel_handle),
+                    "timeout_seconds": max(0.0, deadline - time.monotonic()),
                     "pinned_ip": self._pinned_ip,
                 }
                 if cancel_handle is not None:
@@ -471,12 +497,15 @@ class SSEMCPTransport(MCPTransport):
         params: dict[str, Any],
         *,
         cancel_handle: Any = None,
+        timeout_seconds: float | None = None,
     ) -> None:
         payload = {"jsonrpc": "2.0", "method": method, "params": params}
+        timeout = self._init_timeout() if timeout_seconds is None else timeout_seconds
+        deadline = time.monotonic() + timeout
         try:
             notification_kwargs: dict[str, Any] = {
-                "headers": self._headers(),
-                "timeout_seconds": self._init_timeout(),
+                "headers": self._headers(deadline=deadline, cancel_handle=cancel_handle),
+                "timeout_seconds": max(0.0, deadline - time.monotonic()),
                 "pinned_ip": self._pinned_ip,
             }
             if cancel_handle is not None:
@@ -503,6 +532,18 @@ class SSEMCPTransport(MCPTransport):
         if not isinstance(error, dict):
             return
         raw_message = error.get("message")
+        auth = self._config.auth
+        credentials: list[str] = []
+        if auth is not None:
+            credentials.extend([auth.token or "", auth.client_secret or ""])
+        # A server can echo an older minted token after cache invalidation, so an
+        # OAuth server's text is never shown.
+        if self._token_source is not None:
+            raw_message = "mcp server returned an error"
+        raw_message = str(raw_message or "")
+        for value in sorted(set(credentials), key=len, reverse=True):
+            if value:
+                raw_message = raw_message.replace(value, "[REDACTED]")
         # Bound the server-supplied message everywhere it reaches a log or error.
         message = (
             _bounded_server_message(raw_message)
@@ -513,7 +554,8 @@ class SSEMCPTransport(MCPTransport):
         retryable = False
         data = error.get("data")
         if isinstance(data, dict):
-            if isinstance(data.get("code"), str):
+            if (isinstance(data.get("code"), str)
+                    and re.fullmatch(r"CMP-[A-Z]+-[0-9]{4}", data["code"])):
                 error_code = str(data["code"])
             retryable = data.get("retryable") is True
         logger.warning("mcp call failed on server=%s message=%s", self.server_name, message)

@@ -18,6 +18,26 @@ function prompts(access = '1', confirmAccessChange = true) {
     secret: async () => 'correct horse battery staple' };
 }
 
+test('configure requires replacement of an invalid existing model credential', async (t) => {
+  const fixture = setupFixture(t);
+  fixture.source.model_endpoint.engine = 'openai-compatible';
+  saveSetup(fixture.configPath, fixture.source, 'old-key');
+  fs.writeFileSync(path.join(fixture.source.secrets_dir, 'model-api-key'), 'invalid\nkey');
+  const ui = prompts();
+  ui.secret = async () => 'replacement-key';
+  const questions = [];
+  ui.yes = async (label, fallback = false) => { questions.push(label); return fallback; };
+  await configure('configure', { configPath: fixture.configPath, template: fixture.source, prompts: ui,
+    acquireProfileImpl: () => ({ release() {} }), initializeOwnerImpl: async () => ({ ok: true }),
+    probeModelsImpl: async (_endpoint, options) => {
+      assert.equal(options.apiKey, 'replacement-key');
+      return { ok: true, models: ['installed-model'] };
+    } });
+  assert.equal(readSetup(fixture.configPath).apiKey, 'replacement-key');
+  assert.equal(questions.includes('Keep the existing model API key'), false);
+  assert.equal(questions.includes('Does this model server require an API key'), false);
+});
+
 test('guided init uses canonical owner initialization and reruns without replacing settings or password', async (t) => {
   const fixture = setupFixture(t);
   const ui = prompts();
@@ -223,8 +243,41 @@ test('doctor checks localhost health and the configured worker state', async (t)
   const result = await doctor({ configPath: fixture.configPath, say: (value) => output.push(value),
     probeModelsImpl: async () => ({ ok: true, models: [fixture.source.model_endpoint.model] }),
     probeLocalHostImpl: async (config) => { assert.equal(config.canonicalOrigin, 'http://127.0.0.1:8080'); return true; },
+    probeLocalReadyImpl: async () => true,
     probeWorkerImpl: async (operation) => { assert.equal(operation, 'status'); return { phase: 'ready' }; } });
   assert.equal(result.ok, true);
   assert.match(output.join(' '), /Localhost service: Jenny health response received/);
   assert.match(output.join(' '), /Command sandbox: ready/);
+});
+
+test('guided configure refuses a nested custom workspace root before prompting or saving', async (t) => {
+  const fixture = setupFixture(t);
+  fixture.source.workspace_root = '/workspaces/default/nested';
+  saveSetup(fixture.configPath, fixture.source, null);
+  let saves = 0;
+  let asked = 0;
+  const askPrompts = prompts();
+  const ask = askPrompts.ask;
+  askPrompts.ask = async (...args) => { asked += 1; return ask(...args); };
+  await assert.rejects(() => configure('configure', { configPath: fixture.configPath,
+    template: { ...fixture.source, workspace_root: '/workspaces/default' },
+    acquireProfileImpl: () => ({ release() {} }), prompts: askPrompts,
+    saveSetupImpl: () => { saves += 1; } }), /guided_workspace_mismatch/);
+  assert.equal(saves, 0);
+  assert.equal(asked, 0);
+  assert.equal(readSetup(fixture.configPath).source.workspace_root, '/workspaces/default/nested');
+});
+
+test('doctor fails with an explicit diagnostic when the server is live but not ready', async (t) => {
+  const fixture = setupFixture(t);
+  saveSetup(fixture.configPath, fixture.source, null);
+  const auth = new AuthService({ filePath: path.join(fixture.source.user_data_path, 'auth.json') });
+  await auth.initializePassword('correct horse battery staple');
+  const output = [];
+  const result = await doctor({ configPath: fixture.configPath, say: (value) => output.push(value),
+    probeModelsImpl: async () => ({ ok: true, models: [fixture.source.model_endpoint.model] }),
+    probeLocalHostImpl: async () => true, probeLocalReadyImpl: async () => false });
+  assert.equal(result.ok, false);
+  assert.match(output.join('\n'), /Jenny health response received/);
+  assert.match(output.join('\n'), /Application readiness: not ready/);
 });

@@ -4,13 +4,17 @@
 // project has no folder (General, or unbound by hand) gets a "Use <folder>"
 // action on the existing workspace-root nudge that adopts the workspace
 // project through projects.adoptWorkspace. Idle chats only; per-chat dismiss;
-// non-General chats are judged by one bounded projects.list read.
+// non-General chats are judged by the project switcher's one cache (one
+// bounded projects.list read per 15 s, owned by the switcher).
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { JSDOM } = require('jsdom');
 
 const { createWorkspaceRootNudgeController, folderName } = require('../renderer/features/renderer-workspace-root-nudge');
+const { createProjectSwitcher } = require('../renderer/features/renderer-project-switcher');
+
+const stubMenu = { isOpen: () => false, close() {}, show() { return null; }, dispose() {} };
 const { loadRendererApp, waitForUi } = require('./helpers/renderer-shell-harness');
 
 function makeDom() {
@@ -56,18 +60,24 @@ function makeProjectsApi({ projects, adopt } = {}) {
 
 function createHarness(t, { state, api, refreshSessions, appendClientLog, now } = {}) {
   const dom = makeDom();
+  const appState = state || makeState();
+  const switcher = createProjectSwitcher({
+    state: appState, windowRef: dom.window, documentRef: dom.window.document, menu: stubMenu,
+    getProjectsApi: () => api || null, now,
+  });
+  switcher.bind();
   const controller = createWorkspaceRootNudgeController({
-    state: state || makeState(),
+    state: appState,
     windowRef: dom.window,
     documentRef: dom.window.document,
     appendClientLog: appendClientLog || (() => {}),
     getProjectsApi: () => api || null,
+    getProjectSwitcher: async () => switcher,
     refreshSessions,
-    now,
   });
   controller.bind();
-  t.after(() => controller.dispose());
-  return { dom, controller };
+  t.after(() => { controller.dispose(); switcher.dispose(); });
+  return { dom, controller, switcher };
 }
 
 function chip(dom) {
@@ -83,7 +93,7 @@ function click(dom, element) {
 }
 
 async function settle() {
-  for (let i = 0; i < 6; i += 1) await Promise.resolve();
+  for (let i = 0; i < 12; i += 1) await Promise.resolve();
 }
 
 test('folderName takes the last segment of either separator style', () => {
@@ -249,7 +259,7 @@ test('clearing the folder swaps back to the set-root hint; a bound chat under a 
   assert.equal(bound.dom.window.document.querySelector('#composerProjectPill .inv-chip-label').textContent, 'Ascend');
 });
 
-test('a non-General chat is judged by its project root after one bounded list fetch', async (t) => {
+test('a non-General chat is judged by its project root after one bounded list read by the switcher', async (t) => {
   const state = makeState({
     sessions: [
       { id: 'sess_old', title: 'Bound chat', project_id: 'project_bound' },
@@ -278,7 +288,7 @@ test('a non-General chat is judged by its project root after one bounded list fe
   clock += 20000;
   controller.render();
   await settle();
-  assert.equal(calls.list, 2, 'a stale list is re-read on the snapshot cadence');
+  assert.equal(calls.list, 2, 'a stale list is re-read on the snapshot cadence (the switcher\'s 15 s window)');
 });
 
 test('app binding mounts "Use <folder>" for a folderless chat and routes the click to projects.adoptWorkspace', async () => {

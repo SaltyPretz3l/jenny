@@ -1,7 +1,5 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
-const path = require('node:path');
 const { JSDOM } = require('jsdom');
 
 const {
@@ -13,11 +11,16 @@ const {
   buildWebSearchSectionMarkup,
   resolveToolConfigToggleEvent,
   resolveModelBadge,
+  buildUiLanguageFieldMarkup,
 } = require('../renderer/shell/renderer-settings-support');
+const supportExports = require('../renderer/shell/renderer-settings-support');
 const { toggleSwitch } = require('../renderer/inventory/toggle-switch');
 const selectField = require('../renderer/inventory/select-field');
 const textField = require('../renderer/inventory/text-field');
 const actionButton = require('../renderer/inventory/action-button');
+const settingsField = require('../renderer/inventory/settings-field');
+const { segmentedGroup, segmentedValue } = require('./helpers/segmented-control');
+const { settingRow } = require('./helpers/settings-rows');
 
 function escapeHtml(value) {
   return String(value || '')
@@ -28,30 +31,42 @@ function escapeHtml(value) {
     .replaceAll("'", '&#39;');
 }
 
-test('buildSettingsToggleListMarkup renders one inventory switch per field and drops id-less rows', () => {
+test('buildSettingsToggleListMarkup renders one standard row per field and drops id-less rows', () => {
   const markup = buildSettingsToggleListMarkup({
     fields: [
-      { id: 'aToggle', label: 'A', tooltip: 'Hover text', checked: true },
+      { id: 'aToggle', label: 'A', description: 'About A', detail: 'More on A', checked: true },
       { id: 'bToggle', label: 'B', checked: false, disabled: true },
+      { id: 'contextIncludePersonalityToggle', checked: false },
       { id: '', label: 'no id' },
     ],
     toggleSwitch,
     escapeHtml,
   });
   const doc = new JSDOM(`<!doctype html><body>${markup}</body>`).window.document;
-  const toggles = doc.querySelectorAll('[data-inv-toggle]');
-  assert.equal(toggles.length, 2, 'id-less field is dropped');
-  assert.equal(doc.querySelector('label.inv-toggle').getAttribute('title'), 'Hover text');
-  assert.equal(doc.querySelector('[data-inv-toggle="aToggle"]').getAttribute('aria-checked'), 'true');
+  assert.equal(doc.querySelectorAll('[data-inv-toggle]').length, 3, 'id-less field is dropped');
+  assert.equal(doc.querySelectorAll('.settings-field.settings-field--row').length, 3);
+  assert.equal(doc.querySelector('.inv-toggle-label'), null, 'no legacy switch label');
+  const a = doc.querySelector('[data-inv-toggle="aToggle"]');
+  const rowA = a.closest('.settings-field--row');
+  const title = rowA.querySelector('.settings-field-title');
+  assert.equal(title.tagName, 'LABEL');
+  assert.equal(title.textContent, 'A');
+  assert.equal(title.htmlFor, a.id);
+  assert.equal(rowA.querySelector('.settings-field-help').textContent, 'About A');
+  assert.equal(a.getAttribute('aria-checked'), 'true');
+  assert.equal(rowA.querySelector('.settings-field-detail').getAttribute('data-tooltip'), 'More on A');
   const b = doc.querySelector('[data-inv-toggle="bToggle"]');
   assert.equal(b.getAttribute('aria-checked'), 'false');
   assert.equal(b.disabled, true, 'disabled lands on the track button');
+  assert.equal(b.closest('.settings-field--row').querySelector('.settings-field-detail'), null, 'no detail, no affordance');
+  const copyRow = doc.querySelector('[data-inv-toggle="contextIncludePersonalityToggle"]').closest('.settings-field--row');
+  assert.match(copyRow.querySelector('.settings-field-detail').getAttribute('data-tooltip'), /ChatGPT engine/, 'field copy detail');
 });
 
-test('buildSettingsToggleListMarkup degrades to a note when no toggle renderer is available', () => {
-  const markup = buildSettingsToggleListMarkup({ fields: [{ id: 'x', label: 'X' }], escapeHtml });
-  assert.match(markup, /class="settings-note"/);
-  assert.doesNotMatch(markup, /data-inv-toggle/);
+test('buildSettingsToggleListMarkup finds the switch through the shared row builder when none is passed in', () => {
+  const markup = buildSettingsToggleListMarkup({ fields: [{ id: 'x', label: 'X' }] });
+  assert.match(markup, /data-inv-toggle="x"/);
+  assert.doesNotMatch(markup, /class="settings-note"/);
 });
 
 test('buildContextToggleListsMarkup splits prefs and feature flags by persistence path', () => {
@@ -71,10 +86,11 @@ test('buildContextToggleListsMarkup splits prefs and feature flags by persistenc
   assert.equal(sources.querySelector('[data-inv-toggle="contextIncludePersonalityToggle"]').getAttribute('aria-checked'), 'true');
   assert.equal(sources.querySelector('[data-inv-toggle="contextIncludeMemoryToggle"]').getAttribute('aria-checked'), 'false');
 
-  // runtime = the 2 expert diagnostics toggles, both disabled in this case
-  assert.equal(runtime.querySelectorAll('[data-inv-toggle]').length, 2);
-  assert.equal(runtime.querySelector('[data-inv-toggle="contextTokenBudgetToggle"]').getAttribute('aria-checked'), 'true');
-  assert.equal(runtime.querySelector('[data-inv-toggle="contextTokenBudgetToggle"]').disabled, true);
+  // runtime = automatic summarization only (token budget left the page), disabled here
+  assert.equal(runtime.querySelectorAll('[data-inv-toggle]').length, 1);
+  assert.equal(runtime.querySelector('[data-inv-toggle="contextTokenBudgetToggle"]'), null);
+  assert.equal(runtime.querySelector('[data-inv-toggle="contextCompactionToggle"]').getAttribute('aria-checked'), 'false');
+  assert.equal(runtime.querySelector('[data-inv-toggle="contextCompactionToggle"]').disabled, true);
 });
 
 test('web search provider markup nests a bounded connection test in Web tools', () => {
@@ -83,11 +99,11 @@ test('web search provider markup nests a bounded connection test in Web tools', 
     webSearch: { provider: 'duckduckgo' },
     selectField,
     textField,
-    actionButton,
+    actionButton, settingsField,
     escapeHtml,
   });
   const doc = new JSDOM(`<!doctype html><body>${markup}</body>`).window.document;
-  assert.equal(doc.querySelector('[data-web-search-test]')?.textContent.trim(), 'Test connection');
+  assert.equal(doc.querySelector('[data-web-search-test]')?.textContent.trim(), 'Test');
   assert.ok(doc.querySelector('[data-web-search-test-status][aria-live="polite"]'));
 });
 
@@ -150,7 +166,6 @@ test('normalizeFeatureState preserves sanitized tool config metadata', () => {
       storage: 'config',
       default: false,
       helpText: 'Use <live> lookup.',
-      addonNote: '',
       configFlag: 'tools_web_enabled',
       toolIds: ['web_search', 'fetch_url'],
     },
@@ -164,8 +179,8 @@ test('tool config fields fall back to the legacy tool toggles when metadata is a
   assert.deepEqual(
     fields.map((field) => field.key),
     [
-      'imageRead', 'fileTools', 'richFiles', 'web', 'pythonRuntime',
-      'worktree', 'subagents', 'bash', 'lsp',
+      'fileTools', 'richFiles', 'imageRead', 'web', 'bash',
+      'pythonRuntime', 'lsp', 'worktree', 'subagents',
     ]
   );
   assert.ok(fields.every((field) => field.fieldType === 'toggle'));
@@ -193,54 +208,76 @@ test('tool config field list renders display-safe inventory toggle rows', () => 
     toggleSwitch,
   });
   const dom = new JSDOM(`<!doctype html><body>${markup}</body>`);
-  const row = dom.window.document.querySelector('[data-tool-config-key="web"]');
+  const row = dom.window.document.querySelector('[data-settings-field="settings-tool-config-web"]');
   const toggle = dom.window.document.querySelector('[data-inv-toggle="settings-tool-config-web"]');
 
   assert.ok(row);
   assert.ok(toggle);
   assert.equal(toggle.getAttribute('aria-checked'), 'true');
   assert.equal(toggle.hasAttribute('disabled'), true);
-  assert.match(row.innerHTML, /Live &lt;web&gt;/);
-  assert.match(row.innerHTML, /Use &lt;live&gt; lookup\./);
+  assert.match(row.textContent, /Web tools/);
+  assert.match(row.textContent, /Search the web and fetch pages\. Currently blocked by runtime availability\./);
 });
 
-// F24: the backend's tool metadata carries no add-on note; the renderer owns
-// that copy and must keep it through normalization. The stylesheet shows the
-// note only while the field list says the PDF add-on is needed.
-test('file-tool toggles from backend metadata show the PDF add-on note only while the add-on is missing', () => {
-  const backendField = (key, label, configFlag) => ({ key, label, field_type: 'toggle', storage: 'config',
-    default: false, help_text: `${label} help.`, config_flag: configFlag, tool_ids: ['read_file'] });
-  const normalized = normalizeFeatureState({
-    toolConfig: { schemaVersion: 1, fields: [
-      backendField('imageRead', 'Image and PDF reads', 'tools_image_read_enabled'),
-      backendField('richFiles', 'Rich file tools', 'tools_rich_files_enabled'),
-      backendField('web', 'Web tools', 'tools_web_enabled'),
-    ] },
-  });
-  const markup = buildToolConfigFieldListMarkup({
-    fields: getToolConfigFieldsForRender(normalized), tools: {}, availability: {}, escapeHtml, toggleSwitch,
-  });
-  const css = fs.readFileSync(path.join(__dirname, '..', 'styles', 'settings-controls.css'), 'utf8');
-  const dom = new JSDOM(`<!doctype html><head><style>${css}</style></head>
-    <body><div id="toolsConfigFieldList" data-pdf-addon-needed="true">${markup}</div></body>`);
-  const doc = dom.window.document;
-  const note = (key) => doc.querySelector(`[data-tool-config-key="${key}"] .tools-config-field-addon-note`);
+test('PDF help uses the shared add-on sentence only while the add-on is needed', () => {
+  for (const pdfAddonNeeded of [true, false]) {
+    const markup = buildToolConfigFieldListMarkup({ fields: getToolConfigFieldsForRender({}), pdfAddonNeeded, toggleSwitch });
+    const doc = new JSDOM(markup).window.document;
+    for (const key of ['richFiles', 'imageRead']) {
+      const help = doc.querySelector(`[data-settings-field="settings-tool-config-${key}"] .settings-field-help`);
+      assert.equal(help.textContent.endsWith('Needs the PDF reading add-on.'), pdfAddonNeeded);
+    }
+    assert.equal(doc.querySelector('.tools-config-field-addon-note'), null);
+  }
+});
 
-  assert.equal(note('imageRead')?.textContent, 'PDF pages need the PDF reading add-on.');
-  assert.equal(note('richFiles')?.textContent, 'PDFs need the PDF reading add-on.');
-  assert.equal(note('web'), null);
-  assert.equal(dom.window.getComputedStyle(note('imageRead')).display, 'inline');
+test('a tool row help line is the base help plus the add-on and runtime notes that apply', () => {
+  const { composeToolHelp } = supportExports;
+  const rich = { key: 'richFiles', helpText: 'Open files.' };
+  assert.equal(composeToolHelp(rich, {}), 'Open files.');
+  assert.equal(composeToolHelp(rich, { pdfAddonNeeded: true }), 'Open files. Needs the PDF reading add-on.');
+  assert.equal(composeToolHelp(rich, { blocked: true }), 'Open files. Currently blocked by runtime availability.');
+  assert.equal(composeToolHelp(rich, { pdfAddonNeeded: true, blocked: true }), 'Open files. Needs the PDF reading add-on. Currently blocked by runtime availability.');
+  assert.equal(composeToolHelp({ key: 'web', helpText: 'Search.' }, { pdfAddonNeeded: true }), 'Search.', 'only the PDF rows need the add-on');
+});
 
-  doc.getElementById('toolsConfigFieldList').dataset.pdfAddonNeeded = 'false';
-  assert.equal(dom.window.getComputedStyle(note('imageRead')).display, 'none');
-  assert.equal(dom.window.getComputedStyle(note('richFiles')).display, 'none');
+test('Tools rows show the copy their descriptors hold; a tool the renderer does not know shows the manifest copy', () => {
+  // Fresh modules under a translator that numbers every tool string it hands out, so a
+  // second copy of the same catalog string would read differently from the descriptor's.
+  const paths = ['../renderer/shell/renderer-settings-field-descriptors.js', '../renderer/shell/renderer-settings-field-copy.js', '../renderer/shell/renderer-settings-support.js'].map((p) => require.resolve(p));
+  const cached = paths.map((p) => require.cache[p]);
+  const saved = globalThis.jennyI18n;
+  let calls = 0;
+  paths.forEach((p) => { delete require.cache[p]; });
+  globalThis.jennyI18n = { t: (k, d, p) => (k.startsWith('settings.tools.') ? `${d} #${calls += 1}` : (p ? String(d).replace(/\{(\w+)\}/g, (m, n) => String(p[n])) : d)) };
+  let fresh;
+  try {
+    fresh = paths.map((p) => require(p));
+  } finally {
+    globalThis.jennyI18n = saved;
+    paths.forEach((p, i) => { if (cached[i]) require.cache[p] = cached[i]; else delete require.cache[p]; });
+  }
+  const [descriptors, , support] = fresh;
+  const markup = support.buildToolConfigFieldListMarkup({ fields: support.DEFAULT_TOOL_CONFIG_FIELDS.concat([{ key: 'futureTool', label: 'Future tool', helpText: 'From the manifest.' }]), toggleSwitch });
+  const doc = new JSDOM(markup).window.document;
+  for (const field of support.DEFAULT_TOOL_CONFIG_FIELDS) {
+    const copy = descriptors.getSettingDescriptor('settings-tool-config-' + field.key).copy;
+    const row = doc.querySelector(`[data-settings-field="settings-tool-config-${field.key}"]`);
+    assert.equal(row.querySelector('.settings-field-title').textContent, copy.label, field.key);
+    assert.equal(row.querySelector('.settings-field-help').textContent, copy.description, field.key);
+    assert.equal(row.querySelector('.settings-field-detail')?.dataset.tooltip || '', copy.detail, field.key);
+  }
+  assert.match(descriptors.getSettingDescriptor('settings-tool-config-pythonRuntime').copy.detail, /^Resource-bounded, but not a filesystem or network sandbox\./);
+  const future = doc.querySelector('[data-settings-field="settings-tool-config-futureTool"]');
+  assert.equal(future.querySelector('.settings-field-title').textContent, 'Future tool');
+  assert.equal(future.querySelector('.settings-field-help').textContent, 'From the manifest.');
 });
 
 test('tool config field list escapes help text with its built-in fallback', () => {
   const markup = buildToolConfigFieldListMarkup({
     fields: [
       {
-        key: 'web',
+        key: 'futureTool',
         label: 'Web tools',
         fieldType: 'toggle',
         storage: 'config',
@@ -326,4 +363,155 @@ test('resolveToolConfigToggleEvent maps inventory toggle events back to tool key
     checked: true,
     label: 'Future tool',
   });
+});
+
+test('two unknown tool keys never share a row: each title toggles its own switch', () => {
+  // "future/tool" encodes to "future%2Ftool"; a plain replace of "%" would land on the second key's id.
+  const fields = ['future/tool', 'future_2Ftool'].map((key) => ({ key, label: key }));
+  const doc = new JSDOM(buildToolConfigFieldListMarkup({ fields, tools: {} })).window.document;
+  const rows = [...doc.querySelectorAll('.settings-field')];
+  assert.equal(new Set(rows.map((row) => row.dataset.settingsField)).size, 2);
+  for (const [index, row] of rows.entries()) {
+    const toggle = row.querySelector('[data-inv-toggle]');
+    assert.equal(toggle.dataset.invToggle, `settings-tool-config-${encodeURIComponent(fields[index].key)}`);
+    assert.equal(doc.getElementById(row.querySelector('.settings-field-title').htmlFor), toggle);
+    assert.equal(supportExports.toolConfigRowId(toggle.dataset.invToggle), row.dataset.settingsField);
+  }
+});
+
+test('the Permissions rows and the language row keep their control ids', () => {
+  const markup = settingRow('safetyModeSelect', 'strict', { selectField })
+    + settingRow('defaultRunModeSelect', 'plan', { selectField })
+    + settingRow('unattendedGuardMinutesInput', 0)
+    + settingRow('autoApproveStreakCapInput', 0)
+    + buildUiLanguageFieldMarkup({ value: 'de', use24HourTime: true, selectField });
+  const doc = new JSDOM(`<!doctype html><body>${markup}</body>`).window.document;
+  const expected = { safetyModeSelect: 'strict', defaultRunModeSelect: 'plan', unattendedGuardMinutesInput: '0', autoApproveStreakCapInput: '', uiLanguageSelect: 'de' };
+  // Three-option preferences are segmented groups; the rest keep an input with the id.
+  const segmented = ['safetyModeSelect', 'defaultRunModeSelect'];
+  for (const [id, value] of Object.entries(expected)) {
+    const control = segmented.includes(id) ? segmentedGroup(doc, id) : doc.getElementById(id);
+    assert.ok(control, `${id} keeps its id`);
+    assert.equal(segmented.includes(id) ? segmentedValue(doc, id) : control.value, value, id);
+    assert.ok(control.closest(`[data-settings-field="${id}"]`), `${id} renders as its descriptor row`);
+  }
+  assert.equal(doc.getElementById('unattendedGuardModeSelect'), null, 'the Off/On select is retired');
+  assert.equal(doc.querySelector('[data-inv-toggle="unattendedGuardToggle"]'), null);
+  assert.equal(doc.getElementById('unattendedGuardMinutesInput').disabled, false);
+  assert.equal(doc.querySelector('[data-inv-toggle="use24HourTimeToggle"]').getAttribute('aria-checked'), 'true');
+  assert.match(doc.querySelector('[data-settings-field="defaultRunModeSelect"] .settings-field-detail').dataset.tooltip, /The composer switcher changes the current chat\./);
+  assert.equal(doc.querySelector('[data-default-run-mode-field]'), null);
+  assert.equal(doc.querySelector('[data-settings-field="defaultRunModeSelect"] [data-setting-revert]').getAttribute('data-setting-revert-default'), 'Ask');
+  for (const retired of ['resolveSafetyModeChangeEvent', 'resolveDefaultRunModeChangeEvent', 'resolveUnattendedGuardChangeEvent', 'resolveAutoApproveStreakCapChangeEvent', 'resolveUiLanguageChangeEvent', 'resolveWebSearchFieldChangeEvent']) {
+    assert.equal(supportExports[retired], undefined, `${retired} is retired`);
+  }
+});
+
+
+test('W2-2 contract 3 keeps rich file reading stored and disabled under its off parent', () => {
+  const markup = buildToolConfigFieldListMarkup({ fields: getToolConfigFieldsForRender({}), tools: { fileTools: false, richFiles: true }, toggleSwitch });
+  const doc = new JSDOM(markup).window.document;
+  const toggle = doc.querySelector('[data-inv-toggle="settings-tool-config-richFiles"]');
+  assert.equal(toggle.disabled, true);
+  assert.equal(toggle.getAttribute('aria-checked'), 'true');
+  const row = toggle.closest('.settings-field--row');
+  assert.ok(row.classList.contains('settings-field--sub'));
+  assert.equal(row.dataset.settingParentOff, 'true');
+});
+
+
+test('unknown tool keys keep encoded toggle ids and title wiring through the row primitive', () => {
+  for (const key of ['future/tool', 'future.tool', "future'quote"]) {
+    const id = `settings-tool-config-${encodeURIComponent(key)}`;
+    const markup = buildToolConfigFieldListMarkup({ fields: [{ key, label: 'Future tool', helpText: '<untrusted help>' }], tools: { [key]: true } });
+    const doc = new JSDOM(markup).window.document;
+    const toggle = doc.querySelector('[data-inv-toggle]');
+    assert.equal(toggle.dataset.invToggle, id);
+    assert.match(doc.querySelector('.settings-field').dataset.settingsField, /^[A-Za-z0-9_-]+$/, 'the row id is a plain token');
+    const title = doc.querySelector('.settings-field-title');
+    assert.equal(title.htmlFor, toggle.id);
+    assert.equal(doc.getElementById(title.htmlFor), toggle);
+    assert.equal(doc.querySelector('.settings-field-help').textContent, '<untrusted help>');
+    assert.equal(doc.querySelector('untrusted'), null);
+  }
+});
+
+// The Tools page as one root: the Files rows (Rich file reading under File tools)
+// and the web search section under Web tools, rendered for the given parent states.
+function renderToolsRoot({ fileTools, web }) {
+  const fields = getToolConfigFieldsForRender({}).filter((field) => ['fileTools', 'richFiles'].includes(field.key));
+  const markup = buildToolConfigFieldListMarkup({ fields, tools: { fileTools, richFiles: true, web }, toggleSwitch })
+    + buildWebSearchSectionMarkup({ visible: true, parentOff: !web, webSearch: { provider: 'google_pse' },
+      selectField, textField, actionButton, settingsField, escapeHtml });
+  const doc = new JSDOM(`<!doctype html><body><div id="toolsConfigFieldList">${markup}</div></body>`).window.document;
+  return doc.getElementById('toolsConfigFieldList');
+}
+test('the search provider row takes the wide dropdown, so the longest provider name fits', () => {
+  const root = renderToolsRoot({ fileTools: true, web: true });
+  const row = root.querySelector('[data-settings-field="webSearchProviderSelect"]');
+  assert.ok(row.classList.contains('settings-field--wide-control'));
+  assert.ok(row.classList.contains('settings-field--sub'));
+  // Google needs a key and an engine ID; only the key field asks for an API key.
+  assert.equal(root.querySelector('[data-web-search-key-field="google_pse"]').placeholder, 'Enter API key');
+  assert.equal(root.querySelector('[data-web-search-key-field="google_pse_cx"]').placeholder, '');
+});
+
+// What a person sees and a screen reader hears for each row and control.
+function dependentState(root) {
+  return Array.from(root.querySelectorAll('.settings-field, select, input, button, label.inv-toggle')).map((el) => [
+    el.tagName, el.id || el.dataset.settingsField || '', el.getAttribute('data-setting-parent-off'), el.disabled === true,
+    el.getAttribute('aria-disabled'), el.classList.contains('inv-toggle--disabled'),
+  ]);
+}
+const barrelToggleSwitch = Object.assign((options) => toggleSwitch(options), { setDisabled: require('../renderer/inventory/toggle-switch').setDisabled });
+const syncTools = (root, tools, availability = {}) => supportExports.syncToolDependents(root, {
+  toolOn: (key) => tools[key] === true, availability, inventory: { toggleSwitch: barrelToggleSwitch } });
+
+test('dependent rows follow their parent in place and match what a fresh render shows', () => {
+  assert.deepEqual({ ...supportExports.TOOL_DEPENDENTS }, { richFiles: 'fileTools', commandSandbox: 'bash', webSearch: 'web' });
+  assert.ok(Object.isFrozen(supportExports.TOOL_DEPENDENTS));
+  const root = renderToolsRoot({ fileTools: false, web: false });
+  const nodes = Array.from(root.querySelectorAll('*'));
+  const track = root.querySelector('[data-inv-toggle="settings-tool-config-richFiles"]');
+  const label = track.closest('label.inv-toggle');
+
+  syncTools(root, { fileTools: true, web: true });
+  assert.deepEqual(Array.from(root.querySelectorAll('*')), nodes, 'no node is created or removed');
+  assert.deepEqual(dependentState(root), dependentState(renderToolsRoot({ fileTools: true, web: true })));
+  assert.equal(track.disabled, false);
+  assert.equal(track.hasAttribute('aria-disabled'), false);
+  assert.equal(label.hasAttribute('aria-disabled'), false);
+  assert.equal(label.classList.contains('inv-toggle--disabled'), false);
+  assert.equal(track.getAttribute('aria-checked'), 'true', 'the stored value is kept');
+
+  syncTools(root, { fileTools: false, web: false });
+  assert.deepEqual(dependentState(root), dependentState(renderToolsRoot({ fileTools: false, web: false })));
+  assert.equal(track.getAttribute('aria-disabled'), 'true');
+  assert.equal(label.getAttribute('aria-disabled'), 'true');
+  assert.ok(label.classList.contains('inv-toggle--disabled'));
+
+  syncTools(root, { fileTools: true, web: true }, { richFiles: { enabled: false } });
+  assert.equal(track.disabled, true, 'runtime availability still blocks the switch under an on parent');
+  assert.equal(track.closest('.settings-field').hasAttribute('data-setting-parent-off'), false);
+  assert.doesNotThrow(() => syncTools(null, {}));
+  assert.doesNotThrow(() => syncTools(new JSDOM('<div></div>').window.document.body, {}));
+});
+
+test('the dependent sync leaves a write lock in place and the release reads the parent again', () => {
+  const binding = require('../renderer/shell/renderer-settings-field-binding');
+  const descriptor = require('../renderer/shell/renderer-settings-field-descriptors').getSettingDescriptor('settings-tool-config-richFiles');
+  const root = renderToolsRoot({ fileTools: true, web: true });
+  const track = root.querySelector('[data-inv-toggle="settings-tool-config-richFiles"]');
+  const testButton = root.querySelector('[data-web-search-test]');
+  binding.setRowBusy(root, descriptor, true);
+  testButton.setAttribute('data-setting-busy', '');
+  testButton.disabled = true;
+
+  syncTools(root, { fileTools: false, web: false });
+  syncTools(root, { fileTools: true, web: true });
+  assert.equal(track.disabled, true, 'a write in flight keeps its lock when the parent turns on');
+  assert.equal(testButton.disabled, true, 'a running connection test keeps its lock');
+
+  binding.setRowBusy(root, descriptor, false);
+  assert.equal(track.disabled, false, 'the release enables the switch under an on parent');
 });

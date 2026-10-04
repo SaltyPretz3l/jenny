@@ -13,7 +13,7 @@ class FakeHomeConfigService extends EventEmitter {
   }
 
   getHomeConfig() {
-    return { links: this._links, weather: {} };
+    return { links: this._links };
   }
 
   setLinks(links) {

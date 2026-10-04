@@ -33,6 +33,7 @@ from sidecar.ai.memory.store_bootstrap import (
     validate_memory_store_files,
 )
 from sidecar.ai.memory.store_pending import _PendingCandidatesMixin
+from sidecar.ai.memory.store_project_move import _ProjectMoveMixin
 from sidecar.ai.memory.store_shared import (
     MEMORY_MAINTENANCE_MUTATION_INTERVAL,
     MEMORY_MAINTENANCE_SECONDS,
@@ -59,7 +60,7 @@ _RETENTION_TABLES = (
     ("pending_memory_candidates", "updated_at"),
 )
 
-class MemoryStore(_PendingCandidatesMixin, _ApprovedMemoriesMixin):
+class MemoryStore(_ProjectMoveMixin, _PendingCandidatesMixin, _ApprovedMemoriesMixin):
     def __init__(self, db_path: Path) -> None:
         self._db_path = db_path
         self._lock = threading.RLock()
@@ -108,8 +109,22 @@ class MemoryStore(_PendingCandidatesMixin, _ApprovedMemoriesMixin):
         self._record_successful_mutation()
 
     def _record_successful_mutation(self) -> None:
+        """Bookkeeping after a commit. Never raises.
+
+        The write this follows is already durable, and callers read an error
+        from a write as "nothing was saved" (the desktop project delete puts
+        the project back on one). Maintenance that fails here stays due and
+        runs again after the next write.
+        """
         self._successful_mutations += 1
-        self._run_due_maintenance()
+        try:
+            self._run_due_maintenance()
+        except Exception as error:  # noqa: BLE001 - the committed write must still answer ok.
+            logger.warning(
+                "%s memory_post_commit_bookkeeping_failed error_type=%s",
+                CMP_MEMORY_FAILED,
+                type(error).__name__,
+            )
 
     def _run_due_maintenance(
         self,
@@ -299,7 +314,7 @@ class MemoryStore(_PendingCandidatesMixin, _ApprovedMemoriesMixin):
             )
             if source_table in {"memories", "pending_memory_candidates"}:
                 self._connection.execute(
-                    f"DELETE FROM {source_table} WHERE id = ?",  # noqa: S608
+                    f"DELETE FROM {source_table} WHERE id = ?",
                     (row_id,),
                 )
 

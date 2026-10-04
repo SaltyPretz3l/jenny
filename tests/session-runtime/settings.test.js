@@ -5,7 +5,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
 const { ShellConfigService } = require('../../services/shell-config-service');
-const { normalizeState, serializeState } = require('../../services/shell-config-state');
+const { CONFIG_VERSION, normalizeState, serializeState } = require('../../services/shell-config-state');
 const { DEFAULT_SESSION_RUNTIME, applySessionRuntimePatch } = require('../../services/shell-config-session-runtime');
 
 function profile(t, document) {
@@ -18,7 +18,7 @@ function profile(t, document) {
 
 test('v53 migration preserves sandbox and global preferences with independent local/cloud defaults', () => {
   const state = normalizeState({ version: 53, commandSandbox: { enabled: true }, uiLanguage: 'ja' });
-  assert.equal(state.version, 55);
+  assert.equal(state.version, 59);
   assert.deepEqual(state.sessionRuntime, DEFAULT_SESSION_RUNTIME);
   assert.equal(state.commandSandbox.enabled, true);
   assert.equal(state.uiLanguage, 'ja');
@@ -47,7 +47,7 @@ test('limits update only the requested group and cannot change downstream sandbo
 });
 
 test('future shell config is preserved and refuses runtime preference writes', t => {
-  const document = { version: 56, authored_future_data: { keep: 'exact bytes' } };
+  const document = { version: CONFIG_VERSION + 1, authored_future_data: { keep: 'exact bytes' } };
   const { service, file } = profile(t, document);
   assert.throws(() => service.updateSessionRuntime({ local: { runnable_turns: 2 } }), /write_failed/);
   assert.equal(fs.readFileSync(file, 'utf8'), JSON.stringify(document));

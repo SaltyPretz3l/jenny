@@ -15,6 +15,7 @@ const {
   retryInfrastructureFailures,
 } = require('./run-node-tests-safe-reporting');
 const { startRunHistory, finishRunHistory } = require('./run-node-tests-safe-history');
+const { runManagedPlan } = require('./run-node-tests-safe-plan');
 
 const PER_FILE_TERMINATION_GRACE_MS = 5_000;
 const RUN_TERMINATION_EXIT_GRACE_MS = 5_000;
@@ -27,6 +28,7 @@ const {
   partitionChildArgs,
   selectRunGroups,
   laneOverlapEnabled,
+  splitLoadTail,
   loadQuarantineOverrides,
   applyChildArgFilters,
   collectRerunTargets,
@@ -345,6 +347,10 @@ function buildChildEnv() {
   return env;
 }
 
+// Extra node arguments for every test-file process (the jsdom bundle preload);
+// set once by main() so library callers and injected spawns see plain args.
+let testProcessNodeArgs = [];
+
 function runCapturedChild(runnerArgs, {
   activeChildren,
   timeoutMs,
@@ -354,7 +360,7 @@ function runCapturedChild(runnerArgs, {
   terminationGraceMs = PER_FILE_TERMINATION_GRACE_MS,
 }) {
   return new Promise((resolve) => {
-    const child = spawnImpl(process.execPath, runnerArgs, {
+    const child = spawnImpl(process.execPath, [...testProcessNodeArgs, ...runnerArgs], {
       cwd: process.cwd(),
       env: buildChildEnv(),
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -368,6 +374,7 @@ function runCapturedChild(runnerArgs, {
     let settled = false;
     let timedOut = false;
     let terminationFailed = false;
+    let drainExpired = false;
     let watchdog = null;
     let flushGrace = null;
 
@@ -440,17 +447,26 @@ function runCapturedChild(runnerArgs, {
       appendCapturedChunk(captured, `[run-node-tests-safe] failed to start child process: ${error.message}\n`);
       finish(1);
     });
-    // 'close' guarantees the stdio pipes drained; a leaked grandchild can hold
-    // the pipes open after exit, so a short grace timer forces settlement.
+    // 'close' guarantees the stdio pipes drained; descendants can retain them
+    // after exit, which the drain grace below bounds.
     child.once('close', (code, signal) => {
-      if (timedOut) return;
+      if (timedOut || terminationFailed || drainExpired) return;
       finish(resolveChildExitCode(code, signal, timedOut, captured));
     });
-    child.once('exit', (code, signal) => {
+    // An exited pid is no handle on the orphans and may be reused: release it
+    // from the kill set and its watchdog now; an expired drain fails this file.
+    child.once('exit', () => {
       if (timedOut) return;
       activeChildren.delete(child);
+      if (watchdog) clearTimeout(watchdog);
       flushGrace = setTimeout(() => {
-        finish(resolveChildExitCode(code, signal, timedOut, captured));
+        drainExpired = true;
+        appendCapturedChunk(captured,
+          '[run-node-tests-safe] orphaned descendants may still hold child pipes; drain grace expired, closing pipes\n');
+        child.stdout?.destroy?.();
+        child.stderr?.destroy?.();
+        child.unref?.();
+        finish(1);
       }, EXIT_STREAM_FLUSH_GRACE_MS);
       if (typeof flushGrace.unref === 'function') flushGrace.unref();
     });
@@ -490,7 +506,7 @@ async function runManagedFile(file, parsed, state) {
     // signature). A timeout (hang) is never retried -- it only burns the global
     // budget -- and a collateral fail-fast/shutdown kill means the whole run is
     // already tearing down.
-    if (result.timedOut || result.collateralKilled || attempt >= maxAttempts) break;
+    if (result.timedOut || result.terminationFailed || result.collateralKilled || attempt >= maxAttempts) break;
     console.error(
       `[run-node-tests-safe] RETRY ${display} (quarantined flake, attempt ${attempt}/${maxAttempts}, ` +
         `exit ${result.code}); ${quarantine.reason || 'see tests/.quarantine.json'}`
@@ -519,102 +535,14 @@ async function runManagedFile(file, parsed, state) {
   return record;
 }
 
-async function runManagedPlan(parsed, state) {
-  const groups = selectRunGroups(parsed);
-  const { parallelArgs, sequentialArgs } = groups;
-
-  let aborted = false;
-  let nextIndex = 0;
-  let seqIndex = 0;
-
-  const abortRemaining = async (failedFile, reason = '--fail-fast') => {
-    aborted = true;
-    console.error(
-      `[run-node-tests-safe] ${reason}: aborting remaining files after ${failedFile} failed`
-    );
-    await killActiveChildren(state.activeChildren);
-  };
-
-  const retryInfrastructureFailuresOrAbort = async () => {
-    const unconfirmedTermination = await retryInfrastructureFailures(
-      parsed,
-      state,
-      runCapturedChild
-    );
-    if (unconfirmedTermination) {
-      await abortRemaining(
-        unconfirmedTermination.file,
-        'unconfirmed infrastructure retry termination'
-      );
-    }
-  };
-
-  async function worker() {
-    while (nextIndex < parallelArgs.length && !aborted) {
-      const file = parallelArgs[nextIndex];
-      nextIndex += 1;
-      const record = await runManagedFile(file, parsed, state);
-      if (record.terminationFailed && !aborted) {
-        await abortRemaining(record.file, 'unconfirmed timeout termination');
-      } else if (
-        record.code !== 0 && parsed.failFast && !record.infrastructureFailure && !aborted
-      ) {
-        await abortRemaining(record.file);
-      }
-    }
-  }
-
-  // The sequential lane stays one-at-a-time relative to ITSELF; overlap only
-  // changes when it starts (alongside the pool instead of after it).
-  async function sequentialWorker() {
-    while (seqIndex < sequentialArgs.length && !aborted) {
-      const file = sequentialArgs[seqIndex];
-      seqIndex += 1;
-      const record = await runManagedFile(file, parsed, state);
-      if (record.terminationFailed && !aborted) {
-        await abortRemaining(record.file, 'unconfirmed timeout termination');
-      } else if (
-        record.code !== 0 && parsed.failFast && !record.infrastructureFailure && !aborted
-      ) {
-        await abortRemaining(record.file);
-      }
-    }
-  }
-
-  if (laneOverlapEnabled(parsed, groups)) {
-    // Reserve one worker slot for the sequential chain so total child
-    // concurrency stays at parsed.parallelWorkers.
-    const poolWidth = Math.min(parsed.parallelWorkers - 1, parallelArgs.length);
-    await Promise.all([
-      ...Array.from({ length: poolWidth }, () => worker()),
-      sequentialWorker(),
-    ]);
-    await retryInfrastructureFailuresOrAbort();
-  } else {
-    const workerCount = Math.min(parsed.parallelWorkers, parallelArgs.length);
-    if (workerCount > 0) {
-      await Promise.all(Array.from({ length: workerCount }, () => worker()));
-    }
-    await retryInfrastructureFailuresOrAbort();
-    if (!aborted) {
-      await sequentialWorker();
-      await retryInfrastructureFailuresOrAbort();
-    }
-  }
-
-  if (aborted) {
-    for (const file of [...parallelArgs.slice(nextIndex), ...sequentialArgs.slice(seqIndex)]) {
-      state.notRun.push(normalizeChildArgPath(file));
-    }
-  }
-}
-
 function readLockPayload(lockPath) {
   try {
     const payload = JSON.parse(fs.readFileSync(lockPath, 'utf8'));
     return payload && typeof payload === 'object' ? payload : null;
-  } catch {
-    return null;
+  } catch (error) {
+    // A lock being written or briefly locked reads as held with an unknown pid.
+    if (['ENOENT', 'EPERM', 'EBUSY', 'EACCES'].includes(error.code) || error instanceof SyntaxError) return null;
+    throw error;
   }
 }
 
@@ -632,6 +560,28 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+const RECLAIM_GUARD_STALE_MS = 30_000;
+
+function removeStrandedGuard(guardPath, log) {
+  const isStale = (dir) => Date.now() - fs.statSync(dir).mtimeMs > RECLAIM_GUARD_STALE_MS;
+  const claimed = `${guardPath}.${process.pid}.${Date.now()}`;
+  try {
+    if (!isStale(guardPath)) return false;
+    // Rename is atomic: only one waiter claims the stranded guard. If a fresh
+    // guard replaced it between the check and the rename, hand it back.
+    fs.renameSync(guardPath, claimed);
+    if (!isStale(claimed)) {
+      try { fs.renameSync(claimed, guardPath); } catch { fs.rmdirSync(claimed); }
+      return false;
+    }
+    fs.rmdirSync(claimed);
+    log('[run-node-tests-safe] removed a stranded test-run lock guard');
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 // Serializes test runs across concurrent agent sessions sharing this working
 // tree. Reentrant via LOCK_ENV_VAR so nested runner invocations (pre-commit
 // hooks, diagnostics) do not deadlock against their parent run.
@@ -642,52 +592,68 @@ async function acquireRunLock(options = {}) {
   const staleMs = Number.isFinite(options.staleMs) && options.staleMs > 0 ? options.staleMs : LOCK_STALE_MS;
   const log = typeof options.log === 'function' ? options.log : (message) => console.error(message);
   const lockPath = path.join(cwd, LOCK_BASENAME);
+  const guardPath = `${lockPath}.reclaim`;
   const waitStartedAt = Date.now();
   let lastWaitLogAt = 0;
 
   for (;;) {
+    let guarded = false;
+    let payload = null;
     try {
-      fs.writeFileSync(
-        lockPath,
-        JSON.stringify({
-          pid: process.pid,
-          startedAt: new Date().toISOString(),
-          argv: process.argv.slice(2),
-        }),
-        { flag: 'wx' }
-      );
-      return {
-        lockPath,
-        release() {
-          try {
-            const payload = readLockPayload(lockPath);
-            if (payload && payload.pid === process.pid) {
-              fs.unlinkSync(lockPath);
-            }
-          } catch {
-            // best-effort release; stale-lock detection covers leftovers
-          }
-        },
-      };
-    } catch (error) {
-      if (error.code !== 'EEXIST') throw error;
-    }
-
-    const payload = readLockPayload(lockPath);
-    const holderPid = Number(payload?.pid);
-    const heldSinceMs = Date.parse(payload?.startedAt ?? '');
-    const stale = !isPidAlive(holderPid)
-      || (Number.isFinite(heldSinceMs) && Date.now() - heldSinceMs > staleMs);
-    if (stale) {
-      log(`[run-node-tests-safe] removing stale test-run lock (pid ${Number.isInteger(holderPid) ? holderPid : 'unknown'})`);
+      // Serialize publication and reclamation. The guard is held for a few
+      // milliseconds, so one older than RECLAIM_GUARD_STALE_MS was stranded by a
+      // killed runner and is removed rather than blocking every later run.
+      fs.mkdirSync(guardPath);
+      guarded = true;
       try {
-        fs.unlinkSync(lockPath);
-      } catch {
-        // another waiter may have removed it first
+        fs.writeFileSync(
+          lockPath,
+          JSON.stringify({
+            pid: process.pid,
+            startedAt: new Date().toISOString(),
+            argv: process.argv.slice(2),
+          }),
+          { flag: 'wx' }
+        );
+        const identity = fs.statSync(lockPath);
+        return {
+          lockPath,
+          release() {
+            try {
+              const current = fs.statSync(lockPath);
+              if (current.dev === identity.dev && current.ino === identity.ino) {
+                fs.unlinkSync(lockPath);
+              }
+            } catch {
+              // best-effort release; stale-lock detection covers leftovers
+            }
+          },
+        };
+      } catch (error) {
+        if (error.code !== 'EEXIST') throw error;
       }
-      continue;
+      payload = readLockPayload(lockPath);
+      const holderPid = Number(payload?.pid);
+      const knownPid = Number.isInteger(holderPid) && holderPid > 0;
+      // A dead holder is stale at once; age also covers a reused pid. A fresh
+      // lock without a readable pid may be mid-publication and is left alone.
+      const stale = (knownPid && !isPidAlive(holderPid))
+        || Date.now() - fs.statSync(lockPath).mtimeMs > staleMs;
+      if (stale) {
+        log(`[run-node-tests-safe] removing stale test-run lock (pid ${knownPid ? holderPid : 'unknown'})`);
+        fs.unlinkSync(lockPath);
+        continue;
+      }
+    } catch (error) {
+      if (error.code === 'ENOENT' && guarded) continue;
+      if (error.code !== 'EEXIST') throw error;
+      if (!guarded && removeStrandedGuard(guardPath, log)) continue;
+    } finally {
+      // force: a guard already removed (by a stranded-guard claim) is not an error.
+      if (guarded) fs.rmSync(guardPath, { recursive: true, force: true });
     }
 
+    const holderPid = Number(payload?.pid);
     const elapsedWaitMs = Date.now() - waitStartedAt;
     if (elapsedWaitMs >= waitMs) {
       return null;
@@ -892,8 +858,7 @@ async function main() {
     // process handle referenced even after the tree-termination attempt. The
     // global budget is a hard contract: allow a short output-flush grace, then
     // exit with the already-recorded timeout/signal code instead of hanging.
-    const forcedExit = setTimeout(() => process.exit(code), RUN_TERMINATION_EXIT_GRACE_MS);
-    forcedExit.unref?.();
+    setTimeout(() => process.exit(code), RUN_TERMINATION_EXIT_GRACE_MS).unref?.();
   };
 
   const timeoutHandle = setTimeout(() => {
@@ -922,7 +887,9 @@ async function main() {
     return;
   }
 
-  await runManagedPlan(parsed, state);
+  require('./run-node-tests-safe-power').startPowerKeeper();
+  testProcessNodeArgs = require('./tests/jsdom-bundle').jsdomBundleNodeArgs();
+  await runManagedPlan(parsed, state, { runManagedFile, runCapturedChild, killActiveChildren });
   if (timeoutTriggered) {
     return;
   }
@@ -958,6 +925,7 @@ module.exports = {
   parseArgs,
   resolvePerFileTimeoutMs,
   resolveTimeoutMs,
+  splitLoadTail,
   runCapturedChild,
   hasTestEvents,
   isInfrastructureFailure,

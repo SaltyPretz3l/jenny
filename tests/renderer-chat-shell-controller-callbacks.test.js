@@ -183,7 +183,6 @@ test('chat shell disposal releases message-edit and selection controllers exactl
 
 test('chat shell controller forwards chat zoom callbacks into chat event bindings', () => {
   let receivedCallbacks = null;
-  const reasoningBatchCalls = [];
 
   createChatShellController({
     state: {},
@@ -238,7 +237,6 @@ test('chat shell controller forwards chat zoom callbacks into chat event binding
       runRuntimePreferenceActivity: async () => {},
       adjustChatZoomPercent() {},
       resetChatZoomPercent() {},
-      setReasoningPhaseExpandedPreferences(...args) { reasoningBatchCalls.push(args); },
     },
     factories: {
       sendUtils: {
@@ -287,9 +285,7 @@ test('chat shell controller forwards chat zoom callbacks into chat event binding
 
   assert.equal(typeof receivedCallbacks?.adjustChatZoomPercent, 'function');
   assert.equal(typeof receivedCallbacks?.resetChatZoomPercent, 'function');
-  assert.equal(typeof receivedCallbacks?.setReasoningPhaseExpandedPreferences, 'function');
-  receivedCallbacks.setReasoningPhaseExpandedPreferences('session_1', [{ messageId: 'message_1' }]);
-  assert.deepEqual(reasoningBatchCalls, [['session_1', [{ messageId: 'message_1' }]]]);
+  assert.equal(receivedCallbacks?.setReasoningPhaseExpandedPreferences, undefined, 'the bulk batch API retired with the collapse/expand-all toggle');
 });
 
 test('chat shell controller keeps toggleThreadBranch safe when the callback bundle omits it', () => {

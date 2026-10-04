@@ -14,13 +14,26 @@ No cloud credentials, no Anthropic/OpenAI API keys, no telemetry.
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from sidecar.ai.engines.base import EngineMessage
-from sidecar.ai.engines.model_name import is_bonsai2_model, uses_qwen38_chat_contract
+from sidecar.ai.engines.model_name import (
+    is_bonsai2_model,
+    is_ornith15_model,
+    uses_qwen38_chat_contract,
+)
 from sidecar.ai.engines.vllm_engine import VLLMEngine
 
 _OPENAI_COMPAT_DEFAULT_BASE_URL = "http://127.0.0.1:8033/v1"
+
+# Output room left after the prompt: the same chars/4 estimate, 512-token
+# margin and 1,024-token floor as Ollama's ``_remaining_context_tokens``. The
+# floor matches TokenBudget's minimum reservation. An attached image counts a
+# fixed share instead of its base64 length.
+_PROMPT_ESTIMATE_MARGIN_TOKENS = 512
+_MIN_OUTPUT_ROOM_TOKENS = 1_024
+_IMAGE_PROMPT_TOKENS_ESTIMATE = 1_024
 
 _QWEN38_LLAMA_EFFORT_MAP = {
     "default": "medium",
@@ -73,6 +86,16 @@ class OpenAICompatibleEngine(VLLMEngine):
         self._profile_max_output_tokens = _positive_int(profile_max_output_tokens)
         self._profile_thinking_headroom = _positive_int(profile_thinking_headroom) or 0
 
+    def set_profile_output_limits(
+        self,
+        *,
+        max_output_tokens: int | None,
+        thinking_headroom: int | None,
+    ) -> None:
+        """Adopt the app profile's limits, which resolve after the model loads."""
+        self._profile_max_output_tokens = _positive_int(max_output_tokens)
+        self._profile_thinking_headroom = _positive_int(thinking_headroom) or 0
+
     def get_configured_context_length(self) -> int | None:
         # /props reports the window requests are actually served with; Electron's
         # value is the fallback when the probe fails. Keep this getter subclass-only:
@@ -84,8 +107,13 @@ class OpenAICompatibleEngine(VLLMEngine):
     def _detect_thinking(model_name: str) -> bool:
         # Every Qwen3.8-contract name gets `enable_thinking`, including separator
         # variants (`Ternary_Bonsai_2_27B`) the prefix lists miss; keep their
-        # reasoning output visible.
-        return VLLMEngine._detect_thinking(model_name) or uses_qwen38_chat_contract(model_name)
+        # reasoning output visible. Ornith 1.5 reasons natively too (dogfood
+        # TR-018): unrecognised, its reasoning was dropped and no guard ran.
+        return (
+            VLLMEngine._detect_thinking(model_name)
+            or uses_qwen38_chat_contract(model_name)
+            or is_ornith15_model(model_name)
+        )
 
     def get_model_max_output_tokens(self) -> int | None:
         return self._profile_max_output_tokens
@@ -126,10 +154,16 @@ class OpenAICompatibleEngine(VLLMEngine):
             messages=messages,
             response_format=response_format,
         )
+        requested = str(reasoning_effort or "default").strip().lower() or "default"
         if not uses_qwen38_chat_contract(self.model_name):
+            if requested == "none" and is_ornith15_model(self.model_name):
+                # Ornith 1.5's template reads no effort level, only
+                # enable_thinking; false renders an empty think block. The
+                # top-level effort alone left None (and the wind-down legs that
+                # send it) thinking at full length (dogfood FG-010).
+                payload["chat_template_kwargs"] = {"enable_thinking": False}
             return payload
 
-        requested = str(reasoning_effort or "default").strip().lower() or "default"
         template_kwargs: dict[str, Any] = {}
         if _thinking_disabled(self.model_name, requested):
             template_kwargs["enable_thinking"] = False
@@ -158,12 +192,25 @@ class OpenAICompatibleEngine(VLLMEngine):
             if value is not None:
                 payload[key] = value
         if thinking and self._profile_thinking_headroom:
-            combined_max = int(max_tokens) + self._profile_thinking_headroom
-            if self._configured_context_length is not None:
-                combined_max = min(combined_max, self._configured_context_length)
-            payload["max_tokens"] = combined_max
+            # Fitted to the prompt's leftover room once the payload is final.
+            payload["max_tokens"] = int(max_tokens) + self._profile_thinking_headroom
         payload["chat_template_kwargs"] = template_kwargs
         return payload
+
+    def _fit_output_to_window(self, payload: dict[str, Any]) -> int:
+        """Clamp the wire ``max_tokens`` to the room the prompt leaves.
+
+        llama-server rejects a request whose prompt plus ``max_tokens`` exceeds
+        its slot, and final + thinking headroom can equal the whole window.
+        """
+        requested = int(payload.get("max_tokens") or 0)
+        window = self.get_configured_context_length()
+        if window is None or requested <= 0:
+            return requested
+        room = window - _estimate_prompt_tokens(payload) - _PROMPT_ESTIMATE_MARGIN_TOKENS
+        fitted = min(requested, max(room, _MIN_OUTPUT_ROOM_TOKENS), window)
+        payload["max_tokens"] = fitted
+        return fitted
 
     def _build_not_reachable_message(self) -> str:
         return (
@@ -196,6 +243,25 @@ def _resolve_llama_effort(model_name: str | None, requested: str) -> str:
     if resolved is None:
         raise ValueError(f"Unsupported {family} reasoning effort: {requested}")
     return resolved
+
+
+def _estimate_prompt_tokens(payload: dict[str, Any]) -> int:
+    """chars/4 estimate of the messages and tool schemas the server will template."""
+    chars = len(json.dumps(payload.get("tools") or [], ensure_ascii=False, default=str))
+    images = 0
+    for message in payload.get("messages") or ():
+        if not isinstance(message, dict):
+            continue
+        for key, value in message.items():
+            if key != "content" or not isinstance(value, list):
+                chars += len(json.dumps(value, ensure_ascii=False, default=str))
+                continue
+            for block in value:
+                if isinstance(block, dict) and block.get("type") == "image_url":
+                    images += 1
+                else:
+                    chars += len(json.dumps(block, ensure_ascii=False, default=str))
+    return chars // 4 + images * _IMAGE_PROMPT_TOKENS_ESTIMATE
 
 
 def _positive_int(value: int | None) -> int | None:

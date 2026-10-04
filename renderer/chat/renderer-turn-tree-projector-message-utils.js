@@ -43,8 +43,27 @@
     if (calendarReceipt) metadata.calendar_receipt = calendarReceipt;
   }
 
-  function cloneSubagentReportMetadata(value) {
-    if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  // A Docker sandbox receipt keeps the exit status under execution; a run the
+  // sandbox itself stopped has none to show (mirrors tool-call-utils).
+  const SANDBOX_NO_EXIT_STATUSES = new Set(['timed_out', 'cancelled', 'interrupted', 'output_limit', 'running', 'preparing']);
+  function commandExitCode(value, toolResult) {
+    const source = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+    const execution = source.execution && typeof source.execution === 'object' && !Array.isArray(source.execution)
+      && !SANDBOX_NO_EXIT_STATUSES.has(String(source.execution.status || '').trim().toLowerCase())
+      ? source.execution : {};
+    const result = toolResult && typeof toolResult === 'object' ? toolResult : {};
+    const code = source.exit_code ?? source.exitCode ?? execution.exit_code ?? execution.exitCode
+      ?? result.exit_code ?? result.exitCode;
+    return Number.isInteger(code) ? code : null;
+  }
+
+  // `toolResult` is the stored tool_result the metadata belongs to: older
+  // results carry the command's exit status only at their top level.
+  function cloneSubagentReportMetadata(value, toolResult) {
+    const exitCode = commandExitCode(value, toolResult);
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      return exitCode != null ? { exit_code: exitCode } : null;
+    }
     const metadata = {};
     for (const key of ['subagent_report', 'subagent_batch_report']) {
       const report = cloneNoticePayload(value[key]);
@@ -62,6 +81,10 @@
     // Home calendar cards rebuild from these bounded persisted fields after a
     // cold reopen; without them only the generic tool result remains.
     if (resultKind === 'home') copyHomeMetadata(metadata, value);
+    // A command the shell tool stopped at its time limit reads Timed out (B11).
+    if (value.timed_out === true) metadata.timed_out = true;
+    // A command's own exit status: the row reads "exit N" after a reopen too.
+    if (exitCode != null) metadata.exit_code = exitCode;
     return Object.keys(metadata).length ? metadata : null;
   }
 

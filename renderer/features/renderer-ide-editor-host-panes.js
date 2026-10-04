@@ -71,6 +71,8 @@
   }
 
   function createEditorHostPanes(deps) {
+    const asyncFence = deps?.asyncFence || resolveModule('rendererAsyncFence', '../shared/async-fence');
+    const disposalFence = asyncFence.createDisposalFence();
     const docs = deps?.docs instanceof Map ? deps.docs : new Map();
     const getDom = typeof deps?.getDom === 'function' ? deps.getDom : () => ({});
     const onDirtyChange = typeof deps?.onDirtyChange === 'function' ? deps.onDirtyChange : () => {};
@@ -103,8 +105,8 @@
     // Test seam: forces the lazy script path by returning null for every module.
     const resolveRuntimeModule = typeof deps?.resolveRuntimeModule === 'function' ? deps.resolveRuntimeModule : resolveModule;
     const documentPaneFactories = deps?.documentPaneFactories || {
-      pdf: () => loadDocumentRuntime('pdf'),
-      docx: () => loadDocumentRuntime('docx'),
+      pdf: (isCurrent) => loadDocumentRuntime('pdf', isCurrent),
+      docx: (isCurrent) => loadDocumentRuntime('docx', isCurrent),
     };
     const documentPanes = new Map();
     const stylesheetsInjected = new Set();
@@ -126,9 +128,9 @@
 
     // Resolves a format's pane constructor: already-present global or
     // require() first (tests, preloaded), else lazy script injection.
-    async function loadDocumentRuntime(format) {
+    async function loadDocumentRuntime(format, isCurrent) {
       const runtime = DOCUMENT_RUNTIMES[format];
-      if (!runtime) return null;
+      if (!runtime || !isCurrent()) return null;
       const requirePath = runtime.scripts[runtime.scripts.length - 1].src.replace(/^renderer\/features\//, './').replace(/\.js$/, '');
       let module = resolveRuntimeModule(runtime.global, requirePath);
       if (!module && typeof scriptLoader?.ensureScript === 'function') {
@@ -136,6 +138,7 @@
           const ok = await scriptLoader.ensureScript({
             src: script.src, isReady: () => Boolean(globalRef[script.global]), log,
           });
+          if (!isCurrent()) return null;
           if (!ok) {
             log?.('WARN', 'ide.document_runtime_load_failed', { format, src: script.src });
             return null;
@@ -143,7 +146,7 @@
         }
         module = globalRef[runtime.global] || null;
       }
-      if (!module) return null;
+      if (!module || !isCurrent()) return null;
       injectStylesheets(runtime.stylesheets);
       return typeof module[runtime.factory] === 'function' ? module[runtime.factory] : null;
     }
@@ -166,26 +169,36 @@
       onDocumentEdit(String(path || ''));
     }
 
-    async function documentPaneFor(format) {
+    async function documentPaneFor(format, isCurrent) {
       const key = String(format || '').toLowerCase();
+      if (!isCurrent()) return null;
       if (documentPanes.has(key)) {
-        return documentPanes.get(key);
+        const entry = documentPanes.get(key);
+        entry.opens += 1;
+        return entry;
       }
       if (!DOCUMENT_FORMATS.includes(key)) {
         return null;
       }
       const factory = documentPaneFactories[key];
-      const create = typeof factory === 'function' ? await factory() : null;
-      if (documentPanes.has(key)) return documentPanes.get(key); // a parallel open won
+      const create = typeof factory === 'function' ? await factory(isCurrent) : null;
+      if (!isCurrent()) return null;
+      if (documentPanes.has(key)) return documentPaneFor(key, isCurrent); // a parallel open won
       const pane = typeof create === 'function'
         ? create({ getHost, onDirtyChange: noteDocumentDirty, onEdit: noteDocumentEdit, onSaveRequest, log })
         : null;
-      documentPanes.set(key, pane || null);
-      return pane || null;
+      if (!isCurrent()) {
+        pane?.dispose?.();
+        return null;
+      }
+      if (!pane) return null;
+      const entry = { pane, opens: 1 };
+      documentPanes.set(key, entry);
+      return entry;
     }
 
     function hideDocumentPanes() {
-      for (const pane of documentPanes.values()) {
+      for (const { pane } of documentPanes.values()) {
         pane?.hide?.();
       }
     }
@@ -281,48 +294,64 @@
       if (!normalizedPath) {
         return null;
       }
-      const pane = await documentPaneFor(normalizedFormat);
-      if (!pane) {
+      const isCurrent = () => !disposalFence.isDisposed() && !deps?.ownerFence?.isDisposed()
+        && (typeof shouldApply !== 'function' || shouldApply() === true);
+      const entry = await documentPaneFor(normalizedFormat, isCurrent);
+      if (!entry) {
+        if (!isCurrent()) return null;
         throw documentError(DOCUMENT_UNSUPPORTED_CODE, 'No viewer is available for this document format.');
       }
-      const existing = getDoc(normalizedPath);
-      const wasDirty = existing?.dirty === true;
-      // `shouldCommit` runs inside the pane after the async parse and before
-      // the live record is replaced, so a veto (edits during a reload, a
-      // stale token) keeps the previous record and its dirty state intact.
-      const shouldCommit = typeof shouldApply === 'function' ? () => shouldApply() === true : null;
-      const result = await pane.load(normalizedPath, { base64, size, mtimeMs, shouldCommit });
-      if (result?.ok !== true && result?.code === 'document_stale') {
-        return null;
+      const { pane } = entry;
+      try {
+        if (!isCurrent()) return null;
+        const existing = getDoc(normalizedPath);
+        const wasDirty = existing?.dirty === true;
+        // `shouldCommit` runs inside the pane after the async parse and before
+        // the live record is replaced, so a veto (edits during a reload, a
+        // stale token) keeps the previous record and its dirty state intact.
+        const shouldCommit = isCurrent;
+        const result = await pane.load(normalizedPath, { base64, size, mtimeMs, shouldCommit });
+        if (result?.ok !== true && result?.code === 'document_stale') {
+          return null;
+        }
+        if (!isCurrent()) {
+          if (!existing && !disposalFence.isDisposed() && !getDoc(normalizedPath)) pane.close(normalizedPath);
+          return null;
+        }
+        if (!result || result.ok !== true) {
+          if (!existing) pane.close(normalizedPath);
+          throw documentError(DOCUMENT_UNSUPPORTED_CODE, result?.message || 'The document could not be opened.');
+        }
+        let doc = existing;
+        if (!doc || doc.kind !== 'document') {
+          doc = { kind: 'document', model: null, viewState: null, dirty: false };
+          docs.set(normalizedPath, doc);
+        }
+        doc.format = normalizedFormat;
+        doc.pane = pane;
+        doc.size = Number(size) || 0;
+        doc.mtimeMs = Number(mtimeMs) || 0;
+        doc.dirty = false;
+        if (wasDirty) onDirtyChange(normalizedPath, false);
+        if (typeof onApplied === 'function') onApplied();
+        return doc;
+      } finally {
+        entry.opens -= 1;
+        // A vetoed first open owns no document. Retire its pane only after
+        // parallel opens finish, and never tear down another live document.
+        if (entry.opens === 0 && documentPanes.get(normalizedFormat) === entry
+          && ![...docs.values()].some(doc => doc.pane === pane)) {
+          documentPanes.delete(normalizedFormat);
+          pane.dispose?.();
+        }
       }
-      if (!result || result.ok !== true) {
-        if (!existing) pane.close(normalizedPath);
-        throw documentError(DOCUMENT_UNSUPPORTED_CODE, result?.message || 'The document could not be opened.');
-      }
-      if (typeof shouldApply === 'function' && shouldApply() !== true) {
-        if (!existing) pane.close(normalizedPath);
-        return null;
-      }
-      let doc = existing;
-      if (!doc || doc.kind !== 'document') {
-        doc = { kind: 'document', model: null, viewState: null, dirty: false };
-        docs.set(normalizedPath, doc);
-      }
-      doc.format = normalizedFormat;
-      doc.pane = pane;
-      doc.size = Number(size) || 0;
-      doc.mtimeMs = Number(mtimeMs) || 0;
-      doc.dirty = false;
-      if (wasDirty) onDirtyChange(normalizedPath, false);
-      if (typeof onApplied === 'function') onApplied();
-      return doc;
     }
 
     function activateBinaryDocument(normalizedPath, doc) {
       hideEditorSurfaces();
       imagePane?.hide();
       previewPane?.hide();
-      for (const pane of documentPanes.values()) {
+      for (const { pane } of documentPanes.values()) {
         if (pane && pane !== doc.pane) pane.hide?.();
       }
       return doc.pane?.show?.(normalizedPath) === true;
@@ -373,12 +402,13 @@
     }
 
     function dispose() {
+      if (!disposalFence.dispose()) return;
       for (const doc of docs.values()) {
         if (doc?.kind === 'image') imageMemory?.release(doc);
       }
       imagePane?.dispose();
       previewPane?.dispose();
-      for (const pane of documentPanes.values()) {
+      for (const { pane } of documentPanes.values()) {
         pane?.dispose?.();
       }
       documentPanes.clear();

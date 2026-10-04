@@ -56,8 +56,8 @@
       put('diagnosticsResetControl', inventoryActionButton({ id: 'reset-phase-percentiles', domId: 'phasePercentilesResetButton', label: jt('shell.bootstrap.diagnostics.resetSamples', 'Reset samples'), variant: 'ghost', size: 'sm' }));
       put('diagnosticsRefreshControl', inventoryActionButton({ id: 'refresh-diagnostics', domId: 'observabilityRefreshButton', label: jt('common.refresh', 'Refresh'), variant: 'ghost', size: 'sm' }));
       put('diagnosticsFollowControl', inventoryActionButton({ id: 'follow-latest', domId: 'logAutoScrollToggle', label: jt('shell.bootstrap.diagnostics.followLatest', 'Follow latest'), variant: 'ghost', size: 'sm', ariaPressed: true }));
-      put('contextPersonalityLinkHost', inventoryActionButton({ id: 'open-personality-page', label: jt('shell.bootstrap.diagnostics.openPersonality', 'Open Personality'), variant: 'secondary' }));
-      put('contextMemoryLinkHost', inventoryActionButton({ id: 'open-memory-page', label: jt('shell.bootstrap.diagnostics.manageRecalledMemories', 'Manage recalled memories'), variant: 'secondary' }));
+      put('contextPersonalityLinkHost', inventoryActionButton({ id: 'open-personality-page', label: jt('shell.bootstrap.diagnostics.openPersonality', 'Open Personality'), plain: true, className: 'settings-row-link' }));
+      put('contextMemoryLinkHost', inventoryActionButton({ id: 'open-memory-page', label: jt('shell.bootstrap.diagnostics.manageRecalledMemories', 'Manage memories'), plain: true, className: 'settings-row-link' }));
     }
   }
 
@@ -100,6 +100,7 @@
       auth: { authenticated: false, user: null },
       uiLanguage: 'en',
       use24HourTime: false,
+      transcriptViewDefault: 'thinking',
       safetyMode: 'normal',
       unattendedGuardMinutes: 0,
       autoApproveStreakCap: 50,
@@ -114,6 +115,10 @@
       currentSessionId: deriveCurrentSessionId(initialPaneLayout),
       panes: initialPaneLayout,
       workspace: { activeSessionId: '', openSessionIds: [] },
+      // A workspace restore before the signed-in session list loads is deferred
+      // to that load (renderer-workspace-session-utils.js syncWorkspaceFromStore).
+      sessionListLoaded: false,
+      workspaceRestoreDeferred: false,
       workspaceRoot: {
         path: '',
         status: {
@@ -127,6 +132,7 @@
       degradedBufferedStreamsByStream: new Map(),
       pendingStreams: new Map(),
       streamThinkingStatusByStream: new Map(),
+      streamDeltaKindByStream: new Map(),
       activeStreamId: '',
       activeStreamSessionId: '',
       sendPreflight: null,
@@ -224,17 +230,6 @@
           total: 0,
           always: 0,
         },
-      },
-      tips: {
-        loaded: false,
-        featureEnabled: false,
-        settings: {
-          enabled: true,
-          sessionCount: 0,
-          historyByTipId: {},
-        },
-        relevantTips: [],
-        activeTip: null,
       },
       features: {
         loaded: false,
@@ -429,6 +424,7 @@
         composerStatusNoticeTone: 'default',
         composerStatusNoticeSpinner: false,
         composerStatusNoticeBadgeText: '',
+        composerStatusNoticeSessionId: '',
         interactiveFocusRequest: null,
         interactiveRecapExpandedBySession: new Map(),
         /* Message ids whose context-compacted notice body is open. Keyed by
@@ -436,6 +432,7 @@
            message record), so it cannot outlive its session's messages. */
         contextCompactionExpanded: new Set(),
         reasoningPhaseExpansionBySession: new Map(),
+        transcriptViewBySession: new Map(),
         threadBranchesCollapsedBySession: new Map(),
         chatSendLifecycleBySession: new Map(),
         chatSendFailuresBySession: new Map(),
@@ -445,7 +442,7 @@
         chatTimelineBatch4FastPathEnabled: false,
         appearance: getDefaultAppearancePreferences(),
         chatZoomPercent: 100,
-        appZoomPercent: 100,
+        appZoomPercent: 110, // Mirrors services/shell-config-zoom-state.js APP_ZOOM_DEFAULT.
         osReducedMotion: false,
       },
     };
@@ -456,6 +453,7 @@
       state.uiLanguage = normalizeUiLanguageTag(config?.uiLanguage);
       state.use24HourTime = config?.use24HourTime === true;
       globalThis.jennyI18n?.setTimeFormat?.(state.use24HourTime);
+      state.transcriptViewDefault = globalThis.rendererTranscriptViewUtils?.normalizeTranscriptView?.(config?.transcriptViewDefault) || 'thinking';
       state.safetyMode = normalizeSafetyMode(config?.safetyMode);
       state.unattendedGuardMinutes = normalizeUnattendedGuardMinutes(config?.unattendedGuardMinutes);
       state.autoApproveStreakCap = normalizeAutoApproveStreakCap(config?.autoApproveStreakCap);
@@ -476,12 +474,10 @@
       },
       advanced: {
         advancedTuningStatus: 'advancedTuningStatus',
-        advancedTuningProfileSwitch: 'advancedTuningProfileSwitch',
         advancedTuningFields: 'advancedTuningFields',
         advancedTuningActions: 'advancedTuningActions',
       },
       offline: {
-        offlineBadge: 'offlineBadge',
         offlineSummary: 'offlineSummary',
         offlineStatus: 'offlineStatus',
         offlineLocalOnlyList: 'offlineLocalOnlyList',
@@ -519,9 +515,7 @@
       runtime: {
         sessionRuntimeSettingsMount: 'sessionRuntimeSettingsMount',
       },
-      runtimeLimits: {
-        sessionOrchestrationMount: 'sessionOrchestrationMount',
-      },
+      runtimeLimits: {},
     });
     const getHomeDom = createLazyDomResolver(document, {
       home: {
@@ -564,7 +558,6 @@
         artifactSplitViewToggle: 'artifactSplitViewToggle',
         artifactReviewResizer: 'artifactReviewResizer',
         artifactReviewPanel: 'artifactReviewPanel',
-        artifactReviewStatus: 'artifactReviewStatus',
         artifactReviewCollapseButton: 'artifactReviewCollapseButton',
         artifactReviewDetailEmpty: 'artifactReviewDetailEmpty',
         artifactReviewDetailPanel: 'artifactReviewDetailPanel',
@@ -665,7 +658,124 @@
     };
   }
 
+  // renderer/app.js dependencies, resolved from the real UMD modules that
+  // index.html loads before app.js. These replace the deleted fallback
+  // registries (renderer-fallback-registry.js / -workspace-registry.js), whose
+  // silent stand-ins booted a degraded shell whenever a module failed to load.
+  // A missing module or member is a packaging or script-order defect, so it
+  // throws with the window global it expected.
+  function requireShellModule(win, globalName) {
+    const mod = win ? win[globalName] : undefined;
+    if (!mod || (typeof mod !== 'object' && typeof mod !== 'function')) {
+      throw new Error(`Jenny renderer: required module window.${globalName} is not loaded; check the index.html script list.`);
+    }
+    return mod;
+  }
+
+  function requireShellMember(win, globalName, member) {
+    const value = requireShellModule(win, globalName)[member];
+    if (value === undefined) {
+      throw new Error(`Jenny renderer: required member window.${globalName}.${member} is missing.`);
+    }
+    return value;
+  }
+
+  // Output key -> [window global, member]. A null member means the module itself.
+  const SHELL_MODULE_MAP = Object.freeze({
+    normalizeChatMessage: ['chatMessageUtils', 'normalizeChatMessage'],
+    normalizeChatMessages: ['chatMessageUtils', 'normalizeChatMessages'],
+    buildAssistantMetaLabel: ['chatMessageUtils', 'buildAssistantMetaLabel'],
+    mergeReasoningEntries: ['chatMessageUtils', 'mergeReasoningEntries'],
+    getLatestAssistantMessageId: ['chatMessageUtils', 'getLatestAssistantMessageId'],
+    MAX_INTERACTIVE_QUESTIONS: ['interactiveModeUtils', 'MAX_INTERACTIVE_QUESTIONS'],
+    MAX_INTERACTIVE_ROUNDS: ['interactiveModeUtils', 'MAX_INTERACTIVE_ROUNDS'],
+    INTERACTIVE_SEQUENCE_IDLE: ['interactiveModeUtils', 'INTERACTIVE_SEQUENCE_IDLE'],
+    INTERACTIVE_SEQUENCE_STRUCTURED_ACTIVE: ['interactiveModeUtils', 'INTERACTIVE_SEQUENCE_STRUCTURED_ACTIVE'],
+    INTERACTIVE_SEQUENCE_FALLBACK_REQUESTED: ['interactiveModeUtils', 'INTERACTIVE_SEQUENCE_FALLBACK_REQUESTED'],
+    INTERACTIVE_GUARDRAIL_PROMPT: ['interactiveModeUtils', 'INTERACTIVE_GUARDRAIL_PROMPT'],
+    INTERACTIVE_OTHER_OPTION_ID: ['interactiveModeUtils', 'INTERACTIVE_OTHER_OPTION_ID'],
+    getInteractiveComposerStatusNotice: ['interactiveModeUtils', 'getComposerStatusNotice'],
+    getInteractiveQuestionOptions: ['interactiveModeUtils', 'buildQuestionOptionsWithOther'],
+    isInteractiveOtherTrigger: ['interactiveModeUtils', 'isOtherTrigger'],
+    isInteractiveQuestionAnswered: ['interactiveModeUtils', 'isQuestionAnswered'],
+    areInteractiveQuestionsAnswered: ['interactiveModeUtils', 'allQuestionsAnswered'],
+    getInteractiveNextUnansweredIndex: ['interactiveModeUtils', 'getNextUnansweredIndex'],
+    buildMessageActionModel: ['chatBubbleActionUtils', 'buildMessageActionModel'],
+    getElaboratePrompt: ['chatBubbleActionUtils', 'getElaboratePrompt'],
+    getLatestReplyAssistantMessageId: ['chatBubbleActionUtils', 'getLatestReplyAssistantMessageId'],
+    resolveRegenerateRequest: ['chatBubbleActionUtils', 'resolveRegenerateRequest'],
+    ThinkingPanelController: ['chatThinkingUtils', 'ThinkingPanelController'],
+    getThinkingSummary: ['chatThinkingUtils', 'getThinkingSummary'],
+    shouldShowThinkingToggle: ['chatThinkingUtils', 'shouldShowThinkingToggle'],
+    getLatestUserMessageId: ['chatScrollUtils', 'getLatestUserMessageId'],
+    isChatNearBottom: ['chatScrollUtils', 'isNearBottom'],
+    deriveFollowLatestFromScroll: ['chatScrollUtils', 'deriveFollowLatestFromScroll'],
+    shouldAutoScrollThread: ['chatScrollUtils', 'shouldAutoScrollThread'],
+    formatTokenUsageDisplay: ['chatbarUtils', 'formatTokenUsageDisplay'],
+    normalizeReasoningEffort: ['chatbarUtils', 'normalizeReasoningEffort'],
+    resolveComposerModelSelectWidth: ['chatbarUtils', 'resolveComposerModelSelectWidth'],
+    appearanceUtils: ['appearanceUtils', null],
+    getDefaultAppearancePreferences: ['appearanceUtils', 'getDefaultAppearancePreferences'],
+    normalizeAppearancePreferences: ['appearanceUtils', 'normalizeAppearancePreferences'],
+    getPalettePresets: ['appearanceUtils', 'getPalettePresets'],
+    getTypographyPresets: ['appearanceUtils', 'getTypographyPresets'],
+    getSurfaceEffectPresets: ['appearanceUtils', 'getSurfaceEffectPresets'],
+    getFontScalePresets: ['appearanceUtils', 'getFontScalePresets'],
+    applyAppearanceToDocument: ['appearanceUtils', 'applyAppearanceToDocument'],
+    loadStoredAppearancePreferences: ['appearanceUtils', 'loadAppearancePreferences'],
+    saveStoredAppearancePreferences: ['appearanceUtils', 'saveAppearancePreferences'],
+    toolCallUtils: ['toolCallUtils', null],
+    transcriptUtils: ['rendererTranscriptUtils', null],
+    composerHoloUtils: ['rendererComposerHoloUtils', null],
+    sessionUtils: ['rendererSessionUtils', null],
+    streamHandlerUtils: ['rendererStreamHandlerUtils', null],
+    sendUtils: ['rendererSendUtils', null],
+    interactivePanelUtils: ['rendererInteractivePanelUtils', null],
+    personalityEditorUtils: ['rendererPersonalityUtils', null],
+    toastControllerUtils: ['rendererToastUtils', null],
+    settingsRendererUtils: ['rendererSettingsUtils', null],
+    sidebarControllerUtils: ['rendererSidebarUtils', null],
+    lifecycleUtils: ['rendererLifecycleUtils', null],
+    memoryManagerUtils: ['rendererMemoryUtils', null],
+    viewportUtils: ['rendererViewportUtils', null],
+    artifactsUtils: ['rendererArtifactsUtils', null],
+    activityPrefsUtils: ['rendererActivityPrefsUtils', null],
+    renderPipelineUtils: ['rendererRenderPipelineUtils', null],
+    lifecycleProgressUtils: ['lifecycleProgressUtils', null],
+    workspaceStateUtils: ['rendererWorkspaceStateUtils', null],
+    workspaceChromeUtils: ['rendererWorkspaceChromeUtils', null],
+    buildPersonalityStatusTextModel: ['personalityUiUtils', 'buildPersonalityStatusText'],
+    resolvePreferredPersonalityTab: ['personalityUiUtils', 'resolvePreferredPersonalityTab'],
+    beginActivity: ['activityUtils', 'beginActivity'],
+    clearActivity: ['activityUtils', 'clearActivity'],
+    failActivity: ['activityUtils', 'failActivity'],
+    getActivitySnapshot: ['activityUtils', 'getActivitySnapshot'],
+    getMostRecentActivity: ['activityUtils', 'getMostRecentActivity'],
+    resolveActivity: ['activityUtils', 'resolveActivity'],
+    setActivityChangeListener: ['activityUtils', 'setChangeListener'],
+    applyActivityAttributes: ['activityDomUtils', 'applyActivityAttributes'],
+    isActivityBusy: ['activityDomUtils', 'isBusy'],
+    createToastStore: ['toastUtils', 'createToastStore'],
+    buildLogViewModel: ['logViewUtils', 'buildLogViewModel'],
+    createSlashCommandRegistry: ['rendererSlashCommandRegistryUtils', 'createSlashCommandRegistry'],
+    createContextCommand: ['rendererSlashCommandContextUtils', 'createContextCommand'],
+  });
+
+  function resolveShellModules(win) {
+    const resolved = {};
+    for (const [key, [globalName, member]] of Object.entries(SHELL_MODULE_MAP)) {
+      resolved[key] = member === null ? requireShellModule(win, globalName) : requireShellMember(win, globalName, member);
+    }
+    resolved.MESSAGE_STATUS = Object.freeze({
+      STREAMING: requireShellMember(win, 'chatMessageUtils', 'STREAMING_STATUS'),
+      COMPLETE: requireShellMember(win, 'chatMessageUtils', 'COMPLETE_STATUS'),
+      ERROR: requireShellMember(win, 'chatMessageUtils', 'ERROR_STATUS'),
+    });
+    return resolved;
+  }
+
   return {
     createRendererBootstrap,
+    resolveShellModules,
   };
 });

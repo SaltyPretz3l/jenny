@@ -59,6 +59,41 @@ function buildCompanionState(overrides = {}) {
   };
 }
 
+/* Edit, Archive and Delete live in the row's overflow menu (action.slot ===
+ * 'overflow'). The real inventory context menu mounts on <body>, outside
+ * #homeView, and its items dispatch through closures, so these helpers drive
+ * the same path a pointer user takes: the row's menu button, then the item. */
+async function openLoopMenu(window, followUpId) {
+  const trigger = window.document.querySelector(`#homeView [data-loop-overflow="${followUpId}"]`);
+  assert.ok(trigger, `row ${followUpId} renders an overflow menu button`);
+  trigger.click();
+  await waitForUi(window, 10);
+  const menu = window.document.querySelector('body > .inv-context-menu');
+  assert.ok(menu, 'the overflow menu mounts on <body>');
+  assert.equal(trigger.getAttribute('aria-expanded'), 'true');
+  return menu;
+}
+
+function loopMenuLabels(menu) {
+  return [...menu.querySelectorAll('.inv-context-menu-item')].map((node) => node.textContent.trim());
+}
+
+function closeLoopMenu(window) {
+  // Keys land on the focused menu item (the menu focuses its first item).
+  const target = window.document.activeElement;
+  assert.ok(target?.closest('.inv-context-menu'), 'the open menu holds focus');
+  target.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  assert.equal(window.document.querySelector('.inv-context-menu'), null, 'Escape closes the menu');
+}
+
+async function clickLoopMenuItem(window, followUpId, label) {
+  const menu = await openLoopMenu(window, followUpId);
+  const item = [...menu.querySelectorAll('.inv-context-menu-item')].find((node) => node.textContent.trim() === label);
+  assert.ok(item, `the menu offers ${label} (got ${loopMenuLabels(menu).join(', ')})`);
+  item.click();
+  assert.equal(window.document.querySelector('.inv-context-menu'), null, 'choosing an item closes the menu');
+}
+
 test('renderer home follow-up open loops render Done and Delete actions', async () => {
   const app = await loadRendererApp({
     shell: {
@@ -116,11 +151,19 @@ test('renderer home follow-up open loops render Done and Delete actions', async 
     window.document.getElementById('homeTopRailTab').click();
     await waitForUi(window, 30);
 
-    const actionButtons = [...window.document.querySelectorAll('#homeOpenLoopList .btn')].map((node) =>
+    const row = window.document.querySelector('#homeOpenLoopList [data-follow-up-id="followup-1"]');
+    const inlineButtons = [...row.querySelectorAll('.home-loop-actions [data-companion-action-id]')].map((node) =>
       node.textContent.trim()
     );
 
-    assert.deepEqual(actionButtons, ['Edit', 'Resume this thread', 'Done', 'Later', 'Delete']);
+    // A linked (saved) session makes Resume the primary; Done and Later stay
+    // inline, Edit and Delete move into the menu, Delete behind a separator.
+    assert.deepEqual(inlineButtons, ['Resume thread', 'Done', 'Later']);
+    assert.equal(row.querySelector('.btn--primary')?.textContent.trim(), 'Resume thread');
+    const menu = await openLoopMenu(window, 'followup-1');
+    assert.deepEqual(loopMenuLabels(menu), ['Edit', 'Delete']);
+    assert.ok(menu.querySelector('.inv-context-menu-separator'), 'Delete sits behind a separator');
+    assert.equal(menu.querySelector('.inv-context-menu-item--danger')?.textContent.trim(), 'Delete');
   } finally {
     await app.dispose();
   }
@@ -250,11 +293,19 @@ test('renderer home Delete action removes a follow-up and refreshes the open loo
     window.document.getElementById('homeTopRailTab').click();
     await waitForUi(window, 30);
 
-    window.document.querySelector('[data-companion-action-id="delete_follow_up:followup-1"]').click();
+    assert.equal(
+      window.document.querySelector('#homeView [data-companion-action-id="delete_follow_up:followup-1"]'),
+      null,
+      'Delete is only reachable through the overflow menu'
+    );
+    await clickLoopMenuItem(window, 'followup-1', 'Delete');
     await waitForUi(window, 40);
 
-    assert.deepEqual(shell.__state.companionCalls.deleteFollowUp, ['followup-1']);
+    // Delete hides the row at once but holds the IPC call for the undo
+    // window (the timed commit is covered in the action-utils unit tests).
+    assert.equal(window.document.querySelector('#homeOpenLoopList [data-follow-up-id="followup-1"]'), null);
     assert.match(window.document.getElementById('homeOpenLoopStatus').textContent, /all loops closed/i);
+    assert.deepEqual(shell.__state.companionCalls.deleteFollowUp || [], []);
   } finally {
     await app.dispose();
   }
@@ -410,7 +461,13 @@ test('renderer home recently completed section shows Reopen and moves a loop bac
 
     assert.match(window.document.getElementById('homeRecentResolvedList').textContent, /Review the migration/i);
     assert.match(window.document.getElementById('homeRecentResolvedList').textContent, /Reopen/i);
-    assert.match(window.document.getElementById('homeRecentResolvedList').textContent, /Archive/i);
+    const menu = await openLoopMenu(window, 'followup-1');
+    assert.ok(loopMenuLabels(menu).includes('Archive'), 'Archive is offered in the overflow menu');
+    closeLoopMenu(window);
+    assert.equal(
+      window.document.querySelector('[data-loop-overflow="followup-1"]').getAttribute('aria-expanded'),
+      'false'
+    );
 
     window.document.querySelector('[data-companion-action-id="activate_follow_up:followup-1"]').click();
     await waitForUi(window, 40);
@@ -559,7 +616,7 @@ test('renderer home edit form reuses the add surface for active loops and can re
     window.document.getElementById('homeTopRailTab').click();
     await waitForUi(window, 30);
 
-    window.document.querySelector('[data-companion-action-id="edit_follow_up:followup-1"]').click();
+    await clickLoopMenuItem(window, 'followup-1', 'Edit');
     await waitForUi(window, 20);
 
     assert.equal(window.document.getElementById('homeOpenLoopFormHeading').textContent, 'Edit Open Loop');
@@ -602,7 +659,7 @@ test('renderer home resolved edit disables timing and shows loop history', async
                 title: 'Review the migration',
                 body: 'Ask if the migration still needs a final check.',
                 followUpId: 'followup-1',
-                timingLabel: 'Completed 3/19/2026, 7:20:00 AM',
+                resolvedAt: '2026-03-19T12:20:00.000Z',
                 history: [
                   {
                     kind: 'resolved',
@@ -612,21 +669,35 @@ test('renderer home resolved edit disables timing and shows loop history', async
                 ],
                 actions: [
                   {
-                    id: 'edit_follow_up:followup-1',
-                    type: 'edit_follow_up',
-                    label: 'Edit',
-                    followUpId: 'followup-1',
-                  },
-                  {
                     id: 'activate_follow_up:followup-1',
                     type: 'activate_follow_up',
                     label: 'Reopen',
+                    labelKey: 'companion.actions.reopen',
+                    slot: 'inline',
+                    followUpId: 'followup-1',
+                  },
+                  {
+                    id: 'edit_follow_up:followup-1',
+                    type: 'edit_follow_up',
+                    label: 'Edit',
+                    labelKey: 'companion.actions.edit',
+                    slot: 'overflow',
                     followUpId: 'followup-1',
                   },
                   {
                     id: 'archive_follow_up:followup-1',
                     type: 'archive_follow_up',
                     label: 'Archive',
+                    labelKey: 'companion.actions.archive',
+                    slot: 'overflow',
+                    followUpId: 'followup-1',
+                  },
+                  {
+                    id: 'delete_follow_up:followup-1',
+                    type: 'delete_follow_up',
+                    label: 'Delete',
+                    labelKey: 'companion.actions.delete',
+                    slot: 'overflow',
                     followUpId: 'followup-1',
                   },
                 ],
@@ -650,10 +721,12 @@ test('renderer home resolved edit disables timing and shows loop history', async
     window.document.getElementById('homeTopRailTab').click();
     await waitForUi(window, 30);
 
-    assert.match(window.document.getElementById('homeRecentResolvedList').textContent, /History \(1\)/);
+    const historyToggle = window.document.querySelector('#homeRecentResolvedList [data-loop-history-toggle]');
+    assert.equal(historyToggle?.getAttribute('aria-label'), 'History (1)');
     assert.match(window.document.getElementById('homeRecentResolvedList').textContent, /Marked complete\./);
+    assert.match(window.document.getElementById('homeRecentResolvedList').textContent, /Completed Mar 19/);
 
-    window.document.querySelector('[data-companion-action-id="edit_follow_up:followup-1"]').click();
+    await clickLoopMenuItem(window, 'followup-1', 'Edit');
     await waitForUi(window, 20);
 
     assert.match(window.document.getElementById('homeOpenLoopFormNote').textContent, /completed loops keep their current status/i);
@@ -691,7 +764,19 @@ test('renderer home archive and restore move loops between recently completed an
     await waitForUi(window, 30);
 
     assert.equal(window.document.getElementById('homeArchivedLoopList').hidden, true);
-    window.document.querySelector('[data-companion-action-id="archive_follow_up:followup-1"]').click();
+    const resolvedRow = window.document.querySelector('#homeRecentResolvedList [data-follow-up-id="followup-1"]');
+    assert.equal(resolvedRow.querySelector('.btn--primary'), null, 'a completed row carries no primary button');
+    for (const type of ['archive_follow_up', 'delete_follow_up', 'edit_follow_up']) {
+      assert.equal(
+        resolvedRow.querySelector(`[data-companion-action-id="${type}:followup-1"]`),
+        null,
+        `${type} is only reachable through the overflow menu`
+      );
+    }
+    const menu = await openLoopMenu(window, 'followup-1');
+    assert.deepEqual(loopMenuLabels(menu), ['Edit', 'Archive', 'Delete']);
+    closeLoopMenu(window);
+    await clickLoopMenuItem(window, 'followup-1', 'Archive');
     await waitForUi(window, 40);
 
     assert.deepEqual(shell.__state.companionCalls.archiveFollowUp, ['followup-1']);

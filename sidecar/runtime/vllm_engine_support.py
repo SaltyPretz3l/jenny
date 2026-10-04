@@ -48,6 +48,7 @@ def log_vllm_stream_terminal_gap(
     *,
     finish_reason: str,
     inband_error: str = "",
+    diagnostics: Mapping[str, Any] | None = None,
 ) -> None:
     """Emit the actionable event for a vLLM stream that did not end cleanly.
 
@@ -58,6 +59,10 @@ def log_vllm_stream_terminal_gap(
     This lives in ``sidecar.runtime`` rather than the engine module because
     ``vllm_engine_generation`` is AT the 6-module ``sidecar.ai`` leaf import
     fan-out cap and ``CMP_STREAM_INCOMPLETE`` lives in ``sidecar.ai.error_codes``.
+
+    ``diagnostics`` carries the caller's counts and call names (never message
+    text) so a recurrence shows how far the stream got before the close; the
+    fixed keys below always win over it.
     """
     log_event(
         logger,
@@ -67,6 +72,7 @@ def log_vllm_stream_terminal_gap(
         message="vLLM stream ended without clean terminal evidence.",
         status="degraded",
         data={
+            **(diagnostics or {}),
             "code": CMP_STREAM_INCOMPLETE,
             "model": getattr(engine, "model_name", None),
             "finish_reason": finish_reason,

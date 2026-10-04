@@ -19,6 +19,9 @@ from sidecar.ai.config_models import (
     ToolPolicyRuleMatch,
     ToolPolicySnapshot,
 )
+from sidecar.ai.engines.chatgpt_model_catalog import (
+    normalize_chatgpt_model_catalog as normalize_chatgpt_model_catalog,  # noqa: PLC0414 - re-export
+)
 from sidecar.ai.error_codes import CMP_MCP_CONFIG_INVALID, CMP_MCP_SSE_DISABLED
 from sidecar.ai.tools.contracts import ToolExecutionFailure
 from sidecar.ai.tools.tool_search import DEFAULT_AUTO_TOOL_SEARCH_PERCENTAGE, DeferralMode
@@ -360,7 +363,7 @@ def _parse_mcp_servers(
         args = tuple(
             str(item)
             for item in _as_list(candidate.get("args"))
-            if isinstance(item, (str, int, float)) and str(item).strip()
+            if isinstance(item, (str, int, float))
         )
         url = _as_non_empty_string(candidate.get("url"))
         request_timeout_seconds = _as_bounded_float(

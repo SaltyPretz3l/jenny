@@ -24,8 +24,10 @@ Test coverage map (one assertion per spec rule):
 
 from __future__ import annotations
 
+import logging
 import re
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -1192,7 +1194,9 @@ def test_vllm_dict_arguments_refund_the_fragments_they_replace() -> None:
                                         "index": index,
                                         "id": f"call-{index}",
                                         "function": {
-                                            "name": "read_file",
+                                            # Not a path-only tool: the fragments
+                                            # sit near the generic 64 KiB cap.
+                                            "name": "write_file",
                                             "arguments": arguments,
                                         },
                                     }
@@ -1488,3 +1492,27 @@ def test_stream_counters_payload_carries_the_incomplete_count() -> None:
 
     assert payload["tool_call_incomplete_count"] == 2
     assert "malformed_tool_arguments_count" in payload
+
+
+def test_feed_logs_a_classifier_crash_once_per_stream_and_never_raises(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """feed() is diagnostic-only: a crash is logged (WARNING once, then DEBUG)."""
+    normalizer = ProviderStreamNormalizer(provider="vllm")
+
+    def _explode(_raw_chunk: Any) -> Any:
+        raise RuntimeError("classifier exploded")
+
+    monkeypatch.setattr(normalizer, "process_chunk", _explode)
+    with caplog.at_level(logging.DEBUG, logger="sidecar.ai.routing.provider_stream_normalizer"):
+        for _ in range(3):
+            assert normalizer.feed({"choices": []}) is None
+
+    levels = [
+        record.levelno
+        for record in caplog.records
+        if record.name == "sidecar.ai.routing.provider_stream_normalizer"
+    ]
+    assert levels == [logging.WARNING, logging.DEBUG, logging.DEBUG]
+    assert all(record.exc_info is not None for record in caplog.records)

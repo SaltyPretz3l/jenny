@@ -233,7 +233,7 @@ def test_process_suggestions_method_returns_error_when_not_initialized() -> None
     assert "error" in result.response
 
 
-def test_process_suggestions_method_notification_skips_generation(monkeypatch) -> None:  # noqa: ANN001
+def test_process_suggestions_method_notification_skips_generation(monkeypatch) -> None:
     calls: list[object] = []
     monkeypatch.setattr(
         dispatch_mod,

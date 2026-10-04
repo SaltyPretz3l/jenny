@@ -39,13 +39,22 @@ function positiveBound(value) {
   return value;
 }
 
+function waiting(reason, records) {
+  const blockers = records.map(record => Object.freeze({
+    session_id: typeof record.sessionId === 'string' ? record.sessionId : null,
+    quarantined_at: Number.isFinite(record.quarantinedAt) ? record.quarantinedAt : null,
+  }));
+  return Object.freeze({ status: 'waiting', reason, blockers: Object.freeze(blockers) });
+}
+
 class RuntimeLaneAdmission {
   constructor({ limits, maxRunnableTurns = 16, maxInferenceRequests = 16,
-    createId = randomUUID, onChange = null } = {}) {
+    createId = randomUUID, onChange = null, now = Date.now } = {}) {
     this.limits = normalizeSessionRuntime(limits);
     this.capacity = { turn: positiveBound(maxRunnableTurns), inference: positiveBound(maxInferenceRequests) };
     this.createId = createId;
     this.onChange = typeof onChange === 'function' ? onChange : null;
+    this.now = now;
     this.leases = new Map();
   }
 
@@ -80,6 +89,7 @@ class RuntimeLaneAdmission {
     const current = this.leases.get(lease?.id);
     if (!current || current.lease !== lease) return false;
     if (!producerSettled) {
+      if (current.state !== 'quarantined') current.quarantinedAt = this.now();
       current.state = 'quarantined';
       this._changed();
       return false;
@@ -93,6 +103,19 @@ class RuntimeLaneAdmission {
     const current = this.leases.get(lease?.id);
     if (!current || current.lease !== lease || current.state !== 'quarantined') return false;
     return this.release(lease, { producerSettled: true });
+  }
+
+  // Backend-restart proof only: confirms every quarantined lease no live owner
+  // still holds (a turn lease in `heldLeases`, an inference lease whose owner is
+  // in `heldOwners`). Returns how many were confirmed.
+  confirmOrphaned({ heldLeases, heldOwners }) {
+    let confirmed = 0;
+    for (const record of [...this.leases.values()]) {
+      if (record.state !== 'quarantined') continue;
+      if (record.kind === 'turn' ? heldLeases.has(record.lease) : heldOwners.has(record.ownerId)) continue;
+      if (this.confirmCleanup(record.lease)) confirmed += 1;
+    }
+    return confirmed;
   }
 
   snapshot() {
@@ -121,26 +144,28 @@ class RuntimeLaneAdmission {
     let sessionBusy = false;
     let kindCount = 0;
     let keyCount = 0;
+    const kindRecords = [];
     for (const record of this.leases.values()) {
       if (record.kind !== kind) continue;
+      kindRecords.push(record);
       kindCount += 1;
       if (record.key === key) keyCount += 1;
       if (kind === 'turn' && record.sessionId === sessionId) sessionBusy = true;
     }
-    if (sessionBusy) return Object.freeze({ status: 'waiting', reason: 'session_busy' });
+    if (sessionBusy) return waiting('session_busy', kindRecords.filter(record => record.sessionId === sessionId));
     if (kindCount >= this.capacity[kind]) {
-      return Object.freeze({ status: 'waiting', reason: 'downstream_capacity' });
+      return waiting('downstream_capacity', kindRecords);
     }
     const setting = kind === 'turn' ? 'runnable_turns' : 'inference_requests';
     if (keyCount >= this.limits[route.resource_class][setting]) {
-      return Object.freeze({ status: 'waiting', reason: 'lane_capacity' });
+      return waiting('lane_capacity', kindRecords.filter(record => record.key === key));
     }
     const id = this.createId();
     if (typeof id !== 'string' || !TOKEN.test(id) || this.leases.has(id)) {
       throw new Error('runtime_lane_identity_conflict');
     }
     const lease = Object.freeze({ id });
-    this.leases.set(id, { lease, kind, sessionId, ownerId, route, key, state: 'active' });
+    this.leases.set(id, { lease, kind, sessionId, ownerId, route, key, state: 'active', quarantinedAt: null });
     this._changed();
     return Object.freeze({ status: 'granted', lease });
   }

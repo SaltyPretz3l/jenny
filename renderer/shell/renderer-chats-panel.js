@@ -32,14 +32,8 @@
     return String(value == null ? '' : value).replace(/\s+/g, ' ').trim();
   }
 
-  function escapeHtmlText(value) {
-    return String(value == null ? '' : value)
-      .replaceAll('&', '&amp;')
-      .replaceAll('<', '&lt;')
-      .replaceAll('>', '&gt;')
-      .replaceAll('"', '&quot;')
-      .replaceAll("'", '&#39;');
-  }
+  const { escapeHtml: escapeHtmlText, resolveDefaultTitle } = (typeof globalThis !== 'undefined' && globalThis.stringUtils)
+    || (typeof require === 'function' ? require('../shared/string-utils') : null);
 
   function sessionTimestamp(session) {
     var value = session && (session.updated_at || session.created_at);
@@ -113,7 +107,7 @@
       : new Set(Array.isArray(o.pendingDeleteIds) ? o.pendingDeleteIds : []);
     var scope = o.scope === 'archived' ? 'archived' : 'recent';
     var query = normalizeInlineText(o.query).toLowerCase();
-    // Projects v2: '' = all projects; a chat without project_id is General.
+    // Projects v2: '' = all projects; a chat without project_id is General. Every count follows the filter (D15).
     var projectId = String(o.projectId || '').trim();
     var recentTotal = 0;
     var archivedTotal = 0;
@@ -122,10 +116,10 @@
 
     sessions.forEach(function (session) {
       if (!session || !session.id || pendingDeletes.has(session.id)) return;
+      if (projectId && (String(session.project_id || '').trim() || GENERAL_PROJECT_ID) !== projectId) return;
       var archived = Boolean(session.archived_at);
       if (archived) archivedTotal += 1;
       else recentTotal += 1;
-      if (projectId && (String(session.project_id || '').trim() || GENERAL_PROJECT_ID) !== projectId) return;
       projectTotal += 1;
       if ((scope === 'archived') !== archived) return;
       if (query) {
@@ -148,12 +142,13 @@
     var emptyKind = '';
     if (!visibleSessions.length) {
       if (query) emptyKind = 'search';
-      else if (projectId && scope !== 'archived') emptyKind = 'project';
-      else emptyKind = scope === 'archived' ? 'archived' : 'empty';
+      else if (sessions.length && projectId && scope !== 'archived') emptyKind = 'project';
+      else emptyKind = sessions.length && scope === 'archived' ? 'archived' : 'empty';
     }
     return {
       scope: scope,
       query: query,
+      noHistory: !query && !sessions.some(function (s) { return s && s.id && !pendingDeletes.has(s.id); }),
       projectId: projectId,
       projectTotal: projectTotal,
       recentTotal: recentTotal,
@@ -296,7 +291,7 @@
         ? state.sendOutboxBySession.get(session.id) || []
         : [];
       return JSON.stringify({
-        title: session.title === 'New Plugin Session' ? jt('session.defaultTitle.plugin', 'New Plugin Session') : (!session.title || session.title === 'New Chat' ? jt('session.defaultTitle.chat', 'New Chat') : session.title),
+        title: resolveDefaultTitle(session.title),
         updatedAt: session.updated_at || session.created_at || '',
         preview: session.last_message_preview || '',
         model: session.last_model_used || session.preferred_model || '',
@@ -313,7 +308,7 @@
     }
 
     function buildRowContents(session, active, tabStop) {
-      var title = normalizeInlineText(session.title); title = title === 'New Plugin Session' ? jt('session.defaultTitle.plugin', 'New Plugin Session') : (!title || title === 'New Chat' ? jt('session.defaultTitle.chat', 'New Chat') : title);
+      var title = resolveDefaultTitle(normalizeInlineText(session.title));
       var accessibleTitle = title.length <= 120 ? title : title.slice(0, 117).trim() + '...';
       var isPlugin = session.session_type === 'plugin';
       var provider = normalizeInlineText(session.plugin_session && session.plugin_session.provider_name).slice(0, 40);
@@ -458,7 +453,7 @@
         ? actionButton({
           plain: true,
           className: 'chats-project-filter' + (model.projectId ? ' chats-project-filter--set' : ''),
-          ariaHaspopup: 'listbox',
+          ariaHaspopup: 'menu',
           ariaLabel: jt('sidebar.chats.projectFilterLabel', 'Filter chats by project: {name}', { name: filterLabel }),
           title: jt('sidebar.chats.projectFilterTitle', 'Filter by project'),
           dataset: { 'chats-project-filter': model.projectId || 'all' },
@@ -518,7 +513,7 @@
             : jt('sidebar.chats.projectEmptyElsewhere', 'New chats start in the current Workspace project.'),
         ];
       }
-      return [jt('sidebar.chats.emptyTitle', 'No chats yet.'), jt('sidebar.chats.emptyDescription', 'Start a conversation and it will appear here.')];
+      return [jt('sidebar.chats.emptyTitle', 'No chats yet.'), model.noHistory ? '' : jt('sidebar.chats.emptyDescription', 'Start a conversation and it will appear here.')];
     }
 
     function renderEmpty(model) {
@@ -540,7 +535,7 @@
       empty.querySelector('.sidebar-empty-title').textContent = copy[0];
       empty.querySelector('.sidebar-empty-copy').textContent = copy[1];
       var projectAction = model.emptyKind === 'project' ? projectEmptyAction(model) : null;
-      empty.querySelector('.sidebar-empty-action-slot').innerHTML = actionButton({
+      empty.querySelector('.sidebar-empty-action-slot').innerHTML = model.noHistory && empty.closest('.view-panel')?.querySelector('.new-chat-button:not([hidden]):not(.hidden)') ? '' : actionButton({
         id: 'chats-empty-action',
         label: projectAction ? projectAction.label : (model.emptyKind === 'search'
           ? jt('sidebar.chats.clearSearch', 'Clear search') : (model.emptyKind === 'archived' ? jt('sidebar.chats.viewRecentChats', 'View recent chats') : jt('sidebar.chats.newChat', 'New chat'))),
@@ -814,11 +809,19 @@
         query: dom.searchInput && dom.searchInput.value,
         visibleLimit: visibleLimit,
       });
+      var panelRoot = dom.conversationGroups.closest('.view-panel');
+      if (panelRoot && model.noHistory) panelRoot.dataset.chatsHistory = 'none';
+      else if (panelRoot) delete panelRoot.dataset.chatsHistory;
       renderScopeControl(model);
       if (dom.conversationCount) {
         var totalChats = model.recentTotal + model.archivedTotal;
         dom.conversationCount.textContent = String(totalChats);
         dom.conversationCount.setAttribute('aria-label', jt('sidebar.chats.totalChats', '{count} total chats', { count: totalChats }));
+        // The rail holds at most 8 tabs; say how the two numbers relate.
+        var openTabs = state.workspace && Array.isArray(state.workspace.openSessionIds) ? state.workspace.openSessionIds.length : 0;
+        dom.conversationCount.setAttribute('title', openTabs > 0
+          ? jt('sidebar.chats.countOpenAsTabs', '{count} chats · {open} open as tabs', { count: totalChats, open: openTabs })
+          : jt('sidebar.chats.countChats', '{count} chats', { count: totalChats }));
       }
       reconcileGroups(model, scrollAnchor);
       renderEmpty(model);

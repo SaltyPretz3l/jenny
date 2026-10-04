@@ -141,3 +141,58 @@ test('draft helpers scrub unsafe clone keys and tolerate circular metadata', () 
   assert.equal(restored.meta.circularMeta.self, null);
   assert.deepEqual(restored.meta.unsafePayload, { safe: true });
 });
+
+// Split view W2-2a: a send resolves the REQUESTED session's preferences, so a
+// send from pane 1 carries pane 1's model, effort and run mode whichever pane
+// is focused. Without a session (or a reader) it is `current()` as before.
+test('resolveSendRuntimePreferences reads the requested session through fromSession', () => {
+  const { resolveSendRuntimePreferences, cloneJsonLike } = require('../renderer/chat/renderer-composer-v2-state');
+  const focused = { preferredModel: 'model-x', reasoningEffort: 'high', runMode: 'ask', planMode: false };
+  const sessionB = { id: 'session-b', preferred_model: 'model-y', reasoning_effort: 'low', run_mode: 'auto', plan_mode: false };
+  const fromSession = (session) => ({
+    preferredModel: session.preferred_model, reasoningEffort: session.reasoning_effort, runMode: session.run_mode, planMode: session.plan_mode === true,
+  });
+
+  const resolved = resolveSendRuntimePreferences({ session: sessionB, current: () => focused, clone: cloneJsonLike, fromSession });
+  assert.deepEqual(resolved, { preferredModel: 'model-y', reasoningEffort: 'low', runMode: 'auto', planMode: false });
+
+  assert.deepEqual(
+    resolveSendRuntimePreferences({ session: null, current: () => focused, clone: cloneJsonLike, fromSession }),
+    focused,
+    'no requested session: the current preferences'
+  );
+  assert.deepEqual(
+    resolveSendRuntimePreferences({ session: sessionB, current: () => focused, clone: cloneJsonLike }),
+    focused,
+    'no reader: the current preferences (the pre-split contract)'
+  );
+});
+
+test('resolveSendRuntimePreferences keeps a queued snapshot frozen and re-reads only the live run mode', () => {
+  const { resolveSendRuntimePreferences, cloneJsonLike } = require('../renderer/chat/renderer-composer-v2-state');
+  const snapshot = { preferredModel: 'model-q', reasoningEffort: 'medium', runMode: 'ask', planMode: false };
+  const sessionB = { id: 'session-b', preferred_model: 'model-y', reasoning_effort: 'low', run_mode: 'plan', plan_mode: true, pre_plan_run_mode: 'auto' };
+  const resolved = resolveSendRuntimePreferences({
+    snapshot, session: sessionB, current: () => ({}), clone: cloneJsonLike, fromSession: () => ({ preferredModel: 'wrong' }),
+  });
+  assert.deepEqual(resolved, { preferredModel: 'model-q', reasoningEffort: 'medium', runMode: 'plan', planMode: true, prePlanRunMode: 'auto' });
+});
+
+test('a pending skill whose session another pane still shows is kept, not dropped, by a read bound elsewhere (W3-1)', () => {
+  const api = require('../renderer/chat/renderer-composer-v2-state');
+  const previous = globalThis.rendererPaneVisibilityUtils;
+  const visible = new Set(['sess-B']);
+  globalThis.rendererPaneVisibilityUtils = { isSessionVisibleInAnyPane: (_state, id) => visible.has(id) };
+  try {
+    const state = { currentSessionId: 'sess-A' };
+    api.setPendingSkillInvocation(state, { id: 'skill-1', name: 'Research' }, { getSessionId: () => 'sess-B' });
+    assert.equal(api.getPendingSkillInvocation(state), null, 'pane 0 (sess-A) does not see pane 1\'s skill');
+    assert.equal(api.peekPendingSkillInvocation(state, 'sess-B').id, 'skill-1', 'pane 1 still holds it');
+    visible.delete('sess-B');
+    assert.equal(api.getPendingSkillInvocation(state), null);
+    assert.equal(api.peekPendingSkillInvocation(state, 'sess-B'), null, 'once no pane shows it, the old drop applies');
+  } finally {
+    if (previous === undefined) delete globalThis.rendererPaneVisibilityUtils;
+    else globalThis.rendererPaneVisibilityUtils = previous;
+  }
+});

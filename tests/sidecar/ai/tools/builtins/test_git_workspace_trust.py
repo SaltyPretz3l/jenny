@@ -39,7 +39,7 @@ def _install_real_process_adapter(
 ) -> list[list[str]]:
     commands: list[list[str]] = []
 
-    def run(arguments, *, cwd, timeout_seconds, env):  # noqa: ANN001
+    def run(arguments, *, cwd, timeout_seconds, env):
         commands.append(arguments)
         if assume_different_owner:
             env = {**env, "GIT_TEST_ASSUME_DIFFERENT_OWNER": "1"}
@@ -247,7 +247,7 @@ def _install_discovery_result_adapter(
 ) -> list[list[str]]:
     calls: list[list[str]] = []
 
-    def run(arguments, *, cwd, timeout_seconds, env):  # noqa: ANN001
+    def run(arguments, *, cwd, timeout_seconds, env):
         calls.append(arguments)
         if len(calls) == 1:
             return discovery_result

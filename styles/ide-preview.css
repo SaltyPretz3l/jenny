@@ -48,12 +48,12 @@
   padding: 4px 12px;
   border-bottom: 1px solid var(--line);
   background: var(--bg-surface-2);
-  font-size: 11px;
+  font-size: var(--font-size-footnote);
   color: var(--text-secondary);
 }
 
 .ide-preview-stage-name {
-  font-weight: 600;
+  font-weight: 500;
   color: var(--text-primary);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -66,9 +66,7 @@
 
 .ide-preview-stage-kind {
   flex-shrink: 0;
-  font-size: 10px;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
+  font-size: var(--font-size-caption);
   color: var(--text-muted);
 }
 
@@ -97,7 +95,7 @@
   border-radius: 8px;
   background: var(--bg-surface-2);
   color: var(--text-secondary);
-  font-size: 12.5px;
+  font-size: var(--font-size-footnote);
   line-height: 1.6;
   overflow-wrap: anywhere;
   /* Opt out of the shell-wide user-select:none (foundation.css) - these
@@ -147,7 +145,7 @@
   margin: 0 auto;
   padding: 20px 28px 48px;
   color: var(--text-primary);
-  font-size: 14px;
+  font-size: var(--font-size-prose);
   line-height: 1.65;
   overflow-wrap: anywhere;
   user-select: text;

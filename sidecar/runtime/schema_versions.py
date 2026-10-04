@@ -9,18 +9,18 @@ PLUGIN_CONTRACT_SET_VERSION = 1
 
 def get_all_schema_versions() -> list[dict[str, object]]:
     """Return sidecar-owned schema/API versions for status surfaces."""
-    from sidecar.ai.engines.ollama_catalog_cache import (  # noqa: PLC0415
+    from sidecar.ai.engines.ollama_catalog_cache import (
         SCHEMA_VERSION as OLLAMA_CATALOG_CACHE_SCHEMA_VERSION,
     )
-    from sidecar.ai.engines.ollama_templates import (  # noqa: PLC0415
+    from sidecar.ai.engines.ollama_templates import (
         SCHEMA_VERSION as OLLAMA_TEMPLATE_SCHEMA_VERSION,
     )
-    from sidecar.ai.memory.embedding import EMBEDDING_SCHEMA_VERSION  # noqa: PLC0415
-    from sidecar.ai.memory.store_migrations import (  # noqa: PLC0415
+    from sidecar.ai.memory.embedding import EMBEDDING_SCHEMA_VERSION
+    from sidecar.ai.memory.store_migrations import (
         SCHEMA_VERSION as MEMORY_SCHEMA_VERSION,
     )
-    from sidecar.protocol import API_VERSION  # noqa: PLC0415
-    from sidecar.runtime.diagnostics import (  # noqa: PLC0415
+    from sidecar.protocol import API_VERSION
+    from sidecar.runtime.diagnostics import (
         SCHEMA_VERSION as DIAGNOSTICS_SCHEMA_VERSION,
     )
 

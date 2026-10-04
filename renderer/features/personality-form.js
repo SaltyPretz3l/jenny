@@ -81,14 +81,8 @@
     oversized: jt('personality.form.fileTooLarge', 'This file is larger than 64 KiB. Open the folder to edit it.'),
   };
 
-  function escapeHtml(value) {
-    return String(value == null ? '' : value)
-      .replaceAll('&', '&amp;')
-      .replaceAll('<', '&lt;')
-      .replaceAll('>', '&gt;')
-      .replaceAll('"', '&quot;')
-      .replaceAll("'", '&#39;');
-  }
+  const escapeHtml = ((typeof globalThis !== 'undefined' && globalThis.stringUtils)
+    || (typeof require === 'function' ? require('../shared/string-utils') : null)).escapeHtml;
 
   function fieldId(prefix, suffix) {
     var safePrefix = String(prefix || 'settings-personality').replace(/[^A-Za-z0-9_-]/g, '');

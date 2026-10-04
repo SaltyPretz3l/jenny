@@ -527,6 +527,12 @@ function normalizePersistedToolResultMetadata(metadata, options = {}) {
   if (homeResult) Object.assign(result, homeResult);
   Object.assign(result, normalizeSandboxResultMetadata(source));
   if (workspaceChangeSet) result.workspace_change_set = workspaceChangeSet;
+  // The shell tool stopped the command at its time limit: the tool row reads
+  // Timed out from this flag on the turn event as well as the stored result.
+  if (source.timed_out === true) result.timed_out = true;
+  // The command's own exit status, for the row's "exit N" label.
+  const exitCode = source.exit_code ?? source.exitCode;
+  if (Number.isInteger(exitCode)) result.exit_code = exitCode;
   return Object.keys(result).length ? result : null;
 }
 

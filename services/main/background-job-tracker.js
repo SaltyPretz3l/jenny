@@ -15,7 +15,7 @@
 
 const fs = require('fs');
 const path = require('path');
-const { execFile } = require('child_process');
+const { isProcessAlive, killProcessTree, getProcessStartTime } = require('../backend/process-utils');
 
 // Mirrors the canonical job-ID format minted by shell_background.py
 // (uuid4().hex[:12]) — anything else is refused before any path join
@@ -42,6 +42,7 @@ const KILL_ESCALATION_MS = 5_000;
 const MAX_TRACKED_JOBS = 32;
 const MAX_COMMAND_CHARS = 400;
 const MAX_ERROR_CHARS = 400;
+const MAX_STATUS_FAILURES = 3;
 
 function defaultReadStatusFile(statusPath) {
   // Bounded read: open + read at most MAX_STATUS_FILE_BYTES + 1 so an
@@ -67,41 +68,14 @@ function defaultReadStatusFile(statusPath) {
   }
 }
 
-function defaultIsPidAlive(pid) {
+async function defaultKillPidTree(pid, { platform = process.platform, force = false } = {}) {
   try {
-    process.kill(pid, 0);
-    return true;
+    const result = await killProcessTree(pid, { platform, force: platform === 'win32' || force,
+      processGroup: platform !== 'win32' });
+    return { ok: result?.terminated === true, reason: result?.terminated ? '' : 'kill_failed' };
   } catch (error) {
-    // EPERM means the process exists but is not signalable by us — alive.
-    return Boolean(error && error.code === 'EPERM');
+    return { ok: false, reason: String(error?.message || error) };
   }
-}
-
-function defaultKillPidTree(pid, { platform = process.platform, force = false } = {}) {
-  return new Promise((resolve) => {
-    if (platform === 'win32') {
-      // taskkill /F is already forceful; the escalation retry just re-issues it.
-      execFile('taskkill', ['/PID', String(pid), '/T', '/F'], (error) => {
-        resolve({ ok: !error, reason: error ? String(error.message || error) : '' });
-      });
-      return;
-    }
-    const signal = force ? 'SIGKILL' : 'SIGTERM';
-    try {
-      // Owned processes are spawned as group leaders (start_new_session), so
-      // the negative-pid group kill takes the whole tree; fall back to the
-      // single pid if the group signal is refused.
-      process.kill(-pid, signal);
-      resolve({ ok: true, reason: '' });
-    } catch (_groupError) {
-      try {
-        process.kill(pid, signal);
-        resolve({ ok: true, reason: '' });
-      } catch (error) {
-        resolve({ ok: false, reason: String((error && error.message) || error) });
-      }
-    }
-  });
 }
 
 function normalizePid(value) {
@@ -113,8 +87,9 @@ function createBackgroundJobTracker({
   sendBridgeEvent = () => {},
   log = () => {},
   readStatusFileImpl = defaultReadStatusFile,
-  isPidAliveImpl = defaultIsPidAlive,
+  isPidAliveImpl = isProcessAlive,
   killPidTreeImpl = defaultKillPidTree,
+  getProcessStartTimeImpl = getProcessStartTime,
   nowImpl = () => Date.now(),
   pollIntervalMs = POLL_INTERVAL_MS,
   platform = process.platform,
@@ -183,6 +158,30 @@ function createBackgroundJobTracker({
     job.endedAtMs = nowImpl();
   }
 
+  function recordStatusFailure(job, error) {
+    job.statusFailures += 1;
+    job.error = error;
+    if (job.statusFailures >= MAX_STATUS_FAILURES) settleLocally(job, error);
+  }
+
+  function lookupStartTime(pid) {
+    return Promise.resolve().then(() => getProcessStartTimeImpl(pid, { platform }))
+      .then((value) => String(value || ''), () => '');
+  }
+
+  // A failed lookup refuses the signal but keeps the job running and Stop
+  // retryable; only a different creation time proves our process is gone.
+  // The baseline comes only from registration: taken at Stop, it could be a
+  // replacement process's identity, which the next lookup would then match.
+  async function verifyProcessIdentity(job) {
+    await job.identityReady;
+    if (!job.processStartTime) return false;
+    const current = await lookupStartTime(job.pid);
+    if (current === job.processStartTime) return true;
+    if (current) settleLocally(job, 'Background job process can no longer be verified.');
+    return false;
+  }
+
   function pruneJobs() {
     const now = nowImpl();
     for (const [jobId, job] of jobs) {
@@ -225,7 +224,7 @@ function createBackgroundJobTracker({
     }
     // Unknown/hostile state strings degrade to a local failure rather than
     // rendering attacker-controlled text as a chip state.
-    settleLocally(job, 'background job reported an unrecognized state');
+    recordStatusFailure(job, 'background job reported an unrecognized state');
   }
 
   function pollJob(job) {
@@ -235,7 +234,7 @@ function createBackgroundJobTracker({
       if (read.reason === 'not_found' && now - job.startedAtMs < MISSING_STATUS_GRACE_MS) {
         return; // startup race: the initial status write may still be landing
       }
-      settleLocally(job, read.reason === 'not_found'
+      recordStatusFailure(job, read.reason === 'not_found'
         ? 'background job status was not found'
         : `background job status could not be read (${read.reason})`);
       return;
@@ -247,8 +246,12 @@ function createBackgroundJobTracker({
       payload = null;
     }
     if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
-      settleLocally(job, 'background job status was malformed');
+      recordStatusFailure(job, 'background job status was malformed');
       return;
+    }
+    if (payload.state === 'running' || payload.state === 'completed' || payload.state === 'failed') {
+      job.statusFailures = 0;
+      job.error = '';
     }
     applyStatusPayload(job, payload);
     if (job.state !== 'running' && job.state !== 'killing') {
@@ -275,8 +278,14 @@ function createBackgroundJobTracker({
       && now - job.killRequestedAtMs > KILL_ESCALATION_MS
     ) {
       job.killEscalated = true;
-      log('WARN', 'background_jobs.kill_escalated', { jobId: job.jobId });
-      Promise.resolve(killPidTreeImpl(job.pid, { platform, force: true })).catch(() => {});
+      verifyProcessIdentity(job).then((verified) => {
+        if (!verified) {
+          job.killEscalated = job.state !== 'killing';
+          return null;
+        }
+        log('WARN', 'background_jobs.kill_escalated', { jobId: job.jobId });
+        return killPidTreeImpl(job.pid, { platform, force: true });
+      }).catch(() => {});
     }
   }
 
@@ -305,12 +314,12 @@ function createBackgroundJobTracker({
     }
   }
 
-  function registerJob({ jobId, sessionId, command, toolCallId, pid } = {}) {
+  function registerJob({ jobId, sessionId, command, toolCallId, pid, workspaceRoot: jobRoot } = {}) {
     const normalizedJobId = String(jobId || '').trim();
     if (disposed || !JOB_ID_PATTERN.test(normalizedJobId) || jobs.has(normalizedJobId)) {
       return false;
     }
-    const workspaceRoot = String(getWorkspaceRoot() || '').trim();
+    const workspaceRoot = String(jobRoot || getWorkspaceRoot() || '').trim();
     if (!workspaceRoot) {
       log('WARN', 'background_jobs.register_without_workspace_root', { jobId: normalizedJobId });
       return false;
@@ -334,6 +343,9 @@ function createBackgroundJobTracker({
       // Kill authority: ONLY the PID carried through the trusted registration
       // path (the sidecar tool result). Never assigned from status.json.
       pid: normalizePid(pid),
+      processStartTime: '',
+      identityReady: null,
+      statusFailures: 0,
       exitCode: null,
       error: '',
       startedAtMs: nowImpl(),
@@ -343,6 +355,10 @@ function createBackgroundJobTracker({
       killEscalated: false,
       outputTruncated: false,
     });
+    const registered = jobs.get(normalizedJobId);
+    if (registered.pid) {
+      registered.identityReady = lookupStartTime(registered.pid).then((value) => { registered.processStartTime = value; });
+    }
     log('INFO', 'background_jobs.registered', { jobId: normalizedJobId });
     emitChanged();
     ensurePolling();
@@ -368,6 +384,10 @@ function createBackgroundJobTracker({
     if (job.pid <= 4 || job.pid === process.pid || job.pid === process.ppid) {
       log('WARN', 'background_jobs.kill_refused_sensitive_pid', { jobId: normalizedJobId });
       return { ok: false, reason: 'pid_refused' };
+    }
+    if (!(await verifyProcessIdentity(job))) {
+      emitChanged();
+      return { ok: false, reason: 'pid_identity_unverified' };
     }
     job.state = 'killing';
     job.killRequestedAtMs = nowImpl();

@@ -6,7 +6,7 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 11px;
+  font-size: var(--font-size-caption);
   color: var(--text-muted);
 }
 
@@ -135,7 +135,7 @@
 .ide-chat-dock-session-status {
   padding: var(--space-2) var(--space-3);
   color: var(--text-muted);
-  font-size: var(--font-size-xs);
+  font-size: var(--font-size-caption);
 }
 
 .ide-chat-dock-session-status {

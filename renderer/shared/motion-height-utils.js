@@ -26,6 +26,14 @@
     void el.offsetHeight;
   }
 
+  function readCurrentMaxHeightPx(el, win) {
+    if (el && typeof win?.getComputedStyle === 'function') {
+      const computed = String(win.getComputedStyle(el)?.maxHeight || '');
+      if (/^\d+(\.\d+)?px$/.test(computed)) return Number(computed.slice(0, -2));
+    }
+    return measureCollapseStartPx(el);
+  }
+
   function resolveCollapseStartPx(el) {
     const maxHeight = el && el.style ? String(el.style.maxHeight || '') : '';
     if (/^\d+(\.\d+)?px$/.test(maxHeight)) {
@@ -38,5 +46,6 @@
     measureCollapseStartPx,
     pinHeightForTransition,
     resolveCollapseStartPx,
+    readCurrentMaxHeightPx,
   };
 });

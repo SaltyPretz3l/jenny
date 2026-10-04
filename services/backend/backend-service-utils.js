@@ -9,6 +9,8 @@ const {
   ensureArray,
 } = require('../value-utils');
 
+const { ALWAYS_ON_TOOL_NAMES, LEGACY_TOGGLE_TO_SURFACE, resolveRequestToolPreferences } = require('../tools/tool-surface-families');
+
 const LOCAL_AUTH_ACCOUNTS_KEY = 'local_auth_accounts_json';
 const MANAGED_REASONING_EFFORT_SUPPORTED_ENGINES = new Set(['vllm', 'openai-compatible', 'codex-cli', 'chatgpt']);
 const KNOWN_OLLAMA_THINKING_MODEL_PREFIXES = [
@@ -40,41 +42,6 @@ const KNOWN_VLLM_VISION_PREFIXES = [
   'phi-3-vision',
   'minicpm-v',
 ];
-const TOOL_PREFERENCE_TOGGLE_TO_TOOL_IDS = Object.freeze({
-  web_search: ['web_search', 'fetch_url'],
-  Bash: ['run_command', 'run_temp_script', 'check_background_job', 'stop_background_job'],
-  python_execute: ['python_execute'],
-  file_tools: [
-    'read_file',
-    'write_file',
-    'edit_file',
-    'delete_file',
-    'move_file',
-    'glob_files',
-    'grep_search',
-    'list_dir',
-    'create_artifact',
-    'mermaid_generate',
-  ],
-});
-
-// Every canonical tool id that belongs to some toggle group above. Tools
-// OUTSIDE this set are governed by config flags and policy only — composer
-// toggles must never affect them. Because a non-empty enabled_tools acts as an
-// exclusive allowlist in sidecar/ai/tools/assembly.py, any off-group tool
-// would silently vanish from the model's offer the moment one toggle was set
-// (this dropped mermaid_generate once, and delete_file/tool_search/git_* until
-// 2026-07): normalizeManagedToolPreferences repairs that by unioning all
-// off-group manifest tools into the allowlist whenever it is engaged.
-const TOGGLE_GROUP_TOOL_IDS = Object.freeze(
-  new Set(Object.values(TOOL_PREFERENCE_TOGGLE_TO_TOOL_IDS).flat())
-);
-const NON_TOGGLE_GROUP_TOOL_IDS = Object.freeze(
-  require('../tools/tool-manifest.json')
-    .tools.map((tool) => String(tool.name || ''))
-    .filter((name) => name && !TOGGLE_GROUP_TOOL_IDS.has(name))
-);
-
 function isLikelyVllmModel(model) {
   const token = String(model || '').trim().toLowerCase();
   if (!token) {
@@ -120,9 +87,6 @@ function inferEngineTypeFromModel(model) {
   if (token.startsWith('replay')) {
     return 'replay';
   }
-  if (token.startsWith('plugin-host/')) {
-    return 'plugin_host';
-  }
   if (isLikelyVllmModel(token)) {
     return 'vllm';
   }
@@ -147,7 +111,7 @@ const ID_ANCHORED_ENGINE_TYPES = Object.freeze(
 // Pins naming a LOCAL runtime the model string cannot reliably imply: e.g.
 // 'NousResearch/Hermes-3-Llama-3.1-8B' misses isLikelyVllmModel's prefix list
 // and falls through to 'ollama', discarding an explicit vLLM pin.
-const LOCAL_RUNTIME_ENGINE_PINS = Object.freeze(new Set(['vllm', 'openai-compatible', 'plugin_host']));
+const LOCAL_RUNTIME_ENGINE_PINS = Object.freeze(new Set(['vllm', 'openai-compatible']));
 
 // Resolve the engine a load request should target: the user's pin wins for
 // local runtimes unless the model id itself names a different engine outright.
@@ -448,43 +412,38 @@ function promptHasExplicitResponseStyleInstruction(prompt) {
   return RESPONSE_STYLE_PATTERNS.some((pattern) => pattern.test(normalizedPrompt));
 }
 
-function normalizeManagedToolPreferences(toolPreferences) {
+function normalizeManagedToolPreferences(toolPreferences, { catalog } = {}) {
   if (!toolPreferences || typeof toolPreferences !== 'object' || Array.isArray(toolPreferences)) {
     return undefined;
   }
-  const enabledTools = new Set();
-  const disabledTools = new Set();
-  for (const [toggleKey, toolIds] of Object.entries(TOOL_PREFERENCE_TOGGLE_TO_TOOL_IDS)) {
-    const value = toolPreferences[toggleKey];
-    if (typeof value !== 'boolean') {
-      continue;
+  if (['enabled_tools', 'disabled_tools', 'disabled_tool_families'].some(key => Object.hasOwn(toolPreferences, key))) {
+    const normalized = {};
+    for (const key of ['disabled_tools', 'disabled_tool_families']) {
+      const values = Array.isArray(toolPreferences[key]) ? toolPreferences[key] : [];
+      const names = [...new Set(values.filter(value => typeof value === 'string')
+        .map(value => value.trim()).filter(Boolean))]
+        .filter(name => key !== 'disabled_tools' || !ALWAYS_ON_TOOL_NAMES.includes(name)).sort();
+      if (names.length) normalized[key] = names;
     }
-    for (const toolId of toolIds) {
-      if (value) {
-        enabledTools.add(toolId);
-        disabledTools.delete(toolId);
-      } else {
-        disabledTools.add(toolId);
-        enabledTools.delete(toolId);
-      }
-    }
+    return Object.keys(normalized).length ? normalized : undefined;
   }
-  if (enabledTools.size) {
-    // The allowlist is engaged: protect every off-group tool from being
-    // implicitly excluded (see NON_TOGGLE_GROUP_TOOL_IDS above).
-    for (const toolId of NON_TOGGLE_GROUP_TOOL_IDS) {
-      enabledTools.add(toolId);
-    }
+  if (Object.hasOwn(toolPreferences, 'families') || Object.hasOwn(toolPreferences, 'connections')) {
+    return resolveRequestToolPreferences(toolPreferences, catalog);
   }
-  const enabled = [...enabledTools].sort();
-  const disabled = [...disabledTools].sort();
-  if (!enabled.length && !disabled.length) {
-    return undefined;
+  const families = {};
+  for (const [key, surface] of Object.entries(LEGACY_TOGGLE_TO_SURFACE)) {
+    if (typeof toolPreferences[key] === 'boolean') families[surface] = toolPreferences[key];
   }
-  return {
-    enabled_tools: enabled,
-    disabled_tools: disabled,
-  };
+  return resolveRequestToolPreferences({ families }, catalog);
+}
+
+// The tools a chat's stored per-chat switches turn off, resolved exactly as a
+// request start resolves them. A missing catalog still resolves manifest tools.
+function resolveSessionToolDenyList(session, catalog) {
+  return normalizeManagedToolPreferences({
+    families: session?.tool_category_overrides,
+    connections: session?.tool_connection_overrides,
+  }, { catalog })?.disabled_tools || [];
 }
 
 module.exports = {
@@ -507,7 +466,6 @@ module.exports = {
   normalizeRecallQueryFragment,
   buildRecallQuery,
   promptHasExplicitResponseStyleInstruction,
-  TOOL_PREFERENCE_TOGGLE_TO_TOOL_IDS,
-  NON_TOGGLE_GROUP_TOOL_IDS,
   normalizeManagedToolPreferences,
+  resolveSessionToolDenyList,
 };

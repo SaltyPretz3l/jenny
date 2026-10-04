@@ -163,7 +163,7 @@ function createDigestSink(hash) {
   });
 }
 
-async function encryptFile({ sourcePath, destinationPath, masterKey, salt, entryId }) {
+async function encryptFile({ sourcePath, destinationPath, masterKey, salt, entryId, signal }) {
   const iv = crypto.randomBytes(12);
   const key = deriveEntryKey(masterKey, salt, entryId);
   const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
@@ -174,7 +174,8 @@ async function encryptFile({ sourcePath, destinationPath, masterKey, salt, entry
     fs.createReadStream(sourcePath),
     createDigestTransform(hash),
     cipher,
-    fs.createWriteStream(destinationPath, { flags: 'wx' })
+    fs.createWriteStream(destinationPath, { flags: 'wx' }),
+    { signal }
   );
   return {
     iv: encodeBase64(iv),

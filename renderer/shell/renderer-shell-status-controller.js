@@ -16,18 +16,14 @@
       startupOverlay,
       startupOverlaySublabel,
       startupOverlaySecondary,
-      turnStatusPill,
-      titlebarStatus,
-      metricList,
     } = deps.dom;
     const callbacks = deps.callbacks || {};
 
     const activityPrefsUtils = globalThis.rendererActivityPrefsUtils || {};
     const lifecycleProgressUtils = globalThis.lifecycleProgressUtils || {};
-    const turnStatusPillUtils = globalThis.rendererTurnStatusPill || {};
 
     const {
-      getCurrentRuntimePreferences,
+      getCurrentRuntimePreferences, getRuntimePreferencesFromSession,
       getActiveSession,
       patchSessionSummary,
       setSessionPreferences,
@@ -44,6 +40,7 @@
       renderSettings = function noop() {},
       renderPersonalityEditor = function noop() {},
       renderSessions = function noop() {},
+      renderSessionComposer = function noop() {},
       getRendererElapsedMs = function noopElapsedMs() { return 0; },
       appendClientLog = function noopLog() {},
       onStartupReady = function noopStartupReady() {},
@@ -109,7 +106,7 @@
       model_unavailable: {
         tone: 'danger',
         title: jt('titlebar.status.modelLoadFailed', 'Model failed to load'),
-        message: jt('titlebar.status.modelLoadFailedMessage', 'Send a message to retry, or pick another model in Settings.'),
+        message: jt('titlebar.status.modelLoadFailedRetryMessage', 'Retry restarts the engine, or pick another model in Settings.'),
         actions: ['retry', 'models'],
       },
       failed: {
@@ -179,7 +176,7 @@
       constants: { ACTIVITY_SCOPE },
       dom: { composerStatusNotice },
       callbacks: {
-        getCurrentRuntimePreferences,
+        getCurrentRuntimePreferences, getRuntimePreferencesFromSession,
         getActiveSession,
         patchSessionSummary,
         setSessionPreferences,
@@ -197,41 +194,9 @@
         renderSettings: (...args) => renderSettings(...args),
         syncBackendNotice: (...args) => syncBackendNotice(...args),
         renderSessions: (...args) => renderSessions(...args),
+        renderSessionComposer: (...args) => renderSessionComposer(...args),
       },
     }) || null;
-
-    const turnStatusPillController = turnStatusPillUtils.createTurnStatusPillController?.({
-      state,
-      dom: {
-        turnStatusPill,
-        titlebarStatus,
-        metricList,
-      },
-    }) || null;
-
-    function setTurnStatusPill(source, payload) {
-      if (turnStatusPillController && typeof turnStatusPillController.set === 'function') {
-        turnStatusPillController.set(source, payload);
-      }
-    }
-
-    function clearTurnStatusPill(source) {
-      if (turnStatusPillController && typeof turnStatusPillController.clear === 'function') {
-        turnStatusPillController.clear(source);
-      }
-    }
-
-    function clearTurnStatusPillSources(sources) {
-      if (turnStatusPillController && typeof turnStatusPillController.clearSources === 'function') {
-        turnStatusPillController.clearSources(sources);
-      }
-    }
-
-    function renderTurnStatusPill() {
-      if (turnStatusPillController && typeof turnStatusPillController.render === 'function') {
-        turnStatusPillController.render();
-      }
-    }
 
     const lifecycleProgressController = lifecycleProgressUtils.createLifecycleProgressController?.({
       state,
@@ -250,8 +215,6 @@
         retryBackendStart,
         openLogs,
         appendClientLog,
-        setTurnStatusPill,
-        clearTurnStatusPill,
       },
     }) || null;
 
@@ -266,19 +229,16 @@
       handleLifecycleProgress = function noopHandleLifecycleProgress() {},
       handleBackendStatus = function noopHandleBackendStatus() {},
       notifyBootViewReady = function noopNotifyBootViewReady() {},
+      notifyShellHydrated = function noopNotifyShellHydrated() {},
       beginModelSwitch = function noopBeginModelSwitch() {},
       updateModelSwitch = function noopUpdateModelSwitch() {},
       failModelSwitch = function noopFailModelSwitch() {},
-      publishLifecycleStatus = function noopPublishLifecycleStatus() {},
     } = lifecycleProgressController || {};
 
     function dispose() {
       statusControllerDisposed = true;
       if (lifecycleProgressController && typeof lifecycleProgressController.dispose === 'function') {
         try { lifecycleProgressController.dispose(); } catch (_e) { /* best-effort teardown */ }
-      }
-      if (turnStatusPillController && typeof turnStatusPillController.dispose === 'function') {
-        try { turnStatusPillController.dispose(); } catch (_e) { /* best-effort teardown */ }
       }
     }
 
@@ -287,15 +247,11 @@
       syncBackendNotice,
       retryBackendStart,
       renderComposerStatusNotice,
-      publishLifecycleStatus: publishLifecycleStatus,
-      renderTurnStatusPill,
-      setTurnStatusPill,
-      clearTurnStatusPill,
-      clearTurnStatusPillSources,
       handleActivityChange,
       handleLifecycleProgress,
       handleLifecycleBackendStatus: handleBackendStatus,
       notifyBootViewReady,
+      notifyShellHydrated,
       beginModelSwitch,
       updateModelSwitch,
       failModelSwitch,

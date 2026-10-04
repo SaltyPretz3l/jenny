@@ -72,7 +72,7 @@ PY_DESIGNATED_DIRS = [
 # dirs, so it is left out to keep this check sub-second; the graph still reaches
 # every services file through services/** + main entrypoints + tests/**.
 JS_GRAPH_DIRS = ["services", "tests"]
-JS_GRAPH_ROOT_FILES = ["main.js", "preload.js", "preload-overlay.js", "overlay-window.js", "start.js"]
+JS_GRAPH_ROOT_FILES = ["main.js", "preload.js", "start.js"]
 
 JS_SUFFIXES = {".js", ".cjs", ".mjs"}
 JS_TEST_RE = re.compile(r"\.test\.(c|m)?js$")
@@ -352,18 +352,36 @@ def _is_py_shim(path: Path) -> bool:
         tree = ast.parse(path.read_text(encoding="utf-8"))
     except (OSError, SyntaxError):
         return False
+    exports: set[str] = set()
     has_reexport = False
     for node in tree.body:
-        if isinstance(node, ast.Expr) and isinstance(getattr(node, "value", None), ast.Constant):
-            continue  # module docstring / bare literal
+        if isinstance(node, ast.Expr) and isinstance(node.value, ast.Constant):
+            continue
         if isinstance(node, (ast.Import, ast.ImportFrom)):
+            exports.update(
+                alias.asname or (alias.name.split(".")[0]
+                                 if isinstance(node, ast.Import) else alias.name)
+                for alias in node.names if alias.name != "*"
+            )
             has_reexport = True
             continue
-        if isinstance(node, ast.Assign) and all(isinstance(t, ast.Name) for t in node.targets):
-            continue  # __all__ = [...] / simple alias re-export
-        if isinstance(node, ast.AnnAssign):
-            continue
-        return False  # any def/class/if/for/while/with/try -> real logic
+        if isinstance(node, ast.Assign):
+            targets, value = node.targets, node.value
+        elif (isinstance(node, ast.AnnAssign)
+              and isinstance(node.annotation, (ast.Name, ast.Constant))):
+            targets, value = [node.target], node.value
+        else:
+            return False
+        if not all(isinstance(target, ast.Name) for target in targets):
+            return False
+        names = [target.id for target in targets]
+        if names == ["__all__"] and isinstance(value, (ast.List, ast.Tuple, ast.Set)):
+            if all(isinstance(item, ast.Constant) and isinstance(item.value, str)
+                   for item in value.elts):
+                continue
+        if not isinstance(value, ast.Name) or value.id not in exports:
+            return False
+        exports.update(names)
     return has_reexport
 
 

@@ -7,6 +7,7 @@ import pytest
 from sidecar.ai.tools import catalog as catalog_module
 from sidecar.ai.tools.tool_families import (
     KNOWN_TOOL_FAMILIES,
+    RETIRED_TOOL_FAMILY_NAMES,
     TOOL_FAMILY_ALIASES,
     TOOL_FAMILY_NAMES,
     requested_tool_families,
@@ -19,7 +20,8 @@ _FOUNDATION_FAMILIES = ("browser", "code_intelligence", "rich_files")
 @pytest.mark.parametrize("family", _FOUNDATION_FAMILIES)
 def test_foundation_families_registered(family: str) -> None:
     assert family in KNOWN_TOOL_FAMILIES
-    assert family in TOOL_FAMILY_NAMES
+    # browser/rich_files tools are retired; their names classify old transcripts.
+    assert family in TOOL_FAMILY_NAMES or family in RETIRED_TOOL_FAMILY_NAMES
     assert family in TOOL_FAMILY_ALIASES
 
 
@@ -34,9 +36,8 @@ def test_every_known_descriptor_family_resolves_in_status_lookup(family: str) ->
     assert tool_family_for_status(name="placeholder", tool_family=family) == family
 
 
-@pytest.mark.parametrize("tool_name", TOOL_FAMILY_NAMES["browser"])
+@pytest.mark.parametrize("tool_name", RETIRED_TOOL_FAMILY_NAMES["browser"])
 def test_browser_family_resolves_all_browser_tools(tool_name: str) -> None:
-    assert tool_name in TOOL_FAMILY_NAMES["browser"]
     assert tool_family_for_status(name=tool_name, tool_family=None) == "browser"
 
 
@@ -52,7 +53,7 @@ def test_browser_family_resolves_all_browser_tools(tool_name: str) -> None:
     ),
 )
 def test_rich_files_family_resolves_inspect_tools(tool_name: str) -> None:
-    assert tool_name in TOOL_FAMILY_NAMES["rich_files"]
+    assert tool_name in RETIRED_TOOL_FAMILY_NAMES["rich_files"]
     assert tool_family_for_status(name=tool_name, tool_family=None) == "rich_files"
 
 
@@ -105,7 +106,7 @@ def test_manifest_validator_accepts_foundation_families(family: str) -> None:
             "always_available": False,
         },
     }
-    catalog_module._validate_manifest_payload(  # noqa: SLF001
+    catalog_module._validate_manifest_payload(
         {"manifest_version": 2, "tools": [entry]}
     )
 
@@ -132,7 +133,7 @@ def test_requested_knowledge_keywords_resolve_family() -> None:
 
 
 def test_known_tool_families_remains_a_superset_of_existing_dicts() -> None:
-    for family in TOOL_FAMILY_NAMES:
+    for family in (*TOOL_FAMILY_NAMES, *RETIRED_TOOL_FAMILY_NAMES):
         assert family in KNOWN_TOOL_FAMILIES, (
             f"TOOL_FAMILY_NAMES has '{family}' but KNOWN_TOOL_FAMILIES does not"
         )

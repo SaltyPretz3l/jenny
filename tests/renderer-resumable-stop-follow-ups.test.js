@@ -13,21 +13,26 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { loadRendererApp, waitForUi } = require('./helpers/renderer-shell-harness');
 const { buildFeatureFlagDefaults } = require('../services/feature-flags');
+const { waitForUiState } = require('./helpers/wait-for-ui-state');
 const fixture = require('./fixtures/resumed-paused-turn-session.json');
 
 const BUDGET_STOP = "Stopped: this turn's context budget is used up. Reply 'resume' to continue.";
 const BUSY = /Wait for the current response to finish/;
 
 // The gate's memory suggestion call outlived a frame; this one does too.
-async function slowMemorySuggestion() {
-  await new Promise((resolve) => { setTimeout(resolve, 200); });
-  return { suggestions: [] };
+function makeSlowMemorySuggestion(tracker) {
+  return async function slowMemorySuggestion() {
+    await new Promise((resolve) => { setTimeout(resolve, 200); });
+    tracker.settled += 1;
+    return { suggestions: [] };
+  };
 }
 
 async function loadApp(t, { sessionId, streamId, turnId, flags }) {
+  const memoryTracker = { settled: 0 };
   const app = await loadRendererApp({ shell: {
     ...(flags ? { features: { state: { featureFlags: flags } } } : {}),
-    memory: { suggestForSession: slowMemorySuggestion },
+    memory: { suggestForSession: makeSlowMemorySuggestion(memoryTracker) },
     chat: {
       async startStream(_payload, { state }) {
         state.sessions = [{ id: sessionId, title: sessionId, conversation_mode: 'chat', preferred_model: 'gpt-test',
@@ -39,7 +44,22 @@ async function loadApp(t, { sessionId, streamId, turnId, flags }) {
     },
   } });
   t.after(() => app.dispose());
+  app.memoryTracker = memoryTracker;
   return app;
+}
+
+// The regression lives in the window AFTER terminal postwork (the slow memory
+// suggestion round-trip) closes, so wait for that round-trip to return and for
+// Resume to enable before asserting, rather than sleeping a fixed time.
+async function waitForPostworkSettled(app, window) {
+  await waitForUiState(window, () => app.memoryTracker.settled >= 1, {
+    timeoutMs: 5000, message: 'terminal postwork (memory suggestion round-trip) never returned.',
+  });
+  await waitForUiState(window, () => {
+    const resume = window.document.querySelector('#chatTimeline .resume-turn-action');
+    return Boolean(resume) && resume.disabled === false;
+  }, { timeoutMs: 5000, message: 'the stop never rendered an enabled Resume action after postwork settled.' });
+  await waitForUi(window, 40);
 }
 
 async function send(window, text) {
@@ -88,7 +108,7 @@ test('a context-budget stop leaves Resume and the follow-up actions enabled', as
   await emit({ type: 'started' });
   await emit({ type: 'delta', content: 'Working on it.', aggregate: 'Working on it.' });
   await emit({ type: 'complete', content, resumableStop: 'context_budget' });
-  await waitForUi(window, 500);
+  await waitForPostworkSettled(app, window);
 
   assertFollowUpsEnabled(window.document);
 });
@@ -132,7 +152,7 @@ test('a budget stop on an approval-resumed second stream leaves the follow-ups e
     turn_event_log_version: fixture.turn_event_log_version, active_turn: null };
   await emit({ type: 'complete', streamId: B, content, resumableStop: 'context_budget',
     canonicalTurnEvents: fixture.turn_events.filter((event) => event.event_seq >= 4) });
-  await waitForUi(window, 500);
+  await waitForPostworkSettled(app, window);
 
   assert.deepEqual([...window.__rendererState.pendingStreams.keys()], [], 'no stream of the turn is still pending');
   // Regenerate is left out: on this two-stream turn it reads "only available

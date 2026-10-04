@@ -16,10 +16,8 @@
 
 .ide-scm-branch {
   color: var(--text-secondary);
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
+  font-size: var(--font-size-caption);
+  font-weight: 500;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -42,7 +40,7 @@
 .ide-scm-empty {
   padding: 6px 2px;
   color: var(--text-muted);
-  font-size: 12px;
+  font-size: var(--font-size-body);
   line-height: 1.5;
 }
 
@@ -54,7 +52,7 @@
   border-radius: 4px;
   background: color-mix(in srgb, var(--state-warning) 12%, transparent);
   color: var(--state-warning);
-  font-size: 11px;
+  font-size: var(--font-size-footnote);
   line-height: 1.4;
 }
 
@@ -70,10 +68,8 @@
   gap: 6px;
   padding: 2px 2px 4px;
   color: var(--text-primary);
-  font-size: 11px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
+  font-size: var(--font-size-caption);
+  font-weight: 500;
 }
 
 .ide-scm-group-count {
@@ -126,8 +122,8 @@
   flex: 0 0 auto;
   width: 14px;
   text-align: center;
-  font-size: 11px;
-  font-weight: 700;
+  font-size: var(--font-size-caption);
+  font-weight: 500;
   color: var(--state-warning);
 }
 
@@ -147,7 +143,7 @@
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--text-muted);
-  font-size: 11px;
+  font-size: var(--font-size-caption);
 }
 
 .ide-scm-row-actions {
@@ -166,7 +162,7 @@
 .ide-scm-action {
   padding: 1px 6px;
   color: var(--text-secondary);
-  font-size: 11px;
+  font-size: var(--font-size-footnote);
   border-radius: 4px;
   cursor: pointer;
   background: none;
@@ -216,7 +212,7 @@
 
 .ide-scm-commit-hint {
   color: var(--state-warning);
-  font-size: 11px;
+  font-size: var(--font-size-footnote);
 }
 
 .ide-scm-commit-actions {
@@ -262,8 +258,8 @@
   flex: 0 0 auto;
   margin-inline-start: auto;
   padding-inline-start: 6px;
-  font-size: 10px;
-  font-weight: 700;
+  font-size: var(--font-size-caption);
+  font-weight: 500;
   color: var(--text-muted);
 }
 
@@ -294,7 +290,7 @@
 .ide-statusbar-branch-count {
   margin-inline-start: 4px;
   color: var(--state-warning);
-  font-weight: 600;
+  font-weight: 500;
 }
 
 /* ── Friendly commit History (read-only recent-commit cards) ── */
@@ -317,10 +313,8 @@
   gap: 6px;
   padding: 2px 2px;
   color: var(--text-primary);
-  font-size: 11px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
+  font-size: var(--font-size-caption);
+  font-weight: 500;
   cursor: pointer;
   background: none;
   border: none;
@@ -351,7 +345,7 @@
 .ide-scm-history-loading {
   padding: 4px 2px;
   color: var(--text-muted);
-  font-size: 12px;
+  font-size: var(--font-size-footnote);
   line-height: 1.5;
 }
 
@@ -392,7 +386,7 @@
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--text-primary);
-  font-size: 12px;
+  font-size: var(--font-size-body);
   font-weight: 500;
 }
 
@@ -402,7 +396,7 @@
   gap: 5px;
   min-width: 0;
   color: var(--text-muted);
-  font-size: 11px;
+  font-size: var(--font-size-caption);
 }
 
 .ide-scm-card-author {
@@ -427,17 +421,15 @@
   flex: 0 0 auto;
   padding: 0 4px;
   color: var(--state-info);
-  font-size: 10px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.03em;
+  font-size: var(--font-size-caption);
+  font-weight: 500;
 }
 
 .ide-scm-card-hash {
   flex: 0 0 auto;
   margin-inline-start: auto;
   font-family: var(--font-family-mono);
-  font-size: 10px;
+  font-size: var(--font-size-caption);
   color: var(--text-muted);
 }
 

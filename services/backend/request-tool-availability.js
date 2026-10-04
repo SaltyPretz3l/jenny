@@ -1,5 +1,14 @@
 'use strict';
 
+const { isNonEmptyPlainObject } = require('../tools/tool-policy-actions');
+
+// A mixed tool (manifest `actions`) keeps its declared read actions in a
+// read-only request, like the executor gate (dogfood HB-002 follow-up).
+function hasReadAction(descriptor) {
+  return isNonEmptyPlainObject(descriptor.actions)
+    && Object.values(descriptor.actions).some(spec => isNonEmptyPlainObject(spec) && spec.side_effecting === false);
+}
+
 // Diagnostic projection only. Execution remains with the authority/policy owners.
 function scopedToolAvailability(status, state, descriptorFor) {
   const tools = {};
@@ -12,8 +21,9 @@ function scopedToolAvailability(status, state, descriptorFor) {
       else if (descriptor.plan_mode_only) {
         if (state.mode !== 'plan') reason = 'tool is available only in plan mode';
         else if (reason === 'tool is available only in plan mode') reason = null;
-      } else if (state.readOnly && descriptor.side_effecting) reason = 'read-only mode blocks side-effecting tools';
-      if (state.toolPreferences?.disabled_tools?.includes(name)) reason = 'disabled for this request';
+      } else if (state.readOnly && descriptor.side_effecting && !hasReadAction(descriptor)) reason = 'read-only mode blocks side-effecting tools';
+      if (state.toolPreferences?.disabled_tools?.includes(name)
+        || state.liveDisabledTools?.has(name)) reason = 'disabled for this request';
     }
     tools[name] = { ...entry, available: !reason && (entry.available === true
       || (descriptor?.plan_mode_only && state.mode === 'plan')), reason };

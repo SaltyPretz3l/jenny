@@ -72,6 +72,11 @@
       const pinned = new Set();
       const currentSessionId = String(state.currentSessionId || '').trim();
       if (currentSessionId) pinned.add(currentSessionId);
+      // Split view W1-4c: every pane's session stays cached, not only the focused one.
+      (Array.isArray(state.panes?.panes) ? state.panes.panes : []).forEach((pane) => {
+        const paneSessionId = String(pane?.sessionId || '').trim();
+        if (paneSessionId) pinned.add(paneSessionId);
+      });
       const multiStreamController = getMultiStreamController();
       (multiStreamController?.getStreamingSessionIds?.() || []).forEach((sessionId) => {
         const normalizedSessionId = String(sessionId || '').trim();
@@ -113,6 +118,7 @@
     async function evictSessionCacheEntry(sessionId, { clearPostwork = false } = {}) {
       await clearSessionStreamState(sessionId);
       state.messagesBySession.delete(sessionId);
+      state.turnEventsBySession?.delete?.(sessionId);
       state.interactiveDraftsBySession.delete(sessionId);
       state.sessionMessageAccessOrder?.delete(sessionId);
       invalidateSessionArtifacts(sessionId);
@@ -180,6 +186,7 @@
       for (const streamId of streamIds) {
         state.pendingStreams.delete(streamId);
         state.streamThinkingStatusByStream.delete(streamId);
+        state.streamDeltaKindByStream?.delete(streamId);
         state.toolCallsByStream.delete(streamId);
       }
       for (const [callId, approval] of [...state.pendingToolApprovals.entries()]) {

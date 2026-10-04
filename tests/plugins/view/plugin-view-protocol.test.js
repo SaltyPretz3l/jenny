@@ -40,43 +40,14 @@ test('path traversal, mutable URL suffixes, and digest mismatch fail closed', as
   assert.equal((await handler({ url: `jenny-plugin-view://${DIGEST}/view/index.html` })).status, 409);
 });
 
-test('attachment tickets route only through the bound attachment resolver', async () => {
-  const bytes = Buffer.from('png-bytes');
-  const sha256 = crypto.createHash('sha256').update(bytes).digest('hex');
-  const token = 'b'.repeat(64);
-  const attachmentCalls = [];
+test('the retired attachment-ticket path is just an unknown asset path', async () => {
   const assetCalls = [];
   const handler = createPluginViewProtocolHandler({
     resolveAsset: async (request) => { assetCalls.push(request); return null; },
-    resolveAttachment: async (request) => {
-      attachmentCalls.push(request);
-      return request.token === token ? { bytes, sha256, media_type: 'image/png' } : null;
-    },
+    resolveAttachment: async () => { throw new Error('must never be reached'); },
   });
 
-  const served = await handler({ url: `jenny-plugin-view://${DIGEST}/__attachment/${token}` });
-  assert.equal(served.status, 200);
-  assert.equal(served.headers.get('content-type'), 'image/png');
-  assert.deepEqual(attachmentCalls, [{ artifactDigest: DIGEST, token }]);
-  assert.deepEqual(assetCalls, []);
-  assert.equal((await handler({
-    url: `jenny-plugin-view://${DIGEST}/__attachment/not-a-ticket`,
-  })).status, 404);
-  assert.equal((await handler({
-    url: `jenny-plugin-view://${DIGEST}/__attachment/${'c'.repeat(64)}`,
-  })).status, 404);
-});
-
-test('attachment tickets preserve a non-PNG image content type', async () => {
-  const bytes = Buffer.from('jpeg-bytes');
-  const sha256 = crypto.createHash('sha256').update(bytes).digest('hex');
-  const token = 'd'.repeat(64);
-  const handler = createPluginViewProtocolHandler({
-    resolveAsset: async () => null,
-    resolveAttachment: async () => ({ bytes, sha256, mediaType: 'image/jpeg' }),
-  });
-
-  const served = await handler({ url: `jenny-plugin-view://${DIGEST}/__attachment/${token}` });
-  assert.equal(served.status, 200);
-  assert.equal(served.headers.get('content-type'), 'image/jpeg');
+  const response = await handler({ url: `jenny-plugin-view://${DIGEST}/__attachment/${'b'.repeat(64)}` });
+  assert.equal(response.status, 404);
+  assert.deepEqual(assetCalls, [{ artifactDigest: DIGEST, path: `__attachment/${'b'.repeat(64)}` }]);
 });

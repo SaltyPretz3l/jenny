@@ -15,8 +15,10 @@ const {
   normalizeLinkedSessionIds,
 } = require('./session-store-migrations');
 const {
+  TOOL_CONNECTION_OVERRIDES_MAX,
   normalizeSessionStartDate,
   normalizeToolCategoryOverrides,
+  normalizeToolConnectionOverrides,
 } = require('./session-normalizers');
 
 const PASSTHROUGH_PREFERENCE_KEYS = [
@@ -98,6 +100,13 @@ function buildSessionPreferencesPatch(preferences = {}, currentRecord = {}) {
   }
   if (Object.prototype.hasOwnProperty.call(source, 'tool_category_overrides')) {
     patch.tool_category_overrides = normalizeToolCategoryOverrides(source.tool_category_overrides);
+  }
+  if (Object.prototype.hasOwnProperty.call(source, 'tool_connection_overrides')) {
+    const overrides = normalizeToolConnectionOverrides(source.tool_connection_overrides);
+    if (Object.keys(overrides).length > TOOL_CONNECTION_OVERRIDES_MAX) {
+      throw new RangeError('tool_connection_overrides_limit');
+    }
+    patch.tool_connection_overrides = overrides;
   }
   return patch;
 }

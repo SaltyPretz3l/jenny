@@ -61,7 +61,6 @@ test('deny response and foreground-only schema reject without a host fallback', 
 test('Electron indirect executable paths are fenced before plugin and checkpoint invocation', async () => {
   const { service } = fixture();
   service.workspaceGitService = { createCheckpoint: () => { throw new Error('must not invoke'); } };
-  service._pluginStage8ControlPlane = { invokeNativeTool: () => { throw new Error('must not invoke'); } };
   for (const tool_name of ['__jenny_git_checkpoint','verify','worktree_create','python_execute','plugin:a:b:c']) {
     const result = await executeElectronToolRequest(service, { params: { tool_name }, pluginRuntimeAuthority: { mode: 'plugin' } });
     assert.equal(result.success, false);

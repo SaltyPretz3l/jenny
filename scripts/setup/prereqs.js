@@ -34,10 +34,14 @@ function pythonCandidates(platform) {
 }
 
 function defaultRun(cmd, args, opts = {}) {
-  const result = spawnSync(cmd, args, {
+  // Only fixed probe commands opt into a shell (npm.cmd on Windows, see
+  // checkNpm). Pass them as one command line: Node deprecates (DEP0190) an
+  // args array combined with shell: true.
+  const shell = Boolean(opts.shell);
+  const result = spawnSync(shell ? [cmd, ...args].join(' ') : cmd, shell ? [] : args, {
     encoding: 'utf8',
     windowsHide: true,
-    shell: false,
+    shell,
     // Honor an explicit cwd (installSidecarDeps relies on this so
     // `pip install -e ".[dev]"` resolves the package at the repo root rather
     // than wherever node happened to be launched from).
@@ -89,8 +93,8 @@ function formatMin(min) {
 }
 
 // Generic "run <cmd> --version, parse, compare to min" probe.
-function probeVersioned(run, cmd, args, min, label) {
-  const result = run(cmd, [...args, '--version']);
+function probeVersioned(run, cmd, args, min, label, runOpts) {
+  const result = run(cmd, [...args, '--version'], runOpts);
   if (result.status !== 0) {
     return { name: label, found: false, version: null, satisfiesMin: false, min: formatMin(min) };
   }
@@ -133,7 +137,12 @@ function isSupportedNode(version) {
   return false;
 }
 
-function checkNpm(run) {
+function checkNpm(run, { platform = process.platform } = {}) {
+  // npm is a .cmd shim on Windows: a bare spawn of 'npm' is ENOENT and Node
+  // refuses to spawn a .cmd without a shell.
+  if (platform === 'win32') {
+    return probeVersioned(run, 'npm.cmd', [], MIN_NPM, 'npm', { shell: true });
+  }
   return probeVersioned(run, 'npm', [], MIN_NPM, 'npm');
 }
 

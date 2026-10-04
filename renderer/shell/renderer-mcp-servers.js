@@ -10,12 +10,11 @@
   var GROUP_ID = 'mcpServersGroup';
   var HOST_ID = 'mcpServersHost';
 
-  function escapeHtml(value) {
-    return String(value == null ? '' : value).replaceAll('&', '&amp;').replaceAll('<', '&lt;')
-      .replaceAll('>', '&gt;').replaceAll('"', '&quot;').replaceAll("'", '&#39;');
-  }
+  const escapeHtml = ((typeof globalThis !== 'undefined' && globalThis.stringUtils)
+    || (typeof require === 'function' ? require('../shared/string-utils') : null)).escapeHtml;
   function resolveMcpServerBadge(signals) {
     var source = signals || {};
+    if (source.builtin) return { state: 'info', text: 'Built-in' };
     if (source.enabled === false) return { state: 'muted', text: 'Off' };
     if (source.trustStatus !== 'approved') return { state: 'warn', text: jt('mcp.servers.reviewRequired', 'Review required') };
     var status = String(source.status || 'configured').toLowerCase();
@@ -38,7 +37,7 @@
   function normalizeDiscoveryServer(value) {
     var row = value && typeof value === 'object' ? value : {};
     var trust = row.trust && typeof row.trust === 'object' ? row.trust : {};
-    return { name: String(row.name || ''), transport: String(row.transport || 'stdio'),
+    return { name: String(row.name || ''), builtin: row.builtin === true, transport: String(row.transport || 'stdio'),
       status: String(row.status || 'configured'), toolsCount: Number(row.toolsCount) || 0,
       command: String(row.command || ''), url: String(row.url || ''), enabled: row.enabled === true,
       args: Array.isArray(row.args) ? row.args.map(function (item) { return String(item); }) : [],
@@ -252,6 +251,9 @@
         restoreFocusTo: focusRestoreHandle(drawerState.restoreFocusIdentity) });
     }
     function rowMarkup(server) {
+      if (server.builtin) return '<div class="settings-field-row mcp-servers-row" data-mcp-server-row="'
+        + escapeHtml(server.name) + '"><span class="settings-field-row-text"><strong>'
+        + escapeHtml(server.name) + '</strong><small>Built-in</small></span></div>';
       var pending = server.trustStatus !== 'approved';
       var secondary = [server.transport === 'sse' ? 'remote' : 'local', server.toolsCount + ' tools',
         resolveMcpServerBadge(server).text.toLowerCase()];
@@ -278,8 +280,8 @@
         + '<p class="settings-group-copy">' + escapeHtml(jt('mcp.servers.trustReviewRequirement', 'Standalone connections require an explicit tool-surface trust review before they can be enabled.')) + '</p></div>'
         + actionButton({ label: jt('mcp.servers.addConnectionShort', 'Add connection'), size: 'sm', disabled: discovery.readOnly || Boolean(busy),
           ariaHaspopup: 'dialog', dataset: { 'mcp-servers-action': 'add' } }) + '</div>' + readonly + operation
-        + '<div class="mcp-servers-list">' + (discovery.servers.length ? discovery.servers.map(rowMarkup).join('')
-          : '<div class="settings-note">' + escapeHtml(jt('mcp.servers.noneConfigured', 'No standalone MCP connections.')) + '</div>') + '</div></div>';
+        + '<div class="mcp-servers-list">' + (discovery.servers.map(rowMarkup).join('') + (discovery.servers.some(function (server) { return !server.builtin; }) ? ''
+          : '<div class="settings-note">' + escapeHtml(jt('mcp.servers.noneConfigured', 'No standalone MCP connections.')) + '</div>')) + '</div></div>';
     }
     function render() {
       var target = host(); if (!target || disposed) return;
@@ -306,31 +308,33 @@
       var target = documentRef.getElementById('mcpServerTarget')?.value?.trim() || '';
       var args = String(documentRef.getElementById('mcpServerArgs')?.value || '').split(/\r?\n/).filter(Boolean);
       var authKind = documentRef.getElementById('mcpServerAuthKind')?.value || 'none';
+      var previousAuth = drawerState?.server?.auth;
       var authBlock = authKind === 'none' ? null : { kind: authKind };
+      if (authBlock && previousAuth?.secretRef) authBlock.secret_ref = previousAuth.secretRef;
       if (authKind === 'oauth_client_credentials') {
         authBlock.token_url = documentRef.getElementById('mcpServerTokenUrl')?.value?.trim() || '';
         authBlock.client_id = documentRef.getElementById('mcpServerClientId')?.value?.trim() || '';
         authBlock.scope = documentRef.getElementById('mcpServerScope')?.value?.trim() || '';
       }
       return transport === 'sse' ? { name: name, transport: transport, url: target,
-        ...(authBlock ? { auth: authBlock } : {}) } : { name: name, transport: transport, command: target, args: args };
+        auth: authBlock } : { name: name, transport: transport, command: target, args: args };
     }
-    async function run(name, payload) {
+    async function runOperation(name, payload, api, messages, allowConfirmation) {
       if (busy) return null;
-      if (typeof bridge()?.[name] !== 'function') {
-        reportBridgeFailure('mcp_settings.bridge_method_missing', name, jt('mcp.servers.actionUnavailable', 'This MCP action is unavailable in this build.'));
+      if (typeof api?.[name] !== 'function') {
+        reportBridgeFailure(messages.family + 'bridge_method_missing', name, messages.unavailable);
         return { ok: false, reason: 'bridge_method_missing' };
       }
       busy = name; render(); setDrawerBusy(true);
       var result;
       try {
-        result = await bridge()[name](payload);
-        if (result?.ok === false && result?.confirmation_required !== true) {
-          reportBridgeFailure('mcp_settings.operation_failed', name, jt('mcp.servers.operationIncomplete', 'The MCP operation could not be completed.'));
+        result = await api[name](payload);
+        if (result?.ok === false && !(allowConfirmation && result?.confirmation_required === true)) {
+          reportBridgeFailure(messages.family + 'operation_failed', name, messages.incomplete(result));
         }
       }
       catch (_error) {
-        reportBridgeFailure('mcp_settings.bridge_call_failed', name, jt('mcp.servers.operationFailed', 'The MCP operation failed.'));
+        reportBridgeFailure(messages.family + 'bridge_call_failed', name, messages.failed);
         result = { ok: false, reason: 'bridge_call_failed' };
       }
       finally {
@@ -340,30 +344,26 @@
       }
       return result;
     }
-    async function runAuth(name, payload) {
-      if (busy) return null;
-      if (typeof authBridge()?.[name] !== 'function') {
-        reportBridgeFailure('mcp_settings.auth_bridge_method_missing', name,
-          jt('mcp.servers.credentialManagementUnavailable', 'Credential management is unavailable in this build.'));
-        return { ok: false, reason: 'bridge_method_missing' };
-      }
-      busy = name; render(); setDrawerBusy(true);
-      var result;
-      try {
-        result = await authBridge()[name](payload);
-        if (result?.ok === false) reportBridgeFailure('mcp_settings.auth_operation_failed', name,
-          jt('mcp.servers.credentialOperationIncomplete', 'The credential operation could not be completed.'));
-      }
-      catch (_error) {
-        reportBridgeFailure('mcp_settings.auth_bridge_call_failed', name, jt('mcp.servers.credentialOperationFailed', 'The credential operation failed.'));
-        result = { ok: false, reason: 'bridge_call_failed' };
-      }
-      finally {
-        busy = '';
-        if (!disposed) await load();
-        if (!disposed) setDrawerBusy(false);
-      }
-      return result;
+    function run(name, payload) {
+      return runOperation(name, payload, bridge(), {
+        family: 'mcp_settings.',
+        unavailable: jt('mcp.servers.actionUnavailable', 'This MCP action is unavailable in this build.'),
+        incomplete: function (result) { return result.saved && result.runtimeApplied === false
+          ? jt('mcp.servers.runtimeApplyPending', 'Saved, but not applied yet. The previous setup may still be running.')
+          : jt('mcp.servers.operationIncomplete', 'The MCP operation could not be completed.'); },
+        failed: jt('mcp.servers.operationFailed', 'The MCP operation failed.'),
+      }, true);
+    }
+    // A saved change whose runtime refresh failed still moved the config:
+    // navigate as on success; run() already showed the pending warning.
+    function wasSaved(result) { return result?.ok === true || result?.saved === true; }
+    function runAuth(name, payload) {
+      return runOperation(name, payload, authBridge(), {
+        family: 'mcp_settings.auth_',
+        unavailable: jt('mcp.servers.credentialManagementUnavailable', 'Credential management is unavailable in this build.'),
+        incomplete: function () { return jt('mcp.servers.credentialOperationIncomplete', 'The credential operation could not be completed.'); },
+        failed: jt('mcp.servers.credentialOperationFailed', 'The credential operation failed.'),
+      }, false);
     }
     async function testServer(name) {
       var result = await run('testServer', { name: name });
@@ -388,7 +388,7 @@
       if (!await confirmDanger({ title: jt('mcp.servers.removeConfirmTitle', 'Remove MCP connection?'), message: jt('mcp.servers.removeConfirmMessage', 'Remove MCP connection “{name}”?', { name: name }),
         confirmLabel: jt('common.remove', 'Remove'), cancelLabel: jt('mcp.servers.keep', 'Keep') }) || !drawerActiveFor(name)) return;
       var result = await run('removeServer', { name: name });
-      if (result?.ok && drawerActiveFor(name)) { inspections.delete(name); drawerState = null; drawer.close(); }
+      if (wasSaved(result) && drawerActiveFor(name)) { inspections.delete(name); drawerState = null; drawer.close(); }
     }
     function showDetails(name, target) {
       if (disposed || !enabled()) return;
@@ -419,7 +419,7 @@
       else if (action === 'save-editor') {
         var payload = editorPayload(); var method = name ? 'updateServer' : 'createServer';
         run(method, name ? { name: name, server: payload } : { server: payload }).then(function (result) {
-          if (!result?.ok || !drawerActiveFor(name, 'editor')) return;
+          if (!wasSaved(result) || !drawerActiveFor(name, 'editor')) return;
           if (name) inspections.delete(name);
           var nextName = payload.name;
           drawerState = serverByName(nextName) ? { kind: 'details', name: nextName,
@@ -428,7 +428,7 @@
         });
       } else if (action === 'test') testServer(name);
       else if (action === 'approve') run('approveServer', { name: name }).then(function (result) {
-        if (result?.ok && drawerActiveFor(name, 'details')) showDetails(name);
+        if (wasSaved(result) && drawerActiveFor(name, 'details')) showDetails(name);
       });
       else if (action === 'remove') removeServer(name);
     }

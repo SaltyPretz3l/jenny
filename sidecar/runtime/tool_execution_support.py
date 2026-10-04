@@ -17,6 +17,7 @@ from sidecar.ai.tools.builtins.file_state import (
     READ_SNAPSHOT_SCOPE_FULL,
     read_snapshot_from_metadata,
 )
+from sidecar.ai.tools.builtins.shell_command_split import cmd_exe_multiline_refusal
 from sidecar.ai.tools.builtins.shell_security import CommandVerdict, classify_command
 from sidecar.ai.tools.contracts import ToolExecutionFailure, validate_tool_arguments
 from sidecar.ai.tools.models import GenerationResult, ToolCallRequest
@@ -49,6 +50,7 @@ __all__ = [
     "ToolExecutionOutcome",
     "handle_tool_search",
     "classify_command",
+    "cmd_exe_multiline_refusal",
     "is_feature_flag_enabled",
     "read_snapshot_from_metadata",
     "sanitize_tool_output",

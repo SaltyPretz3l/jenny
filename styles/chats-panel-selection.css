@@ -55,7 +55,7 @@
 
 .sidebar-bulk-status {
   color: var(--text-secondary);
-  font-size: var(--font-size-md);
+  font-size: var(--font-size-body);
   font-weight: 500;
   font-variant-numeric: tabular-nums;
   overflow-wrap: anywhere;
@@ -74,7 +74,7 @@
   background: transparent;
   color: var(--text-secondary);
   font: inherit;
-  font-size: var(--font-size-md);
+  font-size: var(--font-size-body);
   cursor: pointer;
 }
 
@@ -120,7 +120,7 @@
 .sidebar-bulk-confirm p {
   margin: 0 0 var(--space-8);
   color: var(--text-primary);
-  font-size: var(--font-size-sm);
+  font-size: var(--font-size-footnote);
   overflow-wrap: anywhere;
 }
 
@@ -222,7 +222,7 @@
   background: transparent;
   color: var(--text-secondary);
   font: inherit;
-  font-size: var(--font-size-sm);
+  font-size: var(--font-size-footnote);
   cursor: pointer;
 }
 
@@ -234,7 +234,7 @@
 
 .chats-project-filter--set {
   color: var(--text-primary);
-  font-weight: 600;
+  font-weight: 500;
 }
 
 .chats-project-filter:focus-visible {
@@ -258,4 +258,13 @@
 .chats-project-filter .chats-project-filter-icon {
   width: 14px;
   height: 14px;
+}
+
+/* No chat history at all: only the header New chat and the empty line remain. */
+[data-chats-history="none"] .search-shell,
+[data-chats-history="none"] .chats-project-row,
+[data-chats-history="none"] .chats-scope-row,
+[data-chats-history="none"] .sidebar-empty-copy,
+[data-chats-history="none"] .sidebar-empty-action-slot:empty {
+  display: none;
 }

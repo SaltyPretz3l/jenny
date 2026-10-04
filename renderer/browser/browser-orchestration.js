@@ -1,4 +1,4 @@
-/* Browser authorization and transport adapter for the shared runtime inspector. */
+/* Browser authorization and transport adapter for the shared Runs + Runtime limits controller. */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) module.exports = factory(require('../shell/renderer-orchestration-controller'));
   else root.jennyBrowserOrchestration = factory(root.rendererOrchestrationController);
@@ -17,22 +17,22 @@
     };
     async function mutate(method, payload) {
       const captured = currentIdentity();
-      let sessionId = payload.session_id;
-      if (!['start', 'updateLimits'].includes(method)) {
+      let sessionId = null;
+      if (method !== 'updateLimits') {
         const detail = await read('getWork', { work_id: payload.work_id });
         sessionId = detail?.work?.session_id;
       }
       if (captured !== currentIdentity() || app.disposed || !app.state.authenticated) return { ok: false };
       if (method !== 'updateLimits' && !canControl(sessionId)) return { ok: false };
-      const { session_id: _session, idempotency_key: requestId, ...params } = payload;
+      const { session_id: _session, ...params } = payload;
       const result = await app._command(`sessionRuntime.${method}`, { params,
         ...(method === 'updateLimits' ? {} : { sessionId, controlGeneration: app.state.control.generation,
-          expectedRevision: app.state.snapshot?.session?.revision }),
-        ...(requestId ? { requestId } : {}) });
+          expectedRevision: app.state.snapshot?.session?.revision }) });
       return result?.ok ? result.runtime : result;
     }
     const api = Object.fromEntries(['getSnapshot', 'getWork', 'getResult'].map(method => [method, params => read(method, params)]));
-    for (const method of ['start', 'pause', 'resume', 'cancel', 'updatePending', 'updateLimits']) {
+    // No Start: only the composer starts work (owner rule 2026-09-20).
+    for (const method of ['pause', 'resume', 'cancel', 'updatePending', 'updateLimits']) {
       api[method] = payload => mutate(method, payload);
     }
     function dispose() { controller?.dispose(); controller = null; host = null; identity = ''; }
@@ -47,12 +47,14 @@
       toggle?.setAttribute('aria-expanded', String(!host.hidden));
       if (host.hidden) return;
       if (!controller) {
-        controller = orchestration.createController({ host, state, api,
-          windowRef: host.ownerDocument.defaultView,
-          isVisible: () => !app.disposed && app.state.authenticated && app.state.runtimeOpen === true,
+        host.innerHTML = '<div class="browser-runs" data-browser-runs></div><div class="browser-runtime-limits" data-browser-limits></div>';
+        const windowRef = host.ownerDocument.defaultView;
+        controller = orchestration.createController({ state, api, windowRef, documentRef: host.ownerDocument,
+          runsHost: host.querySelector('[data-browser-runs]'), limitsHost: host.querySelector('[data-browser-limits]'),
+          isSectionVisible: () => !app.disposed && app.state.authenticated && app.state.runtimeOpen === true,
           controlsBlocked: () => app.state.mutationPending === true,
-          canStart: () => canControl(app.state.selectedSessionId),
           canControlWork: work => canControl(work?.session_id),
+          getProjects: () => app.state.projects || [],
           openSession: sessionId => app.selectSession(sessionId) });
         controller.bind();
       } else controller.render();

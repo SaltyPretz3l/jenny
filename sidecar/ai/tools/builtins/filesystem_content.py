@@ -106,7 +106,7 @@ def _load_pillow():
     try:
         image_module = importlib.import_module("PIL.Image")
         image_ops_module = importlib.import_module("PIL.ImageOps")
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         raise ToolExecutionFailure(
             code=CMP_TOOL_EXECUTION_FAILED,
             message="image read support requires Pillow to be installed",
@@ -118,7 +118,7 @@ def _load_pillow():
 def _load_pymupdf():
     try:
         fitz = importlib.import_module("fitz")
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         if not pdf_addon_configured():
             message = (
                 "PDF reading needs the optional PDF reading add-on, which is not installed. "
@@ -297,7 +297,7 @@ def _read_image_file(
             message=f"failed to read image file: {exc}",
             retryable=False,
         ) from exc
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         if _is_pillow_pixel_limit_error(exc, Image):
             raise _pixel_limit_failure(target="image") from exc
         raise
@@ -367,7 +367,7 @@ def _render_pdf_page_image(page: Any, *, max_bytes: int) -> tuple[bytes | None, 
             with Image.open(io.BytesIO(pixmap.tobytes("png"))) as image:
                 image.load()
                 return _encode_complete_jpeg(image, max_bytes=max_bytes)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         if _is_pillow_pixel_limit_error(exc, Image):
             raise _pixel_limit_failure(target="rendered PDF page") from exc
         raise
@@ -452,7 +452,7 @@ def _read_pdf_file(
             remaining_budget = TRUSTED_ATTACHMENTS_MAX_TOTAL_BYTES
             # Lazy: pdf_ocr (urllib, hashing, download lock) stays out of the
             # sidecar.server import graph until a PDF is actually read.
-            from sidecar.ai.tools.builtins import pdf_ocr  # noqa: PLC0415
+            from sidecar.ai.tools.builtins import pdf_ocr
 
             ocr_session = pdf_ocr.PdfOcrSession()
             text_less_pages: list[int] = []
@@ -539,7 +539,7 @@ def _read_pdf_file(
             payload = build_payload([text for text, _next in fitted])
     except ToolExecutionFailure:
         raise
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         raise ToolExecutionFailure(
             code=CMP_TOOL_IO_FAILED,
             message=f"failed to read PDF file: {exc}",

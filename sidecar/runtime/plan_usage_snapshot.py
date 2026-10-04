@@ -50,12 +50,10 @@ _HEADER_VALUE_MAX_CHARS = 64
 _logger = logging.getLogger(__name__)
 
 
-def bind_live_plan_usage(
-    engine: Any, *, writer: Any, enabled: bool, session_id: str | None
-) -> None:
+def bind_live_plan_usage(engine: Any, *, writer: Any, session_id: str | None) -> None:
     """Bind the request's existing writer; no engine-global callback or polling."""
     context = current_request_context(engine)
-    if context is None or not enabled or not callable(writer):
+    if context is None or not callable(writer):
         return
 
     def publish(snapshot: dict[str, Any]) -> None:
@@ -253,15 +251,15 @@ def read_plan_usage_snapshot(engine: Any) -> dict[str, Any] | None:
     return snapshot
 
 
-def attach_plan_usage(payload: dict[str, Any], engine: Any, *, enabled: bool) -> None:
-    """Copy the stashed plan-usage snapshot onto ``payload`` when enabled.
+def attach_plan_usage(payload: dict[str, Any], engine: Any) -> None:
+    """Copy the stashed plan-usage snapshot onto ``payload``.
 
     A deep copy, never an alias -- the caller's payload must not be able to
-    mutate the request-context stash (or vice versa). Sets nothing when the
-    flag is off or there is no snapshot, so the wire key is omitted entirely
-    rather than published as ``null``.
+    mutate the request-context stash (or vice versa). Sets nothing when there
+    is no snapshot, so the wire key is omitted entirely rather than published
+    as ``null``.
     """
-    if not enabled or not isinstance(payload, dict):
+    if not isinstance(payload, dict):
         return
     snapshot = read_plan_usage_snapshot(engine)
     if not snapshot:

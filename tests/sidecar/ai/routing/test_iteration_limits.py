@@ -123,6 +123,20 @@ def test_cloud_engines_get_the_widened_iteration_caps(engine_type: str) -> None:
     assert max_iterations_for_mode(config, mode="autonomous") == 300
 
 
+@pytest.mark.parametrize("engine_type", CLOUD_ENGINE_TYPES)
+def test_stale_cloud_loop_profile_key_is_ignored(engine_type: str) -> None:
+    # cloud_loop_profile retired 2026-09-25 (post-1.2.0 sweep): an old
+    # Electron build may still ship the key in feature_flags; it must be
+    # tolerated and must not switch the cloud profile off.
+    config = parse_runtime_config(
+        {"engine_type": engine_type, "feature_flags": {"cloud_loop_profile": False}}
+    )
+
+    assert config.feature_flags.get("cloud_loop_profile") is False
+    assert loop_profile_name(config) == "cloud"
+    assert max_iterations_for_mode(config, mode="chat") == 40
+
+
 @pytest.mark.parametrize("engine_type", LOCAL_ENGINE_TYPES)
 def test_local_engines_keep_todays_iteration_caps(engine_type: str) -> None:
     config = parse_runtime_config({"engine_type": engine_type})
@@ -130,21 +144,6 @@ def test_local_engines_keep_todays_iteration_caps(engine_type: str) -> None:
     assert loop_profile_name(config) == "local"
     assert max_iterations_for_mode(config, mode="chat") == 8
     assert max_iterations_for_mode(config, mode="task") == 30
-
-
-def test_cloud_profile_falls_back_to_local_when_the_flag_is_off() -> None:
-    config = parse_runtime_config(
-        {"engine_type": "chatgpt", "feature_flags": {"cloud_loop_profile": False}}
-    )
-
-    assert loop_profile_name(config) == "local"
-    assert max_iterations_for_mode(config, mode="chat") == 8
-    assert max_iterations_for_mode(config, mode="task") == 30
-    # 2026-08-30: local working-time default raised to 1800 seconds.
-    assert effective_max_loop_wall_seconds(config) == 1_800.0
-    assert effective_max_tools_per_turn(config) == 20
-    assert effective_tools_execution_timeout_seconds(config) == 120.0
-    assert effective_chunk_inactivity_seconds(config) == 120.0
 
 
 def test_cloud_engine_that_fell_back_to_mock_degrades_to_the_local_profile() -> None:
@@ -219,7 +218,7 @@ def test_effective_helpers_select_local_versus_cloud_values() -> None:
     local = parse_runtime_config({})
     cloud = parse_runtime_config({"engine_type": "chatgpt"})
 
-    assert effective_max_loop_wall_seconds(local) == 1_800.0
+    assert effective_max_loop_wall_seconds(local) == 3_600.0
     assert effective_max_loop_wall_seconds(cloud) == 28_800.0
     assert effective_tools_execution_timeout_seconds(local) == 120.0
     assert effective_tools_execution_timeout_seconds(cloud) == 1_800.0
@@ -227,7 +226,7 @@ def test_effective_helpers_select_local_versus_cloud_values() -> None:
     assert effective_chunk_inactivity_seconds(cloud) == 300.0
     assert effective_max_tools_per_turn(local) == 20
     assert effective_max_tools_per_turn(cloud) == 200
-    assert effective_max_tool_calls_per_session(local) == 200
+    assert effective_max_tool_calls_per_session(local) == 2_000
     assert effective_max_tool_calls_per_session(cloud) == 2_000
     assert effective_max_web_tool_calls_per_turn(local) == 10
     assert effective_max_web_tool_calls_per_turn(cloud) == 30
@@ -257,6 +256,11 @@ def test_effective_helpers_fail_open_on_malformed_and_missing_attributes() -> No
     )
 
     assert effective_max_loop_wall_seconds(malformed) == 28_800.0
+    # The local fallback matches the RuntimeConfig default (3600s).
+    local_malformed = SimpleNamespace(
+        engine_type="ollama", feature_flags={}, max_loop_wall_seconds="not-a-float"
+    )
+    assert effective_max_loop_wall_seconds(local_malformed) == 3_600.0
     assert effective_tools_execution_timeout_seconds(malformed) == 1_800.0
     assert effective_chunk_inactivity_seconds(malformed) == 300.0
     assert effective_max_tools_per_turn(malformed) == 200

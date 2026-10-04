@@ -16,8 +16,8 @@
 }
 
 @media (max-width: 1280px) {
-  .settings-layout {
-    grid-template-columns: 220px minmax(0, 1fr);
+  .settings-view {
+    --settings-rail-width: 200px;
   }
 
   :root {
@@ -38,94 +38,76 @@
   .composer-jump-tools {
     width: 100%;
   }
+}
 
+/* A narrow window has no room for the rail: one bar with the section picker
+   and the search field, both the same height. */
+@media (max-width: 720px) {
   .settings-layout {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
     grid-template-rows: auto minmax(0, 1fr);
-    gap: var(--space-6);
-    padding: var(--space-7);
+    gap: var(--space-5);
+    padding: var(--space-6) var(--space-6) 0;
   }
 
-  .settings-nav-header {
-    padding: var(--space-7) var(--space-6) var(--space-4);
-    border-bottom: none;
-  }
-
-  .settings-nav-title {
-    font-size: var(--font-size-4xl);
+  .settings-nav {
+    overflow: visible;
   }
 
   .settings-nav-scroll {
-    display: flex;
-    flex-wrap: wrap;
-    gap: var(--space-2);
-    padding: 0 var(--space-6) var(--space-6);
-    overflow-x: auto;
-    overflow-y: hidden;
-  }
-
-  .settings-nav-group {
-    display: contents;
-  }
-
-  .settings-nav-group-advanced {
-    display: flex;
-    align-items: center;
-    gap: var(--space-2);
-  }
-
-  .settings-nav-label {
     display: none;
   }
 
-  .settings-nav-disclosure {
+  /* Here the search sits after the section picker, so its results keep to
+     the search field's own width instead of running off the window. */
+  .settings-search-results {
     width: auto;
-    min-height: 36px;
-    padding: 0 var(--space-5);
+    max-width: none;
+    inset-inline-end: 0;
   }
 
-  .settings-nav-disclosure .settings-nav-label-inline {
-    display: inline;
-    color: var(--text-secondary);
-    font-size: var(--font-size-base);
+  /* The picker names the page on screen; the heading stays for assistive tech. */
+  .settings-nav-title {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
   }
 
-  .settings-nav-children {
+  .settings-nav-header {
     display: flex;
-    flex-wrap: wrap;
-    gap: var(--space-2);
+    align-items: stretch;
+    gap: var(--space-4);
+    padding: 0;
   }
 
-  .settings-nav-children[hidden] {
-    display: none;
+  .settings-nav-picker {
+    display: block;
+    flex: 0 1 220px;
+    min-width: 0;
   }
 
-  .settings-nav-item-child {
-    padding-inline-start: var(--space-5);
+  .settings-nav-picker .inv-select-field,
+  .settings-nav-picker .inv-select-field-control {
+    width: 100%;
+    height: var(--rail-search-height);
+    min-height: var(--rail-search-height);
   }
 
-  .settings-nav-divider {
-    display: none;
+  .settings-nav-picker .inv-select-field-control {
+    font-weight: 600;
   }
 
-  .settings-appearance-swatch-row {
-    grid-template-columns: 1fr;
+  .settings-search {
+    flex: 1 1 0;
+    min-width: 0;
   }
 }
 
 @media (max-width: 700px) {
-  .settings-layout {
-    padding: var(--space-6);
-  }
-
-  .settings-nav-header {
-    padding: var(--space-7) var(--space-6) var(--space-4);
-  }
-
-  .settings-overview-chip-row {
-    gap: var(--space-2);
-  }
-
   .chat-view .attachment-chip {
     gap: 6px;
     padding-block: 0;

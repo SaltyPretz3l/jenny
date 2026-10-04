@@ -813,7 +813,7 @@ test('ollama manager forwards stdout and resolves structured stderr levels from 
   );
 });
 
-test('ollama manager kills orphaned Windows runner processes', async () => {
+test('ollama manager kills Windows runner children of the owned root but not a foreign orphan', async () => {
   const killCalls = [];
   const manager = new OllamaProcessManager({
     detectTrayConflictImpl: () => null,
@@ -830,10 +830,7 @@ test('ollama manager kills orphaned Windows runner processes', async () => {
 
   await manager._killOrphanedRunners(140000);
 
-  assert.deepEqual(killCalls, [
-    { pid: 140123, force: true },
-    { pid: 140124, force: true },
-  ]);
+  assert.deepEqual(killCalls, [{ pid: 140124, force: true }]);
 });
 
 test('managed ollama stderr decode telemetry forwards throttled engine-activity heartbeats', async () => {

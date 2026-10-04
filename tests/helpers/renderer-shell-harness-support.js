@@ -1,3 +1,4 @@
+const IDE_SCRIPTS = require('../../renderer/shell/renderer-ide-script-manifest').map(([src]) => src);
 const fs = require('node:fs');
 const path = require('node:path');
 
@@ -33,6 +34,8 @@ function extractRendererScriptOrder(html) {
 const SCRIPT_ORDER = extractRendererScriptOrder(
   fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8')
 );
+
+const IDE_SCRIPT_ORDER = [...SCRIPT_ORDER, ...IDE_SCRIPTS];
 
 function createCanvasContext() {
   const calls = [];
@@ -156,7 +159,7 @@ function createUpdatesStub(options, state, addListener, emitUpdatesChanged) {
 }
 
 module.exports = {
-  SCRIPT_ORDER,
+  SCRIPT_ORDER, IDE_SCRIPT_ORDER,
   createCanvasContext,
   createPretextLayoutMock,
   createSchedulerStub,

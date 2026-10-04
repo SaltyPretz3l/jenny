@@ -21,6 +21,7 @@ const {
   MAX_COMMIT_MESSAGE_CHARS,
   MAX_STASH_MESSAGE_CHARS,
   buildPathspecCommand,
+  literalPathspec,
   classifyExpectedOutcome,
   runWorkspaceGit,
 } = require('./workspace-git-executor');
@@ -165,8 +166,9 @@ class WorkspaceGitService {
 
   // Lexical gate: returns the normalized POSIX relative path or throws.
   _normalizeRelPath(value) {
-    const raw = String(value || '').trim().replace(/\\/g, '/');
-    if (!raw || raw.includes('\0') || raw.startsWith('/') || /^[A-Za-z]:/.test(raw)) {
+    const raw = String(value || '').replace(/\\/g, '/');
+    const lead = raw.trimStart();
+    if (!lead || raw.includes('\0') || lead.startsWith('/') || /^[A-Za-z]:/.test(lead)) {
       throw workspaceGitError(
         WORKSPACE_GIT_ERROR_CODES.PATH_INVALID,
         'Path must be a workspace-relative path.'
@@ -387,7 +389,7 @@ class WorkspaceGitService {
         args.push('HEAD');
       }
       args.push('--');
-      if (relPath) args.push(relPath);
+      if (relPath) args.push(literalPathspec(relPath));
       const r = await this._exec(root, args, { signal: operationSignal });
       if (!r.success) {
         return this._execFailure('getDiff', r);
@@ -759,13 +761,13 @@ class WorkspaceGitService {
         // path (even one currently absent on disk, e.g. a working-tree delete)
         // goes through `restore`; anything git's index doesn't know about is
         // "untracked" for this purpose and is moved to the OS recycle bin.
-        const tracked = await this._exec(root, ['ls-files', '-z', '--', relPath], { signal: opSignal });
+        const tracked = await this._exec(root, ['ls-files', '-z', '--', literalPathspec(relPath)], { signal: opSignal });
         if (!tracked.success) {
           return { skipExec: true, result: this._execFailure('discardFile', tracked) };
         }
         const isTracked = String(tracked.stdout || '').split('\0').filter(Boolean).includes(relPath);
         if (isTracked) {
-          return ['restore', '--worktree', '--', relPath];
+          return ['restore', '--worktree', '--', literalPathspec(relPath)];
         }
         const absolute = this._path.resolve(root, relPath);
         // `ls-files -- <dir>` lists the CHILDREN, never the directory itself,

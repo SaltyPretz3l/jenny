@@ -24,10 +24,10 @@ def test_looks_like_coding_task_detects_repo_work_without_generic_chat() -> None
 
 
 def test_route_prefers_explicit_owner_over_generic_tool_keyword() -> None:
-    assert task_capsule._route_for_prompt("Fix the renderer tool card CSS.") == (  # noqa: SLF001
+    assert task_capsule._route_for_prompt("Fix the renderer tool card CSS.") == (
         "ui/ux (docs/manifests/ui-ux.md)"
     )
-    assert task_capsule._route_for_prompt("Fix the Electron IPC tool bridge.") == (  # noqa: SLF001
+    assert task_capsule._route_for_prompt("Fix the Electron IPC tool bridge.") == (
         "electron wiring (docs/manifests/electron-wiring.md)"
     )
 
@@ -332,7 +332,7 @@ def test_task_capsule_failure_log_redacts_absolute_paths(
     )
 
     assert captured
-    assert captured[0]["data"]["error"] == "boom at [path]"
+    assert captured[0]["data"]["error"] == "boom at [redacted:path]"
 
 
 def test_task_capsule_cache_reuses_and_evicts_oldest_root(tmp_path: Path) -> None:

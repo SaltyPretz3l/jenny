@@ -507,7 +507,7 @@ def test_approval_plan_owns_turn_set_without_mutation_frozen_inputs(tmp_path: Pa
     }
     without_id = build_approval_plan(**builder_args)
     plan = build_approval_plan(**builder_args, change_set_id=CHANGE_SET_ID)
-    from sidecar.ai.routing.tool_loop import (  # noqa: PLC0415
+    from sidecar.ai.routing.tool_loop import (
         build_approval_plan as build_run_approval_plan,
     )
 
@@ -551,7 +551,7 @@ def test_approval_plan_owns_turn_set_without_mutation_frozen_inputs(tmp_path: Pa
 def test_commit_maintenance_is_best_effort_and_skips_interrupted_sets(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from sidecar.ai.tools import workspace_retention  # noqa: PLC0415
+    from sidecar.ai.tools import workspace_retention
 
     workspace = tmp_path / "workspace"
     workspace.mkdir()

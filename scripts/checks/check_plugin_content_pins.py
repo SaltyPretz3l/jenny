@@ -202,11 +202,8 @@ def main() -> int:
         _validate_assets(violations, document_path, plugin_root, assets)
         _validate_entry(violations, document_path, plugin_root, document)
 
-    if pinned_document_count == 0:
-        violations.append(
-            "plugins/official/*/content/*.json: expected at least one document "
-            "declaring assets; actual 0"
-        )
+    # Zero is valid: the last signed panel (ChatGPT) left with the plugin
+    # platform retirement, stage 2 (2026-10-02).
     if violations:
         print("FAIL: official plugin content pin check")
         for violation in violations:

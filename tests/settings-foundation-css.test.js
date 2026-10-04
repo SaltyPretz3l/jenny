@@ -65,16 +65,10 @@ test('settings-grid sheet defines the 2026-07 redesign primitives and stays flat
   const css = readRepoFile('styles/settings-grid.css');
   assert.match(
     css,
-    /\.settings-content-scroll \.settings-card\.settings-section-active\s*\{[^}]*display:\s*grid/,
-    'active section card flips to grid at the same specificity settings-sections.css shows it'
-  );
-  assert.match(
-    css,
     /\.settings-toggle-list \.inv-toggle\s*\{[^}]*flex-direction:\s*row-reverse/,
     'toggle rows read label-first via row-reverse (DOM order stays track-first)'
   );
   for (const selector of [
-    '.settings-group--wide',
     '.settings-toggle-list .inv-toggle-description',
     '.settings-field-row',
     '.settings-field-description',
@@ -92,14 +86,14 @@ test('settings-grid sheet defines the 2026-07 redesign primitives and stays flat
     /\.settings-card \.settings-group,[\s\S]*?\{[^}]*background:\s*none/,
     'groups carry no box surface (open sections)'
   );
-  assert.match(
+  assert.doesNotMatch(
     css,
     /\.settings-card \.settings-group-heading\s*\{[^}]*text-transform:\s*uppercase/,
-    'group headings are kicker-style'
+    'group headings are sentence case (type scale 2026-09-28)'
   );
   assert.match(
     css,
-    /\.settings-toggle-list \.inv-toggle-label\s*\{[^}]*font-size:\s*var\(--font-size-card-title\)/,
-    'toggle row labels use the bumped type step'
+    /\.settings-toggle-list \.inv-toggle-label\s*\{[^}]*font-size:\s*var\(--font-size-body\)/,
+    'toggle row labels use the body role'
   );
 });

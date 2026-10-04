@@ -135,7 +135,7 @@ for (const boundary of ['before', 'after']) {
   });
 }
 
-test('pre-publication create crash preserves an unresolved directory across restart', t => {
+test('pre-publication create crash recovers an empty directory across restart', t => {
   const { root } = fixture(t);
   const io = faultIO();
   const store = new RuntimeLineageStore(root, { io });
@@ -143,9 +143,9 @@ test('pre-publication create crash preserves an unresolved directory across rest
   assert.throws(() => store.create({ ...rootArgs(), rootRunId: 'root_2', rootWorkId: 'work_2' }),
     { code: 'lineage_write_uncertain' });
   const restarted = new RuntimeLineageStore(root);
-  assert.equal(restarted.snapshot().read_only, true);
-  assert.throws(() => readPortableLineageSnapshot(root), { code: 'lineage_entry_unresolved' });
-  store.recover();
+  assert.equal(restarted.snapshot().read_only, false);
+  assert.equal(readPortableLineageSnapshot(root).records.length, 1);
+  assert.equal(restarted.create({ ...rootArgs(), rootRunId: 'root_2', rootWorkId: 'work_2' }).created, true);
   assert.equal(new RuntimeLineageStore(root).snapshot().root_record_count, 2);
 });
 
@@ -223,4 +223,34 @@ test('a future child cannot collide with an already owned root work ID', t => {
   assert.equal(restarted.snapshot().read_only, false);
   assert.throws(() => restarted.beginSpawn(spawn()), { code: 'lineage_snapshot_conflict' });
   assert.equal(restarted.get('root_1').children.length, 0);
+});
+
+test('portable export treats a missing lineage root as empty and still fails closed on an unsafe root', t => {
+  const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-lineage-profile-'));
+  t.after(() => fs.rmSync(userData, { recursive: true, force: true }));
+  const root = path.join(userData, 'session-runtime-lineage');
+  const store = new RuntimeLineageStore(root);
+  fs.rmSync(root, { recursive: true, force: true });
+  assert.deepEqual(store.exportPortableSnapshot(), { schema_version: 1, records: [] });
+  assert.deepEqual(readPortableLineageSnapshot(root), { schema_version: 1, records: [] });
+  assert.equal(store.hasSessionReferences('session_1'), false);
+  assert.equal(store.snapshot().read_only, false);
+
+  fs.writeFileSync(root, '');
+  assert.throws(() => store.exportPortableSnapshot(), { code: 'lineage_directory_unsafe' });
+  assert.throws(() => readPortableLineageSnapshot(root), { code: 'lineage_directory_unsafe' });
+  assert.equal(store.snapshot().read_only, true);
+  fs.rmSync(root, { force: true });
+  const linked = new RuntimeLineageStore(root);
+  fs.rmSync(root, { recursive: true, force: true });
+  const outside = path.join(userData, 'outside');
+  fs.mkdirSync(outside);
+  fs.symlinkSync(outside, root, process.platform === 'win32' ? 'junction' : 'dir');
+  assert.throws(() => linked.exportPortableSnapshot(), { code: 'lineage_directory_unsafe' });
+  assert.throws(() => readPortableLineageSnapshot(root), { code: 'lineage_directory_unsafe' });
+
+  const registered = fixture(t);
+  fs.rmSync(registered.root, { recursive: true, force: true });
+  assert.throws(() => registered.store.exportPortableSnapshot(), { code: 'lineage_directory_changed' });
+  assert.equal(registered.store.snapshot().read_only, true);
 });

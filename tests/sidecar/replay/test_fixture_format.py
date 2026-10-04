@@ -219,12 +219,12 @@ def test_discover_fixtures_returns_empty_for_missing_dir(tmp_path: Path) -> None
 def test_allowed_constants_have_expected_cardinality() -> None:
     # Phase 12B widened ALLOWED_FIXTURE_FAMILIES (+1 conversation_scenario)
     # and ALLOWED_TARGET_PHASES (+1 target_phase=12). Phase 12D widens
-    # ALLOWED_TURN_EVENT_KINDS from 16 to 18 (plan_object + plan_document).
-    # The provider set is unchanged.
+    # ALLOWED_TURN_EVENT_KINDS from 16 to 18 (plan_object + plan_document);
+    # source_citations (a live turn event) makes 19. The provider set is unchanged.
     assert len(ALLOWED_FIXTURE_FAMILIES) == 10
     assert len(ALLOWED_PROVIDERS) == 3
     assert len(ALLOWED_TARGET_PHASES) == 6
-    assert len(ALLOWED_TURN_EVENT_KINDS) == 18
+    assert len(ALLOWED_TURN_EVENT_KINDS) == 19
 
 
 def test_fixtures_root_resolves_under_repo_tests_dir() -> None:

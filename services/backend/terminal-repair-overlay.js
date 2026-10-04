@@ -1,8 +1,6 @@
 'use strict';
 
-function normalizeId(value) {
-  return typeof value === 'string' ? value.trim() : '';
-}
+const { normalizeId } = require('../shared/normalize');
 
 function buildTerminalRepairOverlayMessage(repair) {
   if (!repair || typeof repair !== 'object') return null;

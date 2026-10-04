@@ -308,7 +308,7 @@ class MonitorManager(_MonitorStreamingMixin, _MonitorPollingMixin):
         )
         try:
             thread.start()
-        except Exception as error:  # noqa: BLE001 - normalized at the tool boundary
+        except Exception as error:  # normalized at the tool boundary
             self._terminate_active(active, reason="process_error")
             raise ToolExecutionFailure(
                 code=CMP_TOOL_EXECUTION_FAILED,
@@ -367,14 +367,13 @@ class MonitorManager(_MonitorStreamingMixin, _MonitorPollingMixin):
                 continue
             if status is None:
                 continue
-            if (
-                status.get("state") == "running"
-                and status.get("persistent") is True
-            ):
-                status["state"] = "stale"
+            if status.get("state") == "running":
+                status["state"] = "stale" if status.get("persistent") is True else "cancelled"
                 status["success"] = False
                 status["terminal"] = True
-                status["terminal_reason"] = "stale_recovery"
+                status["terminal_reason"] = (
+                    "stale_recovery" if status.get("persistent") is True else "shutdown"
+                )
                 status["updated_at"] = _utc_now_iso()
                 try:
                     self._status_store.write(monitor_id, status)

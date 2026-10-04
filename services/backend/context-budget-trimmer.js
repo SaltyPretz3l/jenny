@@ -29,8 +29,10 @@
  * when the estimate already exceeds budget). On large windows it is inert.
  *
  * computeEffectiveContextBudget mirrors token_budget.py
- * TokenBudget.effective_context so the JS budget tracks the sidecar per-request
- * ceiling without crossing the process boundary.
+ * TokenBudget.effective_context (the window less the LARGER of the output and
+ * summary reservations, no tools) so the JS budget tracks the sidecar
+ * per-request ceiling without crossing the process boundary. Both languages
+ * assert tests/fixtures/context-budget-parity.json.
  */
 
 'use strict';
@@ -41,6 +43,7 @@ const MESSAGE_OVERHEAD_TOKENS = 4; // mirrors token_budget.py _MESSAGE_OVERHEAD_
 // Mirrors token_budget.py constants.
 const MIN_OUTPUT_RESERVATION = 1024;
 const DEFAULT_RESERVED_FOR_SUMMARY = 8192;
+const MIN_SUMMARY_RESERVATION = 1024;
 
 // Headroom withheld from the blocks for context the JS layer cannot measure:
 // the sidecar's own base system prompt + tool schemas. Conservative on purpose
@@ -81,11 +84,14 @@ function estimateMessagesTokens(messages) {
 
 /**
  * Mirror of token_budget.py TokenBudget.effective_context() for a chat turn
- * with no tools counted. We don't know max_output_tokens in JS, so we make the
- * same conservative assumption the sidecar makes for typical small local models
- * (where max_output defaults to min(window, 16384) ≥ window/4): the output
- * reservation binds at the quarter cap. This matches the sidecar's post-16e7863
- * number on the common path (e.g. 32768 → 16384, 16384 → 8192, 8192 → 4096).
+ * with no tools counted. The answer and the compaction summary are separate
+ * requests, so only the larger reservation is held back (not their sum). We
+ * don't know max_output_tokens in JS, so we make the same conservative
+ * assumption the sidecar makes for typical small local models (where
+ * max_output defaults to min(window, 16384) >= window/4): the output
+ * reservation binds at its quarter-window cap. The summary reservation is
+ * capped at an eighth of the window (floor 1024). Examples: 32768 -> 24576,
+ * 8192 -> 6144, 200000 -> 150000.
  *
  * @param {number} contextWindow effective context length (status field)
  * @returns {number|null} usable input budget in tokens, or null when unknown
@@ -96,10 +102,15 @@ function computeEffectiveContextBudget(contextWindow) {
   if (window <= 0) {
     return null;
   }
-  const quarter = Math.floor(window / 4);
-  const outputReservation = Math.max(quarter, MIN_OUTPUT_RESERVATION);
-  const summaryReservation = Math.min(DEFAULT_RESERVED_FOR_SUMMARY, quarter);
-  return Math.max(0, window - outputReservation - summaryReservation);
+  const outputReservation = Math.min(
+    window,
+    Math.max(Math.floor(window / 4), MIN_OUTPUT_RESERVATION)
+  );
+  const summaryReservation = Math.min(
+    DEFAULT_RESERVED_FOR_SUMMARY,
+    Math.max(Math.floor(window / 8), MIN_SUMMARY_RESERVATION)
+  );
+  return Math.max(0, window - Math.max(outputReservation, summaryReservation));
 }
 
 // Close an unterminated CommonMark code fence so a truncated block never spills

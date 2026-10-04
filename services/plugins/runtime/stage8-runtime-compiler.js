@@ -3,15 +3,16 @@
 const { validate } = require('../contracts/generated-plugin-contracts');
 const { compileV5RuntimeSnapshot } = require('./stage7-runtime-compiler');
 const { reverifyInstalledPackage, evaluateActivationEligibility } = require('./declarative-compiler');
+const { RETIRED_CONTRIBUTION_KIND_SET } = require('./declarative-compiler-constants');
 
 const ARRAY_FIELDS = Object.freeze([
   'full_host_descriptors', 'native_mcp_bindings', 'session_providers',
   'engine_adapters', 'hook_descriptors', 'containment_profiles', 'expected_rejections',
 ]);
-const PRIVILEGED_KINDS = new Set(['native_mcp', 'session_provider', 'engine_adapter', 'hook']);
 
 async function compileV6RuntimeSnapshot(options = {}) {
   const { generation, pointer } = options;
+  const verifiedPackages = new Map();
   if (!generation || !pointer || generation.generation_schema_version !== 6) {
     return { ok: false, reason: 'stage8_generation_required' };
   }
@@ -20,11 +21,11 @@ async function compileV6RuntimeSnapshot(options = {}) {
     return { ok: false, reason: 'authority_snapshot_mismatch' };
   }
   const legacyEntries = [];
-  const privilegedPackages = [];
   for (const entry of generation.plugins.filter((item) => item.effective_state === 'active')) {
     const reverified = await reverifyInstalledPackage({
       facade: options.facade, baseDir: options.baseDir, pluginEntry: entry,
       verifyPackage: options.verifyPackage, now: options.now,
+      verifiedPackages,
     });
     if (!reverified.ok) return { ok: false, reason: reverified.reason || 'package_record_unavailable' };
     if (reverified.verdict.manifest.manifest_schema_version !== 6) {
@@ -36,46 +37,17 @@ async function compileV6RuntimeSnapshot(options = {}) {
       verdict: reverified.verdict,
     });
     if (!activation.activation_eligible) return { ok: false, reason: activation.activation_reason_code };
-    const privilegedContributions = reverified.verdict.manifest.contributions.filter(
-      (item) => PRIVILEGED_KINDS.has(item.kind)
-    );
-    if (reverified.verdict.manifest.contributions.length > privilegedContributions.length) {
-      legacyEntries.push(entry);
-    }
-    if (privilegedContributions.length > 0) {
-      const ids = new Set(privilegedContributions.map((item) => item.contribution_id));
-      privilegedPackages.push({ entry, verdict: {
-        ...reverified.verdict,
-        manifest: { ...reverified.verdict.manifest, contributions: privilegedContributions },
-        full_host_contents: reverified.verdict.full_host_contents.filter(
-          (item) => ids.has(item.contribution_id)
-        ),
-      } });
-    }
+    // Privileged kinds are retired and inert: no host package is ever compiled.
+    if (reverified.verdict.manifest.contributions.some(
+      (item) => !RETIRED_CONTRIBUTION_KIND_SET.has(item.kind)
+    )) legacyEntries.push(entry);
   }
   const legacy = await compileV5RuntimeSnapshot({
     ...options,
+    verifiedPackages,
     generation: { ...generation, generation_schema_version: 5, plugins: legacyEntries },
   });
   if (!legacy.ok) return legacy;
-  let privileged = {};
-  if (privilegedPackages.length) {
-    if (typeof options.compilePrivileged !== 'function') {
-      return { ok: false, reason: 'privileged_runtime_participant_unavailable' };
-    }
-    const compiled = await options.compilePrivileged({
-      packages: privilegedPackages,
-      phase: options.phase,
-      authority: {
-        registry_revision: pointer.revision,
-        dependency_graph_hash: generation.graph_hash,
-        commit_epoch: pointer.commit_epoch,
-        active_generation_id: generation.generation_id,
-      },
-    });
-    if (!compiled?.ok) return { ok: false, reason: compiled?.reason || 'privileged_runtime_compile_failed' };
-    privileged = compiled;
-  }
   const candidate = {
     kind: 'plugin_runtime_snapshot', runtime_schema_version: 6,
     registry_revision: pointer.revision, dependency_graph_hash: generation.graph_hash,
@@ -86,11 +58,11 @@ async function compileV6RuntimeSnapshot(options = {}) {
     view_contributions: legacy.snapshot.view_contributions,
     provider_descriptors: legacy.snapshot.provider_descriptors,
   };
-  for (const field of ARRAY_FIELDS) candidate[field] = Array.isArray(privileged[field]) ? privileged[field] : [];
+  for (const field of ARRAY_FIELDS) candidate[field] = [];
   const checked = validate('PluginRuntimeSnapshotV6', candidate);
   if (!checked.ok) return { ok: false, reason: 'runtime_snapshot_invalid', detail: checked.error };
-  return { ...legacy, snapshot: checked.value, privileged,
-    privileged_packages: Object.freeze(privilegedPackages) };
+  return { ...legacy, snapshot: checked.value, privileged: {},
+    privileged_packages: Object.freeze([]) };
 }
 
 module.exports = { ARRAY_FIELDS, compileV6RuntimeSnapshot };

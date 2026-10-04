@@ -120,56 +120,18 @@ test('the bottom-panel toggle is always present and reflects + flips the open st
   assert.equal(harness.state.ui.ide.bottomPanelOpen, false, 'toggle collapses it again');
 });
 
-test('the inline-suggestions toggle appears only behind the flag and flips the persisted state', async (t) => {
+test('the status bar has no inline-suggestions control (removed 2026-10-01)', async (t) => {
   const harness = createHarness({ bridgeOptions: { files: { 'a.txt': 'hi' } } });
   t.after(() => harness.dispose());
+  // A leftover flag value from an old profile must not bring the control back.
+  harness.state.features = { featureFlags: { workspace_inline_suggest: true } };
   await harness.controller.activateIde();
   await harness.controller.openFile('a.txt');
   await settle();
   const statusBar = harness.getDom().ideStatusBar;
-  // Default (flag off): no inline-suggest toggle in the status bar.
+  assert.ok(statusBar.querySelector('[data-ide-status-action="go-to-line"]'), 'the status bar rendered');
   assert.equal(statusBar.querySelector('[data-ide-status-action="toggle-inline-suggest"]'), null);
-
-  // Turn the feature flag on; the status bar re-renders the toggle on next render.
-  harness.state.features = { featureFlags: { workspace_inline_suggest: true } };
-  await harness.controller.openFile('a.txt'); // re-activates + re-renders the status bar
-  await settle();
-  const toggle = statusBar.querySelector('[data-ide-status-action="toggle-inline-suggest"]');
-  assert.ok(toggle, 'toggle renders when the flag is on');
-  assert.ok(toggle.querySelector('svg'), 'inline-suggest glyph is present (CSP-safe)');
-  // Defaults to enabled (the per-user quick toggle starts on).
-  assert.equal(toggle.classList.contains('ide-statusbar-action--active'), true);
-
-  toggle.click();
-  await settle();
-  assert.equal(harness.state.ui.ide.inlineSuggestEnabled, false, 'click disables suggestions');
-  const after = statusBar.querySelector('[data-ide-status-action="toggle-inline-suggest"]');
-  assert.equal(after.classList.contains('ide-statusbar-action--active'), false, 'inactive after turning off');
-  assert.equal(harness.bridge.calls.updateSettings.at(-1).inlineSuggestEnabled, false, 'persisted off');
-});
-
-test('the inline-suggest caret opens the completion-model menu without flipping the toggle', async (t) => {
-  const harness = createHarness({ bridgeOptions: { files: { 'a.txt': 'hi' } } });
-  t.after(() => harness.dispose());
-  harness.state.features = { featureFlags: { workspace_inline_suggest: true } };
-  await harness.controller.activateIde();
-  await harness.controller.openFile('a.txt');
-  await settle();
-  const dom = harness.getDom();
-  const statusBar = dom.ideStatusBar;
-
-  const caret = statusBar.querySelector('[data-ide-status-action="inline-suggest-menu"]');
-  assert.ok(caret, 'the menu caret renders beside the toggle when the flag is on');
-  assert.equal(caret.getAttribute('aria-haspopup'), 'dialog', 'caret advertises a dialog popup');
-
-  const enabledBefore = harness.state.ui.ide.inlineSuggestEnabled;
-  caret.click();
-  await settle();
-  // Clicking the caret opens the menu; it must NOT toggle on/off (that is the
-  // adjacent button's job).
-  assert.equal(harness.state.ui.ide.inlineSuggestEnabled, enabledBefore, 'caret does not flip enabled state');
-  const popover = dom.ideShell.querySelector('.ide-fim-popover');
-  assert.ok(popover && popover.hidden === false, 'the completion-model menu opens on the shell');
+  assert.equal(statusBar.querySelector('[data-ide-status-action="inline-suggest-menu"]'), null);
 });
 
 test('status bar shows the git branch + dirty count from the store and opens the branch switcher', async (t) => {
@@ -206,127 +168,6 @@ test('status bar hides the branch chip when the workspace is not a git repo', as
   await harness.controller.openFile('a.txt');
   await settle(250);
   assert.equal(harness.getDom().ideStatusBar.querySelector('.ide-statusbar-branch'), null);
-});
-
-test('the inline-suggest group shows a warn marker when FIM is degraded', () => {
-  const dom = new JSDOM('<!doctype html><body><div id="sb"></div></body>');
-  const prevWindow = globalThis.window;
-  globalThis.window = dom.window;
-  try {
-    const doc = dom.window.document;
-    let degraded = true;
-    const ide = { activeTabPath: 'a.js', wordWrap: 'off' };
-    const statusBar = createIdeStatusBar({
-      getDom: () => ({ ideStatusBar: doc.getElementById('sb'), ideBreadcrumbs: null }),
-      getIde: () => ide,
-      callbacks: {
-        getCursorInfo: () => ({ lineNumber: 1, column: 1, selectedChars: 0 }),
-        getActiveLanguageId: () => 'javascript',
-        getDocumentKind: () => 'file',
-        isDiffTab: () => false,
-        getInlineSuggestVisible: () => true,
-        getInlineSuggestEnabled: () => true,
-        getInlineSuggestDegraded: () => degraded,
-        getInlineSuggestComputeStatus: () => ({
-          target: 'automatic', reason: 'Selected from live runtime resources.',
-        }),
-      },
-    });
-    statusBar.render();
-    const warn = doc.getElementById('sb').querySelector('.ide-statusbar-inline-suggest-warn');
-    assert.ok(warn, 'warn marker rendered while FIM is degraded');
-    assert.ok(warn.querySelector('svg'), 'warn uses an inline (CSP-safe) glyph');
-    assert.match(warn.getAttribute('aria-label') || '', /unavailable/i);
-    // The toggle button title also reflects the degraded state on hover.
-    const toggle = doc.getElementById('sb').querySelector('[data-ide-status-action="toggle-inline-suggest"]');
-    assert.match(toggle.getAttribute('title') || '', /unavailable/i);
-
-    // Healthy again -> the warn marker disappears.
-    degraded = false;
-    statusBar.render();
-    assert.equal(
-      doc.getElementById('sb').querySelector('.ide-statusbar-inline-suggest-warn'),
-      null,
-      'no warn marker when FIM is healthy'
-    );
-    assert.match(
-      doc.getElementById('sb').querySelector('[data-ide-status-action="toggle-inline-suggest"]').title,
-      /Compute: automatic.*live runtime resources/
-    );
-  } finally {
-    globalThis.window = prevWindow;
-  }
-});
-
-test('paused inline suggestions use a distinct info glyph while degraded takes precedence', () => {
-  const dom = new JSDOM('<!doctype html><body><div id="sb"></div></body>');
-  const prevWindow = globalThis.window;
-  globalThis.window = dom.window;
-  try {
-    const doc = dom.window.document;
-    let paused = true;
-    let degraded = false;
-    const statusBar = createIdeStatusBar({
-      getDom: () => ({ ideStatusBar: doc.getElementById('sb'), ideBreadcrumbs: null }),
-      getIde: () => ({ activeTabPath: 'a.js', wordWrap: 'off' }),
-      callbacks: {
-        getCursorInfo: () => ({ lineNumber: 1, column: 1, selectedChars: 0 }),
-        getDocumentKind: () => 'file',
-        isDiffTab: () => false,
-        getInlineSuggestVisible: () => true,
-        getInlineSuggestEnabled: () => true,
-        getInlineSuggestPaused: () => paused,
-        getInlineSuggestDegraded: () => degraded,
-      },
-    });
-    statusBar.render();
-
-    const marker = doc.querySelector('.ide-statusbar-inline-suggest-warn');
-    const title = 'Inline suggestions paused while chat is responding.';
-    assert.equal(marker.dataset.diagSeverity, 'info');
-    assert.equal(marker.title, title);
-    assert.equal(marker.querySelectorAll('rect').length, 2, 'paused uses the pause glyph');
-    assert.equal(doc.querySelector('[data-ide-status-action="toggle-inline-suggest"]').title, title);
-
-    degraded = true;
-    statusBar.render();
-    assert.equal(doc.querySelector('.ide-statusbar-inline-suggest-warn').dataset.diagSeverity, 'warning');
-    assert.match(doc.querySelector('[data-ide-status-action="toggle-inline-suggest"]').title, /unavailable/i);
-    assert.equal(doc.querySelector('.ide-statusbar-inline-suggest-warn rect'), null, 'degraded restores the warning glyph');
-  } finally {
-    globalThis.window = prevWindow;
-  }
-});
-
-test('no warn marker when suggestions are disabled even if degraded', () => {
-  const dom = new JSDOM('<!doctype html><body><div id="sb"></div></body>');
-  const prevWindow = globalThis.window;
-  globalThis.window = dom.window;
-  try {
-    const doc = dom.window.document;
-    const ide = { activeTabPath: 'a.js', wordWrap: 'off' };
-    const statusBar = createIdeStatusBar({
-      getDom: () => ({ ideStatusBar: doc.getElementById('sb'), ideBreadcrumbs: null }),
-      getIde: () => ide,
-      callbacks: {
-        getCursorInfo: () => ({ lineNumber: 1, column: 1, selectedChars: 0 }),
-        getActiveLanguageId: () => 'javascript',
-        getDocumentKind: () => 'file',
-        isDiffTab: () => false,
-        getInlineSuggestVisible: () => true,
-        getInlineSuggestEnabled: () => false, // user turned suggestions off
-        getInlineSuggestDegraded: () => true,
-      },
-    });
-    statusBar.render();
-    assert.equal(
-      doc.getElementById('sb').querySelector('.ide-statusbar-inline-suggest-warn'),
-      null,
-      'a backend warn is irrelevant when the user has suggestions off'
-    );
-  } finally {
-    globalThis.window = prevWindow;
-  }
 });
 
 test('status bar explains when large-file policy overrides the minimap preference', () => {

@@ -382,6 +382,10 @@
     hardware_fit_unverified: jt('models.library.tuning.hardwareFitUnverified', 'Applied. Ollama reports this native context limit, but Jenny could not independently verify RAM or VRAM fit.'),
     hardware_fit_estimated: jt('models.library.tuning.hardwareFitEstimated', 'Applied. Fit estimated from model size and your hardware; not yet measured on this machine.'),
   });
+  // Refusal reasons with their own next step; any other reads "Not applied: <reason>."
+  var APPLY_REASON_COPY = Object.assign(Object.create(null), {
+    active_stream: jt('models.library.tuning.finishReplyThenApply', 'Finish the current reply first, then Apply again.'),
+  });
 
   function applyStatusMessage(result) {
     var status = String((result && result.status) || '');
@@ -389,7 +393,12 @@
       var warning = String((result && result.preflight && result.preflight.warning) || '');
       return APPLY_STATUS_COPY[warning] || jt('models.library.tuning.appliedAcknowledged', 'Applied. The runtime acknowledged this model profile.');
     }
+    // A refusal while an image render holds the GPU says what to wait for.
+    if (status === 'rejected' && result && result.reason === 'gpu_lease_held') {
+      return jt('models.library.tuning.imageHoldsGpu', 'An image is being drawn. Apply again when it finishes.');
+    }
     return APPLY_STATUS_COPY[status]
+      || APPLY_REASON_COPY[String((result && result.reason) || '')]
       || jt('models.library.tuning.notApplied', 'Not applied: {reason}.', { reason: String((result && result.reason) || 'validation failed').replaceAll('_', ' ') });
   }
 

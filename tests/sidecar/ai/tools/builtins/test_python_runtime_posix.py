@@ -191,8 +191,8 @@ def test_create_runtime_venv_copies_pbs_tree(
     assert telemetry.events["venv_created"]["creation_path"] == "bundled_copy"
     assert (staging / "bin" / "python").is_file()
     if os.name != "nt":
-        assert interpreter._venv_python(staging) == staging / "bin" / "python"  # noqa: SLF001
-        assert interpreter._venv_python(staging).is_file()  # noqa: SLF001
+        assert interpreter._venv_python(staging) == staging / "bin" / "python"
+        assert interpreter._venv_python(staging).is_file()
 
 
 @pytest.mark.parametrize("working_directory", (None, Path("workspace")))

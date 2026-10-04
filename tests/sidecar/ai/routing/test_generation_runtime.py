@@ -60,9 +60,9 @@ from sidecar.runtime.turn_state import (
 
 
 def _reset_engine_liveness_state() -> None:
-    with engine_liveness._state.lock:  # noqa: SLF001
-        engine_liveness._state.last_activity_monotonic = None  # noqa: SLF001
-        engine_liveness._state.active_generations = 0  # noqa: SLF001
+    with engine_liveness._state.lock:
+        engine_liveness._state.last_activity_monotonic = None
+        engine_liveness._state.active_generations = 0
 
 
 @pytest.fixture(autouse=True)
@@ -2799,7 +2799,92 @@ class _ThinkingRepetitionTripEngine:
         yield  # pragma: no cover
 
 
-def test_emit_thinking_surfaces_repetition_suppression_once() -> None:
+def _run_repetition_trip_generation(events: list[object], engine: Any = None) -> Any:
+    kernel = SimpleNamespace(
+        _engine=engine if engine is not None else _ThinkingRepetitionTripEngine(),
+        _config=SimpleNamespace(
+            temperature=0.0,
+            reasoning_effort=None,
+            feature_flags={},
+            engine_type="ollama",
+            model="test-model",
+        ),
+        _system_prompt_for_engine=lambda v: str(v),
+    )
+    runtime = LoopRuntime(
+        emit=events.append,
+        request_id="req_repetition_trip",
+        streaming=True,
+        chunk_inactivity_seconds=0.5,
+    )
+    result, _emitted = stream_generate_with_tools(
+        kernel,
+        runtime=runtime,
+        latest_user_content="hello",
+        prompt_messages=[],
+        max_tokens=20_000,
+        reasoning_effort=None,
+        prompt_cache_enabled=False,
+        system_prompt="sys",
+        tool_schemas=[],
+    )
+    return result
+
+
+def _hidden_status_events(events: list[object]) -> list[ThinkingEvent]:
+    return [
+        event
+        for event in events
+        if isinstance(event, ThinkingEvent)
+        and event.delta == "Reasoning hidden - repetition detected"
+    ]
+
+
+def test_router_repetition_trip_aborts_into_the_checkpoint_when_abort_is_on(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """HB-004: the router's own guard ends the generation on a repetition trip
+    (finish ``thinking_budget`` -> checkpoint continuation), not a silent row."""
+    monkeypatch.delenv("JENNY_ENABLE_THINKING_BUDGET_ABORT", raising=False)
+    events: list[object] = []
+
+    result = _run_repetition_trip_generation(events)
+
+    assert result.finish_reason == "thinking_budget"
+    assert _hidden_status_events(events) == []
+
+
+class _EngineStatusEngine:
+    """An engine whose own guard hid the reasoning and said so (abort off)."""
+
+    def stream_with_tools(self, **_kwargs: Any):
+        yield StreamingEvent(kind="thinking", text="Looking at the ledger rows.")
+        yield StreamingEvent(
+            kind="thinking_status", text="Reasoning hidden - repetition detected"
+        )
+        yield StreamingEvent(kind="content", text="Done.")
+        return GenerationResult(content="Done.", finish_reason="stop")
+
+
+def test_router_turns_the_engine_status_kind_into_a_status_thinking_event() -> None:
+    events: list[object] = []
+
+    result = _run_repetition_trip_generation(events, engine=_EngineStatusEngine())
+
+    assert result.finish_reason == "stop"
+    statuses = _hidden_status_events(events)
+    assert len(statuses) == 1
+    assert statuses[0].kind == CHAT_THINKING_KIND_STATUS
+    assert statuses[0].persist is False
+    assert statuses[0].thinking_id == "think_req_repetition_trip_model"
+
+
+def test_emit_thinking_surfaces_repetition_suppression_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Abort off: the generation runs on with the reasoning hidden, so the row
+    # must say so (with the abort on, the checkpoint continuation takes over).
+    monkeypatch.setenv("JENNY_ENABLE_THINKING_BUDGET_ABORT", "0")
     kernel = SimpleNamespace(
         _engine=_ThinkingRepetitionTripEngine(),
         _config=SimpleNamespace(
@@ -2982,14 +3067,13 @@ def test_emit_thinking_logs_guard_trip_once_and_suppresses_subsequent(
             tool_schemas=[],
         )
 
-    # Guard was tripped — no thinking events should be emitted
+    # Guard was tripped: no reasoning deltas, only one non-persisted status that
+    # says why the row went quiet (abort off keeps generating; Astra B1 review).
     thinking_events = [e for e in events if isinstance(e, ThinkingEvent)]
-    assert thinking_events == []
-    assert all(
-        event.delta != "Reasoning hidden - repetition detected"
-        for event in thinking_events
-    )
-    assert "chat.thinking" not in emitted
+    assert [(e.kind, e.delta, e.persist) for e in thinking_events] == [
+        ("status", "Reasoning hidden - thinking budget reached", False)
+    ]
+    assert "chat.thinking" in emitted
 
     # The guard-trip log event must appear exactly once (lines 385-386)
     trip_records = [

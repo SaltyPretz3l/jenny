@@ -9,6 +9,7 @@ const { AttachmentAssetStore } = require('../../services/attachment-asset-store'
 const { prepareAttachmentEntries } = require('../../services/attachment-service');
 const { validateImageAttachmentsForManagedSend } = require('../../services/backend/managed-sidecar-attachments');
 const { PROJECT_ERROR_CODES } = require('../../services/backend/error-codes');
+const PNG_SIGNATURE = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
 
 function registerWithAttachmentDeps({ workspaceRoot, preparedCalls, backendService }) {
   const handlers = createAttachmentIpcHandlers({ backendService,
@@ -69,7 +70,7 @@ function importFixture(t, dialog = {}) {
 test('image import receipt allows only its originating session even with an unavailable project folder', t => {
   const h = importFixture(t);
   const image = h.handlers['attachments.saveImageAsset']({}, {
-    bytes: Buffer.from('image data'), mimeType: 'image/png', displayName: 'capture.png',
+    bytes: Buffer.concat([PNG_SIGNATURE, Buffer.from('image data')]), mimeType: 'image/png', displayName: 'capture.png',
   }, { session_id: 'session-a' });
   assert.doesNotThrow(() => validateImageAttachmentsForManagedSend(h.backend, [image], {
     requestedSessionId: 'session-a', resolvedSessionId: 'session-a',

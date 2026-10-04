@@ -375,27 +375,36 @@ test('renderer renders composer tool toggles, updates state, and includes toolPr
       tools: {
         async list() {
           return [
-            { name: 'web_search', description: 'Web search' },
-            { name: 'Bash', description: 'Terminal' },
-            { name: 'list_dir', description: 'List directory' },
+            { name: 'web_search', surfaceFamily: 'web', lockdownAvailable: false },
+            { name: 'run_command', surfaceFamily: 'terminal', lockdownAvailable: false },
+            { name: 'list_dir', surfaceFamily: 'files', lockdownAvailable: true },
           ];
         },
       },
     },
   });
+  // This harness predates connection overrides; echo both maps at the service boundary.
+  const setPreferences = shell.sessions.setPreferences;
+  shell.sessions.setPreferences = async (id, preferences) => {
+    const persisted = await setPreferences(id, preferences);
+    if (persisted) persisted.tool_connection_overrides = { ...preferences.tool_connection_overrides };
+    return persisted;
+  };
+  window.document.getElementById('newChatButton').click();
+  await waitForUi(window, 40);
   const input = window.document.getElementById('chatInput');
   const sendButton = window.document.getElementById('sendButton');
   const contextUsageSlot = window.document.getElementById('composerContextUsageSlot');
 
   await waitForUi(window, 40);
-  const webToggle = window.document.querySelector('[data-inv-toggle="tool-toggle-web_search"]');
+  const webToggle = window.document.querySelector('[data-inv-toggle="tool-target:web"]');
   assert.ok(webToggle);
   assert.equal(
     webToggle.getAttribute('aria-checked'),
     'false',
     'web starts off — hydrated from the stub persisted config (tools.web=false)'
   );
-  const bashToggle = window.document.querySelector('[data-inv-toggle="tool-toggle-Bash"]');
+  const bashToggle = window.document.querySelector('[data-inv-toggle="tool-target:terminal"]');
   assert.ok(bashToggle);
   bashToggle.click();
 
@@ -405,17 +414,14 @@ test('renderer renders composer tool toggles, updates state, and includes toolPr
   await waitForUi(window, 25);
 
   assert.equal(shell.__state.chatCalls.length, 1);
+  // Settings-off web is enforced by config, so the payload carries only this chat's own switches.
+  assert.equal(Object.hasOwn(shell.__state.chatCalls[0].toolPreferences?.families || {}, 'web'), false);
   assert.equal(
-    shell.__state.chatCalls[0].toolPreferences?.web_search,
-    false,
-    'hydrated-off web reaches the send payload'
-  );
-  assert.equal(
-    shell.__state.chatCalls[0].toolPreferences?.Bash,
+    shell.__state.chatCalls[0].toolPreferences?.families?.terminal,
     false,
     'user-disabled Bash reaches the send payload'
   );
-  assert.equal(shell.__state.chatCalls[0].toolPreferences?.file_tools, true);
+  assert.equal(Object.hasOwn(shell.__state.chatCalls[0].toolPreferences?.families || {}, 'files'), false);
 
   await shell.__emitChat({
     type: 'complete',
@@ -492,10 +498,26 @@ test('renderer keeps the composer usable at model_unavailable and sends the retr
   // the next turn, so a failed lazy load must not lock the composer.
   assert.equal(input.disabled, false, 'composer input stays enabled at model_unavailable');
 
-  const curtain = window.document.getElementById('startupOverlay');
-  assert.match(curtain.textContent, /configured model is unavailable/i);
-  // The curtain owns the failure message while it is up; no second surface
-  // restates it underneath.
+  // A model load no longer holds the curtain (86ea19366): it lifts on shell
+  // readiness and its copy is renderer-owned, so the failure is told by the
+  // backend-notice toast once the curtain is gone, and nowhere else.
+  let curtainGone = false;
+  for (let attempt = 0; attempt < 150 && !curtainGone; attempt += 1) {
+    const curtain = window.document.getElementById('startupOverlay');
+    curtainGone = !curtain || curtain.classList.contains('hidden');
+    if (!curtainGone) {
+      assert.doesNotMatch(curtain.textContent, /failed to load|unavailable/i, 'the curtain never narrates the model failure');
+      await waitForUi(window, 20);
+    }
+  }
+  assert.equal(curtainGone, true, 'curtain lifts at model_unavailable');
+  // The notice is raised once the curtain has been removed, not merely hidden.
+  const toastViewport = window.document.getElementById('toastViewport');
+  for (let attempt = 0; attempt < 150 && !/Model failed to load/.test(toastViewport.textContent); attempt += 1) {
+    await waitForUi(window, 20);
+  }
+  assert.match(toastViewport.textContent, /Model failed to load/);
+  assert.ok(toastViewport.querySelector('[data-toast-action-id="backend-retry"]'), 'the toast offers Retry');
   assert.equal(window.document.getElementById('backendBanner'), null);
 
   const newChatButton = window.document.getElementById('newChatButton');

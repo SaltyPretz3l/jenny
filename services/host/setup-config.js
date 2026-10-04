@@ -21,9 +21,14 @@ function readSetup(configPath) {
   const pending = marker !== null;
   if (!fs.existsSync(configPath)) return { source: null, pending, apiKey: null };
   const config = loadHostConfig(configPath, { allowPendingSetup: true });
-  return { source: readJson(configPath, { maxBytes: 128 * 1024 }), pending,
-    // Never reuse a key from an interrupted endpoint/key update.
-    apiKey: pending || config.modelEndpoint.engine !== 'openai-compatible' ? null : new FileSecretStore({ directory: config.secretsDir }).get('openai_compatible_api_key') };
+  let apiKey = null;
+  let credentialUnavailable = false;
+  // Never reuse a key from an interrupted endpoint/key update.
+  if (!pending && config.modelEndpoint.engine === 'openai-compatible') {
+    try { apiKey = new FileSecretStore({ directory: config.secretsDir }).get('openai_compatible_api_key'); }
+    catch (_error) { credentialUnavailable = true; }
+  }
+  return { source: readJson(configPath, { maxBytes: 128 * 1024 }), pending, apiKey, credentialUnavailable };
 }
 
 // Caller holds the existing profile lock. Normal startup refuses the pending

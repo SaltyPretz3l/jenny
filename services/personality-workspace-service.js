@@ -21,6 +21,7 @@ const path = require('node:path');
 
 const { PERSONALITY_ERROR_CODES } = require('./backend/error-codes');
 const { t } = require('./i18n-main');
+const { GENERAL_PROJECT_ID, normalizeProjectId } = require('./projects/project-schema');
 const {
   ADVANCED_CONTEXT_MAX_BYTES,
   CLIP_MARKER,
@@ -207,6 +208,7 @@ class PersonalityWorkspaceService {
       : MAX_ARCHIVED_ENTRIES;
     this._seedPromise = null;
     this._createdDirectories = [];
+    this._unreadableFiles = new Set();
     // Snapshot the retired assistantIdentity eagerly. The shell-config schema
     // 47 bump drops `profile`/`customText` the next time shell-config is
     // written, which can happen before the (lazy) v3 workspace migration runs;
@@ -375,14 +377,16 @@ class PersonalityWorkspaceService {
     try {
       await this._assertContainedContextPath(filePath);
       const stat = await fs.stat(filePath);
-      if (!stat.isFile()) return empty;
+      if (!stat.isFile()) throw new Error('Context path is not a file.');
       if (stat.size > CONTEXT_FILE_MAX_BYTES) {
         this._logContextFileFailure('read', definition.sectionId, {
           code: PERSONALITY_ERROR_CODES.FILE_TOO_LARGE,
         });
         return { ...empty, oversized: true };
       }
-      const raw = await fs.readFile(filePath, 'utf8');
+      const buffer = await this._readBoundedFile(filePath, CONTEXT_FILE_MAX_BYTES);
+      if (buffer.length > CONTEXT_FILE_MAX_BYTES) return { ...empty, oversized: true };
+      const raw = buffer.toString('utf8');
       const body = normalizeBody(raw);
       return {
         ...empty, raw, body, editorBody: this._editorBody(definition, raw), chars: body.length,
@@ -391,7 +395,8 @@ class PersonalityWorkspaceService {
       if (error?.code === 'ENOENT') return empty;
       if (error?.code === 'CONTEXT_FILE_PATH_UNSAFE') throw error;
       this._logContextFileFailure('read', definition.sectionId, error);
-      return empty;
+      this._unreadableFiles.add(definition.key);
+      return { ...empty, unreadable: true };
     }
   }
 
@@ -456,7 +461,8 @@ class PersonalityWorkspaceService {
 
   async _hashSmallFile(filePath) {
     try {
-      return sha256(await fs.readFile(filePath)).slice(0, 16);
+      const buffer = await this._readBoundedFile(filePath, COMPILED_CONTEXT_DIGEST_MAX_BYTES);
+      return buffer.length > COMPILED_CONTEXT_DIGEST_MAX_BYTES ? 'large' : sha256(buffer).slice(0, 16);
     } catch {
       return 'missing';
     }
@@ -471,7 +477,6 @@ class PersonalityWorkspaceService {
    * @returns {Promise<string>}
    */
   async getCompiledContext({ projectId = 'project_general' } = {}) {
-    const { GENERAL_PROJECT_ID, normalizeProjectId } = require('./projects/project-schema');
     if (!normalizeProjectId(projectId)) throw new TypeError('Invalid project identity for personality.');
     await this.ensureSeeded();
     // Historical profile notes have no project provenance. Only General may
@@ -483,12 +488,17 @@ class PersonalityWorkspaceService {
   /**
    * One call for the whole Settings Personality section.
    *
-   * @param {{agentName?: string}} [options]
+   * @param {{agentName?: string, projectId?: string, uiLanguage?: string}} [options]
    */
-  async getState({ agentName } = {}) {
+  async getState({ agentName, projectId = 'project_general', uiLanguage = 'en' } = {}) {
+    if (!normalizeProjectId(projectId)) throw new TypeError('Invalid project identity for personality.');
     await this.ensureSeeded();
     const state = await this._readPersonalityState();
-    const compiled = await this._compiledSnapshot();
+    const compiled = projectId === GENERAL_PROJECT_ID
+      ? await this._compiledSnapshot({ fresh: true }) : await this._compile({ includeMemory: false });
+    for (const entry of Object.values(compiled.entries)) this._requireReadableEntry(entry);
+    this._unreadableFiles.delete(FILE_KEYS.PERSONALITY);
+    this._unreadableFiles.delete(FILE_KEYS.USER);
     return {
       agentName: normalizeAgentName(agentName),
       files: {
@@ -496,7 +506,7 @@ class PersonalityWorkspaceService {
         user: this._fileView(compiled.entries[FILE_KEYS.USER]),
       },
       budgets: { ...SECTION_BUDGETS },
-      compiled: this._compiledView(agentName, compiled),
+      compiled: this._compiledView(agentName, compiled, { uiLanguage }),
       schemaVersion: state.version,
       migration: { mergedFrom: state.mergedFrom, archivedFiles: state.archivedFiles },
     };
@@ -511,14 +521,16 @@ class PersonalityWorkspaceService {
     return { body: entry.editorBody, chars: entry.chars, oversized: entry.oversized === true };
   }
 
-  _compiledView(agentName, compiled) {
-    const text = buildPersonalityMessage(agentName, compiled.content);
+  _compiledView(agentName, compiled, options) {
+    const text = buildPersonalityMessage(agentName, compiled.content, options);
     return {
       text,
       chars: text.length,
       tokensEstimate: estimateTokens(text),
       sections: compiled.sections.map((section) => ({ ...section })),
       backstopClipped: compiled.backstopClipped === true,
+      // A dirty draft's local preview needs the reply-language line this text carries.
+      uiLanguage: options?.uiLanguage || 'en',
     };
   }
 
@@ -526,6 +538,8 @@ class PersonalityWorkspaceService {
   async getNotesState() {
     await this.ensureSeeded();
     const entry = await this._readFileEntry(DEFINITION_BY_KEY[FILE_KEYS.MEMORY]);
+    this._requireReadableEntry(entry);
+    this._unreadableFiles.delete(FILE_KEYS.MEMORY);
     const clipped = clipToBudget(entry.body, SECTION_BUDGETS.memory);
     return {
       // Editable raw text; `chars` is the normalized, budget-relevant length.
@@ -573,7 +587,7 @@ class PersonalityWorkspaceService {
       [FILE_KEYS.PERSONALITY, source.personality],
       [FILE_KEYS.USER, source.user],
     ].filter(([, body]) => body !== undefined && body !== null);
-    return this._applyWrites(targets, source.agentName, source.force === true);
+    return this._applyWrites(targets, source.agentName, source.force === true, false, source);
   }
 
   /**
@@ -581,12 +595,13 @@ class PersonalityWorkspaceService {
    * the one destructive action the user asks for by name (behind a confirm
    * dialog), so it forces past the oversized guard.
    */
-  async clear({ agentName } = {}) {
+  async clear({ agentName, ...options } = {}) {
     await this.ensureSeeded();
-    return this._applyWrites([[FILE_KEYS.PERSONALITY, ''], [FILE_KEYS.USER, '']], agentName, true, true);
+    return this._applyWrites([[FILE_KEYS.PERSONALITY, ''], [FILE_KEYS.USER, '']], agentName, true, true, options);
   }
 
-  async _applyWrites(targets, agentName, force = false, reset = false) {
+  async _applyWrites(targets, agentName, force = false, reset = false, { projectId = 'project_general', uiLanguage = 'en' } = {}) {
+    if (!normalizeProjectId(projectId)) throw new TypeError('Invalid project identity for personality.');
     const failed = [];
     let code = '';
     for (const [key, body] of targets) {
@@ -596,8 +611,9 @@ class PersonalityWorkspaceService {
       code = code || result.code;
     }
     this._invalidateCompiledContextCache();
-    const compiled = await this._compiledSnapshot({ fresh: true });
-    const view = this._compiledView(agentName, compiled);
+    const compiled = projectId === GENERAL_PROJECT_ID
+      ? await this._compiledSnapshot({ fresh: true }) : await this._compile({ includeMemory: false });
+    const view = this._compiledView(agentName, compiled, { uiLanguage });
     if (failed.length) {
       return {
         ok: false,
@@ -633,6 +649,9 @@ class PersonalityWorkspaceService {
     const definition = DEFINITION_BY_KEY[key];
     const filePath = path.join(this.workspacePath, definition.filename);
     const entry = await this._readFileEntry(definition);
+    if (entry.unreadable || this._unreadableFiles.has(key)) {
+      return { ok: false, code: PERSONALITY_ERROR_CODES.SAVE_PARTIAL_FAILURE };
+    }
     if (entry.oversized && !force) {
       // The renderer showed an empty box for this file because it is over the
       // read limit. Writing that box back would destroy it.
@@ -677,6 +696,41 @@ class PersonalityWorkspaceService {
   }
 
   // ------------------------------------------------------------- file plumbing
+
+  _requireReadableEntry(entry) {
+    if (!entry.unreadable) return;
+    const error = new Error('Unable to read personality file. Reload before saving.');
+    error.code = PERSONALITY_ERROR_CODES.SAVE_PARTIAL_FAILURE;
+    throw error;
+  }
+
+  async _readBoundedFile(filePath, maxBytes) {
+    const readPath = await this._assertContainedContextPath(filePath);
+    const before = await fs.stat(readPath);
+    const handle = await fs.open(readPath, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0));
+    try {
+      const opened = await handle.stat();
+      if (!opened.isFile() || before.dev !== opened.dev || before.ino !== opened.ino
+        || await fs.realpath(filePath) !== readPath) {
+        throw new Error('Context file changed while reading.');
+      }
+      const buffer = Buffer.allocUnsafe(maxBytes + 1);
+      let used = 0;
+      while (used < buffer.length) {
+        const { bytesRead } = await handle.read(buffer, used, buffer.length - used, null);
+        if (!bytesRead) break;
+        used += bytesRead;
+      }
+      const after = await fs.stat(filePath);
+      if (after.dev !== opened.dev || after.ino !== opened.ino
+        || await fs.realpath(filePath) !== readPath) {
+        throw new Error('Context file changed while reading.');
+      }
+      return buffer.subarray(0, used);
+    } finally {
+      await handle.close();
+    }
+  }
 
   async _assertContainedContextPath(filePath) {
     const rootRealPath = await fs.realpath(this.workspacePath);
@@ -736,9 +790,10 @@ class PersonalityWorkspaceService {
       const stat = await fs.stat(filePath);
       if (stat.size > LEGACY_STOCK_FILE_MAX_BYTES) return false;
       if (Array.isArray(sizes) && sizes.length && !sizes.includes(stat.size)) return false;
-      return knownHashes.includes(sha256(await fs.readFile(filePath)));
+      const buffer = await this._readBoundedFile(filePath, LEGACY_STOCK_FILE_MAX_BYTES);
+      return buffer.length <= LEGACY_STOCK_FILE_MAX_BYTES && knownHashes.includes(sha256(buffer));
     } catch (error) {
-      if (error?.code === 'ENOENT') return false;
+      if (error?.code === 'ENOENT' || error?.code === 'CONTEXT_FILE_PATH_UNSAFE') return false;
       throw error;
     }
   }
@@ -747,16 +802,20 @@ class PersonalityWorkspaceService {
     try {
       await fs.access(filePath);
       return true;
-    } catch {
-      return false;
+    } catch (error) {
+      if (error?.code === 'ENOENT') return false;
+      throw error;
     }
   }
 
   async captureFileSnapshot(filePath) {
+    const backupPath = `${filePath}.rollback-${crypto.randomBytes(6).toString('hex')}`;
     try {
-      return { exists: true, content: await fs.readFile(filePath) };
+      await fs.copyFile(filePath, backupPath, fs.constants.COPYFILE_EXCL);
+      return { exists: true, backupPath };
     } catch (error) {
-      if (error?.code === 'ENOENT') return { exists: false, content: Buffer.alloc(0) };
+      await fs.rm(backupPath, { force: true }).catch(() => {});
+      if (error?.code === 'ENOENT') return { exists: false };
       throw error;
     }
   }
@@ -767,7 +826,7 @@ class PersonalityWorkspaceService {
       await fs.rm(filePath, { force: true });
       return;
     }
-    await fs.writeFile(filePath, snapshot.content);
+    await fs.rename(snapshot.backupPath, filePath);
   }
 
   // ----------------------------------------------------------- observability

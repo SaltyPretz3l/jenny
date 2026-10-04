@@ -84,10 +84,6 @@ test('managed deleteSession structurally cancels an active turn and settles pend
     streamId: lease.identity.streamId,
     resolve(approved, reason) { approvalResolution = { approved, reason }; },
   });
-  const cancelledStreams = [];
-  service.toolExecutor = {
-    cancelPendingForStream(streamId) { cancelledStreams.push(streamId); },
-  };
 
   const deleted = await service.deleteSession(sessionId);
 
@@ -102,7 +98,6 @@ test('managed deleteSession structurally cancels an active turn and settles pend
   assert.equal(controller.signal.reason.cancel_reason, 'session_delete');
   assert.deepEqual(approvalResolution, { approved: false, reason: 'cancelled' });
   assert.equal(service.pendingToolApprovals.size, 0);
-  assert.deepEqual(cancelledStreams, [lease.identity.streamId]);
   assert.equal(service.activeStreams.has(lease.identity.streamId), false);
 });
 

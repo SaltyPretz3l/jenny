@@ -179,3 +179,14 @@ test('a stray Ctrl-release after dispose does not commit (listeners + overlay to
   winKeyup(dom, 'Control');
   assert.deepEqual(calls.activateTab, [], 'no commit after teardown');
 });
+
+test('the highlighted tab is announced through a polite live region (the overlay never takes focus)', () => {
+  const { stage, switcher } = buildSwitcher(['a.js', 'src/b.js', 'c.js'], fileTabs('a.js', 'src/b.js', 'c.js'));
+  switcher.handleTabKey(true);
+  const announce = stage.querySelector('[data-ide-mru-announce]');
+  assert.equal(announce.getAttribute('aria-live'), 'polite');
+  assert.equal(announce.textContent, 'b.js, src');
+  switcher.handleTabKey(true);
+  assert.equal(announce.textContent, 'c.js');
+  switcher.dispose();
+});

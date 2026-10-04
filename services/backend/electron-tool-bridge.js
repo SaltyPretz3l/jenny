@@ -5,7 +5,7 @@ const { executeHostedRunCommand } = require('./hosted-command-bridge');
 
 const { TOOL_ERROR_CODES } = require('./error-codes');
 const { getTrustedExecutionBinding } = require('./session-execution-authority');
-const { createToolResourceClaim } = require('../tools/tool-resource-execution');
+const { withQuestionWithdrawal } = require('./runtime-decision-control');
 
 const MAX_BRIDGE_METADATA_DEPTH = 6;
 const MAX_BRIDGE_METADATA_ITEMS = 100;
@@ -26,6 +26,7 @@ const ELECTRON_BRIDGE_TOOL_NAMES = new Set([
   'workspace_present',
   'preview_test',
   'verify',
+  'image_generate',
   'home',
   'task_board',
   'exit_plan_mode',
@@ -222,10 +223,12 @@ function rememberLocalGeneratedArtifacts(service, { streamId, callId, artifacts 
 
 function resolveConfiguredWorkspaceRoot(service) {
   try {
-    const state = service?.configService?.getState?.();
-    const workspaceRoot = typeof state?.toolsWorkspaceRoot === 'string'
-      ? state.toolsWorkspaceRoot.trim()
-      : '';
+    // Narrow getter per tool call (no whole-config clone); getState for duck-typed config services.
+    const config = service?.configService;
+    const root = typeof config?.getToolsWorkspaceRoot === 'function'
+      ? config.getToolsWorkspaceRoot()
+      : config?.getState?.()?.toolsWorkspaceRoot;
+    const workspaceRoot = typeof root === 'string' ? root.trim() : '';
     return workspaceRoot ? path.resolve(workspaceRoot) : '';
   } catch (error) {
     service?._emitServiceLog?.('WARN', 'electron_tool_bridge.workspace_root_lookup_failed', {
@@ -252,168 +255,6 @@ function bridgeFailure(toolName, output, errorCode = TOOL_ERROR_CODES.EXECUTION_
 
 const { executeSandboxCommand, sandboxEnabled, ALLOWED: SANDBOX_BRIDGE_TOOLS } = require('../execution/command-bridge');
 const { trackSandboxBridgeRequest } = require('../execution/execution-settlement');
-
-function nativeInvocationReceipt(result) {
-  return Boolean(result?.proof
-    && typeof result.proof.launch_receipt_id === 'string'
-    && result.proof.launch_receipt_id
-    && Number.isSafeInteger(result.proof.session_epoch));
-}
-
-function captureDynamicToolAuthority(trustedExecution, toolName) {
-  if (!trustedExecution) return null;
-  trustedExecution.assertCurrent();
-  const captured = trustedExecution.captureRuntimeTool?.(toolName);
-  if (!captured) throw new Error('dynamic_tool_authority_unavailable');
-  return captured;
-}
-
-function staleDynamicTool(toolName) {
-  return { cleanup: 'confirmed', response: bridgeFailure(
-    toolName,
-    'Dynamic plugin tool authority is stale or unavailable.',
-    TOOL_ERROR_CODES.DISABLED
-  ) };
-}
-
-async function executeDynamicPluginTool(service, {
-  toolName, input, abortSignal, pluginRuntimeAuthority, scopedSessionId, trustedExecution,
-}) {
-  const privilegedService = service?._pluginStage8ControlPlane;
-  if (privilegedService && pluginRuntimeAuthority?.mode === 'plugin'
-    && typeof privilegedService.invokeNativeTool === 'function') {
-    try { captureDynamicToolAuthority(trustedExecution, toolName); }
-    catch (_error) { return staleDynamicTool(toolName); }
-    const authority = { ...pluginRuntimeAuthority };
-    delete authority.mode;
-    let native;
-    try {
-      native = await privilegedService.invokeNativeTool({ authority, toolName,
-        arguments: input, signal: abortSignal });
-    } catch (_error) {
-      return { cleanup: 'uncertain', response: bridgeFailure(toolName,
-        'Native plugin tool execution failed.', TOOL_ERROR_CODES.EXECUTION_FAILED) };
-    }
-    if (native?.ok) {
-      let output;
-      try {
-        output = typeof native.output === 'string'
-          ? native.output : JSON.stringify(native.result ?? native.output ?? null);
-      } catch (_error) { output = ''; }
-      return { cleanup: nativeInvocationReceipt(native) ? 'confirmed' : 'uncertain',
-        response: {
-          tool_name: toolName,
-          output: String(output || '').slice(0, MAX_BRIDGE_METADATA_STRING_LENGTH),
-          success: true, content_type: 'text', generated_artifacts: [], error_code: null,
-          metadata: sanitizeBridgeMetadata({ result_kind: 'plugin_native_mcp',
-            binding_digest: native.binding_digest }),
-        } };
-    }
-    if (native?.reason !== 'native_mcp_tool_not_found') {
-      return { cleanup: nativeInvocationReceipt(native) ? 'confirmed' : 'uncertain',
-        response: bridgeFailure(toolName,
-          `Native plugin tool failed: ${String(native?.reason || 'native_mcp_invocation_failed').slice(0, 120)}`,
-          TOOL_ERROR_CODES.EXECUTION_FAILED) };
-    }
-  }
-  if (toolName.startsWith('plugin:') && toolName.split(':').length === 4) {
-    const restrictedService = service?._pluginStage6ControlPlane;
-    if (!restrictedService || typeof restrictedService.executeRestrictedTool !== 'function') {
-      return { cleanup: 'confirmed', response: bridgeFailure(
-        toolName,
-        'Restricted plugin runtime is unavailable.'
-      ) };
-    }
-    let restricted;
-    let executionAuthority;
-    try {
-      executionAuthority = captureDynamicToolAuthority(trustedExecution, toolName);
-      restricted = await restrictedService.executeRestrictedTool(toolName, input, {
-        signal: abortSignal,
-        sessionId: scopedSessionId,
-        purpose: 'restricted_invocation',
-        executionAuthority,
-        requireCurrent: trustedExecution?.assertCurrent,
-      });
-    } catch (_error) {
-      return !trustedExecution || executionAuthority
-        ? { cleanup: 'uncertain', response: bridgeFailure(toolName,
-        'Restricted plugin tool execution failed.', TOOL_ERROR_CODES.EXECUTION_FAILED) }
-        : staleDynamicTool(toolName);
-    }
-    const cleanup = restricted?.execution_settlement?.cleanup === 'confirmed'
-      || (typeof restricted?.invocation_id === 'string' && restricted.invocation_id.trim())
-      ? 'confirmed' : 'uncertain';
-    if (!restricted?.ok) {
-      return { cleanup, response: bridgeFailure(
-        toolName,
-        `Restricted plugin tool failed: ${String(restricted?.reason || 'restricted_invocation_failed').slice(0, 200)}`,
-        String(restricted?.code || TOOL_ERROR_CODES.EXECUTION_FAILED)
-      ) };
-    }
-    let output;
-    try { output = JSON.stringify(restricted.value); } catch (_error) { output = ''; }
-    return { cleanup, response: {
-      tool_name: toolName,
-      output: String(output || '').slice(0, MAX_BRIDGE_METADATA_STRING_LENGTH),
-      success: true,
-      content_type: 'text',
-      generated_artifacts: [],
-      error_code: null,
-      metadata: sanitizeBridgeMetadata({
-        result_kind: 'plugin_restricted_host',
-        invocation_id: restricted.invocation_id,
-      }),
-    } };
-  }
-  const pluginService = service?._pluginStage5ControlPlane;
-  if (!pluginService || typeof pluginService.executeRemoteTool !== 'function') {
-    return { cleanup: 'confirmed', response: bridgeFailure(
-      toolName,
-      `Electron tool bridge rejected unsupported tool "${toolName || 'unknown'}".`,
-      TOOL_ERROR_CODES.UNKNOWN
-    ) };
-  }
-  let remote;
-  let executionAuthority;
-  try {
-    executionAuthority = captureDynamicToolAuthority(trustedExecution, toolName);
-    remote = await pluginService.executeRemoteTool(toolName, input, {
-      signal: abortSignal,
-      sessionId: scopedSessionId,
-      executionAuthority,
-      requireCurrent: trustedExecution?.assertCurrent,
-    });
-  } catch (_error) {
-    return !trustedExecution || executionAuthority ? { cleanup: 'uncertain', response: bridgeFailure(
-      toolName,
-      'Remote plugin tool execution failed.'
-    ) } : staleDynamicTool(toolName);
-  }
-  const remoteCleanup = remote?.execution_settlement?.cleanup === 'confirmed'
-    ? 'confirmed' : 'uncertain';
-  if (!remote?.ok) {
-    return { cleanup: remoteCleanup, response: bridgeFailure(
-      toolName,
-      `Remote plugin tool failed: ${String(remote?.reason || 'remote_tool_failed').slice(0, 200)}`,
-      String(remote?.code || TOOL_ERROR_CODES.EXECUTION_FAILED)
-    ) };
-  }
-  let output;
-  try { output = JSON.stringify(remote.result); } catch (_error) { output = ''; }
-  return { cleanup: remoteCleanup, response: {
-    tool_name: toolName,
-    output: String(output || '').slice(0, MAX_BRIDGE_METADATA_STRING_LENGTH),
-    success: true,
-    content_type: 'text',
-    generated_artifacts: [],
-    error_code: null,
-    metadata: sanitizeBridgeMetadata({
-      result_kind: 'plugin_remote_mcp',
-      plugin_provenance: remote.provenance,
-    }),
-  } };
-}
 
 async function executeElectronToolRequest(
   service,
@@ -534,36 +375,11 @@ async function executeElectronToolRequest(
   }
 
   if (!ELECTRON_BRIDGE_TOOL_NAMES.has(toolName)) {
-    let resourceClaim;
-    try {
-      resourceClaim = createToolResourceClaim({
-        binding: executionAuthority,
-        operationId: callId,
-        toolName,
-        input,
-        required: Boolean(service?.sessionRuntime),
-      });
-      await resourceClaim?.admit();
-    } catch (_error) {
-      return bridgeFailure(
-        toolName,
-        'Dynamic plugin tool resource admission failed.',
-        TOOL_ERROR_CODES.DISABLED
-      );
-    }
-    const dynamic = await executeDynamicPluginTool(service, {
-      toolName, input, abortSignal, pluginRuntimeAuthority, scopedSessionId, trustedExecution,
-    });
-    try {
-      await resourceClaim?.settle({
-        status: dynamic.response.success ? 'succeeded' : 'failed',
-        cleanup: dynamic.cleanup,
-      });
-    } catch (_error) {
-      return bridgeFailure(toolName, 'Dynamic plugin tool resource settlement failed.',
-        TOOL_ERROR_CODES.EXECUTION_FAILED);
-    }
-    return dynamic.response;
+    return bridgeFailure(
+      toolName,
+      `Electron tool bridge rejected unsupported tool "${toolName || 'unknown'}".`,
+      TOOL_ERROR_CODES.UNKNOWN
+    );
   }
 
   const toolExecutor = service?.toolExecutor;
@@ -592,7 +408,10 @@ async function executeElectronToolRequest(
       projectAuthority: trustedExecution?.authority || null,
       beforeProducer,
       ...(toolName === 'ask_user' && runtimeDecisionControl ? {
-        runtimeDecisionControl, runtimeDecision: payload.runtime_decision,
+        runtimeDecisionControl: withQuestionWithdrawal(runtimeDecisionControl, service, {
+          sessionId: scopedSessionId, streamId: scopedStreamId, callId, turnId: logicalTurnId,
+        }),
+        runtimeDecision: payload.runtime_decision,
       } : {}),
     }
   );
@@ -612,6 +431,9 @@ async function executeElectronToolRequest(
     artifacts: rawMetadata.generatedArtifacts,
   });
   const metadata = sanitizeBridgeMetadata(rawMetadata);
+  // preview_test screenshots and image_generate pictures reach a vision chat model.
+  const carriesPreviewImage = toolName === 'image_generate'
+    || (toolName === 'preview_test' && input.screenshot === true);
 
   return {
     tool_name: toolName,
@@ -621,7 +443,7 @@ async function executeElectronToolRequest(
     generated_artifacts: generatedArtifacts,
     error_code: String(result?.errorCode || '').trim() || null,
     metadata,
-    ...(toolName === 'preview_test' && input.screenshot === true && result.isError === false
+    ...(carriesPreviewImage && result.isError === false
       && Buffer.isBuffer(result.previewImage?.buffer)
       && result.previewImage.buffer.length <= 2 * 1024 * 1024 ? {
         preview_image: {
@@ -632,6 +454,14 @@ async function executeElectronToolRequest(
         },
       } : {}),
   };
+}
+
+// "Build it" on an exit_plan_mode card continues the build inside the same
+// chat.send with a fresh working-time budget on the sidecar side.
+function isPlanBuildApproval(params, result) {
+  return params?.tool_name === 'exit_plan_mode'
+    && result?.approved === true
+    && ['approved', 'approved_auto'].includes(result?.decision);
 }
 
 function buildManagedSidecarChatSendOptions({
@@ -663,6 +493,15 @@ function buildManagedSidecarChatSendOptions({
   const suspendIdleWatchdog = typeof pauseStreamIdleTimer === 'function'
     ? pauseStreamIdleTimer
     : () => {};
+  // The sidecar credits every approval wait to its working-time deadline and
+  // gives a plan-build approval a fresh budget (request_dispatch_chat.py
+  // _credit_approval_wait / _fresh_build_budget), so the chat.send transport
+  // deadline follows the same clock or it fires first (dogfood HB-026).
+  const suspendTransportTimeout = () => (
+    typeof service.sidecarClient?.suspendRequestTimeout === 'function'
+      ? service.sidecarClient.suspendRequestTimeout(requestId)
+      : () => {}
+  );
   async function waitForAuthorizedToolApproval(params, approvalController = controller) {
     const result = await waitForToolApproval(
       service,
@@ -734,11 +573,16 @@ function buildManagedSidecarChatSendOptions({
       // function every notification calls, so an unrelated event arriving while
       // the user decides would resume the clocks mid-decision.
       const resumeAfterApproval = suspendIdleWatchdog();
+      const resumeTransportTimeout = suspendTransportTimeout();
+      let freshBudget = false;
       try {
-        return await waitForAuthorizedToolApproval(params);
+        const result = await waitForAuthorizedToolApproval(params);
+        freshBudget = isPlanBuildApproval(params, result);
+        return result;
       } finally {
+        resumeTransportTimeout({ freshBudget });
         if (typeof resumeAfterApproval === 'function') {
-          resumeAfterApproval();
+          resumeAfterApproval({ freshBudget });
         } else {
           // A watchdog stub that pauses without handing back a resume: fall back
           // rather than leave both clocks parked for the rest of the turn.
@@ -778,7 +622,8 @@ function buildManagedSidecarChatSendOptions({
           });
         } finally { if (typeof resume === 'function') resume(); }
       }
-      if (params?.tool_name !== 'ask_user') {
+      const suspendsIdle = params?.tool_name === 'ask_user' || params?.tool_name === 'image_generate';
+      if (!suspendsIdle) {
         return executeElectronToolRequest(service, {
           beforeProducer,
           params,
@@ -789,7 +634,7 @@ function buildManagedSidecarChatSendOptions({
           executionAuthority,
         });
       }
-      // ask_user blocks on human answers, so that wait is not stream idle time.
+      // Human answers and image renders can take minutes without stream activity.
       const resumeAfterAnswers = suspendIdleWatchdog();
       try {
         return await executeElectronToolRequest(service, {
@@ -811,17 +656,6 @@ function buildManagedSidecarChatSendOptions({
         }
       }
     } }),
-    onPluginHostRequest: (() => {
-      if (sandboxEnabled(service)) return undefined;
-      const privileged = service?._pluginStage8ControlPlane;
-      if (!privileged?.engineStream) return undefined;
-      const { createElectronPluginHostBridge } = require('./electron-plugin-host-bridge');
-      const authority = pluginRuntimeAuthority?.mode === 'plugin'
-        ? (() => { const value = { ...pluginRuntimeAuthority }; delete value.mode; return value; })()
-        : {};
-      return createElectronPluginHostBridge({ currentAuthority: async () => authority,
-        streamBroker: privileged.engineStream });
-    })(),
     onRuntimeOperation: (params) => service.sessionExecutionAuthority
       .checkRuntimeOperation(executionAuthority, params),
   };

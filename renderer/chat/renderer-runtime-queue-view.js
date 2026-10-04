@@ -62,6 +62,23 @@
     return jt('chat.runtimeQueue.queued', 'Queued');
   }
 
+  /* HB-009: why a sent message has not started (renderer-stuck-send.js decides
+   * when a wait is worth showing). A normal wait is calm; only unconfirmed
+   * cleanup, which nothing but a restart resolves, is a warning. */
+  function waitStatus(state, row) {
+    if (row.wait?.reason === 'cleanup_unconfirmed') {
+      return jt('chat.runtimeQueue.cleanupUnconfirmed', "The last reply's cleanup hasn't been confirmed, so nothing new can start on this model.");
+    }
+    if (row.wait?.reason !== 'model_busy') return '';
+    // F20: the timeline's waiting line owns these words (a chat paused on an approval says so).
+    const shared = globalThis.rendererAdmissionWaitLine?.waitText;
+    if (typeof shared === 'function') return shared(state, row.wait.blockingSessionId);
+    const blocker = (Array.isArray(state.sessions) ? state.sessions : []).find((entry) => entry?.id === row.wait.blockingSessionId);
+    const title = String(blocker?.title || '').trim();
+    return title ? jt('chat.runtimeQueue.modelBusy', 'Starts when "{title}" finishes its reply on this model.', { title })
+      : jt('chat.runtimeQueue.modelBusyUntitled', 'Starts when another chat finishes its reply on this model.');
+  }
+
   function statusLabel(status) {
     if (status === 'running') return jt('chat.runtimeQueue.running', 'Running');
     if (status === 'withdrawing') return jt('chat.runtimeQueue.withdrawing', 'Withdrawing…');
@@ -79,7 +96,7 @@
    * @param {Object} options.state - Renderer state (current session, sessions)
    * @param {HTMLElement} options.host - The #runtimeQueue host element
    * @param {Array<Object>} options.rows - Frozen row views from listPending()
-   * @param {Object} [options.actions] - { withdraw(row), resume(row) }
+   * @param {Object} [options.actions] - { withdraw(row), resume(row), restartEngine(row), openChat(row) }
    * @returns {number} rendered row count
    */
   function renderRuntimeQueue(options = {}) {
@@ -93,8 +110,8 @@
     const sessionId = String(state.currentSessionId || '').trim();
     const session = (Array.isArray(state.sessions) ? state.sessions : []).find((entry) => entry?.id === sessionId);
     const signature = JSON.stringify([sessionId, session?.title, view.collapsed, closing,
-      rows.map((row) => [row.key, row.workId, row.prompt, row.position, row.status])]);
-    const sameActions = view.actions?.withdraw === actions.withdraw && view.actions?.resume === actions.resume;
+      rows.map((row) => [row.key, row.workId, row.prompt, row.position, row.status, row.wait?.blockingSessionId, waitStatus(state, row)])]);
+    const sameActions = ['withdraw', 'resume', 'restartEngine', 'openChat'].every((name) => view.actions?.[name] === actions[name]);
     // Streaming chrome refreshes must not rebuild an unchanged strip (focus, hover).
     if (view.signature === signature && sameActions) return rows.length;
     view.signature = signature;
@@ -112,8 +129,10 @@
       focusControl(host, focusId);
     };
     const heading = element(doc, 'div', 'runtime-queue__heading');
-    const summary = element(doc, 'span', 'runtime-queue__summary',
-      jtn('chat.runtimeQueue.summary', rows.length, { count: String(rows.length) }, '{count} queued', '{count} queued'));
+    // The direct send alone is not "queued" behind anything the person sent.
+    const summary = element(doc, 'span', 'runtime-queue__summary', rows.length === 1 && rows[0].wait
+      ? jt('chat.runtimeQueue.notStarted', 'Not started')
+      : jtn('chat.runtimeQueue.summary', rows.length, { count: String(rows.length) }, '{count} queued', '{count} queued'));
     summary.setAttribute('role', 'status');
     heading.appendChild(summary);
     const toggle = button(doc, heading, 'runtime-queue-toggle',
@@ -132,17 +151,19 @@
       { title: String(session?.title || sessionId) }));
     host.appendChild(list);
     const taken = new Set();
-    for (const row of rows) renderRow({ row, key: rowDomKey(row.key, taken), view, actions, doc, list, closing });
+    for (const row of rows) renderRow({ row, key: rowDomKey(row.key, taken), view, actions, doc, list, closing, state });
     focusControl(host, focused);
     return rows.length;
   }
 
-  function renderRow({ row, key, view, actions, doc, list, closing }) {
-    const node = element(doc, 'div', `runtime-queue__row runtime-queue__row--${row.status}`);
+  function renderRow({ row, key, view, actions, doc, list, closing, state }) {
+    const stuck = row.wait?.reason === 'cleanup_unconfirmed';
+    const node = element(doc, 'div', `runtime-queue__row runtime-queue__row--${stuck ? 'stuck' : row.status}`);
     node.id = `runtime-queue-row-${key}`;
     node.dataset.runtimeWorkKey = String(row.key || '');
     // The place in line is real information, so assistive tech hears it too.
-    const marker = element(doc, 'span', 'runtime-queue__position', positionLabel(row));
+    const marker = element(doc, 'span', 'runtime-queue__position',
+      stuck ? jt('chat.runtimeQueue.waiting', 'Waiting') : positionLabel(row));
     node.appendChild(marker);
     const content = element(doc, 'div', 'runtime-queue__content');
     node.appendChild(content);
@@ -150,8 +171,16 @@
     const preview = element(doc, 'div', 'runtime-queue__preview', prompt.slice(0, PREVIEW_CHARS));
     preview.title = prompt;
     content.appendChild(preview);
-    const status = statusLabel(row.status);
+    const status = waitStatus(state, row) || statusLabel(row.status);
     if (status) content.appendChild(element(doc, 'div', 'runtime-queue__status', status));
+    if (stuck && actions.restartEngine) {
+      const restart = button(doc, content, `runtime-queue-restart-${key}`, jt('chat.stuckSend.restartEngine', 'Restart engine'),
+        'runtime-queue__action--restart', () => actions.restartEngine(row), view.cleanup);
+      restart.title = jt('chat.runtimeQueue.restartTitle', 'Restart the engine so this message can start');
+    } else if (row.wait?.reason === 'model_busy' && row.wait.blockingSessionId && actions.openChat) {
+      button(doc, content, `runtime-queue-open-${key}`, jt('chat.runtimeQueue.openBlocking', 'Open that chat'),
+        'runtime-queue__action--open', () => actions.openChat(row), view.cleanup);
+    }
     // A detached row is a paused reply the composer never queued: it is
     // discarded rather than withdrawn, and its copy says reply, not message.
     const detached = row.detached === true;

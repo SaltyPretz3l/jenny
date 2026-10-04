@@ -404,7 +404,7 @@ def run_automation_worker(payload: dict[str, Any]) -> dict[str, Any]:  # noqa: P
                 runtime_ms=runtime_ms,
             ),
         )
-    except Exception as error:  # noqa: BLE001
+    except Exception as error:
         logger.exception("automation worker failed")
         runtime_ms = int((time.monotonic() - started) * 1000)
         return _write_result(

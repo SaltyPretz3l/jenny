@@ -1,6 +1,7 @@
 const path = require('path');
 const {
   loadRendererApp: loadRendererDomHarness,
+  waitForStartupCurtainRemoval,
   waitForUi,
 } = require('./renderer-shell-harness-dom');
 const {
@@ -12,7 +13,7 @@ const {
   createDefaultCompanionState,
   syncFollowUpOpenLoops,
 } = require('./renderer-shell-harness-companion');
-const { createDefaultSkillsState, createDefaultTipsState, emitGuidanceState } = require('./renderer-shell-harness-guidance');
+const { createDefaultSkillsState, emitGuidanceState } = require('./renderer-shell-harness-guidance');
 const {
   initializeWorkspaceRootHarnessState,
 } = require('./renderer-shell-harness-workspace-root');
@@ -23,7 +24,7 @@ const {
 const ROOT = path.resolve(__dirname, '..', '..');
 
 function createShellStub(options = {}) {
-  const listeners = { auth: [], backend: [], chat: [], logs: [], proactive: [], skills: [], tips: [], system: [], features: [], speech: [], updates: [], planUsage: [] };
+  const listeners = { auth: [], backend: [], chat: [], logs: [], proactive: [], skills: [], system: [], features: [], speech: [], updates: [], planUsage: [] };
   const state = {
     authState: { authenticated: true, user: { email: 'local@jenny.local', display_name: 'Local User' } },
     sessions: Array.isArray(options.sessions) ? options.sessions.map((session) => ({ ...session })) : [],
@@ -39,7 +40,7 @@ function createShellStub(options = {}) {
       zoomPercent: Number(options.chatUi?.state?.zoomPercent || 100),
     },
     windowUiState: {
-      appZoomPercent: Number(options.windowUi?.state?.appZoomPercent || 100),
+      appZoomPercent: Number(options.windowUi?.state?.appZoomPercent || 110),
     },
     workspaceUpdateCalls: [],
     phasePercentilesPayload: options.phasePercentilesPayload || null,
@@ -83,12 +84,6 @@ function createShellStub(options = {}) {
         shell_security: true,
         git_tracking: true,
         pretext_layout: false,
-        // Mirrors production: artifact_panel_v2 is DEFAULT-ON
-        // (services/feature-flags.js). The renderer boot seed omits it, so the
-        // real feature payload delivers it; the shell artifact bridge only
-        // trusts the V2-vs-legacy decision once this key is present in state.
-        artifact_panel_v2: true,
-        artifact_panel_v3: true,
       },
       featureOverrides: {},
       availability: {
@@ -169,7 +164,6 @@ function createShellStub(options = {}) {
     },
     mcpDiscoveryRefreshCalls: 0,
     mcpDiscoveryOperationCalls: [],
-    tipsState: createDefaultTipsState(),
     harnessSnapshot: null,
     lifecycleReadySignals: 0,
     speechState: {
@@ -257,9 +251,6 @@ function createShellStub(options = {}) {
   async function emitChat(payload) { await Promise.all(listeners.chat.map((listener) => listener(payload))); }
   async function emitBackendStatus(payload) {
     await emitBackendStatusUpdate(listeners, state, payload);
-  }
-  async function emitTipsChanged(payload) {
-    await emitGuidanceState(listeners, 'tips', state, 'tipsState', payload);
   }
   async function emitSkillsChanged(payload) {
     await emitGuidanceState(listeners, 'skills', state, 'skillsState', payload);
@@ -355,15 +346,15 @@ function createShellStub(options = {}) {
     __emitChat: emitChat,
     __emitBackendStatus: emitBackendStatus,
     __emitPlanUsage: async (payload) => { await Promise.all(listeners.planUsage.map((listener) => listener(payload))); },
+    __emitSystemStats: async (payload) => { await Promise.all(listeners.system.map((listener) => listener(payload))); },
     __emitAuthState: emitAuthState,
     __emitFeaturesChanged: emitFeaturesChanged,
     __emitLogAppend: emitLogAppend,
     __emitSkillsChanged: emitSkillsChanged,
-    __emitTipsChanged: emitTipsChanged,
     __emitSpeechState: emitSpeechState,
     __emitUpdatesState: emitUpdatesChanged,
     __getListenerCounts() {
-      return { auth: listeners.auth.length, backend: listeners.backend.length, chat: listeners.chat.length, logs: listeners.logs.length, proactive: listeners.proactive.length, skills: listeners.skills.length, tips: listeners.tips.length, system: listeners.system.length, features: listeners.features.length, speech: listeners.speech.length, planUsage: listeners.planUsage.length };
+      return { auth: listeners.auth.length, backend: listeners.backend.length, chat: listeners.chat.length, logs: listeners.logs.length, proactive: listeners.proactive.length, skills: listeners.skills.length, system: listeners.system.length, features: listeners.features.length, speech: listeners.speech.length, planUsage: listeners.planUsage.length };
     },
     backend: createBackendStub(options, state, listeners, addListener),
     knowledge: options.knowledge,
@@ -545,14 +536,13 @@ function createShellStub(options = {}) {
         });
         return session;
       },
-      async updateMessage() {
-        return { ok: true };
-      },
     },
     // A test may hand the shell a session-runtime bridge stub
     // (`loadRendererApp({ shell: { sessionRuntime } })`). Left out, the
     // renderer sees no runtime bridge, which is a real state of its own.
     ...(options.sessionRuntime && typeof options.sessionRuntime === 'object' ? { sessionRuntime: options.sessionRuntime } : {}),
+    // Likewise a desktop-notifications bridge stub (`{ notify, onOpen }`); left out, there is none.
+    ...(options.notifications && typeof options.notifications === 'object' ? { notifications: options.notifications } : {}),
     ...createShellStubServices({
       options,
       state,
@@ -573,5 +563,6 @@ module.exports = {
       createShellStub,
     });
   },
+  waitForStartupCurtainRemoval,
   waitForUi,
 };

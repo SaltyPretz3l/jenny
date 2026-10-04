@@ -1,12 +1,6 @@
 const crypto = require('crypto');
 
-const { FileJsonStore } = require('./file-json-store');
-const {
-  SECRET_TYPE_REMOTE_CONTROL,
-  parseRemoteControlRecord,
-  remoteControlRecordKeyName,
-  serializeRemoteControlRecord,
-} = require('./secure-store-remote-record');
+const { CredentialFileStore } = require('./secure-store-file-health');
 
 const SECURE_STORE_SOURCE = 'electron_safe_storage';
 const BASIC_TEXT_STORAGE_BACKEND = 'basic_text';
@@ -15,8 +9,6 @@ const SECRET_TYPE_SENTRY_DSN = 'sentry_dsn';
 const SECRET_TYPE_WEB_SEARCH_PROVIDER_KEY = 'web_search_provider_key';
 const SECRET_TYPE_MCP_AUTH_TOKEN = 'mcp_auth_token';
 const SECRET_TYPE_MODEL_PROVIDER_OAUTH = 'model_provider_oauth';
-const SECRET_TYPE_PLUGIN_REMOTE_MCP = 'plugin_remote_mcp';
-const SECRET_TYPE_PLUGIN_FULL_HOST = 'plugin_full_host';
 const WEB_SEARCH_PROVIDER_KEY_PREFIX = 'web_search_provider_key:';
 const MCP_AUTH_TOKEN_KEY_PREFIX = 'mcp_auth_token:';
 const MODEL_PROVIDER_OAUTH_KEY_PREFIX = 'model_provider_oauth:';
@@ -131,14 +123,22 @@ function normalizeIsoTimestamp(value) {
   return Number.isNaN(parsed.valueOf()) ? '' : parsed.toISOString();
 }
 
+// Keys whose owning feature is gone. Remote Control (removed 2026-10-02) kept
+// its encrypted pairing record under the exact key; the plugin remote-MCP tier
+// (retired 2026-10-02) kept one digest-keyed credential per binding under the
+// prefix, which no other namespace shares; the plugin full-host tier (retired
+// 2026-10-02) did the same under its own prefix.
+const RETIRED_SECRET_KEYS = Object.freeze(['remote_control:record']);
+const RETIRED_SECRET_KEY_PREFIXES = Object.freeze([
+  PLUGIN_REMOTE_MCP_KEY_PREFIX,
+  PLUGIN_FULL_HOST_KEY_PREFIX,
+]);
+
 const KNOWN_SECRET_TYPES = Object.freeze([
   SECRET_TYPE_SENTRY_DSN,
   SECRET_TYPE_WEB_SEARCH_PROVIDER_KEY,
   SECRET_TYPE_MCP_AUTH_TOKEN,
   SECRET_TYPE_MODEL_PROVIDER_OAUTH,
-  SECRET_TYPE_PLUGIN_REMOTE_MCP,
-  SECRET_TYPE_PLUGIN_FULL_HOST,
-  SECRET_TYPE_REMOTE_CONTROL,
 ]);
 
 function normalizeSecretType(value, fallback = '') {
@@ -187,39 +187,9 @@ function modelProviderOAuthKeyName(providerId) {
   return `${MODEL_PROVIDER_OAUTH_KEY_PREFIX}${token}`;
 }
 
-function pluginRemoteMcpCredentialKeyName(binding) {
-  const idsValid = /^[a-z][a-z0-9_-]{0,63}$/.test(binding?.plugin_id || '')
-    && /^[a-z][a-z0-9-]{0,63}$/.test(binding?.publisher_id || '');
-  const digests = [binding?.descriptor_digest, binding?.resource_digest, binding?.issuer_digest];
-  if (!idsValid || digests.some((value) => !/^[0-9a-f]{64}$/.test(value || ''))) {
-    throw new Error('SecureStore: invalid plugin remote MCP credential binding.');
-  }
-  const canonical = JSON.stringify([
-    binding.publisher_id,
-    binding.plugin_id,
-    binding.descriptor_digest,
-    binding.resource_digest,
-    binding.issuer_digest,
-  ]);
-  const digest = crypto.createHash('sha256').update(canonical, 'utf8').digest('hex');
-  return `${PLUGIN_REMOTE_MCP_KEY_PREFIX}${digest}`;
-}
-
-function pluginFullHostSecretKeyName(sourceIdDigest) {
-  const digest = String(sourceIdDigest || '').trim().toLowerCase();
-  if (!/^[0-9a-f]{64}$/.test(digest)) {
-    throw new Error('SecureStore: invalid plugin full-host secret source.');
-  }
-  return `${PLUGIN_FULL_HOST_KEY_PREFIX}${digest}`;
-}
-
-function deferSecureStorageOperation() {
-  return new Promise((resolve) => setImmediate(resolve));
-}
-
 class SecureStore {
   constructor({ filePath, safeStorage, isSafeStorageReady, nowProvider } = {}) {
-    this.store = new FileJsonStore(filePath);
+    this.store = new CredentialFileStore(filePath);
     this.safeStorage = safeStorage || defaultSafeStorage();
     this.isSafeStorageReady = typeof isSafeStorageReady === 'function'
       ? isSafeStorageReady
@@ -261,11 +231,9 @@ class SecureStore {
       });
     }
 
-    if (!encryptionAvailable) {
-      return buildUnavailableStatus({
-        audit,
-        storageBackend,
-      });
+    const detail = this.store.damagedDetail();
+    if (!encryptionAvailable || detail) {
+      return buildUnavailableStatus({ audit, storageBackend, detail });
     }
 
     return buildStatus({
@@ -397,6 +365,7 @@ class SecureStore {
     }
 
     const status = this._assertSafeStorageReady();
+    this.store.assertWritable();
     const payload = this.store.read({});
 
     if (status.encryptionAvailable) {
@@ -495,36 +464,23 @@ class SecureStore {
     return this.delete(keyName);
   }
 
-  getRemoteControlRecord() {
-    if (!this._assertSafeStorageReady().ready) {
-      throw new Error('SecureStore: encryption unavailable for the remote control record.');
-    }
-    const keyName = remoteControlRecordKeyName();
-    const record = parseRemoteControlRecord(this.get(keyName));
-    if (record === undefined) {
-      this._dropInvalidRecord(this.store.read({}), keyName,
-        'SecureStore: invalid remote control record, removing corrupted entry.');
-      return null;
-    }
-    return record;
-  }
-
-  // Presence of ANY stored envelope (even a malformed or unencrypted one) so
-  // the device store routes it through the fail-closed getter instead of
-  // treating corruption as absence and minting a fresh identity over it.
-  hasRemoteControlRecord() {
+  // Drops the entries removed features left behind and returns the keys it
+  // removed. The file is rewritten only when one was present.
+  purgeRetiredSecrets() {
     this._assertAppReady();
-    return Object.hasOwn(this.store.read({}), remoteControlRecordKeyName());
-  }
-
-  setRemoteControlRecord(record) {
-    return this.set(remoteControlRecordKeyName(), serializeRemoteControlRecord(record), {
-      secretType: SECRET_TYPE_REMOTE_CONTROL,
-    });
-  }
-
-  deleteRemoteControlRecord() {
-    return this.delete(remoteControlRecordKeyName());
+    const payload = this.store.read({});
+    const retired = Object.keys(payload).filter((key) => (
+      RETIRED_SECRET_KEYS.includes(key)
+      || RETIRED_SECRET_KEY_PREFIXES.some((prefix) => key.startsWith(prefix))
+    ));
+    if (retired.length === 0) {
+      return [];
+    }
+    for (const key of retired) {
+      delete payload[key];
+    }
+    this.store.write(payload);
+    return retired;
   }
 
   getModelProviderOAuth(providerId) {
@@ -540,61 +496,10 @@ class SecureStore {
   deleteModelProviderOAuth(providerId) {
     return this.delete(modelProviderOAuthKeyName(providerId));
   }
-
-  async getPluginRemoteMcpCredential(binding) {
-    await deferSecureStorageOperation();
-    const status = this._assertSafeStorageReady();
-    if (!status.ready) throw new Error('SecureStore: encryption unavailable for plugin credentials.');
-    return this.get(pluginRemoteMcpCredentialKeyName(binding));
-  }
-
-  async hasPluginRemoteMcpCredential(binding) {
-    await deferSecureStorageOperation();
-    const status = this._assertSafeStorageReady();
-    if (!status.ready) return false;
-    const key = pluginRemoteMcpCredentialKeyName(binding);
-    const record = this.store.read({})[key];
-    return Boolean(record?.encrypted === true && String(record.value || '').trim());
-  }
-
-  async setPluginRemoteMcpCredential(binding, value) {
-    await deferSecureStorageOperation();
-    return this.set(pluginRemoteMcpCredentialKeyName(binding), String(value || ''), {
-      secretType: SECRET_TYPE_PLUGIN_REMOTE_MCP,
-    });
-  }
-
-  async deletePluginRemoteMcpCredential(binding) {
-    await deferSecureStorageOperation();
-    return this.delete(pluginRemoteMcpCredentialKeyName(binding));
-  }
-
-  async getPluginFullHostSecret(sourceIdDigest) {
-    await deferSecureStorageOperation();
-    const status = this._assertSafeStorageReady();
-    if (!status.ready) throw new Error('SecureStore: encryption unavailable for plugin secrets.');
-    return this.get(pluginFullHostSecretKeyName(sourceIdDigest));
-  }
-
-  async setPluginFullHostSecret(sourceIdDigest, value) {
-    await deferSecureStorageOperation();
-    return this.set(pluginFullHostSecretKeyName(sourceIdDigest), String(value || ''), {
-      secretType: SECRET_TYPE_PLUGIN_FULL_HOST,
-    });
-  }
-
-  async deletePluginFullHostSecret(sourceIdDigest) {
-    await deferSecureStorageOperation();
-    return this.delete(pluginFullHostSecretKeyName(sourceIdDigest));
-  }
 }
 
 module.exports = {
   SECRET_TYPE_MODEL_PROVIDER_OAUTH,
-  SECRET_TYPE_REMOTE_CONTROL,
   WEB_SEARCH_PROVIDER_KEY_IDS,
   SecureStore,
-  pluginRemoteMcpCredentialKeyName,
-  pluginFullHostSecretKeyName,
-  remoteControlRecordKeyName,
 };

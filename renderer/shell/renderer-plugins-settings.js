@@ -1,13 +1,13 @@
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) {
-    module.exports = factory(root, require('./renderer-plugin-catalog'),
-      require('./renderer-plugin-manager-details'), require('./renderer-plugin-manager-operations'));
+    module.exports = factory(root, require('./renderer-plugin-manager-details'),
+      require('./renderer-plugin-manager-operations'));
     return;
   }
-  root.rendererPluginsSettingsUtils = factory(root, root.rendererPluginCatalog,
+  root.rendererPluginsSettingsUtils = factory(root,
     root.rendererPluginManagerDetails, root.rendererPluginManagerOperations);
 })(typeof globalThis !== 'undefined' ? globalThis : this,
-  function (root, catalogModule, detailsModule, operationsModule) {
+  function (root, detailsModule, operationsModule) {
   'use strict';
   var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   var jtn = (globalThis.jennyI18n && globalThis.jennyI18n.tn) || function (k, count, params, one, other) { return jt.call(null, k, count === 1 ? one : other, params); };
@@ -18,7 +18,7 @@
   var SOURCES_HOST_ID = 'pluginsSourcesHost';
   var GROUP_ID = 'pluginsSettingsGroup';
   var SOURCES_GROUP_ID = 'pluginsSourcesGroup';
-  var SOURCE_ID_RE = /^[a-z][a-z0-9_-]{0,63}$/;
+  var OPERATION_WAIT_MS = 10 * 60 * 1000;
   var STATE_COPY = Object.freeze({ absent: jt('plugins.settings.stateNotInstalled', 'not installed'), staged: jt('plugins.settings.stateInstalling', 'installing…'),
     installed_disabled: jt('plugins.settings.stateTurnedOff', 'turned off'), preparing: jt('plugins.settings.stateStarting', 'starting…'), active: jt('plugins.settings.stateActive', 'active'),
     disabling: jt('plugins.settings.turningOff', 'turning off…'), blocked: jt('plugins.settings.stateBlocked', 'blocked'), quarantined: jt('plugins.settings.stateQuarantined', 'quarantined'),
@@ -95,14 +95,10 @@
     var windowRef = options.windowRef || root;
     var documentRef = options.documentRef || windowRef.document;
     var actionButton = root.inventoryActionButton;
-    var textField = root.inventoryTextField;
     var platform = null;
-    var catalog = null;
     var lastError = '';
     var progressText = '';
     var busyOperationId = '';
-    var mirrorDraft = null;
-    var mirrorError = '';
     var advancedExpanded = false;
     var disposed = false;
     var refreshPromise = null;
@@ -113,6 +109,8 @@
     var unsubscribeFeatures = null;
     var confirmDialog = null;
     var details = null;
+    var operationPollMs = Number.isFinite(options.operationPollMs) ? options.operationPollMs : 400;
+    var operationWaitMs = Number.isFinite(options.operationWaitMs) ? options.operationWaitMs : OPERATION_WAIT_MS;
     function api() { return windowRef.jennyShell?.plugins || null; }
     function card() { return documentRef?.querySelector(CARD_SELECTOR) || null; }
     function nav() { return documentRef?.querySelector(NAV_SELECTOR) || null; }
@@ -156,12 +154,10 @@
     }
     async function fetchState() {
       var bridge = api();
-      if (!bridge?.getState) return { platform: classifyPluginsPlatform(false, null), catalog: null };
-      var results = await Promise.allSettled([bridge.getState(),
-        bridge.getCatalogState?.() || Promise.resolve({ ok: true, configured: false, entries: [], sources: [] })]);
+      if (!bridge?.getState) return { platform: classifyPluginsPlatform(false, null) };
+      var results = await Promise.allSettled([bridge.getState()]);
       return { platform: results[0].status === 'fulfilled'
-        ? classifyPluginsPlatform(true, results[0].value) : classifyPluginsPlatform(false, null),
-        catalog: results[1].status === 'fulfilled' ? catalogModule.normalizeCatalogState(results[1].value) : null };
+        ? classifyPluginsPlatform(true, results[0].value) : classifyPluginsPlatform(false, null) };
     }
     async function refresh() {
       if (disposed || !enabled()) return null;
@@ -171,7 +167,6 @@
         if (refreshPending) { refreshPending = false; refreshPromise = null; return refresh(); }
         if (!platform || platform.kind !== 'ready' || next.platform.kind !== 'ready'
           || next.platform.revision >= platform.revision) platform = next.platform;
-        if (!catalog || !next.catalog || next.catalog.revision >= catalog.revision) catalog = next.catalog;
         render(); return next;
       }).catch(function () {
         if (!disposed) log('INFO', 'plugins_settings.refresh_unavailable', {});
@@ -187,7 +182,6 @@
       if (active.dataset?.pluginsSettingsAction) return { kind: 'action', action: active.dataset.pluginsSettingsAction,
         publisherId: active.dataset.publisherId || '', pluginId: active.dataset.pluginId || '',
         contributionId: active.dataset.contributionId || '' };
-      if (active.id === 'pluginMirrorSourceId') return { kind: 'id', id: active.id };
       return null;
     }
     function restoreFocus(identity) {
@@ -200,7 +194,6 @@
           && (node.dataset.publisherId || '') === identity.publisherId
           && (node.dataset.pluginId || '') === identity.pluginId
           && (node.dataset.contributionId || '') === identity.contributionId; });
-      else if (identity.kind === 'id') match = documentRef.getElementById(identity.id);
       match?.focus?.();
     }
     function operationStatusMarkup() {
@@ -223,9 +216,11 @@
     }
 
     function dropZoneMarkup() {
+      // Unsigned installs are off unless the developer profile is switched on, so the hint follows the flag.
+      var unsignedHint = state.features?.featureFlags?.plugin_developer_profile === true
+        ? ' ' + actionButton.escapeHtml(jt('plugins.settings.unsignedProfileHint', 'Unsigned plugins are labelled and run in the developer profile.')) : '';
       return '<div class="plugins-drop-zone" data-plugins-drop-zone>'
-        + actionButton.escapeHtml(jt('plugins.settings.dropPackageHint', 'Drop a .jenny-plugin file here or use Install plugin.')) + ' '
-        + actionButton.escapeHtml(jt('plugins.settings.unsignedProfileHint', 'Unsigned plugins are labelled and run in the developer profile.')) + '</div>';
+        + actionButton.escapeHtml(jt('plugins.settings.dropPackageHint', 'Drop a .jenny-plugin file here or use Install plugin.')) + unsignedHint + '</div>';
     }
 
     function installedMarkup(escapeHtml) {
@@ -234,10 +229,7 @@
         var active = plugin.effectiveState === 'active';
         var key = plugin.publisherId + '/' + plugin.pluginId;
         var primaryView = primaryViewContribution(plugin);
-        var updateAvailable = plugin.updateAvailable || Boolean(catalog?.entries?.some(function (entry) {
-          return entry.publisherId === plugin.publisherId && entry.pluginId === plugin.pluginId
-            && catalogModule.isNewerVersion(entry.version, plugin.version);
-        }));
+        var updateAvailable = plugin.updateAvailable;
         var reason = !active && !plugin.activationEligible ? activationReasonCopy(plugin.activationReasonCode) : '';
         var publisher = plugin.sourceKind === 'developer_link'
           ? 'developer (unsigned)' : plugin.publisherId || jt('plugins.settings.publisherUnavailable', 'Publisher unavailable');
@@ -286,21 +278,13 @@
       var readOnly = platform.readOnly || !platform.storeWritable
         ? '<div class="settings-note plugins-settings-error" data-plugins-read-only>' + escapeHtml(jt('plugins.settings.readOnlyPreserved', 'Plugin state is read-only and preserved unchanged.')) + '</div>' : '';
       var error = lastError ? '<div class="settings-note plugins-settings-error" data-plugins-last-error>' + escapeHtml(lastError) + '</div>' : '';
+      // Zero plugins reads once, as the empty state; the count line only appears beside rows.
+      var countLine = platform.plugins.length
+        ? '<p class="settings-group-copy">' + escapeHtml(jtn('plugins.settings.installedPluginCount', platform.installedCount, { count: platform.installedCount }, '{count} installed plugin.', '{count} installed plugins.')) + '</p>'
+        : '';
       return '<div class="settings-group settings-group--wide plugins-settings-group" role="group" aria-labelledby="pluginsInstalledHeading" id="'
-        + GROUP_ID + '">' + heading + '<p class="settings-group-copy">' + escapeHtml(jtn('plugins.settings.installedPluginCount', platform.installedCount, { count: platform.installedCount }, '{count} installed plugin.', '{count} installed plugins.')) + '</p>' + installedMarkup(escapeHtml)
+        + GROUP_ID + '">' + heading + countLine + installedMarkup(escapeHtml)
         + dropZoneMarkup() + readOnly + error + operationStatusMarkup() + '</div>';
-    }
-    function mirrorFormMarkup(escapeHtml) {
-      if (!mirrorDraft || !textField) return '';
-      var error = mirrorError ? '<p class="settings-note plugins-settings-error" role="alert">' + escapeHtml(mirrorError) + '</p>' : '';
-      return '<div class="plugins-mirror-form" data-plugins-mirror-form>'
-        + textField({ id: 'pluginMirrorSourceId', label: jt('plugins.settings.sourceId', 'Source ID'), value: mirrorDraft.sourceId, maxLength: 64 })
-        + '<p class="settings-group-copy">' + escapeHtml(jt('plugins.settings.sourceIdHint', 'Use lowercase letters, numbers, underscores, or hyphens. This is the name the mirror is stored and shown under. Jenny will ask you to choose the mirror folder next.')) + '</p>'
-        + error + '<div class="settings-actions">'
-        + actionButton({ label: jt('plugins.settings.chooseMirrorFolder', 'Choose mirror folder'), size: 'sm', disabled: operations.busy(),
-          dataset: { 'plugins-settings-action': 'save-mirror' } })
-        + actionButton({ label: jt('common.cancel', 'Cancel'), variant: 'ghost', size: 'sm', disabled: operations.busy(),
-          dataset: { 'plugins-settings-action': 'cancel-mirror' } }) + '</div></div>';
     }
     function sourcesGroupMarkup() {
       if (!actionButton || platform?.kind !== 'ready') return '';
@@ -309,17 +293,11 @@
       return '<div class="settings-group settings-group--wide plugins-settings-group" role="group" aria-labelledby="pluginsSourcesHeading" id="'
         + SOURCES_GROUP_ID + '"><h4 class="settings-group-heading" id="pluginsSourcesHeading">' + escapeHtml(jt('plugins.settings.advancedHeading', 'Advanced')) + '</h4>'
         + '<div class="settings-field-row plugins-advanced-summary"><span class="settings-field-row-text">'
-        + '<strong>' + escapeHtml(jt('plugins.settings.packageSources', 'Package sources')) + '</strong><small>'
-        + escapeHtml(catalog?.configured ? jtn('plugins.settings.catalogEntryCount', catalog.entries.length, { count: catalog.entries.length }, '{count} catalog entry', '{count} catalog entries')
-          : jt('plugins.settings.noCatalogConfigured', 'No catalog configured')) + escapeHtml(jt('plugins.settings.sourcesSummarySuffix', ' · offline mirrors · audit log')) + '</small></span>'
+        + '<strong>' + escapeHtml(jt('plugins.settings.packageSources', 'Package sources')) + '</strong></span>'
         + actionButton({ label: jt('common.open', 'Open'), variant: 'ghost', size: 'sm', ariaExpanded: advancedExpanded,
           ariaControls: 'pluginsAdvancedDisclosure', dataset: { 'plugins-settings-action': 'toggle-advanced' } })
         + '</div><div class="plugins-advanced-disclosure" id="pluginsAdvancedDisclosure" data-plugins-advanced-disclosure'
-        + (advancedExpanded ? '' : ' hidden') + '><div class="plugin-catalog-list">'
-        + catalogModule.renderCatalog(catalog, platform.plugins, actionButton, escapeHtml, operations.busy()) + '</div>'
-        + mirrorFormMarkup(escapeHtml) + '<div class="settings-actions plugins-sources-actions">'
-        + actionButton({ label: jt('plugins.settings.addOfflineMirror', 'Add offline mirror'), size: 'sm', disabled: operations.busy() || unavailable,
-          dataset: { 'plugins-settings-action': 'add-mirror' } })
+        + (advancedExpanded ? '' : ' hidden') + '><div class="settings-actions plugins-sources-actions">'
         + actionButton({ label: jt('plugins.settings.installSignedPackage', 'Install signed package'), size: 'sm', disabled: operations.busy() || unavailable,
           dataset: { 'plugins-settings-action': 'install-package' } })
         + actionButton({ label: jt('plugins.settings.exportAuditLog', 'Export audit log'), size: 'sm', disabled: operations.busy(),
@@ -359,10 +337,37 @@
         render(); return { ok: false, reason: 'bridge_method_missing' };
       }
       var result;
-      try { result = await operations.run(name, function () { return bridge[name](payload); }); }
+      try { result = await operations.run(name, async function () { return settleAdmitted(bridge, await bridge[name](payload)); }); }
       catch (_error) { result = { ok: false, reason: 'bridge_call_failed' };
         log('WARN', 'plugins_settings.bridge_call_failed', { name: name }); }
       return afterOperation(result, successMessage, reloadDetails);
+    }
+    // A distribution install answers as soon as it is admitted; its outcome is
+    // the operation receipt. Stay busy until that receipt is terminal, so the
+    // success toast means the plugin is installed and a late failure is shown.
+    async function settleAdmitted(bridge, admitted) {
+      if (admitted?.ok !== true || admitted.status !== 'pending' || !admitted.operation_id
+        || typeof bridge.getOperation !== 'function') return admitted;
+      var operationId = String(admitted.operation_id);
+      busyOperationId = operationId;
+      // One deadline bounds the whole wait, a status query that never answers included.
+      var EXPIRED = {}; var deadlineTimer = null;
+      var expired = new Promise(function (resolve) {
+        deadlineTimer = windowRef.setTimeout(function () { resolve(EXPIRED); }, operationWaitMs); });
+      try {
+        while (!disposed) {
+          var status = await Promise.race([bridge.getOperation({ operation_id: operationId }), expired]);
+          if (status === EXPIRED) break;
+          if (status?.ok !== true) return status || { ok: false, reason: 'bridge_call_failed' };
+          if (status.classification === 'terminal') {
+            return status.receipt?.status === 'committed' ? admitted : { ok: false };
+          }
+          var tick = await Promise.race([new Promise(function (resolve) {
+            windowRef.setTimeout(resolve, operationPollMs); }), expired]);
+          if (tick === EXPIRED) break;
+        }
+      } finally { windowRef.clearTimeout(deadlineTimer); }
+      return { ok: false, reason: 'operation_busy' };
     }
     async function exportAudit() {
       var bridge = api();
@@ -392,19 +397,6 @@
       var result = await runSimple('uninstall', identity, jt('plugins.settings.uninstalled', 'Plugin uninstalled.'));
       if (!disposed && result?.ok) details?.close?.();
     }
-    function catalogPayload(target) { return { source_id: target.dataset.sourceId,
-      publisher_id: target.dataset.publisherId, plugin_id: target.dataset.pluginId,
-      version: target.dataset.version, package_sha256: target.dataset.packageSha256 }; }
-    async function saveMirror() {
-      if (!mirrorDraft || operations.busy()) return;
-      var sourceId = String(mirrorDraft.sourceId || '').trim();
-      mirrorError = SOURCE_ID_RE.test(sourceId) ? ''
-        : jt('plugins.settings.invalidSourceId', 'Source ID must start with a letter and use only lowercase letters, numbers, underscores, or hyphens.');
-      if (mirrorError) { render(); return; }
-      var result = await runSimple('selectOfflineMirror', { source_id: sourceId }, jt('plugins.settings.offlineMirrorTrusted', 'Offline mirror trusted.'));
-      if (disposed || result?.canceled === true) return;
-      if (result?.ok) { mirrorDraft = null; mirrorError = ''; render(); }
-    }
     function handleClick(event) {
       var target = event.target?.closest?.('[data-plugins-settings-action]'); if (!target) return;
       var action = target.dataset.pluginsSettingsAction;
@@ -420,16 +412,6 @@
       else if (action === 'install-package') runSimple('installLocalPackage', {}, jt('plugins.settings.installedInactive', 'Plugin installed — inactive.'));
       else if (action === 'toggle-advanced') { advancedExpanded = !advancedExpanded; render(); }
       else if (action === 'export-audit') exportAudit();
-      else if (action === 'add-mirror') { mirrorDraft = { sourceId: '' }; mirrorError = ''; render();
-        documentRef.getElementById('pluginMirrorSourceId')?.focus?.(); }
-      else if (action === 'cancel-mirror') { mirrorDraft = null; mirrorError = ''; render(); }
-      else if (action === 'save-mirror') saveMirror();
-      else if (action === 'catalog-install') runSimple('installFromCatalog', catalogPayload(target), jt('plugins.settings.installedInactive', 'Plugin installed — inactive.'));
-      else if (action === 'catalog-update') runSimple('updateFromCatalog', catalogPayload(target), jt('plugins.settings.updatedInactive', 'Plugin updated — inactive.'));
-    }
-    function handleInput(event) {
-      if (!mirrorDraft) return;
-      if (event.target?.id === 'pluginMirrorSourceId') mirrorDraft.sourceId = event.target.value;
     }
     function handleToggleChange(event) {
       var id = String(event.detail?.id || '');
@@ -486,13 +468,11 @@
     function syncFeatureState() {
       var show = enabled(); syncVisibility(show); if (!show) { render(); return; }
       subscribe(); refresh();
-      if (api()?.refreshCatalogs) api().refreshCatalogs().then(function () { if (!disposed) refresh(); }).catch(function () {});
     }
     function bind() {
       if (disposed || !documentRef) return;
       root.inventoryToggleSwitch?.initToggleHandlers?.(documentRef);
       documentRef.addEventListener('click', handleClick);
-      documentRef.addEventListener('input', handleInput);
       documentRef.addEventListener('inv-toggle-change', handleToggleChange);
       host(INSTALLED_HOST_ID)?.addEventListener('dragover', handleDropZoneEvent);
       host(INSTALLED_HOST_ID)?.addEventListener('dragleave', handleDropZoneEvent);
@@ -504,7 +484,6 @@
     function dispose() {
       disposed = true;
       documentRef?.removeEventListener('click', handleClick);
-      documentRef?.removeEventListener('input', handleInput);
       documentRef?.removeEventListener('inv-toggle-change', handleToggleChange);
       host(INSTALLED_HOST_ID)?.removeEventListener('dragover', handleDropZoneEvent);
       host(INSTALLED_HOST_ID)?.removeEventListener('dragleave', handleDropZoneEvent);
@@ -524,6 +503,5 @@
   return { createPluginsSettingsController: createPluginsSettingsController,
     classifyPluginsPlatform: classifyPluginsPlatform, formatWireFailure: formatWireFailure,
     stateCopy: stateCopy, activationReasonCopy: activationReasonCopy, progressCopy: progressCopy,
-    failureMessage: failureMessage,
-    isNewerVersion: catalogModule.isNewerVersion };
+    failureMessage: failureMessage };
 });

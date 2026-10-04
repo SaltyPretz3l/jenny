@@ -57,7 +57,11 @@ test('renderer composer shortcut buttons stay wired (command popover + attach)',
   await waitForUi(window, 20);
   assert.equal(commandPopover.classList.contains('hidden'), true, 'command popover closes on outside press');
 
+  // The paperclip opens the attach menu (composer Chat panel, 2026-09-30); Attach files picks.
   attachShortcut.click();
+  await waitForUi(window, 20);
+  assert.equal(window.document.getElementById('composerAttachMenu').classList.contains('hidden'), false, 'attach menu opens');
+  window.document.getElementById('attachFilesButton').click();
   await waitForUi(window, 20);
 
   assert.equal(shell.__state.attachmentPickCalls.length, 1);

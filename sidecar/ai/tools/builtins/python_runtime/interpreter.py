@@ -427,6 +427,17 @@ def _runtime_wheelhouse(config: Any | None) -> Path | None:
                 "scripts/build-python-runtime-bundle.py; Jenny will not fall back "
                 "to an unverified wheelhouse."
             )
+        if not _wheelhouse_manifest_path(wheelhouse).is_file() and not any(
+            wheelhouse.glob("*.whl")
+        ):
+            # A clean checkout tracks only a .gitignore sentinel here. That is
+            # a bundle nobody built, not a tampered one (dogfood TR-021); wheels
+            # without their manifest still fail the integrity check below.
+            raise FileNotFoundError(
+                f"Configured python runtime wheelhouse is not built: {wheelhouse}. "
+                "Build or restore the verified offline bundle with "
+                "scripts/build-python-runtime-bundle.py."
+            )
         return wheelhouse
     # The source tree tracks an otherwise-empty .gitignore sentinel so static
     # electron-builder paths exist on clean checkouts. Treat that directory as

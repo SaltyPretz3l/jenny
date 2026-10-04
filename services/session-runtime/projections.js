@@ -1,6 +1,7 @@
 'use strict';
 
-const { validId } = require('./contracts');
+const { validId, workPromptPreview } = require('./contracts');
+const { DEFAULT_SESSION_RUNTIME, LIMIT_RANGES } = require('../shell-config-session-runtime');
 
 const PROJECTION_SCHEMA_VERSION = 1;
 const MAX_CURSOR_CHARS = 4096;
@@ -12,6 +13,10 @@ const LANE_CLASSES = ['local', 'cloud'];
 const LANE_LIMIT_KEYS = ['descendant_depth', 'descendants', 'inference_requests', 'runnable_turns'];
 const CONFIGURED_RESOURCE_KEYS = ['native_processes', 'tests', 'tool_operations'];
 const EFFECTIVE_RESOURCE_KEYS = ['native_processes', 'sandbox_commands', 'tests', 'tool_operations'];
+const RUN_GROUPS = new Set(['needs_you', 'running', 'waiting', 'finished']);
+const RECOVERY_KINDS = ['restart_paused', 'transition_repaired'];
+const WAIT_KINDS = ['dependency', 'resource'];
+const ADMISSION_WAIT_REASONS = new Set(['session_busy', 'model_busy', 'cleanup_unconfirmed']);
 
 class RuntimeProjectionError extends Error {
   constructor(reason = 'runtime_projection_invalid') {
@@ -39,18 +44,26 @@ function boundedCount(value, { positive = false } = {}) {
   return Number.isSafeInteger(value) && value >= (positive ? 1 : 0);
 }
 
+// `view: 'runs'` asks for the Runs page shape: every unfinished item plus the
+// terminal items updated since `finished_since`, in a stable created_at order,
+// without a cursor (which goes stale on every transition while work runs).
 function normalizeSnapshotRequest(payload = {}) {
-  if (!hasOnlyKeys(payload, ['cursor', 'limit', 'project_id', 'session_id'])) return null;
+  if (!hasOnlyKeys(payload, ['cursor', 'finished_since', 'limit', 'project_id', 'session_id', 'view'])) return null;
   const projectId = Object.hasOwn(payload, 'project_id') ? payload.project_id : null;
   const sessionId = Object.hasOwn(payload, 'session_id') ? payload.session_id : null;
   const cursor = Object.hasOwn(payload, 'cursor') ? payload.cursor : null;
   const limit = Object.hasOwn(payload, 'limit') ? payload.limit : 50;
+  const view = Object.hasOwn(payload, 'view') ? payload.view : 'page';
+  const finishedSince = Object.hasOwn(payload, 'finished_since') ? payload.finished_since : null;
   if ((projectId !== null && !validId(projectId))
     || (sessionId !== null && !validId(sessionId))
     || (cursor !== null && (typeof cursor !== 'string' || !CURSOR_PATTERN.test(cursor)
       || cursor.length > MAX_CURSOR_CHARS))
-    || !Number.isSafeInteger(limit) || limit < 1 || limit > 100) return null;
-  return Object.freeze({ cursor, limit, projectId, sessionId });
+    || !Number.isSafeInteger(limit) || limit < 1 || limit > 100
+    || !['page', 'runs'].includes(view)
+    || (view === 'runs' && (cursor !== null || sessionId !== null))
+    || (finishedSince !== null && (view !== 'runs' || !validTimestamp(finishedSince)))) return null;
+  return Object.freeze({ cursor, limit, projectId, sessionId, view, finishedSince });
 }
 
 function normalizeWorkRequest(payload = {}) {
@@ -140,14 +153,62 @@ function projectSummary(summary) {
     || !validTimestamp(summary.created_at) || !validTimestamp(summary.updated_at)) {
     throw new RuntimeProjectionError();
   }
+  const wait = Object.hasOwn(summary, 'admission_wait') ? summary.admission_wait : null;
+  if (wait !== null && (summary.status !== 'pending' || !hasOnlyKeys(wait,
+    ['reason', 'since', 'blocking_session_id']) || Object.keys(wait).length !== 3
+    || !ADMISSION_WAIT_REASONS.has(wait.reason) || !Number.isFinite(wait.since)
+    || wait.since < 0 || (wait.blocking_session_id !== null && !validId(wait.blocking_session_id)))) {
+    throw new RuntimeProjectionError();
+  }
+  let admissionWait = null;
+  if (wait !== null) {
+    try { admissionWait = Object.freeze({ ...wait, since: new Date(wait.since).toISOString() }); }
+    catch (_error) { throw new RuntimeProjectionError(); }
+  }
   return Object.freeze({ work_id: summary.work_id, project_id: summary.project_id,
     session_id: summary.session_id, turn_id: summary.turn_id, purpose: summary.purpose,
     status: summary.status, revision: summary.revision,
     submission_sequence: summary.submission_sequence,
-    created_at: summary.created_at, updated_at: summary.updated_at });
+    created_at: summary.created_at, updated_at: summary.updated_at, admission_wait: admissionWait });
 }
 
-function projectRuntimeSnapshot({ runtime, storeStatus, laneSnapshot, resourceSnapshot, page }) {
+function nullableCount(value) {
+  return value === null || boundedCount(value);
+}
+
+// One Runs row. `group` is the page section (needs_you | running | waiting |
+// finished); `queue_position` is the 1-based place of pending work in its lane;
+// `progress` is null when the runtime has no durable step count for the item.
+function projectRunItem(item) {
+  if (!isPlainRecord(item) || !RUN_GROUPS.has(item.group)) throw new RuntimeProjectionError();
+  const summary = projectSummary(item);
+  if ((item.recovery_kind !== null && !RECOVERY_KINDS.includes(item.recovery_kind))
+    || (item.control_kind !== null && !['cancel', 'pause'].includes(item.control_kind))
+    || (item.wait_kind !== null && !WAIT_KINDS.includes(item.wait_kind))
+    || (item.queue_position !== null && !boundedCount(item.queue_position, { positive: true }))
+    || (item.parent_work_id !== null && !validId(item.parent_work_id))
+    || (item.progress !== null && (!isPlainRecord(item.progress)
+      || !nullableCount(item.progress.steps) || !nullableCount(item.progress.tool_calls)))) {
+    throw new RuntimeProjectionError();
+  }
+  return Object.freeze({ ...summary, group: item.group, recovery_kind: item.recovery_kind,
+    control_kind: item.control_kind, wait_kind: item.wait_kind, queue_position: item.queue_position,
+    parent_work_id: item.parent_work_id,
+    progress: item.progress === null ? null : Object.freeze({ steps: item.progress.steps,
+      tool_calls: item.progress.tool_calls }) });
+}
+
+function projectLimitDefaults() {
+  const ranges = Object.fromEntries(Object.entries(LIMIT_RANGES).map(([key, [min, max]]) => [key,
+    Object.freeze({ min, max })]));
+  return Object.freeze({ defaults: Object.freeze(Object.fromEntries(Object.entries(DEFAULT_SESSION_RUNTIME)
+    .map(([group, values]) => [group, Object.freeze({ ...values })]))), ranges: Object.freeze(ranges) });
+}
+
+function projectRuntimeSnapshot({ runtime, storeStatus, laneSnapshot, resourceSnapshot, page, runs = null }) {
+  if (runs !== null && (!isPlainRecord(runs) || !Array.isArray(runs.items) || runs.items.length > 100
+    || typeof runs.truncated !== 'boolean')) throw new RuntimeProjectionError();
+  if (runs !== null) page = { items: [], next_cursor: null, revision: runs.revision };
   if (!isPlainRecord(storeStatus) || typeof storeStatus.read_only !== 'boolean'
     || !boundedCount(storeStatus.revision) || !isPlainRecord(laneSnapshot)
     || !isPlainRecord(resourceSnapshot) || !isPlainRecord(page)
@@ -183,8 +244,9 @@ function projectRuntimeSnapshot({ runtime, storeStatus, laneSnapshot, resourceSn
       counts: projectLaneCounts(laneSnapshot) }),
     resources: Object.freeze({ configured_limits: configuredResources,
       effective_limits: effectiveResources, counts: projectResourceCounts(resourceSnapshot) }),
-    work: Object.freeze(page.items.map(projectSummary)),
-    next_cursor: page.next_cursor,
+    ...(runs === null ? { work: Object.freeze(page.items.map(projectSummary)), next_cursor: page.next_cursor }
+      : { view: 'runs', limit_defaults: projectLimitDefaults(), work: Object.freeze(runs.items.map(projectRunItem)),
+        next_cursor: null, truncated: runs.truncated }),
   });
 }
 
@@ -216,8 +278,11 @@ function projectWorkRecord(record) {
     return Object.freeze({ kind: record.recovery.kind,
       previous_status: record.recovery.previous_status, at: record.recovery.at });
   })();
+  // FG-007: only the work read carries the record, so only it names the prompt;
+  // snapshot rows stay index-only.
   return Object.freeze({ ok: true, schema_version: PROJECTION_SCHEMA_VERSION,
-    work: Object.freeze({ ...summary, attempt: projectAttempt(record.attempt),
+    work: Object.freeze({ ...summary, prompt_preview: workPromptPreview(record.input),
+      attempt: projectAttempt(record.attempt),
       checkpoint: Object.freeze({ recorded: checkpoint !== null,
         bytes: checkpoint?.bytes || 0 }), control, recovery }) });
 }

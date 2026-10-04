@@ -25,7 +25,11 @@ from sidecar.ai.tools.models import ToolCallRequest
 from sidecar.ai.tools.workspace import WorkspaceGuard
 from sidecar.ai.tools.workspace_mutation_journal_contract import workspace_identity
 from sidecar.ai.tools.workspace_mutation_journal_store import WorkspaceMutationJournalStore
-from sidecar.runtime.operation_ledger import LEDGER_OPERATIONS_DIR, OperationLedger
+from sidecar.runtime.operation_ledger import (
+    LEDGER_OPERATIONS_DIR,
+    OperationLedger,
+    operation_timestamp,
+)
 
 KEY = "idem_0123456789abcdef01234567"
 
@@ -49,7 +53,7 @@ def _tool(handler, *, side_effecting: bool = True, name: str = "probe_write") ->
 
 
 def _call(tool: BuiltinTool, workspace_root: Path, arguments: dict | None = None) -> dict:
-    return builtin_server._handle_tools_call(  # noqa: SLF001
+    return builtin_server._handle_tools_call(
         "ledger-call",
         {tool.name: tool},
         WorkspaceGuard(str(workspace_root)),
@@ -139,13 +143,15 @@ def test_recorded_committed_outcome_replays_without_executing(ledger_root, tmp_p
             tool_name=tool.name, arguments={}
         ),
         generation_id=builtin_server.SERVER_GENERATION_ID,
-        now_iso="2026-08-28T12:00:00Z",
+        now_iso=operation_timestamp(),
     )
+    # Settle at wall-clock now: a fixed date ages past the 30-day retention and
+    # the receipt then reads as expired instead of replayable.
     ledger.settle(
         operation_id=KEY,
         status="committed",
         terminal_result_digest="sha256:beef",
-        now_iso="2026-08-28T12:00:01Z",
+        now_iso=operation_timestamp(),
     )
     response = _call(tool, tmp_path, {"_jenny_idempotency_key": KEY})
     assert "result" in response
@@ -294,3 +300,18 @@ def test_journal_edit_replay_and_terminal_refusal_keep_honest_effects(
     assert "effects: none" in message["content"]
     assert "retry: after_fix" in message["content"]
     assert "retry: same_args" not in message["content"]
+
+
+def test_pending_receipt_records_the_owning_session(ledger_root, tmp_path) -> None:
+    seen: dict = {}
+
+    def handler(_arguments, _workspace):
+        seen["receipt"] = _receipt(ledger_root)
+        return "done"
+
+    _call(
+        _tool(handler),
+        tmp_path,
+        {"_jenny_idempotency_key": KEY, "_jenny_session_id": "sess_owner"},
+    )
+    assert seen["receipt"]["evidence"]["session_id"] == "sess_owner"

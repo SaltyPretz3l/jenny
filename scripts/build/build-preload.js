@@ -14,16 +14,15 @@ const MAX_STAMP_INPUTS = 5000;
 let lastBuildSkipped = false;
 
 // Every preload entry, bundled in ONE esbuild invocation: each buildSync call
-// spawns its own esbuild process, and four serial spawns sat on the critical
+// spawns its own esbuild process, and serial spawns sat on the critical
 // path of every dev launch (start.js rebuilds on boot). entryNames maps
 // preload.js -> preload.bundle.js, uninstall-preload.js ->
-// uninstall-preload.bundle.js, and so on for the plugin-view / plugin-consent
-// preloads. No `splitting` (cjs), so each output stays self-contained.
+// uninstall-preload.bundle.js, and so on for the plugin-view
+// preload. No `splitting` (cjs), so each output stays self-contained.
 const PRELOAD_ENTRY_BASENAMES = [
   'preload.js',
   'uninstall-preload.js',
   'plugin-view-preload.js',
-  'plugin-consent-preload.js',
 ];
 
 function computeStamp(root, inputs, esbuildVersion, buildOptions) {

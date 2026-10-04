@@ -141,6 +141,21 @@ test('tool activity: running -> timed_out announces assertively', () => {
   assert.equal(announcer.calls[0].politeness, 'assertive');
 });
 
+test('tool activity: running -> cancelled announces once, politely, with the status label and never as a failure', () => {
+  const announcer = createFakeAnnouncer();
+  const { controller, frameHarness } = createHarness(rowFixture('call-8', 'running'), announcer);
+
+  controller.queueToolPatch({
+    type: 'tool_result', sessionId: 'session-1', callId: 'call-8', toolName: 'Bash', approvalState: 'cancelled', isError: true,
+  }, { eventType: 'tool_result' });
+  frameHarness.drain();
+
+  assert.equal(announcer.calls.length, 1);
+  assert.equal(announcer.calls[0].politeness, 'polite');
+  assert.equal(announcer.calls[0].message, 'Bash: Cancelled');
+  assert.doesNotMatch(announcer.calls[0].message, /failed/);
+});
+
 test('tool activity: awaiting_approval does NOT announce here (already covered by the approval block\'s own live region)', () => {
   const announcer = createFakeAnnouncer();
   const { controller, frameHarness } = createHarness(rowFixture('call-5', 'running'), announcer);

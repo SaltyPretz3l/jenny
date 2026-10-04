@@ -114,6 +114,8 @@ test('Open Diagnostics uses the shell view owner', async (t) => {
 
 test('clicking Quit invokes bridge.quitTrayApp and re-runs status', async (t) => {
   const statusCalls = [];
+  const quitCalls = [];
+  // The tray app is there until it is quit (the Quit button is only offered while it is).
   const bridge = makeBridgeStub({
     status: async () => {
       statusCalls.push(1);
@@ -121,13 +123,12 @@ test('clicking Quit invokes bridge.quitTrayApp and re-runs status', async (t) =>
         ok: true,
         supported: true,
         platform: 'win32',
-        detected: statusCalls.length === 1,
-        trayProcesses: statusCalls.length === 1 ? [{ pid: 1234, name: 'ollama app.exe' }] : [],
+        detected: quitCalls.length === 0,
+        trayProcesses: quitCalls.length === 0 ? [{ pid: 1234, name: 'ollama app.exe' }] : [],
         startupShortcuts: [],
       };
     },
   });
-  const quitCalls = [];
   bridge.quitTrayApp = async () => {
     quitCalls.push(1);
     return { ok: true, killedPids: [1234] };
@@ -148,6 +149,7 @@ test('clicking Quit invokes bridge.quitTrayApp and re-runs status', async (t) =>
   assert.ok(statusCalls.length >= 2, 'status() should be re-run after Quit');
   const group = dom.window.document.getElementById('ollamaHealthGroup');
   assert.match(group.querySelector('.settings-note').textContent, /Quit|removed|no longer|not running/i);
+  assert.equal(group.querySelector('[data-ollama-health-action="quit"]'), null, 'with the tray app gone, Quit is no longer offered');
 });
 
 test('supported:false disables the action buttons and shows a platform note', async (t) => {
@@ -168,10 +170,11 @@ test('supported:false disables the action buttons and shows a platform note', as
   const group = dom.window.document.getElementById('ollamaHealthGroup');
   assert.ok(group);
   assert.match(group.textContent, /not applicable/i);
-  ['quit', 'disable', 'restart'].forEach((action) => {
-    const btn = group.querySelector(`[data-ollama-health-action="${action}"]`);
-    assert.ok(btn, `${action} button should still render`);
-    assert.ok(btn.disabled, `${action} button should be disabled when unsupported`);
+  const restart = group.querySelector('[data-ollama-health-action="restart"]');
+  assert.ok(restart, 'restart button should still render');
+  assert.ok(restart.disabled, 'restart button should be disabled when unsupported');
+  ['quit', 'disable'].forEach((action) => {
+    assert.equal(group.querySelector(`[data-ollama-health-action="${action}"]`), null, `${action} is not offered when no tray app or shortcut was found`);
   });
 });
 
@@ -193,4 +196,38 @@ test('stale process identity refusal remains visible after the recovery re-check
     dom.window.document.querySelector('.ollama-health-status').textContent,
     /no longer matches the expected Ollama command/i,
   );
+});
+
+test('another engine running and no tray app: the checks fold, and an opened fold stays open across re-checks', async (t) => {
+  const state = makeState({ offline: { currentEngine: 'openai-compatible' } });
+  const bridge = makeBridgeStub({
+    status: async () => ({ ok: true, supported: true, platform: 'win32', detected: false, trayProcesses: [], startupShortcuts: [] }),
+  });
+  const { dom, controller } = createHarness(t, { state, bridge });
+  controller.bind();
+  await controller.refresh();
+  const doc = dom.window.document;
+  let fold = doc.querySelector('#ollamaHealthGroup details.ollama-health-fold');
+  assert.ok(fold, 'troubleshooting folds while llama-server serves');
+  assert.equal(fold.open, false);
+  fold.open = true;
+  await controller.refresh();
+  await controller.refresh();
+  fold = doc.querySelector('#ollamaHealthGroup details.ollama-health-fold');
+  assert.ok(fold, 'the fold survives a re-check');
+  assert.equal(fold.open, true, 'and keeps the state the person chose');
+});
+
+test('Ollama running, or a tray app found: the checks stay open', async (t) => {
+  const { dom, controller } = createHarness(t, { state: makeState({ offline: { currentEngine: 'openai-compatible' } }) });
+  controller.bind();
+  await controller.refresh();
+  assert.equal(dom.window.document.querySelector('#ollamaHealthGroup details'), null, 'a detected tray app is never folded away');
+  const ollama = createHarness(t, {
+    state: makeState({ offline: { currentEngine: 'ollama' } }),
+    bridge: makeBridgeStub({ status: async () => ({ ok: true, supported: true, platform: 'win32', detected: false, trayProcesses: [], startupShortcuts: [] }) }),
+  });
+  ollama.controller.bind();
+  await ollama.controller.refresh();
+  assert.equal(ollama.dom.window.document.querySelector('#ollamaHealthGroup details'), null);
 });

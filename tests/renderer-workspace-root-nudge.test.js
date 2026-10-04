@@ -61,12 +61,12 @@ test('no root + flag ON renders the chip', (t) => {
   controller.render();
   const chip = dom.window.document.getElementById('workspaceRootNudge');
   assert.ok(chip, 'chip should render when no workspace root is set');
-  assert.match(chip.textContent, /No workspace root set/);
+  assert.match(chip.textContent, /No Workspace folder set/, 'user copy says "Workspace folder", never "workspace root" (D20)');
   assert.match(chip.textContent, /file tools are off for this chat/);
   assert.ok(chip.querySelector('[data-workspace-root-nudge-action="set-root"]'));
   const dismiss = chip.querySelector('[data-workspace-root-nudge-action="dismiss"]');
   assert.ok(dismiss);
-  assert.equal(dismiss.title, 'Dismiss workspace root hint');
+  assert.equal(dismiss.title, 'Dismiss Workspace folder hint');
 });
 
 test('persisted root hides the chip while its status probe is still checking', (t) => {

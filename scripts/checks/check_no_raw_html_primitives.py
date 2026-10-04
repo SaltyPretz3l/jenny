@@ -19,7 +19,7 @@ LEGACY_RAW_PRIMITIVE_ALLOWLIST = {
     # Active root-shell legacy debt. The cap is a ceiling (count <= cap passes), so
     # it never self-tightens: after markup is removed, re-measure and lower it here
     # rather than leaving stale headroom behind. It only ever moves down.
-    "index.html": {"html_tag": 51},
+    "index.html": {"html_tag": 38},
     # Active root renderer markup/string-template debt tracked by the same finding.
     "renderer/chat/renderer-approval-block.js": {"html_tag": 3},
     "renderer/chat/renderer-user-questions-block.js": {"html_tag": 6},
@@ -51,7 +51,6 @@ LEGACY_RAW_PRIMITIVE_ALLOWLIST = {
     "renderer/chat/renderer-transcript-actions.js": {"html_tag": 1},
     "renderer/chat/renderer-transcript-interactions.js": {"html_tag": 4},
     "renderer/chat/renderer-turn-row-render-utils.js": {"html_tag": 1},
-    "renderer/features/renderer-companion-utils.js": {"create_element": 1},
     "renderer/features/renderer-mermaid-utils.js": {"create_element": 4},
     "renderer/shell/renderer-workspace-chrome-utils.js": {"create_element": 9},
     "renderer/features/renderer-artifact-document-render.js": {"html_tag": 2, "create_element": 2},
@@ -102,7 +101,6 @@ def iter_scan_files() -> Iterable[Path]:
     seen: set[Path] = set()
     roots = [
         ROOT / "index.html",
-        ROOT / "overlay.html",
         ROOT / "mermaid-frame.html",
     ]
     roots.extend(ROOT.glob("renderer*.js"))
@@ -127,11 +125,13 @@ def collect_occurrences() -> dict[tuple[str, str], list[str]]:
     for file_path in iter_scan_files():
         relative_path = repo_relative(file_path)
         text = file_path.read_text(encoding="utf-8")
-        for lineno, line in enumerate(text.splitlines(), start=1):
-            if file_path.suffix in HTML_SUFFIXES | JS_SUFFIXES and TAG_RE.search(line):
-                occurrences[(relative_path, "html_tag")].append(f"{relative_path}:{lineno}")
-            if file_path.suffix in JS_SUFFIXES and CREATE_ELEMENT_RE.search(line):
-                occurrences[(relative_path, "create_element")].append(f"{relative_path}:{lineno}")
+        patterns = [("html_tag", TAG_RE)]
+        if file_path.suffix in JS_SUFFIXES:
+            patterns.append(("create_element", CREATE_ELEMENT_RE))
+        for kind, pattern in patterns:
+            for match in pattern.finditer(text):
+                lineno = text.count("\n", 0, match.start()) + 1
+                occurrences[(relative_path, kind)].append(f"{relative_path}:{lineno}")
     return occurrences
 
 

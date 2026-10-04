@@ -53,6 +53,9 @@ EXPECTED_ELECTRON_BRIDGE_TOOLS = frozenset(
         # first Electron-owned tool that is NOT read-only, so it is correctly
         # withheld from the plan-mode schema by the read-only gate below.
         "verify",
+        # image_generate writes a session artifact and parks the chat engine.
+        # Side-effecting, so withheld from plan mode like verify.
+        "image_generate",
         "workspace_present",
         "worktree_create",
         "worktree_delete",
@@ -90,6 +93,7 @@ def _kernel(workspace_root: str, **overrides: bool) -> SimpleNamespace:
         "tools_workspace_present_enabled": True,
         "tools_preview_test_enabled": True,
         "tools_verify_enabled": True,
+        "tools_image_generate_enabled": True,
         "tools_home_enabled": True,
         "tools_task_board_enabled": True,
         "tools_workspace_root": workspace_root,
@@ -177,6 +181,7 @@ def test_electron_owned_read_only_tools_reach_the_plan_mode_schema(tmp_path) -> 
         ("tools_workspace_present_enabled", {"workspace_present"}),
         ("tools_preview_test_enabled", {"preview_test"}),
         ("tools_verify_enabled", {"verify"}),
+        ("tools_image_generate_enabled", {"image_generate"}),
         ("tools_home_enabled", {"home"}),
         ("tools_task_board_enabled", {"task_board"}),
     ],

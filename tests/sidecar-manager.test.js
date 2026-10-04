@@ -258,6 +258,7 @@ test('stale-state cleanup kills the tree when the live pid still matches the sto
     jwtSecret: 'jwt_secret',
     killProcessTreeImpl: async (pid, options = {}) => {
       killCalls.push({ pid, force: Boolean(options.force) });
+      return { terminated: true };
     },
     // The OS reports the same command we launched (quoting may differ).
     getProcessCommandLineImpl: async () =>

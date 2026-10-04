@@ -99,11 +99,13 @@ def test_server_config_forces_one_call_approval_and_keeps_allowlist_closed() -> 
 def test_server_builtin_tools_list_is_closed_and_dispatch_rejects_forged_tool(
     tmp_path: Path,
 ) -> None:
-    allowed_tools = builtin_server._default_tools(  # noqa: SLF001
-        host_mode="server",
-        host_execution_policy_version=HOST_EXECUTION_POLICY_VERSION,
+    allowed_tools = builtin_server._default_tools(
+        {
+            "host_mode": "server",
+            "host_execution_policy_version": HOST_EXECUTION_POLICY_VERSION,
+            "tools_mermaid_enabled": True,
+        },
         workspace_root_present=True,
-        mermaid_enabled=True,
     )
     forged_calls: list[str] = []
 
@@ -119,7 +121,7 @@ def test_server_builtin_tools_list_is_closed_and_dispatch_rejects_forged_tool(
         handler=forged_handler,
     )
     host_config = _host_config()
-    list_response = builtin_server._dispatch_message(  # noqa: SLF001
+    list_response = builtin_server._dispatch_message(
         {"id": 1, "method": "tools/list"},
         allowed_tools,
         WorkspaceGuard(str(tmp_path)),
@@ -129,7 +131,7 @@ def test_server_builtin_tools_list_is_closed_and_dispatch_rejects_forged_tool(
     assert "run_command" not in listed
     assert {"read_file", "list_dir", "write_file", "edit_file"} <= listed
 
-    call_response = builtin_server._dispatch_message(  # noqa: SLF001
+    call_response = builtin_server._dispatch_message(
         {
             "id": 2,
             "method": "tools/call",
@@ -323,7 +325,7 @@ def test_policy_v2_builtin_direct_dispatch_is_rejected_before_handler(tmp_path: 
             handler=forged_handler,
         )
     }
-    response = builtin_server._dispatch_message(  # noqa: SLF001
+    response = builtin_server._dispatch_message(
         {
             "id": 4,
             "method": "tools/call",

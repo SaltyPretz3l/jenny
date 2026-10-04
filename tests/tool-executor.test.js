@@ -75,7 +75,7 @@ function makeJennyStatusExecutor() {
 
 function executeJennyStatusTool({ backendService, callId = 'call_status', input = {} } = {}) {
   const executor = makeJennyStatusExecutor();
-  return executor.execute(
+  return executor.executePreApproved(
     { callId, toolName: 'jenny_status', input },
     makeContext({ workingDirectory: '', backendService })
   );
@@ -96,7 +96,7 @@ describe('ToolExecutor', () => {
       logger: noop,
     });
 
-    const result = await executor.execute(
+    const result = await executor.executePreApproved(
       { callId: 'call_1', toolName: 'Read', input: { file_path: 'test.js' } },
       makeContext()
     );
@@ -110,7 +110,7 @@ describe('ToolExecutor', () => {
     assert.equal(result.metadata.policy_decision.tool_name, 'Read');
   });
 
-  test('pre-approved execution bypasses local approval wait for bridged tools', async () => {
+  test('pre-approved execution runs bridged tools with ask policy', async () => {
     let executed = false;
     const tool = makeMockTool({
       name: 'worktree_create',
@@ -136,7 +136,6 @@ describe('ToolExecutor', () => {
     assert.equal(executed, true);
     assert.equal(result.isError, false);
     assert.equal(result.approvalState, 'auto');
-    assert.deepEqual(executor.getPendingApprovals(), []);
   });
 
   test('pre-approved execution still honors current deny policy', async () => {
@@ -178,7 +177,7 @@ describe('ToolExecutor', () => {
       logger: noop,
     });
 
-    const result = await executor.execute(
+    const result = await executor.executePreApproved(
       { callId: 'call_1', toolName: 'Unknown', input: {} },
       makeContext()
     );
@@ -198,7 +197,7 @@ describe('ToolExecutor', () => {
       logger: noop,
     });
 
-    const result = await executor.execute(
+    const result = await executor.executePreApproved(
       { callId: 'call_no_root', toolName: 'Read', input: {} },
       makeContext({ workingDirectory: '' })
     );
@@ -289,7 +288,7 @@ describe('ToolExecutor', () => {
       logger: noop,
     });
 
-    const result = await executor.execute(
+    const result = await executor.executePreApproved(
       { callId: 'call_1', toolName: 'Write', input: {} },
       makeContext({ planMode: true, readOnly: true })
     );
@@ -297,218 +296,6 @@ describe('ToolExecutor', () => {
     assert.equal(result.isError, true);
     assert.match(result.content, /request is read-only/);
     assert.equal(result.errorCode, TOOL_ERROR_CODES.DISABLED);
-  });
-
-  test('ask-policy tool waits for approval then executes', async () => {
-    const tool = makeMockTool({
-      name: 'Write',
-      readOnly: false,
-      execute: async () => ({ content: 'written', summary: 'Write done', isError: false }),
-    });
-    const executor = new ToolExecutor({
-      registry: makeRegistry([tool]),
-      permissionStore: makePermissionStore({ Write: 'ask' }),
-      pathPolicy: {},
-      shellRunner: makeShellRunner(),
-      logger: noop,
-    });
-
-    const resultPromise = executor.execute(
-      { callId: 'call_1', toolName: 'Write', input: {} },
-      makeContext()
-    );
-
-    // Approval should be pending
-    const pending = executor.getPendingApprovals();
-    assert.equal(pending.length, 1);
-    assert.equal(pending[0].callId, 'call_1');
-
-    executor.approve('call_1');
-
-    const result = await resultPromise;
-    assert.equal(result.content, 'written');
-    assert.equal(result.approvalState, 'approved');
-    assert.equal(result.errorCode, '');
-    assert.equal(result.metadata.policy_decision.decision, 'ask');
-  });
-
-  test('deny resolves with denied result', async () => {
-    const tool = makeMockTool({ name: 'Write', readOnly: false });
-    const executor = new ToolExecutor({
-      registry: makeRegistry([tool]),
-      permissionStore: makePermissionStore({ Write: 'ask' }),
-      pathPolicy: {},
-      shellRunner: makeShellRunner(),
-      logger: noop,
-    });
-
-    const resultPromise = executor.execute(
-      { callId: 'call_1', toolName: 'Write', input: {} },
-      makeContext()
-    );
-
-    executor.deny('call_1');
-
-    const result = await resultPromise;
-    assert.equal(result.isError, true);
-    assert.equal(result.approvalState, 'denied');
-    assert.equal(result.errorCode, TOOL_ERROR_CODES.APPROVAL_DENIED);
-    assert.equal(result.metadata.policy_decision.decision, 'ask');
-  });
-
-  test('cancelPendingForStream cancels all pending for that stream', async () => {
-    const tool = makeMockTool({ name: 'Edit', readOnly: false });
-    const executor = new ToolExecutor({
-      registry: makeRegistry([tool]),
-      permissionStore: makePermissionStore({ Edit: 'ask' }),
-      pathPolicy: {},
-      shellRunner: makeShellRunner(),
-      logger: noop,
-    });
-
-    const resultPromise = executor.execute(
-      { callId: 'call_1', toolName: 'Edit', input: {} },
-      makeContext({ streamId: 'stream_A' })
-    );
-
-    executor.cancelPendingForStream('stream_A');
-
-    const result = await resultPromise;
-    assert.equal(result.approvalState, 'cancelled');
-    assert.equal(result.isError, true);
-    assert.equal(result.errorCode, TOOL_ERROR_CODES.APPROVAL_DENIED);
-    assert.equal(result.metadata.policy_decision.decision, 'ask');
-  });
-
-  test('approval expiry resolves with approval-denied error code', async () => {
-    const tool = makeMockTool({ name: 'Write', readOnly: false });
-    const executor = new ToolExecutor({
-      registry: makeRegistry([tool]),
-      permissionStore: makePermissionStore({ Write: 'ask' }),
-      pathPolicy: {},
-      shellRunner: makeShellRunner(),
-      logger: noop,
-      approvalExpiryMs: 5,
-    });
-
-    const result = await executor.execute(
-      { callId: 'call_expire', toolName: 'Write', input: {} },
-      makeContext()
-    );
-
-    assert.equal(result.isError, true);
-    assert.equal(result.approvalState, 'expired');
-    assert.equal(result.errorCode, TOOL_ERROR_CODES.APPROVAL_DENIED);
-    assert.equal(result.metadata.policy_decision.decision, 'ask');
-  });
-
-  test('approve with alwaysAllow updates permission store', async () => {
-    const policies = { Write: 'ask' };
-    const tool = makeMockTool({
-      name: 'Write',
-      readOnly: false,
-      execute: async () => ({ content: 'ok', summary: 'ok', isError: false }),
-    });
-    const executor = new ToolExecutor({
-      registry: makeRegistry([tool]),
-      permissionStore: makePermissionStore(policies),
-      pathPolicy: {},
-      shellRunner: makeShellRunner(),
-      logger: noop,
-    });
-
-    const resultPromise = executor.execute(
-      { callId: 'call_1', toolName: 'Write', input: {} },
-      makeContext()
-    );
-
-    executor.approve('call_1', { alwaysAllow: true });
-
-    await resultPromise;
-    assert.equal(policies.Write, 'auto');
-  });
-
-  test('alwaysAllow persistence failure does not prevent approval settlement', async () => {
-    const logs = [];
-    const tool = makeMockTool({
-      name: 'Write',
-      readOnly: false,
-      execute: async () => ({ content: 'ok', summary: 'ok', isError: false }),
-    });
-    const permissionStore = makePermissionStore({ Write: 'ask' });
-    permissionStore.setPolicy = () => { throw new Error('disk full'); };
-    const executor = new ToolExecutor({
-      registry: makeRegistry([tool]),
-      permissionStore,
-      pathPolicy: {},
-      shellRunner: makeShellRunner(),
-      logger: (level, event, details) => logs.push({ level, event, details }),
-    });
-
-    const resultPromise = executor.execute(
-      { callId: 'call_persist_failure', toolName: 'Write', input: {} },
-      makeContext()
-    );
-
-    assert.equal(executor.approve('call_persist_failure', { alwaysAllow: true }), true);
-    const result = await resultPromise;
-    assert.equal(result.isError, false);
-    assert.deepEqual(executor.getPendingApprovals(), []);
-    assert.ok(logs.some(({ level, event }) => (
-      level === 'WARN' && event === 'tool.always_allow_persist_failed'
-    )));
-  });
-
-  test('an unrecognized approval decision denies instead of executing', async () => {
-    let executed = false;
-    const logs = [];
-    const tool = makeMockTool({
-      name: 'Write',
-      readOnly: false,
-      execute: async () => { executed = true; return { content: 'ok', summary: 'ok', isError: false }; },
-    });
-    const executor = new ToolExecutor({
-      registry: makeRegistry([tool]),
-      permissionStore: makePermissionStore({ Write: 'ask' }),
-      pathPolicy: {},
-      shellRunner: makeShellRunner(),
-      logger: (level, event, details) => logs.push({ level, event, details }),
-    });
-
-    const resultPromise = executor.execute(
-      { callId: 'call_unknown', toolName: 'Write', input: {} },
-      makeContext()
-    );
-    assert.equal(executor.approve('call_unknown', { decision: 'yolo' }), true);
-    const result = await resultPromise;
-    assert.equal(executed, false);
-    assert.equal(result.isError, true);
-    assert.ok(logs.some(({ event }) => event === 'tool.unknown_decision_denied'));
-  });
-
-  test('exit_plan_mode never creates a persistent always-allow policy', async () => {
-    const policies = {};
-    const tool = makeMockTool({
-      name: 'exit_plan_mode',
-      readOnly: true,
-      planModeOnly: true,
-      execute: async () => ({ content: 'approved', summary: 'approved', isError: false }),
-    });
-    const executor = new ToolExecutor({
-      registry: makeRegistry([tool]),
-      permissionStore: makePermissionStore(policies),
-      pathPolicy: {},
-      shellRunner: makeShellRunner(),
-      logger: noop,
-    });
-
-    const resultPromise = executor.execute(
-      { callId: 'call_plan', toolName: 'exit_plan_mode', input: {} },
-      makeContext({ planMode: true, readOnly: true })
-    );
-    executor.approve('call_plan', { decision: 'approved_auto', alwaysAllow: true });
-    await resultPromise;
-    assert.equal(policies.exit_plan_mode, undefined);
   });
 
   test('deny-policy tool is rejected without execution', async () => {
@@ -526,7 +313,7 @@ describe('ToolExecutor', () => {
       logger: noop,
     });
 
-    const result = await executor.execute(
+    const result = await executor.executePreApproved(
       { callId: 'call_1', toolName: 'Bash', input: {} },
       makeContext()
     );
@@ -569,7 +356,7 @@ describe('ToolExecutor', () => {
       logger: noop,
     });
 
-    const result = await executor.execute(
+    const result = await executor.executePreApproved(
       { callId: 'call_policy_rule', toolName: 'write_file', input: { path: 'prod/config.json' } },
       makeContext()
     );
@@ -581,11 +368,9 @@ describe('ToolExecutor', () => {
     assert.equal(result.metadata.policy_decision.decision, 'deny');
     assert.equal(result.metadata.policy_decision.matched_rule_id, 'deny-prod-writes');
     assert.equal(result.metadata.policy_decision.tool_family, 'filesystem');
-    assert.deepEqual(executor.getPendingApprovals(), []);
   });
 
   test('rule-list auto policy promotes side-effecting direct tools', async () => {
-    let approvalRequested = false;
     const tool = makeMockTool({
       name: 'write_file',
       readOnly: false,
@@ -609,14 +394,10 @@ describe('ToolExecutor', () => {
       }),
       pathPolicy: {},
       shellRunner: makeShellRunner(),
-      logger(level, event) {
-        if (event === 'tool.approval_requested') {
-          approvalRequested = true;
-        }
-      },
+      logger: noop,
     });
 
-    const result = await executor.execute(
+    const result = await executor.executePreApproved(
       { callId: 'call_policy_auto', toolName: 'write_file', input: { path: 'scratch.txt' } },
       makeContext()
     );
@@ -625,7 +406,6 @@ describe('ToolExecutor', () => {
     assert.equal(result.approvalState, 'auto');
     assert.equal(result.metadata.policy_decision.decision, 'auto');
     assert.equal(result.metadata.policy_decision.matched_rule_id, 'auto-test-fs');
-    assert.equal(approvalRequested, false);
   });
 
   test('getToolPolicy previews rule-list decisions with tool input and context', () => {
@@ -692,7 +472,7 @@ describe('ToolExecutor', () => {
       logger: noop,
     });
 
-    const result = await executor.execute(
+    const result = await executor.executePreApproved(
       { callId: 'call_alias', toolName: 'Bash', input: {} },
       makeContext()
     );
@@ -717,7 +497,7 @@ describe('ToolExecutor', () => {
       logger: noop,
     });
 
-    const result = await executor.execute(
+    const result = await executor.executePreApproved(
       { callId: 'call_1', toolName: 'Read', input: {} },
       makeContext()
     );
@@ -756,11 +536,11 @@ describe('ToolExecutor', () => {
       logger: noop,
     });
 
-    const invalidErrorResult = await executor.execute(
+    const invalidErrorResult = await executor.executePreApproved(
       { callId: 'call_invalid_error', toolName: 'Read', input: {} },
       makeContext()
     );
-    const successResult = await executor.execute(
+    const successResult = await executor.executePreApproved(
       { callId: 'call_success_code', toolName: 'Glob', input: {} },
       makeContext()
     );
@@ -785,7 +565,7 @@ describe('ToolExecutor', () => {
       logger: noop,
     });
 
-    const result = await executor.execute(
+    const result = await executor.executePreApproved(
       { callId: 'call_string_throw', toolName: 'Read', input: {} },
       makeContext()
     );
@@ -813,44 +593,12 @@ describe('ToolExecutor', () => {
       logger: noop,
     });
 
-    const result = await executor.execute(
+    const result = await executor.executePreApproved(
       { callId: 'call_policy', toolName: 'Read', input: {} },
       makeContext()
     );
 
     assert.equal(result.isError, true);
     assert.equal(result.errorCode, TOOL_ERROR_CODES.DISABLED);
-  });
-});
-
-describe('ToolExecutor scoped always-allow grants', () => {
-  test('approve forwards the approved call input to grantAlwaysAllow', async () => {
-    const grants = [];
-    const permissionStore = makePermissionStore({ Write: 'ask' });
-    permissionStore.grantAlwaysAllow = (toolName, input) => {
-      grants.push({ toolName, input });
-    };
-    const tool = makeMockTool({
-      name: 'Write',
-      readOnly: false,
-      execute: async () => ({ content: 'ok', summary: 'ok', isError: false }),
-    });
-    const executor = new ToolExecutor({
-      registry: makeRegistry([tool]),
-      permissionStore,
-      pathPolicy: {},
-      shellRunner: makeShellRunner(),
-      logger: noop,
-    });
-    const toolInput = { path: 'docs/a.md', content: 'hello' };
-
-    const resultPromise = executor.execute(
-      { callId: 'call_scoped', toolName: 'Write', input: toolInput },
-      makeContext()
-    );
-
-    assert.equal(executor.approve('call_scoped', { alwaysAllow: true }), true);
-    await resultPromise;
-    assert.deepEqual(grants, [{ toolName: 'Write', input: toolInput }]);
   });
 });

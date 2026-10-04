@@ -244,6 +244,37 @@ test('subagent inspector evidence chips use the same contained path navigation s
   }]);
 });
 
+test('split view: a second pane\'s transcript and inspector chips open once through the pane host; nothing else does', async () => {
+  const dom = new JSDOM('<!doctype html><html><body><div id="chatView">'
+    + '<div class="chat-pane" data-pane-id="0"><div id="chatTimeline" data-chat-node="chatTimeline"><code>src/zero.js</code></div>'
+    + '<aside id="subagentInspector" data-chat-node="subagentInspector"></aside></div>'
+    + '<div class="chat-pane" data-pane-id="1"><div data-chat-node="chatTimeline"><span data-chat-path-open="src/one.js">one</span><code>src/inline.js</code></div>'
+    + '<aside data-chat-node="subagentInspector"><span data-chat-path-open="src/two.js">two</span><code>src/not-prose.js</code></aside>'
+    + '<div class="composer"><span data-chat-path-open="src/composer.js">composer</span></div></div>'
+    + '<aside class="artifact-review-panel"><span data-chat-path-open="src/panel.js">panel</span></aside>'
+    + '</div></body></html>', { url: 'https://jenny.local/chat' });
+  const doc = dom.window.document;
+  const { calls, dispose } = makeHarness(dom, { paneHost: doc });
+  const click = (node) => node.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true, cancelable: true }));
+  const pane1 = doc.querySelector('.chat-pane[data-pane-id="1"]');
+
+  click(doc.querySelector('#chatTimeline code'));
+  click(pane1.querySelector('[data-chat-path-open="src/one.js"]'));
+  click(pane1.querySelector('[data-chat-node="chatTimeline"] code'));
+  click(pane1.querySelector('[data-chat-path-open="src/two.js"]'));
+  click(pane1.querySelector('aside code'));
+  click(pane1.querySelector('[data-chat-path-open="src/composer.js"]'));
+  click(doc.querySelector('[data-chat-path-open="src/panel.js"]'));
+  await flush();
+
+  assert.deepEqual(calls.openIdeFileAtLine.map((call) => call.path), ['src/zero.js', 'src/one.js', 'src/inline.js', 'src/two.js'],
+    'pane 0 once (its own root), pane 1\'s chips and prose code once; inspector prose, the composer and the side panel stay inert');
+  dispose();
+  click(pane1.querySelector('[data-chat-path-open="src/one.js"]'));
+  await flush();
+  assert.equal(calls.openIdeFileAtLine.length, 4, 'dispose detaches the pane host');
+});
+
 // ---------------------------------------------------------------------------
 // delegated context menu
 // ---------------------------------------------------------------------------

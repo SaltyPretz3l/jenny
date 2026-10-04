@@ -88,7 +88,7 @@ class WorkspaceGuard:
     def internal_store(self) -> GuardedWorkspaceStore:
         """Build the operation owner for workspace-local ``.jenny`` state."""
 
-        from sidecar.ai.tools.workspace_store import (  # noqa: PLC0415
+        from sidecar.ai.tools.workspace_store import (
             GuardedWorkspaceStore,
         )
 

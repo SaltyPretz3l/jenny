@@ -105,6 +105,7 @@ function createViewportControllerHarness(options = {}) {
   let autoScrollThread = options.autoScrollThread === true;
   let reducedMotion = options.reducedMotion === true;
   let pendingApprovalVisible = false;
+  let pendingApprovalRect = { top: 120, bottom: 160, width: 600, height: 40 };
   let threadScrollTopWriteCount = 0;
 
   const chatView = createTarget(() => ({ top: 0, bottom: 760, width: 900, height: 760 }));
@@ -169,7 +170,7 @@ function createViewportControllerHarness(options = {}) {
     }
     return [{
       getBoundingClientRect() {
-        return { top: 120, bottom: 160, width: 600, height: 40 };
+        return { ...pendingApprovalRect };
       },
     }];
   };
@@ -357,6 +358,9 @@ function createViewportControllerHarness(options = {}) {
     },
     setPendingApprovalVisible(value) {
       pendingApprovalVisible = Boolean(value);
+    },
+    setPendingApprovalRect({ top, bottom }) {
+      pendingApprovalRect = { top, bottom, width: 600, height: bottom - top };
     },
     setScrollMetrics({ scrollTop, scrollHeight, clientHeight } = {}) {
       if (Number.isFinite(Number(scrollTop))) chatThreadScroll.scrollTop = Number(scrollTop);

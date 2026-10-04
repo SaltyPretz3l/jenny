@@ -1,7 +1,7 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { normalizeString } = require('../../renderer/shared/string-utils');
+const { normalizeString } = require('../shared/normalize');
 
 function ensureDir(targetPath) {
   fs.mkdirSync(targetPath, { recursive: true });

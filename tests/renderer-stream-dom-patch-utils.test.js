@@ -260,3 +260,194 @@ test('reconcileStreamUnits does not serialize an unchanged fingerprinted unit', 
   assert.equal(container.firstElementChild.textContent, 'alpha');
   dom.window.close();
 });
+
+// timeline-perf 2026-09-30: per-row reconcile of a turn row list. The keyed
+// fallback used to re-parse and morph every node of every row per delta.
+const {
+  reconcileKeyedRowList, morphChildren: morphChildrenForStamp, invalidateRowStamp, setOuterHtmlPreservingCodeScroll,
+} = require('../renderer/chat/renderer-stream-dom-patch-utils');
+
+function rowSegment(id, body, extra = '') {
+  return { kind: 'row', id, markup: `<div class="chat-row" data-row-id="${id}" data-row-kind="tool_call"${extra}><span class="chat-row-node-dot"></span><div class="tool-card">${body}</div></div>` };
+}
+
+function reconcileFixture(segments) {
+  const dom = new JSDOM('<!doctype html><body><div id="list" data-turn-row-list="true"></div></body>');
+  const list = dom.window.document.getElementById('list');
+  const outcomes = [];
+  const apply = (next) => {
+    const ok = reconcileKeyedRowList(list, next, { onOutcome: (record) => outcomes.push(record) });
+    return { ok, stats: outcomes[outcomes.length - 1]?.stats, outcome: outcomes[outcomes.length - 1]?.outcome };
+  };
+  const first = apply(segments);
+  return { dom, list, apply, first, outcomes };
+}
+
+test('reconcileKeyedRowList keeps unchanged rows untouched and morphs only the rows whose markup changed', () => {
+  const segments = [rowSegment('a', 'A'), rowSegment('b', 'B'), rowSegment('c', 'C')];
+  const { dom, list, apply, first } = reconcileFixture(segments);
+  assert.equal(first.ok, true);
+  assert.equal(first.outcome, 'reconcile_applied');
+  assert.deepEqual([first.stats.added, first.stats.kept, first.stats.morphed, first.stats.removed], [3, 0, 0, 0]);
+  const [a, b, c] = list.children;
+  // A post-patch decorator touched row A; an unchanged segment must not undo it.
+  a.querySelector('.tool-card').setAttribute('data-code-highlighted', 'true');
+
+  const second = apply([rowSegment('a', 'A'), rowSegment('b', 'B grew'), rowSegment('c', 'C')]);
+  assert.deepEqual([second.stats.added, second.stats.kept, second.stats.morphed, second.stats.removed], [0, 2, 1, 0]);
+  assert.strictEqual(list.children[0], a);
+  assert.strictEqual(list.children[1], b);
+  assert.strictEqual(list.children[2], c);
+  assert.equal(a.querySelector('.tool-card').getAttribute('data-code-highlighted'), 'true', 'a kept row is not re-morphed');
+  assert.equal(b.textContent, 'B grew');
+  dom.window.close();
+});
+
+test('reconcileKeyedRowList inserts, reorders and removes rows by key while keeping the others', () => {
+  const { dom, list, apply } = reconcileFixture([rowSegment('a', 'A'), rowSegment('b', 'B'), rowSegment('c', 'C')]);
+  const [a, b, c] = list.children;
+  const result = apply([
+    rowSegment('c', 'C'),
+    { kind: 'divider', id: 'msg-9', markup: '<div class="chat-timeline-divider" data-before-message-id="msg-9">gap</div>' },
+    rowSegment('a', 'A'),
+    rowSegment('d', 'D'),
+  ]);
+  assert.deepEqual([result.stats.added, result.stats.kept, result.stats.morphed, result.stats.removed], [2, 2, 0, 1]);
+  assert.deepEqual([...list.children].map((node) => node.getAttribute('data-row-id') || node.getAttribute('data-before-message-id')), ['c', 'msg-9', 'a', 'd']);
+  assert.strictEqual(list.children[0], c, 'moved rows keep identity');
+  assert.strictEqual(list.children[2], a);
+  assert.equal(b.isConnected, false, 'a row absent from the segments is removed');
+  // The divider is keyed by its target message id and kept on the next pass.
+  const divider = list.children[1];
+  const again = apply([
+    rowSegment('c', 'C'),
+    { kind: 'divider', id: 'msg-9', markup: '<div class="chat-timeline-divider" data-before-message-id="msg-9">gap</div>' },
+    rowSegment('a', 'A'),
+    rowSegment('d', 'D'),
+  ]);
+  assert.equal(again.stats.kept, 4);
+  assert.strictEqual(list.children[1], divider);
+  dom.window.close();
+});
+
+test('reconcileKeyedRowList always morphs live rows, even when their markup is unchanged', () => {
+  const liveRow = (body) => rowSegment('live', body, ' data-streaming-row="true"');
+  const reasoningRow = (body) => ({ kind: 'row', id: 'r', markup: `<div class="chat-row" data-row-id="r" data-row-kind="reasoning"><div class="reasoning-row-stack"><div class="reasoning-row-block" data-reasoning-live-tail="true">${body}</div></div></div>` });
+  const { dom, list, apply } = reconcileFixture([reasoningRow('think'), liveRow('L')]);
+  // The surgical patch wrote into the live rows behind the reconcile's back.
+  list.children[0].querySelector('.reasoning-row-block').textContent = 'patched elsewhere';
+  list.children[1].querySelector('.tool-card').textContent = 'patched elsewhere';
+  const result = apply([reasoningRow('think'), liveRow('L')]);
+  assert.deepEqual([result.stats.kept, result.stats.morphed], [0, 2], 'live rows are never memo hits');
+  assert.equal(list.children[0].textContent, 'think');
+  assert.equal(list.children[1].textContent, 'L');
+  // A row leaving the live state is morphed once more (the incoming markup no longer says live).
+  const settled = apply([{ kind: 'row', id: 'r', markup: '<div class="chat-row" data-row-id="r" data-row-kind="reasoning"><div class="reasoning-row-stack"><div class="reasoning-row-block">think</div></div></div>' }, rowSegment('live', 'L')]);
+  assert.deepEqual([settled.stats.kept, settled.stats.morphed], [0, 2]);
+  const settledAgain = apply([{ kind: 'row', id: 'r', markup: '<div class="chat-row" data-row-id="r" data-row-kind="reasoning"><div class="reasoning-row-stack"><div class="reasoning-row-block">think</div></div></div>' }, rowSegment('live', 'L')]);
+  assert.deepEqual([settledAgain.stats.kept, settledAgain.stats.morphed], [2, 0], 'settled rows are kept from then on');
+  dom.window.close();
+});
+
+test('a whole-list morph drops the reconcile stamp so the next reconcile re-checks that row', () => {
+  const { dom, list, apply } = reconcileFixture([rowSegment('a', 'A'), rowSegment('b', 'B')]);
+  const a = list.children[0];
+  // Another lane morphs the list (same markup for A, B changed) through morphChildren.
+  const template = dom.window.document.createElement('template');
+  template.innerHTML = rowSegment('a', 'A').markup + rowSegment('b', 'B2').markup;
+  morphChildrenForStamp(list, template.content);
+  assert.strictEqual(list.children[0], a);
+  const result = apply([rowSegment('a', 'A'), rowSegment('b', 'B2')]);
+  assert.deepEqual([result.stats.kept, result.stats.morphed], [0, 2], 'rows another lane morphed are re-morphed once, then stamped');
+  const again = apply([rowSegment('a', 'A'), rowSegment('b', 'B2')]);
+  assert.deepEqual([again.stats.kept, again.stats.morphed], [2, 0]);
+  dom.window.close();
+});
+
+// Astra finding (timeline-perf 2026-09-30): the live tool patch writes a row's
+// DOM directly. It drops the stamp, so an identical later segment restores
+// the canonical markup instead of trusting the stamp.
+test('invalidateRowStamp makes the next identical reconcile re-morph a directly written row', () => {
+  const { dom, list, apply } = reconcileFixture([rowSegment('a', 'Read'), rowSegment('b', 'B')]);
+  const a = list.children[0];
+  a.querySelector('.tool-card').textContent = 'read_file';
+  const trusted = apply([rowSegment('a', 'Read'), rowSegment('b', 'B')]);
+  assert.deepEqual([trusted.stats.kept, trusted.stats.morphed], [2, 0], 'without invalidation the stamp is trusted');
+  assert.equal(a.querySelector('.tool-card').textContent, 'read_file');
+  invalidateRowStamp(a.querySelector('.tool-card'));
+  const rechecked = apply([rowSegment('a', 'Read'), rowSegment('b', 'B')]);
+  assert.deepEqual([rechecked.stats.kept, rechecked.stats.morphed], [1, 1], 'the invalidated row is re-morphed, the other kept');
+  assert.strictEqual(list.children[0], a, 'identity is kept');
+  assert.equal(a.querySelector('.tool-card').textContent, 'Read', 'the canonical markup is restored');
+  dom.window.close();
+});
+
+// The streaming article rewrite morphs the whole article; with the row
+// segments it reconciles the row list per row and keeps the stamps, so the
+// next queuePatch fallback stays warm.
+test('setOuterHtmlPreservingCodeScroll with rowListSegments reconciles the row list per row and keeps the stamps', () => {
+  const segments = [rowSegment('a', 'A'), rowSegment('b', 'B'), rowSegment('c', 'C')];
+  const { dom, list, apply } = reconcileFixture(segments);
+  const article = dom.window.document.createElement('article');
+  article.setAttribute('data-message-id', 'm1');
+  article.innerHTML = '<header class="h">one</header>';
+  article.appendChild(list);
+  dom.window.document.body.appendChild(article);
+  const [a, b] = list.children;
+  const next = [rowSegment('a', 'A'), rowSegment('b', 'B2'), rowSegment('c', 'C')];
+  const html = `<article data-message-id="m1"><header class="h">two</header><div id="list" data-turn-row-list="true">${next.map((s) => s.markup).join('')}</div></article>`;
+  const result = setOuterHtmlPreservingCodeScroll(article, html, { rowListSegments: next });
+  assert.equal(result.outcome, 'morph_applied');
+  assert.equal(result.rowList.outcome, 'reconcile_applied');
+  assert.deepEqual([result.rowList.stats.kept, result.rowList.stats.morphed], [2, 1]);
+  assert.equal(article.querySelector('header').textContent, 'two', 'the rest of the article is morphed');
+  assert.strictEqual(list.children[0], a);
+  assert.strictEqual(list.children[1], b);
+  assert.equal(b.textContent, 'B2');
+  const warm = apply(next);
+  assert.deepEqual([warm.stats.kept, warm.stats.morphed], [3, 0], 'the stamps survived the article morph');
+  const plain = setOuterHtmlPreservingCodeScroll(article, html, {});
+  assert.equal(plain.outcome, 'morph_applied');
+  assert.equal(plain.rowList, undefined, 'without segments the article morph descends as before');
+  const cold = apply(next);
+  assert.deepEqual([cold.stats.kept, cold.stats.morphed], [0, 3], 'and drops the stamps');
+  dom.window.close();
+});
+
+test('reconcileKeyedRowList lands a repeated segment key once', () => {
+  const { dom, list, first } = reconcileFixture([rowSegment('a', 'A'), rowSegment('b', 'B'), rowSegment('a', 'A again')]);
+  assert.deepEqual([first.stats.added, first.stats.kept], [2, 0]);
+  assert.equal(list.children.length, 2, 'the duplicate does not become an extra row');
+  assert.equal(list.children[0].textContent, 'A', 'the first copy wins');
+  dom.window.close();
+});
+
+test('reconcileKeyedRowList reports unusable input without touching the list', () => {
+  const { dom, list, apply, outcomes } = reconcileFixture([rowSegment('a', 'A')]);
+  assert.equal(apply([]).ok, false);
+  assert.equal(outcomes[outcomes.length - 1].outcome, 'no_segments');
+  assert.equal(reconcileKeyedRowList(null, [rowSegment('a', 'A')]), false);
+  assert.equal(list.children.length, 1);
+  // Segments without a key or markup are skipped, not fatal.
+  const result = apply([{ kind: 'row', id: '', markup: '<div></div>' }, rowSegment('a', 'A')]);
+  assert.equal(result.ok, true);
+  assert.deepEqual([result.stats.kept, result.stats.removed], [1, 0]);
+  dom.window.close();
+});
+
+test('reconcileKeyedRowList preserves code-block scroll and expand state inside a morphed row', () => {
+  const codeRow = (body) => ({ kind: 'row', id: 'code', markup: `<div class="chat-row" data-row-id="code" data-row-kind="assistant_text"><div class="markdown-code-block collapsible collapsed"><div class="markdown-code-expand-overlay" aria-expanded="false"><span>Show more</span></div><pre><code>${body}</code></pre></div></div>` });
+  const { dom, list, apply } = reconcileFixture([codeRow('line 1'), rowSegment('b', 'B')]);
+  const block = list.querySelector('.markdown-code-block');
+  block.classList.remove('collapsed');
+  const pre = block.querySelector('pre');
+  Object.defineProperty(pre, 'scrollLeft', { value: 40, writable: true, configurable: true });
+  const result = apply([codeRow('line 1\nline 2'), rowSegment('b', 'B')]);
+  assert.deepEqual([result.stats.kept, result.stats.morphed], [1, 1]);
+  // The code component is keyed by its source, so a grown block is a new
+  // node (same as the whole-list morph); its user-expanded state carries over.
+  const patchedBlock = list.querySelector('.markdown-code-block');
+  assert.equal(patchedBlock.classList.contains('collapsed'), false, 'the user-expanded state survives the row morph');
+  assert.match(patchedBlock.textContent, /line 2/);
+  dom.window.close();
+});

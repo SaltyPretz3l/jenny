@@ -2,7 +2,7 @@
  * Sibling factory for renderer-turn-reducer.js: owns the pure
  * `buildTurnEventFromStreamPayload` translator that maps a live stream
  * payload (started / phase_* / delta / tool_use / tool_approval_needed /
- * tool_result / stream_reset / complete / error) to the reducer's normalized
+ * tool_result / stream_reset / context_compacted / complete / error) to the reducer's normalized
  * turn-event shape(s). It receives normalization and phase helpers through
  * `deps`.
  */
@@ -427,6 +427,30 @@
           source_message_ids: [assistantMessageId].filter(Boolean),
           next_assistant_message_id: normalizeId(settings.next_assistant_message_id),
           sort_key: sortKey,
+        };
+      }
+      if (type === 'context_compacted') {
+        // Live twin of the hydrated projector's notice (renderer-turn-tree-projector.js):
+        // same kind, subkind and payload key, anchored on the segment the compaction
+        // lands on, so the row model paints the hairline where it happened and the
+        // terminal reconcile folds it onto the persisted row (HB-007).
+        const liveCompacted = payload && payload.contextCompacted;
+        const contextCompacted = liveCompacted && typeof liveCompacted === 'object' && !Array.isArray(liveCompacted)
+          ? deepCloneJsonValue(liveCompacted)
+          : {
+            strategy: String(payload && payload.strategy || 'micro'),
+            tokensBefore: Number(payload && payload.tokensBefore) || 0,
+            tokensAfter: Number(payload && payload.tokensAfter) || 0,
+            phase: String(payload && payload.compactionPhase || 'preflight'),
+          };
+        return {
+          event_id: eventId,
+          turn_id: turnId,
+          kind: 'system_notice',
+          primary_message_id: assistantMessageId,
+          source_message_ids: [assistantMessageId].filter(Boolean),
+          sort_key: sortKey,
+          payload: { subkind: 'context_compacted', context_compacted: contextCompacted },
         };
       }
       if (type === 'complete' || type === 'error') {

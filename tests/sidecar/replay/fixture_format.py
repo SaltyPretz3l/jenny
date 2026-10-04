@@ -91,6 +91,9 @@ ALLOWED_TURN_EVENT_KINDS: frozenset[str] = frozenset(
         # services/backend/plan-object-promotion.js.
         "plan_object",
         "plan_document",
+        # Electron-derived web citations persisted by
+        # services/backend/canonical-turn-event-collector.js.
+        "source_citations",
     }
 )
 

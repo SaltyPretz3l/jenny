@@ -12,7 +12,7 @@ function runtimeSnapshot() {
   resources: { configured_limits: limits.resources, effective_limits: limits.resources, counts: { waiter_count: 0, quarantined_count: 0 } } };
 }
 function harness(t) {
-  const dom = new JSDOM('<div id="root"></div>'); const calls = [];
+  const dom = new JSDOM('<div id="root"></div>', { pretendToBeVisual: true }); const calls = [];
   const bridge = { clientId: 'client_a', command: async (operation, options) => {
     calls.push({ operation, options: structuredClone(options) });
     if (operation === 'sessionRuntime.getSnapshot') return { ok: true, runtime: runtimeSnapshot() };
@@ -28,33 +28,38 @@ function harness(t) {
   return { app, dom, bridge, calls };
 }
 
-test('browser inspector is lazy, maps separate revisions and never turns inspection into control', async t => {
+test('browser Runs is lazy, labelled Runs, maps separate revisions and never turns inspection into control', async t => {
   const h = harness(t); assert.equal(h.calls.length, 0);
+  const toggle = h.dom.window.document.querySelector('[data-action="runtime-toggle"]');
+  assert.equal(toggle.textContent.trim(), 'Runs');
   h.app.orchestration.toggle(); await flush();
   assert.equal(h.calls[0].operation, 'sessionRuntime.getSnapshot');
+  // The hosted contract accepts the Runs view (api-contract getSnapshot view/finished_since).
+  const params = h.calls[0].options.params;
+  assert.equal(params.view, 'runs');
+  assert.equal(params.limit, 100);
+  assert.match(params.finished_since, /^\d{4}-\d{2}-\d{2}T/);
   const host = h.dom.window.document.querySelector('[data-browser-runtime]');
-  host.querySelector('[data-action="runtime-inspect"]').click(); await flush();
+  assert.equal(host.querySelector('.runs-row .runs-row-title').textContent, 'A');
+  assert.match(host.textContent, /Needs you/);
+  assert.match(host.textContent, /Runtime limits/);
+  host.querySelector('[data-action="runs-select"]').click(); await flush();
   assert.equal(h.calls.every(call => call.operation.startsWith('sessionRuntime.get')), true);
   await h.app.orchestration.api.cancel({ work_id: 'work_a', expected_revision: 4 });
   const cancel = h.calls.find(call => call.operation === 'sessionRuntime.cancel');
   assert.equal(cancel.options.sessionId, 'session_a'); assert.equal(cancel.options.controlGeneration, 3);
   assert.equal(cancel.options.expectedRevision, 'boot:8'); assert.equal(cancel.options.params.expected_revision, 4);
   assert.equal(h.app.state.snapshot.session.revision, 'boot:9');
-  h.app.state.selectedSessionId = 'session_b'; h.app.render();
-  assert.equal(host.querySelector('[data-action="runtime-cancel"]').disabled, true);
+  h.app.state.selectedSessionId = 'session_b'; h.app.render(); await flush();
+  assert.equal(host.querySelector('[data-action="runs-resume"]').disabled, true);
   const before = h.calls.filter(call => call.operation === 'sessionRuntime.cancel').length;
   assert.equal((await h.app.orchestration.api.cancel({ work_id: 'work_a', expected_revision: 4 })).ok, false);
   assert.equal(h.calls.filter(call => call.operation === 'sessionRuntime.cancel').length, before);
 });
 
-test('browser Start uses its stable request identity and authorization replacement fences pending control', async t => {
+test('browser Runs has no Start, and authorization replacement fences pending control', async t => {
   const h = harness(t);
-  const payload = { session_id: 'session_a', idempotency_key: 'desktop_start_stable', prompt: 'Inspect', purpose: 'Check',
-    limits: { inference_requests: 2, input_tokens: 100, output_tokens: 100 } };
-  await h.app.orchestration.api.start(payload);
-  const start = h.calls.find(call => call.operation === 'sessionRuntime.start');
-  assert.equal(start.options.requestId, payload.idempotency_key);
-  assert.deepEqual(start.options.params, { prompt: payload.prompt, purpose: payload.purpose, limits: payload.limits });
+  assert.equal(typeof h.app.orchestration.api.start, 'undefined', 'only the composer starts work');
   let release;
   h.bridge.command = async operation => {
     assert.equal(operation, 'sessionRuntime.getWork');

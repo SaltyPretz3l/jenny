@@ -242,7 +242,7 @@ def test_successful_containment_emits_no_degraded_warning(
 
 def test_containment_verify_budget_is_two_seconds() -> None:
     """Pinned: long enough for a kernel unwind, short enough to still be a bound."""
-    assert subprocess_manager_module._CONTAINMENT_VERIFY_SECONDS == 2.0  # noqa: SLF001
+    assert subprocess_manager_module._CONTAINMENT_VERIFY_SECONDS == 2.0
 
 
 def test_receipt_is_terminated_when_root_reaped_and_tree_empty() -> None:
@@ -292,12 +292,12 @@ def test_receipt_is_unterminated_when_the_tree_survives(
     assert containment.kill_tree_calls == 1
     # The key stays occupied: an unproven tree must not be replaced by a second
     # worker racing it for the same device.
-    assert "imagegen:op" in manager._children  # noqa: SLF001
+    assert "imagegen:op" in manager._children
     with pytest.raises(TaskAlreadyRunningError) as excinfo:
         manager.spawn_module("worker", task_key="imagegen:op")
     assert excinfo.value.task_key == "imagegen:op"
 
-    containment._surviving = ()  # noqa: SLF001 - let the manager close cleanly
+    containment._surviving = ()  # let the manager close cleanly
     manager.close()
 
 
@@ -371,7 +371,7 @@ def test_a_concurrent_waiter_cannot_downgrade_the_receipt_to_unverified() -> Non
         def terminate(self) -> None:
             super().terminate()
             manager = holder["manager"]
-            manager._finalize_child("race", expected_child=holder["child"])  # noqa: SLF001
+            manager._finalize_child("race", expected_child=holder["child"])
 
     process = FinalizingProcess()
     containment = FakeContainment()
@@ -379,7 +379,7 @@ def test_a_concurrent_waiter_cannot_downgrade_the_receipt_to_unverified() -> Non
     holder["manager"] = manager
     try:
         manager.spawn_module("worker", task_key="race")
-        child = manager._children["race"]  # noqa: SLF001
+        child = manager._children["race"]
         holder["child"] = child
 
         receipt = manager.terminate_task("race", timeout_seconds=1.0)

@@ -52,8 +52,8 @@ def _reset_web_tools(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
                 "tools_web_search_provider": "duckduckgo",
             }
         )
-        _fetch_cache._entries.clear()  # noqa: SLF001
-        _fetch_cache._size_bytes = 0  # noqa: SLF001
+        _fetch_cache._entries.clear()
+        _fetch_cache._size_bytes = 0
 
     class _UrlopenProxy:
         def open(self, request: object, timeout: float | None = None) -> object:
@@ -1180,4 +1180,28 @@ def test_fetch_cache_is_thread_safe_and_respects_size_limit() -> None:
     join_all_or_fail(threads, timeout=5, what="cache contention workers")
 
     assert errors == []
-    assert cache._size_bytes <= cache._max_bytes  # noqa: SLF001
+    assert cache._size_bytes <= cache._max_bytes
+
+
+
+def test_initial_dns_receives_fetch_deadline_and_remaining_budget(monkeypatch):
+    from sidecar.ai.tools.builtins import web
+
+    now = [100.0]
+    deadlines = []
+    budgets = []
+    monkeypatch.setattr(web.time, "monotonic", lambda: now[0])
+    def validate(url, **kwargs):
+        deadlines.append(kwargs.get("deadline"))
+        now[0] += 0.5
+        return ValidatedUrl(url=url)
+    def load(_validated, *, timeout_s, deadline):
+        assert deadline == 101.0
+        budgets.append(timeout_s)
+        raise TimeoutError("done")
+    monkeypatch.setattr(web, "validate_public_url", validate)
+    monkeypatch.setattr(web, "_load_fetch_entry", load)
+    with pytest.raises(ToolExecutionFailure):
+        fetch_url_tool({"url": "https://example.com", "timeout_s": 1}, None)
+    assert deadlines == [101.0]
+    assert budgets == [0.5]

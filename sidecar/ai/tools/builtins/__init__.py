@@ -14,7 +14,7 @@ __all__ = [
 
 def __getattr__(name: str) -> Any:
     if name in __all__:
-        from sidecar.ai.tools.builtins import python_runtime  # noqa: PLC0415
+        from sidecar.ai.tools.builtins import python_runtime
 
         return getattr(python_runtime, name)
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

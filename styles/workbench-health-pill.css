@@ -3,39 +3,47 @@
 .workbench-health-pill-slot {
   display: flex;
   align-items: center;
+  gap: var(--space-3);
   flex-shrink: 0;
 }
 
 .titlebar-health-slot {
   -webkit-app-region: no-drag;
-  margin-inline-start: var(--space-2);
-  /* The brand wordmark is all-caps in the display face, so its optical center
-     sits above its line-box center; flex centering alone leaves the pill
-     looking low. Nudge up to align with the caps' visual midline. */
-  transform: translateY(-1px);
 }
 
+/* The health dot: a 32px target around a 7px dot. It widens only while it
+   has words to say (a model load, a warning); healthy is the dot alone. */
 .workbench-health-pill {
   --pill-accent: var(--text-muted);
   -webkit-app-region: no-drag;
   appearance: none;
+  position: relative;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: var(--space-2);
-  min-width: 26px;
-  min-height: 26px;
-  padding: 0 7px;
+  gap: var(--space-3);
+  min-width: var(--titlebar-icon-button-size, 32px);
+  min-height: var(--titlebar-icon-button-size, 32px);
+  padding: 0 var(--space-4);
   border: 0;
   border-radius: var(--radius-xs, 4px);
   background: transparent;
   color: var(--text-secondary);
   font-family: inherit;
-  font-size: 12px;
+  font-size: var(--font-size-footnote);
   font-weight: 500;
   cursor: pointer;
   white-space: nowrap;
+  /* A long status ("Starting engine · openai-compatible") ellipsizes instead
+     of eating the title-bar drag gutter; the popover carries the full text. */
+  max-inline-size: 32ch;
   transition: background-color var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.workbench-health-pill-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .workbench-health-pill:hover,
@@ -51,8 +59,8 @@
 .workbench-health-pill-dot {
   --status-dot-accent: var(--pill-accent);
   display: inline-block;
-  width: 6px;
-  height: 6px;
+  width: 7px;
+  height: 7px;
   border-radius: 50%;
   background: var(--pill-accent);
   opacity: 1;
@@ -109,13 +117,30 @@
   color: var(--text-muted);
 }
 
+/* The Auto chip: its own button (run mode), present only while Auto is on. */
 .workbench-health-pill-mode {
-  padding: 1px 5px;
+  -webkit-app-region: no-drag;
+  appearance: none;
+  padding: 3px var(--space-4);
+  border: 0;
   border-radius: 999px;
   background: var(--toprail-item-hover-bg);
   color: var(--text-secondary);
-  font-size: 10px;
-  font-weight: 600;
+  font-family: inherit;
+  font-size: var(--font-size-footnote);
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.workbench-health-pill-mode:hover {
+  background: color-mix(in srgb, var(--text-primary) 12%, transparent);
+  color: var(--text-primary);
+}
+
+.workbench-health-pill-mode:focus-visible {
+  outline: 2px solid var(--focus-outline);
+  outline-offset: 2px;
 }
 .workbench-health-pill-mode[data-pause-state="requested"] {
   color: var(--accent-amber);
@@ -129,22 +154,32 @@
 }
 
 .workbench-health-pill-error-badge {
+  position: absolute;
+  top: 3px;
+  inset-inline-end: 1px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  box-sizing: border-box;
   min-width: 14px;
   height: 14px;
-  padding: 0 3px;
+  padding: 0 4px;
+  margin-inline-start: 1px;
   border-radius: 999px;
   background: color-mix(in srgb, var(--text-danger-emphasis, #e5484d) 82%, var(--bg-surface));
   color: var(--bg-surface, #fff);
-  font-size: 9px;
-  font-weight: 700;
-  /* Fill the badge box so the digits center on font metrics instead of a
-     9px strut floating inside the 14px pill. */
+  /* The caption role exactly: nothing in the chrome renders under 12px. */
+  font-size: var(--font-size-caption);
+  font-weight: 600;
+  /* Fill the badge box so the digits center on font metrics. */
   line-height: 14px;
   font-variant-numeric: tabular-nums;
   flex: 0 0 auto;
+}
+
+/* With words beside the dot the count follows them instead of the corner. */
+.workbench-health-pill:has(.workbench-health-pill-label) .workbench-health-pill-error-badge {
+  position: static;
 }
 
 @media (max-width: 719px) {
@@ -202,14 +237,14 @@
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  font-size: 13px;
-  font-weight: 600;
+  font-size: var(--font-size-body);
+  font-weight: 500;
   line-height: 1.4;
 }
 
 .workbench-health-popover-summary {
   color: var(--text-secondary);
-  font-size: 12.5px;
+  font-size: var(--font-size-body);
   line-height: 1.5;
 }
 
@@ -221,7 +256,7 @@
 
 .workbench-health-popover-fact {
   color: var(--text-secondary);
-  font-size: 12.5px;
+  font-size: var(--font-size-body);
   line-height: 1.6;
   overflow-wrap: anywhere;
 }
@@ -253,8 +288,8 @@
 
 .workbench-health-popover-errors-title {
   color: var(--text-secondary);
-  font-size: 12.5px;
-  font-weight: 600;
+  font-size: var(--font-size-body);
+  font-weight: 500;
 }
 
 .workbench-health-popover-rows {
@@ -268,13 +303,13 @@
   grid-template-columns: 52px minmax(0, 1fr);
   gap: var(--space-2);
   align-items: baseline;
-  font-size: 12.5px;
+  font-size: var(--font-size-body);
   line-height: 1.5;
 }
 
 .workbench-health-popover-row-label {
   color: var(--text-muted);
-  font-size: 11.5px;
+  font-size: var(--font-size-footnote);
 }
 
 .workbench-health-popover-row-value {
@@ -310,7 +345,7 @@
   background: transparent;
   color: var(--text-secondary);
   font-family: inherit;
-  font-size: 13px;
+  font-size: var(--font-size-body);
   font-weight: 500;
   line-height: 1.4;
   cursor: pointer;
@@ -337,7 +372,7 @@
 .workbench-health-popover-empty {
   padding: var(--space-2) 0;
   color: var(--text-muted);
-  font-size: 12.5px;
+  font-size: var(--font-size-body);
   line-height: 1.5;
 }
 

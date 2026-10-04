@@ -381,3 +381,22 @@ test('handleToolNotification bounds oversized diff metadata without dropping the
   assert.equal(turnToolResult.payload.metadata.diff.review_state, 'summary_only');
   assert.deepEqual(turnToolResult.payload.metadata.diff.hunks, []);
 });
+
+
+// Dogfood B11: the timeline reads a tool row's status from the tool_result
+// turn event, whose metadata is this normalizer's output.
+test('persisted metadata keeps the shell tool timed_out flag and nothing else from it', () => {
+  assert.deepEqual(
+    normalizePersistedToolResultMetadata({ timed_out: true, timeout_seconds: 10, shell: 'cmd' }),
+    { timed_out: true },
+  );
+  assert.equal(normalizePersistedToolResultMetadata({ timed_out: false, shell: 'cmd' }), null);
+});
+
+// Dogfood HB-035 (B12): the row's "exit N" label reads the exit status from
+// the tool_result turn event, whose metadata is this normalizer's output.
+test('persisted metadata keeps the shell tool exit status', () => {
+  assert.deepEqual(normalizePersistedToolResultMetadata({ exit_code: 1, shell: 'cmd' }), { exit_code: 1 });
+  assert.deepEqual(normalizePersistedToolResultMetadata({ exitCode: 0 }), { exit_code: 0 });
+  assert.equal(normalizePersistedToolResultMetadata({ exit_code: '1', shell: 'cmd' }), null);
+});

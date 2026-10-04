@@ -6,7 +6,10 @@ import math
 from collections.abc import Callable, Mapping, Sequence
 from typing import TYPE_CHECKING, Any, cast
 
-from sidecar.ai.context.compaction_window import MID_TURN_TASK_STUB
+from sidecar.ai.context.compaction_window import (
+    MID_TURN_ANSWERED_TASK_PREFIX,
+    MID_TURN_TASK_STUB,
+)
 from sidecar.ai.engines.base import BaseEngine, ModelModality
 from sidecar.ai.engines.vision_input import VisionImage
 from sidecar.ai.feature_flags import FEATURE_VISION_UNIFIED_TURN
@@ -59,7 +62,9 @@ def current_turn_anchor_index(
             continue
         if not isinstance(content, str):
             continue
-        text = content.strip()
+        # A pin answered in-turn carries the prefix; compare the bare text so a
+        # prefixed prompt or stub still anchors on every later pass.
+        text = content.strip().removeprefix(MID_TURN_ANSWERED_TASK_PREFIX).strip()
         if normalized_anchor:
             if text in {normalized_anchor, MID_TURN_TASK_STUB}:
                 return index

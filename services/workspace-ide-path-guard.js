@@ -4,27 +4,37 @@ const crypto = require('crypto');
 
 const { WORKSPACE_FS_ERROR_CODES, workspaceFsError } = require('./workspace-ide-errors');
 
-function normalizeWorkspaceRelPath(value, { strictName = false, relocationFrom = null } = {}) {
+// Whitespace in a name is identity, not padding: ` target.txt` and `target.txt`
+// are different entries, so the path is never trimmed. Typed-input callers trim
+// BEFORE calling. Win32 silently strips a trailing space/period (aliasing a
+// different entry), so those names are rejected there rather than converted.
+function normalizeWorkspaceRelPath(
+  value,
+  { strictName = false, relocationFrom = null, platform = process.platform } = {}
+) {
   const input = String(value || '').replace(/\\/g, '/');
-  const raw = input.trim();
-  if (!raw || raw.includes('\0') || raw.startsWith('/') || /^[A-Za-z]:/.test(raw)) {
+  const lead = input.trimStart();
+  if (!lead || input.includes('\0') || lead.startsWith('/') || /^[A-Za-z]:/.test(lead)) {
     throw workspaceFsError(
       WORKSPACE_FS_ERROR_CODES.PATH_INVALID,
       'Path must be a workspace-relative path.'
     );
   }
-  const segments = raw.split('/').filter((segment) => segment.length > 0 && segment !== '.');
+  const segments = input.split('/').filter((segment) => segment.length > 0 && segment !== '.');
   if (!segments.length || segments.some((segment) => segment === '..')) {
     throw workspaceFsError(
       WORKSPACE_FS_ERROR_CODES.PATH_INVALID,
       'Path must stay inside the workspace (no ".." segments).'
     );
   }
+  if (platform === 'win32' && segments.some((segment) => /[. ]$/.test(segment))) {
+    throw workspaceFsError(
+      WORKSPACE_FS_ERROR_CODES.PATH_INVALID,
+      'A name can\'t end with a space or a period on Windows.'
+    );
+  }
   const normalized = segments.join('/');
-  // The UNTRIMMED input leaf: trailing dot/space checks (and the relocation
-  // compare) must see exactly what the caller sent, not the trimmed form.
-  const inputLeaf = input.split('/').filter((segment) => segment.length > 0 && segment !== '.').pop()
-    || segments[segments.length - 1];
+  const inputLeaf = segments[segments.length - 1];
   // Relocation semantics: moving/copying an entry WITHOUT renaming it is not a
   // naming act — a POSIX-legal legacy leaf (e.g. `what?.txt`) must stay movable
   // and duplicable. When the destination leaf exactly equals the source leaf,

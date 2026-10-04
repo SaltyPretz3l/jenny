@@ -2,10 +2,8 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { JSDOM } = require('jsdom');
 
-const {
-  createChatKeyboardController,
-  wireChatAccessibility,
-} = require('../renderer/chat/renderer-chat-keyboard-utils');
+const { createChatKeyboardController } = require('../renderer/chat/renderer-chat-keyboard-utils');
+const { wireChatAccessibility } = require('../renderer/chat/renderer-chat-accessibility-wiring');
 
 function buildDom(messageIds) {
   const entries = (messageIds || ['m1', 'm2', 'm3'])
@@ -682,4 +680,41 @@ test('F4: wireChatAccessibility threads selectionController + bulkActionsControl
   assert.equal(selectAllCalls, 1);
   dispatchKey(chatTimeline, 'Delete');
   assert.equal(deleteCalls, 1);
+});
+
+// CTR-002: only the roving-tabindex article itself may open Edit; Enter on a
+// control inside the article keeps its native activation.
+test('CTR-002: Enter on a control inside a user .chat-entry does not open edit or swallow the key', () => {
+  const dom = new JSDOM(
+    '<!DOCTYPE html><html><body><div class="chat-timeline" id="chatTimeline" role="feed">'
+      + '<article class="chat-entry" data-message-id="u1" data-message-role="user" tabindex="-1">'
+      + '<div class="chat-bubble">hello <a href="#docs" id="docsLink">docs</a></div>'
+      + '<button type="button" id="copyBtn">Copy</button>'
+      + '<span role="button" tabindex="0" id="roleBtn">Act</span>'
+      + '<details><summary id="sum">More</summary>body</details>'
+      + '</article></div></body></html>'
+  );
+  const doc = dom.window.document;
+  const chatTimeline = doc.getElementById('chatTimeline');
+  const calls = [];
+  const controller = createChatKeyboardController({
+    chatTimeline,
+    document: doc,
+    onEnterEditFromKeyboard: (id) => calls.push(id),
+  });
+  controller.attach();
+
+  for (const id of ['copyBtn', 'docsLink', 'roleBtn', 'sum']) {
+    const control = doc.getElementById(id);
+    control.focus();
+    const event = dispatchKey(control, 'Enter');
+    assert.equal(event.defaultPrevented, false, id + ' keeps its native Enter activation');
+  }
+  assert.deepEqual(calls, [], 'no control inside the article opens Edit');
+
+  const article = chatTimeline.querySelector('.chat-entry');
+  article.focus();
+  const onArticle = dispatchKey(article, 'Enter');
+  assert.equal(onArticle.defaultPrevented, true, 'Enter on the article itself still opens Edit');
+  assert.deepEqual(calls, ['u1']);
 });

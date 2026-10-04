@@ -24,15 +24,17 @@ test('the rail shows unconditionally and drives view switching with per-view pan
   assert.equal(doc.getElementById('topRail').classList.contains('hidden'), false, 'rail visible after boot');
   assert.equal(doc.documentElement.dataset.topNavShell, 'true', 'flip data attribute set');
   const tabs = [...doc.querySelectorAll('#topRailTabs .toprail-tab')];
-  assert.deepEqual(tabs.map((tab) => tab.dataset.tabId), ['home', 'chat', 'ide', 'logs', 'settings']);
+  assert.deepEqual(tabs.map((tab) => tab.dataset.tabId), ['home', 'chat', 'ide', 'logs']);
+  const gear = doc.getElementById('settingsTopRailTab');
+  assert.ok(gear?.closest('.titlebar-status'), 'Settings is the gear in the right cluster, not a tab');
   const artifactToggle = doc.getElementById('artifactSplitViewToggle');
   const healthButton = doc.getElementById('workbenchHealthPillButton');
   assert.equal(window.__rendererState.ui.activeView, 'chat');
   assert.equal(artifactToggle.parentElement, doc.getElementById('chatTimelineUtilityCluster'), 'artifact action belongs to the chat utility cluster');
   assert.equal(artifactToggle.hidden, false, 'artifact action is available in the initial Chat view');
   assert.ok(healthButton, 'runtime health remains available in the titlebar');
-  assert.ok(healthButton.closest('.titlebar-brand'), 'runtime health belongs beside the titlebar wordmark');
-  assert.equal(doc.getElementById('topRailActions').contains(healthButton), false, 'global rail no longer owns runtime health');
+  assert.ok(healthButton.closest('.titlebar-status'), 'runtime health is the dot in the right cluster');
+  assert.equal(doc.getElementById('topRailActions'), null, 'the dead rail action mount is gone');
 
   doc.getElementById('logsTopRailTab').click();
   await waitForUi(window, 40);
@@ -64,7 +66,6 @@ test('the sidebar toggle collapses to the strip and the strip toggle restores; W
   assert.ok(collapseToggle, 'the sidebar header mounted the collapse toggle');
   assert.ok(collapseToggle.closest('.sidebar-header-actions'), 'the toggle belongs to the sidebar header actions');
   assert.equal(doc.getElementById('topRailPanelToggle'), null, 'the rail action slot no longer owns a panel toggle');
-  assert.equal(doc.getElementById('topRailActions').children.length, 0, 'the rail action slot is empty');
   assert.equal(collapseToggle.hidden, false, 'visible on a collapsible panel view');
   assert.equal(collapseToggle.getAttribute('aria-expanded'), 'true');
   assert.equal(collapseToggle.getAttribute('aria-controls'), 'viewPanel');

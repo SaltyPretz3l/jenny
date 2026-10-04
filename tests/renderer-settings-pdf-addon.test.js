@@ -19,6 +19,7 @@ const NOT_INSTALLED_TEXT = 'PDF reading needs the optional PDF reading add-on, w
 
 function inventoryFixture() {
   return {
+    settingsField: require('../renderer/inventory/settings-field'),
     statusRow(options = {}) {
       const progress = options.progress ? ` data-progress="${options.progress.value}/${options.progress.max}"` : '';
       return `<div class="inv-status-row" data-status-tone="${options.tone || ''}"${progress} role="status">${options.label || ''} ${options.message || ''}</div>`;
@@ -100,7 +101,7 @@ test('not installed: Set up… opens the inline licence disclosure; Accept insta
   h.controller.bind();
   await settle();
   assert.equal(h.host.dataset.pdfAddonState, 'not_installed');
-  assert.match(h.host.textContent, /Status Not installed/);
+  assert.match(h.host.textContent, /Not installed/);
   assert.equal(h.fieldList.dataset.pdfAddonNeeded, 'true');
   assert.equal(h.host.querySelector('.pdf-addon-disclosure'), null);
 
@@ -130,6 +131,8 @@ test('downloading shows bytes, a progress bar and Cancel; a pushed state replace
   await settle();
   assert.match(h.host.textContent, /Downloading · 11\.4 of 19\.2 MB/);
   assert.equal(h.host.querySelector('[data-progress]').dataset.progress, '11400000/19238032');
+  const progressText = h.host.querySelector('[data-progress]').textContent.trim();
+  assert.ok(progressText && !h.host.querySelector('.settings-field-help').textContent.includes(progressText), 'the progress message is said once, in the progress line');
   assert.match(h.host.textContent, /Chats keep working meanwhile/);
   h.click('pdfAddonCancel');
   await settle();
@@ -140,7 +143,7 @@ test('downloading shows bytes, a progress bar and Cancel; a pushed state replace
   assert.equal(h.host.querySelector('[data-action="pdfAddonCancel"]'), null);
 
   h.emit(state({ state: 'ready', installedVersion: '1.27.2.2' }));
-  assert.match(h.host.textContent, /Ready · PyMuPDF 1\.27\.2\.2 · AGPL-3\.0/);
+  assert.match(h.host.querySelector('.settings-field-detail').dataset.tooltip, /Ready · PyMuPDF 1\.27\.2\.2 · AGPL-3\.0/);
   assert.equal(h.fieldList.dataset.pdfAddonNeeded, 'false');
   h.close();
 });
@@ -176,7 +179,7 @@ test('failure, load failure, development and unsupported states show their copy 
     const h = harness(initial);
     h.controller.bind();
     await settle();
-    assert.match(h.host.textContent, copy);
+    assert.match(h.host.textContent + (h.host.querySelector('.settings-field-detail')?.dataset.tooltip || ''), copy);
     assert.deepEqual([...h.host.querySelectorAll('[data-action]')].map((node) => node.dataset.action), actions);
     h.close();
   }
@@ -245,4 +248,87 @@ test('the open_pdf_addon_settings recovery action opens Settings > Tools at the 
   await controller.handleErrorRecoveryAction({ action: 'open_pdf_addon_settings' });
   assert.deepEqual(opened, [['tools', { source: 'pdf_addon_tool_row', focusId: 'toolsPdfAddonHost' }]]);
   dom.window.close();
+});
+
+
+test('PDF states keep status and actions in one row and expand only the required block', async () => {
+  const cases = [
+    ['not_installed', 'Not installed', null, ['pdfAddonSetUp'], false],
+    ['downloading', 'Working\u2026', null, ['pdfAddonCancel'], true],
+    ['ready', 'Ready', 'ready', ['pdfAddonRemove', 'pdfAddonLicence'], false],
+    ['failed', 'Failed', 'blocked', ['pdfAddonRetry', 'pdfAddonFromFile'], false],
+  ];
+  for (const [kind, label, tone, actions, block] of cases) {
+    const h = harness(state({ state: kind, totalBytes: kind === 'downloading' ? 100 : 0, downloadedBytes: 10, cancellable: kind === 'downloading' }));
+    h.controller.bind();
+    await settle();
+    const row = h.host.querySelector('[data-settings-field="toolsPdfAddonRow"]');
+    assert.ok(row.classList.contains('settings-field--row'));
+    const status = row.querySelector('.settings-page-status[role="status"]');
+    assert.equal(status.textContent, label);
+    assert.equal(status.getAttribute('data-state'), tone);
+    assert.deepEqual(Array.from(row.querySelectorAll('[data-action]'), (node) => node.dataset.action), actions);
+    assert.equal(Boolean(h.host.querySelector('[data-pdf-addon-block]')), block);
+    if (kind === 'not_installed') {
+      h.click('pdfAddonSetUp');
+      const expanded = h.host.querySelector('[data-pdf-addon-block]');
+      assert.equal(h.host.querySelector('[data-settings-field] [data-action]'), null);
+      assert.ok(expanded.querySelector('[data-action="pdfAddonAccept"]'));
+      h.click('pdfAddonCloseDisclosure');
+      assert.equal(h.host.querySelector('[data-pdf-addon-block]'), null);
+    }
+    if (kind === 'failed') {
+      h.host.querySelector('[data-action="pdfAddonRetry"]').focus();
+      h.emit(state({ state: 'failed', reason: 'disk' }));
+      assert.equal(h.doc.activeElement.dataset.action, 'pdfAddonRetry');
+    }
+    h.close();
+  }
+});
+
+test('PDF state changes patch both tool help paragraphs without reloading the hosts', async () => {
+  const h = harness(state());
+  const support = require('../renderer/shell/renderer-settings-support');
+  h.fieldList.innerHTML = support.buildToolConfigFieldListMarkup({ fields: support.DEFAULT_TOOL_CONFIG_FIELDS });
+  const help = (key) => h.fieldList.querySelector(`[data-settings-field="settings-tool-config-${key}"] .settings-field-help`);
+  const original = help('richFiles');
+  h.controller.bind();
+  await settle();
+  for (const key of ['richFiles', 'imageRead']) assert.ok(help(key).textContent.endsWith('Needs the PDF reading add-on.'));
+  h.emit(state({ state: 'ready' }));
+  for (const key of ['richFiles', 'imageRead']) assert.equal(help(key).textContent.includes('Needs the PDF reading add-on.'), false);
+  assert.equal(help('richFiles'), original);
+  h.emit(state({ state: 'development', developmentAvailable: false }));
+  assert.equal(h.fieldList.dataset.pdfAddonNeeded, 'true');
+  h.emit(state({ state: 'development', developmentAvailable: true }));
+  assert.equal(h.fieldList.dataset.pdfAddonNeeded, 'false');
+  h.close();
+});
+
+test('the add-on writes each PDF tool help line as the shared composition, also when repainted and when blocked', async () => {
+  const h = harness(state());
+  const support = require('../renderer/shell/renderer-settings-support');
+  // As the Tools page draws them: Image reads blocked by the runtime, Rich file reading free.
+  h.fieldList.innerHTML = support.buildToolConfigFieldListMarkup({ fields: support.DEFAULT_TOOL_CONFIG_FIELDS, tools: { fileTools: true }, availability: { imageRead: { enabled: false } }, pdfAddonNeeded: true });
+  const help = (key) => h.fieldList.querySelector(`[data-settings-field="settings-tool-config-${key}"] .settings-field-help`).textContent;
+  const expected = (key, pdfAddonNeeded) => support.composeToolHelp(support.DEFAULT_TOOL_CONFIG_FIELDS.find((field) => field.key === key), { pdfAddonNeeded, blocked: key === 'imageRead' });
+  h.controller.bind();
+  await settle();
+  h.controller.render();
+  for (const key of ['richFiles', 'imageRead']) assert.equal(help(key), expected(key, true), key);
+  h.emit(state({ state: 'ready' }));
+  h.controller.render();
+  for (const key of ['richFiles', 'imageRead']) assert.equal(help(key), expected(key, false), key);
+  h.emit(state({ state: 'failed', reason: 'network' }));
+  for (const key of ['richFiles', 'imageRead']) assert.equal(help(key), expected(key, true), key);
+  h.close();
+});
+
+test('a remove that waits for the running chat says so on the row', async () => {
+  const h = harness(state({ state: 'not_installed', applyPending: true }));
+  h.controller.bind();
+  await settle();
+  assert.match(h.host.querySelector('.settings-field-help').textContent, /stops using it once the current chat finishes/);
+  assert.equal(h.host.querySelector('[data-action]'), null);
+  h.close();
 });

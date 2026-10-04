@@ -31,11 +31,10 @@ def _reset_shell_flags() -> None:
 def test_default_tools_enable_shell_security_classifier() -> None:
     _reset_shell_flags()
     try:
-        builtin_server._default_tools(  # noqa: SLF001
-            shell_enabled=True,
-            shell_security_enabled=True,
+        builtin_server._default_tools(
+            {"tools_shell_enabled": True, "feature_flags": {"shell_security": True}}
         )
-        assert shell_module._shell_security_enabled() is True  # noqa: SLF001
+        assert shell_module._shell_security_enabled() is True
     finally:
         _reset_shell_flags()
 
@@ -43,11 +42,10 @@ def test_default_tools_enable_shell_security_classifier() -> None:
 def test_default_tools_enable_git_tracking() -> None:
     _reset_shell_flags()
     try:
-        builtin_server._default_tools(  # noqa: SLF001
-            shell_enabled=True,
-            git_tracking_enabled=True,
+        builtin_server._default_tools(
+            {"tools_shell_enabled": True, "feature_flags": {"git_tracking": True}}
         )
-        assert shell_module._git_tracking_enabled() is True  # noqa: SLF001
+        assert shell_module._git_tracking_enabled() is True
     finally:
         _reset_shell_flags()
 
@@ -56,15 +54,15 @@ def test_default_tools_leave_shell_security_and_git_tracking_off_by_default() ->
     # Baseline them ON so a no-op (the bug) would leave them ON and fail the assert.
     shell_module.configure_shell_security({"shell_security": True, "git_tracking": True})
     try:
-        builtin_server._default_tools(shell_enabled=True)  # noqa: SLF001
-        assert shell_module._shell_security_enabled() is False  # noqa: SLF001
-        assert shell_module._git_tracking_enabled() is False  # noqa: SLF001
+        builtin_server._default_tools({"tools_shell_enabled": True})
+        assert shell_module._shell_security_enabled() is False
+        assert shell_module._git_tracking_enabled() is False
     finally:
         _reset_shell_flags()
 
 
 def test_default_tools_expose_complete_background_job_lifecycle() -> None:
-    tools = builtin_server._default_tools(shell_enabled=True)  # noqa: SLF001
+    tools = builtin_server._default_tools({"tools_shell_enabled": True})
 
     assert "run_command" in tools
     assert "check_background_job" in tools
@@ -81,9 +79,8 @@ def test_default_tools_shell_security_arms_classification_metadata(
     # _shell_security_enabled() is true inside the handler that actually runs.
     _reset_shell_flags()
     try:
-        tools = builtin_server._default_tools(  # noqa: SLF001
-            shell_enabled=True,
-            shell_security_enabled=True,
+        tools = builtin_server._default_tools(
+            {"tools_shell_enabled": True, "feature_flags": {"shell_security": True}}
         )
         # Patch the owned-process seam, not subprocess.run: real execution goes
         # through OwnedProcessService.run(), which uses Popen, so a subprocess.run
@@ -106,7 +103,7 @@ def test_default_tools_no_classification_metadata_when_shell_security_off(
 ) -> None:
     _reset_shell_flags()
     try:
-        tools = builtin_server._default_tools(shell_enabled=True)  # noqa: SLF001
+        tools = builtin_server._default_tools({"tools_shell_enabled": True})
         # Patch the owned-process seam, not subprocess.run: real execution goes
         # through OwnedProcessService.run(), which uses Popen, so a subprocess.run
         # fake is never called here and the command would run for real.
@@ -122,15 +119,15 @@ def test_default_tools_no_classification_metadata_when_shell_security_off(
 
 
 def test_default_tools_gate_delete_file_tool() -> None:
-    enabled = builtin_server._default_tools()  # noqa: SLF001 — default True
-    disabled = builtin_server._default_tools(delete_file_enabled=False)  # noqa: SLF001
+    enabled = builtin_server._default_tools()  # default True
+    disabled = builtin_server._default_tools({"tools_delete_file_enabled": False})
 
     assert "delete_file" in enabled
     assert "delete_file" not in disabled
 
 
 def test_default_tools_hide_workspace_tools_when_root_is_absent() -> None:
-    tools = builtin_server._default_tools(workspace_root_present=False)  # noqa: SLF001
+    tools = builtin_server._default_tools(workspace_root_present=False)
 
     assert "read_file" not in tools
     assert "list_dir" not in tools
@@ -147,7 +144,9 @@ def _run_main_capturing_kwargs(
 ) -> dict[str, object]:
     captured: dict[str, object] = {}
 
-    def fake_default_tools(**kwargs):
+    def fake_default_tools(config, **kwargs):
+        captured.update({key.removeprefix("tools_"): value for key, value in config.items()})
+        captured.update({f"{key}_enabled": value for key, value in config["feature_flags"].items()})
         captured.update(kwargs)
         return {}
 
@@ -229,7 +228,7 @@ def test_container_emitted_argv_parses_in_main_without_systemexit(
         skills_disabled_ids=("bundled/verification-specialist", "user/team/review"),
         skills_auto_index="off",
     )
-    servers = _default_mcp_servers(config, tmp_path)  # noqa: SLF001
+    servers = _default_mcp_servers(config, tmp_path)
     argv = list(servers[0].args)
     # main() receives only the flag args; the python -m module-selection prefix is
     # consumed by the interpreter. --workspace-root is always the first flag.
@@ -318,10 +317,31 @@ def test_main_defaults_skill_scope_roots_to_none_and_load_skill_on(
 
 
 def test_default_tools_binds_load_skill_by_default() -> None:
-    tools = builtin_server._default_tools()  # noqa: SLF001
+    tools = builtin_server._default_tools()
     assert "load_skill" in tools
 
 
 def test_default_tools_omits_load_skill_when_disabled() -> None:
-    tools = builtin_server._default_tools(load_skill_enabled=False)  # noqa: SLF001
+    tools = builtin_server._default_tools({"tools_load_skill_enabled": False})
     assert "load_skill" not in tools
+
+
+def test_default_tools_accept_normalized_config_without_mutating_it() -> None:
+    config = {
+        "tools_glob_enabled": False,
+        "tools_grep_enabled": False,
+        "tools_delete_file_enabled": False,
+        "tools_todo_enabled": True,
+        "tools_connections_enabled": False,
+        "tools_knowledge_enabled": False,
+        "knowledge_roots": ("unused",),
+    }
+    before = dict(config)
+    tools = builtin_server._default_tools(config, request_scoped_authority=True)
+
+    assert "glob" not in tools
+    assert "grep" not in tools
+    assert "delete_file" not in tools
+    assert "todo_write" in tools
+    assert "read_file" in tools
+    assert config == before

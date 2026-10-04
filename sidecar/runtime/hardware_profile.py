@@ -14,12 +14,14 @@ import logging
 import math
 import multiprocessing
 import platform
+import sys
 import threading
 import time
 import urllib.error
 import urllib.request
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
+from pathlib import Path
 from typing import Any
 
 from sidecar.ai.dependency_status import probe_dependencies
@@ -255,7 +257,7 @@ def _probe_gpu_inner() -> tuple[GpuInfo, CapabilityFlags, PythonInfo]:
 
         has_flash_attn = False
         try:
-            import flash_attn as _flash_attn  # type: ignore[import-untyped,import-not-found] # noqa: F811
+            import flash_attn as _flash_attn  # type: ignore[import-untyped,import-not-found]
 
             has_flash_attn = bool(_flash_attn)
         except ImportError:
@@ -668,73 +670,27 @@ def _effective_gpu(gpu: GpuInfo) -> tuple[int, str, str]:
 
 
 # ---------------------------------------------------------------------------
-# Model recommendation engine (ranks a supplied catalog; embedded fallback)
+# Model recommendation engine (ranks a supplied catalog; bundled fallback)
 # ---------------------------------------------------------------------------
 
-# Embedded fallback so recommendations work even with no provided/cached catalog.
-# Mirrors config/model-recommendation-catalog.json (camelCase keys). TUNABLE.
-_FALLBACK_CATALOG: dict[str, Any] = {
-    "catalogVersion": 8,
-    "updatedAt": "",
-    "models": [
-        {
-            "tier": "challenger", "modelId": "batiai/gemma4-26b:q6",
-            "displayName": "Gemma 4 26B A4B", "params": "26B-A4B", "quant": "Q6_K",
-            "vramRequiredMb": 20000, "ramRequiredMb": 24000, "contextLength": 32768,
-            "downloadSizeMb": 23000,
-            "pullTag": "batiai/gemma4-26b:q6",
-        },
-        {
-            "tier": "daily", "modelId": "batiai/gemma4-12b:q6",
-            "displayName": "Gemma 4 12B", "params": "12B", "quant": "Q6_K",
-            "vramRequiredMb": 13000, "ramRequiredMb": 16000, "contextLength": 32768,
-            "downloadSizeMb": 9800,
-            "pullTag": "batiai/gemma4-12b:q6",
-        },
-        {
-            "tier": "coder", "modelId": "hf.co/ornith-ai/Ornith-1.5-9B-GGUF:Q8_0",
-            "displayName": "Ornith 1.5 9B (coder)", "params": "9B", "quant": "Q8_0",
-            "vramRequiredMb": 12000, "ramRequiredMb": 14000, "contextLength": 49152,
-            "downloadSizeMb": 9530,
-            "pullTag": "hf.co/ornith-ai/Ornith-1.5-9B-GGUF:Q8_0", "preferred": True,
-        },
-        {
-            "tier": "coder-lite", "modelId": "hf.co/ornith-ai/Ornith-1.5-9B-GGUF:Q4_K_M",
-            "displayName": "Ornith 1.5 9B (lean coder)", "params": "9B", "quant": "Q4_K_M",
-            "vramRequiredMb": 7500, "ramRequiredMb": 10000, "contextLength": 32768,
-            "downloadSizeMb": 5630,
-            "pullTag": "hf.co/ornith-ai/Ornith-1.5-9B-GGUF:Q4_K_M", "preferred": True,
-        },
-        {
-            "tier": "compact", "modelId": "batiai/gemma4-12b:q4",
-            "displayName": "Gemma 4 12B (lean)", "params": "12B", "quant": "Q4_K",
-            "vramRequiredMb": 9000, "ramRequiredMb": 12000, "contextLength": 16384,
-            "downloadSizeMb": 7400,
-            "pullTag": "batiai/gemma4-12b:q4",
-        },
-        {
-            "tier": "small", "modelId": "batiai/gemma4-e4b:q6",
-            "displayName": "Gemma 4 E4B", "params": "4B", "quant": "Q6_K",
-            "vramRequiredMb": 7500, "ramRequiredMb": 8000, "contextLength": 32768,
-            "downloadSizeMb": 6200,
-            "pullTag": "batiai/gemma4-e4b:q6",
-        },
-        {
-            "tier": "baseline", "modelId": "batiai/gemma4-e4b:q6",
-            "displayName": "Gemma 4 E4B (CPU)", "params": "4B", "quant": "Q6_K",
-            "vramRequiredMb": 0, "ramRequiredMb": 8000, "contextLength": 8192,
-            "downloadSizeMb": 6200,
-            "pullTag": "batiai/gemma4-e4b:q6",
-        },
-        {
-            "tier": "tiny", "modelId": "batiai/gemma4-e2b:q4",
-            "displayName": "Gemma 4 E2B", "params": "2B", "quant": "Q4_K",
-            "vramRequiredMb": 0, "ramRequiredMb": 4000, "contextLength": 8192,
-            "downloadSizeMb": 3400,
-            "pullTag": "batiai/gemma4-e2b:q4",
-        },
-    ],
-}
+# The standalone sidecar uses the same catalog as the Electron application.
+def _load_fallback_catalog() -> dict[str, Any]:
+    bundled_root = getattr(sys, "_MEIPASS", None)
+    root = Path(bundled_root) if bundled_root else Path(__file__).resolve().parents[2]
+    try:
+        catalog_path = root / "config" / "model-recommendation-catalog.json"
+        catalog = json.loads(catalog_path.read_text(encoding="utf-8"))
+        if not isinstance(catalog, dict) or not isinstance(catalog.get("models"), list):
+            raise ValueError("Invalid model catalog shape")
+        if not all(isinstance(model, dict) for model in catalog["models"]):
+            raise ValueError("Invalid model catalog entry")
+        return catalog
+    except (OSError, ValueError) as exc:
+        logger.warning("Model recommendation catalog unavailable (%s).", type(exc).__name__)
+        return {"models": []}
+
+
+_FALLBACK_CATALOG = _load_fallback_catalog()
 
 
 def _catalog_models(catalog: Any) -> list[dict[str, Any]]:
@@ -818,7 +774,7 @@ def _build_model_recommendations(
             and vreq > 0
             and max(vreq, rreq) <= unified_budget_mb
         )
-        fits_on_cpu = avail_ram >= rreq if rreq > 0 else True
+        fits_on_cpu = rreq > 0 and avail_ram >= rreq
         fits = fits_in_vram or fits_in_accelerator or fits_on_cpu
         model_id = str(_entry_get(entry, "modelId", "model_id") or "")
         pull_tag = str(_entry_get(entry, "pullTag", "pull_tag") or model_id)
@@ -918,8 +874,8 @@ def get_hardware_profile(
 
     GPU/Python info is cached.  Ollama status, system memory, dependency report,
     and model recommendations are refreshed on every call.  ``model_catalog`` is
-    the (camelCase) catalog object supplied by the main process; when absent, an
-    embedded fallback catalog is used so recommendations always populate.
+    the (camelCase) catalog object supplied by the main process; when absent, the
+    bundled catalog is used when available.
     """
     gpu, caps, py_info = _get_immutable_profile()
     ollama = _probe_ollama(host=ollama_host)

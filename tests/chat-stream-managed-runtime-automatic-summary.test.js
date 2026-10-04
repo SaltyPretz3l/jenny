@@ -12,6 +12,9 @@ const {
   makeHandleToolNotification,
   callsOf,
 } = require('./helpers/managed-runtime-notification-harness');
+const {
+  createManagedChatStreamRuntime,
+} = require('../services/backend/chat-stream-managed-runtime');
 
 function automaticSummaryCtx(historyOverride = null) {
   const history = historyOverride || [
@@ -295,4 +298,75 @@ test('an oversized task prompt is replaced by the stub anchor', () => {
     role: 'user',
     content: '[Original request summarized above]',
   });
+});
+
+// FG-008: the runtime keeps every compaction for the turn diagnostics dump.
+function diagnosticsRuntime(featureFlags) {
+  const emitted = [];
+  const service = {
+    featureFlags,
+    emit(_channel, payload) { emitted.push(payload); },
+    _emitServiceLog() {},
+    sessionStore: { getSessionMessages: () => [] },
+  };
+  const runtime = createManagedChatStreamRuntime({
+    service,
+    resolvedSessionId: 'session-compaction-diagnostics',
+    streamId: 'stream-compaction-diagnostics',
+    normalizedPreferences: { conversation_mode: 'chat', interactive_round_count: 0 },
+    normalizedInteractiveResponse: null,
+    normalizedAttachments: [],
+    transcriptPrompt: 'Prompt',
+    userMessageId: 'user-compaction-diagnostics',
+  });
+  const send = (params) => runtime.handleNotification(
+    { method: 'context.compacted', params },
+    { toolContext: {}, handleToolNotification() { return false; } }
+  );
+  return { runtime, emitted, send };
+}
+
+const WINDOW_SHAPE = [
+  { role: 'system', kind: 'summary', chars: 72 },
+  { role: 'user', kind: 'task_pin', chars: 16 },
+  { role: 'system', kind: 'nudge', chars: 90 },
+];
+
+test('a tool_loop compaction records a diagnostics entry with text under agent_test_hooks', () => {
+  const { runtime, send } = diagnosticsRuntime({ agent_test_hooks: true });
+  assert.equal(runtime.getDiagnosticCompactions(), null);
+  const params = toolLoopSummaryParams({ window_shape: WINDOW_SHAPE });
+  send(params);
+
+  const { entries, omitted } = runtime.getDiagnosticCompactions();
+  assert.equal(omitted, 0);
+  assert.equal(entries.length, 1);
+  assert.equal(entries[0].phase, 'tool_loop');
+  assert.equal(entries[0].covered_through_tool_call_id, 'c2');
+  assert.equal(entries[0].summary_persisted, false);
+  assert.equal(entries[0].summary_text, params.summary_message.content);
+  assert.equal(entries[0].summary_chars, params.summary_message.content.length);
+  assert.deepEqual(entries[0].window, WINDOW_SHAPE);
+});
+
+test('without agent_test_hooks the diagnostics entry carries no summary text', () => {
+  const { runtime, send } = diagnosticsRuntime({});
+  send(toolLoopSummaryParams({ window_shape: WINDOW_SHAPE }));
+
+  const [entry] = runtime.getDiagnosticCompactions().entries;
+  assert.equal(Object.hasOwn(entry, 'summary_text'), false);
+  assert.match(entry.summary_sha256_16, /^[0-9a-f]{16}$/);
+  assert.equal(entry.summary_chars > 0, true);
+});
+
+test('the renderer-facing context_compacted event gains no diagnostics fields', () => {
+  const { ctx } = automaticSummaryCtx();
+  dispatch(ctx, 'context.compacted', toolLoopSummaryParams({ window_shape: WINDOW_SHAPE }));
+
+  const payload = callsOf(ctx, 'emitChatStream')[0].payload;
+  assert.deepEqual(Object.keys(payload).sort(), [
+    'compactionPhase', 'droppedBytes', 'droppedMessages', 'inputComplete', 'reasonCode',
+    'strategy', 'summaryExcerpt', 'summaryPersisted', 'summaryStatus', 'tokensAfter',
+    'summarySourceDroppedMessages', 'tokensBefore', 'type', ...Object.keys(ctx.eventBase),
+  ].sort());
 });

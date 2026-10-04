@@ -125,7 +125,6 @@ def test_resolve_variant_12b() -> None:
     assert profile is not None
     variant = resolve_variant(profile, model)
     assert variant.name == "12b"
-    assert variant.param_billions == 12.0
     assert variant.native_context_length == 262_144
 
 
@@ -192,7 +191,10 @@ def test_apply_overrides_sets_family_defaults() -> None:
     config = RuntimeConfig()
     result = apply_overrides(config, profile, variant)
     assert result.context_length == 32768
-    assert result.tools_image_read_enabled is True
+    # The user's Image and PDF reads toggle wins: the profile never forces it.
+    assert result.tools_image_read_enabled is False
+    enabled = apply_overrides(RuntimeConfig(tools_image_read_enabled=True), profile, variant)
+    assert enabled.tools_image_read_enabled is True
 
 
 def test_apply_overrides_variant_wins_over_family() -> None:
@@ -203,7 +205,7 @@ def test_apply_overrides_variant_wins_over_family() -> None:
     config = RuntimeConfig()
     result = apply_overrides(config, profile, variant)
     assert result.context_length == 8192
-    assert result.tools_image_read_enabled is True
+    assert result.tools_image_read_enabled is False
 
 
 def test_apply_overrides_does_not_touch_other_fields() -> None:
@@ -401,7 +403,7 @@ def test_proof_of_concept_e4b_target() -> None:
 
     result = apply_overrides(config, profile, variant)
     assert result.context_length == 32768
-    assert result.tools_image_read_enabled is True
+    assert result.tools_image_read_enabled is False
     # Generic knobs untouched
     assert result.temperature == 0.7
     assert result.max_tokens == 16384
@@ -505,7 +507,7 @@ class TestBrainContainerIntegration:
     """Plan items 23-26: profile overrides flow through BrainContainer.configure()."""
 
     def test_gemma4_e4b_applies_overrides(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Plan #23: e4b target gets context_length=32768 and vision enabled."""
+        """Plan #23: e4b gets context_length=32768; image read stays the user's."""
         import sidecar.ai.container as container_mod
 
         model = "gemma4-e4b-it-ud-q5_k_xl:latest"
@@ -521,7 +523,7 @@ class TestBrainContainerIntegration:
         stack = bc.configure({"engine_type": "ollama", "model": model})
 
         assert stack.config.context_length == 32768
-        assert stack.config.tools_image_read_enabled is True
+        assert stack.config.tools_image_read_enabled is False
         assert stack.config.resolved_app_profile_family == "gemma4"
         assert stack.config.resolved_app_profile_variant == "e4b"
         assert stack.config.resolved_app_profile_temperature == 1.0
@@ -529,7 +531,7 @@ class TestBrainContainerIntegration:
         assert "<|channel>thought" in stack.config.system_prompt
 
     def test_gemma4_e2b_variant_override(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Plan #24: e2b variant gets context_length=8192."""
+        """Plan #24: e2b gets context_length=8192 and keeps an enabled image read."""
         import sidecar.ai.container as container_mod
 
         model = "gemma4-e2b-it"
@@ -542,7 +544,9 @@ class TestBrainContainerIntegration:
         from sidecar.ai.container import BrainContainer
 
         bc = BrainContainer()
-        stack = bc.configure({"engine_type": "ollama", "model": model})
+        stack = bc.configure(
+            {"engine_type": "ollama", "model": model, "tools_image_read_enabled": True}
+        )
 
         assert stack.config.context_length == 8192
         assert stack.config.tools_image_read_enabled is True
@@ -647,8 +651,6 @@ def test_resolve_variant_qwen36_35b_a3b(model_id: str) -> None:
     assert profile is not None
     variant = resolve_variant(profile, model_id)
     assert variant.name == "35b-a3b"
-    assert variant.param_billions == 35.0
-    assert variant.active_param_billions == 3.0
     assert variant.native_context_length == 262_144
     assert variant.is_moe is True
 
@@ -778,3 +780,53 @@ def test_apply_overrides_ornith15_leaves_owner_context_choices_alone() -> None:
     config = RuntimeConfig(context_length=4096)
     result = apply_overrides(config, profile, variant)
     assert result.context_length == 4096
+
+
+def test_lean_gemma_catalog_context_matches_loaded_profile() -> None:
+    import json
+    from pathlib import Path
+
+    from sidecar.ai.container import _apply_context_length_override
+
+    catalog = json.loads((Path(__file__).resolve().parents[4] / "config" / "model-recommendation-catalog.json").read_text(encoding="utf-8"))
+    rec = next(row for row in catalog["models"] if row["pullTag"] == "batiai/gemma4-12b:q4")
+    profile = resolve_profile(rec["pullTag"])
+    assert profile is not None
+    variant = resolve_variant(profile, rec["pullTag"])
+    loaded = apply_overrides(RuntimeConfig(), profile, variant)
+    assert rec["contextLength"] == loaded.context_length
+    explicit = apply_overrides(RuntimeConfig(model=rec["pullTag"], context_length_override=8192), profile, variant)
+    explicit = _apply_context_length_override(explicit, selected_engine_type="ollama", selected_model=rec["pullTag"])
+    assert explicit.context_length == 8192
+
+
+def test_variant_spec_requires_only_runtime_profile_data() -> None:
+    from dataclasses import asdict
+
+    from sidecar.ai.app_profiles import RequestBehavior, VariantSpec
+
+    variant = VariantSpec(
+        name="test",
+        aliases=("test",),
+        label="Test",
+        native_context_length=8192,
+        overrides=ConfigOverrides(context_length=4096),
+        behavior=RequestBehavior(engine_types=("ollama",), temperature=0.6),
+    )
+    profile = AppProfile(
+        family="test",
+        label="Test",
+        family_aliases=("test",),
+        variants=(variant,),
+        default_variant="test",
+        overrides=ConfigOverrides(),
+    )
+    result = apply_behavior(
+        apply_overrides(RuntimeConfig(engine_type="ollama"), profile, variant), profile, variant
+    )
+    assert result.context_length == 4096
+    assert result.resolved_app_profile_temperature == 0.6
+    unused = {"param_billions", "active_param_billions", "family_supports_vision", "family_supports_audio"}
+    for registered in _REGISTRY.values():
+        for registered_variant in registered.variants:
+            assert unused.isdisjoint(asdict(registered_variant))

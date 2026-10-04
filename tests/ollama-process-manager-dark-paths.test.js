@@ -548,7 +548,7 @@ test('_cleanupFailedStartup logs warning and clears state when stopOwnedPid thro
 // LINE 475-476: _killOrphanedRunners() handles POSIX orphan runners.
 // ---------------------------------------------------------------------------
 
-test('_killOrphanedRunners on linux kills reparented and child runners but never the owned server', async (t) => {
+test('_killOrphanedRunners on linux kills children of the owned root but never the root or a foreign orphan', async (t) => {
   const killCalls = [];
   const manager = makeManager({
     platform: 'linux',
@@ -567,15 +567,15 @@ test('_killOrphanedRunners on linux kills reparented and child runners but never
   });
 
   await manager._killOrphanedRunners(55000);
-  assert.deepEqual(killCalls, [55050, 55051]);
+  assert.deepEqual(killCalls, [55050]);
 });
 
-test('_killOrphanedRunners on linux skips an orphan whose command line is not a runner', async (t) => {
+test('_killOrphanedRunners on linux skips a child of the owned root whose command line is not a runner', async (t) => {
   const logs = [], killCalls = [];
   const manager = makeManager({
     platform: 'linux',
     logger: (level, event, details) => logs.push({ level, event, details }),
-    listLocalOllamaProcessesImpl: () => [{ pid: 55070, parentPid: 1, name: 'ollama' }],
+    listLocalOllamaProcessesImpl: () => [{ pid: 55070, parentPid: 55000, name: 'ollama' }],
     getProcessCommandLineSyncImpl: () => '/usr/local/bin/ollama serve',
     killProcessTreeImpl: async (pid) => killCalls.push(pid),
   });

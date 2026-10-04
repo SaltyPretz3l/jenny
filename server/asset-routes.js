@@ -1,6 +1,7 @@
 'use strict';
 
 const { hostFailure } = require('./api-contract');
+const { json, sendHostFailure } = require('./http-server');
 const { downloadDisposition } = require('./download-headers');
 const { projectMessage } = require('./session-snapshots');
 
@@ -16,25 +17,6 @@ function authorized(ctx) {
 
 function contentType(request) {
   return String(request?.headers?.['content-type'] || '').split(';', 1)[0].trim().toLowerCase();
-}
-
-function json(response, status, value) {
-  if (response.destroyed || response.writableEnded) return;
-  response.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8' });
-  response.end(JSON.stringify(value));
-}
-
-function failure(response, result, requestId) {
-  const kind = result?.error?.kind || 'unavailable';
-  const reason = result?.error?.reason || 'asset_unavailable';
-  const status = { invalid: 400, unauthorized: 401, forbidden: 403, conflict: 409,
-    limit: 429, persistence: 503, unavailable: 503 }[kind] || 503;
-  const envelope = hostFailure(kind, reason, requestId, result?.error?.retryable === true);
-  if (result?.error?.limit_bytes) {
-    envelope.error.limit_bytes = result.error.limit_bytes;
-    envelope.error.actual_bytes = result.error.actual_bytes;
-  }
-  json(response, status, envelope);
 }
 
 async function readBody(request, maximum) {
@@ -80,49 +62,49 @@ function createAssetRoutes({ commands } = {}) {
     const messageMatch = method === 'GET' ? routeIds(pathname, 'messages') : null;
     if (!isUpload && !attachmentMatch && !messageMatch) return false;
     if (!authorized(ctx)) {
-      failure(ctx.response, { error: { kind: 'forbidden', reason: 'client_required' } }, ctx.requestId);
+      sendHostFailure(ctx.response, hostFailure('forbidden', 'client_required'), ctx.requestId);
       return true;
     }
     if (isUpload) {
       const type = contentType(ctx.request);
       if (!UPLOAD_TYPES.has(type)) {
-        failure(ctx.response, { error: { kind: 'invalid', reason: 'mime_type_unsupported' } }, ctx.requestId);
+        sendHostFailure(ctx.response, hostFailure('invalid', 'mime_type_unsupported'), ctx.requestId);
         return true;
       }
       const bytes = await readBody(ctx.request, type === 'text/plain' ? MAX_TEXT_UPLOAD_BYTES : MAX_UPLOAD_BYTES);
       if (!bytes) {
-        failure(ctx.response, { error: { kind: 'limit', reason: 'attachment_size_limit' } }, ctx.requestId);
+        sendHostFailure(ctx.response, hostFailure('limit', 'attachment_size_limit'), ctx.requestId);
         return true;
       }
       // Authorization is intentionally checked again after consuming the body.
       if (!authorized(ctx)) {
-        failure(ctx.response, { error: { kind: 'forbidden', reason: 'client_required' } }, ctx.requestId);
+        sendHostFailure(ctx.response, hostFailure('forbidden', 'client_required'), ctx.requestId);
         return true;
       }
       const displayName = decodeDisplayName(ctx.request?.headers?.['x-file-name']);
       if (displayName === null) {
-        failure(ctx.response, { error: { kind: 'invalid', reason: 'display_name_invalid' } }, ctx.requestId);
+        sendHostFailure(ctx.response, hostFailure('invalid', 'display_name_invalid'), ctx.requestId);
         return true;
       }
       const result = await commands.upload({ deviceId: ctx.deviceId, bytes, displayName, mimeType: type });
-      if (!authorized(ctx)) { failure(ctx.response, { error: { kind: 'forbidden', reason: 'client_required' } }, ctx.requestId); return true; }
-      if (!result.ok) failure(ctx.response, result, ctx.requestId);
+      if (!authorized(ctx)) { sendHostFailure(ctx.response, hostFailure('forbidden', 'client_required'), ctx.requestId); return true; }
+      if (!result.ok) sendHostFailure(ctx.response, result, ctx.requestId);
       else json(ctx.response, 201, result);
       return true;
     }
     const sessionId = attachmentMatch?.[1] || messageMatch?.[1];
     const valueId = attachmentMatch?.[2] || messageMatch?.[2];
     if (!ID_PATTERN.test(sessionId) || !ID_PATTERN.test(valueId)) {
-      failure(ctx.response, { error: { kind: 'invalid', reason: 'reference_invalid' } }, ctx.requestId);
+      sendHostFailure(ctx.response, hostFailure('invalid', 'reference_invalid'), ctx.requestId);
       return true;
     }
     if (attachmentMatch) {
       const result = await commands.readAttachment(sessionId, valueId);
-      if (!authorized(ctx)) { failure(ctx.response, { error: { kind: 'forbidden', reason: 'client_required' } }, ctx.requestId); return true; }
-      if (!result.ok) { failure(ctx.response, result, ctx.requestId); return true; }
+      if (!authorized(ctx)) { sendHostFailure(ctx.response, hostFailure('forbidden', 'client_required'), ctx.requestId); return true; }
+      if (!result.ok) { sendHostFailure(ctx.response, result, ctx.requestId); return true; }
       const type = String(result.attachment?.mime_type || '').toLowerCase();
       if (!UPLOAD_TYPES.has(type)) {
-        failure(ctx.response, { error: { kind: 'forbidden', reason: 'attachment_type_forbidden' } }, ctx.requestId);
+        sendHostFailure(ctx.response, hostFailure('forbidden', 'attachment_type_forbidden'), ctx.requestId);
         return true;
       }
       const name = String(result.attachment?.display_name || 'attachment').replace(/[\r\n"]/gu, '_').slice(0, 240);
@@ -135,11 +117,11 @@ function createAssetRoutes({ commands } = {}) {
       return true;
     }
     const result = await commands.readMessage(sessionId, valueId);
-      if (!authorized(ctx)) { failure(ctx.response, { error: { kind: 'forbidden', reason: 'client_required' } }, ctx.requestId); return true; }
-    if (!result.ok) { failure(ctx.response, result, ctx.requestId); return true; }
+      if (!authorized(ctx)) { sendHostFailure(ctx.response, hostFailure('forbidden', 'client_required'), ctx.requestId); return true; }
+    if (!result.ok) { sendHostFailure(ctx.response, result, ctx.requestId); return true; }
     const message = projectMessage(result.message);
     if (!message) {
-      failure(ctx.response, { error: { kind: 'unavailable', reason: 'message_projection_failed' } }, ctx.requestId);
+      sendHostFailure(ctx.response, hostFailure('unavailable', 'message_projection_failed'), ctx.requestId);
       return true;
     }
     json(ctx.response, 200, { ok: true, message });

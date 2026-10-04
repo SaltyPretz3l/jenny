@@ -28,7 +28,10 @@ test('Personality Settings removes only the retired overlay playground controls'
   assert.match(html, /data-settings-section="home"/);
   assert.match(html, /appearanceSurfaceEffectSelect/);
   assert.equal(fs.existsSync(path.join(root, 'services', 'companion-service.js')), true);
-  assert.equal(fs.existsSync(path.join(root, 'renderer', 'app', 'renderer-app-comet-runtime.js')), true);
+  // The comet companion was removed outright (sweep S9, 2026-09-25).
+  assert.equal(fs.existsSync(path.join(root, 'renderer', 'app', 'renderer-app-comet-runtime.js')), false);
+  assert.equal(fs.existsSync(path.join(root, 'comet')), false);
+  assert.doesNotMatch(html, /comet/i);
 });
 
 test('the Personality card is flat: no tabs, no badge, no details, no preview box', () => {
@@ -79,7 +82,7 @@ test('Memory owns Long-term notes and no daily record twin', () => {
   assert.ok(memory, 'the Memory section still exists');
 
   assert.match(memory, /Long-term notes/);
-  assert.match(memory, /Always sent with your messages\. Approved memories are separate and live below\./);
+  assert.match(memory, /Sent with your messages in the General project, except on the ChatGPT engine\. Approved memories are separate and live below\./);
   assert.match(memory, /id="memoryNotesFieldHost"/);
   assert.match(memory, /id="memoryNotesCounter"/);
   assert.match(memory, /id="memoryNotesActions"/);
@@ -98,8 +101,6 @@ test('the retired per-file personality IPC surface is gone from the renderer', (
         continue;
       }
       if (!entry.name.endsWith('.js')) continue;
-      // The minified fallback registry keeps historical shims; it resolves no IPC.
-      if (entry.name === 'renderer-fallback-registry.js') continue;
       const text = fs.readFileSync(full, 'utf8');
       if (/personality\.(getWorkspaceState|listFiles|readFile|writeFile|resetFile|getCompiledContext)\b/.test(text)
         || /contextFiles\.readFile\b/.test(text)) {

@@ -3,6 +3,7 @@
 const path = require('node:path');
 
 const { PROJECT_ERROR_CODES } = require('../backend/error-codes');
+const { ProjectDeleteJournal } = require('./project-delete-journal');
 const { GENERAL_PROJECT_ID, normalizeProjectId } = require('./project-schema');
 const { ProjectService, canonicalizeProjectRoot } = require('./project-service');
 const { ProjectStore } = require('./project-store');
@@ -37,7 +38,6 @@ function createProjectRootCanonicalizer({ restrictRoots = false, rootBoundary = 
 class ApplicationProjectAuthority {
   constructor({ store, projectService, workspacePool, sessionStore, restrictRoots, rootBoundary }) {
     this._store = store;
-    this._projectService = projectService;
     this._workspacePool = workspacePool;
     this._sessionStore = sessionStore;
     this._restrictRoots = restrictRoots === true;
@@ -53,6 +53,22 @@ class ApplicationProjectAuthority {
         'Project identity is invalid.'
       );
     }
+    this._requireWritableStore();
+    return this._acceptCaptured(this._workspacePool.capture(id));
+  }
+
+  // projects.list: the same authority as captureProject for a record taken
+  // from one list snapshot, with the filesystem probe done asynchronously.
+  async captureProjectRecordAsync(project) {
+    const id = normalizeProjectId(project?.id);
+    if (!id) {
+      throw projectError(PROJECT_ERROR_CODES.INVALID, 'invalid_project_id', 'Project identity is invalid.');
+    }
+    this._requireWritableStore();
+    return this._acceptCaptured(await this._workspacePool.captureRecordAsync(project));
+  }
+
+  _requireWritableStore() {
     const status = this._store.getStatus();
     if (status.read_only) {
       throw projectError(
@@ -61,7 +77,9 @@ class ApplicationProjectAuthority {
         'Project storage is unavailable.'
       );
     }
-    const captured = this._workspacePool.capture(id);
+  }
+
+  _acceptCaptured(captured) {
     if (!captured.ok) {
       const notFound = captured.reason === 'project_not_found';
       throw projectError(
@@ -133,6 +151,10 @@ function initializeApplicationProjects(service, options) {
   });
   const workspacePool = new ProjectWorkspacePool({ projectService });
   service.projectStore = store;
+  // Deletions whose memory move the sidecar has not confirmed (DPR-008).
+  service.projectDeleteJournal = new ProjectDeleteJournal(
+    path.join(options.userDataPath, 'project-delete-operations.json'), { logger }
+  );
   service.projectService = projectService;
   service.projectWorkspacePool = workspacePool;
   service.projectAuthority = new ApplicationProjectAuthority({

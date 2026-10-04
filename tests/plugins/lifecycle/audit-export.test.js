@@ -203,22 +203,13 @@ test('exportAuditLog accepts an injected redact function in place of the default
   assert.equal(result.detail.path, 'custom.path');
 });
 
-test('export carries one bounded pathless managed-policy revision and clamps caller expansion', async () => {
+test('export clamps caller expansion and carries no managed-policy provenance (retired)', async () => {
   const facade = createMemoryFsFacade();
   await seed(facade, Array.from({ length: 4 }, (_, sequence) => ({
     sequence, eventId: `audit-managed-${sequence}`,
   })));
-  const managedPolicy = {
-    status: 'active', reason: 'managed_policy_privileged_denied', revision: 9,
-    source_revision: 12, policy_digest: 'a'.repeat(64), source_kind: 'windows_machine_policy',
-    source_fingerprint: 'b'.repeat(64), privileged_execution: 'deny', update_ring: 'stable',
-  };
-  const result = await exportAuditLog(facade, BASE_DIR, {
-    maxEntries: 9999, policyMaxEntries: 2, managedPolicy,
-  });
+  const result = await exportAuditLog(facade, BASE_DIR, { maxEntries: 9999 });
   assert.equal(result.ok, true);
-  assert.equal(result.document.entry_count, 2);
-  assert.deepEqual(result.document.managed_policy, managedPolicy);
-  assert.equal(JSON.stringify(result.document).includes('C:\\'), false);
-  assert.equal(JSON.stringify(result.document).includes('/Library/'), false);
+  assert.equal(result.document.entry_count, 4);
+  assert.equal(Object.hasOwn(result.document, 'managed_policy'), false);
 });

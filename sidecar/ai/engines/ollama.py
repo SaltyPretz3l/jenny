@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import http.client
 import json
+import math
 import socket
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
+from collections.abc import Callable
 from typing import Any
 
 from sidecar.ai.config import _DEFAULT_MAX_OUTPUT_TOKENS
@@ -45,6 +49,7 @@ from sidecar.ai.engines.ollama_shared import (
     report_model_state,
     supports_ollama_reasoning_levels,
 )
+from sidecar.ai.engines.ollama_stream_transport import force_close_socket
 from sidecar.ai.engines.ollama_telemetry import (
     ResidencyKey,
     _OllamaTelemetryMixin,
@@ -84,7 +89,6 @@ from sidecar.runtime.ollama_support import (
     resolve_ollama_base_url,
 )
 
-
 # Hard cap on how many /api/ps entries list_resident_models() will surface.
 # A pathological/compromised Ollama daemon reporting an unbounded models list
 # must not let this fan out into an unbounded number of model-fit
@@ -102,7 +106,7 @@ def _coerce_str(value: Any, max_len: int) -> str:
 def _coerce_nonneg_int(value: Any) -> int:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return 0
-    if value != value or value in (float("inf"), float("-inf")):  # NaN guard
+    if (isinstance(value, float) and math.isnan(value)) or value in (float("inf"), float("-inf")):
         return 0
     return max(0, int(value))
 
@@ -112,10 +116,71 @@ def _coerce_optional_nonneg_int(value: Any) -> int | None:
         return None
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return None
-    if value != value or value in (float("inf"), float("-inf")):
+    if (isinstance(value, float) and math.isnan(value)) or value in (float("inf"), float("-inf")):
         return None
     coerced = int(value)
     return coerced if coerced >= 0 else None
+
+
+# Set by the warmup thread around its request so ``_post`` (whose signature
+# other callers and tests depend on) issues that one request over a connection
+# another thread can tear down. Thread-local: only the warmup thread sees it.
+_post_abort_scope = threading.local()
+
+
+class _AbortableRequest:
+    """One in-flight POST whose blocked connection another thread can close."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._conn: http.client.HTTPConnection | None = None
+        self._aborted = False
+
+    def attach(self, conn: http.client.HTTPConnection) -> None:
+        with self._lock:
+            self._conn = conn
+        self.raise_if_aborted()
+
+    def raise_if_aborted(self) -> None:
+        with self._lock:
+            if self._aborted:
+                raise ConnectionAbortedError("request aborted before it was sent")
+
+    def abort(self) -> None:
+        with self._lock:
+            self._aborted = True
+            conn = self._conn
+        if conn is None:
+            return
+        force_close_socket(getattr(conn, "sock", None))
+        conn.close()
+
+
+def _post_abortable(
+    abortable: _AbortableRequest,
+    url: str,
+    req: urllib.request.Request,
+    timeout: float,
+) -> dict[str, Any]:
+    """POST ``req`` over a connection ``abortable.abort()`` can close mid-flight."""
+    parts = urllib.parse.urlsplit(url)
+    conn_class = (
+        http.client.HTTPSConnection if parts.scheme == "https" else http.client.HTTPConnection
+    )
+    conn = conn_class(parts.hostname or "", parts.port, timeout=timeout)
+    try:
+        abortable.attach(conn)
+        # An abort that ran before the socket existed had nothing to close:
+        # connect first, then honor it, so every later abort finds the socket.
+        conn.connect()
+        abortable.raise_if_aborted()
+        conn.request("POST", req.selector, body=req.data, headers=dict(req.header_items()))
+        resp = conn.getresponse()
+        if resp.status >= 400:
+            raise urllib.error.HTTPError(url, resp.status, resp.reason, resp.headers, resp)
+        return read_json_response(resp)
+    finally:
+        conn.close()
 
 
 class OllamaEngine(_OllamaGenerationMixin, _OllamaTelemetryMixin, BaseEngine):
@@ -165,6 +230,12 @@ class OllamaEngine(_OllamaGenerationMixin, _OllamaTelemetryMixin, BaseEngine):
         self._warmup_lock = threading.Lock()
         self._warmup_generation = 0
         self._warmup_model: str | None = None
+        # Stop flag of the newest warmup. Set without the coordination lock so
+        # an engine swap (close) cancels a warmup that has not posted yet
+        # instead of waiting for it.
+        self._warmup_stop = threading.Event()
+        # Aborts the warmup request while it is in flight (None otherwise).
+        self._warmup_abort: Callable[[], None] | None = None
         self._cached_tools_state: tuple[tuple[str, ...], list[dict[str, Any]]] | None = None
         self._local_runtime_capability_sources: dict[str, str] = {
             "text": "engine_default",
@@ -350,40 +421,61 @@ class OllamaEngine(_OllamaGenerationMixin, _OllamaTelemetryMixin, BaseEngine):
         """
 
         warmup_lock = self._warmup_coordination_lock()
+        stop = threading.Event()
         with warmup_lock:
             self._warmup_generation += 1
             generation = self._warmup_generation
             self._warmup_model = name
+            previous_stop = getattr(self, "_warmup_stop", None)
+            self._warmup_stop = stop
+        if previous_stop is not None:
+            previous_stop.set()
 
         def _run() -> None:
             started_at = time.monotonic()
             try:
+                if stop.is_set():
+                    return
                 with warmup_lock:
                     if (
-                        generation != self._warmup_generation
+                        stop.is_set()
+                        or generation != self._warmup_generation
                         or self._warmup_model != name
                     ):
                         return
                     emit_startup_audit_mark(logger, "warmup-start", data={"model": name})
-                    self._post(
-                        "/api/generate",
-                        {
-                            "model": name,
-                            "prompt": "",
-                            "stream": False,
-                            # Generate exactly one token so Ollama fully
-                            # materializes the compute graph but we don't pay
-                            # for real output. No keep_alive override — let
-                            # Ollama's server default (typically 5 min) hold
-                            # the model hot. num_ctx must match what chat
-                            # requests will send: Ollama keys the loaded
-                            # runner on n_ctx, so a warmup at the tag default
-                            # forces a full second load when the first chat
-                            # arrives with the configured context length.
-                            "options": self._apply_configured_num_ctx({"num_predict": 1}),
-                        },
-                        timeout=self._request_timeout_seconds,
-                    )
+                    # Publish the abort before sending, then re-check stop: the
+                    # canceller sets stop first and reads the abort second, so
+                    # one side always sees the other.
+                    request = _AbortableRequest()
+                    self._warmup_abort = request.abort
+                    _post_abort_scope.request = request
+                    try:
+                        if stop.is_set():
+                            return
+                        self._post(
+                            "/api/generate",
+                            {
+                                "model": name,
+                                "prompt": "",
+                                "stream": False,
+                                # Generate exactly one token so Ollama fully
+                                # materializes the compute graph but we don't
+                                # pay for real output. No keep_alive override
+                                # — let Ollama's server default (typically 5
+                                # min) hold the model hot. num_ctx must match
+                                # what chat requests will send: Ollama keys the
+                                # loaded runner on n_ctx, so a warmup at the tag
+                                # default forces a full second load when the
+                                # first chat arrives with the configured
+                                # context length.
+                                "options": self._apply_configured_num_ctx({"num_predict": 1}),
+                            },
+                            timeout=self._request_timeout_seconds,
+                        )
+                    finally:
+                        _post_abort_scope.request = None
+                        self._warmup_abort = None
                 duration_ms = int((time.monotonic() - started_at) * 1000)
                 logger.info(
                     "OllamaEngine: warmup complete (model=%s, duration_ms=%d).",
@@ -420,6 +512,24 @@ class OllamaEngine(_OllamaGenerationMixin, _OllamaTelemetryMixin, BaseEngine):
         thread.start()
         return thread
 
+    def _cancel_pending_warmup(self) -> None:
+        stop = getattr(self, "_warmup_stop", None)
+        if stop is not None:
+            stop.set()
+        self._abort_warmup_request()
+
+    def _abort_warmup_request(self) -> None:
+        """Make a warmup request already in flight raise instead of blocking."""
+        abort = getattr(self, "_warmup_abort", None)
+        if abort is not None:
+            abort()
+
+    def close(self) -> None:
+        # Engine swap: the container retires this instance. A warmup that has
+        # not posted yet must not load weights on behalf of a retired engine.
+        self._cancel_pending_warmup()
+        super().close()
+
     def _claim_residency(self) -> None:
         """(Re)claim the shared daemon residency triple this engine now needs.
 
@@ -453,8 +563,10 @@ class OllamaEngine(_OllamaGenerationMixin, _OllamaTelemetryMixin, BaseEngine):
         # shared across generations, so the eviction is refcounted and only the
         # LAST holder posts keep_alive:0. Passing an explicit tag means
         # "intentionally evict this model" (operator models.unload, shutdown, or
-        # a DIFFERENT loaded model such as the inline-completion FIM model); that
-        # bypasses the refcount so a user-visible eviction is never suppressed.
+        # a DIFFERENT loaded model); that bypasses the refcount so a
+        # user-visible eviction is never suppressed.
+        if name is None:
+            self._cancel_pending_warmup()  # closing this instance: no late load
         target = str(name if name is not None else self.model_name or "").strip()
         if not target:
             if name is None:
@@ -463,6 +575,8 @@ class OllamaEngine(_OllamaGenerationMixin, _OllamaTelemetryMixin, BaseEngine):
             return
         intentional_eviction = name is not None
         should_evict = True
+        if intentional_eviction and getattr(self, "_warmup_model", None) == target:
+            self._cancel_pending_warmup()  # this eviction invalidates the warmup
         if intentional_eviction:
             claim = getattr(self, "_residency_claim", None)
             if claim is not None and claim[1] == target:
@@ -473,31 +587,45 @@ class OllamaEngine(_OllamaGenerationMixin, _OllamaTelemetryMixin, BaseEngine):
         else:
             should_evict = self._release_residency_claim()
         if should_evict:
-            try:
-                with self._warmup_coordination_lock():
-                    if self._warmup_model == target:
-                        self._warmup_generation += 1
-                        self._warmup_model = None
-                    self._post(
-                        "/api/generate",
-                        {
-                            "model": target,
-                            "prompt": "",
-                            "stream": False,
-                            "keep_alive": 0,
-                        },
-                        timeout=_UNLOAD_TIMEOUT,
-                    )
-            except urllib.error.URLError as exc:
-                raise EngineConnectionError(
-                    f"Could not connect to Ollama at {self.host} while unloading {target}: {exc}"
-                ) from exc
-            except Exception as exc:
-                raise GenerationError(f"Model unload failed: {exc}") from exc
+            self._send_eviction(target)
         # Only the bound chat model's loaded-state bookkeeping is this engine's to
         # clear; an explicit foreign tag does not change self.model_name's state.
         if name is None or target == str(self.model_name or "").strip():
             self._reset_loaded_state()
+
+    def _send_eviction(self, target: str) -> None:
+        # Bounded wait: an aborted warmup releases promptly, but one that does
+        # not must not stall retirement. The lock wait and the eviction request
+        # share one budget, so the caller's own unload timeout is not outrun.
+        deadline = time.monotonic() + _UNLOAD_TIMEOUT
+        warmup_lock = self._warmup_coordination_lock()
+        if not warmup_lock.acquire(timeout=_UNLOAD_TIMEOUT):
+            raise GenerationError(
+                f"Model unload could not start for {target}: "
+                "a warmup request did not release the engine."
+            )
+        try:
+            if self._warmup_model == target:
+                self._warmup_generation += 1
+                self._warmup_model = None
+            self._post(
+                "/api/generate",
+                {
+                    "model": target,
+                    "prompt": "",
+                    "stream": False,
+                    "keep_alive": 0,
+                },
+                timeout=max(1.0, deadline - time.monotonic()),
+            )
+        except urllib.error.URLError as exc:
+            raise EngineConnectionError(
+                f"Could not connect to Ollama at {self.host} while unloading {target}: {exc}"
+            ) from exc
+        except Exception as exc:
+            raise GenerationError(f"Model unload failed: {exc}") from exc
+        finally:
+            warmup_lock.release()
 
     def get_inference_budget_context_length(self) -> int | None:
         # Actual model metadata; output including reasoning is context-clamped.
@@ -508,6 +636,24 @@ class OllamaEngine(_OllamaGenerationMixin, _OllamaTelemetryMixin, BaseEngine):
 
     def get_configured_context_length(self) -> int | None:
         return self._configured_context_length
+
+    def set_profile_output_limits(
+        self,
+        *,
+        max_output_tokens: int | None,
+        thinking_headroom: int | None,
+    ) -> None:
+        """Adopt the app profile's limits, which resolve after the model loads."""
+        self._profile_max_output_tokens = (
+            int(max_output_tokens)
+            if isinstance(max_output_tokens, int) and max_output_tokens > 0
+            else None
+        )
+        self._profile_thinking_headroom = (
+            int(thinking_headroom)
+            if isinstance(thinking_headroom, int) and thinking_headroom > 0
+            else None
+        )
 
     def set_configured_context_length(self, context_length: int | None) -> None:
         # Use ``getattr`` because ``object.__new__`` test doubles may omit this attribute.
@@ -609,6 +755,9 @@ class OllamaEngine(_OllamaGenerationMixin, _OllamaTelemetryMixin, BaseEngine):
         effective_timeout = (
             self._request_timeout_seconds if timeout is None else max(float(timeout), 0.05)
         )
+        abortable = getattr(_post_abort_scope, "request", None)
+        if abortable is not None:
+            return _post_abortable(abortable, url, req, effective_timeout)
         with urllib.request.urlopen(req, timeout=effective_timeout) as resp:
             return read_json_response(resp)
 
@@ -621,24 +770,6 @@ class OllamaEngine(_OllamaGenerationMixin, _OllamaTelemetryMixin, BaseEngine):
         with urllib.request.urlopen(req, timeout=effective_timeout) as resp:
             return read_json_response(resp)
 
-    def list_loaded_models(self, timeout: int | None = None) -> list[dict[str, Any]]:
-        """Return the models currently resident in the Ollama daemon (`/api/ps`).
-
-        Each item is ``{"name": str, "expires_at": str|None}``. Raises on a
-        connection/HTTP failure so the caller can degrade to "unknown".
-        """
-        payload = self._get("/api/ps", timeout=timeout if timeout is not None else _HEALTH_TIMEOUT)
-        raw = payload.get("models") if isinstance(payload, dict) else None
-        models: list[dict[str, Any]] = []
-        if isinstance(raw, list):
-            for entry in raw:
-                if not isinstance(entry, dict):
-                    continue
-                name = str(entry.get("name") or entry.get("model") or "").strip()
-                if name:
-                    models.append({"name": name, "expires_at": entry.get("expires_at")})
-        return models
-
     def list_resident_models(self, timeout: int | None = None) -> list[dict[str, Any]]:
         """Return the models currently resident in Ollama (`/api/ps`), enriched
         with their measured footprint for the "record on first load, then
@@ -647,7 +778,7 @@ class OllamaEngine(_OllamaGenerationMixin, _OllamaTelemetryMixin, BaseEngine):
         Each item is ``{"name", "digest", "size", "size_vram",
         "context_length", "parameter_size", "quantization_level",
         "expires_at"}``. Raises on a connection/HTTP failure so the caller can
-        degrade to "unavailable" (mirrors list_loaded_models). Coercion is
+        degrade to "unavailable". Coercion is
         defensive: numeric fields reject bools and non-finite/negative values
         (clamped to 0), string fields are truncated to a safe length. Capped
         at `_MAX_RESIDENT_MODELS` entries regardless of how many the daemon

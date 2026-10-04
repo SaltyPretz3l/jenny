@@ -139,6 +139,46 @@ test('findConflicts ignores all-day events and all-day descriptors', () => {
 
 // ---- buildAgendaMarkup ----
 
+test('empty agenda headers keep a count element with no text', () => {
+  const root = domFragment(agenda.buildAgendaMarkup({
+    weekStart: new Date(2026, 5, 8), instances: [], now: NOW,
+    actionButton: inventoryActionButton,
+  }));
+  const counts = [...root.querySelectorAll('.cal-agenda__day-count')];
+  assert.equal(counts.length, 7);
+  for (const count of counts) assert.equal(count.textContent, '');
+});
+
+test('open-slot titles use the translator while accessible names stay unchanged', (t) => {
+  const modulePath = require.resolve('../renderer/features/renderer-dashboard-calendar-agenda.js');
+  const previous = globalThis.jennyI18n;
+  globalThis.jennyI18n = { t(key, fallback, params) {
+    if (key === 'dashboard.calendar.agenda.openSlotTitle') return '<Libre>';
+    return String(fallback).replace(/\{(\w+)\}/g, (match, name) => params?.[name] ?? match);
+  } };
+  delete require.cache[modulePath];
+  t.after(() => {
+    if (previous === undefined) delete globalThis.jennyI18n;
+    else globalThis.jennyI18n = previous;
+    delete require.cache[modulePath];
+  });
+  const translated = require(modulePath);
+  const options = {
+    weekStart: new Date(2026, 5, 8), instances: [], now: NOW,
+    actionButton: inventoryActionButton,
+  };
+  const root = domFragment(translated.buildAgendaMarkup(options));
+  const original = domFragment(agenda.buildAgendaMarkup(options));
+  const slots = [...root.querySelectorAll('.cal-agenda__item--open')];
+  assert.equal(slots.length, 7);
+  slots.forEach((slot, index) => {
+    assert.equal(slot.querySelector('.cal-agenda__title').textContent, '<Libre>');
+    assert.equal(slot.querySelector('libre'), null);
+    assert.equal(slot.getAttribute('aria-label'),
+      original.querySelectorAll('.cal-agenda__item--open')[index].getAttribute('aria-label'));
+  });
+});
+
 test('buildAgendaMarkup renders seven day groups with counts and marks up next', () => {
   const root = domFragment(agenda.buildAgendaMarkup({
     weekStart: new Date(2026, 5, 8),
@@ -273,15 +313,14 @@ test('a wholly empty week renders seven day groups with seven open slots', () =>
   assert.equal(groups.length, 7, 'seven day groups, exactly as a busy week renders');
   assert.equal(root.querySelectorAll('.cal-agenda__item--open').length, 7);
 
-  // Every group carries its day heading and its em-dash count, unchanged from
-  // the populated path — no zero-data divergence in the group chrome.
+  // Every group keeps its day heading and count element; empty counts are blank.
   assert.deepEqual(
     groups.map((group) => group.dataset.calAgendaDay),
     ['2026-07-06', '2026-07-07', '2026-07-08', '2026-07-09', '2026-07-10', '2026-07-11', '2026-07-12']
   );
   assert.deepEqual(
     groups.map((group) => group.querySelector('.cal-agenda__day-count').textContent),
-    ['—', '—', '—', '—', '—', '—', '—']
+    ['', '', '', '', '', '', '']
   );
   groups.forEach((group) => {
     assert.ok(group.querySelector('.cal-agenda__day-label').textContent.length > 0);
@@ -313,7 +352,7 @@ test('buildAgendaMarkup treats a prior event ending at week start as outside the
   // the week is all open slots — no event row survives the boundary test.
   assert.equal(root.querySelectorAll('[data-cal-instance]').length, 0);
   assert.equal(root.querySelectorAll('.cal-agenda__item--open').length, 7);
-  assert.equal(root.querySelector('[data-cal-agenda-day="2026-06-08"] .cal-agenda__day-count').textContent, '—');
+  assert.equal(root.querySelector('[data-cal-agenda-day="2026-06-08"] .cal-agenda__day-count').textContent, '');
 });
 
 test('buildAgendaMarkup tags timed rows with their end and dims already-ended ones', () => {
@@ -413,6 +452,11 @@ function renderWeek(instances, reminders) {
     actionButton: inventoryActionButton,
   }));
 }
+
+test('HOM-18 reminder tooltip describes automatic delivery while Jenny is running', () => {
+  const root = renderWeek([], [reminder()]);
+  assert.equal(root.querySelector('.cal-agenda__badge').title, 'Reminder fires automatically while Jenny is running.');
+});
 
 function todayRowTitles(root) {
   const group = root.querySelector('[data-cal-agenda-day="2026-06-11"]');

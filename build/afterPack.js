@@ -43,14 +43,6 @@ module.exports = async function afterPack(context) {
     'sidecar',
     'sidecar'
   );
-  const restrictedHost = path.join(
-    context.appOutDir,
-    appBundle,
-    'Contents',
-    'Resources',
-    'restricted-host',
-    'jenny-plugin-host'
-  );
   try {
     if (fs.existsSync(sidecar)) {
       fs.chmodSync(sidecar, 0o755);
@@ -59,13 +51,6 @@ module.exports = async function afterPack(context) {
     // Non-fatal: a signed build also re-signs nested binaries, and the launch
     // path verifies the binary independently.
     process.stderr.write(`afterPack: could not chmod sidecar (${(error && error.message) || error})\n`);
-  }
-  try {
-    if (fs.existsSync(restrictedHost)) {
-      fs.chmodSync(restrictedHost, 0o755);
-    }
-  } catch (error) {
-    process.stderr.write(`afterPack: could not chmod restricted host (${(error && error.message) || error})\n`);
   }
   try {
     fs.chmodSync(path.resolve(__dirname, '..', 'uninstall.command'), 0o755);

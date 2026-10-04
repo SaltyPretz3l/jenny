@@ -61,8 +61,8 @@
     const { APPEARANCE_STORAGE_KEY, TOAST_SOURCE, INTERACTIVE_SEQUENCE_IDLE } = deps.constants;
     const {
       chatInput,
-      composerSettingsPopover,
-      composerSettingsButton,
+      composerAttachMenu,
+      composerAttachShortcut,
       composerCommandPopover,
       composerTerminalShortcut,
     } = deps.dom;
@@ -86,7 +86,7 @@
     const call = deps.callbacks;
     let disposed = false;
     const lifecycleFence = asyncFenceUtils.createDisposalFence();
-    const FWD_KEYS = ['renderComposerPopover', 'renderCommandPopover', 'renderAttachmentTray', 'clearAttachmentNotice', 'buildAttachmentToastMessage', 'showToastMessage', 'reportError', 'renderAll', 'renderLayout', 'renderHeader', 'renderLogs', 'renderSettings', 'renderApprovedMemoryManager', 'renderIde', 'activateIde', 'renderHomePanel', 'renderDashboard', 'notifyBootViewReady', 'syncStartupBackendStatus', 'resetArtifactsState', 'renderComposerState', 'syncComposerVisualState', 'renderPersonalityEditor', 'syncBackendNotice', 'renderSessions', 'refreshApprovedMemories', 'refreshPendingMemories', 'refreshPersonalityWorkspace', 'refreshCompanionState', 'toErrorMessage', 'refreshProactiveState', 'refreshSkillsState', 'refreshTipsState', 'refreshOfflineState', 'refreshAwayDigest', 'refreshPhasePercentiles', 'refreshObservability', 'syncUsageVisibility', 'initializeComposerHolo', 'initializeSpriteHolo', 'initializeComposerLayoutObserver', 'warmCodeHighlighting', 'disposeCodeHighlighting', 'applyViewChrome', 'updateComposerSafeOffset', 'updateAssistantSpritePosition', 'hideAssistantSprite', 'setSidebarCollapsed', 'clearComposerStatusNotice', 'getCurrentVisibleMessages', 'getCurrentSessionMessages', 'getSessionMessages', 'setSessionMessages', 'setSessionTurnEventState', 'scrollThreadToTop', 'scrollThreadToBottom', 'scrollMessageIntoView', 'getLatestUserMessageId', 'getLatestReplyAssistantMessageId', 'isSendBusy', 'isAnySendBusy', 'setFollowLatest', 'clearStalePendingQuestionBatch', 'getPendingQuestionBatch', 'clearInteractiveDraft', 'getScrollMetrics', 'createNormalizedMessage', 'restoreSettingsNavSection', 'ensureSettingsSectionReady', 'refreshSettingsSection', 'upsertSessionSummary', 'removeSessionState', 'applySurfaceEffect', 'renderMessages', 'flushPendingStreamCommitsForSession'];
+    const FWD_KEYS = ['renderComposerPopover', 'renderCommandPopover', 'renderAttachmentTray', 'clearAttachmentNotice', 'buildAttachmentToastMessage', 'showToastMessage', 'reportError', 'renderAll', 'renderLayout', 'renderHeader', 'renderLogs', 'renderSettings', 'renderApprovedMemoryManager', 'renderIde', 'ensureIdeLoaded', 'activateIde', 'renderHomePanel', 'renderDashboard', 'notifyBootViewReady', 'syncStartupBackendStatus', 'resetArtifactsState', 'renderComposerState', 'syncComposerVisualState', 'renderPersonalityEditor', 'syncBackendNotice', 'renderSessions', 'refreshApprovedMemories', 'refreshPendingMemories', 'refreshPersonalityWorkspace', 'refreshCompanionState', 'toErrorMessage', 'refreshProactiveState', 'refreshSkillsState', 'refreshOfflineState', 'refreshAwayDigest', 'refreshPhasePercentiles', 'refreshObservability', 'syncUsageVisibility', 'initializeComposerHolo', 'initializeComposerLayoutObserver', 'warmCodeHighlighting', 'disposeCodeHighlighting', 'applyViewChrome', 'updateComposerSafeOffset', 'updateAssistantSpritePosition', 'hideAssistantSprite', 'setSidebarCollapsed', 'clearComposerStatusNotice', 'getCurrentVisibleMessages', 'getCurrentSessionMessages', 'getSessionMessages', 'setSessionMessages', 'setSessionTurnEventState', 'scrollThreadToTop', 'scrollThreadToBottom', 'scrollMessageIntoView', 'getLatestUserMessageId', 'getLatestReplyAssistantMessageId', 'isSendBusy', 'isAnySendBusy', 'setFollowLatest', 'clearStalePendingQuestionBatch', 'getPendingQuestionBatch', 'clearInteractiveDraft', 'getScrollMetrics', 'createNormalizedMessage', 'restoreSettingsNavSection', 'ensureSettingsSectionReady', 'refreshSettingsSection', 'upsertSessionSummary', 'removeSessionState', 'applySurfaceEffect', 'renderMessages', 'flushPendingStreamCommitsForSession'];
     const fwd = {};
     for (const k of FWD_KEYS) {
       fwd[k] = (...a) => (typeof call[k] === 'function' ? call[k](...a) : undefined);
@@ -271,6 +271,7 @@
       call.refreshObservability = undefined;
       clientLogForwarder?.dispose();
       disposeDeferredVisualStartup();
+      snapshotRefresh.dispose?.(); // its catalog-retry timer
       attachmentQueueController?.dispose?.();
       composerSessionStateController?.clearAll?.();
       if (window.rendererComposerSessionStateController === composerSessionStateController) {
@@ -420,7 +421,8 @@
         const activatedSessionId = state.currentSessionId;
         requestAnimationFrame(() => {
           if (disposed || state.ui.activeView !== 'chat' || state.currentSessionId !== activatedSessionId) return;
-          chatInput.focus();
+          // Split view: the focused pane's composer, not pane 0's #chatInput.
+          if (!globalThis.rendererAppPaneComposition?.getPaneComposition?.()?.focusComposer?.()) chatInput.focus();
           fwd.updateComposerSafeOffset({
             force: true,
             syncViewport: true,
@@ -467,40 +469,19 @@
       saveAppearancePreferences,
     } = appearanceController;
 
-    function syncComposerPopoverFallback() {
-      if (!composerSettingsPopover || !composerSettingsButton) {
-        return;
-      }
-      const open = Boolean(state.ui.composerPopoverOpen);
-      composerSettingsPopover.classList.toggle('hidden', !open);
-      composerSettingsButton.setAttribute('aria-expanded', open ? 'true' : 'false');
-      if (!open || typeof composerSettingsButton.getBoundingClientRect !== 'function') {
-        return;
-      }
-      const buttonRect = composerSettingsButton.getBoundingClientRect();
-      const popoverRect = composerSettingsPopover.getBoundingClientRect();
-      const viewportWidth = Math.max(Number(globalThis?.innerWidth || 0), 0);
-      const top = Math.max(buttonRect.top - popoverRect.height - 10, 16);
-      const left = Math.min(
-        Math.max(buttonRect.right - popoverRect.width, 16),
-        Math.max(viewportWidth - popoverRect.width - 16, 16)
-      );
-      composerSettingsPopover.style.top = `${top}px`;
-      composerSettingsPopover.style.left = `${left}px`;
-    }
-
     function closeComposerPopover({ restoreFocus = false } = {}) {
       state.ui.composerPopoverOpen = false;
       fwd.renderComposerPopover();
-      syncComposerPopoverFallback();
-      if (restoreFocus) composerSettingsButton.focus();
+      if (restoreFocus) composerAttachShortcut.focus();
     }
 
     function focusPopover(popover) {
       if (!popover || typeof popover.querySelector !== 'function') return;
-      const target = popover.querySelector(
+      const target = [...popover.querySelectorAll(
         'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
-      );
+      )].find((item) => !item.closest('[hidden], .hidden') && item.getAttribute('aria-disabled') !== 'true'
+        && popover.ownerDocument.defaultView.getComputedStyle(item).display !== 'none'
+        && popover.ownerDocument.defaultView.getComputedStyle(item).visibility !== 'hidden');
       if (target && typeof target.focus === 'function') {
         target.focus();
         return;
@@ -513,8 +494,7 @@
       if (state.ui.commandPopoverOpen) closeCommandPopover();
       state.ui.composerPopoverOpen = true;
       fwd.renderComposerPopover();
-      syncComposerPopoverFallback();
-      focusPopover(composerSettingsPopover);
+      focusPopover(composerAttachMenu);
     }
 
     function closeCommandPopover({ restoreFocus = false } = {}) {
@@ -599,8 +579,10 @@
           getShell: () => window.jennyShell,
           onModelsUpdated: (models) => {
             window.reasoningEffortControls?.applyModelCatalog?.(models);
-            window.rendererSettingsEditorSection?.invalidateInlineModelCatalog?.();
           },
+          // A catalog back after "sidecar not ready": the full render rebuilds
+          // both panes' model carriers (the snapshot render below does not).
+          onModelCatalogRecovered: () => fwd.renderAll(),
           render: () => {
             fwd.renderHeader();
             fwd.renderSessions();
@@ -637,11 +619,9 @@
       fwd.renderAll();
       noteFirstRenderComplete();
       markStartupAudit('first-render');
-      // The painted startup curtain still hides and gates the workspace until
-      // backend-ready plus boot-view-ready, so revealing the OS window is safe:
-      // notifyBootViewReady() (the boot-view-ready half) no longer fires from
-      // this function for chat/logs/settings -- bootstrapAppShell calls it
-      // once hydration has actually landed. See F1 in the startup-reveal review.
+      // The curtain lifts after shared shell hydration and the restored view's
+      // readiness; backend readiness is not a curtain gate, so the OS window
+      // can reveal while hydration is still pending.
       signalRendererReadyOnce();
       scheduleDeferredVisualStartup();
 
@@ -719,7 +699,10 @@
         // is idempotent (guarded by the controller's activated/hydrated flags), so
         // a later manual navigation won't re-hydrate.
         try {
-          await Promise.resolve(fwd.activateIde?.());
+          if (await fwd.ensureIdeLoaded?.() !== false) {
+            fwd.renderIde?.();
+            await Promise.resolve(fwd.activateIde?.());
+          }
         } catch (_error) {
           appendClientLog('WARN', 'ide.boot_activation_failed', { reason: 'persisted_tab_activation_failed' });
         } finally {
@@ -775,7 +758,7 @@
           : []
       );
       fwd.clearComposerStatusNotice();
-      if (fwd.isAnySendBusy() && sessionType === 'chat' && typeof options.initialPrompt !== 'string') {
+      if (fwd.isAnySendBusy() && sessionType === 'chat' && typeof options.initialPrompt !== 'string' && options.requireRecord !== true) {
         const runtimePreferences = mergeRequestedRuntimePreferences(getCurrentRuntimePreferences(), options.preferences, normalizeReasoningEffort);
         const sessionId = createLocalDraftSessionId();
         const timestamp = new Date().toISOString();
@@ -832,8 +815,11 @@
       const createdSessionId = String(payload?.data?.id || '').trim();
       composerSessionStateController?.captureActive(previousCurrentSessionId, 'session_create');
       state.currentSessionId = createdSessionId;
-      thinkingController.resumeAutoScroll();
-      fwd.setFollowLatest(true);
+      // Pane 0's follow intent; a chat created into another pane re-latches that pane's own (pane composition).
+      if (!(state.panes?.panes?.length > 1) || state.panes.focusedPaneId === 0) {
+        thinkingController.resumeAutoScroll();
+        fwd.setFollowLatest(true);
+      }
       fwd.setSessionMessages(createdSessionId, [], `session_${createdSessionId}`);
       await loadSessions(createdSessionId, { skipOpenCurrent: true });
       if (state.currentSessionId === createdSessionId) { // navigation during the await: never restore over another session's composer

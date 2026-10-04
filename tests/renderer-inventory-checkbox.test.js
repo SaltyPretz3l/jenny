@@ -61,3 +61,17 @@ test('setChecked updates native and inventory checked state', () => {
   assert.equal(input.checked, false);
   assert.equal(label.classList.contains('inv-checkbox--on'), false);
 });
+
+test('radio renders a bare native radio with escaped name and value', () => {
+  const dom = new JSDOM('<!doctype html><body></body>');
+  dom.window.document.body.innerHTML = checkboxModule.radio({ name: 'route"x', value: '<a>', checked: true, className: 'ok bad"cls' })
+    + checkboxModule.radio({ name: 'route"x', value: 'b' });
+  const inputs = dom.window.document.querySelectorAll('input[type="radio"]');
+  assert.equal(inputs.length, 2);
+  assert.equal(inputs[0].name, 'route"x');
+  assert.equal(inputs[0].value, '<a>');
+  assert.equal(inputs[0].checked, true);
+  assert.equal(inputs[0].className, 'ok');
+  assert.equal(inputs[1].checked, false);
+  assert.equal(inputs[1].hasAttribute('class'), false);
+});

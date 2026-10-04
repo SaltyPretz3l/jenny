@@ -120,7 +120,7 @@ class LoopRuntime:
 
     def _preview_context_tokens(self, messages: list[Any]) -> int:
         """Release compacted observations before reserving their context cost."""
-        from sidecar.ai.routing.preview_vision import (  # noqa: PLC0415 — lazy preview path
+        from sidecar.ai.routing.preview_vision import (  # lazy preview path
             preview_token_cost,
             prune_previews,
         )
@@ -209,7 +209,7 @@ class LoopRuntime:
             return
         try:
             store.record(event)
-        except Exception:
+        except Exception:  # noqa: BLE001  # telemetry
             return
 
     def audit(self, kind: str, **fields: Any) -> None:
@@ -238,7 +238,7 @@ class LoopRuntime:
                 request_id=self.request_id,
                 **fields,
             )
-        except Exception:
+        except Exception:  # noqa: BLE001  # telemetry
             return
         self.observe(event)
 

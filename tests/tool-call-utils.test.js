@@ -378,3 +378,41 @@ test('every tool-call status label resolves through the i18n catalog', (t) => {
     assert.equal(getStatusLabel(status), label, 'status ' + (status || '(empty)') + ' must resolve through the catalog');
   }
 });
+
+test('todo_write reads as the checklist with its progress (FG-006)', () => {
+  const { getToolDisplayName } = require('../renderer/chat/tool-call-utils');
+  assert.equal(getToolDisplayName('todo_write', 'Todo Write'), 'Checklist');
+  assert.equal(getToolDisplayName('todo_read', 'Todo Read'), 'Todo Read', 'only the writer is renamed');
+  const todos = [
+    { content: 'Parse the bank exports', status: 'completed' },
+    { content: 'Normalize dates', status: 'completed' },
+    { content: 'Extract check numbers', status: 'pending' },
+    { content: 'Match cleared checks', status: 'in_progress' },
+  ];
+  assert.equal(formatToolCallSummary('todo_write', { purpose: 'Track it', todos }),
+    '2 of 4 done · Match cleared checks', 'the in-progress item wins');
+  assert.equal(formatToolCallSummary('todo_write', { todos: todos.slice(0, 3) }),
+    '2 of 3 done · Extract check numbers', 'else the first unfinished item');
+  assert.equal(formatToolCallSummary('todo_write', { todos: todos.slice(0, 2) }), '2 of 2 done');
+  assert.equal(formatToolCallSummary('todo_write', { todos: [] }), 'Checklist', 'empty list: name only (no summary)');
+});
+
+test('toolRowKeySessionPrefix is the prefix every buildToolRowKey key of that session starts with', () => {
+  const { buildToolRowKey, toolRowKeySessionPrefix } = require('../renderer/chat/tool-call-utils');
+  const key = buildToolRowKey({ sessionId: 'sess A/1', turnId: 't1', rowId: 'r1', callId: 'c1' });
+  assert.equal(toolRowKeySessionPrefix('sess A/1'), 'session=sess%20A%2F1|');
+  assert.equal(key.startsWith(toolRowKeySessionPrefix('sess A/1')), true);
+  assert.equal(toolRowKeySessionPrefix('  sess A/1  '), toolRowKeySessionPrefix('sess A/1'), 'trimmed like the key builder');
+  assert.equal(key.startsWith(toolRowKeySessionPrefix('sess A')), false, 'no cross-session prefix match');
+});
+
+test('toolRunVerb maps a tool name onto its run verb through the kind aliases', () => {
+  const { toolRunVerb } = require('../renderer/chat/tool-call-utils');
+  assert.equal(toolRunVerb('Grep'), 'search');
+  assert.equal(toolRunVerb('web_search'), 'web');
+  assert.equal(toolRunVerb('read_file'), 'read');
+  assert.equal(toolRunVerb('glob_files'), 'search');
+  assert.equal(toolRunVerb('run_command'), 'run');
+  assert.equal(toolRunVerb('some_unknown_tool'), '');
+  assert.equal(toolRunVerb(''), '');
+});

@@ -18,3 +18,16 @@ test('briefing cache keeps the newer key when an older request resolves last', a
   resolvers.older({ branch: 'older' }); await requests[0];
   assert.deepEqual(await cache.getSnapshot(params('newer')), { branch: 'newer' });
 });
+
+test('a retryable Git failure is read again instead of cached for the day', async () => {
+  let reads = 0;
+  const cache = createDailyBriefingCache({
+    formatDateKey: () => 'today', buildSnapshot: ({ gitSnapshot }) => gitSnapshot,
+    readGitSnapshotImpl: async () => { reads += 1; return reads === 1 ? { available: false, retryable: true } : { available: true }; },
+  });
+  const params = { workspaceRoot: 'repo', workspaceRootStatus: { state: 'ready' } };
+  assert.equal((await cache.getSnapshot(params)).available, false);
+  assert.equal((await cache.getSnapshot(params)).available, true);
+  assert.equal((await cache.getSnapshot(params)).available, true);
+  assert.equal(reads, 2);
+});

@@ -69,6 +69,18 @@ test('append-only rendering reuses a proven prefix and matches a full render', (
   assert.equal(Object.isFrozen(third.streamState.prefixUnits), true);
 });
 
+test('a bare list marker keeps the boundary pending so a loose list never streams as two lists', () => {
+  for (const frames of [['- a\n\n', '- a\n\n-', '- a\n\n- b'], ['1. a\n\n', '1. a\n\n2', '1. a\n\n2.', '1. a\n\n2. b']]) {
+    let previous = null;
+    for (const source of frames) {
+      previous = markdownUtils.renderStreamingMarkdownUnits(source, previous
+        ? { previousUnits: previous.units, previousStreamState: previous.streamState }
+        : {});
+      assert.equal(previous.html, markdownUtils.renderStreamingMarkdownUnits(source).html, JSON.stringify(source));
+    }
+  }
+});
+
 test('source replacement and malformed state fail back to a complete render', () => {
   const initial = markdownUtils.renderStreamingMarkdownUnits('Original paragraph.');
   const replaced = markdownUtils.renderStreamingMarkdownUnits('Replacement paragraph.', {

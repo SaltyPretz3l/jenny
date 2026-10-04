@@ -259,6 +259,43 @@ test('clicking a local block opens the edit form seeded from the series event', 
   assert.ok(body.querySelector('[data-cal-form-action="delete"]'));
 });
 
+test('HOM-06 widget title edits persist multi-day dates through CalendarService', async () => {
+  const { CalendarService } = require('../services/calendar-service');
+  for (const allDay of [true, false]) {
+    const event = { id: 'span', title: 'Trip', start: '2026-06-11T09:00', end: '2026-06-14T10:00', allDay, recurrence: 'none' };
+    if (allDay) { event.start = '2026-06-11T00:00'; event.end = '2026-06-14T00:00'; }
+    const store = { value: { events: [event] }, read() { return this.value; }, writeImmediate(value) { this.value = value; } };
+    const service = new CalendarService({ store, nowProvider: () => NOW, configService: { getHomeConfig: () => ({}) } });
+    const { dom, body, widget, ctx } = createHarness({ state: { calendar: service.getState() },
+      shell: { calendar: { updateEvent: async (id, payload) => service.updateEvent(id, payload) } } });
+    widget.render(body, ctx);
+    click(dom, body.querySelector('[data-cal-event-id="span"]'));
+    body.querySelector('#calFormTitle').value = 'Renamed trip';
+    click(dom, body.querySelector('[data-cal-form-action="save"]'));
+    await flush();
+    assert.equal(store.value.events[0].title, 'Renamed trip');
+    assert.equal(store.value.events[0].start, event.start);
+    assert.equal(store.value.events[0].end, event.end);
+    dom.window.close();
+  }
+});
+
+test('HOM-06 create form saves an earlier end time on the following day', async () => {
+  const calls = [];
+  const { dom, body, widget, ctx } = createHarness({ shell: { calendar: { createEvent: async (payload) => {
+    calls.push(payload); return makeState().calendar;
+  } } } });
+  widget.render(body, ctx);
+  click(dom, body.querySelector('[data-cal-new-event]'));
+  body.querySelector('#calFormStart').value = '23:00';
+  body.querySelector('#calFormEnd').value = '01:00';
+  click(dom, body.querySelector('[data-cal-form-action="save"]'));
+  await flush();
+  assert.equal(calls[0].end, '2026-06-12T01:00');
+  assert.equal(body.querySelector('[data-cal-form="1"]'), null);
+  dom.window.close();
+});
+
 test('readonly feed instances render dashed and ignore clicks', () => {
   const state = makeState({
     instances: [makeInstance({
@@ -438,7 +475,7 @@ test('feed warnings mark the overflow control and unsupported recurrence gets a 
   assert.ok(body.querySelector('.cal-event__marker'));
 });
 
-test('the create form rejects an end at/before start without calling createEvent', async () => {
+test('the create form rejects an end equal to start without calling createEvent', async () => {
   const calls = [];
   const shell = { calendar: { createEvent: async (p) => { calls.push(p); return makeState().calendar; } } };
   const { dom, body, widget, ctx } = createHarness({ shell });
@@ -446,7 +483,7 @@ test('the create form rejects an end at/before start without calling createEvent
 
   click(dom, body.querySelector('[data-cal-new-event]'));
   body.querySelector('#calFormStart').value = '15:00';
-  body.querySelector('#calFormEnd').value = '14:00';
+  body.querySelector('#calFormEnd').value = '15:00';
   click(dom, body.querySelector('[data-cal-form-action="save"]'));
   await flush();
 

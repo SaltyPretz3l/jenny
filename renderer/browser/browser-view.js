@@ -14,6 +14,7 @@
       require('marked'),
       require('dompurify'),
       require('../shared/markdown-sanitize-policy'),
+      require('./browser-bridge'),
     );
     return;
   }
@@ -29,6 +30,7 @@
     root.marked,
     root.DOMPurify,
     root.markdownSanitizePolicy,
+    root.jennyBrowserBridge,
   );
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (
   actionButton,
@@ -42,6 +44,7 @@
   markedModule,
   domPurifyModule,
   sanitizePolicy,
+  bridgeModule,
 ) {
   'use strict';
   const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
@@ -55,6 +58,14 @@
 
   function text(value, fallback = '') {
     return typeof value === 'string' ? value : fallback;
+  }
+
+  function activityTime(value) {
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      const date = new Date(value);
+      if (Number.isFinite(date.getTime())) return date.toLocaleString(globalThis.jennyI18n?.tag?.());
+    }
+    return text(value, jt("browserView.lastSeenUnavailable", "Last seen unavailable"));
   }
 
   function idToken(value, fallback = 'item') {
@@ -119,7 +130,7 @@
     const mutationBlocked = state.mutationPending === true;
     const hasOwner = Boolean(text(control.ownerClientId) && !canControl);
     const controlAction = canControl ? 'release-control' : 'acquire-control';
-    const controlLabel = canControl ? jt("browserView.releaseControl", "Release control") : hasOwner ? jt("browserView.takeOver", "Take over") : jt("remote.banner.takeControl", "Take control");
+    const controlLabel = canControl ? jt("browserView.releaseControl", "Release control") : hasOwner ? jt("browserView.takeOver", "Take over") : jt("browserView.takeControl", "Take control");
     const controlTitle = hasOwner
       ? jt("browserView.takeOverThisConversationFromTheCurrentBrowser", "Take over this conversation from the current browser")
       : canControl ? jt("browserView.releaseTheConversationController", "Release the conversation controller") : jt("browserView.becomeTheConversationController", "Become the conversation controller");
@@ -139,7 +150,7 @@
         <div class="browser-brand"><span class="browser-brand-mark" aria-hidden="true">J</span><span>Jenny</span><span class="browser-host-badge">${escapeHtml(jt("models.library.hosted", "Hosted"))}</span></div>
           <div class="browser-top-actions">
             <span class="browser-connection" data-browser-connection aria-live="polite">${escapeHtml(connectionLabel(state))}</span>
-            ${button({ id: 'runtime-toggle', label: jt('settings.sections.runtime.title', 'Runtime & orchestration'), variant: 'ghost', size: 'sm', ariaExpanded: state.runtimeOpen === true })}
+            ${button({ id: 'runtime-toggle', label: jt('settings.sections.runs.title', 'Runs'), variant: 'ghost', size: 'sm', ariaExpanded: state.runtimeOpen === true })}
             ${button({ id: 'projects-toggle', label: jt('browserProjects.manage', 'Projects'), variant: 'ghost', size: 'sm', ariaExpanded: state.projectsOpen === true })}
             ${button({ id: 'manage-auth-sessions', label: jt("browserView.manageAccess", "Manage access"), variant: 'ghost', size: 'sm', ariaExpanded: state.authSessionsOpen === true })}
            ${button({ id: 'logout', label: jt("browserView.logOut", "Log out"), variant: 'ghost', size: 'sm' })}
@@ -175,6 +186,11 @@
     </div>`;
   }
 
+  function signOutNoticeHtml(state) {
+    if (state.signOutUnconfirmed !== true) return '';
+    return `<p class="browser-error" data-signout-unconfirmed>${escapeHtml(jt("browserView.signOutUnconfirmed", "Jenny could not reach the host to confirm the sign-out. This browser is locked, but the host session may still be active until the sign-out is confirmed."))}</p>${button({ id: 'retry-logout', label: jt("browserView.retrySignOut", "Retry sign-out"), variant: 'secondary', size: 'sm', disabled: state.busy === true })}`;
+  }
+
   function loginView(state) {
     return `<main class="browser-login" data-browser-login>
       <div class="browser-login-card">
@@ -182,7 +198,7 @@
         <h1>${escapeHtml(jt("browserView.signInToYourJennyHost", "Sign in to your Jenny host"))}</h1>
         <p class="browser-login-copy">${escapeHtml(jt("browserView.resumeYourLocalConversationsThroughThisPrivateHostedSurface", "Resume your local conversations through this private hosted surface."))}</p>
         ${field({ id: 'login-password', label: jt("browserView.hostPassword", "Host password"), type: 'password', placeholder: jt("browserView.enterYourPassword", "Enter your password"), autocomplete: 'current-password', maxLength: 512, className: 'browser-login-field' })}
-        <div class="browser-login-actions">${button({ id: 'login-submit', label: state.busy ? jt("browserView.signingIn", "Signing in…") : jt("browserView.signIn", "Sign in"), variant: 'primary', size: 'lg', disabled: state.busy })}</div>
+        <div class="browser-login-actions">${button({ id: 'login-submit', label: state.busy ? jt("browserView.signingIn", "Signing in…") : jt("browserView.signIn", "Sign in"), variant: 'primary', size: 'lg', disabled: state.busy })}</div>${signOutNoticeHtml(state)}
         <p class="browser-error" data-login-error${state.error ? '' : ' hidden'}>${escapeHtml(text(state.error))}</p>
       </div>
     </main>`;
@@ -244,7 +260,10 @@
 
   const INERT_ARTIFACT_CSP = "default-src 'none'; style-src 'unsafe-inline'; img-src data: blob:; base-uri 'none'; form-action 'none'";
   function buildInertArtifactDocument(source) { return `<!doctype html><html><head><meta http-equiv="Content-Security-Policy" content="${INERT_ARTIFACT_CSP}"></head><body>${text(source)}</body></html>`; }
-  function artifactMimeType(value) { const raw = text(value).toLowerCase(); const aliases = { 'text/html': 'html', 'text/markdown': 'markdown', 'image/svg+xml': 'svg+xml', 'image/png': 'png', 'image/jpeg': 'jpeg', 'image/webp': 'webp', 'application/json': 'json' }; const normalized = aliases[raw] || raw; return new Set(['text/plain', 'html', 'markdown', 'svg+xml', 'png', 'jpeg', 'webp', 'json', 'octet-stream']).has(normalized) ? normalized : 'octet-stream'; }
+  const PREVIEWABLE_ARTIFACT_KINDS = new Set(['text/plain', 'markdown', 'json', 'html', 'svg+xml', 'png', 'jpeg', 'webp']);
+  // One normalizer/allowlist: the bridge owns the artifact MIME vocabulary.
+  function artifactMimeType(value) { return typeof bridgeModule?.artifactMimeType === 'function' ? bridgeModule.artifactMimeType(value) : 'octet-stream'; }
+  function artifactRefMimeType(artifact) { return typeof bridgeModule?.artifactRefMimeType === 'function' ? bridgeModule.artifactRefMimeType(artifact) : artifactMimeType(artifact?.mime_type); }
   function artifactRefForId(snapshot, artifactIdentifier) {
     const id = artifactId(artifactIdentifier);
     if (!id) return null;
@@ -256,18 +275,22 @@
   function artifactFileName(value, fallback = 'artifact') { const name = text(value).split(/[\\/]/).pop().trim().slice(0, 255); return name || fallback; }
   function artifactDownloadName(disposition, ref) { const encoded = text(disposition).match(/filename\*=UTF-8''([^;]+)/i)?.[1]; if (encoded) { try { return artifactFileName(decodeURIComponent(encoded)); } catch (_error) { /* fallback */ } } const quoted = text(disposition).match(/filename="([^"]+)"/i)?.[1] || text(disposition).match(/filename=([^;]+)/i)?.[1]; return artifactFileName(quoted || ref?.file_name || ref?.fileName || ref?.title); }
   async function renderArtifactPreview(target, options = {}) {
-    const { id, ref, result, sessionId, isCurrent, trackUrl } = options;
+    const { id, ref, result, sessionId, isCurrent, trackUrl, clearPreviewUrl } = options;
     const blob = result?.blob;
-    if (!target || !blob || !Number.isSafeInteger(Number(blob.size)) || Number(blob.size) > 4 * 1024 * 1024) { if (target && isCurrent?.()) target.textContent = jt("browserView.previewUnavailableBecauseThisArtifactExceedsThe4Mib", "Preview unavailable because this artifact exceeds the 4 MiB preview limit."); return; }
+    if (!target || !blob || !Number.isSafeInteger(Number(blob.size)) || Number(blob.size) > 4 * 1024 * 1024) { if (target && isCurrent?.()) { target.textContent = jt("browserView.previewUnavailableBecauseThisArtifactExceedsThe4Mib", "Preview unavailable because this artifact exceeds the 4 MiB preview limit."); clearPreviewUrl?.(); } return; }
     const kind = artifactMimeType(result.artifactMimeType || ref?.mime_type);
     const section = document.createElement('section'); section.className = 'browser-artifact-preview'; section.dataset.artifactPreview = text(id);
     section.appendChild(Object.assign(document.createElement('strong'), { textContent: jt("browserView.previewValue", "Preview · {value1}", { value1: String(artifactFileName(ref?.file_name || ref?.fileName || ref?.title)) }) }));
     let child;
+    let previewBlob;
     if (kind === 'text/plain' || kind === 'markdown' || kind === 'json') { if (typeof blob.text !== 'function') return; const content = await blob.text(); if (!isCurrent?.()) return; child = document.createElement('pre'); child.textContent = content; }
-    else if (kind === 'html' || kind === 'svg+xml') { if (typeof blob.text !== 'function') return; const content = await blob.text(); if (!isCurrent?.()) return; child = document.createElement('iframe'); child.setAttribute('sandbox', ''); child.setAttribute('title', jt("browserView.previewOfValue", "Preview of {value1}", { value1: String(artifactFileName(ref?.file_name || ref?.fileName || ref?.title)) })); child.src = trackUrl(`${sessionId}:${id}:preview`, new Blob([buildInertArtifactDocument(content)], { type: 'text/html' })); }
-    else if (kind === 'png' || kind === 'jpeg' || kind === 'webp') { child = document.createElement('img'); child.src = trackUrl(`${sessionId}:${id}:preview`, blob); child.alt = artifactFileName(ref?.file_name || ref?.fileName || ref?.title); }
+    else if (kind === 'html' || kind === 'svg+xml') { if (typeof blob.text !== 'function') return; const content = await blob.text(); if (!isCurrent?.()) return; child = document.createElement('iframe'); child.setAttribute('sandbox', ''); child.setAttribute('title', jt("browserView.previewOfValue", "Preview of {value1}", { value1: String(artifactFileName(ref?.file_name || ref?.fileName || ref?.title)) })); previewBlob = new Blob([buildInertArtifactDocument(content)], { type: 'text/html' }); }
+    else if (kind === 'png' || kind === 'jpeg' || kind === 'webp') { child = document.createElement('img'); child.alt = artifactFileName(ref?.file_name || ref?.fileName || ref?.title); previewBlob = blob; }
     else { child = document.createElement('p'); child.textContent = jt("browserView.previewUnavailableForThisArtifactType", "Preview unavailable for this artifact type."); }
-    section.appendChild(child); if (isCurrent?.()) target.replaceChildren(section);
+    // The displayed preview owns one Blob URL; replacing it revokes the previous one (SIM-006).
+    if (!isCurrent?.()) return;
+    if (previewBlob) child.src = trackUrl(`${sessionId}:${id}:preview`, previewBlob); else clearPreviewUrl?.();
+    section.appendChild(child); target.replaceChildren(section);
   }
 
   function renderAttachmentList(attachments) {
@@ -290,7 +313,8 @@
     return `<div class="browser-artifacts" data-artifact-list>${valid.map(({ artifact, id }) => {
       const name = text(artifact?.file_name || artifact?.title, jt("artifacts.generated.defaultTitle", "Generated artifact"));
       const type = text(artifact?.mime_type || artifact?.language, 'artifact');
-      return `<span class="browser-artifact" data-artifact-id="${escapeHtml(id)}"><span class="browser-artifact-name">${escapeHtml(name)}</span><span class="browser-artifact-meta">${escapeHtml(type)}</span>${button({ id: 'preview-artifact', label: jt("ide.rail.preview", "Preview"), variant: 'ghost', size: 'sm', ariaLabel: jt("browserView.previewValue2", "Preview {value1}", { value1: String(name) }), dataset: { 'artifact-id': id } })}${button({ id: 'download-artifact', label: jt("artifacts.actions.download", "Download"), variant: 'ghost', size: 'sm', ariaLabel: jt("browserView.downloadValue", "Download {value1}", { value1: String(name) }), dataset: { 'artifact-id': id } })}</span>`;
+      const previewable = PREVIEWABLE_ARTIFACT_KINDS.has(artifactRefMimeType(artifact));
+      return `<span class="browser-artifact" data-artifact-id="${escapeHtml(id)}"><span class="browser-artifact-name">${escapeHtml(name)}</span><span class="browser-artifact-meta">${escapeHtml(type)}</span>${!previewable ? '' : button({ id: 'preview-artifact', label: jt("ide.rail.preview", "Preview"), variant: 'ghost', size: 'sm', ariaLabel: jt("browserView.previewValue2", "Preview {value1}", { value1: String(name) }), dataset: { 'artifact-id': id } })}${button({ id: 'download-artifact', label: jt("artifacts.actions.download", "Download"), variant: 'ghost', size: 'sm', ariaLabel: jt("browserView.downloadValue", "Download {value1}", { value1: String(name) }), dataset: { 'artifact-id': id } })}</span>`;
     }).join('')}</div>`;
   }
 
@@ -387,7 +411,32 @@
         return `<div class="browser-question" data-question-block="${escapeHtml(questionId)}"><p class="browser-question-prompt">${escapeHtml(text(question.prompt))}</p>${input}${other}${options.length ? `<p class="browser-question-options">${options.map((option) => escapeHtml(option.label)).join(' · ')}</p>` : ''}</div>`;
       }).join('')}</div><div class="browser-decision-actions">${button({ id: 'answer-questions', label: busy ? jt("chat.send.sendingStatus", "Sending…") : jt("browserView.sendAnswers", "Send answers"), variant: 'primary', size: 'sm', disabled: !canAct || busy, dataset: { 'question-ref': questionRef, 'stream-id': streamId } })}${button({ id: 'decline-questions', label: jt("browserView.decline", "Decline"), variant: 'ghost', size: 'sm', disabled: !canAct || busy, dataset: { 'question-ref': questionRef, 'stream-id': streamId } })}</div></section>`);
     }
-    pending.innerHTML = chunks.join('');
+    const keys = [
+      ...approvals.filter((a) => text(a.approval_id) && text(a.stream_id)).map((a) => `approval:${text(a.approval_id)}:${text(a.decision_revision)}`),
+      ...questions.filter((b) => text(b.question_ref) && text(b.stream_id)).map((b) => `questions:${text(b.question_ref)}`),
+    ].join('|');
+    const html = chunks.join('');
+    if (!keys || pending.dataset.decisionKey !== keys) {
+      // Decision identity changed: rebuild, which intentionally discards typed answers.
+      pending.innerHTML = html;
+      if (keys) pending.dataset.decisionKey = keys; else delete pending.dataset.decisionKey;
+      return;
+    }
+    // Same decision: keep editable nodes mounted and sync only non-editable state.
+    const scratch = pending.ownerDocument.createElement('div');
+    scratch.innerHTML = html;
+    const controlSelector = 'button, input, select, textarea';
+    const oldControls = Array.from(pending.querySelectorAll(controlSelector));
+    const newControls = Array.from(scratch.querySelectorAll(controlSelector));
+    if (oldControls.length !== newControls.length) {
+      pending.innerHTML = html;
+      return;
+    }
+    oldControls.forEach((control, index) => {
+      const next = newControls[index];
+      control.disabled = next.disabled;
+      if (control.tagName === 'BUTTON' && control.innerHTML !== next.innerHTML) control.innerHTML = next.innerHTML;
+    });
   }
 
   function renderLive(rootEl, state) {
@@ -426,7 +475,26 @@
     const controls = (active
       ? button({ id: 'cancel-chat', label: jt("browserView.cancelTurn", "Cancel turn"), variant: 'danger', size: 'md', disabled: !canControl || state.mutationPending === true }) : '')
       + button({ id: 'send-chat', label: jt("common.send", "Send"), variant: 'primary', size: 'md', disabled });
-    wrap.innerHTML = `<div class="browser-composer"><div class="browser-composer-field">${field({ id: 'composer-prompt', multiline: true, rows: 1, value: text(state.draft), placeholder: canControl ? jt("dashboard.widgets.ask.placeholder", "Ask Jenny…") : jt("browserView.takeControlToWrite", "Take control to write"), ariaLabel: jt("composer.input.label", "Message Jenny"), disabled, maxLength: 100000, spellcheck: true, className: 'browser-prompt-field' })}</div>${queuedMarkup}<div class="browser-composer-footer"><span class="browser-composer-hint">${escapeHtml(hint)}</span><span data-attachment-picker></span>${button({ id: 'choose-attachment', label: jt("commandPalette.hints.attach", "Attach"), variant: 'ghost', size: 'md', disabled: !canAttach, title: jt("browserView.attachAnImageOrTextFile", "Attach an image or text file") })}${controls}</div></div>`;
+    const html = `<div class="browser-composer"><div class="browser-composer-field">${field({ id: 'composer-prompt', multiline: true, rows: 1, value: text(state.draft), placeholder: canControl ? jt("dashboard.widgets.ask.placeholder", "Ask Jenny…") : jt("browserView.takeControlToWrite", "Take control to write"), ariaLabel: jt("composer.input.label", "Message Jenny"), disabled, maxLength: 100000, spellcheck: true, className: 'browser-prompt-field' })}</div>${queuedMarkup}<div class="browser-composer-footer"><span class="browser-composer-hint">${escapeHtml(hint)}</span><span data-attachment-picker></span>${button({ id: 'choose-attachment', label: jt("commandPalette.hints.attach", "Attach"), variant: 'ghost', size: 'md', disabled: !canAttach, title: jt("browserView.attachAnImageOrTextFile", "Attach an image or text file") })}${controls}</div></div>`;
+    const oldComposer = wrap.querySelector('.browser-composer');
+    const oldArea = oldComposer?.querySelector('#composer-prompt');
+    if (!oldComposer || !oldArea) {
+      wrap.innerHTML = html;
+      return;
+    }
+    // Keep the textarea node mounted (focus, selection and IME composition
+    // survive); refresh everything around it.
+    const scratch = wrap.ownerDocument.createElement('div');
+    scratch.innerHTML = html;
+    const nextComposer = scratch.firstElementChild;
+    const nextArea = nextComposer.querySelector('#composer-prompt');
+    oldArea.disabled = nextArea.disabled;
+    oldArea.setAttribute('placeholder', nextArea.getAttribute('placeholder') || '');
+    oldArea.setAttribute('aria-label', nextArea.getAttribute('aria-label') || '');
+    if (oldArea.value !== text(state.draft)) oldArea.value = text(state.draft);
+    const keep = oldArea.closest('.browser-composer-field');
+    for (const child of Array.from(oldComposer.children)) if (child !== keep) child.remove();
+    for (const child of Array.from(nextComposer.children)) if (!child.querySelector('#composer-prompt')) oldComposer.appendChild(child);
   }
 
   function renderDetails(rootEl, state) {
@@ -457,7 +525,7 @@
       const sessions = Array.isArray(state.authSessions) ? state.authSessions : [];
       authPanel.innerHTML = state.authSessionsBusy
         ? `<p class="browser-auth-sessions-status">${escapeHtml(jt("browserView.loadingDevices", "Loading devices…"))}</p>`
-        : `<div class="browser-auth-sessions-heading">${escapeHtml(jt("browserView.signedInDevices", "Signed-in devices"))}</div>${state.authSessionsError ? `<p class="browser-auth-sessions-status browser-status--error">${escapeHtml(state.authSessionsError)}</p>` : ''}${sessions.length ? `<div class="browser-auth-session-list">${sessions.map((session) => { const id = text(session?.id); if (!id) return ''; const current = session.current === true; const label = current ? jt("browserView.thisDevice", "This device") : jt("browserView.deviceValue", "Device {value1}", { value1: String(id.slice(0, 12)) }); return `<div class="browser-auth-session"><span><strong>${escapeHtml(label)}</strong><small>${escapeHtml(text(session.last_seen_at || session.created_at, jt("browserView.lastSeenUnavailable", "Last seen unavailable")))}</small></span>${button({ id: 'revoke-auth-session', label: current ? jt("browserView.signOut", "Sign out") : jt("settings.remote.revoke", "Revoke"), variant: current ? 'danger' : 'ghost', size: 'sm', dataset: { 'session-id': id } })}</div>`; }).join('')}</div>` : `<p class="browser-auth-sessions-status">${escapeHtml(jt("browserView.noActiveDevicesFound", "No active devices found."))}</p>`}`;
+        : `<div class="browser-auth-sessions-heading">${escapeHtml(jt("browserView.signedInDevices", "Signed-in devices"))}</div>${state.authSessionsError ? `<p class="browser-auth-sessions-status browser-status--error">${escapeHtml(state.authSessionsError)}</p>` : ''}${sessions.length ? `<div class="browser-auth-session-list">${sessions.map((session) => { const id = text(session?.id); if (!id) return ''; const current = session.current === true; const label = current ? jt("browserView.thisDevice", "This device") : jt("browserView.deviceValue", "Device {value1}", { value1: String(id.slice(0, 12)) }); return `<div class="browser-auth-session"><span><strong>${escapeHtml(label)}</strong><small>${escapeHtml(activityTime(session.last_seen_at ?? session.created_at))}</small></span>${button({ id: 'revoke-auth-session', label: current ? jt("browserView.signOut", "Sign out") : jt("browserView.revoke", "Revoke"), variant: current ? 'danger' : 'ghost', size: 'sm', dataset: { 'session-id': id } })}</div>`; }).join('')}</div>` : `<p class="browser-auth-sessions-status">${escapeHtml(jt("browserView.noActiveDevicesFound", "No active devices found."))}</p>`}`;
     }
     if (authToggle) authToggle.setAttribute('aria-expanded', state.authSessionsOpen === true ? 'true' : 'false');
     const plan = rootEl.querySelector('[data-inv-segmented="plan-mode"]');
@@ -471,7 +539,7 @@
     if (newSession) newSession.disabled = state.mutationPending === true;
     const controlButton = rootEl.querySelector('[data-action="acquire-control"], [data-action="release-control"]');
     if (controlButton) {
-      controlButton.textContent = state.control?.owned ? jt("browserView.releaseControl", "Release control") : state.control?.ownerClientId ? jt("browserView.takeOver", "Take over") : jt("remote.banner.takeControl", "Take control");
+      controlButton.textContent = state.control?.owned ? jt("browserView.releaseControl", "Release control") : state.control?.ownerClientId ? jt("browserView.takeOver", "Take over") : jt("browserView.takeControl", "Take control");
       controlButton.dataset.takeover = state.control?.ownerClientId && !state.control?.owned ? 'true' : 'false';
       controlButton.classList.toggle('btn--primary', !state.control?.owned && Boolean(state.control?.ownerClientId));
       controlButton.disabled = state.controlBusy === true;
@@ -492,6 +560,14 @@
       if (error) { error.hidden = !state.error; error.textContent = text(state.error); }
       const submit = rootEl.querySelector('[data-action="login-submit"]');
       if (submit) submit.disabled = state.busy === true;
+      const notice = rootEl.querySelector('[data-signout-unconfirmed]');
+      if (state.signOutUnconfirmed === true && !notice) error?.insertAdjacentHTML('beforebegin', signOutNoticeHtml(state));
+      else if (state.signOutUnconfirmed !== true && notice) {
+        notice.remove();
+        rootEl.querySelector('[data-action="retry-logout"]')?.remove();
+      }
+      const retry = rootEl.querySelector('[data-action="retry-logout"]');
+      if (retry) retry.disabled = state.busy === true;
       return;
     }
     segmentedControl?.initSegmentedHandlers?.(rootEl);

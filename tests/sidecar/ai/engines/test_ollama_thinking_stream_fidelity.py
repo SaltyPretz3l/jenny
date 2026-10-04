@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from sidecar.ai.engines.ollama_runtime import _thinking_delta, stream
+from sidecar.ai.engines.ollama_runtime import stream
 from tests.sidecar.ai.engines.test_ollama_runtime_reasoning import FakeEngine, _patch_urlopen
 
 FIXTURE = Path(__file__).parent / "fixtures" / "ollama_qwen38_thinking_stream.ndjson"
@@ -26,12 +26,14 @@ def test_real_ollama_thinking_stream_is_byte_faithful(monkeypatch):
     assert "\n" in joined
 
 
-def test_repeated_per_token_digits_are_preserved():
-    accumulated = ""
-    emitted: list[str] = []
+def test_repeated_and_prefix_per_token_chunks_are_preserved(monkeypatch):
+    chunks = ["1", "0", "0", " is", " island"]
+    lines = [json.dumps({"message": {"thinking": chunk}}).encode() + b"\n" for chunk in chunks]
+    lines.append(json.dumps({"message": {"content": "answer"}, "done": True}).encode() + b"\n")
+    _patch_urlopen(monkeypatch, lines)
 
-    for chunk in ["1", "0", "0"]:
-        delta, accumulated = _thinking_delta(accumulated, chunk)
-        emitted.append(delta)
+    events = list(stream(FakeEngine(think_value=True), prompt="hi"))
+    emitted = [event.text for event in events if event.kind == "thinking"]
 
-    assert "".join(emitted) == "100"
+    assert emitted == chunks
+    assert "".join(emitted) == "100 is island"

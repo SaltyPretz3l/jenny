@@ -156,6 +156,17 @@ def _execution_policy_mcp_args(config: RuntimeConfig) -> list[str]:
     ]
 
 
+def _diagnostics_mcp_args(config: RuntimeConfig) -> list[str]:
+    log_level = config.diagnostics_log_level.strip().lower()
+    capture_mode = config.diagnostics_capture_mode.strip().lower()
+    return [
+        "--diagnostics-log-level",
+        log_level if log_level in {"debug", "info", "warn", "warning", "error"} else "info",
+        "--diagnostics-capture-mode",
+        capture_mode if capture_mode in {"redacted", "sanitized_snippets"} else "redacted",
+    ]
+
+
 def _default_mcp_servers(
     config: RuntimeConfig,
     workspace_root: Path | None,
@@ -180,6 +191,7 @@ def _default_mcp_servers(
             str(resolve_operation_ledger_root(config)),
         ]
     )
+    args.extend(_diagnostics_mcp_args(config))
     args.extend(_execution_policy_mcp_args(config))
     args.extend(["--glob-enabled", "1" if config.tools_glob_enabled else "0"])
     args.extend(["--grep-enabled", "1" if config.tools_grep_enabled else "0"])

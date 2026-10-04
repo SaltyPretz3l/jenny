@@ -6,12 +6,10 @@ const test = require('node:test');
 const {
   createSettingsAdapter,
   createAppearanceAdapter,
-  createZoomAdapter,
   createOfflineAdapter,
 } = require('../renderer/shell/renderer-settings-persistence-adapters.js');
 
 const appearanceUtils = require('../renderer/shared/appearance-utils.js');
-const chatZoomUtils = require('../renderer/chat/chat-zoom-utils.js');
 
 function createFakeStorage(initial) {
   const map = new Map(Object.entries(initial || {}));
@@ -498,94 +496,6 @@ test('appearance adapter: write() rolls back and logs when the underlying storag
 test('createAppearanceAdapter requires a localStorage-shaped storage dependency', () => {
   assert.throws(() => createAppearanceAdapter({}), /deps\.storage must be a localStorage-shaped object/);
   assert.throws(() => createAppearanceAdapter({ storage: {} }), /deps\.storage must be a localStorage-shaped object/);
-});
-
-// ── createZoomAdapter ──────────────────────────────────────────────────────
-
-function createZoomHarness(overrides) {
-  const calls = [];
-  const logs = [];
-  let current = 100;
-  const settings = Object.assign(
-    {
-      getCurrent: () => current,
-      updateSettings: async ({ zoomPercent }) => {
-        calls.push(['update', zoomPercent]);
-        return { zoomPercent };
-      },
-      applyZoom: (value) => {
-        calls.push(['apply', value]);
-        current = value;
-      },
-      log: (message) => logs.push(message),
-    },
-    overrides
-  );
-  const adapter = createZoomAdapter(settings);
-  return { adapter, calls, logs, getCurrent: () => current, setCurrent: (v) => { current = v; } };
-}
-
-test('zoom adapter: clamp bounds match the real chat-zoom-utils normalize (derived, not hardcoded)', () => {
-  const { adapter } = createZoomHarness();
-  const probes = [
-    chatZoomUtils.MIN_CHAT_ZOOM_PERCENT - 50,
-    chatZoomUtils.MIN_CHAT_ZOOM_PERCENT,
-    chatZoomUtils.MAX_CHAT_ZOOM_PERCENT,
-    chatZoomUtils.MAX_CHAT_ZOOM_PERCENT + 50,
-    103, // off-step value
-    'not-a-number',
-  ];
-  for (const probe of probes) {
-    assert.equal(
-      adapter.normalize(probe),
-      chatZoomUtils.normalizeChatZoomPercent(probe),
-      `adapter.normalize(${JSON.stringify(probe)}) must match chatZoomUtils.normalizeChatZoomPercent`
-    );
-  }
-  assert.equal(adapter.getDefault(), chatZoomUtils.getDefaultChatZoomPercent());
-});
-
-test('zoom adapter: optimistic apply fires with the normalized value before the persist call resolves', async () => {
-  const { adapter, calls } = createZoomHarness();
-  const result = await adapter.write(122); // normalizes to 120 (step 5)
-  assert.equal(result, 120);
-  assert.deepEqual(calls, [['apply', 120], ['update', 120]]);
-});
-
-test('zoom adapter: reconciles to the persisted response value when it differs from what was applied', async () => {
-  const { adapter, calls } = createZoomHarness({
-    updateSettings: async ({ zoomPercent }) => {
-      calls.push(['update', zoomPercent]);
-      return { zoomPercent: 125 }; // server reconciles to a different value
-    },
-  });
-  const result = await adapter.write(110);
-  assert.equal(result, 125);
-  assert.deepEqual(calls, [['apply', 110], ['update', 110], ['apply', 125]]);
-});
-
-test('zoom adapter: on updateSettings rejection, rolls back to the previous value and logs', async () => {
-  const { adapter, calls, logs, getCurrent } = createZoomHarness({
-    getCurrent: () => 100,
-    updateSettings: async ({ zoomPercent }) => {
-      calls.push(['update', zoomPercent]);
-      throw new Error('ipc unavailable');
-    },
-  });
-  await assert.rejects(() => adapter.write(130), /ipc unavailable/);
-  assert.deepEqual(calls, [['apply', 130], ['update', 130], ['apply', 100]]);
-  assert.equal(logs.length, 1);
-  assert.match(logs[0], /chatZoom/);
-  assert.match(logs[0], /ipc unavailable/);
-  assert.equal(getCurrent(), 100);
-});
-
-test('createZoomAdapter requires updateSettings and getCurrent dependencies', () => {
-  assert.throws(() => createZoomAdapter({}), /deps\.updateSettings must be a function/);
-  assert.throws(
-    () => createZoomAdapter({ updateSettings: async () => {} }),
-    /deps\.getCurrent must be a function/
-  );
 });
 
 // ── listEditableKeys() (JSON-editor allowlist capability) ──────────────────

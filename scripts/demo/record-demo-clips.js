@@ -12,7 +12,7 @@ const childProcess = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const { pollReadiness, navigateToView } = require('../../capture-ui');
+const { pollReadiness, navigateToView } = require('../dev/capture-ui');
 const { buildPreloadBundle } = require('../build/build-preload');
 const {
   DEMO_SCENES,

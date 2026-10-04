@@ -13,7 +13,6 @@ const {
   sanitizeToolSummary,
   sanitizeToolInputValue,
   buildPersistedToolInputSnapshot,
-  buildModelReplayToolInputJson,
 } = require('./tool-loop-input-sanitization');
 const {
   buildCanonicalTurnEvent,
@@ -155,21 +154,19 @@ function mergeLocalGeneratedArtifactPaths(service, {
     `${normalizedStreamId}|${normalizedCallId}`,
     `|${normalizedCallId}`,
   ];
+  // Read, never consume: the live tool.result and its canonical replay both
+  // land here, and the replay upserts over the first row. The writer bounds
+  // the cache (electron-tool-bridge.js rememberLocalGeneratedArtifacts).
   let localArtifacts = [];
-  let consumedKey = '';
   for (const key of keys) {
     const value = store.get(key);
     if (Array.isArray(value) && value.length) {
       localArtifacts = value;
-      consumedKey = key;
       break;
     }
   }
   if (!localArtifacts.length) {
     return artifacts;
-  }
-  if (consumedKey) {
-    store.delete(consumedKey);
   }
   const localById = new Map(
     localArtifacts
@@ -294,7 +291,6 @@ function buildToolCallPayload({
   oneOffOnly = false,
   toolName,
   input,
-  workspaceRoot = '',
   inputSnapshot = null,
   summary,
   status,
@@ -319,7 +315,6 @@ function buildToolCallPayload({
   // inside this builder, and a reason reaching it unbounded from any other
   // caller would be persisted raw.
   const sanitizedReason = sanitizeApprovalReason(reason);
-  const modelInputJson = buildModelReplayToolInputJson(input, workspaceRoot);
   return {
     call_id: String(callId || '').trim(),
     ...(String(approvalId || '').trim() ? { approval_id: String(approvalId || '').trim() } : {}),
@@ -336,8 +331,9 @@ function buildToolCallPayload({
     ...(oneOffOnly === true ? { one_off_only: true } : {}),
     tool_name: String(toolName || '').trim(),
     input: sanitizedInput.input,
+    // input_json keeps real paths (HB-012), so it is the model-facing replay
+    // copy too; rows persisted before HB-012 may still carry model_input_json.
     input_json: sanitizedInput.inputJson,
-    ...(modelInputJson ? { model_input_json: modelInputJson } : {}),
     summary: sanitizeToolSummary(summary).trim(),
     status: String(status || '').trim() || 'completed',
     approval_state: String(approvalState || '').trim() || 'auto',
@@ -436,9 +432,19 @@ function makeNoteTurnEvent(turnEventCollector, streamId) {
   };
 }
 
+// The sidecar shell tool reports exit_code (wire casing); exitCode is the
+// older Electron-run shape. Null when the tool reported neither.
+function toolResultExitCode(metadata) {
+  if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) return null;
+  const raw = metadata.exitCode ?? metadata.exit_code;
+  const code = raw != null ? Number(raw) : NaN;
+  return Number.isInteger(code) ? code : null;
+}
+
 module.exports = {
   containsTraversal,
   normalizeDurationMs,
+  toolResultExitCode,
   redactPathLikeText,
   redactSensitiveLikeText,
   sanitizeToolSummary,

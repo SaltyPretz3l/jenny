@@ -25,18 +25,22 @@ function isPlainObject(value) {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 
-function readCatalog(file, tag) {
-  const parsed = JSON.parse(fs.readFileSync(file, 'utf8'));
+function parseCatalog(parsed, tag) {
   if (!isPlainObject(parsed)) throw new Error('catalog must be a JSON object');
   const wrapped = Object.prototype.hasOwnProperty.call(parsed, 'strings');
   const strings = wrapped ? parsed.strings : parsed;
   if (!isPlainObject(strings)) throw new Error('strings must be a JSON object');
   if (wrapped && parsed.tag !== tag) throw new Error(`tag must match filename (${tag})`);
-  const sortedStrings = {};
-  for (const key of Object.keys(strings).sort(compareOrdinal)) {
-    if (typeof strings[key] !== 'string') throw new Error(`${key}: value must be a string`);
-    sortedStrings[key] = strings[key];
+  for (const [key, value] of Object.entries(strings)) {
+    if (typeof value !== 'string') throw new Error(`${key}: value must be a string`);
   }
+  return strings;
+}
+
+function readCatalog(file, tag) {
+  const strings = parseCatalog(JSON.parse(fs.readFileSync(file, 'utf8')), tag);
+  const sortedStrings = {};
+  for (const key of Object.keys(strings).sort(compareOrdinal)) sortedStrings[key] = strings[key];
   return { tag, strings: sortedStrings };
 }
 
@@ -92,4 +96,4 @@ function main(argv = process.argv.slice(2)) {
 
 if (require.main === module) process.exitCode = main();
 
-module.exports = { buildCatalogs, main, renderCatalog };
+module.exports = { buildCatalogs, main, parseCatalog, renderCatalog };

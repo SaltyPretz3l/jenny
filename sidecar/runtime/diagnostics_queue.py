@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import threading
 from collections import Counter, deque
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from time import monotonic
 from typing import Callable
 
@@ -15,6 +15,9 @@ DIRECT_WRITE = "direct_write"
 ENQUEUED = "enqueued"
 DROPPED = "dropped"
 _SEVERE_LEVEL = logging.WARNING
+MAX_LOSS_COUNT = 100_000
+# A permanently failing sink must not turn every record into a loss record.
+SINK_FAILURE_REPORT_INTERVAL_SECONDS = 1.0
 
 
 @dataclass(frozen=True)
@@ -25,6 +28,7 @@ class DiagnosticsLossSnapshot:
     severe_reserve: int
     high_water_mark: int
     direct_write_count: int
+    sink_failures: dict[str, int] = field(default_factory=dict)
 
 
 def _level_name(record: logging.LogRecord) -> str:
@@ -47,6 +51,9 @@ class BoundedDiagnosticsQueue:
         self._condition = threading.Condition()
         self._accepting = True
         self._pending_drops: Counter[str] = Counter()
+        self._pending_sink_failures: Counter[str] = Counter()
+        self._last_sink_only_report: float | None = None
+        self._loss_retry_after: float | None = None
         self._cumulative_drops: Counter[str] = Counter()
         self._high_water_mark = 0
         self._direct_write_count = 0
@@ -67,12 +74,33 @@ class BoundedDiagnosticsQueue:
 
     def _record_drop_locked(self, record: logging.LogRecord) -> None:
         level = _level_name(record)
-        self._pending_drops[level] += 1
-        self._cumulative_drops[level] += 1
+        self._pending_drops[level] = min(self._pending_drops[level] + 1, MAX_LOSS_COUNT)
+        self._cumulative_drops[level] = min(self._cumulative_drops[level] + 1, MAX_LOSS_COUNT)
 
     def record_external_drop(self, record: logging.LogRecord) -> None:
         with self._condition:
             self._record_drop_locked(record)
+
+    def record_sink_failures(self, failures: dict[str, int]) -> None:
+        """Queue acceptance does not imply file persistence or successful mirroring."""
+        with self._condition:
+            for name in ("file", "mirror"):
+                count = failures.get(name, 0)
+                if count > 0:
+                    self._pending_sink_failures[name] = min(
+                        self._pending_sink_failures[name] + count, MAX_LOSS_COUNT
+                    )
+
+    def restore_loss(self, snapshot: DiagnosticsLossSnapshot) -> None:
+        """Keep an undelivered loss notice's evidence for a bounded retry."""
+        with self._condition:
+            for level, count in snapshot.dropped_by_level.items():
+                self._pending_drops[level] = min(self._pending_drops[level] + count, MAX_LOSS_COUNT)
+            for name, count in snapshot.sink_failures.items():
+                self._pending_sink_failures[name] = min(
+                    self._pending_sink_failures[name] + count, MAX_LOSS_COUNT
+                )
+            self._loss_retry_after = monotonic() + SINK_FAILURE_REPORT_INTERVAL_SECONDS
 
     def _low_priority_count_locked(self) -> int:
         return sum(record.levelno < _SEVERE_LEVEL for record in self._records)
@@ -144,15 +172,28 @@ class BoundedDiagnosticsQueue:
 
     def take_loss_snapshot(self, *, force: bool = False) -> DiagnosticsLossSnapshot | None:
         with self._condition:
-            if not self._pending_drops:
+            if not self._pending_drops and not self._pending_sink_failures:
                 return None
             if not force and len(self._records) >= self._low_priority_limit:
                 return None
+            if not force and self._loss_retry_after is not None:
+                if monotonic() < self._loss_retry_after:
+                    return None
+            self._loss_retry_after = None
+            if not force and not self._pending_drops:
+                now = monotonic()
+                last = self._last_sink_only_report
+                if last is not None and now - last < SINK_FAILURE_REPORT_INTERVAL_SECONDS:
+                    return None
+                self._last_sink_only_report = now
             dropped = dict(sorted(self._pending_drops.items()))
             self._pending_drops.clear()
+            sink_failures = dict(self._pending_sink_failures)
+            self._pending_sink_failures.clear()
             return DiagnosticsLossSnapshot(
                 dropped_by_level=dropped,
-                dropped_count=sum(dropped.values()),
+                dropped_count=min(sum(dropped.values()), MAX_LOSS_COUNT),
+                sink_failures=sink_failures,
                 capacity=self.capacity,
                 severe_reserve=self.severe_reserve,
                 high_water_mark=self._high_water_mark,
@@ -174,7 +215,7 @@ def build_loss_record(snapshot: DiagnosticsLossSnapshot) -> logging.LogRecord:
     record.component = "sidecar.runtime.diagnostics_queue"
     record.event = "sidecar.runtime.diagnostics_queue_dropped"
     record.status = "degraded"
-    record.data = {
+    data: dict[str, object] = {
         "dropped_by_level": snapshot.dropped_by_level,
         "dropped_count": snapshot.dropped_count,
         "capacity": snapshot.capacity,
@@ -182,6 +223,9 @@ def build_loss_record(snapshot: DiagnosticsLossSnapshot) -> logging.LogRecord:
         "high_water_mark": snapshot.high_water_mark,
         "direct_write_count": snapshot.direct_write_count,
     }
+    if snapshot.sink_failures:
+        data["sink_failures"] = snapshot.sink_failures
+    record.data = data
     return record
 
 
@@ -204,6 +248,7 @@ class BoundedDiagnosticsListener:
             daemon=True,
         )
         self._started = False
+        self._reported_sink_failures = 0
         self._sink_close_lock = threading.Lock()
         self._sink_close: Callable[[], None] | None = None
         self._sink_close_consumed = False
@@ -226,11 +271,33 @@ class BoundedDiagnosticsListener:
             self.queue.record_external_drop(record)
             return False
 
+    def _take_sink_failures(self) -> dict[str, int]:
+        collect = getattr(self.sink, "take_failure_deltas", None)
+        if collect is not None:
+            return dict(collect())
+        # Without fanout, the configured sink is the rolling file handler.
+        total = getattr(self.sink, "failure_count", 0)
+        delta = total - self._reported_sink_failures
+        self._reported_sink_failures = total
+        return {"file": delta}
+
     def emit_pending_loss(self, *, force: bool = False) -> bool:
+        self.queue.record_sink_failures(self._take_sink_failures())
         snapshot = self.queue.take_loss_snapshot(force=force)
         if snapshot is None:
             return False
-        return self._handle_direct(self.record_factory(snapshot))
+        try:
+            self.sink.handle(self.record_factory(snapshot))
+            thrown = False
+        except Exception:  # noqa: BLE001 - the notice is retried, not counted as a lost record.
+            thrown = True
+        # The loss record's own failed write is not a lost user record, but when no sink
+        # accepted it, its evidence goes back to the queue for a bounded retry.
+        failed_sinks = [name for name, count in self._take_sink_failures().items() if count > 0]
+        if thrown or len(failed_sinks) >= len(getattr(self.sink, "handlers", (self.sink,))):
+            self.queue.restore_loss(snapshot)
+            return False
+        return True
 
     def _run(self) -> None:
         try:

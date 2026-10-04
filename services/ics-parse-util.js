@@ -1,9 +1,7 @@
 const {
   MAX_INSTANCES_PER_EVENT,
   addLocalDays,
-  addWallClockMinutes,
   formatLocalDateTime,
-  wallClockDurationMinutes,
 } = require('./home-calendar-schema');
 
 // Minimal RFC 5545 (ICS) parser for read-only calendar feed subscriptions.
@@ -249,7 +247,7 @@ function parseIcsDuration(value) {
 }
 
 function parseIcsRrule(value) {
-  const rule = { freq: '', interval: 1, count: null, until: null, byDay: null };
+  const rule = { freq: '', interval: 1, count: null, until: null, byDay: null, weekStart: 'MO' };
   let unsupported = false;
   for (const part of String(value || '').split(';')) {
     if (!part) {
@@ -297,7 +295,13 @@ function parseIcsRrule(value) {
         // Ordinal BYDAY (1MO, -1FR...) is out of the supported subset.
         unsupported = true;
       }
-    } else if (key !== 'WKST') {
+    } else if (key === 'WKST') {
+      if (val.toUpperCase() in WEEKDAY_OFFSET_FROM_MONDAY) {
+        rule.weekStart = val.toUpperCase();
+      } else {
+        unsupported = true;
+      }
+    } else {
       // Any other BYxxx/BYSETPOS rule part changes the recurrence set in ways
       // this subset cannot reproduce — degrade instead of guessing.
       unsupported = true;
@@ -350,6 +354,8 @@ function finalizeIcsEvent(props) {
     end,
     allDay: dtstart.allDay,
     tzApprox: dtstart.tzApprox,
+    timeZone: !dtstart.allDay && !dtstart.tzApprox
+      ? (/Z$/.test(props.dtstart.value) ? 'UTC' : props.dtstart.params.TZID || '') : '',
     rrule,
     rruleUnsupported,
     exdateKeys,
@@ -450,24 +456,53 @@ function buildIcsInstance(event, occStart, occEnd, flags = {}) {
   };
 }
 
+// Recurrence arithmetic uses UTC getters on source-zone wall-clock components.
+// This coordinate is not an instant; convert only after selecting each date.
+function recurrenceClockDate(event, date) {
+  if (event.timeZone) {
+    const parts = {};
+    const formatter = new Intl.DateTimeFormat('en-US', {
+      timeZone: event.timeZone, hourCycle: 'h23',
+      year: 'numeric', month: '2-digit', day: '2-digit',
+      hour: '2-digit', minute: '2-digit', second: '2-digit',
+    });
+    for (const part of formatter.formatToParts(date)) {
+      if (part.type !== 'literal') parts[part.type] = Number(part.value);
+    }
+    return createIcsDate(parts.year, parts.month, parts.day, parts.hour % 24, parts.minute, parts.second, true);
+  }
+  return createIcsDate(date.getFullYear(), date.getMonth() + 1, date.getDate(),
+    date.getHours(), date.getMinutes(), date.getSeconds(), true);
+}
+
+function recurrenceInstant(event, clock) {
+  const parts = [clock.getUTCFullYear(), clock.getUTCMonth() + 1, clock.getUTCDate(),
+    clock.getUTCHours(), clock.getUTCMinutes(), clock.getUTCSeconds()];
+  return event.timeZone
+    ? zonedWallClockToLocalDate(...parts, event.timeZone)
+    : createIcsDate(...parts, false);
+}
+
+function addRecurrenceDays(clock, days) {
+  const result = new Date(clock.getTime());
+  result.setUTCDate(result.getUTCDate() + days);
+  return result;
+}
+
 function* iterateRruleStarts(event, rule, windowStart) {
-  const start = event.start;
+  const start = recurrenceClockDate(event, event.start);
+  const windowClock = recurrenceClockDate(event, windowStart);
   if (rule.freq === 'MONTHLY') {
     let k = 0;
     if (rule.count === null) {
-      const monthDiff = (windowStart.getFullYear() - start.getFullYear()) * 12
-        + (windowStart.getMonth() - start.getMonth());
+      const monthDiff = (windowClock.getUTCFullYear() - start.getUTCFullYear()) * 12
+        + (windowClock.getUTCMonth() - start.getUTCMonth());
       k = Math.max(0, Math.floor(monthDiff / rule.interval) - 1);
     }
     for (let i = 0; i < MAX_RRULE_ITERATIONS; i += 1, k += 1) {
-      const occ = new Date(
-        start.getFullYear(),
-        start.getMonth() + k * rule.interval,
-        start.getDate(),
-        start.getHours(),
-        start.getMinutes()
-      );
-      if (occ.getDate() !== start.getDate()) {
+      const occ = new Date(start.getTime());
+      occ.setUTCMonth(start.getUTCMonth() + k * rule.interval);
+      if (occ.getUTCDate() !== start.getUTCDate()) {
         continue; // month without that day: skipped, not rolled
       }
       yield occ;
@@ -475,21 +510,21 @@ function* iterateRruleStarts(event, rule, windowStart) {
     return;
   }
   if (rule.freq === 'WEEKLY' && rule.byDay && rule.byDay.length) {
-    // Anchor on the Monday of DTSTART's week (RFC default WKST=MO), then emit
-    // the listed weekdays per week step, excluding anything before DTSTART.
+    // Anchor on WKST, emitting weekdays in that week's chronological order.
+    const weekStart = WEEKDAY_OFFSET_FROM_MONDAY[rule.weekStart || 'MO'];
     const offsets = rule.byDay
-      .map((code) => WEEKDAY_OFFSET_FROM_MONDAY[code])
+      .map((code) => (WEEKDAY_OFFSET_FROM_MONDAY[code] - weekStart + 7) % 7)
       .sort((a, b) => a - b);
-    const mondayShift = (start.getDay() + 6) % 7;
-    const weekAnchor = addLocalDays(start, -mondayShift);
+    const weekShift = (start.getUTCDay() + 6 - weekStart + 7) % 7;
+    const weekAnchor = addRecurrenceDays(start, -weekShift);
     let week = 0;
     if (rule.count === null) {
-      const daysBehind = Math.floor((windowStart.getTime() - weekAnchor.getTime()) / 86400000);
+      const daysBehind = Math.floor((windowClock.getTime() - weekAnchor.getTime()) / 86400000);
       week = Math.max(0, Math.floor(daysBehind / (7 * rule.interval)) - 1);
     }
     for (let i = 0; i < MAX_RRULE_ITERATIONS; i += 1, week += 1) {
       for (const offset of offsets) {
-        const occ = addLocalDays(weekAnchor, week * 7 * rule.interval + offset);
+        const occ = addRecurrenceDays(weekAnchor, week * 7 * rule.interval + offset);
         if (occ.getTime() < start.getTime()) {
           continue;
         }
@@ -501,21 +536,21 @@ function* iterateRruleStarts(event, rule, windowStart) {
   const stepDays = rule.freq === 'WEEKLY' ? 7 * rule.interval : rule.interval;
   let k = 0;
   if (rule.count === null) {
-    const daysBehind = Math.floor((windowStart.getTime() - start.getTime()) / 86400000);
+    const daysBehind = Math.floor((windowClock.getTime() - start.getTime()) / 86400000);
     k = Math.max(0, Math.floor(daysBehind / stepDays) - 1);
   }
   for (let i = 0; i < MAX_RRULE_ITERATIONS; i += 1, k += 1) {
-    yield addLocalDays(start, k * stepDays);
+    yield addRecurrenceDays(start, k * stepDays);
   }
 }
 
 function expandIcsEvent(event, { windowStart, windowEnd, maxInstances = MAX_INSTANCES_PER_EVENT }) {
-  // Wall-clock duration (not a ms delta) so recurring occurrences keep their
-  // local end across DST transition days — matches the local-event expander.
-  const durationMinutes = wallClockDurationMinutes(event.start, event.end);
+  const durationMs = recurrenceClockDate(event, event.end).getTime()
+    - recurrenceClockDate(event, event.start).getTime();
   const instances = [];
-  const pushIfVisible = (occStart, flags) => {
-    const occEnd = addWallClockMinutes(occStart, durationMinutes);
+  const pushIfVisible = (occStart, flags, clock = null) => {
+    const occEnd = clock
+      ? recurrenceInstant(event, new Date(clock.getTime() + durationMs)) : event.end;
     if (occEnd.getTime() > windowStart.getTime() && occStart.getTime() < windowEnd.getTime()) {
       instances.push(buildIcsInstance(event, occStart, occEnd, flags));
     }
@@ -530,7 +565,8 @@ function expandIcsEvent(event, { windowStart, windowEnd, maxInstances = MAX_INST
   }
   const rule = event.rrule;
   let generated = 0;
-  for (const occStart of iterateRruleStarts(event, rule, windowStart)) {
+  for (const clock of iterateRruleStarts(event, rule, windowStart)) {
+    const occStart = recurrenceInstant(event, clock);
     if (occStart.getTime() >= windowEnd.getTime() && rule.count === null) {
       break;
     }
@@ -543,7 +579,7 @@ function expandIcsEvent(event, { windowStart, windowEnd, maxInstances = MAX_INST
     }
     // EXDATE removes from the set AFTER COUNT/UNTIL bookkeeping.
     if (!event.exdateKeys.has(formatLocalDateTime(occStart))) {
-      pushIfVisible(occStart);
+      pushIfVisible(occStart, undefined, clock);
     }
     if (instances.length >= maxInstances || (rule.count !== null && occStart.getTime() >= windowEnd.getTime())) {
       break;

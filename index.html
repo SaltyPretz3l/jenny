@@ -22,75 +22,64 @@
   <link rel="stylesheet" href="styles/settings-model-library.css">
   <link rel="stylesheet" href="styles/settings-knowledge-folders.css">
   <link rel="stylesheet" href="styles/settings-model-library-folders.css">
+  <link rel="stylesheet" href="styles/settings-model-library-image-engine.css">
   <link rel="stylesheet" href="styles/settings-mcp-servers.css">
+  <link rel="stylesheet" href="styles/settings-runs.css">
   <link rel="stylesheet" href="styles/markdown.css">
   <link rel="stylesheet" href="styles/composer-workspace-nudge.css">
   <link rel="stylesheet" href="styles/chat-send-outbox.css">
   <link rel="stylesheet" href="styles/data-lifecycle.css">
   <link rel="stylesheet" href="styles/plugin-view-host.css">
-  <!-- xterm.css (workspace_pty_terminal): vendored from node_modules under CSP 'self'. -->
+  <!-- xterm.css (PTY terminal): vendored from node_modules under CSP 'self'. -->
   <link rel="stylesheet" href="node_modules/@xterm/xterm/css/xterm.css">
 </head>
 <body>
   <!-- UIUX-021: role/aria-live flip to alertdialog/assertive (and
        aria-modal="true" is set) only while a fatal startup/backend failure
-       is showing; the window controls remain available above this curtain. -->
-  <div class="startup-overlay" id="startupOverlay" role="status" aria-live="polite" aria-labelledby="startupOverlayLabel" aria-describedby="startupOverlaySublabel startupOverlaySecondary">
+       is showing; the window controls remain available above this curtain.
+       The status line is the curtain's label. The sky canvas is painted by
+       renderer-startup-starfield.js, which the lifecycle controller mounts. -->
+  <div class="startup-overlay" id="startupOverlay" role="status" aria-live="polite" aria-labelledby="startupOverlaySublabel" aria-describedby="startupOverlaySecondary">
+    <canvas class="startup-overlay-sky" id="startupOverlaySky" aria-hidden="true"></canvas>
     <div class="startup-overlay-content">
-      <div class="startup-mark" aria-hidden="true"><span class="startup-mark-dot"></span></div>
       <div class="startup-overlay-wordmark" aria-hidden="true">Jenny</div>
-      <div
-        class="startup-progress-bar"
-        id="startupOverlayProgressBar"
-        role="progressbar"
-        aria-label="Startup progress" data-i18n-aria-label="setup.startup.progressLabel"
-        aria-valuemin="0"
-        aria-valuemax="100"
-        aria-valuenow="0"
-      >
-        <div class="startup-progress-fill" id="startupOverlayProgressFill" style="width: 0%"></div>
-      </div>
-      <div class="sr-only" id="startupOverlayLabel" data-i18n="setup.startup.starting">Starting Jenny</div>
-      <div class="startup-overlay-sublabel" id="startupOverlaySublabel"></div>
+      <div class="startup-overlay-sublabel" id="startupOverlaySublabel" data-i18n="setup.startup.restoringChats">Restoring your chats</div>
       <div class="startup-overlay-secondary" id="startupOverlaySecondary"></div>
       <div class="startup-overlay-actions" id="startupOverlayActions"></div>
     </div>
+    <script defer src="renderer/shell/renderer-startup-starfield.js"></script>
   </div>
 
   <div class="app-shell" id="appShell">
     <header class="titlebar">
       <div class="titlebar-brand">
         <button class="section-link titlebar-home-link active-link" id="homeNavButton" type="button">Jenny</button>
-        <div class="workbench-health-pill-slot titlebar-health-slot" id="workbenchHealthPillSlot"></div>
       </div>
+
+      <nav class="toprail titlebar-nav-row hidden" id="topRail" aria-label="Primary views" data-i18n-aria-label="titlebar.primaryViewsLabel">
+        <div class="toprail-tabs" id="topRailTabs" role="tablist" aria-orientation="horizontal" aria-label="Views" data-i18n-aria-label="titlebar.viewsLabel"></div>
+        <div class="toprail-indicator" id="topRailIndicator" aria-hidden="true"></div>
+      </nav>
 
       <div class="titlebar-center">
         <div class="pin-tabs" id="pinnedNoteTabs" role="tablist" aria-label="Pinned notes" data-i18n-aria-label="titlebar.pinnedNotesLabel" hidden></div>
       </div>
 
       <div class="titlebar-status">
-        <button class="palette-pill titlebar-palette-pill hidden" id="titlebarPalettePill" type="button" aria-label="Open command palette" data-i18n-aria-label="titlebar.commandPalette.openLabel" title="Go anywhere (Ctrl+K)" data-i18n-title="titlebar.commandPalette.openTitle">
-          <span class="palette-pill-label" data-i18n="titlebar.commandPalette.goAnywhere">Go anywhere</span>
-          <kbd class="kbd" data-i18n="titlebar.commandPalette.shortcut">Ctrl K</kbd>
+        <div class="workbench-health-pill-slot titlebar-health-slot" id="workbenchHealthPillSlot"></div>
+        <div class="metric-list titlebar-load" id="metricList" role="group" aria-label="System load" data-i18n-aria-label="titlebar.metrics.groupLabel" hidden></div>
+        <button class="titlebar-icon-button titlebar-palette-pill hidden" id="titlebarPalettePill" type="button" aria-label="Open command palette" data-i18n-aria-label="titlebar.commandPalette.openLabel" title="Go anywhere · Ctrl K" data-i18n-title="titlebar.commandPalette.openTitle">
+          <svg class="titlebar-icon" viewBox="0 0 20 20" aria-hidden="true"><circle cx="9" cy="9" r="5.5"/><path d="M13.5 13.5L17 17"/></svg>
         </button>
-        <div class="turn-status-pill hidden" id="turnStatusPill" role="status" aria-live="polite"></div>
-        <span class="stat-divider" aria-hidden="true"></span>
-        <div class="metric-list" id="metricList"></div>
+        <span class="titlebar-settings-slot" id="titlebarSettingsSlot"></span>
       </div>
 
       <div class="window-controls" data-startup-inert-exempt>
-        <button class="window-button" type="button" data-window-action="reload" aria-label="Reload" data-i18n-aria-label="titlebar.window.reload" title="Reload window" data-i18n-title="titlebar.window.reloadTitle">&#x21bb;</button>
-        <button class="window-button" type="button" data-window-action="minimize" aria-label="Minimize" data-i18n-aria-label="titlebar.window.minimize" title="Minimize window" data-i18n-title="titlebar.window.minimizeTitle">&minus;</button>
-        <button class="window-button" type="button" data-window-action="maximize" aria-label="Maximize" data-i18n-aria-label="titlebar.window.maximize" title="Maximize window" data-i18n-title="titlebar.window.maximizeTitle">&#9633;</button>
-        <button class="window-button close-button" type="button" data-window-action="close" aria-label="Close" data-i18n-aria-label="titlebar.window.close" title="Close window" data-i18n-title="titlebar.window.closeTitle">&times;</button>
+        <button class="window-button" type="button" tabindex="-1" data-window-action="minimize" aria-label="Minimize" data-i18n-aria-label="titlebar.window.minimize" title="Minimize" data-i18n-title="titlebar.window.minimize"><svg class="window-glyph" viewBox="0 0 10 10" aria-hidden="true"><path d="M0 5.5h10"/></svg></button>
+        <button class="window-button" type="button" tabindex="-1" data-window-action="maximize" data-maximized="false" aria-label="Maximize" data-i18n-aria-label="titlebar.window.maximize" title="Maximize" data-i18n-title="titlebar.window.maximize"><svg class="window-glyph window-glyph--maximize" viewBox="0 0 10 10" aria-hidden="true"><rect x="0.5" y="0.5" width="9" height="9"/></svg><svg class="window-glyph window-glyph--restore" viewBox="0 0 10 10" aria-hidden="true"><path d="M2.5 2.5V0.5h7v7h-2"/><rect x="0.5" y="2.5" width="7" height="7"/></svg></button>
+        <button class="window-button close-button" type="button" tabindex="-1" data-window-action="close" aria-label="Close Jenny" data-i18n-aria-label="titlebar.window.closeJenny" title="Close Jenny" data-i18n-title="titlebar.window.closeJenny"><svg class="window-glyph" viewBox="0 0 10 10" aria-hidden="true"><path d="M0.5 0.5l9 9M9.5 0.5l-9 9"/></svg></button>
       </div>
     </header>
-
-    <nav class="toprail hidden" id="topRail" aria-label="Primary views" data-i18n-aria-label="titlebar.primaryViewsLabel">
-      <div class="toprail-tabs" id="topRailTabs" role="tablist" aria-orientation="horizontal" aria-label="Views" data-i18n-aria-label="titlebar.viewsLabel"></div>
-      <div class="toprail-actions" id="topRailActions"></div>
-      <div class="toprail-indicator" id="topRailIndicator" aria-hidden="true"></div>
-    </nav>
 
     <div class="workspace view-shell" id="workspace">
       <aside class="view-panel" id="viewPanel" aria-labelledby="chatsPanelHeading">
@@ -255,6 +244,8 @@
                   <div class="home-card-header home-card-header--subsection">
                     <h4 data-i18n="home.openLoops.recentlyCompletedHeading">Recently Completed</h4>
                     <span class="home-card-eyebrow" id="homeRecentResolvedCount">0</span>
+                    <div class="home-card-header-actions"><button class="btn btn--sm btn--ghost" id="homeRecentResolvedToggle" type="button" hidden data-home-resolved-toggle="true" aria-expanded="false" aria-controls="homeRecentResolvedList"
+                      title="Show all recently completed loops" aria-label="Show all recently completed loops" data-i18n-title="companion.openLoops.showAllResolvedTitle" data-i18n-aria-label="companion.openLoops.showAllResolvedTitle" data-i18n="companion.openLoops.showAll">Show all</button></div>
                   </div>
                   <div class="home-card-note" id="homeRecentResolvedStatus" data-i18n="home.openLoops.loadingRecentlyCompleted">Loading recently completed loops...</div>
                   <div class="home-summary-list" id="homeRecentResolvedList" role="list"></div>
@@ -263,18 +254,9 @@
                   <div class="home-card-divider"></div>
                   <div class="home-card-header home-card-header--subsection">
                     <h4 data-i18n="home.openLoops.archivedHeading">Archived</h4>
-                    <div class="home-card-header-actions">
-                      <span class="home-card-eyebrow" id="homeArchivedLoopCount">0</span>
-                      <button
-                        class="btn"
-                        id="homeArchivedLoopToggle"
-                        type="button" title="Show archived open loops" data-i18n-title="home.openLoops.showArchivedTitle" data-i18n="common.show"
-                        data-home-archived-toggle="true"
-                        aria-expanded="false"
-                      >
-                        Show
-                      </button>
-                    </div>
+                    <span class="home-card-eyebrow" id="homeArchivedLoopCount">0</span>
+                    <div class="home-card-header-actions"><button class="btn btn--sm btn--ghost" id="homeArchivedLoopToggle" type="button" data-home-archived-toggle="true" aria-expanded="false" aria-controls="homeArchivedLoopList"
+                      title="Show archived open loops" aria-label="Show archived open loops" data-i18n-title="home.openLoops.showArchivedTitle" data-i18n-aria-label="home.openLoops.showArchivedTitle" data-i18n="common.show">Show</button></div>
                   </div>
                   <div class="home-card-note" id="homeArchivedLoopStatus" data-i18n="home.openLoops.emptyArchived">Nothing archived yet.</div>
                   <div class="home-summary-list" id="homeArchivedLoopList" role="list" hidden></div>
@@ -285,10 +267,12 @@
           </div>
         </section>
 
-        <section class="main-view chat-view active-view chat-empty" id="chatView" role="tabpanel" aria-labelledby="chatTopRailTab" data-surface-effect-surface data-chat-mode="empty" data-send-lifecycle="idle">
+        <section class="main-view chat-view active-view chat-empty" id="chatView" role="tabpanel" aria-labelledby="chatTopRailTab" data-surface-effect-surface data-chat-mode="empty" data-send-lifecycle="idle" data-pane-count="1">
           <div class="chat-surface-effects" id="chatSurfaceEffects" aria-hidden="true">
             <div class="chat-surface-effect-gutter" id="chatSurfaceEffectLeft"></div>
           </div>
+          <div class="chat-pane" id="chatPane0" data-pane-id="0" data-pane-focused="true">
+          <div class="chat-pane-kicker" id="chatPaneKicker" data-chat-node="chatPaneKicker" hidden></div>
           <div class="hero-stage" id="heroStage" data-chat-node="heroStage" data-dock-anchor="hero">
             <div class="hero-stack" id="heroStack">
               <div class="hero-avatar" id="heroAvatar">J</div>
@@ -312,7 +296,6 @@
                 <div class="chat-thread-column" id="chatThreadColumn" data-chat-node="chatThreadColumn">
                   <div class="chat-sprite-layer" id="chatSpriteLayer" data-chat-node="chatSpriteLayer">
                     <div class="chat-assistant-sprite" id="chatAssistantSprite" data-chat-node="chatAssistantSprite" aria-hidden="true">
-                      <canvas class="chat-sprite-holo" id="chatSpriteHolo"></canvas>
                       <span class="chat-assistant-sprite-glyph">J</span>
                     </div>
                   </div>
@@ -326,7 +309,7 @@
             </div>
             <aside
               class="subagent-monitor-inspector"
-              id="subagentInspector"
+              id="subagentInspector" data-chat-node="subagentInspector"
               role="complementary"
               aria-labelledby="subagentInspectorTitle"
               aria-hidden="true"
@@ -383,47 +366,29 @@
               id="artifactSplitViewToggle" data-chat-node="artifactSplitViewToggle"
               type="button"
               aria-pressed="false"
-              title="Toggle split artifact review" data-i18n-title="chat.utilities.toggleArtifactReview"
-              aria-label="Toggle split artifact review" data-i18n-aria-label="chat.utilities.toggleArtifactReview"
+              title="Artifacts" data-i18n-title="artifacts.review.toggleTitle"
+              aria-label="Artifacts panel" data-i18n-aria-label="artifacts.review.toggleLabel"
               hidden
             >
               <svg viewBox="0 0 16 16" aria-hidden="true">
-                <rect x="2" y="2" width="12" height="12" rx="1.5"></rect>
-                <path d="M8 2v12"></path>
+                <path d="M9.5 2v3h3"></path>
+                <path d="M3.5 2h6l3 3v9h-9z"></path>
+                <path d="m7 8.5-1.5 1.5L7 11.5M9 8.5l1.5 1.5L9 11.5"></path>
               </svg>
-              <span class="sr-only" data-i18n="chat.utilities.splitView">Split View</span>
-            </button>
-            <button
-              class="chat-timeline-utility-button"
-              id="timelineCollapseExpandToggle" data-chat-node="timelineCollapseExpandToggle"
-              type="button"
-              title="Collapse/expand all details" data-i18n-title="chat.utilities.collapseExpandAll"
-              aria-label="Collapse/expand all details" data-i18n-aria-label="chat.utilities.collapseExpandAll"
-            >
-              <svg viewBox="0 0 16 16" aria-hidden="true">
-                <path d="M4 6l4-4 4 4M4 10l4 4 4-4"></path>
-              </svg>
-              <span class="sr-only" data-i18n="chat.utilities.collapseExpandAll">Collapse/expand all details</span>
+              <span class="sr-only" data-i18n="artifacts.review.toggleLabel">Artifacts panel</span>
             </button>
             <div class="composer-wayfinder-host chat-timeline-wayfinder-host" id="composerWayfinderHost" data-chat-node="composerWayfinderHost" hidden></div>
           </div>
 
           <div class="composer-wrap" id="composerWrap" data-chat-node="composerWrap" data-dock-anchor="composer" data-send-lifecycle="idle">
             <div class="attachment-preview-pill hidden" id="composerAttachmentPreviewPill" data-composer-v2="off" role="status" aria-live="polite"></div>
-            <div class="attachment-tray hidden" id="attachmentTray" data-composer-v2="off" aria-live="polite"></div>
+            <div class="attachment-tray hidden" id="attachmentTray" data-chat-node="attachmentTray" data-composer-v2="off" aria-live="polite"></div>
             <div class="attachment-notice hidden" id="attachmentNotice" role="status" aria-live="polite"></div>
             <div class="send-outbox" id="sendOutbox" aria-live="polite" hidden></div>
             <div class="runtime-queue" id="runtimeQueue" hidden></div>
             <div class="background-jobs-strip hidden" id="backgroundJobsStrip" role="group" aria-label="Background jobs" data-i18n-aria-label="composer.backgroundJobsLabel" aria-hidden="true"></div>
             <div class="composer-status-notice hidden" id="composerStatusNotice" role="status" aria-live="polite"></div>
             <div class="composer-failed-send-notice hidden" id="composerV2FailedSendNotice" data-composer-v2="off" role="alert" aria-live="assertive"></div>
-            <div class="composer-remote-banner" id="composerRemoteBanner" hidden role="status" aria-live="polite" aria-hidden="true">
-              <span id="composerRemoteBannerLabel"></span>
-              <span class="composer-remote-banner-actions">
-                <span id="composerRemoteTakeControl"></span>
-                <span id="composerRemoteStop"></span>
-              </span>
-            </div>
             <div class="composer" data-send-lifecycle="idle" data-composer-active="false">
               <canvas class="composer-holo" id="composerHolo" aria-hidden="true"></canvas>
               <div class="composer-main">
@@ -441,8 +406,8 @@
                 </div>
                 <div class="composer-toolbar">
                   <div class="composer-toolbar-left">
-                    <button class="composer-icon-button" id="composerAttachShortcut" type="button"
-                            aria-label="Attach file" data-i18n-aria-label="composer.attachFile" title="Attach file" data-i18n-title="composer.attachFile">
+                    <button class="composer-icon-button" id="composerAttachShortcut" data-chat-node="composerAttachShortcut" type="button"
+                            aria-label="Attach" data-i18n-aria-label="composer.attach" title="Attach" data-i18n-title="composer.attach" aria-haspopup="menu" aria-expanded="false" aria-controls="composerAttachMenu">
                       <svg viewBox="0 0 16 16" aria-hidden="true">
                         <path d="M14 8.5l-5.5 5.5a3.5 3.5 0 01-5-5L9 3.5a2.5 2.5 0 013.5 3.5L7 12.5a1.5 1.5 0 01-2-2L10.5 5"/>
                       </svg>
@@ -453,48 +418,49 @@
                         <path d="M3 5l4 3.5L3 12"/><path d="M9 12h5"/>
                       </svg>
                     </button>
-                  </div>
-                  <div class="composer-toolbar-right composer-rail">
-                    <div class="composer-project-pill-slot" id="composerProjectPillSlot"></div><div class="composer-run-mode-slot" id="composerRunModeSlot"></div><div class="composer-model-pill-slot" id="composerModelPillSlot" data-rail-config>
-                      <div class="inv-popover composer-model-popover" id="composerModelPopover" data-inv-popover="composer-model" role="dialog" aria-modal="false" aria-label="Model and reasoning effort" data-i18n-aria-label="composer.modelPicker.dialogLabel" hidden>
-                        <div class="composer-model-picker" data-composer-model-picker></div>
-                        <div class="composer-model-carriers" hidden>
-                          <label class="composer-select-shell composer-select-model" for="composerModelSelect">
-                            <span class="composer-model-popover-label" data-i18n="composer.modelPicker.modelLabel">Model</span>
-                            <select id="composerModelSelect" aria-label="Model selector" data-i18n-aria-label="composer.modelPicker.modelSelectorLabel"></select>
-                            <span class="sr-only" id="composerModelDisabledReason"></span>
-                          </label>
-                          <label class="composer-select-shell composer-select-effort" for="composerEffortSelect">
-                            <span class="composer-model-popover-label" data-i18n="composer.modelPicker.reasoningEffortLabel">Reasoning effort</span>
-                            <select id="composerEffortSelect" aria-label="Reasoning effort selector" data-i18n-aria-label="composer.modelPicker.reasoningEffortSelectorLabel">
-                              <option value="default" data-i18n="composer.modelPicker.useDefault">Use default</option>
-                            </select>
-                            <span class="sr-only" id="composerEffortDisabledReason"></span>
-                          </label>
+                    <div class="composer-toggle-slot" id="composerToolToggleSlot" data-rail-config>
+                      <span id="composerChatChipHost"></span>
+                      <div class="inv-popover composer-chat-panel" id="composerChatPanel" data-inv-popover="composer-chat" role="dialog" aria-modal="false" aria-labelledby="composerChatPanelTitle" hidden>
+                        <div class="composer-chat-view" data-chat-panel-view="main">
+                          <div class="composer-chat-panel-head"><span id="composerChatPanelTitle" data-i18n="composer.chatPanel.title">Tools for this chat</span><button type="button" class="composer-chat-link" data-chat-panel-action="all-tools" data-i18n="composer.chatPanel.allTools">All tools ›</button></div>
+                          <div class="composer-chat-panel-chips" id="composerChatPanelChips" role="group" aria-label="Tools for this chat" data-i18n-aria-label="composer.chatPanel.title"></div>
+                          <div class="composer-chat-panel-row"><span data-i18n="composer.chatPanel.project">Project</span><div class="composer-project-pill-slot" id="composerProjectPillSlot"></div></div>
+                          <div class="composer-chat-panel-row composer-chat-posture" id="composerChatPosture" hidden><span class="status-dot" id="composerChatPostureDot" aria-hidden="true"></span><span id="composerChatPostureText"></span></div>
+                          <div class="composer-chat-panel-foot"><button type="button" class="composer-chat-link" data-chat-panel-action="reset" data-i18n="composer.chatPanel.reset" hidden>Reset to defaults</button><button type="button" class="composer-chat-link" data-chat-panel-action="settings" data-i18n="composer.chatPanel.settings">Full settings</button></div>
+                        </div>
+                        <div class="composer-chat-view" data-chat-panel-view="all" hidden>
+                          <div class="composer-chat-panel-head"><button type="button" class="composer-chat-link composer-chat-back" data-chat-panel-action="back" data-i18n="composer.chatPanel.back">‹ All tools</button></div>
+                          <input type="search" class="composer-chat-filter" data-chat-panel-filter hidden aria-label="Filter tools" data-i18n-aria-label="composer.chatPanel.filter">
+                          <div class="composer-chat-list" id="composerChatPanelList"></div>
+                          <div class="composer-chat-panel-foot composer-chat-always-on" data-i18n="composer.chatPanel.alwaysOn">Always on: questions, to-dos, plan, status, skills</div>
                         </div>
                       </div>
                     </div>
-                    <div class="composer-toggle-slot" id="composerToolToggleSlot" aria-live="polite" data-rail-config></div>
-                    <div class="composer-context-usage-slot" id="composerContextUsageSlot"></div>
-                    <div class="composer-plan-usage-slot" id="composerPlanUsageSlot"></div>
-                    <button
-                      class="composer-gear"
-                      id="composerSettingsButton"
-                      type="button"
-                      aria-label="Open composer settings" data-i18n-aria-label="composer.settings.openLabel"
-                      aria-haspopup="dialog"
-                      aria-expanded="false"
-                      title="Session settings" data-i18n-title="composer.settings.title"
-                      data-rail-config
-                    >
-                      <svg viewBox="0 0 16 16" aria-hidden="true">
-                        <path d="M6.74 1.5h2.52l.4 1.57a4.98 4.98 0 0 1 1.1.46l1.44-.78 1.78 1.78-.78 1.44c.19.35.35.72.46 1.1l1.57.4v2.52l-1.57.4a4.98 4.98 0 0 1-.46 1.1l.78 1.44-1.78 1.78-1.44-.78c-.35.19-.72.35-1.1.46l-.4 1.57H6.74l-.4-1.57a4.98 4.98 0 0 1-1.1-.46l-1.44.78-1.78-1.78.78-1.44a4.98 4.98 0 0 1-.46-1.1L1 9.26V6.74l1.57-.4c.11-.38.27-.75.46-1.1l-.78-1.44 1.78-1.78 1.44.78c.35-.19.72-.35 1.1-.46z" />
-                        <circle cx="8" cy="8" r="2.1" />
-                      </svg>
-                      <span class="composer-gear-dot status-dot" id="composerGearPostureDot" data-posture="local" aria-hidden="true"></span>
-                      <span class="sr-only" data-i18n="composer.settings.label">Settings</span>
-                    </button>
-                    <span class="sr-only" id="composerSettingsDisabledReason"></span>
+                  </div>
+                  <div class="composer-toolbar-right composer-rail">
+                    <div class="composer-settings-group" id="composerSettingsGroup" data-chat-node="composerSettingsGroup">
+                      <div class="composer-context-usage-slot" id="composerContextUsageSlot"></div>
+                      <div class="composer-plan-usage-slot" id="composerPlanUsageSlot"></div>
+                      <div class="composer-run-mode-slot" id="composerRunModeSlot"></div><div class="composer-model-pill-slot" id="composerModelPillSlot" data-rail-config>
+                        <div class="inv-popover composer-model-popover" id="composerModelPopover" data-inv-popover="composer-model" role="dialog" aria-modal="false" aria-label="Model and reasoning effort" data-i18n-aria-label="composer.modelPicker.dialogLabel" hidden>
+                          <div class="composer-model-picker" data-composer-model-picker></div>
+                          <div class="composer-model-carriers" hidden>
+                            <label class="composer-select-shell composer-select-model" for="composerModelSelect">
+                              <span class="composer-model-popover-label" data-i18n="composer.modelPicker.modelLabel">Model</span>
+                              <select id="composerModelSelect" aria-label="Model selector" data-i18n-aria-label="composer.modelPicker.modelSelectorLabel"></select>
+                              <span class="sr-only" id="composerModelDisabledReason"></span>
+                            </label>
+                            <label class="composer-select-shell composer-select-effort" for="composerEffortSelect">
+                              <span class="composer-model-popover-label" data-i18n="composer.modelPicker.reasoningEffortLabel">Reasoning effort</span>
+                              <select id="composerEffortSelect" aria-label="Reasoning effort selector" data-i18n-aria-label="composer.modelPicker.reasoningEffortSelectorLabel">
+                                <option value="default" data-i18n="composer.modelPicker.useDefault">Use default</option>
+                              </select>
+                              <span class="sr-only" id="composerEffortDisabledReason"></span>
+                            </label>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
 
                     <button class="composer-stop-button hidden" id="stopStreamButton" data-chat-node="stopStreamButton" type="button" aria-label="Stop current response" data-i18n-aria-label="composer.stopCurrentResponse" title="Stop" data-i18n-title="composer.stop">
                       <svg viewBox="0 0 16 16" aria-hidden="true">
@@ -510,10 +476,19 @@
             </div>
             <div class="composer-mode-chips" id="composerModeChips" role="group" aria-label="Composer modes" data-i18n-aria-label="composer.modesLabel">
               <div class="sr-only" id="composerModeChipsAnnouncer" aria-live="polite" aria-atomic="true"></div>
-              <span class="composer-run-mode-hint" id="composerRunModeHint"></span>
               <span class="composer-turn-timer" id="composerTurnTimer" data-turn-timer-state="idle"></span>
             </div>
           </div>
+          </div>
+          <div
+            class="chat-pane-resizer artifact-review-resizer hidden"
+            id="chatPaneResizer"
+            role="separator"
+            aria-orientation="vertical"
+            aria-valuemin="20" aria-valuemax="80" aria-valuenow="50"
+            aria-label="Resize conversation panes" data-i18n-aria-label="chat.panes.resizeLabel" title="Drag to resize the conversation panes" data-i18n-title="chat.panes.resizeTitle"
+            tabindex="-1"
+          ></div>
           <div
             class="artifact-review-resizer hidden"
             id="artifactReviewResizer" data-chat-node="artifactReviewResizer"
@@ -524,121 +499,94 @@
           ></div>
 
           <aside class="artifact-review-panel hidden" id="artifactReviewPanel" data-chat-node="artifactReviewPanel" aria-label="Artifact review" data-i18n-aria-label="artifacts.review.panelLabel">
-            <div class="artifact-review-header">
-              <div class="artifact-review-heading">
-                <span class="artifact-review-kicker" data-i18n="artifacts.review.heading">Artifact Review</span>
-                <span class="artifact-review-status" id="artifactReviewStatus" data-i18n="artifacts.review.status">Split view keeps artifact details beside chat.</span>
-              </div>
-              <div class="artifact-review-actions">
-                <button class="artifact-review-action" id="artifactReviewCollapseButton" type="button" aria-label="Collapse artifact review" data-i18n-aria-label="artifacts.review.collapseLabel" title="Collapse panel" data-i18n-title="artifacts.review.collapseTitle">
-                  <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M10 4l-4 4 4 4"/></svg>
-                </button>
-              </div>
-            </div>
-            <div class="artifact-review-scroll">
-              <div class="artifacts-detail-empty" id="artifactReviewDetailEmpty">
-                <h3 data-i18n="artifacts.review.emptyHeading">Select an artifact</h3>
-                <p data-i18n="artifacts.review.emptyDescription">Choose a session artifact from chat, the shelf, or the catalog to inspect it here.</p>
-              </div>
-
-              <div class="artifacts-detail-panel hidden artifact-review-detail-panel" id="artifactReviewDetailPanel">
-                <div class="artifacts-detail-header">
-                  <div>
-                    <div class="artifact-detail-kicker" id="artifactReviewDetailKicker" data-i18n="artifacts.detail.kicker">Artifact</div>
-                    <h3 class="artifact-detail-title" id="artifactReviewDetailTitle" data-i18n="artifacts.detail.title">Artifact</h3>
-                    <p class="artifact-detail-path" id="artifactReviewDetailPath"></p>
-                  </div>
-                  <div class="artifact-detail-header-status">
-                    <span class="dirty-badge hidden" id="artifactReviewDirtyBadge" data-i18n="artifacts.detail.modified">Modified</span>
-                    <div class="artifact-detail-status" id="artifactReviewDetailStatus" data-i18n="artifacts.detail.available">Available</div>
-                  </div>
-                </div>
-
-                <div class="artifact-preview-shell" id="artifactReviewPreviewShell">
-                  <div class="artifact-editor-shell hidden" id="artifactReviewEditorShell">
-                    <div class="artifact-editor-host" id="artifactReviewEditorHost" aria-label="Artifact editor" data-i18n-aria-label="artifacts.editor.label"></div>
-                    <textarea
-                      class="artifact-editor-fallback hidden"
-                      id="artifactReviewEditorFallback"
-                      spellcheck="false"
-                      aria-label="Artifact editor fallback" data-i18n-aria-label="artifacts.editor.fallbackLabel"
-                    ></textarea>
-                  </div>
-
-                  <div class="artifact-preview-content hidden" id="artifactReviewPreviewContent"></div>
-                </div>
-
-                <div class="artifact-detail-note" id="artifactReviewDetailNote" data-i18n="artifacts.detail.selectPrompt">Select an artifact to inspect its metadata and content.</div>
-
-                <div class="artifact-detail-actions">
-                  <div class="artifact-detail-actions-primary">
-                    <button class="settings-primary" id="artifactReviewSaveButton" type="button" title="Save changes to disk" data-i18n-title="artifacts.actions.saveTitle" aria-label="Save artifact" data-i18n-aria-label="artifacts.actions.saveLabel" data-i18n="common.save">Save</button>
-                    <button class="settings-secondary" id="artifactReviewRevertButton" type="button" title="Discard unsaved changes" data-i18n-title="artifacts.actions.revertTitle" aria-label="Revert artifact" data-i18n-aria-label="artifacts.actions.revertLabel" data-i18n="common.revert">Revert</button>
-                    <button class="settings-danger" id="artifactReviewDeleteButton" type="button" title="Delete this artifact" data-i18n-title="artifacts.actions.deleteTitle" aria-label="Delete artifact" data-i18n-aria-label="artifacts.actions.deleteLabel" data-i18n="common.delete">Delete</button>
-                  </div>
-                  <div class="artifact-detail-actions-secondary">
-                    <button class="settings-secondary" id="artifactReviewRevealButton" type="button" title="Show file in explorer" data-i18n-title="artifacts.actions.revealTitle" aria-label="Reveal artifact in explorer" data-i18n-aria-label="artifacts.actions.revealLabel" data-i18n="common.reveal">Reveal</button>
-                    <button class="settings-secondary" id="artifactReviewOpenExternalButton" type="button" title="Open in default application" data-i18n-title="artifacts.actions.openExternalTitle" aria-label="Open artifact externally" data-i18n-aria-label="artifacts.actions.openExternalLabel" data-i18n="artifacts.actions.openExternal">Open External</button>
-                    <button class="settings-secondary" id="artifactReviewJumpButton" type="button" title="Scroll to source message" data-i18n-title="artifacts.actions.jumpToSourceTitle" aria-label="Jump to source message" data-i18n-aria-label="artifacts.actions.jumpToSourceLabel" data-i18n="artifacts.actions.jumpToChat">Jump to Chat</button>
-                  </div>
-                </div>
-
-                <section class="artifacts-meta-section artifact-review-meta-section">
-                  <div class="section-header">
-                    <span class="section-header-label" data-i18n="artifacts.detail.heading">Artifact Detail</span>
-                  </div>
-                  <div class="artifact-review-detail-meta" id="artifactReviewDetailMeta"></div>
-                </section>
-                <section class="artifacts-meta-section artifact-review-meta-section">
-                  <div class="section-header">
-                    <span class="section-header-label" data-i18n="artifacts.detail.provenanceHeading">Provenance</span>
-                  </div>
-                  <div class="artifacts-provenance-timeline" id="artifactReviewProvenanceTimeline"></div>
-                </section>
-              </div>
-            </div>
+            <!-- Children are built at install by renderer-artifact-panel-chrome-render.js (buildPanelHtml). -->
           </aside>
 
           <aside class="chat-context-panel" id="chatContextPanel" data-chat-node="chatContextPanel">
-            <div class="context-panel-header" data-dock-anchor="orbit-header">
-              <button class="context-panel-collapse" id="contextPanelToggle"
-                      type="button" aria-label="Collapse context panel" data-i18n-aria-label="chat.context.collapseLabel" title="Collapse panel" data-i18n-title="chat.context.collapseTitle">
-                <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M10 4l-4 4 4 4"/></svg>
-              </button>
-            </div>
             <div class="context-panel-scroll">
               <section class="context-section" id="contextArtifactSection">
                 <div class="context-section-header">
-                  <span class="context-section-label" data-i18n="chat.context.activeArtifacts">Active Artifacts</span>
+                  <span class="context-section-label" data-i18n="chat.context.artifacts">Artifacts</span>
                   <span class="orbit-section-count" id="contextArtifactCount" aria-label="Artifact count" data-i18n-aria-label="chat.context.artifactCountLabel">0</span>
+                  <span class="context-section-rule" aria-hidden="true"></span>
                   <button class="context-section-action" id="contextArtifactExpand"
-                          type="button" aria-label="Open artifacts tab" data-i18n-aria-label="chat.context.openArtifactsLabel" title="Open in full view" data-i18n-title="chat.context.openFullViewTitle">
-                    <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M6 2h8v8M14 2L6 10"/></svg>
+                          type="button" aria-label="Open artifact panel" data-i18n-aria-label="chat.context.openArtifactPanelLabel" title="Open artifact panel" data-i18n-title="chat.context.openArtifactPanelLabel">
+                    <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="2" y="2.5" width="12" height="11" rx="1.5"/><path d="M9.5 2.5v11"/></svg>
+                  </button>
+                  <button class="context-section-action context-panel-collapse" id="contextPanelToggle"
+                          type="button" aria-label="Collapse context panel" data-i18n-aria-label="chat.context.collapseLabel" title="Collapse panel" data-i18n-title="chat.context.collapseTitle">
+                    <svg class="icon-mirror-rtl" viewBox="0 0 16 16" aria-hidden="true"><path d="M6 4l4 4-4 4"/></svg>
                   </button>
                 </div>
                 <div class="context-artifact-list" id="contextArtifactList" role="list"></div>
               </section>
-              <section class="context-section" id="contextPulseSection">
-                <div class="context-section-header">
-                  <span class="context-section-label" data-i18n="chat.context.sessionPulse">Session Pulse</span>
-                </div>
-                <div class="context-pulse-grid" id="contextPulse"></div>
-              </section>
-              <section class="context-section" id="contextLogSection">
-                <div class="context-section-header">
-                  <span class="context-section-label" data-i18n="chat.context.sessionLogs">Session Logs</span>
-                  <div class="context-section-actions">
-                    <span class="orbit-section-count" id="contextLogCount" aria-label="Log entry count" data-i18n-aria-label="chat.context.logEntryCountLabel">0</span>
-                    <button class="context-section-disclosure" id="contextLogDisclosure"
-                            type="button" aria-expanded="false" title="Show session logs" data-i18n-title="chat.context.showSessionLogs" data-i18n="common.show">
-                      Show
-                    </button>
-                  </div>
-                </div>
-                <div class="context-log-feed" id="contextSessionLogs"></div>
+              <section class="context-section logs-collapsed" id="contextLogSection">
+                <button class="context-section-header context-section-disclosure" id="contextLogDisclosure"
+                        type="button" aria-expanded="false" aria-controls="contextSessionLogs">
+                  <svg class="context-disclosure-chevron" viewBox="0 0 16 16" aria-hidden="true"><path d="M6 4l4 4-4 4"/></svg>
+                  <span class="context-section-label" data-i18n="chat.context.activity">Activity</span>
+                  <span class="orbit-section-count" id="contextLogCount">0</span>
+                  <span class="context-section-rule" aria-hidden="true"></span>
+                </button>
+                <div class="context-log-feed" id="contextSessionLogs" hidden></div>
               </section>
             </div>
           </aside>
+          <template id="chatPaneTemplate">
+            <div class="chat-pane">
+              <div class="chat-pane-kicker" data-chat-node="chatPaneKicker" hidden></div>
+              <div class="hero-stage" data-chat-node="heroStage" data-dock-anchor="hero">
+                <div class="hero-stack">
+                  <div class="hero-avatar">J</div>
+                  <h1 class="hero-title" data-i18n="chat.empty.newSession">New session</h1>
+                  <p class="hero-subtitle" data-i18n="chat.empty.prompt">Ask Jenny anything to begin</p>
+                  <p class="hero-runtime-hint hidden" aria-live="polite"></p>
+                </div>
+              </div>
+              <div class="chat-thread-stage" data-chat-node="chatThreadStage">
+                <div class="chat-search-overlay-host" data-chat-node="chatSearchOverlayHost" hidden></div>
+                <div class="chat-selection-overlay-host" data-chat-node="chatSelectionOverlayHost" hidden></div>
+                <div class="chat-thread-shell" data-chat-node="chatSurface">
+                  <div class="chat-thread-scroll" data-chat-node="chatThreadScroll">
+                    <div class="chat-thread-column" data-chat-node="chatThreadColumn">
+                      <div class="chat-sprite-layer" data-chat-node="chatSpriteLayer">
+                        <div class="chat-assistant-sprite" data-chat-node="chatAssistantSprite" aria-hidden="true">
+                          <span class="chat-assistant-sprite-glyph">J</span>
+                        </div>
+                      </div>
+                      <div class="origin-chip hidden" data-chat-node="chatOriginChip" aria-label="Conversation origin" data-i18n-aria-label="chat.origin.label">
+                        <span class="origin-chip-label" data-chat-node="chatOriginLabel"></span>
+                      </div>
+                      <div class="chat-timeline" data-chat-node="chatTimeline" role="log" aria-live="off" aria-atomic="false" aria-busy="false" aria-label="Conversation messages" data-i18n-aria-label="chat.timeline.messagesLabel" data-timeline-render-strategy="none"></div>
+                      <div class="chat-thread-scroll-sentinel" data-chat-node="chatScrollSentinel" aria-hidden="true"></div>
+                    </div>
+                  </div>
+                </div>
+                <aside class="subagent-monitor-inspector" data-chat-node="subagentInspector" role="complementary" aria-hidden="true" hidden></aside>
+                <div class="composer-jump-tools chat-jump-cluster hidden" aria-label="Thread navigation" data-i18n-aria-label="chat.navigation.label" aria-hidden="true"></div>
+              </div>
+              <div class="chat-timeline-utility-cluster" data-chat-node="chatTimelineUtilityCluster" aria-label="Conversation utilities" data-i18n-aria-label="chat.utilities.label">
+                <div class="composer-wayfinder-host chat-timeline-wayfinder-host" data-chat-node="composerWayfinderHost" hidden></div>
+              </div>
+              <div class="composer-wrap" data-chat-node="composerWrap" data-dock-anchor="composer" data-send-lifecycle="idle">
+                <div class="attachment-preview-pill hidden" data-chat-node="composerAttachmentPreviewPill" data-composer-v2="off" role="status" aria-live="polite"></div>
+                <div class="attachment-tray hidden" data-chat-node="attachmentTray" data-composer-v2="off" aria-live="polite"></div>
+                <div class="composer-status-notice hidden" data-chat-node="composerStatusNotice" role="status" aria-live="polite"></div>
+                <div class="composer-failed-send-notice hidden" data-chat-node="composerV2FailedSendNotice" data-composer-v2="off" role="alert" aria-live="assertive"></div>
+                <div class="composer" data-send-lifecycle="idle" data-composer-active="false">
+                  <div class="composer-main">
+                    <div class="composer-entry-row">
+                      <textarea class="composer-input" data-chat-node="chatInput" dir="auto" rows="1" placeholder="Message Jenny..." data-i18n-placeholder="composer.input.placeholder" aria-label="Message Jenny" data-i18n-aria-label="composer.input.label"></textarea>
+                    </div>
+                    <div class="composer-toolbar">
+                      <div class="composer-toolbar-left"></div>
+                      <div class="composer-toolbar-right composer-rail"></div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </template>
         </section>
 
         <section class="main-view ide-view hidden view-offscreen" id="ideView" role="tabpanel" aria-labelledby="ideTopRailTab" aria-hidden="true">
@@ -774,6 +722,7 @@
                 <aside class="logs-detail-panel" id="logDetailPanel" role="complementary" aria-label="Selected event detail" data-i18n-aria-label="diagnostics.activity.detailLabel" hidden></aside>
               </div>
             </section>
+            <section id="diagnosticsRuns" class="diagnostics-runs" role="tabpanel" aria-labelledby="diagnosticsRunsTab" hidden><div class="diagnostics-section diagnostics-runs-board" id="diagnosticsRunsMount"></div></section>
           </div>
         </section>
 
@@ -790,15 +739,13 @@
           <div class="plugin-view-content-slot" id="pluginViewContentSlot" aria-label="Isolated plugin content" data-i18n-aria-label="plugins.view.contentLabel"></div>
         </section>
 
-        <section class="main-view settings-view view-offscreen" id="settingsView" role="tabpanel" aria-labelledby="settingsTopRailTab" data-surface-effect-surface inert aria-hidden="true">
+        <section class="main-view settings-view view-offscreen" id="settingsView" role="region" aria-label="Settings" data-i18n-aria-label="settings.shell.title" data-surface-effect-surface inert aria-hidden="true">
           <div class="settings-layout">
-            <nav class="settings-nav" role="tablist" aria-orientation="vertical" aria-label="Settings sections" data-i18n-aria-label="settings.shell.sectionsLabel">
+            <nav class="settings-nav" aria-label="Settings sections" data-i18n-aria-label="settings.shell.sectionsLabel">
               <div class="settings-nav-header">
-                <div class="settings-nav-kicker">Jenny</div>
-                <div class="settings-nav-title" data-i18n="settings.shell.title">Settings</div>
-                <p class="settings-nav-copy" data-i18n="settings.shell.description">Shape the companion, the shell, and the local-first runtime without leaving the workspace.</p>
+                <h2 class="settings-nav-title" data-i18n="settings.shell.title">Settings</h2>
               </div>
-              <div class="settings-nav-scroll">
+              <div class="settings-nav-scroll" role="tablist" aria-orientation="vertical" aria-label="Settings sections" data-i18n-aria-label="settings.shell.sectionsLabel">
                 <!--
                   Settings nav items are generated from the section registry at bootstrap
                   (renderer-settings-nav-utils.renderSettingsNav, called from
@@ -810,17 +757,6 @@
 
             <div class="settings-content" id="settingsContentPanel" role="tabpanel" aria-labelledby="settingsNav-models" tabindex="0">
               <div class="settings-content-frame">
-                <div class="settings-content-header">
-                  <div class="settings-masthead">
-                    <div class="settings-masthead-title">
-                      <h2 class="page-title" data-i18n="settings.shell.heading">Shell Settings</h2>
-                    </div>
-                    <div class="settings-overview-chip-row" aria-label="Settings overview" data-i18n-aria-label="settings.shell.overviewLabel">
-                      <span class="settings-overview-traits" data-i18n="settings.shell.overviewTraits">Local-first &middot; Session-aware &middot; File-backed</span>
-                    </div>
-                  </div>
-                </div>
-
               <div class="settings-content-scroll">
               <section class="settings-card readiness-card" data-settings-section="readiness" id="readinessSettingsSection">
                 <div class="settings-card-header"><h3 data-i18n="settings.readiness.heading">Readiness</h3><span class="settings-badge" id="readinessBadge" data-state="pending" data-i18n="settings.readiness.checking">Checking</span></div>
@@ -835,133 +771,67 @@
                 <p class="settings-copy" data-i18n="settings.models.description">Manage installed models and local-engine recovery here. Choose the model and reasoning effort for this chat from Composer.</p>
                 <div class="settings-note" id="modelCatalogEmpty" aria-live="polite" hidden></div>
                 <div class="settings-note" id="modelStatus" aria-live="polite" data-i18n="settings.models.noSnapshot">No model snapshot available yet.</div>
-                <div class="settings-toggle-list" id="modelStartupLoadList" aria-live="polite"></div>
                 <div id="modelLibrarySectionToolbarHost"></div>
                 <div class="settings-note model-library-section-status" aria-live="polite"></div>
                 <div id="modelLibrarySectionHost"></div>
+                <div id="modelLibrarySectionExtrasHost"></div>
+                <div class="settings-group" role="group" aria-labelledby="modelStartupHeading">
+                  <h4 class="settings-group-heading" id="modelStartupHeading" data-i18n="settings.models.startup.heading">On startup</h4>
+                  <div class="settings-toggle-list" id="modelStartupLoadList" aria-live="polite"></div>
+                </div>
+                <div class="settings-group" role="group" aria-labelledby="cloudModelsHeading">
+                  <h4 class="settings-group-heading" id="cloudModelsHeading" data-i18n="settings.cloudModels.heading">Cloud models</h4>
+                  <p class="settings-group-copy" data-i18n="settings.cloudModels.description">Optional models that run on a provider's servers. Local models work without them, and Force local inference blocks them all.</p>
+                  <div class="settings-toggle-list" id="cloudModelsHost" aria-live="polite"></div>
+                </div>
               </section>
 
               <section class="settings-card" data-settings-section="appearance">
                 <div class="settings-card-header">
                   <h3 data-i18n="settings.appearance.heading">Appearance</h3>
-                  <span class="settings-badge" id="appearanceBadge" data-i18n="settings.appearance.themeBadge">Theme</span>
                 </div>
-                <p class="settings-copy" data-i18n="settings.appearance.description">Choose a coordinated theme, fine-tune color, type, and text size, and keep optional effects accessible. Chat zoom lives with Chat and Quick Settings.</p>
-                <div class="settings-appearance-proof" id="settingsAppearanceProof" aria-hidden="true">
-                  <div class="settings-appearance-swatch-row">
-                    <div class="settings-appearance-swatch settings-appearance-swatch-chrome">
-                      <span class="settings-appearance-swatch-label" data-i18n="settings.appearance.preview.chrome">Chrome</span>
-                      <span class="settings-appearance-swatch-value" data-i18n="settings.appearance.preview.shellRail">Shell rail</span>
-                    </div>
-                    <div class="settings-appearance-swatch settings-appearance-swatch-live">
-                      <span class="settings-appearance-swatch-label" data-i18n="settings.appearance.preview.live">Live</span>
-                      <span class="settings-appearance-swatch-value" data-i18n="settings.appearance.preview.signals">Signals</span>
-                    </div>
-                    <div class="settings-appearance-swatch settings-appearance-swatch-work">
-                      <span class="settings-appearance-swatch-label" data-i18n="settings.appearance.preview.work">Work</span>
-                      <span class="settings-appearance-swatch-value" data-i18n="settings.appearance.preview.panels">Panels</span>
-                    </div>
-                  </div>
-                </div>
+                <p class="settings-copy" data-i18n="settings.appearance.description">Choose a coordinated theme, fine-tune color, type, and text size, and keep optional effects accessible.</p>
 
                 <div class="settings-group" role="group" aria-labelledby="appearanceThemeHeading">
                   <h4 class="settings-group-heading" id="appearanceThemeHeading" data-i18n="settings.appearance.theme.heading">Theme &amp; palette</h4>
                   <p class="settings-group-copy" data-i18n="settings.appearance.theme.description">Start from a bundled look, then fine-tune the color palette.</p>
-                  <div class="settings-field-row">
-                    <div class="settings-field-row-text">
-                      <label class="settings-field-label" for="appearanceThemeBundleSelect" data-i18n="settings.appearance.theme.bundleLabel">Theme bundle</label>
-                      <p class="settings-field-description" data-i18n="settings.appearance.theme.bundleDescription">A ready-made palette, typography, surface, and Composer-effect preset.</p>
-                    </div>
-                    <label class="select-shell">
-                      <select id="appearanceThemeBundleSelect" aria-label="Theme bundle selector" data-i18n-aria-label="settings.appearance.theme.bundleSelectorLabel"></select>
-                    </label>
-                  </div>
-                  <div class="settings-field-row">
-                    <div class="settings-field-row-text">
-                      <label class="settings-field-label" for="appearancePaletteSelect" data-i18n="settings.appearance.palette.label">Palette</label>
-                      <p class="settings-field-description" data-i18n="settings.appearance.palette.description">The color scheme used across the app chrome, chat, and editor.</p>
-                    </div>
-                    <label class="select-shell">
-                      <select id="appearancePaletteSelect" aria-label="Palette selector" data-i18n-aria-label="settings.appearance.palette.selectorLabel"></select>
-                    </label>
-                  </div>
+                  <div data-setting-mount="appearanceThemeBundleSelect"></div>
+                  <div data-setting-mount="appearancePaletteSelect"></div>
                 </div>
 
                 <div class="settings-group" role="group" aria-labelledby="appearanceTypeHeading">
                   <h4 class="settings-group-heading" id="appearanceTypeHeading" data-i18n="settings.appearance.typography.heading">Typography &amp; text</h4>
                   <p class="settings-group-copy" data-i18n="settings.appearance.typography.description">Choose a type system, scale shell text up or down, and set whether Jenny checks your spelling.</p>
-                  <div class="settings-field-row">
-                    <div class="settings-field-row-text">
-                      <label class="settings-field-label" for="appearanceTypographySelect" data-i18n="settings.appearance.typography.label">Typography</label>
-                      <p class="settings-field-description" data-i18n="settings.appearance.typography.fontDescription">The font family used for shell text and the chat transcript.</p>
-                    </div>
-                    <label class="select-shell">
-                      <select id="appearanceTypographySelect" aria-label="Typography selector" data-i18n-aria-label="settings.appearance.typography.selectorLabel"></select>
-                    </label>
-                  </div>
-                  <div class="settings-field-row">
-                    <div class="settings-field-row-text">
-                      <label class="settings-field-label" for="appearanceFontScaleSelect" data-i18n="settings.appearance.textSize.label">Text size</label>
-                      <p class="settings-field-description" data-i18n="settings.appearance.textSize.description">Scale shell text larger or smaller without changing your zoom level.</p>
-                    </div>
-                    <label class="select-shell">
-                      <select id="appearanceFontScaleSelect" aria-label="Shell text size selector" data-i18n-aria-label="settings.appearance.textSize.selectorLabel"></select>
-                    </label>
-                  </div>
+                  <div data-setting-mount="appearanceTypographySelect"></div>
+                  <div data-setting-mount="appearanceFontScaleSelect"></div>
                   <div class="settings-toggle-list" id="appearanceSpellcheckList"></div>
                 </div>
 
-                <h4 class="settings-group-heading" id="appearanceLanguageHeading" data-i18n="settings.language.heading">Language</h4>
-                <div class="settings-group settings-group--flush" id="appearanceLanguageField"></div>
+                <div class="settings-group" role="group" aria-labelledby="appearanceLanguageHeading">
+                  <h4 class="settings-group-heading" id="appearanceLanguageHeading" data-i18n="settings.language.heading">Language</h4>
+                  <div id="appearanceLanguageField"></div>
+                </div>
 
                 <div class="settings-group" role="group" aria-labelledby="appearanceChatLayoutHeading">
                   <h4 class="settings-group-heading" id="appearanceChatLayoutHeading" data-i18n="settings.appearance.chatLayout.heading">Chat layout</h4>
-                  <p class="settings-group-copy" data-i18n="settings.appearance.chatLayout.description">How much of the window the chat transcript uses.</p>
-                  <div class="settings-field-row">
-                    <div class="settings-field-row-text">
-                      <label class="settings-field-label" for="appearanceChatWidthSelect" data-i18n="settings.appearance.chatLayout.widthLabel">Chat width</label>
-                      <p class="settings-field-description" data-i18n="settings.appearance.chatLayout.widthDescription">Widen the chat transcript and composer for more text per line.</p>
-                    </div>
-                    <div id="appearanceChatWidthMount"></div>
-                  </div>
+                  <div data-setting-mount="appearanceChatWidthSelect"></div>
+                  <div data-setting-mount="transcriptViewDefaultSelect"></div>
+                  <div data-setting-mount="appearanceArtifactAutoOpenToggle"></div>
                 </div>
 
                 <div class="settings-group" role="group" aria-labelledby="appearanceSurfaceHeading">
                   <h4 class="settings-group-heading" id="appearanceSurfaceHeading" data-i18n="settings.appearance.background.heading">Background</h4>
                   <p class="settings-group-copy" data-i18n="settings.appearance.background.description">An ambient layer behind Home and Chat. It pauses when the window is hidden and holds still if your system asks for reduced motion.</p>
-                  <div class="settings-field-row">
-                    <div class="settings-field-row-text">
-                      <label class="settings-field-label" for="appearanceSurfaceEffectSelect" data-i18n="settings.appearance.background.effectLabel">Effect</label>
-                      <p class="settings-field-description" id="appearanceSurfaceEffectDescription" data-i18n="settings.appearance.background.effectDescription">An ambient layer behind Home and Chat.</p>
-                    </div>
-                    <label class="select-shell">
-                      <select id="appearanceSurfaceEffectSelect" aria-label="Background effect selector" data-i18n-aria-label="settings.appearance.background.effectSelectorLabel"></select>
-                    </label>
-                  </div>
+                  <div data-setting-mount="appearanceSurfaceEffectSelect"></div>
                   <p class="settings-field-note" id="appearanceSurfaceEffectMeta"></p>
                   <div class="surface-effect-preview" id="appearanceSurfaceEffectPreview" data-surface-input-block aria-hidden="true"></div>
                 </div>
 
-                <details class="settings-group settings-group--wide appearance-advanced">
+                <details class="settings-fold appearance-advanced">
                   <summary data-i18n="settings.appearance.advanced.heading">Advanced</summary>
-                  <p class="settings-group-copy" data-i18n="settings.appearance.advanced.description">Optional visual accents that do not affect content or memory.</p>
+                  <div data-setting-mount="appearanceAppZoomSelect"></div>
                   <div class="settings-toggle-list" id="appearanceHoloList"></div>
                 </details>
-
-                <div class="settings-group" role="group" aria-labelledby="appearanceZoomHeading">
-                  <h4 class="settings-group-heading" id="appearanceZoomHeading" data-i18n="settings.appearance.displayScale.heading">Display scale</h4>
-                  <p class="settings-group-copy" data-i18n="settings.appearance.displayScale.description">Scale the entire app shell. Chat content has its own contextual control in Composer and Quick Settings.</p>
-                  <div class="settings-field-row">
-                    <div class="settings-field-row-text">
-                      <label class="settings-field-label" for="appearanceAppZoomSelect" data-i18n="settings.appearance.displayScale.zoomLabel">Overall app zoom</label>
-                      <p class="settings-field-description" data-i18n="settings.appearance.displayScale.zoomDescription">Scale the entire app shell larger or smaller.</p>
-                    </div>
-                    <label class="select-shell">
-                      <select id="appearanceAppZoomSelect" aria-label="Overall app zoom selector" data-i18n-aria-label="settings.appearance.displayScale.zoomSelectorLabel"></select>
-                    </label>
-                  </div>
-                  <p class="settings-note" data-i18n="settings.appearance.displayScale.sidebarNote">Sidebar layout lives in Home &amp; Layout.</p>
-                </div>
 
                 <details class="settings-overflow">
                   <summary data-i18n="settings.appearance.moreActions">More actions</summary>
@@ -969,85 +839,73 @@
                     <button class="settings-secondary" id="appearanceResetButton" type="button" data-i18n="settings.appearance.reset">Reset Appearance</button>
                   </div>
                 </details>
-                <div class="settings-note" id="appearanceStatus" aria-live="polite" data-i18n="settings.appearance.paletteStatus">Midnight palette active.</div>
               </section>
 
 
               <section class="settings-card context-card" data-settings-section="context">
                 <div class="settings-card-header">
                   <h3 data-i18n="settings.context.heading">Context</h3>
-                  <span class="settings-badge" id="contextBadge" data-i18n="settings.context.fullSession">Full session</span>
                 </div>
-                <p class="settings-copy" data-i18n="settings.context.description">Control what rides along with your next message. Your full transcript stays saved either way &mdash; these switches only trim or enrich what gets sent.</p>
-                <div class="settings-note" id="contextStatus" data-i18n="settings.context.readyStatus">Context controls are ready &mdash; edits take effect on your next message.</div>
+                <p class="settings-copy" data-i18n="settings.context.description">What goes along with each message. Your full transcript stays saved either way.</p>
+                <div class="settings-note" id="contextStatus" role="status" aria-live="polite" hidden></div>
 
-                <div class="settings-group settings-group--flush" role="group" aria-labelledby="contextSourcesHeading">
-                  <h4 class="settings-group-heading" id="contextSourcesHeading" data-i18n="settings.context.sources.heading">Context sources</h4>
-                  <p class="settings-group-copy" data-i18n="settings.context.sources.description">Pick how much history and which companion context goes out with each message.</p>
-                  <div class="settings-field-row">
-                    <div class="settings-field-row-text">
-                      <label class="settings-field-label" for="contextHistoryScopeSelect" data-i18n="settings.context.historyScope.label">History scope</label>
-                      <p class="settings-field-description" data-i18n="settings.context.historyScope.description">How much of this conversation rides along with your next message.</p>
-                    </div>
-                    <label class="select-shell">
-                      <select id="contextHistoryScopeSelect" aria-label="Context history scope" data-i18n-aria-label="settings.context.historyScope.selectorLabel">
-                        <option value="session" data-i18n="settings.context.fullSession">Full session</option>
-                        <option value="recent" data-i18n="settings.context.historyScope.lastSixTurns">Last 6 turns</option>
-                        <option value="fresh" data-i18n="settings.context.historyScope.newPromptOnly">New prompt only</option>
-                      </select>
-                    </label>
-                  </div>
-                  <p class="settings-note" data-i18n="settings.context.historyScope.limitNote">If the request exceeds a model or transport limit, Jenny narrows it automatically and reports that in the conversation.</p>
-                  <div class="settings-toggle-list" id="contextSourcesList" aria-live="polite"></div>
-                  <div class="settings-actions"><span id="contextPersonalityLinkHost"></span><span id="contextMemoryLinkHost"></span></div>
+                <div class="settings-group" role="group" aria-labelledby="contextSourcesHeading">
+                  <h4 class="settings-group-heading" id="contextSourcesHeading" data-i18n="settings.context.sources.heading">What is sent</h4>
+                  <div data-setting-mount="contextHistoryScopeSelect"></div>
+                  <div id="contextSourcesList"></div>
+                  <div class="settings-row-links"><span id="contextPersonalityLinkHost"></span><span id="contextMemoryLinkHost"></span></div>
                 </div>
 
                 <div class="settings-group" role="group" aria-labelledby="contextRuntimeHeading">
-                  <h4 class="settings-group-heading" id="contextRuntimeHeading" data-i18n="settings.context.expertDiagnostics.heading">Expert diagnostics</h4>
-                  <p class="settings-group-copy" data-i18n="settings.context.expertDiagnostics.description">Advanced controls for request limits and automatic summary behavior. Provider caching and bounded tool discovery stay managed internally.</p>
-                  <div class="settings-toggle-list" id="contextRuntimeList" aria-live="polite"></div>
-                </div>
-
-                <div class="settings-group" role="group" aria-labelledby="contextCompactionTuningHeading">
-                  <h4 class="settings-group-heading" id="contextCompactionTuningHeading" data-i18n="settings.compaction.heading">Advanced context</h4>
-                  <p class="settings-group-copy" data-i18n="settings.compaction.description">Optional guidance can influence emphasis, but cannot replace Jenny's required summary fields or trust rules.</p>
-                  <div id="contextCompactionTuning" aria-live="polite"></div>
+                  <h4 class="settings-group-heading" id="contextRuntimeHeading" data-i18n="settings.context.summaries.heading">Summaries</h4>
+                  <div id="contextRuntimeList"></div>
+                  <div id="contextCompactionTuning"></div>
                 </div>
               </section>
 
               <section class="settings-card tools-card" data-settings-section="tools">
                 <div class="settings-card-header">
                   <h3 data-i18n="settings.tools.heading">Tools</h3>
-                  <span class="settings-badge" data-i18n="settings.tools.managed">Managed</span>
                 </div>
-                <p class="settings-copy" data-i18n="settings.tools.description">Turn on optional tool capabilities and see what's always available in this workspace.</p>
-                <div class="settings-summary-row" id="toolsSummary" data-i18n="settings.tools.checkingReadiness">Checking tool readiness...</div>
+                <p class="settings-copy" data-i18n="settings.tools.description">What Jenny may do in your workspace, and what she has to ask first.</p>
+                <div class="settings-page-status" id="toolsWorkspaceLine" data-state="blocked">
+                  <span class="settings-page-status-dot" aria-hidden="true"></span>
+                  <span class="settings-page-status-label" data-i18n="settings.tools.workspaceRoot.label">Workspace</span>
+                  <code class="settings-page-status-value" id="toolsWorkspacePath" data-i18n="settings.tools.workspaceRoot.noneSelected">No workspace root selected.</code>
+                  <span class="settings-page-status-note" id="toolsWorkspaceStatus" role="status"></span>
+                  <span class="settings-page-status-note" id="toolsWorkspaceProject" hidden></span>
+                  <button class="btn btn--sm" id="toolsWorkspaceChooseButton" type="button" data-i18n="settings.tools.workspaceRoot.openWorkspace">Open Workspace</button>
+                </div>
 
-                <div class="settings-group settings-group--flush" role="group" aria-labelledby="toolsWorkspaceHeading">
-                  <h4 class="settings-group-heading" id="toolsWorkspaceHeading" data-i18n="settings.tools.workspaceRoot.heading">Workspace root</h4>
-                  <p class="settings-group-copy" data-i18n="settings.tools.workspaceRoot.description">Workspace setup owns this authority. Tools reports the active root and any blocker without changing it.</p>
-                  <div class="settings-note" id="toolsWorkspacePath" data-i18n="settings.tools.workspaceRoot.noneSelected">No workspace root selected.</div>
-                  <div class="settings-note" id="toolsWorkspaceStatus" data-i18n="settings.tools.workspaceRoot.choosePrompt">Choose a workspace root to unlock workspace-aware tools, project skills, and local guidance.</div>
-                  <div class="settings-note" id="toolsWorkspaceProject" hidden></div>
-                  <div class="settings-actions">
-                    <button class="settings-button settings-button-secondary" id="toolsWorkspaceChooseButton" type="button" data-i18n="settings.tools.workspaceRoot.openWorkspace">Open Workspace</button>
+                <div class="settings-flow" id="toolsConfigFieldList">
+                  <div class="settings-group" role="group" aria-labelledby="toolsPermissionsHeading">
+                    <h4 class="settings-group-heading" id="toolsPermissionsHeading" data-i18n="settings.tools.permissions.heading">Permissions</h4>
+                    <div id="toolsPermissionsList"></div>
                   </div>
-                </div>
 
-                <div class="settings-group settings-group--wide" role="group" aria-labelledby="toolsCapabilitiesHeading">
-                  <h4 class="settings-group-heading" id="toolsCapabilitiesHeading" data-i18n="settings.tools.capabilities.heading">Optional capabilities</h4>
-                  <p class="settings-group-copy" data-i18n="settings.tools.capabilities.description">Flip these on or off &mdash; each one applies starting with your next message.</p>
-                  <div class="tools-config-field-list" id="toolsConfigFieldList" aria-live="polite"></div>
-                </div>
+                  <div class="settings-group" role="group" aria-labelledby="toolsApprovalRulesHeading">
+                    <h4 class="settings-group-heading" id="toolsApprovalRulesHeading" data-i18n="settings.tools.approvalRules.heading">Approval rules</h4>
+                    <p class="settings-group-copy" data-i18n="settings.tools.approvalRules.description">What "Always allow" has saved so far. Remove a rule and Jenny asks again next time.</p>
+                    <div class="tools-approval-rules" id="toolsApprovalRulesList" aria-live="polite" data-i18n="settings.tools.approvalRules.loading">Loading approval rules...</div>
+                  </div>
 
-                <div class="settings-group settings-group--wide" id="toolsPdfAddonHost" role="group" aria-labelledby="toolsPdfAddonHeading" aria-live="polite"></div>
+                  <div class="settings-group" role="group" aria-labelledby="toolsFilesHeading">
+                    <h4 class="settings-group-heading" id="toolsFilesHeading" data-i18n="settings.tools.files.heading">Files and documents</h4>
+                    <div id="toolsFilesList"></div>
+                    <div id="toolsPdfAddonHost" role="group" aria-labelledby="toolsPdfAddonHeading"></div>
+                  </div>
 
-                <div class="settings-group settings-group--wide" id="toolsCommandSandboxHost" role="group" aria-labelledby="toolsCommandSandboxHeading" aria-live="polite"></div>
+                  <div class="settings-group" role="group" aria-labelledby="toolsWebHeading">
+                    <h4 class="settings-group-heading" id="toolsWebHeading" data-i18n="settings.tools.web.heading">Web</h4>
+                    <div id="toolsWebList"></div>
+                  </div>
 
-                <div class="settings-group settings-group--wide" role="group" aria-labelledby="toolsApprovalRulesHeading">
-                  <h4 class="settings-group-heading" id="toolsApprovalRulesHeading" data-i18n="settings.tools.approvalRules.heading">Approval rules</h4>
-                  <p class="settings-group-copy" data-i18n="settings.tools.approvalRules.description">What "Always allow" has saved so far. Remove a rule and Jenny asks again next time.</p>
-                  <div class="tools-approval-rules" id="toolsApprovalRulesList" aria-live="polite" data-i18n="settings.tools.approvalRules.loading">Loading approval rules...</div>
+                  <div class="settings-group" role="group" aria-labelledby="toolsCodeHeading">
+                    <h4 class="settings-group-heading" id="toolsCodeHeading" data-i18n="settings.tools.code.heading">Code and commands</h4>
+                    <div id="toolsTerminalList"></div>
+                    <div id="toolsCommandSandboxHost"></div>
+                    <div id="toolsCodeList"></div>
+                  </div>
                 </div>
 
               </section>
@@ -1055,20 +913,21 @@
               <section class="settings-card" data-settings-section="editor">
                 <div class="settings-card-header">
                   <h3 data-i18n="settings.editor.heading">Editor</h3>
-                  <span class="settings-badge" id="editorBadge" data-i18n="settings.editor.workspaceBadge">Workspace</span>
                 </div>
                 <p class="settings-copy" data-i18n="settings.editor.description">Tune the code editor to how you work &mdash; font, tabs, and save behavior all persist across restarts.</p>
-                <div class="settings-note" id="editorStatus" aria-live="polite"></div>
-                <div class="settings-editor-field-list" id="editorSettingsFieldList" aria-live="polite"></div>
+                <div class="settings-note" id="editorStatus" aria-live="polite" hidden></div>
+                <div class="settings-group" role="group" aria-labelledby="editorGeneralHeading">
+                  <h4 class="settings-group-heading" id="editorGeneralHeading" data-i18n="settings.editor.general.heading">General</h4>
+                  <div class="settings-editor-field-list" id="editorSettingsFieldList" aria-live="polite"></div>
+                </div>
               </section>
 
               <section class="settings-card" data-settings-section="home">
                 <div class="settings-card-header">
                   <h3 data-i18n="settings.home.heading">Home</h3>
-                  <span class="settings-badge" id="homeBadge" data-i18n="settings.home.badge">Home</span>
                 </div>
                 <p class="settings-copy" data-i18n="settings.home.description">Choose how Home guidance and quick capture behave across restarts.</p>
-                <div class="settings-note" id="homeStatus" aria-live="polite"></div>
+                <div class="settings-note" id="homeStatus" aria-live="polite" hidden></div>
 
                 <div class="settings-group settings-group--flush" role="group" aria-labelledby="homeScratchpadHeading">
                   <h4 class="settings-group-heading" id="homeScratchpadHeading" data-i18n="settings.home.behavior.heading">Home behavior</h4>
@@ -1077,10 +936,32 @@
                 </div>
               </section>
 
+              <section class="settings-card" data-settings-section="notifications" id="notificationsSettingsSection">
+                <div class="settings-card-header">
+                  <h3 data-i18n="settings.notifications.heading">Notifications</h3>
+                </div>
+                <p class="settings-copy" data-i18n="settings.notifications.description">Desktop notifications while you work in other apps. They never take focus; click one to return to the chat.</p>
+                <div class="settings-note" id="notificationsStatus" aria-live="polite"></div>
+                <div class="settings-group settings-group--flush" role="group" aria-labelledby="notificationsGeneralHeading">
+                  <h4 class="settings-group-heading" id="notificationsGeneralHeading" data-i18n="settings.notifications.general.heading">General</h4>
+                  <div class="settings-toggle-list" id="notificationsGeneralList"></div>
+                </div>
+
+                <div class="settings-group settings-group--flush" role="group" aria-labelledby="notificationsCategoriesHeading">
+                  <h4 class="settings-group-heading" id="notificationsCategoriesHeading" data-i18n="settings.notifications.categories.heading">Notify me when</h4>
+                  <div class="settings-toggle-list" id="notificationsCategoryList"></div>
+                </div>
+
+                <div class="settings-group settings-group--flush" role="group" aria-labelledby="notificationsContentHeading">
+                  <h4 class="settings-group-heading" id="notificationsContentHeading" data-i18n="settings.notifications.content.heading">Content</h4>
+                  <div class="settings-toggle-list" id="notificationsContentList"></div>
+                  <p class="settings-group-copy" data-i18n="settings.notifications.content.note">Your system keeps its own copy of each notification in its notification center, and can silence Jenny system-wide in its notification settings.</p>
+                </div>
+              </section>
+
               <section class="settings-card offline-card" data-settings-section="offline">
                 <div class="settings-card-header">
                   <h3 data-i18n="settings.offline.heading">Offline</h3>
-                  <span class="settings-badge" id="offlineBadge" data-i18n="settings.offline.optional">Optional</span>
                 </div>
                 <p class="settings-copy" data-i18n="settings.offline.description">Force local inference governs model inference only. Tools, extensions, authentication, updates, and other services may still use the network.</p>
                 <div class="settings-summary-row" id="offlineSummary" data-i18n="settings.offline.checkingReadiness">Checking local inference readiness...</div>
@@ -1088,13 +969,11 @@
 
                 <div class="settings-group settings-group--flush" role="group" aria-labelledby="offlineChatHeading">
                   <h4 class="settings-group-heading" id="offlineChatHeading" data-i18n="settings.offline.inferenceBoundary.heading">Inference boundary</h4>
-                  <p class="settings-group-copy" data-i18n="settings.offline.inferenceBoundary.description">When enabled, cloud inference never runs. If the selected local model is unavailable, chat blocks visibly and this setting stays enabled.</p>
                   <div class="settings-toggle-list" id="offlineLocalOnlyList"></div>
                 </div>
 
                 <div class="settings-group settings-group--wide" role="group" aria-labelledby="offlineModelHeading">
                   <h4 class="settings-group-heading" id="offlineModelHeading" data-i18n="settings.offline.localModel.heading">Local inference model</h4>
-                  <p class="settings-group-copy" data-i18n="settings.offline.localModel.description">Model Library owns selection, installation, and runtime lifecycle.</p>
                   <div class="settings-note" id="offlineModelStatus" aria-live="polite" data-i18n="settings.offline.localModel.noneSelected">No local model selected.</div>
                   <div class="settings-actions" id="offlineModelActions"></div>
                 </div>
@@ -1121,47 +1000,45 @@
 
               <section class="settings-card" data-settings-section="account">
                 <div class="settings-card-header">
-                  <h3 data-i18n="settings.account.heading">Local Profile &amp; Setup</h3>
-                  <span class="settings-badge" id="accountBadge" data-i18n="settings.account.localBadge">Local</span>
+                  <h3 data-i18n="settings.sections.account.title">Profile, data &amp; updates</h3>
                 </div>
-                <p class="settings-copy" data-i18n="settings.account.description">Jenny runs locally without an account. This optional profile name is stored on this device and does not affect chat access.</p>
-                <div class="settings-group settings-group--flush" role="group" aria-labelledby="accountAuthHeading">
+                <p class="settings-copy" data-i18n="settings.account.lede">Your profile name, the data Jenny keeps on this device, and updates.</p>
+                <div class="settings-group" role="group" aria-labelledby="accountAuthHeading">
                   <h4 class="settings-group-heading" id="accountAuthHeading" data-i18n="settings.account.localProfile.heading">Local profile</h4>
-                  <p class="settings-group-copy" data-i18n="settings.account.localProfile.description">Choose the name Jenny shows for your local profile. No email or password is required.</p>
+                  <p class="settings-group-copy" data-i18n="settings.account.description">Jenny runs locally without an account. This optional profile name is stored on this device and does not affect chat access.</p>
                   <div id="localProfileSettingsMount" data-renders="local-profile"></div>
                   <div class="settings-note" id="accountSummary" aria-live="polite" data-i18n="settings.account.localProfile.loading">Loading local profile…</div>
                   <div class="settings-note" id="backendSummary" aria-live="polite" data-i18n="settings.account.backendNotReady">Backend not ready.</div>
                 </div>
-                <div class="settings-card-divider settings-setup-divider"></div>
-                <div class="settings-setup-row">
-                  <div>
-                    <h4 class="settings-setup-row-title" data-i18n="settings.account.setup.heading">Setup</h4>
-                    <div class="settings-note" id="setupSettingsSummary" data-i18n="settings.account.setup.loadingStatus">Loading setup status…</div>
+                <div class="settings-group" role="group" aria-labelledby="setupSettingsHeading">
+                  <h4 class="settings-group-heading" id="setupSettingsHeading" data-i18n="settings.account.setup.heading">Setup</h4>
+                  <div class="settings-setup-row">
+                    <div class="settings-note" id="setupSettingsSummary" aria-live="polite" data-i18n="settings.account.setup.loadingStatus">Loading setup status…</div>
+                    <div class="settings-setup-actions" id="setupSettingsActions" data-renders="setup-run-again"></div>
                   </div>
-                  <div class="settings-setup-actions" id="setupSettingsActions" data-renders="setup-run-again"></div>
+                  <div id="setupProgressContainer" data-renders="setup-progress" aria-live="polite"></div>
                 </div>
-                <div id="setupProgressContainer" data-renders="setup-progress" aria-live="polite"></div>
-              </section>
-
-              <section class="settings-card" data-settings-section="dataPrivacy">
-                <div class="settings-card-header"><h3 data-i18n="settings.dataPrivacy.heading">Data &amp; Privacy</h3></div>
-                <p class="settings-copy" data-i18n="settings.dataPrivacy.description">Review local data scope, create private archives, restore data, or remove Jenny.</p>
-                <div id="dataLifecycleSettingsMount"></div>
-              </section>
-
-              <section class="settings-card" data-settings-section="aboutUpdates">
-                <div class="settings-card-header"><h3 data-i18n="settings.about.heading">About &amp; Updates</h3></div>
-                <p class="settings-copy" data-i18n="updates.networkDisclosure">Checks GitHub when you ask. Requires internet access.</p>
-                <p class="settings-note" id="aboutVersionLine" data-i18n="settings.about.version">Version unavailable</p>
-                <p class="settings-copy" data-i18n="settings.about.disclosure">Jenny is software — a tool, not a living being. It has no feelings, awareness, or intent, even when it sounds like it does. With your permission it can read and change files in your workspace and run commands on this computer; keep an eye on it while it works and do not leave Auto mode running unattended.</p>
-                <div class="settings-setup-row">
-                  <div>
-                    <h4 class="settings-setup-row-title" data-i18n="settings.about.updatesHeading">Updates</h4>
-                    <div class="settings-note" id="updateSettingsSummary" data-i18n="settings.about.updatesSummary">Updates are checked only when you ask.</div>
+                <div class="settings-group" role="group" aria-labelledby="dataPrivacyHeading" data-settings-merged-section="dataPrivacy">
+                  <h4 class="settings-group-heading" id="dataPrivacyHeading" data-i18n="settings.dataPrivacy.heading">Data &amp; Privacy</h4>
+                  <div id="dataLifecycleSettingsMount"></div>
+                </div>
+                <div class="settings-group" role="group" aria-labelledby="aboutUpdatesHeading" data-settings-merged-section="aboutUpdates">
+                  <h4 class="settings-group-heading" id="aboutUpdatesHeading" data-i18n="settings.about.heading">About &amp; Updates</h4>
+                  <p class="settings-note" id="aboutVersionLine" data-i18n="settings.about.version">Version unavailable</p>
+                  <p class="settings-group-copy" data-i18n="settings.about.disclosure">Jenny is software — a tool, not a living being. It has no feelings, awareness, or intent, even when it sounds like it does. With your permission it can read and change files in your workspace and run commands on this computer; keep an eye on it while it works and do not leave Auto mode running unattended.</p>
+                  <div class="settings-setup-row">
+                    <div>
+                      <div class="settings-note" id="updateSettingsSummary" data-i18n="settings.about.updatesSummary">Updates are checked only when you ask.</div>
+                      <p class="settings-group-copy" data-i18n="updates.networkDisclosure">Checks GitHub when you ask. Requires internet access.</p>
+                    </div>
+                    <div class="settings-actions">
+                      <button class="settings-secondary" id="checkUpdatesButton" type="button" data-i18n="settings.about.checkForUpdates">Check for Updates</button>
+                    </div>
                   </div>
-                  <div class="settings-actions">
-                    <button class="settings-secondary" id="checkUpdatesButton" type="button" data-i18n="settings.about.checkForUpdates">Check for Updates</button>
-                  </div>
+                </div>
+                <div class="settings-group" role="group" aria-labelledby="removeJennyHeading">
+                  <h4 class="settings-group-heading" id="removeJennyHeading" data-i18n="settings.account.remove.heading">Remove Jenny</h4>
+                  <div id="dataLifecycleRemoveMount"></div>
                 </div>
               </section>
 
@@ -1184,80 +1061,6 @@
                 <div id="pluginsSourcesHost"></div>
               </section>
 
-              <section class="settings-card remote-settings-card" data-settings-section="remote">
-                <div class="settings-card-header">
-                  <h3 data-i18n="settings.remote.heading">Remote Control</h3>
-                </div>
-                <div id="remoteStatusHost"></div>
-                <p class="settings-note" id="remoteStatusMessage" role="status" aria-live="polite"></p>
-                <p class="settings-copy" data-i18n="settings.remote.setup.intro">Use your phone while Jenny is open. First, create a relay in your free Cloudflare account. It carries encrypted messages between Jenny and your phone and cannot read them.</p>
-                <div id="remoteSetupHost">
-                  <template id="remoteSetupStepsTemplate">
-                    <ol class="remote-setup-steps">
-                      <li data-remote-step="relay" data-step-state="current"><strong data-i18n="settings.remote.setup.create">Create your relay</strong>
-                        <p data-i18n="settings.remote.setup.deploy">Deploy the Jenny relay to your free Cloudflare account. It takes a few minutes in your browser and gives you an address like https://name.account.workers.dev.</p>
-                        <div id="remoteTerminalHost"></div>
-                      </li>
-                      <li data-remote-step="connect" data-step-state="todo"><strong data-i18n="settings.remote.setup.connect">Connect Jenny</strong>
-                        <p data-i18n="settings.remote.setup.address">Paste the address Cloudflare shows for your relay into Relay address below and select Save. https:// addresses are converted automatically.</p>
-                      </li>
-                      <li data-remote-step="pair" data-step-state="todo"><strong data-i18n="settings.remote.setup.pair">Pair your phone</strong>
-                        <p data-i18n="settings.remote.setup.pairHelp">Turn on Remote Control, select Add device, and scan the code with your phone's camera.</p>
-                      </li>
-                    </ol>
-                  </template>
-                  <template id="remoteTerminalCommandsTemplate">
-                    <div class="remote-command-list">
-                      <div class="remote-command-row"><code data-remote-command="0">npm --prefix remote/relay ci</code><span data-remote-command-copy="0"></span></div>
-                      <div class="remote-command-row"><code data-remote-command="1">npm --prefix remote/relay exec wrangler login</code><span data-remote-command-copy="1"></span></div>
-                      <div class="remote-command-row"><code data-remote-command="2">npm run remote:relay:deploy</code><span data-remote-command-copy="2"></span></div>
-                    </div>
-                  </template>
-                </div>
-                <div class="settings-group settings-group--flush" role="group" aria-labelledby="remoteRelayHeading">
-                  <h4 class="settings-group-heading" id="remoteRelayHeading" data-i18n="settings.remote.relayHeading">Relay</h4>
-                  <div class="remote-relay-row">
-                    <div id="remoteRelayFieldHost"></div>
-                    <div id="remoteRelaySaveHost"></div>
-                  </div>
-                  <p class="settings-note" id="remoteRelaySummary"></p>
-                  <p class="settings-note remote-action-status" id="remoteActionStatus" role="status" aria-live="polite"></p>
-                </div>
-                <div class="settings-actions" id="remotePrimaryActionHost"></div>
-                <div class="settings-group settings-group--wide remote-pairing-group" role="group" aria-labelledby="remotePairingHeading">
-                  <div class="remote-group-heading-row">
-                    <h4 class="settings-group-heading" id="remotePairingHeading" data-i18n="settings.remote.pairing.heading">Pair a phone</h4>
-                    <div id="remoteAddDeviceHost"></div>
-                  </div>
-                  <div class="remote-pairing-card" id="remotePairingCard" hidden>
-                    <img id="remotePairingQr" alt="Pairing QR code" data-i18n-alt="settings.remote.pairing.qrAlt">
-                    <div class="remote-pairing-copy-row">
-                      <div id="remotePairingLinkHost"></div>
-                      <div id="remotePairingCopyHost"></div>
-                    </div>
-                    <p class="settings-note"><span data-i18n="settings.remote.pairing.expiresIn">Expires in</span> <span id="remotePairingCountdown">00:00</span></p>
-                  </div>
-                </div>
-                <div class="settings-group settings-group--wide" role="group" aria-labelledby="remoteDevicesHeading">
-                  <h4 class="settings-group-heading" id="remoteDevicesHeading" data-i18n="settings.remote.devicesHeading">Paired phones</h4>
-                  <div class="remote-list" id="remoteDevicesList"></div>
-                </div>
-                <div class="settings-group settings-group--wide" role="group" aria-labelledby="remoteSharedHeading">
-                  <h4 class="settings-group-heading" id="remoteSharedHeading" data-i18n="settings.remote.sharedChats.heading">Shared chats</h4>
-                  <p class="settings-group-copy" data-i18n="settings.remote.sharedChats.description">Shared chats are visible to every paired device.</p>
-                  <div class="remote-list" id="remoteSharedSessionsList"></div>
-                </div>
-                <div class="remote-danger-row">
-                  <div id="remoteForgetAllHost"></div>
-                  <div class="remote-forget-confirm" id="remoteForgetConfirm" hidden>
-                    <span data-i18n="settings.remote.forgetAllWarning">This removes every paired phone and shared chat.</span>
-                    <div id="remoteForgetCancelHost"></div>
-                    <div id="remoteForgetConfirmHost"></div>
-                  </div>
-                </div>
-              </section>
-
-
               <section class="settings-card memory-settings-card" data-settings-section="memories" data-settings-field="memoryManager" id="memorySettingsSection">
                 <div class="settings-card-header">
                   <h3 id="memoryPageHeading" tabindex="-1" data-i18n="settings.memories.heading">Memory</h3>
@@ -1269,10 +1072,9 @@
 
                 <div class="settings-group settings-group--wide" role="group" aria-labelledby="memoryNotesHeading">
                   <h4 class="settings-group-heading" id="memoryNotesHeading" data-i18n="settings.memories.notes.heading">Long-term notes</h4>
-                  <p class="settings-group-copy" data-i18n="settings.memories.notes.description">Always sent with your messages. Approved memories are separate and live below.</p>
+                  <p class="settings-group-copy" data-i18n="settings.memories.notes.description">Sent with your messages in the General project, except on the ChatGPT engine. Approved memories are separate and live below.</p>
                   <div id="memoryNotesFieldHost"></div>
-                  <div class="personality-row-meta">
-                    <span class="personality-hint" id="memoryNotesHint" data-i18n="settings.memories.notes.hint">Durable facts and preferences the assistant should always know.</span>
+                  <div class="personality-row-meta memory-notes-meta">
                     <span class="personality-counter" id="memoryNotesCounter" aria-live="polite"></span>
                   </div>
                   <p class="personality-lint" id="memoryNotesLint" hidden></p>
@@ -1285,7 +1087,7 @@
                 <div class="settings-group settings-group--flush" role="group" aria-labelledby="memoryCapturePreferencesHeading">
                   <h4 class="settings-group-heading" id="memoryCapturePreferencesHeading" data-i18n="settings.memories.capture.heading">Capture preferences</h4>
                   <p class="settings-group-copy" data-i18n="settings.memories.capture.description">Jenny can offer one deterministic local suggestion after a turn. Suggestions never write durable memory on their own.</p>
-                  <div id="memoryCapturePreferenceHost" data-settings-field="memoryCaptureSuggestions"></div>
+                  <div class="settings-toggle-list" id="memoryCapturePreferenceHost" data-settings-field="memoryCaptureSuggestions"></div>
                 </div>
 
                 <div class="settings-group settings-group--wide" role="group" aria-labelledby="pendingMemoryHeading">
@@ -1350,16 +1152,15 @@
               </section>
 
               <section class="settings-card" data-settings-section="runtime" id="runtimeSettingsSection"><div id="sessionRuntimeSettingsMount"></div></section>
-              <section class="settings-card" data-settings-section="runtimeLimits" id="runtimeLimitsSettingsSection"><div id="sessionOrchestrationMount"></div></section>
               <section class="settings-card" data-settings-section="advanced" id="advancedSettingsSection">
                 <div class="settings-card-header">
-                  <h3 data-i18n="settings.advanced.heading">Advanced</h3>
+                  <h3 data-i18n="settings.advanced.heading">Limits &amp; budgets</h3>
+                  <div class="settings-actions" id="advancedTuningActions"></div>
                 </div>
-                <p class="settings-copy" data-i18n="settings.advanced.description">Global engine limits that apply to every conversation, for every model. Per-model settings &mdash; sampling, context window, stream inactivity timeout, summarization threshold &mdash; live under Models.</p>
-                <div class="settings-note" id="advancedTuningStatus" role="status" aria-live="polite"></div>
-                <div id="advancedTuningProfileSwitch"></div>
-                <div class="settings-tuning-fields" id="advancedTuningFields"></div>
-                <div class="settings-actions" id="advancedTuningActions"></div>
+                <p class="settings-copy" data-i18n="settings.advanced.description">How far one reply may go, and how much Jenny runs at once. Leave these alone unless a long job is being cut short or the machine is struggling.</p>
+                <p class="settings-note" id="advancedTuningStatus" role="status" aria-live="polite" hidden></p>
+                <p class="settings-note" data-limits-status role="status" aria-live="polite" hidden></p>
+                <div class="settings-flow" id="advancedTuningFields" data-limits-lines></div>
               </section>
 
               </div>
@@ -1380,25 +1181,10 @@
 
   <div class="scratchpad-pin-layer" id="pinnedNoteLayer" aria-label="Pinned notes" data-i18n-aria-label="home.pinnedNotesLabel" hidden></div>
 
-  <div class="composer-popover hidden" id="composerSettingsPopover" role="dialog" aria-modal="false" aria-label="Composer settings" data-i18n-aria-label="composer.settings.dialogLabel">
-    <div class="composer-popover-header">
-      <div class="composer-popover-title" data-i18n="composer.settings.heading">Session Settings</div>
-      <div class="composer-popover-copy" data-i18n="composer.settings.description">Quick controls for the active chat.</div>
-    </div>
-    <div class="composer-popover-section">
-      <div class="composer-popover-section-label" data-i18n="composer.settings.attachmentsHeading">Attachments</div>
-      <button class="composer-popover-action" id="attachFilesButton" type="button" title="Attach files to this message" data-i18n-title="composer.settings.attachFilesTitle" aria-label="Attach files" data-i18n-aria-label="composer.settings.attachFilesLabel" data-i18n="composer.settings.attachFiles">Attach Files</button>
-      <button class="composer-popover-action" id="captureScreenButton" type="button" title="Capture a screenshot to attach" data-i18n-title="composer.settings.captureScreenTitle" aria-label="Capture screen" data-i18n-aria-label="composer.settings.captureScreenLabel" data-i18n="composer.settings.captureScreen">Capture Screen</button>
-      <div class="composer-active-file-action-host hidden" id="composerActiveFileActionHost"></div>
-    </div>
-    <div class="composer-popover-section">
-      <label class="composer-popover-section-label" for="composerChatZoomSelect" data-i18n="composer.settings.chatZoomLabel">Chat zoom</label>
-      <select class="inv-select" id="composerChatZoomSelect" aria-label="Chat zoom" data-i18n-aria-label="composer.settings.chatZoomLabel"></select>
-      <div class="composer-popover-copy" id="composerChatZoomStatus" aria-live="polite" data-i18n="composer.settings.chatZoomStatus">100% &middot; Ctrl + wheel adjusts &middot; Ctrl+0 resets.</div>
-    </div>
-    <div class="composer-popover-section">
-      <button class="composer-popover-action composer-popover-secondary" id="openComposerSettingsViewButton" type="button" title="Open the full settings panel" data-i18n-title="composer.settings.openFullTitle" aria-label="Open full settings" data-i18n-aria-label="composer.settings.openFullLabel" data-i18n="composer.settings.openFull">Open Full Settings</button>
-    </div>
+  <div class="composer-popover composer-attach-menu hidden" id="composerAttachMenu" role="menu" aria-labelledby="composerAttachShortcut">
+    <button class="composer-popover-action" id="attachFilesButton" role="menuitem" type="button" title="Attach files to this message" data-i18n-title="composer.attachMenu.filesTitle" data-i18n="composer.attachMenu.files">Attach files</button>
+    <button class="composer-popover-action" id="captureScreenButton" role="menuitem" type="button" title="Capture a screenshot to attach" data-i18n-title="composer.attachMenu.screenTitle" data-i18n="composer.attachMenu.screen">Capture screen</button>
+    <div class="composer-active-file-action-host hidden" id="composerActiveFileActionHost"></div>
   </div>
   <div class="composer-popover hidden" id="composerCommandPopover" role="menu" aria-labelledby="composerCommandPopoverTitle">
     <div class="composer-popover-header" role="presentation">
@@ -1497,6 +1283,7 @@
   <script defer src="renderer/chat/chat-thinking-utils.js"></script>
   <script defer src="renderer/chat/renderer-chat-surface-live-utils.js"></script>
   <script defer src="renderer/chat/renderer-pane-visibility-utils.js"></script>
+  <script defer src="renderer/chat/renderer-pane-session-context.js"></script>
   <script defer src="renderer/chat/renderer-chat-unread-orientation-utils.js"></script>
   <script defer src="renderer/chat/renderer-chat-citation-jump-utils.js"></script>
   <script defer src="renderer/chat/renderer-chat-codebase-cite-utils.js"></script>
@@ -1565,11 +1352,13 @@
   <script defer src="renderer/shell/renderer-thinking-panel-settle-utils.js"></script>
   <script defer src="renderer/chat/renderer-reasoning-autocollapse-utils.js"></script>
   <script defer src="renderer/chat/renderer-stream-token-fade-utils.js"></script>
+  <script defer src="renderer/chat/renderer-stream-reasoning-patch-utils.js"></script>
   <script defer src="renderer/chat/renderer-stream-reveal-utils.js"></script>
   <script defer src="renderer/chat/renderer-source-utils.js"></script>
   <script defer src="renderer/chat/renderer-error-recovery-utils.js"></script>
   <script defer src="renderer/shared/error-intake.js"></script>
   <script defer src="renderer/features/renderer-artifact-presentation.js"></script>
+  <script defer src="renderer/inventory/artifact-figure.js"></script>
   <script defer src="renderer/chat/renderer-artifact-card-utils.js"></script>
   <script defer src="renderer/chat/renderer-approval-block.js"></script>
   <script defer src="renderer/chat/renderer-user-questions-block.js"></script>
@@ -1594,6 +1383,7 @@
   <script defer src="renderer/chat/renderer-subagent-monitor-model.js"></script>
   <script defer src="renderer/chat/renderer-subagent-monitor-view.js"></script>
   <script defer src="renderer/chat/reasoning-row-v2-utils.js"></script>
+  <script defer src="renderer/chat/renderer-transcript-view-utils.js"></script>
   <script defer src="renderer/chat/renderer-transcript-reasoning-v2.js"></script>
   <script defer src="renderer/chat/renderer-transcript-thinking.js"></script>
   <script defer src="renderer/chat/renderer-transcript-agent-progress.js"></script>
@@ -1608,22 +1398,8 @@
 <script defer src="renderer/chat/renderer-plan-usage-meter.js"></script>
   <script defer src="renderer/chat/renderer-composer-holo-utils.js"></script>
   <script defer src="renderer/shell/renderer-session-utils.js"></script>
-  <script defer src="renderer/features/renderer-comet.js"></script>
   <script defer src="renderer/chat/renderer-thinking-indicator.js"></script>
   <script defer src="renderer/chat/renderer-turn-phase.js"></script>
-  <script defer src="renderer/features/renderer-comet-presence-arbiter.js"></script>
-  <!-- comet personality system (gated by comet_personality feature flag) -->
-  <script defer src="comet/behaviors/behavior-registry.js"></script>
-  <script defer src="comet/behaviors/idle-drift.js"></script>
-  <script defer src="comet/behaviors/settle.js"></script>
-  <script defer src="comet/behaviors/follow-cursor.js"></script>
-  <script defer src="comet/behaviors/alert.js"></script>
-  <script defer src="comet/behaviors/excited.js"></script>
-  <script defer src="comet/behaviors/anchored-orbit.js"></script>
-  <script defer src="comet/comet-dom.js"></script>
-<script defer src="comet/sentiment-utils.js"></script>
-<script defer src="renderer/features/renderer-comet-personality.js"></script>
-<script defer src="comet/index.js"></script>
 <script defer src="renderer/chat/renderer-timeline-visibility-utils.js"></script>
 <script defer src="renderer/chat/renderer-stream-client-metrics.js"></script>
 <script defer src="renderer/chat/renderer-stream-handler-agent-status.js"></script>
@@ -1644,6 +1420,8 @@
 <script defer src="renderer/chat/renderer-stream-handler-runtime.js"></script>
 <script defer src="renderer/chat/renderer-stream-tool-patch-utils.js"></script>
 <script defer src="renderer/chat/renderer-stream-tool-live-tail.js"></script>
+<script defer src="renderer/chat/renderer-stream-waiting-line.js"></script>
+<script defer src="renderer/chat/renderer-stream-activity-typed.js"></script>
 <script defer src="renderer/chat/renderer-stream-activity-row.js"></script>
 <script defer src="renderer/chat/renderer-stream-handler-tools.js"></script>
 <script defer src="renderer/chat/renderer-stream-handler-terminal-merge.js"></script>
@@ -1668,11 +1446,12 @@
 <script defer src="renderer/chat/renderer-skill-slash-commands.js"></script>
 <script defer src="renderer/chat/renderer-runtime-refusals.js"></script>
 <script defer src="renderer/chat/renderer-runtime-queue-view.js"></script>
+<script defer src="renderer/chat/renderer-admission-wait-line.js"></script>
 <script defer src="renderer/chat/renderer-turn-pause-interaction.js"></script>
+<script defer src="renderer/chat/renderer-stuck-send.js"></script>
 <script defer src="renderer/chat/renderer-durable-send-pause.js"></script>
 <script defer src="renderer/chat/renderer-durable-send.js"></script>
 <script defer src="renderer/chat/renderer-send-utils.js"></script>
-<script defer src="renderer/chat/renderer-remote-control-banner.js"></script>
   <script defer src="renderer/features/renderer-interactive-panel-utils.js"></script>
   <script defer src="renderer/features/renderer-plan-proposal-card.js"></script>
   <script defer src="renderer/features/renderer-plan-document.js"></script>
@@ -1683,8 +1462,9 @@
   <script defer src="renderer/features/renderer-offline-utils.js"></script>
   <script defer src="renderer/features/renderer-proactive-utils.js"></script>
   <script defer src="renderer/features/renderer-skills-utils.js"></script>
-  <script defer src="renderer/features/renderer-tips-utils.js"></script>
   <script defer src="renderer/features/renderer-companion-state-utils.js"></script>
+  <script defer src="renderer/features/renderer-open-loop-row.js"></script>
+  <script defer src="renderer/features/renderer-open-loop-form.js"></script>
   <script defer src="renderer/features/renderer-companion-action-utils.js"></script>
   <script defer src="renderer/features/renderer-companion-utils.js"></script>
   <script defer src="renderer/features/renderer-dashboard-registry.js"></script>
@@ -1737,6 +1517,7 @@
   <script defer src="renderer/shell/renderer-error-intake-controller.js"></script>
 <script defer src="vendor/pretext-layout.umd.js"></script>
 <script defer src="renderer/features/renderer-pretext-utils.js"></script>
+<script defer src="renderer/shell/renderer-settings-field-descriptors.js"></script>
 <script defer src="renderer/shell/renderer-settings-field-copy.js"></script>
 <script defer src="renderer/shell/renderer-settings-support.js"></script>
 <script defer src="renderer/shell/renderer-settings-foundation.js"></script>
@@ -1756,21 +1537,21 @@
 <script defer src="renderer/shell/renderer-settings-composer-measure.js"></script>
 <script defer src="renderer/shell/renderer-settings-overlays.js"></script>
 <script defer src="renderer/shell/renderer-settings-v2-surfaces.js"></script>
+<script defer src="renderer/shell/renderer-diagnostics-performance-utils.js"></script>
 <script defer src="renderer/shell/renderer-diagnostics-render-utils.js"></script>
 <script defer src="renderer/shell/renderer-settings-utils.js"></script>
 <script defer src="renderer/shell/model-library/model-library-runtime-actions.js"></script>
 <script defer src="renderer/shell/renderer-model-library-folders.js"></script>
+<script defer src="renderer/shell/model-library/model-library-image-engine.js"></script>
 <script defer src="renderer/shell/renderer-settings-model-library-section.js"></script>
 <script defer src="renderer/shell/renderer-plugin-view-host.js"></script>
 <script defer src="renderer/shell/renderer-plugin-session-controller.js"></script>
 <script defer src="renderer/inventory/drawer.js"></script>
 <script defer src="renderer/shell/renderer-model-tuning-engine-utils.js"></script>
 <script defer src="renderer/shell/renderer-model-tuning-drawer.js"></script>
-<script defer src="renderer/shell/renderer-plugin-catalog.js"></script>
 <script defer src="renderer/shell/renderer-plugin-manager-details.js"></script>
 <script defer src="renderer/shell/renderer-plugin-manager-operations.js"></script>
 <script defer src="renderer/shell/renderer-plugins-settings.js"></script>
-<script defer src="renderer/shell/renderer-settings-remote-section.js"></script>
 <script defer src="renderer/shell/renderer-mcp-servers.js"></script>
 <script defer src="renderer/shell/renderer-knowledge-scope.js"></script>
 <script defer src="renderer/shell/renderer-knowledge-folders.js"></script>
@@ -1779,11 +1560,13 @@
 <script defer src="renderer/features/renderer-workspace-root-nudge.js"></script>
 <script defer src="renderer/shell/renderer-settings-editor-section.js"></script>
 <script defer src="renderer/shell/renderer-settings-home-section.js"></script>
+<script defer src="renderer/shell/renderer-settings-notifications-section.js"></script>
 <script defer src="renderer/shell/renderer-settings-compaction-section.js"></script>
 <script defer src="renderer/shell/renderer-settings-search.js"></script>
 <script defer src="renderer/shell/renderer-settings-nav-utils.js"></script>
 <script defer src="renderer/shell/renderer-bootstrap-dom.js"></script>
 <script defer src="renderer/shell/renderer-pane-model.js"></script>
+<script defer src="renderer/shell/renderer-pane-layout-controller.js"></script>
 <script defer src="renderer/shell/renderer-bootstrap-utils.js"></script>
   <script defer src="renderer/shell/renderer-diagnostics-event-bindings.js"></script>
   <script defer src="renderer/shell/renderer-shell-event-utils.js"></script>
@@ -1795,6 +1578,7 @@
   <script defer src="renderer/shell/renderer-toprail-utils.js"></script>
   <script defer src="renderer/shell/renderer-chats-strip.js"></script>
   <script defer src="renderer/shell/renderer-attention-inbox-model.js"></script>
+  <script defer src="renderer/shell/renderer-desktop-notifications.js"></script>
   <script defer src="renderer/shell/renderer-attention-inbox.js"></script>
   <script defer src="renderer/shell/renderer-away-digest-model.js"></script>
   <script defer src="renderer/shell/renderer-top-nav-shell.js"></script>
@@ -1814,6 +1598,7 @@
   <script defer src="renderer/chat/renderer-chat-wayfinder-utils.js"></script>
   <script defer src="renderer/chat/renderer-chat-scroll-coordinator.js"></script>
   <script defer src="renderer/features/renderer-attachment-queue-utils.js"></script>
+  <script defer src="renderer/chat/renderer-composer-pane-drafts.js"></script>
   <script defer src="renderer/chat/renderer-composer-session-state.js"></script>
   <script defer src="renderer/shell/renderer-session-cache-utils.js"></script>
   <script defer src="renderer/shell/renderer-session-lifecycle-utils.js"></script>
@@ -1830,7 +1615,6 @@
   <script defer src="renderer/shell/renderer-snapshot-refresh.js"></script>
   <script defer src="renderer/shell/renderer-lifecycle-utils.js"></script>
   <script defer src="renderer/shell/renderer-lifecycle-progress-utils.js"></script>
-  <script defer src="renderer/shell/renderer-turn-status-pill.js"></script>
   <script defer src="renderer/shell/renderer-header-utils.js"></script>
   <script defer src="renderer/chat/renderer-message-index-utils.js"></script>
   <script defer src="renderer/chat/renderer-thread-tree-utils.js"></script>
@@ -1855,6 +1639,7 @@
   <script defer src="renderer/chat/renderer-composer-v2-model.js"></script>
   <script defer src="renderer/chat/renderer-composer-v2-state.js"></script>
   <script defer src="renderer/chat/renderer-composer-v2-toggle.js"></script>
+  <script defer src="renderer/chat/renderer-composer-tools-slot.js"></script>
   <script defer src="renderer/chat/renderer-composer-model-picker-utils.js"></script>
   <script defer src="renderer/chat/renderer-composer-model-picker.js"></script>
   <script defer src="renderer/chat/renderer-composer-v2-flow.js"></script>
@@ -1877,6 +1662,8 @@
   <script defer src="renderer/chat/renderer-resume-turn-affordance.js"></script>
   <script defer src="renderer/chat/renderer-turn-row-render-utils.js"></script>
   <script defer src="renderer/chat/renderer-plan-document-controller.js"></script>
+  <script defer src="renderer/chat/renderer-sprite-activity.js"></script>
+  <script defer src="renderer/chat/renderer-sprite-morph.js"></script>
   <script defer src="renderer/chat/renderer-render-pipeline-thinking.js"></script>
   <script defer src="renderer/chat/renderer-composer-vision-gate.js"></script>
   <script defer src="renderer/chat/renderer-render-pipeline-chrome.js"></script>
@@ -1890,6 +1677,7 @@
   <script defer src="renderer/chat/renderer-render-pipeline-fallback-markup.js"></script>
   <script defer src="renderer/chat/renderer-render-pipeline-shell-resolvers.js"></script>
   <script defer src="renderer/chat/renderer-render-pipeline-chrome-delegates.js"></script>
+  <script defer src="renderer/chat/renderer-render-pipeline-article-prediction.js"></script>
   <script defer src="renderer/chat/renderer-render-pipeline-article-markup.js"></script>
   <script defer src="renderer/chat/renderer-chat-timeline-orientation-utils.js"></script>
   <script defer src="renderer/chat/renderer-render-pipeline-thread-dom.js"></script>
@@ -1900,6 +1688,7 @@
   <script defer src="renderer/chat/renderer-render-pipeline-timeline-adapter.js"></script>
   <script defer src="renderer/chat/renderer-render-pipeline-render-ladder.js"></script>
   <script defer src="renderer/chat/renderer-render-pipeline-stream-reveal-callbacks.js"></script>
+  <script defer src="renderer/chat/renderer-render-pipeline-render-signatures.js"></script>
   <script defer src="renderer/chat/renderer-render-pipeline-message-renderer.js"></script>
   <script defer src="renderer/chat/renderer-render-pipeline-utils.js"></script>
   <script defer src="renderer/shell/renderer-shell-status-controller.js"></script>
@@ -1912,125 +1701,16 @@
 <!-- monaco-editor/min/vs/loader.js (+ editor.main) is lazy-loaded on first artifact-editor or Workspace-editor use via renderer-monaco-editor-utils.js (ensureMonacoLoader). -->
 <script defer src="renderer/features/renderer-monaco-editor-utils.js"></script>
   <script defer src="renderer/features/renderer-ide-state.js"></script>
-  <script defer src="renderer/features/renderer-ide-closed-tabs.js"></script>
-  <script defer src="renderer/features/renderer-ide-image-host.js"></script>
-  <script defer src="renderer/features/renderer-ide-image-memory.js"></script>
-  <script defer src="renderer/features/renderer-ide-preview-host.js"></script>
-  <script defer src="renderer/features/renderer-ide-editor-host-panes.js"></script>
-  <script defer src="renderer/features/renderer-ide-editor-reads.js"></script>
-  <script defer src="renderer/features/renderer-ide-editor-host.js"></script>
-  <script defer src="renderer/features/renderer-ide-editor-prefs.js"></script>
-  <script defer src="renderer/features/renderer-ide-tabs.js"></script>
-  <script defer src="renderer/features/renderer-ide-tabs-controller.js"></script>
-  <script defer src="renderer/features/renderer-ide-tree-selection.js"></script>
-  <script defer src="renderer/features/renderer-ide-tree-markup.js"></script>
-  <script defer src="renderer/features/renderer-ide-tree-mutations.js"></script>
-  <script defer src="renderer/features/renderer-ide-tree-keyboard.js"></script>
-  <script defer src="renderer/features/renderer-ide-tree-dnd.js"></script>
-  <script defer src="renderer/features/renderer-ide-tree-clipboard.js"></script>
-  <script defer src="renderer/features/renderer-ide-tree-import.js"></script>
-  <script defer src="renderer/features/renderer-ide-tree-edit.js"></script>
-  <script defer src="renderer/features/renderer-ide-tree.js"></script>
-  <script defer src="renderer/features/renderer-ide-rail.js"></script>
-  <script defer src="renderer/features/renderer-ide-search-panel.js"></script>
-  <script defer src="renderer/features/renderer-ide-replace-text-utils.js"></script>
-  <script defer src="renderer/features/renderer-ide-replace-journal.js"></script>
-  <script defer src="renderer/features/renderer-ide-replace-controller.js"></script>
-  <script defer src="renderer/features/renderer-ide-changes-panel.js"></script>
-  <script defer src="renderer/features/renderer-ide-hunk-apply-utils.js"></script>
-  <!-- UIUX-035: shared incremental ANSI/OSC stripper — precedes both terminal
-       panels that consume it (legacy line panel now; xterm/pty panel keeps
-       its own render path but may adopt it too). -->
-  <script defer src="renderer/shared/ansi-stream-utils.js"></script>
-  <!-- Shared bounded scrollback painter + pre-ready event buffer — precedes
-       the three terminal-stream consumers (terminal, pty, run-scripts). -->
-  <script defer src="renderer/shared/terminal-stream-utils.js"></script>
-  <script defer src="renderer/features/renderer-ide-terminal-panel.js"></script>
-  <script defer src="renderer/features/renderer-ide-pty-terminal-panel.js"></script>
-  <script defer src="renderer/features/renderer-ide-terminal-wiring.js"></script>
-  <script defer src="renderer/features/renderer-ide-theme-bridge.js"></script>
-  <script defer src="renderer/features/renderer-ide-icons.js"></script>
-  <script defer src="renderer/features/renderer-ide-statusbar.js"></script>
-  <script defer src="renderer/features/renderer-ide-chip-picker.js"></script>
-  <script defer src="renderer/features/renderer-ide-picker-overlay.js"></script>
-  <script defer src="renderer/features/renderer-ide-workspace-inventory.js"></script>
-  <script defer src="renderer/features/renderer-ide-quick-open.js"></script>
+  <!-- The Workspace IDE group (including the ANSI stripper and terminal-stream
+       painter) loads on first use, in the order of this manifest. -->
+  <script defer src="renderer/shell/renderer-ide-script-manifest.js"></script>
   <script defer src="renderer/features/renderer-ide-active-file-context.js"></script>
   <script defer src="renderer/features/renderer-ide-mention-autocomplete.js"></script>
   <script defer src="renderer/chat/renderer-slash-autocomplete.js"></script>
-  <script defer src="renderer/features/renderer-ide-preview-controller.js"></script>
-  <script defer src="renderer/features/renderer-ide-diff-controller.js"></script>
-  <script defer src="renderer/features/renderer-ide-send-utils.js"></script>
-  <script defer src="renderer/features/renderer-ide-selection-intents.js"></script>
   <script defer src="renderer/features/renderer-ide-path-menu.js"></script>
-  <script defer src="renderer/features/renderer-ide-shortcuts.js"></script>
-  <script defer src="renderer/features/renderer-ide-welcome.js"></script>
   <script defer src="renderer/features/renderer-ide-confirm-dialog.js"></script>
-  <script defer src="renderer/features/renderer-ide-close-orchestrator.js"></script>
   <script defer src="renderer/features/renderer-window-exit-preflight.js"></script>
-  <script defer src="renderer/features/renderer-ide-watch-controller.js"></script>
-  <script defer src="renderer/features/renderer-workspace-git-client.js"></script>
-  <script defer src="renderer/features/renderer-ide-git-status-store.js"></script>
-  <script defer src="renderer/features/renderer-ide-source-control-panel.js"></script>
-  <script defer src="renderer/features/renderer-ide-commit-history.js"></script>
-  <script defer src="renderer/features/renderer-ide-problems-panel.js"></script>
-  <script defer src="renderer/features/renderer-ide-debug-inspector.js"></script>
-  <script defer src="renderer/features/renderer-ide-run-scripts.js"></script>
-  <script defer src="renderer/features/renderer-ide-git-feature.js"></script>
-  <script defer src="renderer/features/renderer-ide-commands.js"></script>
-  <script defer src="renderer/features/renderer-ide-nav-history.js"></script>
-  <script defer src="renderer/features/renderer-ide-bookmarks.js"></script>
-  <script defer src="renderer/features/renderer-ide-bottom-panel.js"></script>
-  <script defer src="renderer/features/renderer-ide-test-runner-history-strip.js"></script>
-  <script defer src="renderer/features/renderer-ide-test-runner-gate-utils.js"></script>
-  <script defer src="renderer/features/renderer-ide-test-runner-panel.js"></script>
-  <script defer src="renderer/features/renderer-ide-test-runner-wiring.js"></script>
-  <script defer src="renderer/features/renderer-ide-secondary-sidebar.js"></script>
-  <script defer src="renderer/features/renderer-ide-mru.js"></script>
-  <script defer src="renderer/features/renderer-ide-chat-dock.js"></script>
-  <script defer src="renderer/features/renderer-ide-inline-suggest.js"></script>
-  <script defer src="renderer/features/renderer-ide-fim-picker.js"></script>
-  <script defer src="renderer/features/renderer-ide-gutter-decorations.js"></script>
-  <script defer src="renderer/features/renderer-ide-branch-switcher.js"></script>
-  <script defer src="renderer/features/renderer-ide-symbol-nav.js"></script>
-  <script defer src="renderer/features/renderer-ide-layout.js"></script>
-  <script defer src="renderer/features/renderer-ide-nav-bookmarks.js"></script>
-  <script defer src="renderer/features/renderer-ide-file-operations.js"></script>
-  <script defer src="renderer/features/renderer-ide-file-lifecycle.js"></script>
-  <script defer src="renderer/features/renderer-ide-auto-save.js"></script>
-  <script defer src="renderer/features/renderer-ide-save-hygiene.js"></script>
-  <script defer src="renderer/features/renderer-ide-breadcrumbs.js"></script>
-  <script defer src="renderer/features/renderer-ide-mru-switcher.js"></script>
-  <script defer src="renderer/features/renderer-ide-map-event-ownership.js"></script>
-  <script defer src="renderer/features/renderer-ide-map-transform.js"></script>
-  <script defer src="renderer/features/renderer-ide-map-atlas-layout.js"></script>
-  <script defer src="renderer/features/renderer-ide-map-atlas-view.js"></script>
-  <script defer src="renderer/features/renderer-ide-map-states.js"></script>
-  <script defer src="renderer/features/renderer-ide-map-a11y.js"></script>
-  <script defer src="renderer/features/renderer-ide-map-findings.js"></script>
-  <script defer src="renderer/features/renderer-ide-map-controls.js"></script>
-  <script defer src="renderer/features/renderer-ide-map-lod.js"></script>
-  <script defer src="renderer/features/renderer-ide-map-overview.js"></script>
-  <script defer src="renderer/features/renderer-ide-map-prefs.js"></script>
-  <script defer src="renderer/features/renderer-ide-map-controller-utils.js"></script>
-  <script defer src="renderer/features/renderer-ide-map-scan-coordinator.js"></script>
   <script defer src="renderer/features/renderer-ide-map-activity-bus.js"></script>
-  <script defer src="renderer/features/renderer-ide-map-activity-rail.js"></script>
-  <script defer src="renderer/features/renderer-ide-map-controller.js"></script>
-  <script defer src="renderer/features/renderer-ide-exploded-graph-utils.js"></script>
-  <script defer src="renderer/features/renderer-ide-exploded-graph.js"></script>
-  <script defer src="renderer/features/renderer-ide-explode-layout.js"></script>
-  <script defer src="renderer/features/renderer-ide-explode-view.js"></script>
-  <script defer src="renderer/features/renderer-ide-explode-states.js"></script>
-  <script defer src="renderer/features/renderer-ide-explode-toggle.js"></script>
-  <script defer src="renderer/features/renderer-ide-explode-controller.js"></script>
-  <script defer src="renderer/features/renderer-ide-stage-surface-controller.js"></script>
-  <script defer src="renderer/features/renderer-ide-preview-stage.js"></script>
-  <script defer src="renderer/features/renderer-workspace-presentation-controller.js"></script>
-  <script defer src="renderer/features/renderer-ide-qol-wiring.js"></script>
-  <script defer src="renderer/features/renderer-ide-persistence.js"></script>
-  <script defer src="renderer/features/renderer-ide-explorer-wiring.js"></script>
-  <script defer src="renderer/features/renderer-ide-controller.js"></script>
 <script defer src="renderer/features/renderer-artifacts-projection.js"></script>
 <script defer src="renderer/features/renderer-artifact-document-render.js"></script>
 <script defer src="renderer/features/renderer-artifacts-render.js"></script>
@@ -2057,6 +1737,8 @@
 <script defer src="renderer/features/renderer-artifact-review-autoopen.js"></script>
 <!-- Artifact-review preference helpers (incl. artifact_panel_v2 widthBySession); must precede renderer-artifacts-utils.js, which delegates to it. -->
 <script defer src="renderer/features/renderer-artifact-review-prefs.js"></script>
+<!-- Artifact-review rail state machine (prefs, layout, open/close, maximize, wrap, resizer); after the prefs and auto-open modules it wires, before renderer-artifacts-utils.js. -->
+<script defer src="renderer/features/renderer-artifact-review-rail.js"></script>
 <!-- Artifact Panel V3 Canvas modules compose over the V2 rollback shell; keep this order before the V2/V3 installer. -->
 <script defer src="renderer/features/renderer-artifact-panel-chrome-render.js"></script>
 <script defer src="renderer/features/renderer-artifact-view-capabilities.js"></script>
@@ -2075,14 +1757,18 @@
 <!-- Tasks rail stub: render module precedes the controller consumed by renderer-shell-artifact-bridge.js. -->
 <script defer src="renderer/features/renderer-task-rail-render.js"></script>
 <script defer src="renderer/features/renderer-task-rail.js"></script>
+<!-- Subagent Monitor rail (`subagents` rail mode of the artifact panel): must precede renderer-shell-artifact-bridge.js, which builds it. -->
+<script defer src="renderer/features/renderer-subagent-rail.js"></script>
   <script defer src="renderer/features/renderer-context-panel-utils.js"></script>
   <!-- Leaf Enter/IME keydown guard: must precede renderer-user-questions-actions.js and renderer-chat-event-utils.js, which both consume it. -->
   <script defer src="renderer/chat/renderer-enter-keydown-utils.js"></script>
   <script defer src="renderer/chat/renderer-user-questions-actions.js"></script>
+  <script defer src="renderer/chat/renderer-approval-focus-restore.js"></script>
   <script defer src="renderer/chat/renderer-chat-event-transcript-bindings.js"></script>
   <script defer src="renderer/chat/renderer-chat-event-settings-bindings.js"></script>
   <script defer src="renderer/chat/renderer-chat-event-interactive-bindings.js"></script>
   <script defer src="renderer/chat/renderer-chat-keyboard-utils.js"></script>
+  <script defer src="renderer/chat/renderer-chat-accessibility-wiring.js"></script>
   <script defer src="renderer/chat/renderer-chat-help-overlay.js"></script>
   <script defer src="renderer/chat/renderer-chat-search-highlight.js"></script>
   <script defer src="renderer/chat/renderer-chat-search-overlay.js"></script>
@@ -2094,11 +1780,14 @@
   <script defer src="renderer/chat/renderer-chat-backend-recovery-utils.js"></script>
   <script defer src="renderer/chat/renderer-window-controls-utils.js"></script>
   <script defer src="renderer/chat/renderer-plan-mode-shortcut.js"></script>
+  <!-- Ctrl-gated non-passive wheel zoom listener: must precede renderer-chat-event-utils.js, which consumes it. -->
+  <script defer src="renderer/chat/renderer-chat-ctrl-wheel-gate.js"></script>
   <script defer src="renderer/chat/renderer-chat-event-utils.js"></script>
   <!-- Settings persistence adapters (read->normalize->write->default->redact->rollback contract), shared by Quick Settings. -->
   <script defer src="renderer/shell/renderer-settings-persistence-adapters.js"></script>
   <!-- Tier C per-field reset + two-step section reset (JENNY_UIUX_OVERHAUL_PLAN.md item 10); consumes renderer-settings-persistence-adapters.js, mounted from renderer-settings-shell-controller.js. -->
   <script defer src="renderer/shell/renderer-settings-field-reset.js"></script>
+  <script defer src="renderer/shell/renderer-settings-field-binding.js"></script>
   <script defer src="renderer/shell/renderer-settings-advanced-section.js"></script>
   <script defer src="renderer/shell/renderer-settings-session-runtime.js"></script>
   <script defer src="renderer/shell/renderer-settings-section-binders.js"></script>
@@ -2107,13 +1796,14 @@
   <script defer src="renderer/shell/renderer-settings-snapshot-poll.js"></script>
   <script defer src="renderer/shell/renderer-settings-shell-controller.js"></script>
   <script defer src="renderer/shell/renderer-settings-command-sandbox.js"></script>
+  <script defer src="renderer/shell/renderer-settings-cloud-models.js"></script>
   <script defer src="renderer/shell/renderer-settings-pdf-addon.js"></script>
-  <script defer src="renderer/shell/renderer-fallback-workspace-registry.js"></script>
   <script defer src="renderer/shell/renderer-workspace-state-utils.js"></script>
   <script defer src="renderer/shell/renderer-workspace-chrome-utils.js"></script>
   <script defer src="renderer/shell/renderer-workspace-tab-drag-utils.js"></script>
   <script defer src="renderer/shell/renderer-workspace-session-utils.js"></script>
   <script defer src="renderer/shell/renderer-shell-artifact-bridge.js"></script>
+  <script defer src="renderer/shell/renderer-new-chat-entry.js"></script>
   <script defer src="renderer/shell/renderer-shell-runtime-utils.js"></script>
   <script defer src="renderer/shell/renderer-shell-state-runtime-utils.js"></script>
   <script defer src="renderer/shell/renderer-workspace-root-transition.js"></script>
@@ -2125,9 +1815,7 @@
   <script defer src="renderer/chat/renderer-subagent-monitor-controller.js"></script>
   <script defer src="renderer/chat/renderer-resume-turn-interaction.js"></script>
   <script defer src="renderer/chat/renderer-chat-shell-controller.js"></script>
-  <script defer src="renderer/shell/renderer-fallback-registry.js"></script>
   <script defer src="renderer/chat/renderer-multi-stream-utils.js"></script>
-  <script defer src="renderer/features/renderer-comet-overlay-presence-utils.js"></script>
   <script defer src="renderer/shell/renderer-surface-effect-runtime.js"></script>
   <script defer src="renderer/shell/renderer-reactive-grid-core.js"></script>
   <script defer src="renderer/shell/renderer-reactive-grid-utils.js"></script>
@@ -2136,6 +1824,7 @@
   <script defer src="renderer/shell/renderer-atomic-burst-core.js"></script>
   <script defer src="renderer/shell/renderer-atomic-burst-utils.js"></script>
   <script defer src="renderer/shell/renderer-circuit-trace-core.js"></script>
+  <script defer src="renderer/shell/renderer-circuit-trace-board.js"></script>
   <script defer src="renderer/shell/renderer-circuit-trace-gestures.js"></script>
   <script defer src="renderer/shell/renderer-circuit-trace-utils.js"></script>
   <script defer src="renderer/shell/renderer-context-weave-core.js"></script>
@@ -2146,7 +1835,6 @@
   <script defer src="renderer/shell/renderer-command-palette-providers.js"></script>
   <script defer src="renderer/shell/renderer-command-palette-render.js"></script>
   <script defer src="renderer/shell/renderer-command-palette.js"></script>
-  <script defer src="renderer/app/renderer-app-comet-runtime.js"></script>
   <script defer src="renderer/app/renderer-app-lifecycle-preferences.js"></script>
   <script defer src="renderer/app/renderer-app-surface-layout.js"></script>
   <script defer src="renderer/app/renderer-app-surface-input.js"></script>
@@ -2154,8 +1842,14 @@
   <script defer src="renderer/app/renderer-app-surface-activity-wiring.js"></script>
   <script defer src="renderer/app/renderer-app-open-loop-actions.js"></script>
   <script defer src="renderer/chat/renderer-chat-pane-surface-controllers.js"></script>
+  <script defer src="renderer/chat/renderer-chat-pane-resizer.js"></script>
+  <script defer src="renderer/chat/renderer-pane-composer-rail.js"></script>
+  <script defer src="renderer/chat/renderer-side-panel-owner.js"></script>
+  <script defer src="renderer/chat/renderer-composer-toolbar-fit.js"></script>
   <script defer src="renderer/app/renderer-app-lifecycle-composition.js"></script>
   <script defer src="renderer/app/renderer-app-controller-composition.js"></script>
+  <script defer src="renderer/app/renderer-pane-drag-controller.js"></script>
+  <script defer src="renderer/app/renderer-app-pane-composition.js"></script>
   <script defer src="renderer/app/renderer-app-shell-bindings-mcp.js"></script>
   <script defer src="renderer/app/renderer-app-shell-bindings-display-media.js"></script>
   <script defer src="renderer/app/renderer-app-shell-bindings-overlay-manager.js"></script>

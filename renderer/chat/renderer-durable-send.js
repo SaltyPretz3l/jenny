@@ -7,7 +7,8 @@
   const FIELDS = { prompt: 'prompt', visiblePrompt: 'visible_prompt', preferredModel: 'preferred_model',
     reasoningEffort: 'reasoning_effort', attachments: 'attachments', planMode: 'plan_mode',
     contextPreferences: 'context_preferences', activeFileContext: 'active_file_context', mentionContents: 'mention_contents',
-    toolPreferences: 'tool_preferences', approvalMode: 'approval_mode', pluginCommandInvocation: 'plugin_command_invocation', skillInvocation: 'skill_invocation' };
+    toolPreferences: 'tool_preferences', approvalMode: 'approval_mode', skillInvocation: 'skill_invocation',
+    clientTiming: 'client_timing' };
   function eligible(state, shell, settings, prompt, interactive) {
     return state.features?.featureFlags?.session_runtime === true && typeof shell?.sessionRuntime?.submit === 'function'
       && Boolean(String(prompt || '').trim()) && !interactive && !settings.editedMessageId
@@ -25,6 +26,9 @@
   // The pause half lives in its own module (file cap): it reads this
   // controller's snapshot rows, controls work through the same fresh-revision
   // path, and owns the only notice that may say "paused".
+  // HB-009: when a wait is worth showing, and the engine restart that frees it.
+  const stuckSend = () => globalThis.rendererStuckSend
+    || (typeof require === 'function' ? require('./renderer-stuck-send') : null);
   function createPauseRequests(deps) {
     const owner = globalThis.rendererDurableSendPause
       || (typeof require === 'function' ? require('./renderer-durable-send-pause') : null);
@@ -32,7 +36,7 @@
     return { pauseSession: async () => false, settleAll: async () => {}, reconcile() {}, stateFor: () => null,
       forget() {}, sessionOf: () => '', watching: () => false, hasSession: () => false, dispose() {} };
   }
-  function createController({ state, shell, receipts, callbacks: c, helpers, multiStreamController, isDisposed }) {
+  function createController({ state, shell, receipts, callbacks: c, helpers, multiStreamController, isDisposed, sessionContext: sc = (globalThis.rendererPaneSessionContext || require('./renderer-pane-session-context')).createPaneSessionContext({ state }) }) {
     const pending = new Map();
     const creations = new Map();
     const admitted = new Set();
@@ -41,6 +45,19 @@
     const sessionWork = new Map();
     const sessionReads = new Map();
     const detachedWithdrawing = new Set();
+    // FG-007: a detached row's prompt preview by work_id ('' = none or in flight), kept in this
+    // renderer only: one work read per paused row, never repeated once answered; a failure retries.
+    const previews = new Map();
+    function readPreviews(sessionId, rows) {
+      for (const { work_id: id } of rows.filter(row => row.status === 'paused' && !previews.has(row.work_id)).slice(0, 8)) {
+        previews.set(id, '');
+        Promise.resolve().then(() => shell.sessionRuntime.getWork({ work_id: id })).then(read => {
+          const text = read?.ok === true ? String(read.work?.prompt_preview || '').trim() : null;
+          if (text === null || closed()) previews.delete(id); else if (text) { previews.set(id, text); render(sessionId); }
+        }, () => previews.delete(id));
+      }
+      while (previews.size > 64) previews.delete(previews.keys().next().value);
+    }
     let readSequence = 0;
     let disposed = false;
     let pollTimer = null;
@@ -57,7 +74,7 @@
     function render(sessionId) {
       if (closed()) return;
       c.renderSessions();
-      if (state.currentSessionId === sessionId) { c.renderMessages(); c.renderHeader(); c.renderComposerState(); }
+      if (sc.isCurrent(sessionId)) { c.renderMessages(); c.renderHeader(); c.renderComposerState(); }
     }
     function retire(entry) {
       pending.delete(entry.key);
@@ -67,11 +84,18 @@
       render(entry.sessionId);
     }
     function reconcileWork(work) {
-      if (closed() || !['completed', 'failed', 'cancelled'].includes(work?.status)) return;
+      if (closed() || !work) return;
+      const terminal = ['completed', 'failed', 'cancelled'].includes(work.status);
       for (const entry of pending.values()) {
         if (entry.workId !== work.work_id || entry.sessionId !== work.session_id || entry.turnId !== work.turn_id) continue;
-        retire(entry);
+        // Why it has not started yet: the runtime's own reason, or none.
+        if (terminal) retire(entry); else entry.admissionWait = work.admission_wait || null;
       }
+    }
+    // The wait a row shows now: the grace is timed against the runtime's clock
+    // stamp, so a poll tick that crosses it repaints (see refreshPending).
+    function waitOf(entry, now = Date.now()) {
+      return stuckSend()?.visibleWait(entry.admissionWait, entry.workStatus, now) || null;
     }
     function refusalFor(source) {
       try {
@@ -93,11 +117,11 @@
     function sequenceOf(row) {
       return Number.isSafeInteger(row?.submission_sequence) ? row.submission_sequence : Number.MAX_SAFE_INTEGER;
     }
-    // A detached row carries no prompt: the snapshot summary has only `purpose`.
+    // A snapshot row carries only `purpose`: its work read names the prompt (FG-007).
     function detachedPrompt(row) {
       const purpose = String(row?.purpose || '').trim();
-      return purpose && !FIXED_PURPOSES.includes(purpose)
-        ? purpose : jt('chat.runtimeQueue.pausedReply', 'Paused reply');
+      return previews.get(row?.work_id) || (purpose && !FIXED_PURPOSES.includes(purpose)
+        ? purpose : jt('chat.runtimeQueue.pausedReply', 'Paused reply'));
     }
     function listPending(sessionId) {
       const id = String(sessionId || '').trim();
@@ -110,15 +134,17 @@
       const busy = multiStreamController?.isSessionSendBusy?.(id) === true;
       const entries = [...pending.values()].filter(entry => entry.sessionId === id)
         .sort((left, right) => orderOf(left) - orderOf(right))
-        .map((entry, index) => Object.freeze({ key: entry.key, workId: entry.workId, turnId: entry.turnId,
-          prompt: entry.prompt, position: entry.position, status: entry.workStatus, admitted: entry.admitted,
-          queued: entry.queued === true || index > 0 || busy
+        .map((entry, index) => ({ entry, index, wait: waitOf(entry) }))
+        .map(({ entry, index, wait }) => Object.freeze({ key: entry.key, workId: entry.workId, turnId: entry.turnId,
+          userId: entry.userId, prompt: entry.prompt, position: entry.position, status: entry.workStatus, admitted: entry.admitted, wait,
+          // A direct Send that has waited past its grace joins the strip, which says why.
+          queued: entry.queued === true || index > 0 || busy || Boolean(wait)
             || (Number.isSafeInteger(entry.position) && entry.position > 1) || RECOVERY_STATUSES.has(entry.workStatus) }));
       const owned = new Set(entries.map(row => row.workId).filter(Boolean));
-      // Paused work the composer never queued (it was running when it paused)
-      // still needs a row, because Resume is the only way it ever moves again.
+      // Paused work the composer never queued (it was running when it paused) needs a row: Resume is the only
+      // way it moves again. A reply waiting by itself moves again unasked and says so in the chat instead.
       const detached = (sessionWork.get(id)?.rows || [])
-        .filter(row => row.status === 'paused' && !owned.has(row.work_id))
+        .filter(row => row.status === 'paused' && !owned.has(row.work_id) && state.streamWaits?.isWaitingWork?.(row.work_id) !== true)
         .sort((left, right) => sequenceOf(left) - sequenceOf(right))
         .map(row => Object.freeze({ key: DETACHED_PREFIX + row.work_id, workId: row.work_id,
           turnId: String(row.turn_id || ''), prompt: detachedPrompt(row), position: null,
@@ -152,6 +178,7 @@
       if (sessionWork.size > 16) sessionWork.delete(sessionWork.keys().next().value);
       for (const row of rows) reconcileWork(row);
       if (closed()) return false;
+      if (typeof shell.sessionRuntime?.getWork === 'function') readPreviews(sessionId, rows);
       pauses.reconcile(sessionId, rows);
       // Past one page the true place in line is unknown: say queued, not a number.
       const numbered = result.next_cursor === null || result.next_cursor === undefined;
@@ -172,7 +199,7 @@
           ? 1 + ahead.filter(item => item.submission_sequence < row.submission_sequence).length : null;
         changed = changed || entry.workStatus !== status || entry.position !== position
           || entry.revision !== row.revision || entry.submissionSequence !== row.submission_sequence;
-        entry.workStatus = status; entry.position = position;
+        entry.workStatus = status; entry.position = position; entry.admissionWait = row.admission_wait || null;
         entry.revision = row.revision; entry.submissionSequence = row.submission_sequence;
       }
       if (changed || pausedChanged) render(sessionId);
@@ -220,7 +247,7 @@
       if ((!rows.length && !watching) || globalThis.document?.visibilityState === 'hidden') return;
       polling = true;
       try {
-        const sessionId = String(state.currentSessionId || '').trim();
+        const sessionId = sc.getSessionId();
         await confirmUnacknowledged(rows.filter(entry => !entry.workId && entry.payload));
         if (closed()) return;
         const tracked = rows.filter(entry => entry.workId);
@@ -243,7 +270,31 @@
             if (!closed() && result?.ok) reconcileWork(result.work);
           } catch (_error) { /* No terminal proof: keep the pending receipt. */ }
         }));
-      } finally { polling = false; }
+      } finally { polling = false; repaintWaits(); }
+    }
+    // A wait crosses its grace between reads with no field changing: repaint on what a row would show.
+    function repaintWaits() {
+      const now = Date.now(); const sessions = new Set();
+      for (const entry of pending.values()) {
+        const wait = waitOf(entry, now); const shown = wait ? `${wait.reason}:${wait.blockingSessionId}` : '';
+        if ((entry.shownWait || '') !== shown) { entry.shownWait = shown; sessions.add(entry.sessionId); }
+      }
+      if (!closed()) sessions.forEach(id => render(id));
+    }
+    // One row per conversation for the Needs-you inbox: only unconfirmed
+    // cleanup needs the person, since every other wait ends by itself.
+    function listStuckSends() {
+      const rows = new Map();
+      for (const entry of pending.values()) if (!rows.has(entry.sessionId) && waitOf(entry)?.reason === 'cleanup_unconfirmed')
+        rows.set(entry.sessionId, Object.freeze({ key: entry.key, workId: entry.workId, sessionId: entry.sessionId }));
+      return [...rows.values()];
+    }
+    async function restartEngine(keyOrSessionId) {
+      const id = String(keyOrSessionId || '').trim();
+      const sessionId = pending.get(id)?.sessionId || id;
+      return !closed() && Boolean(sessionId) && await stuckSend()?.restartEngine({ state, shell, sessionId, streamingSessionIds:
+        multiStreamController?.getStreamingSessionIds?.() || [], isClosed: closed,
+        notices: { set: c.setComposerStatusNotice, clear: c.clearComposerStatusNotice } }) === true;
     }
     // Durable work is never controlled at a guessed revision: read it, then act.
     async function control(key, owner, invoke) {
@@ -251,24 +302,12 @@
       if (closed() || !entry?.workId || typeof shell.sessionRuntime?.getWork !== 'function') return false;
       const previous = entry.workStatus;
       if (owner === 'runtime:withdraw') { entry.workStatus = 'withdrawing'; render(entry.sessionId); }
-      try {
-        const read = await shell.sessionRuntime.getWork({ work_id: entry.workId });
-        if (closed()) return false;
-        if (read?.ok !== true || !Number.isSafeInteger(read.work?.revision)) {
-          throw Object.assign(new Error('runtime_revision_unavailable'), { refusal: read });
-        }
-        const result = await invoke({ work_id: entry.workId, expected_revision: read.work.revision });
-        if (closed()) return false;
-        if (result?.ok !== true) throw Object.assign(new Error('runtime_control_refused'), { refusal: result });
-        entry.revision = read.work.revision;
-        return result;
-      } catch (error) {
-        if (closed()) return false;
-        entry.workStatus = previous;
-        noticeRefusal(error?.refusal || error, owner);
-        render(entry.sessionId);
-        return false;
-      }
+      let revision = entry.revision;
+      const result = await controlDetached(entry.workId, owner, payload => { revision = payload.expected_revision; return invoke(payload); });
+      if (closed()) return false;
+      if (!result) { entry.workStatus = previous; render(entry.sessionId); return false; }
+      entry.revision = revision;
+      return result;
     }
     async function withdraw(key) {
       if (typeof shell.sessionRuntime?.cancel !== 'function') return false;
@@ -326,7 +365,7 @@
       for (const [sessionId, cached] of sessionWork) {
         if (cached.rows?.some(row => row.work_id === workId)) return sessionId;
       }
-      return pauses.sessionOf(workId) || String(state.currentSessionId || '').trim();
+      return pauses.sessionOf(workId) || sc.getSessionId();
     }
     async function resume(key) {
       if (typeof shell.sessionRuntime?.resume !== 'function') return false;
@@ -401,7 +440,7 @@
         c.upsertSessionSummary({ id: optimisticSessionId, title: helpers.clipSessionTitle(visiblePrompt),
           session_type: 'chat', created_at: now, updated_at: now, message_count: 0, optimistic_local: true, local_draft: false,
           ...(context.requestedSession?.project_id ? { project_id: context.requestedSession.project_id } : {}) }, { prepend: true });
-        state.currentSessionId = optimisticSessionId; c.attachPendingOriginToSession(optimisticSessionId);
+        sc.setSessionId(optimisticSessionId); c.attachPendingOriginToSession(optimisticSessionId);
       }
       c.optimisticAppend(optimisticSessionId, 'user', visiblePrompt, { id: entry.userId,
         attachments: helpers.buildOptimisticAttachmentMetadata(acceptedAttachments),
@@ -421,8 +460,7 @@
       const source = { prompt: context.effectivePrompt, visiblePrompt: context.visiblePrompt,
         ...context.runtimePreferences, planMode: context.runModeProjection.planMode,
         attachments: context.acceptedAttachments, toolPreferences: context.toolPreferences, approvalMode: context.approvalMode,
-        activeFileContext, mentionContents,
-        ...(context.pluginCommandInvocation ? { pluginCommandInvocation: context.pluginCommandInvocation } : {}),
+        activeFileContext, mentionContents, clientTiming: context.clientTiming,
         ...(context.skillInvocation?.id ? { skillInvocation: { id: context.skillInvocation.id } } : {}) };
       const payload = { session_id: entry.sessionId, idempotency_key: entry.key };
       for (const [key, wire] of Object.entries(FIELDS)) if (source[key] !== undefined) payload[wire] = source[key];
@@ -435,7 +473,12 @@
     }
     async function send(context) {
       if (closed() || pending.size >= 128) return null;
+      // Send-phase timing for chat.performance_turn_summary, as the direct path ships it.
+      const sendStartedAtMs = Date.now();
       const entry = initial(context);
+      const optimisticRenderedAtMs = Date.now();
+      context = { ...context, clientTiming: { send_started_at_ms: sendStartedAtMs,
+        optimistic_rendered_at_ms: optimisticRenderedAtMs, local_render_latency_ms: optimisticRenderedAtMs - sendStartedAtMs } };
       let hold = null;
       let attempted = false;
       let payload = null;
@@ -483,7 +526,7 @@
           schedulePoll();
           if (!closed()) {
             receipts.settleAccepted(context.sendReceipt, { sessionId: entry.sessionId });
-            if (state.currentSessionId === entry.sessionId) c.setComposerStatusNotice(jt('runtime.ui.acceptanceUnknown', 'Acceptance is not confirmed. Check the work list before sending again.'), { owner: 'runtime:acceptance', tone: 'warning' });
+            if (sc.isCurrent(entry.sessionId)) c.setComposerStatusNotice(jt('runtime.ui.acceptanceUnknown', 'Acceptance is not confirmed. Check the work list before sending again.'), { owner: 'runtime:acceptance', tone: 'warning' });
           }
         } else {
           pending.delete(entry.key);
@@ -496,7 +539,7 @@
             // A wait is explained in the composer; only a decision interrupts.
             const refusal = _error?.result ? refusalFor(_error.result) : null;
             if (refusal?.severity === 'calm') {
-              c.setComposerStatusNotice(`${refusal.title} ${refusal.hint}`, { owner: 'runtime:refusal', tone: 'warning' });
+              c.setComposerStatusNotice(refusal.notice, { owner: 'runtime:refusal', tone: 'warning' });
             } else {
               c.showComposerActionError?.(new Error(refusal?.hint
                 || jt('runtime.ui.failedAction', 'The change could not be applied. Refresh and try again.')),
@@ -540,13 +583,14 @@
       return additions.length ? [...rows, ...additions.map(row => row.message)] : messages;
     }
     function dispose() { disposed = true; clearTimeout(pollTimer); pending.clear(); creations.clear(); admitted.clear();
-      sessionWork.clear(); sessionReads.clear(); pauses.dispose(); detachedWithdrawing.clear();
+      sessionWork.clear(); sessionReads.clear(); pauses.dispose(); detachedWithdrawing.clear(); previews.clear();
       if (state.runtimeSendController === api) state.runtimeSendController = null; }
     // Only a stream the runtime admitted through this controller can be paused.
     const ownsStream = streamId => admitted.has(String(streamId || '').trim());
     const api = { send, acceptAdmission, mergePending, refreshPending, reconcileWork, listPending,
       withdraw, resume, pauseSession: sessionId => pauses.pauseSession(sessionId),
-      refreshSessionRows, getSessionRuntimeState, ownsStream,
+      refreshSessionRows, getSessionRuntimeState, ownsStream, listStuckSends, restartEngine,
+      openChat: sessionId => (sessionId ? c.activateWorkspaceSession?.(sessionId) : undefined),
       dispose, hasCapacity: () => pending.size < 128 };
     state.runtimeSendController = api;
     return api;

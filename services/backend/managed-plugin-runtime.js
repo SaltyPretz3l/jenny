@@ -36,8 +36,6 @@ function authorityFromEnvelope(envelope) {
     || (declarative && !Array.isArray(declarative)
       && ['skill_scopes', 'prompts', 'themes', 'settings_schemas', 'commands', 'workflows']
         .some((key) => Array.isArray(declarative[key]) && declarative[key].length))
-    || (Array.isArray(snapshot.remote_mcp_bindings) && snapshot.remote_mcp_bindings.length)
-    || (Array.isArray(snapshot.restricted_contributions) && snapshot.restricted_contributions.length)
     || (Array.isArray(snapshot.full_host_descriptors) && snapshot.full_host_descriptors.length)
     || (Array.isArray(snapshot.native_mcp_bindings) && snapshot.native_mcp_bindings.length)
     || (Array.isArray(snapshot.session_providers) && snapshot.session_providers.length)

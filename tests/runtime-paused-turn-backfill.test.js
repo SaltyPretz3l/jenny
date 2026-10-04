@@ -9,6 +9,7 @@ const assert = require('node:assert/strict');
 
 const {
   backfillCancelledPausedTurnEvents,
+  emitCancelledPausedTurnTerminal,
   isCancelledPausedWork,
   repairCancelledPausedTurns,
 } = require('../services/backend/runtime-paused-turn-backfill');
@@ -107,4 +108,50 @@ test('the repair reaches an old orphaned turn behind many newer cancellations', 
     get: (workId) => (workId === 'work_backfill' ? cancelledPaused : { status: 'cancelled', transition: { from: 'running' } }),
   };
   assert.deepEqual(repairCancelledPausedTurns(runtimeStore, store), { appended: 1, failed: 0 });
+});
+
+// Dogfood HB-034: a paused leg gets no terminal of its own, so a stopped or
+// discarded paused reply left the chat showing a live stream until reload.
+const stoppedPaused = {
+  ...cancelledPaused,
+  attempt: { attempt_id: 'attempt_1', stream_id: STREAM, incarnation: 'incarnation_live', authority_revision: 'a1' },
+  transition: { from: 'paused', to: 'cancelled', reason: 'user_cancel' },
+};
+
+function emitter() {
+  const events = [];
+  return { events, emit: (channel, payload) => events.push([channel, payload]) };
+}
+
+test('a stopped paused turn ends its live stream with one cancelled terminal', () => {
+  const service = emitter();
+  assert.equal(emitCancelledPausedTurnTerminal(service, stoppedPaused, 'incarnation_live'), true);
+  assert.equal(service.events.length, 1);
+  const [channel, payload] = service.events[0];
+  assert.equal(channel, 'chat-stream');
+  assert.equal(payload.type, 'error');
+  assert.equal(payload.status, 'cancelled');
+  assert.equal(payload.category, 'cancelled');
+  assert.equal(payload.cancel_reason, 'user_cancel');
+  assert.deepEqual([payload.sessionId, payload.streamId, payload.turnId], [SESSION, STREAM, TURN]);
+
+  const discarded = emitter();
+  assert.equal(emitCancelledPausedTurnTerminal(discarded,
+    { ...stoppedPaused, transition: { from: 'paused', to: 'cancelled', reason: 'user' } }, 'incarnation_live'), true);
+});
+
+test('no terminal is sent for work this process never streamed, or that the user did not stop', () => {
+  for (const work of [
+    { ...stoppedPaused, attempt: { ...stoppedPaused.attempt, incarnation: 'incarnation_before_restart' } },
+    { ...stoppedPaused, transition: { from: 'paused', to: 'cancelled', reason: 'session_cancelled' } },
+    { ...stoppedPaused, transition: { from: 'running', to: 'cancelled', reason: 'user_cancel' } },
+    { ...stoppedPaused, status: 'paused' },
+    { ...stoppedPaused, attempt: null },
+    { ...stoppedPaused, checkpoint_ref: null },
+  ]) {
+    const service = emitter();
+    assert.equal(emitCancelledPausedTurnTerminal(service, work, 'incarnation_live'), false);
+    assert.equal(service.events.length, 0);
+  }
+  assert.equal(emitCancelledPausedTurnTerminal(emitter(), stoppedPaused, ''), false);
 });

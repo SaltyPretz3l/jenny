@@ -31,7 +31,7 @@ const assert = require('node:assert/strict');
 const surfaceInput = require('../renderer/app/renderer-app-surface-input.js');
 const runtime = require('../renderer/shell/renderer-surface-effect-runtime.js');
 const circuitTrace = require('../renderer/shell/renderer-circuit-trace-utils.js');
-const circuitTraceCore = require('../renderer/shell/renderer-circuit-trace-core.js');
+const circuitTraceBoard = require('../renderer/shell/renderer-circuit-trace-board.js');
 const reactiveGrid = require('../renderer/shell/renderer-reactive-grid-utils.js');
 const reactiveGridCore = require('../renderer/shell/renderer-reactive-grid-core.js');
 const atomicBurst = require('../renderer/shell/renderer-atomic-burst-utils.js');
@@ -106,22 +106,26 @@ function makeNativeSoakDom(styleTokens) {
 
 function assertCircuitBounds(snapshot) {
   assert.equal(snapshot.entries.length, 1, 'Circuit Trace retains exactly the one active full-bleed Chat host');
-  assert.ok(snapshot.pendingGestureCount <= 2, 'Circuit Trace pending gestures stay within the two-handle gesture cap');
-  const sceneWidth = snapshot.entries.reduce((width, entry) => width + entry.w, 0);
-  const sceneHeight = Math.max(...snapshot.entries.map((entry) => entry.h));
-  const expectedNodes = circuitTraceCore.buildHexGraph(sceneWidth, sceneHeight, 48, () => 0.5).nodes.length;
-  const hexArea = (3 * circuitTraceCore.SQRT3 / 2) * 48 * 48;
-  const expectedTraces = Math.max(3, Math.min(28, Math.round((sceneWidth * sceneHeight / hexArea) * 0.05)));
+  assert.equal(snapshot.pendingGestureCount, undefined, 'Circuit Trace schedules no deferred gestures (background posture)');
+  assert.ok(snapshot.probes.length <= 4, 'Circuit Trace keeps at most four hover-probe slots');
+  assert.ok(snapshot.packetCount <= 8, 'Circuit Trace idle packets stay bounded (one bus group plus two nets)');
+  assert.ok(snapshot.litCount <= 10 * 20, 'Circuit Trace click chains stay bounded');
+  // A size-only change keeps the previous board until the resize settles
+  // (RESIZE_SETTLE_MS); exact geometry is asserted once nothing is pending.
+  if (snapshot.resizePending) { return; }
   snapshot.entries.forEach((entry) => {
-    assert.equal(entry.nodeCount, expectedNodes, 'Circuit Trace replaces, rather than accumulates, its geometry nodes');
-    assert.equal(entry.traceCount, expectedTraces, 'Circuit Trace retains the exact geometry-derived trace count');
-    assert.ok(entry.waveCount <= circuitTraceCore.MAX_WAVES, 'Circuit Trace wave pool stays at MAX_WAVES');
+    const board = circuitTraceBoard.buildBoard({
+      width: entry.w, height: entry.h, pitch: 20, density: 0.5, rng: runtime.makeRng(entry.seed),
+    });
+    assert.ok(board.nodes.length > 0, 'the soak host is large enough for a routed board');
+    assert.equal(entry.nodeCount, board.nodes.length, 'Circuit Trace replaces, rather than accumulates, its board nodes');
+    assert.equal(entry.traceCount, board.traces.length, 'Circuit Trace retains the exact seeded trace count');
   });
 }
 
 function assertReactiveBounds(snapshot) {
   assert.equal(snapshot.entries.length, 1, 'Reactive Grid retains exactly the one active full-bleed Chat host');
-  assert.ok(snapshot.pendingGestureCount <= 2, 'Reactive Grid pending gestures stay within the two-handle gesture cap');
+  assert.equal(snapshot.pendingGestureCount, undefined, 'Reactive Grid schedules no deferred gestures (no activity channel)');
   const sceneWidth = snapshot.entries.reduce((width, entry) => width + entry.w, 0);
   const sceneHeight = Math.max(...snapshot.entries.map((entry) => entry.h));
   const geometry = reactiveGridCore.resolveGridGeometry(
@@ -136,7 +140,7 @@ function assertReactiveBounds(snapshot) {
 
 function assertAtomicBounds(snapshot) {
   assert.equal(snapshot.entries.length, 1, 'Atomic Burst retains exactly the one active full-bleed Chat host');
-  assert.equal(snapshot.pendingGestureCount, 0, 'Atomic Burst has no queued gesture handles');
+  assert.equal(snapshot.pendingGestureCount, undefined, 'Atomic Burst schedules no deferred gestures (no activity channel)');
   snapshot.entries.forEach((entry) => {
     assert.equal(entry.sparkleCapacity, 1500, 'Atomic Burst reports the exact sparkle capacity');
     assert.ok(entry.sparkleCount <= entry.sparkleCapacity, 'Atomic Burst sparkle fields stay within capacity');
@@ -147,7 +151,7 @@ function assertAtomicBounds(snapshot) {
 
 function assertPlaylistBounds(snapshot) {
   assert.equal(snapshot.entries.length, 1, 'Playlist Scroll retains exactly the one active full-bleed Chat host');
-  assert.equal(snapshot.pendingGestureCount, 0, 'Playlist Scroll has no queued gesture handles');
+  assert.equal(snapshot.pendingGestureCount, undefined, 'Playlist Scroll schedules no deferred gestures (no activity channel)');
   snapshot.entries.forEach((entry) => {
     assert.equal(entry.noteCapacity, 96, 'Playlist Scroll reports the exact note capacity');
     assert.ok(entry.noteCount <= entry.noteCapacity, 'Playlist Scroll notes stay within capacity');
@@ -174,7 +178,7 @@ function assertContextWeaveBounds(snapshot) {
   assert.equal(snapshot.nodeCount, snapshot.cols * snapshot.rows, 'node count is exactly the lattice');
   assert.ok(snapshot.pitch >= contextWeave._internals.MIN_PITCH, 'pitch never drops below its floor');
   assert.equal(typeof snapshot.pluckActive, 'boolean', 'pluck state is a single flag, not a pool');
-  assert.ok(snapshot.bandEnergy >= 0 && snapshot.bandEnergy <= 1, 'the streaming band envelope stays bounded');
+  assert.equal(snapshot.bandEnergy, undefined, 'Context Weave has no streaming band (no activity channel)');
   snapshot.entries.forEach((entry) => {
     assert.equal(entry.nodeCount, snapshot.nodeCount, 'Context Weave entries share one lattice');
   });
@@ -200,12 +204,10 @@ const REAL_NATIVE_EFFECTS = [
   {
     id: 'circuit-trace',
     factory: circuitTrace.createCircuitTraceController,
-    captureOnPress: true,
+    captureOnPress: false,
     styleTokens: {
-      '--widget-circuit-trace-version': '3',
-      '--widget-circuit-trace-hex-size': '48',
+      '--widget-circuit-trace-pitch': '20',
       '--widget-circuit-trace-density': '0.5',
-      '--widget-circuit-trace-trail-length': '8',
     },
     refreshToken: ['--widget-circuit-trace-grid-color', 'rgba(10,20,30,0.2)', 'rgba(30,20,10,0.3)'],
     assertBounds: assertCircuitBounds,

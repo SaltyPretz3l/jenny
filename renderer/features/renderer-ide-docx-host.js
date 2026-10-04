@@ -113,6 +113,7 @@
     const fileInput = resolveModule('inventoryFileInput', '../inventory/file-input');
     const documents = new Map();
     const loadGenerations = new Map();
+    let generationCounter = 0;
 
     let paneEl = null;
     let documentsEl = null;
@@ -253,7 +254,7 @@
       const windowRef = documentRef.defaultView;
       const Parser = windowRef?.DOMParser;
       const Serializer = windowRef?.XMLSerializer;
-      const generation = (loadGenerations.get(normalizedPath) || 0) + 1;
+      const generation = ++generationCounter;
       loadGenerations.set(normalizedPath, generation);
       const isCurrent = () => !disposed && loadGenerations.get(normalizedPath) === generation;
       let zip;
@@ -290,6 +291,7 @@
       // parse, or a caller veto (edits arrived meanwhile), leaves the live
       // record untouched.
       if (!isCurrent() || (typeof source?.shouldCommit === 'function' && source.shouldCommit() !== true)) {
+        if (isCurrent() && !documents.has(normalizedPath)) loadGenerations.delete(normalizedPath);
         return makeFailure('document_stale', jt('ide.docx.staleReload', 'The document changed before the reload could be applied.'));
       }
       endTyping();
@@ -879,7 +881,7 @@
 
     function close(path) {
       const normalizedPath = String(path || '');
-      loadGenerations.set(normalizedPath, (loadGenerations.get(normalizedPath) || 0) + 1);
+      loadGenerations.delete(normalizedPath);
       const record = documents.get(normalizedPath);
       if (!record) return;
       if (typing?.record === record) endTyping();
@@ -976,6 +978,7 @@
       endTyping();
       const documentRef = paneEl?.ownerDocument;
       for (const path of [...documents.keys()]) close(path);
+      loadGenerations.clear();
       paneEl?.removeEventListener('click', handleToolbarClick);
       paneEl?.removeEventListener('mousedown', handleToolbarMouseDown);
       documentRef?.removeEventListener('selectionchange', handleSelectionChange);

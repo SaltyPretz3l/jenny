@@ -2,7 +2,7 @@
 
 const path = require('path');
 const { FileJsonStore } = require('./backend/file-json-store');
-const { normalizeString } = require('../renderer/shared/string-utils');
+const { normalizeString } = require('./shared/normalize');
 const {
   WORKTREE_REGISTRY_SCHEMA_VERSION,
 } = require('./worktree-registry-schema-version');

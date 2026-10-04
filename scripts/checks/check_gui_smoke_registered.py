@@ -31,8 +31,14 @@ SMOKE_DIR = ROOT / "tests" / "gui-smoke"
 RUNNER = ROOT / "scripts" / "run-gui-smoke.js"
 
 
+def _strip_js_comments(source: str) -> str:
+    """Drop JS comments so a commented-out registry entry does not count (CHK-20)."""
+    source = re.sub(r"/\*.*?\*/", "", source, flags=re.DOTALL)
+    return re.sub(r"(?m)^\s*//.*$|\s//.*$", "", source)
+
+
 def _registered_names() -> set[str]:
-    source = RUNNER.read_text(encoding="utf-8")
+    source = _strip_js_comments(RUNNER.read_text(encoding="utf-8"))
     return set(re.findall(r"'([A-Za-z0-9._-]+\.smoke\.js)'", source))
 
 
@@ -41,12 +47,15 @@ def _expected_names() -> list[str]:
 
 
 def main() -> int:
-    if not SMOKE_DIR.is_dir() or not RUNNER.is_file():
+    if not SMOKE_DIR.is_dir():
         print("PASS: no GUI smoke suite to check")
         return 0
     expected = _expected_names()
     if not expected:
         print("FAIL: no *.smoke.js files found -- this check is looking in the wrong place")
+        return 1
+    if not RUNNER.is_file():
+        print(f"FAIL: {len(expected)} GUI smoke files exist but {RUNNER.name} is missing")
         return 1
     registered = _registered_names()
     missing = [name for name in expected if name not in registered]

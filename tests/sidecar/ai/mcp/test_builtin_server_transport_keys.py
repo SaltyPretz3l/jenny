@@ -17,7 +17,9 @@ TOOL_MANIFEST = REPO_ROOT / "services" / "tools" / "tool-manifest.json"
 # Driven by the production constant so a newly injected ``_jenny_*`` key cannot
 # silently re-open the 74ddbc9c regression for additionalProperties:false tools.
 TRANSPORT_ARGUMENTS = {
-    key: {"_jenny_read_only": True, "_jenny_approved_plan": {"id": "plan_test"}}.get(key, f"{key}_test")
+    key: {"_jenny_read_only": True, "_jenny_approved_plan": {"id": "plan_test"}}.get(
+        key, f"{key}_test"
+    )
     for key in builtin_server.TRANSPORT_ARGUMENT_KEYS
 }
 assert {"_jenny_trace_id", "_jenny_session_id", "_jenny_read_only"} <= set(TRANSPORT_ARGUMENTS)
@@ -84,7 +86,7 @@ def test_prepare_call_arguments_preserves_transport_keys_for_strict_schemas(
     )
     arguments = {**_minimal_arguments(manifest_tool), **TRANSPORT_ARGUMENTS}
 
-    prepared, operation_id, _scope = builtin_server._prepare_call_arguments(  # noqa: SLF001
+    prepared, operation_id, _scope = builtin_server._prepare_call_arguments(
         tool,
         arguments,
         WorkspaceGuard(str(tmp_path)),
@@ -105,11 +107,10 @@ def test_load_skill_call_accepts_trace_id_and_returns_bundled_body(tmp_path: Pat
     )
     _reset_skill_tool_state()
     try:
-        tools = builtin_server._default_tools(  # noqa: SLF001
-            workspace_root_present=True,
-            skills_bundled_root=str(bundled_root),
+        tools = builtin_server._default_tools(
+            {"skills_bundled_root": str(bundled_root)}, workspace_root_present=True
         )
-        response = builtin_server._handle_tools_call(  # noqa: SLF001
+        response = builtin_server._handle_tools_call(
             "load-skill-call",
             tools,
             WorkspaceGuard(str(tmp_path)),

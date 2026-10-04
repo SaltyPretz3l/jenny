@@ -1,5 +1,5 @@
 const mainModuleEntryAt = Date.now(); // first executable line: anchors the cold-start audit's 'main-entry' mark
-const { app, BrowserWindow, clipboard, desktopCapturer, dialog, ipcMain, nativeImage, powerMonitor, protocol, safeStorage, screen, session, shell } = require('electron');
+const { app, BrowserWindow, clipboard, desktopCapturer, dialog, ipcMain, Menu, nativeImage, powerMonitor, protocol, safeStorage, screen, session, shell } = require('electron');
 // Agent/dev profile isolation must precede every require that can touch userData.
 // This lets automation use a throwaway profile beside the user's real one.
 const jennyUserDataDirOverride = String(process.env.JENNY_USER_DATA_DIR || '').trim();
@@ -8,8 +8,7 @@ if (jennyUserDataDirOverride) {
 }
 const { applySingleInstance, startWhenSingleInstanceAvailable } = require('./services/apply-single-instance');
 const { createSuggestionCache, clearSuggestionCache } = require('./services/backend/backend-suggestions');
-const { APP_USER_MODEL_ID, ensureDesktopShortcut } = require('./services/desktop-shortcut');
-const { createCometOverlay } = require('./overlay-window');
+const { ensureDesktopShortcut, ensureDevStartMenuShortcut, resolveAppUserModelId } = require('./services/desktop-shortcut');
 const { createFeatureSettingsFacade } = require('./services/main/feature-settings-facade');
 const { stopRuntimeWithDependencies } = require('./services/runtime-stop');
 const { normalizeLogEntry, toPersistedMainLog } = require('./services/log-entry-normalizer');
@@ -18,6 +17,7 @@ const { normalizeCrashDetail, readSidecarLogTail, showSidecarCrashDialog } = req
 const { getBridgeChannel } = require('./services/ipc-contract');
 const { createMainWindowStartupLifecycle } = require('./services/main-window-startup-lifecycle');
 const { getWindowStateSnapshot } = require('./services/window-state-service');
+const { APP_ZOOM_DEFAULT } = require('./services/shell-config-zoom-state');
 const {
   buildSystemStatsPayload,
   createUnavailableGpuMemorySample,
@@ -38,10 +38,6 @@ const { createSetupReadinessProbe } = require('./services/main/setup-readiness')
 const { createLogRedactionPrefixesProvider } = require('./services/main/client-log-forwarding');
 const { createBackendServiceWithDeps } = require('./services/main/backend-service-wiring');
 const mainIpcRegistration = require('./services/main/ipc-handler-registration');
-const {
-  handleCometOverlayToggle,
-  normalizeCometOverlayPresencePayload,
-} = require('./services/main/comet-overlay-controller');
 const { createMainWindowWithDeps, resolveWindowIconPath } = require('./services/main/main-window-composition');
 const { createRuntimeServicesWithDeps, resolveUiLanguage } = require('./services/main/runtime-service-composition');
 const { createRuntimeShutdownController } = require('./services/main/runtime-shutdown');
@@ -53,18 +49,17 @@ const { installDefaultSessionWiring } = require('./services/main/default-session
 // Electron permits this registration only once and only before readiness.
 registerArtifactFramePrivilegedScheme(protocol, [PLUGIN_VIEW_PRIVILEGED_SCHEME]);
 const {
+  resolveBootFailureAction,
   shouldAutoStartMainProcess,
   shouldRefreshManagedConfigForShellConfigReason,
 } = require('./services/main/main-process-policy');
 let mainWindow;
-let overlayRef = null; /* comet overlay companion (spike, default-off) */
 let backendService;
 let logStore;
 let processLogWriter;
 let personalityWorkspace;
 let shellConfigService;
 let schedulerService;
-let weatherService;
 let linkStatusService;
 let calendarService;
 let deferredServicesStarted = false;
@@ -88,7 +83,6 @@ let mcpDiscoveryService;
 let attachmentAssetStore;
 let artifactService;
 let mainLifecycle;
-let tipsService;
 let chatStreamBridge;
 let usageHistory;
 let updateService;
@@ -151,17 +145,11 @@ const {
   applyFeatureSettingsPatch,
   buildEffectiveFeatureFlags,
   buildFeatureStatePayload,
-  closeCometOverlayIfDisabled,
-  isCometOverlayEnabled,
 } = createFeatureSettingsFacade({
   env: process.env,
   platform: process.platform,
   getShellConfigService: () => shellConfigService,
   getBackendService: () => backendService,
-  getOverlayRef: () => overlayRef,
-  setOverlayRef: (nextOverlayRef) => {
-    overlayRef = nextOverlayRef;
-  },
   sendToWindow: (channel, payload) => sendToWindow(channel, payload),
 });
 
@@ -217,6 +205,9 @@ const createWindow = () => createMainWindowWithDeps({
   }),
   ipcMainRef: ipcMain,
   shell,
+  Menu,
+  isPackaged: app.isPackaged,
+  platform: process.platform,
   windowStateService,
   mainErrorHardening,
   mainLifecycle,
@@ -236,12 +227,13 @@ const createWindow = () => createMainWindowWithDeps({
     mainWindow = nextWindow;
   },
   getWindowExitGuard: () => workspaceProcessServices.windowExitGuard,
+  onWindowVisibilityChange: (visible) => systemStats?.visibilityPause?.setVisible(visible),
   getInitialAppZoomFactor: () => {
     try {
       const percent = Number(shellConfigService?.getWindowUiState?.().appZoomPercent);
-      return Number.isFinite(percent) && percent > 0 ? percent / 100 : 1;
+      return Number.isFinite(percent) && percent > 0 ? percent / 100 : APP_ZOOM_DEFAULT / 100;
     } catch (_error) {
-      return 1;
+      return APP_ZOOM_DEFAULT / 100;
     }
   },
   getPortableAppearance: () => dataLifecycleStartup.readPortableAppearance(app), getUiLanguage: () => resolveUiLanguage({ shellConfigService }),
@@ -291,7 +283,6 @@ const createBackendService = () => {
     // captured here if construction order ever changed.
     getRefreshElectronToolRegistry: () => refreshElectronToolRegistry,
     shouldRefreshManagedConfigForShellConfigReason,
-    closeCometOverlayIfDisabled,
     sendBridgeEvent,
     log,
     showSidecarCrashDialog,
@@ -299,12 +290,10 @@ const createBackendService = () => {
   });
   backendService = created.backendService;
   schedulerService = created.schedulerService;
-  weatherService = created.weatherService;
   linkStatusService = created.linkStatusService;
   calendarService = created.calendarService;
   offlineIntelligenceService = created.offlineIntelligenceService;
   companionService = created.companionService;
-  tipsService = created.tipsService;
   chatStreamBridge = created.chatStreamBridge;
   startDeferredBackgroundRefreshes = created.startDeferredBackgroundRefreshes;
 };
@@ -325,6 +314,7 @@ const createRuntimeServices = () => {
     onGpuMemoryReset: resetGpuMemorySample,
     getBackendService: () => backendService,
     getCurrentSystemStatsPayload,
+    getSystemStats: () => systemStats,
     refreshGpuMemorySample,
     probeSetupReadiness,
     sendBridgeEvent,
@@ -384,8 +374,8 @@ const registerWorkspaceIpcHandlers = (ipcMainLike = ipcMain, configService = she
 const registerWorkspaceRootIpcHandlers = (ipcMainLike = ipcMain, deps = {}) =>
   mainIpcRegistration.registerWorkspaceRootIpcHandlers(ipcMainLike, deps);
 
-const registerGuidanceIpcHandlers = (ipcMainLike = ipcMain, skillService = skillsService, tipService = tipsService) =>
-  mainIpcRegistration.registerGuidanceIpcHandlers(ipcMainLike, skillService, tipService);
+const registerGuidanceIpcHandlers = (ipcMainLike = ipcMain, skillService = skillsService) =>
+  mainIpcRegistration.registerGuidanceIpcHandlers(ipcMainLike, skillService);
 
 const registerFeatureIpcHandlers = (ipcMainLike = ipcMain, deps = {}) =>
   mainIpcRegistration.registerFeatureIpcHandlers(ipcMainLike, deps);
@@ -403,7 +393,6 @@ const registerIpcHandlers = () => mainIpcRegistration.registerMainIpcHandlers({
   companionService,
   skillsService,
   knowledgeService,
-  tipsService,
   suggestionCache,
   offlineIntelligenceService,
   applyFeatureSettingsPatch,
@@ -412,11 +401,16 @@ const registerIpcHandlers = () => mainIpcRegistration.registerMainIpcHandlers({
   attachmentAssetStore,
   processRef: process,
   clipboard,
+  nativeImage,
   log,
   getLlamaServerManager: () => getRuntimeShutdownController().getLlamaServerManager(),
   getMainLifecycle: () => mainLifecycle,
   getWindowState: getMainWindowStatePayload,
-  startDeferredServices,
+  // A Retry after a failed boot must also finish a pending restore promotion.
+  startDeferredServices: () => {
+    void dataLifecycleStartup.finalizeSuccessfulRestoredBoot(app, log);
+    startDeferredServices();
+  },
   toolExecutor,
   toolPermissionStore,
   usageHistory,
@@ -424,7 +418,6 @@ const registerIpcHandlers = () => mainIpcRegistration.registerMainIpcHandlers({
   ollamaInstallService,
   mcpDiscoveryService,
   schedulerService,
-  weatherService,
   linkStatusService,
   calendarService,
   chatStreamBridge,
@@ -433,15 +426,10 @@ const registerIpcHandlers = () => mainIpcRegistration.registerMainIpcHandlers({
   createStartupAuditMarksBatchHandler,
   refreshGpuMemorySample,
   getCurrentSystemStatsPayload,
+  // system.setStatsWatch reads the cadence from it; without it the 2 s
+  // watched tick never engages (SC-2).
+  getSystemStats: () => systemStats,
   buildFeatureStatePayload,
-  getOverlayRef: () => overlayRef,
-  setOverlayRef: (nextOverlayRef) => {
-    overlayRef = nextOverlayRef;
-  },
-  isCometOverlayEnabled,
-  createCometOverlay,
-  handleCometOverlayToggle,
-  normalizeCometOverlayPresencePayload,
   trashItemImpl: (targetPath) => shell.trashItem(targetPath),
   showItemInFolderImpl: (targetPath) => shell.showItemInFolder(targetPath),
   openPathImpl: (targetPath) => shell.openPath(targetPath),
@@ -465,7 +453,6 @@ function getRuntimeShutdownController() {
       getSchedulerService: () => schedulerService,
       getBackendService: () => backendService,
       getProcessLogWriter: () => processLogWriter,
-      getWorkspaceTerminalService: () => workspaceProcessServices.workspaceTerminalService || null,
       getWorkspacePtyService: () => workspaceProcessServices.workspacePtyService || null,
       getWorkspaceRunTaskService: () => workspaceProcessServices.workspaceRunTaskService || null,
       getWorkspaceTestRunnerService: () => workspaceProcessServices.workspaceTestRunnerService || null,
@@ -488,7 +475,7 @@ function getRuntimeShutdownController() {
   return runtimeShutdownController;
 }
 
-const emitLifecycleProgress = (...args) => getRuntimeShutdownController().emitLifecycleProgress(...args);
+const emitStartupProgress = (...args) => getRuntimeShutdownController().emitStartupProgress(...args);
 const startLlamaServerBeforeBackend = () => getRuntimeShutdownController().startLlamaServerBeforeBackend();
 const stopRuntimeBeforeQuit = (context) => {
   // Dispose main-owned display-media IPC state before the runtime drain.
@@ -522,6 +509,15 @@ function requestMainProcessShutdown(exitCode = 1) {
   if (mainLifecycle && typeof mainLifecycle.requestEmergencyShutdown === 'function') return mainLifecycle.requestEmergencyShutdown({ exitCode });
   app.exit(exitCode);
 }
+function handleBootFailure(failedStatus, detail) {
+  const action = resolveBootFailureAction({
+    hasPackagedSmoke: Boolean(packagedSmokeController),
+    hasLiveWindow: Boolean(mainWindow && !mainWindow.isDestroyed()),
+  });
+  if (action === 'packaged-smoke') packagedSmokeController.markBackendFailed(failedStatus, detail);
+  else if (action === 'keep-window') log('WARN', 'backend.start_failed_window_kept', { reason: 'awaiting_retry' });
+  else requestMainProcessShutdown(1);
+}
 function startMainProcess() {
   return startWhenSingleInstanceAvailable({
     acquireLock: () => (
@@ -544,7 +540,14 @@ function startMainProcess() {
       app.whenReady().then(async () => {
         emitStartupAuditMark('electron-ready', { source: 'main' });
         if (process.platform === 'win32') {
-          app.setAppUserModelId(APP_USER_MODEL_ID);
+          app.setAppUserModelId(resolveAppUserModelId({ isPackaged: app.isPackaged }));
+          // Before any Notification: Electron creates its toast shortcut when the
+          // presenter starts. No-op when packaged; never blocks startup.
+          try {
+            ensureDevStartMenuShortcut({ app, shell, logger: log });
+          } catch (_shortcutError) {
+            // ensureDevStartMenuShortcut already logs failures.
+          }
         }
 
         packagedSmokeController = createPackagedSmokeController({
@@ -610,7 +613,6 @@ function startMainProcess() {
           });
           registerMainProcessLifecycleHandlers(app, mainLifecycle);
           app.on('window-all-closed', () => {
-            if (overlayRef) { overlayRef.dispose(); overlayRef = null; }
             log('INFO', 'app.window_all_closed');
           });
           workspaceProcessServices = registerIpcHandlers() || {};
@@ -622,11 +624,7 @@ function startMainProcess() {
           emitStartupAuditMark('backend-start', { source: 'main' });
           await backendService.start({
             localServerReadyPromise,
-            onProgress: (phase, detail) => {
-              const startupController = getRuntimeShutdownController();
-              const idx = startupController.startupStepIndex[phase] ?? 0;
-              emitLifecycleProgress('startup', phase, detail, idx, startupController.startupStepCount);
-            },
+            onProgress: (phase, facts) => emitStartupProgress(phase, facts),
           });
           await dataLifecycleStartup.finalizeSuccessfulRestoredBoot(app, log);
           emitStartupAuditMark('backend-ready', { source: 'main' });
@@ -639,8 +637,7 @@ function startMainProcess() {
           log('ERROR', 'backend.start_failed', {
             message: String(error.message || error),
           });
-          emitLifecycleProgress('startup', 'ready', 'Startup failed', 6, getRuntimeShutdownController().startupStepCount,
-            String(error.message || error));
+          emitStartupProgress('ready', {}, String(error.message || error));
           // Guard the deref: a throw inside createRuntimeServices() lands here
           // *before* backendService is assigned, so an unguarded
           // backendService.getBackendStatus() would raise a secondary TypeError
@@ -650,11 +647,7 @@ function startMainProcess() {
             : {};
           const failedStatus = { ...baseStatus, phase: 'failed', detail: String(error.message || error) };
           sendBridgeEvent('backend.onStatus', failedStatus);
-          if (packagedSmokeController) {
-            packagedSmokeController.markBackendFailed(failedStatus, error.message || error);
-          } else {
-            requestMainProcessShutdown(1);
-          }
+          handleBootFailure(failedStatus, error.message || error);
         }
 
         app.on('activate', () => {
@@ -677,11 +670,7 @@ function startMainProcess() {
           : {};
         const failedStatus = { ...baseStatus, phase: 'failed', detail };
         sendBridgeEvent('backend.onStatus', failedStatus);
-        if (packagedSmokeController) {
-          packagedSmokeController.markBackendFailed(failedStatus, detail);
-        } else {
-          requestMainProcessShutdown(1);
-        }
+        handleBootFailure(failedStatus, detail);
       });
 
       registerEmergencyShutdownHandlers(process, {
@@ -704,9 +693,6 @@ if (shouldAutoStartMainProcess() && !dataLifecycleStartup.startUninstallAssistan
 
 module.exports = {
   createMainWindowStartupLifecycle,
-  handleCometOverlayToggle,
-  isCometOverlayEnabled,
-  normalizeCometOverlayPresencePayload,
   normalizeCrashDetail,
   registerFeatureIpcHandlers,
   readSidecarLogTail,

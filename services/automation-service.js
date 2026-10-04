@@ -1,6 +1,6 @@
 'use strict';
 
-const { normalizeString } = require('../renderer/shared/string-utils');
+const { normalizeString } = require('./shared/normalize');
 const { t } = require('./i18n-main');
 const { collapseRedactedPathTails, redactLogValue } = require('./log-entry-normalizer');
 const {

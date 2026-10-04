@@ -6,6 +6,8 @@
   root.rendererSettingsUtils = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
+  const appearanceUtils = (typeof globalThis !== 'undefined' && globalThis.appearanceUtils)
+    || (typeof require === 'function' ? require('../shared/appearance-utils') : null);
   const settingsSupport = (typeof globalThis !== 'undefined' && globalThis.rendererSettingsSupport)
     || (typeof require === 'function' ? require('./renderer-settings-support') : null)
     || {};
@@ -39,10 +41,6 @@
     getToolConfigFieldsForRender = function fallbackGetToolConfigFieldsForRender() { return []; },
     buildToolConfigFieldListMarkup = function fallbackBuildToolConfigFieldListMarkup() { return ''; },
     buildUiLanguageFieldMarkup = function fallbackBuildUiLanguageFieldMarkup() { return ''; },
-    buildSafetyModeFieldMarkup = function fallbackBuildSafetyModeFieldMarkup() { return ''; },
-    buildUnattendedGuardFieldMarkup = function fallbackBuildUnattendedGuardFieldMarkup() { return ''; },
-    buildAutoApproveStreakCapFieldMarkup = function fallbackBuildAutoApproveStreakCapFieldMarkup() { return ''; },
-    buildDefaultRunModeFieldMarkup = function fallbackBuildDefaultRunModeFieldMarkup() { return ''; },
     buildContextToggleListsMarkup = function fallbackBuildContextToggleListsMarkup() { return { sources: '', runtime: '' }; },
     buildSettingsToggleListMarkup = function fallbackBuildSettingsToggleListMarkup() { return ''; },
     renderStatusRowContainer = function fallbackRenderStatusRowContainer() {},
@@ -74,33 +72,32 @@
     const { ACTIVITY_SCOPE } = deps.constants;
     const {
       composerModelSelect, composerEffortSelect,
-      appearanceThemeBundleSelect,
-      appearancePaletteSelect, appearanceTypographySelect, appearanceFontScaleSelect, appearanceSurfaceEffectSelect,
-      appearanceChatWidthMount,
-      appearanceSurfaceEffectDescription, appearanceSurfaceEffectMeta, appearanceSurfaceEffectPreview,
-      appearanceHoloList, appearanceSpellcheckList, appearanceAppZoomSelect,
-      composerSettingsPopover, composerSettingsButton, composerChatZoomSelect, composerChatZoomStatus,
+      appearanceSettingsSection, appearanceSurfaceEffectMeta, appearanceSurfaceEffectPreview,
+      appearanceHoloList, appearanceSpellcheckList,
+      composerAttachMenu,
+      composerAttachShortcut,
       composerCommandPopover, composerCommandPopoverList, composerTerminalShortcut,
       settingsModelCard,
-      modelBadge, modelStatus, modelStartupLoadList, appearanceBadge, appearanceStatus, appearanceResetButton,
+      modelBadge, modelStatus, modelStartupLoadList, appearanceResetButton,
       modelCatalogEmpty,
-      accountBadge, accountSummary, localProfileSettingsMount, backendSummary,
+      accountSummary, localProfileSettingsMount, backendSummary,
       setupSettingsSummary, setupSettingsActions, setupProgressContainer,
       settingsControlTowerHost,
       skillsSettingsNavItem,
-      contextBadge, contextStatus, contextHistoryScopeSelect,
+      contextStatus, contextSettingsSection,
       contextSourcesList, contextRuntimeList, contextCompactionTuning,
-      toolsConfigFieldList, toolsApprovalRulesList, toolsWorkspacePath, toolsWorkspaceStatus,
-      toolsWorkspaceProject, toolsWorkspaceChooseButton, toolsSummary,
-      editorBadge, editorStatus, editorSettingsFieldList,
-      homeBadge, homeStatus, homeSettingsFieldList,
+      toolsConfigFieldList, toolsPermissionsList, toolsFilesList, toolsWebList, toolsTerminalList, toolsCodeList,
+      toolsCommandSandboxHost, toolsWorkspaceLine, toolsApprovalRulesList, toolsWorkspacePath, toolsWorkspaceStatus,
+      toolsWorkspaceProject, toolsWorkspaceChooseButton,
+      editorStatus, editorSettingsFieldList,
+      homeStatus, homeSettingsFieldList, notificationsSettingsSection,
       chatInput, composerModelSelectEl,
     } = deps.dom;
     const appearanceLanguageField = deps.dom.appearanceLanguageField
       || (typeof globalThis !== 'undefined' ? globalThis.document?.getElementById('appearanceLanguageField') : null);
 
     const {
-      getCurrentRuntimePreferences, normalizeAppearancePreferences,
+      getCurrentRuntimePreferences, getRuntimePreferencesFromSession = null, normalizeAppearancePreferences,
       getPalettePresets, getTypographyPresets, getSurfaceEffectPresets,
       getThemeBundles = function fallbackGetThemeBundles() { return []; },
       getComposerHoloOptions = function fallbackGetComposerHoloOptions() {
@@ -124,10 +121,8 @@
     const overlayRenderer = settingsOverlays.createSettingsOverlayRenderer?.({
       state,
       dom: {
-        composerSettingsPopover,
-        composerSettingsButton,
-        composerChatZoomSelect,
-        composerChatZoomStatus,
+        composerAttachMenu,
+        composerAttachShortcut,
         composerCommandPopover,
         composerCommandPopoverList,
         composerTerminalShortcut,
@@ -141,9 +136,43 @@
       },
     }) || {};
     const composerMeasure = settingsComposerMeasure.createComposerMeasure?.({
-      state, composerLayoutRuntime, chatInput, composerModelSelect,
+      state, composerLayoutRuntime, chatInput,
       resolveComposerModelSelectWidth, updateComposerSafeOffset,
     }) || {};
+    const fieldDescriptors = globalThis.rendererSettingsFieldDescriptors
+      || (typeof require === 'function' ? require('./renderer-settings-field-descriptors') : null);
+    // One option list per Appearance select: the control, edit validation and
+    // the "Default: <label>" meta all read it.
+    const presetOptions = (presets) => presets.map((preset) => ({ value: preset.id, label: preset.label }));
+    const optionSources = {
+      themeBundles: () => {
+        const bundles = presetOptions(getThemeBundles());
+        return detectActiveThemeBundle(normalizeAppearancePreferences(state.ui.appearance))
+          ? bundles
+          : bundles.concat([{ value: 'custom', label: jt('settings.appearance.custom', 'Custom') }]);
+      },
+      palettes: () => presetOptions(getPalettePresets()),
+      typography: () => presetOptions(getTypographyPresets()),
+      fontScales: () => presetOptions(getFontScalePresets()),
+      chatWidths: () => presetOptions(getChatWidthPresets()),
+      surfaceEffects: () => presetOptions(getSurfaceEffectPresets()),
+      // Overall app zoom (Electron webContents.setZoomFactor), persisted via jennyShell.windowUi.
+      // The Ctrl +/- steps, plus a stored value between them (the service keeps any 5% step from 80 to 150).
+      appZoomPresets: () => [...new Set([80, 90, 100, 110, 125, 150, Number(state.ui.appZoomPercent) || 110])]
+        .sort((left, right) => left - right).map((percent) => ({ value: percent, label: `${percent}%` })),
+    };
+    Object.keys(optionSources).forEach((name) => fieldDescriptors?.registerOptionSource?.(name, optionSources[name]));
+    // Rendered once into its [data-setting-mount] host, patched in place afterwards.
+    // The binding module loads after this one, so it resolves at render time.
+    function mountSettingRow(section, id, value, extra) {
+      const fieldBinding = globalThis.rendererSettingsFieldBinding
+        || (typeof require === 'function' ? require('./renderer-settings-field-binding') : null);
+      const mount = section?.querySelector?.(`[data-setting-mount="${id}"]`);
+      const descriptor = fieldDescriptors?.getSettingDescriptor?.(id);
+      if (!mount || !descriptor || typeof fieldBinding?.mountSettingRow !== 'function') return null;
+      fieldBinding.mountSettingRow(mount, descriptor, value, { className: 'select-shell', ...extra });
+      return mount;
+    }
     function shouldRenderLazySection(sectionId) { return isSectionInitialized(sectionId); }
     /* DOM lookup is read-only and inexpensive — return existing static markup
      * even when the section's lazy bindings have not yet been wired, so the
@@ -170,29 +199,12 @@
       const modelCatalogReason = String(state.modelList?.reason || '').trim();
       const runtimePreferences = getCurrentRuntimePreferences();
       const appearancePreferences = normalizeAppearancePreferences(state.ui.appearance);
-      const palettePresets = getPalettePresets();
-      const typographyPresets = getTypographyPresets();
-      const fontScalePresets = getFontScalePresets();
-      const chatWidthPresets = getChatWidthPresets();
-      const themeBundles = getThemeBundles();
-      const palettePreset = palettePresets.find((preset) => preset.id === appearancePreferences.paletteId) || palettePresets[0];
-      const typographyPreset =
-        typographyPresets.find((preset) => preset.id === appearancePreferences.typographyId) || typographyPresets[0];
       const surfaceEffectPresets = getSurfaceEffectPresets();
       const surfaceEffectPreset = surfaceEffectPresets.find((preset) => preset.id === appearancePreferences.surfaceEffectId) || surfaceEffectPresets[0];
       const activeThemeBundle = detectActiveThemeBundle(appearancePreferences);
-      const themeBundleOptions = activeThemeBundle
-        ? themeBundles
-        : themeBundles.concat([{ id: 'custom', label: jt('settings.appearance.custom', 'Custom') }]);
       const composerHoloOptions = getComposerHoloOptions();
       const composerHoloOption = composerHoloOptions.find((option) => option.id === appearancePreferences.composerHoloId) || composerHoloOptions[0];
-      // Overall app zoom (Electron webContents.setZoomFactor) — discrete preset
-      // ladder. Persisted via jennyShell.windowUi; applied natively by main.
-      const appZoomOptions = [90, 100, 110, 125, 150].map((percent) => ({
-        id: String(percent),
-        label: `${percent}%`,
-      }));
-      const appZoomPercent = Number(state.ui.appZoomPercent) || 100;
+      const appZoomPercent = Number(state.ui.appZoomPercent) || 110; // APP_ZOOM_DEFAULT (services/shell-config-zoom-state.js)
       const runtimeModelActivity = getMostRecentActivity([
         ACTIVITY_SCOPE.settingsModelLoad,
         ACTIVITY_SCOPE.settingsModelUnload,
@@ -215,11 +227,6 @@
         message: jt('settings.tools.workspaceNotConfigured', 'No workspace root is configured yet.'),
       };
       const workspaceRootStatus = workspaceRootState.status || featureWorkspaceRootStatus;
-      const contextScopeLabel = contextPreferences.historyScope === 'recent'
-        ? jt('settings.context.historyScope.recent', 'Last 6 turns')
-        : contextPreferences.historyScope === 'fresh'
-          ? jt('settings.context.historyScope.fresh', 'New prompt only')
-          : jt('settings.context.historyScope.full', 'Full session');
       const backendMode = String(state.backend?.mode || '').trim().toLowerCase();
       const managedMode = String(state.offline?.managedSidecar?.mode || state.backend?.mode || '').trim().toLowerCase();
       const contextUnavailable = backendMode === 'external';
@@ -244,25 +251,26 @@
       composerModelSelect.dataset.backendEngineType = String(
         state.status?.engine || state.status?.engine_type || state.modelList?.engine_type || ''
       ).trim().toLowerCase();
-      composerModelSelect.innerHTML = buildModelOptionMarkup(models, runtimePreferences.preferredModel, {
+      // Split view W2-2a: pane 0's rail carriers carry pane 0's session (one pane: the current preferences).
+      const composerPreferences = globalThis.rendererRenderPipelineChromeUtils?.resolvePaneRuntimePreferences?.({ state, sessionId: globalThis.rendererPaneVisibilityUtils?.resolvePaneSessionId?.(state, 0), fromSession: getRuntimePreferencesFromSession, current: () => runtimePreferences }) || runtimePreferences;
+      composerModelSelect.innerHTML = buildModelOptionMarkup(models, composerPreferences.preferredModel, {
         compact: true,
       });
-      composerModelSelect.value = runtimePreferences.preferredModel;
-      composerMeasure.syncComposerModelSelectWidth?.();
-      composerEffortSelect.dataset.requestedEffort = String(runtimePreferences.reasoningEffort || '');
-      composerEffortSelect.value = runtimePreferences.reasoningEffort;
-      if (appearanceThemeBundleSelect) {
-        appearanceThemeBundleSelect.innerHTML = buildSelectOptionMarkup(
-          themeBundleOptions,
-          activeThemeBundle ? activeThemeBundle.id : 'custom'
-        );
-        appearanceThemeBundleSelect.value = activeThemeBundle ? activeThemeBundle.id : 'custom';
-      }
-      appearancePaletteSelect.innerHTML = buildSelectOptionMarkup(palettePresets, appearancePreferences.paletteId);
-      appearanceTypographySelect.innerHTML = buildSelectOptionMarkup(typographyPresets, appearancePreferences.typographyId);
-      if (appearanceFontScaleSelect) {
-        appearanceFontScaleSelect.innerHTML = buildSelectOptionMarkup(fontScalePresets, appearancePreferences.fontScaleId);
-      }
+      composerModelSelect.value = composerPreferences.preferredModel;
+      globalThis.rendererComposerModelPicker?.instance?.syncPill?.();
+      composerEffortSelect.dataset.requestedEffort = String(composerPreferences.reasoningEffort || '');
+      composerEffortSelect.value = composerPreferences.reasoningEffort;
+      // Bundle and palette names run long ("Jenny XJ-9 — Night Patrol"): both
+      // take the wide dropdown, so the two stack at one width.
+      mountSettingRow(appearanceSettingsSection, 'appearanceThemeBundleSelect', activeThemeBundle ? activeThemeBundle.id : 'custom', { rowClassName: 'settings-field--wide-control' });
+      mountSettingRow(appearanceSettingsSection, 'appearancePaletteSelect', appearancePreferences.paletteId, { rowClassName: 'settings-field--wide-control' });
+      mountSettingRow(appearanceSettingsSection, 'appearanceTypographySelect', appearancePreferences.typographyId);
+      mountSettingRow(appearanceSettingsSection, 'appearanceFontScaleSelect', appearancePreferences.fontScaleId);
+      mountSettingRow(appearanceSettingsSection, 'appearanceChatWidthSelect', appearancePreferences.chatWidthId);
+      const surfaceEffectMount = mountSettingRow(appearanceSettingsSection, 'appearanceSurfaceEffectSelect', appearancePreferences.surfaceEffectId);
+      mountSettingRow(appearanceSettingsSection, 'appearanceAppZoomSelect', appZoomPercent);
+      mountSettingRow(appearanceSettingsSection, 'transcriptViewDefaultSelect', state.transcriptViewDefault);
+      mountSettingRow(appearanceSettingsSection, 'appearanceArtifactAutoOpenToggle', appearancePreferences.artifactAutoOpen === true);
       if (appearanceLanguageField && shouldPatchSection('appearanceLanguage')) {
         appearanceLanguageField.innerHTML = buildUiLanguageFieldMarkup({
           value: state.uiLanguage,
@@ -270,43 +278,11 @@
           selectField: typeof globalThis !== 'undefined' ? globalThis.inventory?.selectField : null,
         });
       }
-      // Chat width mounts through the inventory selectField primitive rather
-      // than a raw select element declared in index.html (that file's
-      // raw-primitive budget only ever moves down). The select-shell class is
-      // passed through so the row is visually identical to its sibling select
-      // rows with no new CSS.
-      if (appearanceChatWidthMount) {
-        const selectField = (typeof globalThis !== 'undefined'
-          ? (globalThis.inventory?.selectField || globalThis.inventorySelectField)
-          : null) || null;
-        const liveChatWidthSelect = appearanceChatWidthMount.querySelector('#appearanceChatWidthSelect');
-        if (selectField && !liveChatWidthSelect) {
-          appearanceChatWidthMount.innerHTML = selectField({
-            id: 'appearanceChatWidthSelect',
-            className: 'select-shell',
-            ariaLabel: jt('settings.appearance.chatWidthAriaLabel', 'Chat width selector'),
-            value: appearancePreferences.chatWidthId,
-            options: chatWidthPresets.map((preset) => ({ value: preset.id, label: preset.label })),
-          });
-        } else if (selectField && liveChatWidthSelect) {
-          // Repopulate the LIVE select in place. optionsMarkup exists for
-          // exactly this, and keeping the node stable keeps the per-field
-          // reset button's listener bound across re-renders.
-          liveChatWidthSelect.innerHTML = selectField.optionsMarkup(
-            chatWidthPresets.map((preset) => ({ value: preset.id, label: preset.label })),
-            appearancePreferences.chatWidthId
-          );
-        }
-      }
-      appearanceSurfaceEffectSelect.innerHTML = buildSelectOptionMarkup(surfaceEffectPresets, appearancePreferences.surfaceEffectId);
       if (appearanceHoloList) {
-        const holoToggleSwitch = typeof globalThis !== 'undefined' ? globalThis.inventory?.toggleSwitch : null;
         appearanceHoloList.innerHTML = buildSettingsToggleListMarkup({
           escapeHtml,
-          toggleSwitch: holoToggleSwitch,
-          fields: [
-            { id: 'appearanceComposerHoloToggle', label: jt('settings.appearance.holographicTypingBorderLabel', 'Holographic typing border'), checked: composerHoloOption.id !== 'off' },
-          ],
+          toggleSwitch: typeof globalThis !== 'undefined' ? globalThis.inventory?.toggleSwitch : null,
+          fields: appearanceUtils.getAppearanceToggleFields({ jt, composerHoloOption, appearancePreferences, startupAnimationFlagOff: state.features?.featureFlags?.startup_animation === false }),
         });
       }
       if (appearanceSpellcheckList) {
@@ -319,37 +295,18 @@
           ],
         });
       }
-      if (appearanceAppZoomSelect) {
-        appearanceAppZoomSelect.innerHTML = buildSelectOptionMarkup(appZoomOptions, String(appZoomPercent));
-      }
-      appearancePaletteSelect.value = appearancePreferences.paletteId;
-      appearanceTypographySelect.value = appearancePreferences.typographyId;
-      if (appearanceFontScaleSelect) {
-        appearanceFontScaleSelect.value = appearancePreferences.fontScaleId;
-      }
-      const mountedChatWidthSelect = appearanceChatWidthMount
-        ? appearanceChatWidthMount.querySelector('#appearanceChatWidthSelect')
-        : null;
-      if (mountedChatWidthSelect) {
-        mountedChatWidthSelect.value = appearancePreferences.chatWidthId;
-      }
-      appearanceSurfaceEffectSelect.value = appearancePreferences.surfaceEffectId;
-      if (appearanceAppZoomSelect) {
-        appearanceAppZoomSelect.value = String(appZoomPercent);
-      }
-      const appearanceStatusPrefix = activeThemeBundle
-        ? jt('settings.appearance.statusBundle', '{bundle} bundle', { bundle: activeThemeBundle.label })
-        : jt('settings.appearance.statusPalette', '{palette} palette', { palette: palettePreset?.label || jt('settings.appearance.themeFallback', 'Theme') });
-      applyBadgeState(modelBadge, resolveModelBadge({
+      const modelBadgeState = resolveModelBadge({
         busy: runtimeModelBusy, loadingModel, errored: runtimeModelActivity?.state === 'error',
         catalogUnavailable: modelCatalogUnavailable, activeModel,
-      }));
-      appearanceBadge.textContent = activeThemeBundle?.label || 'Custom';
+      });
+      if (activeModel && modelBadgeState.text === activeModel) modelBadgeState.text = activeModel.slice(activeModel.lastIndexOf('/') + 1);
+      applyBadgeState(modelBadge, modelBadgeState);
+      modelBadge.title = activeModel;
       modelStatus.textContent = String(runtimeModelActivity?.message || '').trim() || (
         activeModel && modelCatalogUnavailable && modelCatalogReason
           ? jt('settings.modelLibrary.loadedCatalogUnavailable', 'Loaded model: {model} (catalog unavailable: {reason})', { model: activeModel, reason: modelCatalogReason })
           : activeModel
-            ? jt('settings.modelLibrary.loadedModel', 'Loaded model: {model}', { model: activeModel })
+            ? ''
             : modelCatalogUnavailable && modelCatalogReason
             ? modelCatalogReason
             : jt('settings.modelLibrary.noneLoaded', 'No model is currently loaded.')
@@ -357,13 +314,11 @@
       applyNote(modelCatalogEmpty, modelCatalogUnavailable
         ? jt('settings.modelLibrary.catalogUnavailableFallback', 'Model catalog unavailable. Using the backend default; load actions may not work until the local engine is reachable.')
         : '');
-      const appearanceStatusParams = { appearance: appearanceStatusPrefix, typography: typographyPreset?.label || jt('settings.appearance.typeFallback', 'Type'), effect: surfaceEffectPreset?.label || jt('settings.appearance.effectFallback', 'Effect'), border: composerHoloOption?.label || jt('common.off', 'Off') }; appearanceStatus.textContent = state.ui.osReducedMotion ? jt('settings.appearance.statusReducedMotion', '{appearance} • {typography} typography • {effect} effect • Composer typing border {border} • OS reduced motion is active.', appearanceStatusParams) : jt('settings.appearance.status', '{appearance} • {typography} typography • {effect} effect • Composer typing border {border}', appearanceStatusParams);
       const canEditSessionRuntime = Boolean(state.auth.authenticated);
       if (appearanceResetButton) appearanceResetButton.disabled = isDefaultAppearancePreferences(appearancePreferences);
       // The composer render pass (renderComposerState) owns this control's
       // locked state via the inert-readable floor; a native write here would
       // fight it (S3, spec §6).
-      accountBadge.textContent = jt('settings.account.localBadge', 'Local');
       const localProfileName = String(state.auth?.user?.display_name || jt('settings.account.localUser', 'Local User')).trim() || jt('settings.account.localUser', 'Local User');
       accountSummary.textContent = jt('settings.account.storedAs', 'Stored on this device as {name}.', { name: localProfileName });
       if (localProfileSettingsMount && localProfileSettingsMount.dataset.profileName !== localProfileName) {
@@ -390,21 +345,12 @@
         setupSettingsSummary,
         setupSettingsActions,
       });
-      if (contextBadge) {
-        contextBadge.textContent = contextUnavailable ? jt('settings.context.unavailable', 'Unavailable') : contextScopeLabel;
-      }
-      if (contextStatus) {
-        contextStatus.textContent = String(settingsContextActivity?.message || '').trim() || (
-          contextUnavailable
-            ? jt('settings.context.managedSidecarOnly', 'Context controls are available only when the managed sidecar backend is active.')
-            : jt('settings.context.controlsReady', 'Context controls are ready — edits take effect on your next message.')
-        );
-      }
-      if (contextHistoryScopeSelect) {
-        contextHistoryScopeSelect.value = contextPreferences.historyScope;
-        contextHistoryScopeSelect.disabled =
-          !canEditSessionRuntime || contextUnavailable || isActivityBusy(settingsContextActivity);
-      }
+      applyNote(contextStatus, (isActivityBusy(settingsContextActivity) || settingsContextActivity?.state === 'error'
+        ? String(settingsContextActivity?.message || '').trim() : '') || (contextUnavailable
+          ? jt('settings.context.managedSidecarOnly', 'Context controls are available only when the managed sidecar backend is active.')
+          : ''));
+      mountSettingRow(contextSettingsSection, 'contextHistoryScopeSelect', contextPreferences.historyScope,
+        { disabled: !canEditSessionRuntime || contextUnavailable || isActivityBusy(settingsContextActivity) });
       if (modelStartupLoadList) {
         modelStartupLoadList.innerHTML = buildSettingsToggleListMarkup({
           toggleSwitch: typeof globalThis !== 'undefined' ? globalThis.inventory?.toggleSwitch : null,
@@ -445,94 +391,72 @@
           actionButton: typeof globalThis !== 'undefined' ? globalThis.inventory?.actionButton : null,
         });
       }
-      const toolsToggleSwitchRenderer =
-        typeof globalThis !== 'undefined' ? globalThis.inventory?.toggleSwitch : null;
+      const toolOn = (key) => (Object.prototype.hasOwnProperty.call(featureTools, key)
+        ? featureTools[key] === true : toolConfigFields.find((field) => field.key === key)?.default === true);
       if (toolsConfigFieldList && shouldPatchSection('toolsConfig')) {
-        const selectField = typeof globalThis !== 'undefined' ? globalThis.inventory?.selectField : null;
-        toolsConfigFieldList.innerHTML = buildSafetyModeFieldMarkup({
-          value: state.safetyMode, selectField,
-        }) + buildDefaultRunModeFieldMarkup({
-          value: state.defaultRunMode,
-          selectField,
-        }) + buildUnattendedGuardFieldMarkup({
-          value: state.unattendedGuardMinutes,
-          numberInput: typeof globalThis !== 'undefined' ? globalThis.inventory?.numberInput : null,
-        }) + buildAutoApproveStreakCapFieldMarkup({
-          value: state.autoApproveStreakCap,
-          numberInput: typeof globalThis !== 'undefined' ? globalThis.inventory?.numberInput : null,
-        }) + buildToolConfigFieldListMarkup({
-          fields: toolConfigFields, tools: featureTools, availability: toolAvailability,
-          escapeHtml, toggleSwitch: toolsToggleSwitchRenderer,
-        }) + buildWebSearchSectionMarkup({
-          visible: featureFlags.web_search_providers === true,
+        if (toolsPermissionsList) {
+          // Four fixed rows: mounted once, then patched in place like the Appearance rows.
+          const permissionRows = [['safetyModeSelect', state.safetyMode], ['defaultRunModeSelect', state.defaultRunMode],
+            ['unattendedGuardMinutesInput', state.unattendedGuardMinutes], ['autoApproveStreakCapInput', state.autoApproveStreakCap]];
+          if (!toolsPermissionsList.firstElementChild) {
+            toolsPermissionsList.innerHTML = permissionRows.map(([id]) => `<div data-setting-mount="${id}"></div>`).join('');
+          }
+          for (const [id, value] of permissionRows) {
+            const descriptor = fieldDescriptors?.getSettingDescriptor?.(id);
+            if (descriptor) mountSettingRow(toolsPermissionsList, id, fieldDescriptors.normalizeSettingValue(descriptor, value), { className: '' });
+          }
+        }
+        const groups = [
+          [toolsFilesList, ['fileTools', 'richFiles', 'imageRead']],
+          [toolsWebList, ['web']],
+          [toolsTerminalList, ['bash']],
+          [toolsCodeList, ['pythonRuntime', 'lsp', 'worktree', 'subagents']],
+        ];
+        const knownKeys = groups.flatMap(([, keys]) => keys);
+        for (const [host, keys] of groups) {
+          if (!host) continue;
+          host.innerHTML = buildToolConfigFieldListMarkup({
+            fields: toolConfigFields.filter((field) => keys.includes(field.key) || (host === toolsCodeList && !knownKeys.includes(field.key))),
+            tools: featureTools, availability: toolAvailability, pdfAddonNeeded: toolsConfigFieldList.dataset.pdfAddonNeeded === 'true',
+          });
+        }
+        if (toolsWebList) toolsWebList.insertAdjacentHTML('beforeend', buildWebSearchSectionMarkup({
+          visible: featureFlags.web_search_providers === true, parentOff: !toolOn(settingsSupport.TOOL_DEPENDENTS?.webSearch),
           webSearch: featureState.webSearch, secretStatus: state.webSearchSecrets || null, escapeHtml,
-        });
+        }));
       }
-      if (toolsWorkspacePath) {
-        toolsWorkspacePath.textContent = workspaceRootState.path || jt('settings.tools.noWorkspaceRootSelected', 'No workspace root selected.');
-      }
-      if (toolsWorkspaceStatus) {
-        toolsWorkspaceStatus.textContent = workspaceRootStatus.state === 'ready'
-          ? workspaceRootStatus.message || jt('settings.tools.workspaceRootConfigured', 'Workspace root is configured.')
-          : workspaceRootStatus.state === 'invalid'
-            ? workspaceRootStatus.message || jt('settings.tools.invalidWorkspaceRoot', 'The current workspace root is invalid. Choose a new root to unlock workspace-aware tools.')
-            : jt('settings.tools.chooseWorkspaceDescription', 'Choose a workspace root to unlock workspace-aware tools, project skills, and local guidance.');
-      }
+      // Dependent rows follow their parent on every render: the guard above holds the lists
+      // while one of them has focus or an unsaved key, and a held row must not stay writable.
+      settingsSupport.syncToolDependents?.(toolsConfigFieldList, {
+        toolOn, availability: toolAvailability, inventory: typeof globalThis !== 'undefined' ? globalThis.inventory : null,
+      });
+      const setStatusText = (node, text) => { if (node && node.textContent !== text) node.textContent = text; };
+      if (toolsWorkspaceLine) toolsWorkspaceLine.dataset.state = workspaceRootStatus.state === 'ready' ? 'ready' : 'blocked';
+      setStatusText(toolsWorkspacePath, workspaceRootState.path || jt('settings.tools.noWorkspaceRootSelected', 'No workspace root selected.'));
+      setStatusText(toolsWorkspaceStatus, workspaceRootStatus.state === 'ready'
+        ? ''
+        : workspaceRootStatus.state === 'invalid'
+          ? workspaceRootStatus.message || jt('settings.tools.invalidWorkspaceRoot', 'The current workspace root is invalid. Choose a new root to unlock workspace-aware tools.')
+          : jt('settings.tools.chooseWorkspaceDescription', 'Choose a workspace root to unlock workspace-aware tools, project skills, and local guidance.'));
       if (toolsWorkspaceChooseButton) {
         toolsWorkspaceChooseButton.textContent = jt('settings.tools.openWorkspace', 'Open Workspace');
       }
       settingsCoreRenderers?.paintToolsWorkspaceProject?.(toolsWorkspaceProject, workspaceRootState.path, workspaceRootStatus.state);
-      if (toolsSummary) {
-        const optionalCapabilityStates = [
-          ...toolConfigFields.map((field) => ({
-            enabled: featureTools[field.key] === true,
-            available: toolAvailability[field.key]?.enabled !== false,
-          })),
-        ];
-        const enabledCapabilityCount = optionalCapabilityStates.filter((entry) => entry.enabled).length;
-        const readyCapabilityCount = optionalCapabilityStates.filter((entry) => entry.enabled && entry.available).length;
-        const blockedCapabilityCount = enabledCapabilityCount - readyCapabilityCount;
-        const workspaceSummary = workspaceRootStatus.state === 'ready'
-          ? jt('settings.tools.workspaceSummaryReady', 'workspace ready')
-          : workspaceRootStatus.state === 'invalid'
-            ? jt('settings.tools.workspaceSummaryInvalid', 'workspace root invalid')
-            : jt('settings.tools.workspaceSummaryMissing', 'workspace root missing');
-        renderStatusRowContainer(toolsSummary, buildSettingsSummaryModel({
-          tone: workspaceRootStatus.state === 'invalid'
-            ? 'danger'
-            : blockedCapabilityCount > 0 || workspaceRootStatus.state !== 'ready'
-              ? 'warning'
-              : enabledCapabilityCount > 0
-                ? 'success'
-                : 'default',
-          label: jt('settings.tools.summaryLabel', 'Tools'),
-          message: enabledCapabilityCount === 0
-            ? jt('settings.tools.noOptionalCapabilities', 'No optional capabilities enabled - {workspaceSummary}.', { workspaceSummary })
-            : blockedCapabilityCount > 0
-              ? jt('settings.tools.capabilitiesBlocked', '{readyCount}/{enabledCount} enabled capabilities ready - {blockedCount} blocked - {workspaceSummary}.', { readyCount: readyCapabilityCount, enabledCount: enabledCapabilityCount, blockedCount: blockedCapabilityCount, workspaceSummary })
-              : jt('settings.tools.capabilitiesReady', '{readyCount} enabled capabilities ready - {workspaceSummary}.', { readyCount: readyCapabilityCount, workspaceSummary }),
-          badgeText: workspaceRootStatus.state === 'ready' ? jt('settings.tools.workspaceReady', 'Workspace ready') : jt('settings.tools.workspaceBlocked', 'Workspace blocked'),
-        }), escapeHtml);
-      }
       if (editorSettingsFieldList) {
         const editorSection = typeof globalThis !== 'undefined' ? globalThis.rendererSettingsEditorSection : null;
         editorSection?.renderEditorSection?.({
           container: editorSettingsFieldList,
-          badge: editorBadge,
           status: editorStatus,
           ide: state.ui?.ide || null,
-          inlineSuggestVisible: state.features?.featureFlags?.workspace_inline_suggest === true,
-          autoSaveVisible: true,
         });
       }
       if (homeSettingsFieldList) {
         const homeSection = typeof globalThis !== 'undefined' ? globalThis.rendererSettingsHomeSection : null;
-        homeSection?.renderHomeSection?.({
-          container: homeSettingsFieldList,
-          badge: homeBadge,
-          status: homeStatus,
-          state,
-        });
+        homeSection?.renderHomeSection?.({ container: homeSettingsFieldList, status: homeStatus, state });
+      }
+      if (notificationsSettingsSection) {
+        const notificationsSection = typeof globalThis !== 'undefined' ? globalThis.rendererSettingsNotificationsSection : null;
+        notificationsSection?.renderNotificationsSection?.({ container: notificationsSettingsSection, state });
       }
       if (toolsApprovalRulesList) {
         settingsCoreRenderers?.renderApprovalRules?.({
@@ -559,7 +483,7 @@
         escapeHtml,
       });
       renderSurfaceEffectCopy({
-        descriptionEl: appearanceSurfaceEffectDescription,
+        descriptionEl: surfaceEffectMount?.querySelector('.settings-field-help') || null,
         metaEl: appearanceSurfaceEffectMeta,
         preset: surfaceEffectPreset,
       });
@@ -590,7 +514,6 @@
       dispose: () => { disposeSurfaceEffectPreview(); overlayRenderer.dispose?.(); },
       syncComposerInputHeight: (...args) => composerMeasure.syncComposerInputHeight?.(...args),
       measureInlineTextWidth: (...args) => composerMeasure.measureInlineTextWidth?.(...args),
-      syncComposerModelSelectWidth: (...args) => composerMeasure.syncComposerModelSelectWidth?.(...args),
     };
   }
 

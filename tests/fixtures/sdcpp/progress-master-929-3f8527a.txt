@@ -1,0 +1,261 @@
+[VERBOSE] main.cpp:697  - version: stable-diffusion.cpp version unknown, commit 3f8527a
+ggml_cuda_init: found 1 CUDA devices (Total VRAM: 16275 MiB):
+  Device 0: NVIDIA GeForce RTX 5070 Ti, compute capability 12.0, VMM: yes, VRAM: 16275 MiB
+load_backend: loaded CUDA backend from <scratch>\sdcpp\cuda\ggml-cuda.dll
+load_backend: loaded CPU backend from <scratch>\sdcpp\cuda\ggml-cpu-alderlake.dll
+[VERBOSE] main.cpp:698  - System Info: 
+   SSE3 = 1 |    SSSE3 = 1 |    AVX = 1 |    AVX_VNNI = 1 |    AVX2 = 1 |    F16C = 1 |    FMA = 1 |    BMI2 = 1 |    OPENMP = 1 |    REPACK = 1 | 
+[VERBOSE] main.cpp:699  - SDCliParams {
+  mode: img_gen,
+  output_path: "<scratch>/run1.png",
+  image_path: "",
+  metadata_format: "text",
+  log_level: verbose,
+  color: false,
+  convert_name: false,
+  preview_method: none,
+  preview_interval: 1,
+  preview_path: "preview.png",
+  preview_fps: 16,
+  taesd_preview: false,
+  preview_noisy: false,
+  imatrix_out: "",
+  metadata_raw: false,
+  metadata_brief: false,
+  metadata_all: false
+}
+[VERBOSE] main.cpp:700  - SDContextParams {
+  n_threads: 10,
+  conditioning_cache_size: 0,
+  model_path: "",
+  clip_l_path: "",
+  clip_g_path: "",
+  clip_vision_path: "",
+  t5xxl_path: "",
+  llm_path: "<models>/text_encoders/Qwen3VL-8B-Instruct-Q4_K_M.gguf",
+  llm_vision_path: "",
+  tokenizer: "",
+  diffusion_model_path: "<models>/diffusion_models/qwen-image-2.1-UC-Q4_K_M.gguf",
+  high_noise_diffusion_model_path: "",
+  uncond_diffusion_model_path: "",
+  embeddings_connectors_path: "",
+  vae_path: "<models>/vae/qwen_image_2.1_vae_bf16.safetensors",
+  vae_format: "auto",
+  audio_vae_path: "",
+  audio_encoder_path: "",
+  taesd_path: "",
+  esrgan_path: "",
+  control_net_path: "",
+  embedding_dir: "",
+  embeddings: {
+  }
+  wtype: NONE,
+  tensor_type_rules: "",
+  lora_model_dir: ".",
+  hires_upscalers_dir: "",
+  photo_maker_path: "",
+  rng_type: cuda,
+  sampler_rng_type: NONE,
+  offload_params_to_cpu: true,
+  max_vram: "0",
+  disable_prefetch: false,
+  disable_segmented_compute: false,
+  eager_load: false,
+  backend: "",
+  params_backend: "",
+  split_mode: "",
+  model_args: "",
+  auto_fit: true,
+  enable_mmap: false,
+  control_net_cpu: false,
+  clip_on_cpu: false,
+  vae_on_cpu: false,
+  flash_attn: true,
+  diffusion_flash_attn: false,
+  sage_attn: false,
+  linear_scale: 0,
+  attn_scale: 0,
+  diffusion_conv_direct: false,
+  vae_conv_direct: false,
+  prediction: NONE,
+  lora_apply_mode: auto,
+  force_sdxl_vae_conv_scale: false
+}
+[VERBOSE] main.cpp:701  - SDGenerationParams {
+  loras: "{
+  }",
+  high_noise_loras: "{
+  }",
+  prompt: "a quiet walled garden at dawn, mist over a stone path, watercolor",
+  negative_prompt: "",
+  ad_model_path: "",
+  ad_prompt: "",
+  ad_negative_prompt: "",
+  extra_ad_args: "",
+  clip_skip: -1,
+  width: 1024,
+  height: 1024,
+  batch_count: 1,
+  qwen_image_layers: 3,
+  init_image_path: "",
+  end_image_path: "",
+  mask_image_path: "",
+  control_image_path: "",
+  ref_image_paths: [],
+  ref_video_paths: [],
+  ref_video_audio_paths: [],
+  ref_audio_paths: [],
+  control_video_path: "",
+  image_preprocess: ,
+  ref_image_args: ,
+  increase_ref_index: false,
+  pm_id_images_dir: "",
+  pm_id_embed_path: "",
+  pm_style_strength: 20,
+  skip_layers: [7, 8, 9],
+  sample_params: (txt_cfg: 2.50, img_cfg: 2.50, distilled_guidance: 3.50, slg.layer_count: 0, slg.layer_start: 0.01, slg.layer_end: 0.20, slg.scale: 0.00, scheduler: NONE, sample_method: euler, sample_steps: 20, eta: inf, shifted_timestep: 0, flow_shift: 3.00, extra_sample_args: ),
+  high_noise_skip_layers: [7, 8, 9],
+  high_noise_sample_params: (txt_cfg: 7.00, img_cfg: 7.00, distilled_guidance: 3.50, slg.layer_count: 0, slg.layer_start: 0.01, slg.layer_end: 0.20, slg.scale: 0.00, scheduler: NONE, sample_method: NONE, sample_steps: 20, eta: inf, shifted_timestep: 0, flow_shift: inf, extra_sample_args: ),
+  custom_sigmas: [],
+  cache_mode: "",
+  cache_option: "",
+  cache: disabled (threshold=inf, start=0.15, end=0.95),
+  moe_boundary: 0.875,
+  video_frames: 1,
+  fps: 16,
+  vace_strength: 1,
+  strength: 0.75,
+  control_strength: 0.9,
+  seed: 42,
+  upscale_repeats: 1,
+  upscale_tile_size: 128,
+  hires: { enabled: false, upscaler: "Latent", model_path: "", scale: 2, target_width: 0, target_height: 0, steps: 0, denoising_strength: 0.7, custom_sigmas: [], upscale_tile_size: 128 },
+  vae_tiling_params: { 0, 0, 0, 0, 0.5, 0, 0, "" },
+}
+[VERBOSE] model_loader.cpp:189  - using 10 threads for model loading
+[INFO   ] diffusion_engine.cpp:732  - loading diffusion model from '<models>/diffusion_models/qwen-image-2.1-UC-Q4_K_M.gguf'
+[INFO   ] model_loader.cpp:215  - load <models>/diffusion_models/qwen-image-2.1-UC-Q4_K_M.gguf using gguf format
+[VERBOSE] model_loader.cpp:261  - init from '<models>/diffusion_models/qwen-image-2.1-UC-Q4_K_M.gguf'
+[VERBOSE] gguf_reader_ext.h:219  - GGUF v3, tensor_count=297, metadata_kv_count=3
+[INFO   ] diffusion_engine.cpp:789  - loading llm from '<models>/text_encoders/Qwen3VL-8B-Instruct-Q4_K_M.gguf'
+[INFO   ] model_loader.cpp:215  - load <models>/text_encoders/Qwen3VL-8B-Instruct-Q4_K_M.gguf using gguf format
+[VERBOSE] model_loader.cpp:261  - init from '<models>/text_encoders/Qwen3VL-8B-Instruct-Q4_K_M.gguf'
+[VERBOSE] gguf_reader_ext.h:219  - GGUF v3, tensor_count=399, metadata_kv_count=30
+[INFO   ] diffusion_engine.cpp:803  - loading vae from '<models>/vae/qwen_image_2.1_vae_bf16.safetensors'
+[INFO   ] model_loader.cpp:221  - load <models>/vae/qwen_image_2.1_vae_bf16.safetensors using safetensors format
+[VERBOSE] model_loader.cpp:289  - init from '<models>/vae/qwen_image_2.1_vae_bf16.safetensors', prefix = 'vae.'
+[INFO   ] diffusion_engine.cpp:995  - Version: Qwen Image 2.1 
+[VERBOSE] ggml_extend_backend.cpp:636  - Found 2 backend devices:
+[VERBOSE] ggml_extend_backend.cpp:639  - #0: CUDA0
+[VERBOSE] ggml_extend_backend.cpp:639  - #1: CPU
+[VERBOSE] ggml_extend_backend.cpp:404  - Initializing backend: CUDA0
+[VERBOSE] ggml_extend_backend.cpp:404  - Initializing backend: CPU
+[VERBOSE] model_loader.cpp:189  - using 10 threads for model loading
+[INFO   ] diffusion_engine.cpp:1522 - Weight type stat:                      f32: 145  |    q4_K: 382  |    q6_K: 101  |    bf16: 306  
+[INFO   ] diffusion_engine.cpp:1523 - Conditioner weight type stat:          f32: 145  |    q4_K: 217  |    q6_K: 37   
+[INFO   ] diffusion_engine.cpp:1524 - Diffusion model weight type stat:     q4_K: 165  |    q6_K: 64   |    bf16: 68   
+[INFO   ] diffusion_engine.cpp:1525 - VAE weight type stat:                 bf16: 238  
+[VERBOSE] diffusion_engine.cpp:1527 - ggml tensor size = 432 bytes
+[VERBOSE] llm.hpp:390  - llm: num_layers = 36, vocab_size = 151936, hidden_size = 4096, intermediate_size = 12288
+[WARN   ] llm.hpp:392  - no vision weights detected, vision disabled
+[VERBOSE] qwen2_tokenizer.cpp:14   - merges size 151387
+[VERBOSE] qwen2_tokenizer.cpp:39   - vocab size: 151674
+[VERBOSE] qwen_image_2_1.hpp:54   - qwen_image_2_1: layers = 32, hidden_size = 4096, context_dim = 4096
+[INFO   ] model_builders.cpp:625  - using VAE for encoding / decoding
+[VERBOSE] wan_vae.hpp:1338 - Wan VAE convolution type: 3D
+[INFO   ] diffusion_engine.cpp:1188 - Using flash attention
+[INFO   ] diffusion_engine.cpp:1202 - Using flash attention in the diffusion model
+[VERBOSE] diffusion_engine.cpp:1211 - validating model metadata
+[VERBOSE] diffusion_engine.cpp:1281 - model metadata validated; weights will be prepared lazily
+[INFO   ] diffusion_engine.cpp:1342 - total params memory size = 9337.96MB (VRAM 0.00MB, RAM 9337.96MB): text_encoders 4302.33MB(RAM), diffusion_model 4391.25MB(RAM), vae 644.38MB(RAM), controlnet 0.00MB(N/A), extensions 0.00MB(N/A)
+[INFO   ] diffusion_engine.cpp:1466 - running in FLOW mode
+[INFO   ] image.cpp:814  - generate_image 1024x1024
+[VERBOSE] model_loader.cpp:189  - using 10 threads for model loading
+[INFO   ] diffusion_engine.cpp:3012 - Using 'qwen' preset for reference images
+[INFO   ] denoiser.hpp:1196 - get_sigmas with Flux scheduler
+[VERBOSE] denoiser.hpp:773  - Flux scheduler: image_seq_len=4096, steps=20, mu=0.694, shift_terminal=0.020
+[INFO   ] request.cpp:420  - sampling using Euler method
+[VERBOSE] bpe_tokenizer.cpp:245  - split prompt "<|im_start|>system
+Comprehend and analyze the provided prompt.<|im_end|>
+" to 14 tokens ["<|im_start|>", "system", "Ċ", "Com", "preh", "end", "Ġand", "Ġanalyze", "Ġthe", "Ġprovided", "Ġprompt", ".", "<|im_end|>", "Ċ", ]
+[VERBOSE] conditioner.hpp:2147 - parse '<|im_start|>system
+Comprehend and analyze the provided prompt.<|im_end|>
+<|im_start|>user
+a quiet walled garden at dawn, mist over a stone path, watercolor<|im_end|>
+<|im_start|>assistant
+' to [['<|im_start|>system
+Comprehend and analyze the provided prompt.<|im_end|>
+<|im_start|>user
+', 1], ['a quiet walled garden at dawn, mist over a stone path, watercolor', 1], ['<|im_end|>
+<|im_start|>assistant
+', 1], ]
+[VERBOSE] bpe_tokenizer.cpp:245  - split prompt "<|im_start|>system
+Comprehend and analyze the provided prompt.<|im_end|>
+<|im_start|>user
+" to 17 tokens ["<|im_start|>", "system", "Ċ", "Com", "preh", "end", "Ġand", "Ġanalyze", "Ġthe", "Ġprovided", "Ġprompt", ".", "<|im_end|>", "Ċ", "<|im_start|>", "user", "Ċ", ]
+[VERBOSE] bpe_tokenizer.cpp:245  - split prompt "a quiet walled garden at dawn, mist over a stone path, watercolor" to 16 tokens ["a", "Ġquiet", "Ġw", "alled", "Ġgarden", "Ġat", "Ġdawn", ",", "Ġmist", "Ġover", "Ġa", "Ġstone", "Ġpath", ",", "Ġwater", "color", ]
+[VERBOSE] bpe_tokenizer.cpp:245  - split prompt "<|im_end|>
+<|im_start|>assistant
+" to 5 tokens ["<|im_end|>", "Ċ", "<|im_start|>", "assistant", "Ċ", ]
+[INFO   ] ggml_graph_cut.cpp:1034 - qwen3vl build cached graph cut plan done (taking 2 ms)
+[VERBOSE] model_loader.cpp:1111 - loading 397/399 tensors from <models>/text_encoders/Qwen3VL-8B-Instruct-Q4_K_M.gguf
+  |##########                                        | 72/397 - 2.28GB/s[K  |#################                                 | 133/397 - 2.51GB/s[K  |###########################                       | 207/397 - 2.89GB/s[K  |####################################              | 283/397 - 3.06GB/s[K  |#############################################     | 353/397 - 3.42GB/s[K  |##################################################| 397/397 - 3.42GB/s[K
+[INFO   ] model_loader.cpp:1383 - loading tensors completed, taking 1.23s (read: 1.21s, memcpy: 0.00s, convert: 0.00s, copy_to_backend: 0.00s)
+[VERBOSE] model_manager.cpp:494  - model manager prepared params backend buffers (4302.32 MB, 397 tensors, 1 blocks, RAM) on CUDA_Host
+[VERBOSE] model_manager.cpp:623  - model manager staged compute params (4302.32 MB, 397 tensors, 5 blocks) to CUDA0, taking 0.17s
+[VERBOSE] ggml_runner.cpp:1022 - qwen3vl compute buffer size: 5.35 MB(VRAM) on CUDA0 (peak across 1 segment)
+[VERBOSE] conditioner.hpp:3140 - computing condition graph completed, taking 3916 ms
+[VERBOSE] bpe_tokenizer.cpp:245  - split prompt "<|im_start|>system
+Comprehend and analyze the provided prompt.<|im_end|>
+" to 14 tokens ["<|im_start|>", "system", "Ċ", "Com", "preh", "end", "Ġand", "Ġanalyze", "Ġthe", "Ġprovided", "Ġprompt", ".", "<|im_end|>", "Ċ", ]
+[VERBOSE] conditioner.hpp:2147 - parse '<|im_start|>system
+Comprehend and analyze the provided prompt.<|im_end|>
+<|im_start|>user
+ <|im_end|>
+<|im_start|>assistant
+' to [['<|im_start|>system
+Comprehend and analyze the provided prompt.<|im_end|>
+<|im_start|>user
+', 1], [' ', 1], ['<|im_end|>
+<|im_start|>assistant
+', 1], ]
+[VERBOSE] bpe_tokenizer.cpp:245  - split prompt "<|im_start|>system
+Comprehend and analyze the provided prompt.<|im_end|>
+<|im_start|>user
+" to 17 tokens ["<|im_start|>", "system", "Ċ", "Com", "preh", "end", "Ġand", "Ġanalyze", "Ġthe", "Ġprovided", "Ġprompt", ".", "<|im_end|>", "Ċ", "<|im_start|>", "user", "Ċ", ]
+[VERBOSE] bpe_tokenizer.cpp:245  - split prompt " " to 1 tokens ["Ġ", ]
+[VERBOSE] bpe_tokenizer.cpp:245  - split prompt "<|im_end|>
+<|im_start|>assistant
+" to 5 tokens ["<|im_end|>", "Ċ", "<|im_start|>", "assistant", "Ċ", ]
+[INFO   ] ggml_graph_cut.cpp:1034 - qwen3vl build cached graph cut plan done (taking 2 ms)
+[VERBOSE] conditioner.hpp:3140 - computing condition graph completed, taking 286 ms
+[INFO   ] image.cpp:529  - get_learned_condition completed, taking 4.20s
+[INFO   ] image.cpp:866  - generating image: 1/1 - seed 42
+[INFO   ] ggml_graph_cut.cpp:1034 - qwen_image_2_1 build cached graph cut plan done (taking 4 ms)
+[VERBOSE] model_loader.cpp:1111 - loading 297/297 tensors from <models>/diffusion_models/qwen-image-2.1-UC-Q4_K_M.gguf
+  |###########                                       | 63/297 - 2.86GB/s[K  |####################                              | 116/297 - 3.32GB/s[K  |#############################                     | 172/297 - 3.52GB/s[K  |######################################            | 220/297 - 3.51GB/s[K  |##############################################    | 273/297 - 3.59GB/s[K  |##################################################| 297/297 - 3.52GB/s[K
+[INFO   ] model_loader.cpp:1383 - loading tensors completed, taking 1.22s (read: 1.14s, memcpy: 0.00s, convert: 0.00s, copy_to_backend: 0.00s)
+[VERBOSE] model_manager.cpp:494  - model manager prepared params backend buffers (4391.25 MB, 297 tensors, 1 blocks, RAM) on CUDA_Host
+[VERBOSE] model_manager.cpp:623  - model manager staged compute params (4391.25 MB, 297 tensors, 5 blocks) to CUDA0, taking 0.16s
+[VERBOSE] ggml_runner.cpp:1022 - qwen_image_2_1 compute buffer size: 584.78 MB(VRAM) on CUDA0 (peak across 1 segment)
+[INFO   ] ggml_graph_cut.cpp:1034 - qwen_image_2_1 build cached graph cut plan done (taking 5 ms)
+  |==>                                               | 1/20 - 6.47s/it[K[INFO   ] ggml_graph_cut.cpp:1034 - qwen_image_2_1 build cached graph cut plan done (taking 3 ms)
+[INFO   ] ggml_graph_cut.cpp:1034 - qwen_image_2_1 build cached graph cut plan done (taking 3 ms)
+  |=====>                                            | 2/20 - 2.41s/it[K  |=======>                                          | 3/20 - 2.40s/it[K  |==========>                                       | 4/20 - 2.42s/it[K  |============>                                     | 5/20 - 2.41s/it[K  |===============>                                  | 6/20 - 2.39s/it[K  |=================>                                | 7/20 - 2.38s/it[K  |====================>                             | 8/20 - 2.39s/it[K  |======================>                           | 9/20 - 2.38s/it[K  |=========================>                        | 10/20 - 2.38s/it[K  |===========================>                      | 11/20 - 2.39s/it[K  |==============================>                   | 12/20 - 2.43s/it[K  |================================>                 | 13/20 - 2.43s/it[K  |===================================>              | 14/20 - 2.39s/it[K  |=====================================>            | 15/20 - 2.38s/it[K  |========================================>         | 16/20 - 2.38s/it[K  |==========================================>       | 17/20 - 2.39s/it[K  |=============================================>    | 18/20 - 2.38s/it[K  |===============================================>  | 19/20 - 2.38s/it[K  |==================================================| 20/20 - 2.41s/it[K
+[INFO   ] image.cpp:899  - sampling completed, taking 52.01s
+[INFO   ] image.cpp:913  - generating 1 latent images completed, taking 52.01s
+[INFO   ] image.cpp:554  - decoding 1 latents
+[INFO   ] ggml_graph_cut.cpp:1034 - wan_vae build cached graph cut plan done (taking 0 ms)
+[VERBOSE] model_loader.cpp:1111 - loading 128/238 tensors from <models>/vae/qwen_image_2.1_vae_bf16.safetensors
+  |###################                               | 47/128 - 275.53MB/s[K  |##################################################| 128/128 - 1.15GB/s[K
+[INFO   ] model_loader.cpp:1383 - loading tensors completed, taking 0.41s (read: 0.13s, memcpy: 0.00s, convert: 0.15s, copy_to_backend: 0.00s)
+[VERBOSE] model_manager.cpp:494  - model manager prepared params backend buffers (482.81 MB, 128 tensors, 1 blocks, RAM) on CUDA_Host
+[VERBOSE] model_manager.cpp:623  - model manager staged compute params (482.81 MB, 128 tensors, 1 blocks) to CUDA0, taking 0.02s
+[VERBOSE] ggml_runner.cpp:1022 - wan_vae compute buffer size: 7777.00 MB(VRAM) on CUDA0 (peak across 1 segment)
+[VERBOSE] vae.hpp:351  - computing vae decode graph completed, taking 3.42s
+[INFO   ] image.cpp:620  - latent 1 decoded, taking 3.42s
+[INFO   ] image.cpp:624  - decode_first_stage completed, taking 3.42s
+[INFO   ] image.cpp:1050 - generate_image completed in 59.67s
+[VERBOSE] model_manager.cpp:1264 - model manager released params backend buffers (9176.38 MB, 822 tensors, 3 blocks, RAM) from CUDA_Host
+[INFO   ] main.cpp:497  - save result image 0 to '<scratch>/run1.png' (success)
+[INFO   ] main.cpp:573  - 1/1 images saved

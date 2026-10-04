@@ -26,6 +26,43 @@ function pinnedDownloadError(code, message) {
   return error;
 }
 
+function waitForOutput(out, event, signal, stopped, start = null) {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const settle = (error) => {
+      if (settled) return;
+      settled = true;
+      out.removeListener?.(event, onReady);
+      out.removeListener?.('error', onError);
+      out.removeListener?.('close', onClose);
+      signal.removeEventListener('abort', onAbort);
+      if (error) reject(error);
+      else resolve();
+    };
+    const onReady = () => settle();
+    const onError = (error) => settle(error);
+    const onClose = () => settle(pinnedDownloadError('download_failed', 'The download output closed.'));
+    const onAbort = () => settle(stopped());
+    out.on?.(event, onReady);
+    out.on?.('error', onError);
+    out.on?.('close', onClose);
+    signal.addEventListener('abort', onAbort, { once: true });
+    if (signal.aborted) onAbort();
+    else if (out.destroyed) onClose();
+    else if (start) {
+      try { start(settle); } catch (error) { settle(error); }
+    }
+  });
+}
+
+function waitForDrain(out, signal, stopped) {
+  return waitForOutput(out, 'drain', signal, stopped);
+}
+
+function endOutput(out, signal, stopped) {
+  return waitForOutput(out, 'finish', signal, stopped, (settle) => out.end(settle));
+}
+
 async function downloadPinnedFile({
   url,
   destPath,
@@ -40,6 +77,7 @@ async function downloadPinnedFile({
   isCancelled = () => false,
   onProgress = null,
 }) {
+  const controller = abortController || new AbortController();
   const stopped = () => pinnedDownloadError(
     isCancelled() ? 'cancelled' : 'download_inactivity',
     'The download stopped.'
@@ -47,7 +85,7 @@ async function downloadPinnedFile({
   let responseTimer = null;
   const responseTimeout = new Promise((_, reject) => {
     responseTimer = setTimeout(() => {
-      abortController?.abort();
+      controller.abort();
       reject(pinnedDownloadError('response_timeout', 'The download server did not respond in time.'));
     }, responseStartTimeoutMs);
     responseTimer.unref?.();
@@ -58,7 +96,7 @@ async function downloadPinnedFile({
       fetchImpl(url, {
         ...fetchOptions,
         method: 'GET',
-        ...(abortController ? { signal: abortController.signal } : {}),
+        signal: controller.signal,
       }),
       responseTimeout,
     ]);
@@ -70,7 +108,7 @@ async function downloadPinnedFile({
   }
   const headerTotal = Number(response.headers?.get?.('content-length') || 0);
   if (headerTotal > expectedBytes) {
-    abortController?.abort();
+    controller.abort();
     throw pinnedDownloadError('byte_overflow', 'The download is larger than the pinned size.');
   }
   const hash = cryptoImpl.createHash('sha256');
@@ -83,26 +121,28 @@ async function downloadPinnedFile({
     if (inactivityTimer) clearTimeout(inactivityTimer);
     inactivityTimer = setTimeout(() => {
       inactivityTriggered = true;
-      abortController?.abort();
+      controller.abort();
     }, inactivityMs);
     inactivityTimer.unref?.();
   };
-  out?.on?.('error', (error) => { outputError = error; });
+  const onOutputError = (error) => { outputError = error; };
+  const removeOutputError = () => {
+    out.removeListener?.('error', onOutputError);
+    out.removeListener?.('close', removeOutputError);
+  };
+  out.on?.('error', onOutputError);
   const consumeChunk = async (chunk) => {
     if (outputError) throw outputError;
     const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
     downloaded += buffer.length;
     if (downloaded > expectedBytes) {
-      abortController?.abort();
+      controller.abort();
       throw pinnedDownloadError('byte_overflow', 'The download grew past the pinned size.');
     }
     resetInactivity();
     hash.update(buffer);
     if (out.write(buffer) === false) {
-      await new Promise((resolve, reject) => {
-        out.once?.('drain', resolve);
-        out.once?.('error', reject);
-      });
+      await waitForDrain(out, controller.signal, stopped);
     }
     onProgress?.({ downloadedBytes: downloaded, totalBytes: expectedBytes });
   };
@@ -111,25 +151,22 @@ async function downloadPinnedFile({
     resetInactivity();
     if (response.body && typeof response.body[Symbol.asyncIterator] === 'function') {
       for await (const chunk of response.body) {
-        if (abortController?.signal?.aborted) throw stopped();
+        if (controller.signal.aborted) throw stopped();
         await consumeChunk(chunk);
       }
     } else if (typeof response.arrayBuffer === 'function') {
       const buffer = Buffer.from(await response.arrayBuffer());
-      if (abortController?.signal?.aborted) throw stopped();
+      if (controller.signal.aborted) throw stopped();
       await consumeChunk(buffer);
     } else {
       throw pinnedDownloadError('download_failed', 'Download response had no readable body.');
     }
-    if (abortController?.signal?.aborted) throw stopped();
+    if (controller.signal.aborted) throw stopped();
     if (downloaded !== expectedBytes) {
       throw pinnedDownloadError('size_mismatch', 'The download size did not match the pinned size.');
     }
     if (outputError) throw outputError;
-    await new Promise((resolve, reject) => {
-      out.on?.('error', reject);
-      out.end(resolve);
-    });
+    await endOutput(out, controller.signal, stopped);
     completed = true;
   } catch (error) {
     if (inactivityTriggered && !isCancelled()) {
@@ -139,6 +176,9 @@ async function downloadPinnedFile({
   } finally {
     if (inactivityTimer) clearTimeout(inactivityTimer);
     if (!completed) out.destroy?.();
+    // Destruction can emit a queued error before close (including caller cancellation).
+    if (out.destroyed && !out.closed) out.on?.('close', removeOutputError);
+    else removeOutputError();
   }
   return hash.digest('hex');
 }

@@ -30,10 +30,6 @@
     const CAPTURE_PREFERENCE_KEY = 'jenny.memory.captureSuggestions';
     let disposed = false;
     let searchTimer = null;
-    let capturePreferenceWriteSequence = 0;
-    let capturePreferenceWritePromise = Promise.resolve();
-    let confirmedCapturePreference = state.features?.memory?.captureSuggestions !== false;
-    let capturePreferenceWriteStarted = false;
     registerCleanup(function disposeMemoryActions() {
       disposed = true;
       if (searchTimer) windowRef.clearTimeout(searchTimer);
@@ -98,55 +94,50 @@
       try { windowRef.localStorage?.removeItem(CAPTURE_PREFERENCE_KEY); } catch (_error) { /* retry next launch */ }
     }
 
-    function persistCapturePreference(enabled, { legacyAdoption = false } = {}) {
-      if (!capturePreferenceWriteStarted && !legacyAdoption) {
-        confirmedCapturePreference = state.features?.memory?.captureSuggestions !== false;
-      }
-      capturePreferenceWriteStarted = true;
-      const sequence = ++capturePreferenceWriteSequence;
-      setCaptureSuggestionsEnabled(enabled);
-      renderMemorySurfaces();
-      capturePreferenceWritePromise = capturePreferenceWritePromise
-        .catch(() => undefined)
-        .then(async () => {
-          const updateSettings = windowRef.jennyShell?.features?.updateSettings;
-          if (typeof updateSettings !== 'function') throw new Error('Feature settings are unavailable.');
-          const payload = await updateSettings({ memory: { captureSuggestions: enabled === true } });
-          const persisted = payload?.memory?.captureSuggestions;
-          if (typeof persisted !== 'boolean' || persisted !== (enabled === true)) {
-            throw new Error('Feature settings returned an invalid memory preference acknowledgement.');
-          }
-          if (disposed) return;
-          confirmedCapturePreference = persisted;
-          removeLegacyCapturePreference();
-          if (sequence === capturePreferenceWriteSequence) {
-            setCaptureSuggestionsEnabled(persisted);
-            renderMemorySurfaces();
-          }
-        })
-        .catch((error) => {
-          if (legacyAdoption) confirmedCapturePreference = enabled === true;
-          if (disposed || sequence !== capturePreferenceWriteSequence) return;
-          setCaptureSuggestionsEnabled(confirmedCapturePreference);
-          appendClientLog('WARN', legacyAdoption ? 'memory.capture_preference_adoption_failed' : 'memory.capture_preference_update_failed', {
-            message: toErrorMessage(error, 'Could not save memory capture preference.'),
-          });
-          if (!legacyAdoption) {
-            showShellErrorToast(jt('memory.toasts.capturePreferenceNotSaved', 'Could not save the memory capture preference.'), {
-              title: jt('memory.titles.preferenceNotSaved', 'Memory Preference Not Saved'),
-              source: TOAST_SOURCE.memory,
-              dedupeKey: `${TOAST_SOURCE.memory}:capture-preference:error`,
-            });
-          }
-          renderMemorySurfaces();
-        });
-      return capturePreferenceWritePromise;
+    function logCapturePreferenceFailure(event, error) {
+      appendClientLog('WARN', event, { message: toErrorMessage(error, 'Could not save memory capture preference.') });
     }
 
+    /* The switch persists through the shared Settings coordinator: written to
+     * the features bridge, adopted only from the echoed preference. The legacy
+     * localStorage value is a launch-time migration record: it is cleared once
+     * the owner acknowledges a value and kept (and honored) while it has not. */
+    const load = (path) => (typeof require === 'function' ? require(path) : null);
+    const fieldBinding = globalRef.rendererSettingsFieldBinding || load('../shell/renderer-settings-field-binding');
+    const captureDescriptor = (globalRef.rendererSettingsFieldDescriptors || load('../shell/renderer-settings-field-descriptors'))
+      ?.getSettingDescriptor?.('memoryCaptureSuggestions') || null;
+    const captureRegistry = fieldBinding && captureDescriptor ? fieldBinding.createSettingsAdapterRegistry() : null;
+    captureRegistry?.register({
+      id: 'memory',
+      mode: 'patch',
+      optimistic: false,
+      read: () => ({ captureSuggestions: state.features?.memory?.captureSuggestions !== false }),
+      normalize: (value) => ({ captureSuggestions: value?.captureSuggestions !== false }),
+      write: (payload) => {
+        const updateSettings = windowRef.jennyShell?.features?.updateSettings;
+        if (typeof updateSettings !== 'function') throw new Error('Feature settings are unavailable.');
+        return updateSettings({ memory: { captureSuggestions: payload.captureSuggestions === true } });
+      },
+      ack: (result, payload) => {
+        const persisted = result?.memory?.captureSuggestions;
+        if (typeof persisted !== 'boolean' || persisted !== (payload.captureSuggestions === true)) {
+          throw new Error('Feature settings returned an invalid memory preference acknowledgement.');
+        }
+        return { captureSuggestions: persisted };
+      },
+      apply: (next) => {
+        if (disposed) return;
+        setCaptureSuggestionsEnabled(next.captureSuggestions);
+        renderMemorySurfaces();
+      },
+      onSettled: (ok) => { if (ok && !disposed) removeLegacyCapturePreference(); },
+    });
+
     const legacyCapturePreference = readLegacyCapturePreference();
-    if (legacyCapturePreference !== null) {
+    if (captureRegistry && legacyCapturePreference !== null) {
       setCaptureSuggestionsEnabled(legacyCapturePreference);
-      persistCapturePreference(legacyCapturePreference, { legacyAdoption: true });
+      captureRegistry.write(captureDescriptor, legacyCapturePreference)
+        .catch((error) => logCapturePreferenceFailure('memory.capture_preference_adoption_failed', error));
     }
 
     function isSuccessfulMemorySave(result) {
@@ -658,10 +649,6 @@
         else return;
         renderMemorySurfaces();
       }
-      function handleToggle(event) {
-        if (event.detail?.id !== 'memoryCaptureSuggestions') return;
-        persistCapturePreference(event.detail.checked === true);
-      }
       function handleClick(event) {
         const pageAction = event.target.closest('[data-memory-page-action]');
         if (pageAction) {
@@ -699,14 +686,35 @@
       }
       memorySection.addEventListener('input', handleInput);
       memorySection.addEventListener('change', handleChange);
-      memorySection.addEventListener('inv-toggle-change', handleToggle);
       memorySection.addEventListener('click', handleClick);
+      const fieldListeners = [];
+      if (captureRegistry) {
+        fieldBinding.bindSettingFields({
+          container: memorySection,
+          descriptors: [captureDescriptor],
+          registry: captureRegistry,
+          registerListener: (target, type, handler) => {
+            target.addEventListener(type, handler);
+            fieldListeners.push([type, handler]);
+          },
+          onError: (_descriptor, error, shown) => {
+            if (disposed) return;
+            logCapturePreferenceFailure('memory.capture_preference_update_failed', error);
+            if (shown?.inline) return;
+            showShellErrorToast(jt('memory.toasts.capturePreferenceNotSaved', 'Could not save the memory capture preference.'), {
+              title: jt('memory.titles.preferenceNotSaved', 'Memory Preference Not Saved'),
+              source: TOAST_SOURCE.memory,
+              dedupeKey: `${TOAST_SOURCE.memory}:capture-preference:error`,
+            });
+          },
+        });
+      }
       registerCleanup(function disposeMemoryPageBindings() {
         memorySection.__jennyMemoryPageBound = false;
         memorySection.removeEventListener('input', handleInput);
         memorySection.removeEventListener('change', handleChange);
-        memorySection.removeEventListener('inv-toggle-change', handleToggle);
         memorySection.removeEventListener('click', handleClick);
+        fieldListeners.forEach(([type, handler]) => memorySection.removeEventListener(type, handler));
       });
     }
 

@@ -26,6 +26,36 @@ function wrapVevent(body) {
   ].join('\r\n');
 }
 
+test('HOM-07 recurrence keeps London wall time across its DST change in Chicago', () => {
+  const previousZone = process.env.TZ;
+  process.env.TZ = 'America/Chicago';
+  try {
+    const { instances } = extractIcsInstances(wrapVevent([
+      'DTSTART;TZID=Europe/London:20260322T090000',
+      'DTEND;TZID=Europe/London:20260322T100000',
+      'RRULE:FREQ=WEEKLY;COUNT=3',
+    ]), { windowStart: new Date(2026, 2, 21), windowEnd: new Date(2026, 3, 10) });
+    assert.deepEqual(instances.map((entry) => entry.start), ['2026-03-22T04:00', '2026-03-29T03:00', '2026-04-05T03:00']);
+    assert.deepEqual(instances.map((entry) => entry.end), ['2026-03-22T05:00', '2026-03-29T04:00', '2026-04-05T04:00']);
+    const utc = extractIcsInstances(wrapVevent([
+      'DTSTART:20260301T090000Z', 'DTEND:20260301T100000Z', 'RRULE:FREQ=WEEKLY;COUNT=2',
+    ]), { windowStart: new Date(2026, 1, 28), windowEnd: new Date(2026, 2, 10) });
+    assert.deepEqual(utc.instances.map((entry) => entry.start), ['2026-03-01T03:00', '2026-03-08T04:00']);
+  } finally {
+    if (previousZone === undefined) delete process.env.TZ;
+    else process.env.TZ = previousZone;
+  }
+});
+
+test('HOM-08 biweekly BYDAY uses the declared Sunday week start', () => {
+  const { instances } = extractIcsInstances(wrapVevent([
+    'DTSTART:20260608T090000', 'DTEND:20260608T100000',
+    'RRULE:FREQ=WEEKLY;INTERVAL=2;COUNT=4;BYDAY=SU,MO;WKST=SU',
+  ]), WINDOW);
+  assert.deepEqual(instances.map((entry) => entry.start.slice(0, 10)), ['2026-06-08', '2026-06-21', '2026-06-22']);
+  assert.equal(parseIcsRrule('FREQ=WEEKLY;WKST=XX').unsupported, true);
+});
+
 test('unfoldIcsLines joins space- and tab-continued lines', () => {
   // The single leading space/tab is the folding marker and is stripped; any
   // further whitespace is content.

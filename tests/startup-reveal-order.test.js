@@ -73,8 +73,8 @@ function createPendingBootstrapHarness(t) {
     constants: { APPEARANCE_STORAGE_KEY: 'appearance', TOAST_SOURCE: {}, INTERACTIVE_SEQUENCE_IDLE: 'idle' },
     dom: {
       chatInput: element(),
-      composerSettingsPopover: element(),
-      composerSettingsButton: element(),
+      composerAttachMenu: element(),
+      composerAttachShortcut: element(),
       composerTerminalShortcut: element(),
     },
     callbacks: {
@@ -114,9 +114,8 @@ test('painted renderer signals ready via its own callback while bootstrap IPC is
   // Real order check between the two marks bootstrap() actually emits here:
   // backend.getStatus() never resolves in this harness, so 'renderer-bootstrap-
   // complete' never lands and comparing against it was always vacuously true.
-  // The curtain-dismissal claim moved to the "curtain dismissal still requires
-  // backend-ready plus boot-view-ready" test below, which uses a real progress
-  // controller instead of the bare, unattached div this harness hands bootstrap().
+  // The combined-readiness test below uses the real curtain controller to
+  // verify dismissal and the interactive mark at removal.
   assert.ok(marks.includes('renderer-bootstrap-started'));
   assert.ok(marks.includes('first-render'));
   assert.ok(marks.indexOf('renderer-bootstrap-started') < marks.indexOf('first-render'));
@@ -172,7 +171,7 @@ function createCurtainController(t, maxVisibleMs = 20000) {
       startupOverlaySublabel: dom.window.document.getElementById('startupOverlaySublabel'),
       startupOverlaySecondary: dom.window.document.getElementById('startupOverlaySecondary'),
     },
-    callbacks: { setTurnStatusPill() {}, clearTurnStatusPill() {} },
+    callbacks: {},
   });
   t.after(() => {
     controller.dispose();
@@ -183,14 +182,20 @@ function createCurtainController(t, maxVisibleMs = 20000) {
   return { controller, overlay: dom.window.document.getElementById('startupOverlay'), marks };
 }
 
-test('curtain dismissal still requires backend-ready plus boot-view-ready and marks interaction', (t) => {
+test('curtain dismissal requires shared hydration and view readiness, and marks interaction at removal', (t) => {
   const { controller, overlay, marks } = createCurtainController(t);
 
-  controller.notifyBootViewReady();
-  assert.equal(overlay.classList.contains('hidden'), false);
   controller.handleBackendStatus({ phase: 'ready' });
+  assert.equal(overlay.classList.contains('hidden'), false, 'backend readiness alone never lifts the curtain');
+  controller.handleBackendStatus({ phase: 'model_loading' });
+  controller.notifyBootViewReady();
+  assert.equal(overlay.classList.contains('hidden'), false, 'view readiness still needs shared hydration');
+  controller.notifyShellHydrated();
 
-  assert.equal(overlay.classList.contains('hidden'), true);
+  assert.equal(overlay.classList.contains('hidden'), true, 'the shell reporting ready lifts it, model load or not');
+  assert.deepEqual(marks, [], 'the mounted curtain still isolates the shell during dismissal');
+  overlay.dispatchEvent(new overlay.ownerDocument.defaultView.Event('transitionend'));
+  assert.equal(overlay.parentNode, null);
   assert.deepEqual(marks, ['shell-interactive']);
 });
 
@@ -260,7 +265,8 @@ test('post-binding backend reconcile catches a ready transition missed during bo
   // were deleted, as long as something else happened to call getStatus twice.
   assert.ok(backendCalls >= 2, 'the post-binding reconcile must re-fetch backend status');
   assert.equal(app.window.__rendererState.backendReadyLoadHandled, true);
-  assert.equal(app.window.document.getElementById('startupOverlay').classList.contains('hidden'), true);
+  // Dismissed reads the same whether the curtain is still fading (hidden) or already removed.
+  assert.equal(app.window.document.getElementById('startupOverlay')?.classList.contains('hidden') ?? true, true);
 
   app.window.document.getElementById('logsTopRailTab').click();
   await waitForUi(app.window, 80);

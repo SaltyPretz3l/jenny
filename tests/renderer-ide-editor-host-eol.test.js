@@ -90,3 +90,64 @@ test('repeated reloads with unchanged eol keep the indicator stable', async (t) 
   await host.openDocument({ path: 'c.txt', content: 'a\nb\nc', eol: 'lf' });
   assert.equal(host.getEol('c.txt'), 'lf');
 });
+
+// IDE-020: with Monaco unavailable (textarea fallback) the buffer itself must
+// carry the document's line endings, and the EOL control must change real bytes.
+function makeFallbackHost() {
+  const dom = new JSDOM('<!doctype html><body><div id="ideEditorHost"></div><textarea id="ideEditorFallback"></textarea></body>');
+  const calls = { dirty: [], model: [] };
+  const host = createIdeEditorHost({
+    getDom: () => ({
+      ideEditorHost: dom.window.document.getElementById('ideEditorHost'),
+      ideEditorFallback: dom.window.document.getElementById('ideEditorFallback'),
+    }),
+    monacoUtils: {
+      ...require('../renderer/features/renderer-monaco-editor-utils'),
+      ensureMonacoEditorApi: async () => null,
+      normalizeEditorLanguage: () => 'plaintext',
+    },
+    imageHostUtils: {},
+    previewHostUtils: {},
+    onDirtyChange: (path, dirty) => calls.dirty.push([path, dirty]),
+    onModelChange: (path) => calls.model.push(path),
+  });
+  return { host, dom, calls, textarea: dom.window.document.getElementById('ideEditorFallback') };
+}
+
+test('fallback setEol converts the buffer to the chosen line endings and marks it dirty', async (t) => {
+  const { host, calls } = makeFallbackHost();
+  t.after(() => host.dispose());
+  await host.openDocument({ path: 'a.txt', content: 'a\nb\n', eol: 'lf' });
+
+  assert.equal(host.setEol('a.txt', 'crlf'), true);
+
+  assert.equal(host.getValue('a.txt'), 'a\r\nb\r\n');
+  assert.equal(host.isDirty('a.txt'), true);
+  assert.equal(host.getEol('a.txt'), 'crlf');
+  assert.deepEqual(calls.dirty, [['a.txt', true]]);
+  assert.deepEqual(calls.model, ['a.txt']);
+});
+
+test('fallback setEol to the line ending the buffer already has stays clean', async (t) => {
+  const { host } = makeFallbackHost();
+  t.after(() => host.dispose());
+  await host.openDocument({ path: 'a.txt', content: 'a\r\nb\r\n', eol: 'crlf' });
+
+  host.setEol('a.txt', 'crlf');
+
+  assert.equal(host.getValue('a.txt'), 'a\r\nb\r\n');
+  assert.equal(host.isDirty('a.txt'), false);
+});
+
+test('typing in a CRLF fallback document keeps CRLF in the content returned for save', async (t) => {
+  const { host, dom, textarea } = makeFallbackHost();
+  t.after(() => host.dispose());
+  await host.openDocument({ path: 'a.txt', content: 'a\r\nb\r\n', eol: 'crlf' });
+  host.activateDocument('a.txt');
+
+  textarea.value = 'a\nb\nc\n';
+  textarea.dispatchEvent(new dom.window.Event('input', { bubbles: true }));
+
+  assert.equal(host.getValue('a.txt'), 'a\r\nb\r\nc\r\n');
+  assert.equal(host.isDirty('a.txt'), true);
+});

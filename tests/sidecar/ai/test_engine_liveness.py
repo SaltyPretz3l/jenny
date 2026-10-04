@@ -19,13 +19,13 @@ from sidecar.ai import engine_liveness
 
 @pytest.fixture(autouse=True)
 def _isolate_engine_liveness_state() -> Iterator[None]:
-    with engine_liveness._state.lock:  # noqa: SLF001
-        engine_liveness._state.last_activity_monotonic = None  # noqa: SLF001
-        engine_liveness._state.active_generations = 0  # noqa: SLF001
+    with engine_liveness._state.lock:
+        engine_liveness._state.last_activity_monotonic = None
+        engine_liveness._state.active_generations = 0
     yield
-    with engine_liveness._state.lock:  # noqa: SLF001
-        engine_liveness._state.last_activity_monotonic = None  # noqa: SLF001
-        engine_liveness._state.active_generations = 0  # noqa: SLF001
+    with engine_liveness._state.lock:
+        engine_liveness._state.last_activity_monotonic = None
+        engine_liveness._state.active_generations = 0
 
 
 def test_clock_is_none_until_first_stamp_and_ages_after() -> None:

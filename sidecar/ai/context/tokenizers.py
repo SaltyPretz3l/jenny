@@ -101,10 +101,10 @@ class LocalModelTokenizerBackend:
             return str(decode(token_ids))
         return ""
 
-    def get_context_window(self, model: str) -> int:  # noqa: ARG002
+    def get_context_window(self, model: str) -> int:
         return 200_000
 
-    def get_max_output_tokens(self, model: str) -> int:  # noqa: ARG002
+    def get_max_output_tokens(self, model: str) -> int:
         return 16_384
 
 
@@ -161,10 +161,10 @@ class TiktokenBackend:
             return ""
         return self._encoding.decode(token_ids)
 
-    def get_context_window(self, model: str) -> int:  # noqa: ARG002
+    def get_context_window(self, model: str) -> int:
         return 200_000
 
-    def get_max_output_tokens(self, model: str) -> int:  # noqa: ARG002
+    def get_max_output_tokens(self, model: str) -> int:
         return 16_384
 
 

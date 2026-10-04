@@ -42,7 +42,7 @@ def normalize_assistant_name(value: Any) -> str:
     if isinstance(value, str):
         normalized = " ".join(value.strip().split())
         if normalized:
-            from sidecar.ai.personality.sanitization import sanitize_bootstrap  # noqa: PLC0415
+            from sidecar.ai.personality.sanitization import sanitize_bootstrap
 
             sanitized = sanitize_bootstrap(
                 normalized,
@@ -74,7 +74,7 @@ def _personality_header(agent_name: Any) -> str:
 
 
 def ui_language_instruction(ui_language: Any) -> str:
-    from sidecar.ai.config_parsing import (  # noqa: PLC0415
+    from sidecar.ai.config_parsing import (
         UI_LANGUAGE_NAMES,
         _normalize_ui_language,
     )
@@ -99,7 +99,7 @@ def build_personality_system_message(
     Electron-compiled, user-authored text: it is sanitized here and appended
     only when something survives.
     """
-    from sidecar.ai.personality.sanitization import sanitize_bootstrap  # noqa: PLC0415
+    from sidecar.ai.personality.sanitization import sanitize_bootstrap
 
     header = _personality_header(agent_name)
     language_instruction = ui_language_instruction(ui_language)

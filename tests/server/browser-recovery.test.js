@@ -102,6 +102,66 @@ function bridgeFailure(reason, code, status) {
   });
 }
 
+test('reasoning aggregates replace browser state when the server evicts entries', () => {
+  const instance = dom();
+  const app = new BrowserApp({ root: instance.window.document.getElementById('root'),
+    bridge: bridge(async () => ({ ok: true })), state: state(), view,
+    reconnect: { start() {}, stop() {} } });
+  try {
+    app.conversation.applyStreamEvent({ type: 'delta', stream_id: 'stream_a',
+      reasoning: [{ id: 'old', text: 'evicted' }, { id: 'kept', text: 'before' }] });
+    app.conversation.applyStreamEvent({ type: 'delta', stream_id: 'stream_a',
+      reasoning: [{ id: 'kept', text: 'after' }] });
+    assert.deepEqual(app.state.liveProjection.reasoning, [{ id: 'kept', text: 'after' }]);
+    app.conversation.applyStreamEvent({ type: 'delta', stream_id: 'stream_a', reasoning: [] });
+    assert.deepEqual(app.state.liveProjection.reasoning, []);
+  } finally { close(app, instance); }
+});
+
+test('identity recovery retries a transient bootstrap failure and restarts reconnect', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  let attempts = 0;
+  let starts = 0;
+  const instance = dom();
+  const transport = bridge(async (operation) => operation === 'sessions.list'
+    ? { ok: true, sessions: [] } : { ok: true });
+  transport.bootstrap = async () => {
+    if (++attempts === 1) throw new BrowserBridgeError('host_unavailable', { code: 'host_unavailable', retryable: true });
+    return { tools: { execution: false } };
+  };
+  const app = new BrowserApp({ root: instance.window.document.getElementById('root'), bridge: transport,
+    state: state(), view, reconnect: { start() { starts += 1; }, stop() {} } });
+  try {
+    const recovery = app.identity.recover();
+    await flush();
+    t.mock.timers.tick(500);
+    await recovery;
+    assert.equal(attempts, 2, 'transient recovery failure must retry bootstrap');
+    assert.equal(starts, 1);
+  } finally { close(app, instance); }
+});
+
+test('identity recovery stops retrying when authentication changes during backoff', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  let attempts = 0;
+  const instance = dom();
+  const transport = bridge(async () => ({ ok: true }));
+  transport.bootstrap = async () => {
+    attempts += 1;
+    throw new BrowserBridgeError('host_unavailable', { code: 'host_unavailable', retryable: true });
+  };
+  const app = new BrowserApp({ root: instance.window.document.getElementById('root'), bridge: transport,
+    state: state(), view, reconnect: { start() { assert.fail('stale recovery restarted reconnect'); }, stop() {} } });
+  try {
+    const recovery = app.identity.recover();
+    await flush();
+    app.authGeneration += 1;
+    t.mock.timers.tick(30_000);
+    await recovery;
+    assert.equal(attempts, 1);
+  } finally { close(app, instance); }
+});
+
 test('send, rename, delete, and preferences carry the current lease generation', async () => {
   const calls = [];
   const bridgeInstance = bridge(async (operation, options) => {

@@ -64,13 +64,13 @@ function createFixture({ workspaceRoot = '' } = {}) {
   return { root, folder, projectService, sessionStore, busySessions, application, projectStore };
 }
 
-test('delete refuses malformed requests, unknown projects and General', () => {
+test('delete refuses malformed requests, unknown projects and General', async () => {
   const fixture = createFixture();
-  assert.equal(fixture.application.deleteProject().error.reason, 'invalid_project_request');
-  assert.equal(fixture.application.deleteProject({ project_id: 'project_x', extra: 1 }).error.reason, 'invalid_project_request');
-  assert.equal(fixture.application.deleteProject({ project_id: 'not a project' }).error.reason, 'invalid_project_id');
-  assert.equal(fixture.application.deleteProject({ project_id: 'project_missing' }).error.reason, 'project_not_found');
-  const general = fixture.application.deleteProject({ project_id: GENERAL_PROJECT_ID });
+  assert.equal((await fixture.application.deleteProject()).error.reason, 'invalid_project_request');
+  assert.equal((await fixture.application.deleteProject({ project_id: 'project_x', extra: 1 })).error.reason, 'invalid_project_request');
+  assert.equal((await fixture.application.deleteProject({ project_id: 'not a project' })).error.reason, 'invalid_project_id');
+  assert.equal((await fixture.application.deleteProject({ project_id: 'project_missing' })).error.reason, 'project_not_found');
+  const general = await fixture.application.deleteProject({ project_id: GENERAL_PROJECT_ID });
   assert.equal(general.ok, false);
   assert.equal(general.error.reason, 'general_protected');
   assert.equal(general.error.code, 'CMP-PROJECT-0001');
@@ -78,7 +78,7 @@ test('delete refuses malformed requests, unknown projects and General', () => {
   assert.equal(fixture.projectService.list().length, 1, 'General is still there');
 });
 
-test('delete moves idle chats to General, removes the entry and reports whether the Workspace was bound to it', () => {
+test('delete moves idle chats to General, removes the entry and reports whether the Workspace was bound to it', async () => {
   const fixture = createFixture();
   const created = fixture.application.createProject({ name: 'Ascend' }).project;
   fixture.application.bindProjectRoot({ project_id: created.id, root_path: fixture.folder, expected_root_revision: 0 });
@@ -94,12 +94,12 @@ test('delete moves idle chats to General, removes the entry and reports whether 
   // fixture whose root IS this folder before the unbound case below.
   const boundProject = boundFixture.application.createProject({ name: 'Bound' }).project;
   boundFixture.application.bindProjectRoot({ project_id: boundProject.id, root_path: fixture.folder, expected_root_revision: 0 });
-  const boundResult = boundFixture.application.deleteProject({ project_id: boundProject.id });
+  const boundResult = await boundFixture.application.deleteProject({ project_id: boundProject.id });
   assert.equal(boundResult.ok, true);
   assert.equal(boundResult.workspace_bound, true);
   assert.equal(boundResult.moved_sessions, 0);
 
-  const result = fixture.application.deleteProject({ project_id: created.id });
+  const result = await fixture.application.deleteProject({ project_id: created.id });
   assert.equal(result.ok, true);
   assert.equal(result.project.id, created.id);
   assert.equal(result.project.name, 'Ascend');
@@ -113,7 +113,7 @@ test('delete moves idle chats to General, removes the entry and reports whether 
   assert.equal(fixture.application.listProjects().projects.length, 1);
 });
 
-test('a busy chat anywhere in the project blocks the delete and nothing moves', () => {
+test('a busy chat anywhere in the project blocks the delete and nothing moves', async () => {
   const fixture = createFixture();
   const created = fixture.application.createProject({ name: 'Ascend' }).project;
   const idle = fixture.sessionStore.createSession({ title: 'Idle' });
@@ -122,7 +122,7 @@ test('a busy chat anywhere in the project blocks the delete and nothing moves', 
     assert.equal(fixture.application.assignSessionProject({ session_id: session.id, project_id: created.id }).ok, true);
   }
   fixture.busySessions.add(busy.id);
-  const refused = fixture.application.deleteProject({ project_id: created.id });
+  const refused = await fixture.application.deleteProject({ project_id: created.id });
   assert.equal(refused.ok, false);
   assert.equal(refused.error.reason, 'session_busy');
   assert.equal(refused.error.busy_count, 1);
@@ -130,42 +130,42 @@ test('a busy chat anywhere in the project blocks the delete and nothing moves', 
   assert.equal(fixture.sessionStore.getSessionSummary(idle.id).project_id, created.id, 'idle chat was not moved either');
 });
 
-test('a read-only project store refuses the delete before any chat is moved', () => {
+test('a read-only project store refuses the delete before any chat is moved', async () => {
   const fixture = createFixture();
   const created = fixture.application.createProject({ name: 'Ascend' }).project;
   const session = fixture.sessionStore.createSession({ title: 'Stay' });
   assert.equal(fixture.application.assignSessionProject({ session_id: session.id, project_id: created.id }).ok, true);
   fixture.projectStore._readOnlyReason = 'future_schema';
-  const refused = fixture.application.deleteProject({ project_id: created.id });
+  const refused = await fixture.application.deleteProject({ project_id: created.id });
   assert.equal(refused.ok, false);
   assert.equal(refused.error.code, 'CMP-PROJECT-0003');
   assert.equal(fixture.sessionStore.getSessionSummary(session.id).project_id, created.id);
 });
 
-test('workspace_bound is judged by canonical root identity, not string equality (Windows casing)', { skip: process.platform !== 'win32' ? 'case-insensitive roots are a Windows contract' : false }, () => {
+test('workspace_bound is judged by canonical root identity, not string equality (Windows casing)', { skip: process.platform !== 'win32' ? 'case-insensitive roots are a Windows contract' : false }, async () => {
   const fixture = createFixture();
   const shouted = createFixture({ workspaceRoot: fixture.folder.toUpperCase() });
   const created = shouted.application.createProject({ name: 'Ascend' }).project;
   shouted.application.bindProjectRoot({ project_id: created.id, root_path: fixture.folder, expected_root_revision: 0 });
-  const result = shouted.application.deleteProject({ project_id: created.id });
+  const result = await shouted.application.deleteProject({ project_id: created.id });
   assert.equal(result.ok, true);
   assert.equal(result.workspace_bound, true, 'G:\\A and g:\\a are the same Workspace folder');
 });
 
-test('an unreadable chat inventory refuses the delete instead of treating it as "no chats, none busy"', () => {
+test('an unreadable chat inventory refuses the delete instead of treating it as "no chats, none busy"', async () => {
   const fixture = createFixture();
   const created = fixture.application.createProject({ name: 'Ascend' }).project;
   const session = fixture.sessionStore.createSession({ title: 'One' });
   assert.equal(fixture.application.assignSessionProject({ session_id: session.id, project_id: created.id }).ok, true);
   fixture.sessionStore.listSessionRecords = () => { throw new Error('disk offline'); };
-  const result = fixture.application.deleteProject({ project_id: created.id });
+  const result = await fixture.application.deleteProject({ project_id: created.id });
   assert.equal(result.ok, false);
   assert.equal(result.error.reason, 'session_inventory_unavailable');
   assert.match(result.error.message, /chat list could not be read/);
   assert.ok(fixture.projectService.get(created.id), 'the project survives');
 });
 
-test('a failed project-store write puts the already-moved chats back: a refused delete leaves no chat in General', () => {
+test('a failed project-store write puts the already-moved chats back: a refused delete leaves no chat in General', async () => {
   const fixture = createFixture();
   const created = fixture.application.createProject({ name: 'Ascend' }).project;
   const one = fixture.sessionStore.createSession({ title: 'One' });
@@ -174,7 +174,7 @@ test('a failed project-store write puts the already-moved chats back: a refused 
     assert.equal(fixture.application.assignSessionProject({ session_id: session.id, project_id: created.id }).ok, true);
   }
   fixture.projectService.remove = () => ({ ok: false, reason: 'write_failed' });
-  const result = fixture.application.deleteProject({ project_id: created.id });
+  const result = await fixture.application.deleteProject({ project_id: created.id });
   assert.equal(result.ok, false);
   const details = JSON.stringify(result);
   assert.match(details, /"moved_sessions":0/, 'nothing is left moved');
@@ -182,4 +182,23 @@ test('a failed project-store write puts the already-moved chats back: a refused 
   assert.equal(fixture.sessionStore.getSessionSummary(one.id).project_id, created.id);
   assert.equal(fixture.sessionStore.getSessionSummary(two.id).project_id, created.id);
   assert.ok(fixture.projectService.get(created.id));
+});
+
+test('workspace_bound follows the real path: a Workspace opened through a junction is the deleted project', async (t) => {
+  const fixture = createFixture();
+  const link = path.join(fixture.root, 'AscendLink');
+  try {
+    fs.symlinkSync(fixture.folder, link, process.platform === 'win32' ? 'junction' : 'dir');
+  } catch (error) {
+    t.skip(`directory link unavailable: ${error.code || error.message}`);
+    return;
+  }
+  const linked = createFixture({ workspaceRoot: link });
+  const created = linked.application.createProject({ name: 'Ascend' }).project;
+  assert.equal(linked.application.bindProjectRoot({
+    project_id: created.id, root_path: fixture.folder, expected_root_revision: 0,
+  }).ok, true);
+  const result = await linked.application.deleteProject({ project_id: created.id });
+  assert.equal(result.ok, true);
+  assert.equal(result.workspace_bound, true, 'the junction and its target are one Workspace folder');
 });

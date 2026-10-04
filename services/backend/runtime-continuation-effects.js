@@ -3,7 +3,7 @@
 const { normalizeMutationRef } = require('../session-runtime/continuation-contracts');
 const { stableJson } = require('../session-runtime/contracts');
 const { isDecisionProjection } = require('../session-runtime/continuation-events');
-const { buildPersistedToolInputSnapshot } = require('./tool-loop-input-sanitization');
+const { buildPersistedToolInputSnapshot, redactPathLikeText } = require('./tool-loop-input-sanitization');
 const { PLAN_DECISIONS } = require('../tools/builtin/exit-plan-mode-tool');
 
 function fail(code) { throw Object.assign(new Error(code), { code }); }
@@ -20,8 +20,20 @@ function decisionProjection(event, context) {
     call = completed;
     proof = { ...context, decision: { kind: 'approval', call_id: call.call_id }, pendingCalls: [call] };
   }
-  return isDecisionProjection(event, proof)
-    && stableJson(event.payload.input) === stableJson(buildPersistedToolInputSnapshot(call.arguments).input);
+  if (!isDecisionProjection(event, proof)) return false;
+  const persisted = stableJson(event.payload.input);
+  const fresh = buildPersistedToolInputSnapshot(call.arguments).input;
+  return persisted === stableJson(fresh) || persisted === stableJson(legacyPathRedacted(fresh));
+}
+// A tool_use persisted before HB-012 (2026-09-28) stored its input with paths
+// redacted; an approval pending across that upgrade must still prove.
+function legacyPathRedacted(value) {
+  if (typeof value === 'string') return redactPathLikeText(value);
+  if (Array.isArray(value)) return value.map(legacyPathRedacted);
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, legacyPathRedacted(item)]));
+  }
+  return value;
 }
 // Every plan decision executes exit_plan_mode (rejected and accepted return
 // their outcome as the tool result), so each proves a completed call.

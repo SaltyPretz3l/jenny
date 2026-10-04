@@ -202,14 +202,45 @@ test('localized installed models missing from the catalog keep the combined unkn
   assert.equal(root.querySelector('.model-row-fit').textContent, '[Nøţ ïñ çåţåļøğ · fïţ űñķñøŵñ]');
 });
 
-test('fitSource estimated/observed append a suffix to the row and card fit text', () => {
+test('estimated fits use compact text and retain full hover and accessible wording', () => {
+  const full = '4.1 GB of 15.9 GB VRAM \u00b7 estimated';
+  for (const fitState of ['fits', 'unknown']) {
+    const model = card({ fitState, fitSource: 'estimated', fitLabel: '4.1 GB of 15.9 GB VRAM' });
+    for (const compact of [false, true]) {
+      const root = fragment(view.buildModelCard(model, { compact }));
+      const fit = root.querySelector(compact ? '.inv-progress-text' : '.model-row-fit-text');
+      assert.equal(fit.textContent, '~4.1 GB of 15.9 GB VRAM');
+      assert.equal((compact ? root.querySelector('.model-card-fit') : fit).title, full);
+      if (compact || fitState !== 'unknown') {
+        assert.match(root.querySelector('.model-card-fit').getAttribute('aria-label'),
+          /4\.1 GB of 15\.9 GB VRAM \u00b7 estimated/);
+      } else {
+        assert.equal(fit.getAttribute('aria-label'), full);
+      }
+    }
+  }
+});
+
+test('model metadata omits empty and unknown quantization without extra separators', () => {
+  for (const quant of ['unknown', 'UnKnOwN', ' UNKNOWN ', '', '   ']) {
+    const model = card({ source: 'installed', quant });
+    const row = fragment(view.buildModelRow(model, {}));
+    assert.equal(row.querySelector('.model-row-meta').textContent, '12B \u00b7 32K context \u00b7 4 GB');
+    const compact = fragment(view.buildModelCard(model, { compact: true }));
+    assert.equal(compact.querySelector('.model-card-stats').textContent, '12B \u00b7 32K context \u00b7 4 GB');
+  }
+  const known = fragment(view.buildModelRow(card({ source: 'installed', quant: 'Q6_K' }), {}));
+  assert.match(known.querySelector('.model-row-meta').textContent, /12B \u00b7 Q6_K \u00b7 32K/);
+});
+
+test('fitSource observed remains measured while estimated text is compact', () => {
   const estimatedRow = fragment(view.buildModelRow(card({
     fitSource: 'estimated',
     fitLabel: '8 GB of 12 GB VRAM',
   }), {}));
   assert.match(
     estimatedRow.querySelector('.model-row-fit').textContent,
-    /8 GB of 12 GB VRAM · estimated/
+    /~8 GB of 12 GB VRAM/
   );
 
   const measuredRow = fragment(view.buildModelRow(card({
@@ -236,7 +267,7 @@ test('fitSource estimated/observed append a suffix to the row and card fit text'
   }), { compact: true }));
   assert.match(
     estimatedCard.querySelector('.model-card-fit').textContent,
-    /8 GB of 12 GB VRAM · estimated/
+    /~8 GB of 12 GB VRAM/
   );
 
   const unknownEstimated = fragment(view.buildModelRow(card({
@@ -300,6 +331,19 @@ test('rows and compact cards show serving and per-model engine pills', () => {
   assert.ok(compactBadges.includes('Serving on :8033'));
   assert.ok(compactBadges.includes('llama-server · MTP'));
   assert.equal(compactBadges.includes('MTP ready'), false);
+});
+
+// Owner gate P2: a card whose llama-server is parked for an image render.
+test('a card paused for an image render says so instead of Serving', () => {
+  for (const html of [
+    view.buildModelRow(card({ active: true, servingPaused: true, servingPort: 8033, selectedEngine: 'llama-server' }), {}),
+    view.buildModelCard(card({ active: true, servingPaused: true, servingPort: 8033, selectedEngine: 'llama-server' }), { compact: true }),
+  ]) {
+    const badges = Array.from(fragment(html).querySelectorAll('.inv-badge')).map((badge) => badge.textContent);
+    assert.ok(badges.includes('Paused for an image render'), badges.join(' | '));
+    assert.equal(badges.some((text) => /^Serving/.test(text)), false, badges.join(' | '));
+    assert.ok(badges.indexOf('Active') < badges.indexOf('Paused for an image render'));
+  }
 });
 
 test('the retired global acceleration toggle builder is not exported', () => {
@@ -485,6 +529,19 @@ test('display names, tags, and hardware names are escaped everywhere', () => {
   });
   assert.equal(fragment(hardware).querySelector('img'), null);
   assert.match(hardware, /&lt;img/);
+});
+
+test('the hardware line reads neutral while the probe is pending, never a bare negative', () => {
+  const pending = fragment(view.buildHardwareSummaryLine(null, { pending: true }));
+  assert.equal(pending.textContent, 'Checking hardware…');
+  assert.doesNotMatch(pending.textContent, /not detected/i);
+
+  // A finished probe that found nothing still says so.
+  assert.equal(fragment(view.buildHardwareSummaryLine({ detected: false })).textContent, 'Hardware not detected');
+  // A detected profile wins over a stale pending hint.
+  assert.match(fragment(view.buildHardwareSummaryLine({
+    detected: true, type: 'cuda', name: 'Test GPU', vramMb: 12288,
+  }, { pending: true })).textContent, /Test GPU · 12 GB VRAM/);
 });
 
 test('all interactive markup is emitted by inventory primitives', () => {

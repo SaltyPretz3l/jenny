@@ -8,6 +8,7 @@ const {
   DataLifecycleService,
   REMOVAL_CHOICES,
 } = require('../services/data-lifecycle/data-lifecycle-service');
+const { createRemovalPreparation } = require('../services/main/data-lifecycle-ipc-registration');
 
 function makeTempRoot() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-data-lifecycle-service-'));
@@ -220,6 +221,89 @@ describe('DataLifecycleService', () => {
       assert.equal(result.ok, true);
       assert.equal(result.removeWorkspaceData, false);
       assert.equal(preparation.removeWorkspaceData, false);
+      assert.equal(preparation.workspaceRemovalScope, 'archived');
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('hands the cleanup the narrow scope for archive-and-remove and the full scope only for permanent removal', async () => {
+    const root = makeTempRoot();
+    try {
+      const workspaceRoot = path.join(root, 'workspace');
+      fs.mkdirSync(path.join(workspaceRoot, '.jenny', 'artifacts'), { recursive: true });
+      fs.writeFileSync(path.join(workspaceRoot, '.jenny', 'artifacts', 'one.txt'), 'one');
+      const preparations = [];
+      const service = new DataLifecycleService({
+        userDataPath: path.join(root, 'profile'),
+        documentsPath: path.join(root, 'Documents'),
+        shellConfigService: { getState: () => ({ toolsWorkspaceRoot: workspaceRoot }) },
+        prepareForRemoval: async (value) => { preparations.push(value); },
+      });
+
+      const permanent = await service.prepareRemoval({
+        choice: REMOVAL_CHOICES.PERMANENT,
+        confirmation: 'REMOVE JENNY',
+        removeWorkspaceData: true,
+      });
+      assert.equal(permanent.ok, true);
+
+      const preview = await service.previewWorkspaceArchive();
+      const archived = await service.prepareRemoval({
+        choice: REMOVAL_CHOICES.ARCHIVE_AND_REMOVE,
+        archive: { encrypted: false, includeWorkspace: true, workspaceReviewId: preview.reviewId },
+        removeWorkspaceData: true,
+      });
+      assert.equal(archived.ok, true);
+
+      assert.deepEqual(
+        preparations.map((item) => [item.choice, item.removeWorkspaceData, item.workspaceRemovalScope]),
+        [[REMOVAL_CHOICES.PERMANENT, true, 'all'], [REMOVAL_CHOICES.ARCHIVE_AND_REMOVE, true, 'archived']]
+      );
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('archive-and-remove keeps workspace .jenny data that the archive did not carry', async () => {
+    const root = makeTempRoot();
+    try {
+      const workspaceRoot = path.join(root, 'workspace');
+      const metadata = path.join(workspaceRoot, '.jenny');
+      fs.mkdirSync(path.join(metadata, 'artifacts'), { recursive: true });
+      fs.writeFileSync(path.join(metadata, 'artifacts', 'included.txt'), 'archived');
+      fs.mkdirSync(path.join(metadata, 'notes'));
+      fs.writeFileSync(path.join(metadata, 'notes', 'keep.md'), 'unarchived note');
+      const userDataPath = path.join(root, 'profile');
+      fs.mkdirSync(userDataPath, { recursive: true });
+      const service = new DataLifecycleService({
+        userDataPath,
+        documentsPath: path.join(root, 'Documents'),
+        shellConfigService: { getState: () => ({ toolsWorkspaceRoot: workspaceRoot }) },
+        prepareForRemoval: createRemovalPreparation({
+          cleanupOptions: { userDataPath, runtimePath: path.join(root, '.companion') },
+        }),
+      });
+
+      const preview = await service.previewWorkspaceArchive();
+      assert.equal(preview.itemCount, 1);
+      const result = await service.prepareRemoval({
+        choice: REMOVAL_CHOICES.ARCHIVE_AND_REMOVE,
+        archive: { encrypted: false, includeWorkspace: true, workspaceReviewId: preview.reviewId },
+        removeWorkspaceData: true,
+      });
+
+      assert.equal(result.ok, true);
+      assert.equal(result.status, 'cleanup_authorized');
+      assert.equal(fs.readFileSync(path.join(metadata, 'notes', 'keep.md'), 'utf8'), 'unarchived note');
+      assert.equal(fs.existsSync(path.join(metadata, 'artifacts')), false);
+      assert.equal(result.cleanupResults.some((entry) => entry.status === 'retained'), false);
+      assert.deepEqual(result.warnings, ['Kept 1 workspace .jenny item(s) that are not part of the archive.']);
+      const manifest = JSON.parse(fs.readFileSync(path.join(result.archivePath, 'manifest.json'), 'utf8'));
+      assert.deepEqual(
+        manifest.entries.map((entry) => entry.logical_path).filter((logicalPath) => logicalPath.startsWith('workspace/')),
+        ['workspace/artifacts/included.txt']
+      );
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
@@ -304,6 +388,57 @@ describe('DataLifecycleService', () => {
 
       assert.equal(preview.itemCount, 2);
       assert.equal(archived.ok, true);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('reports a partial archive that could not be removed after a canceled archive', async (t) => {
+    const root = makeTempRoot();
+    t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+    const documentsPath = path.join(root, 'Documents');
+    const userDataPath = path.join(root, 'profile');
+    fs.mkdirSync(userDataPath, { recursive: true });
+    const service = new DataLifecycleService({ userDataPath, documentsPath, sessionStore: createSessionStore() });
+    service.syncPortablePreferences({ appearance: { paletteId: 'obsidian' } });
+    const logs = [];
+    service.logger = (level, event, fields) => logs.push({ level, event, fields });
+    service.on('progress', (event) => {
+      if (event.phase === 'archiving') service.cancel(event.operationId);
+    });
+    const originalRm = fs.promises.rm;
+    t.after(() => { fs.promises.rm = originalRm; });
+    fs.promises.rm = async function rmDenyingPartials(target, options) {
+      if (String(target).endsWith('.partial')) throw Object.assign(new Error('denied'), { code: 'EPERM' });
+      return originalRm.call(fs.promises, target, options);
+    };
+
+    const result = await service.createArchive({ encrypted: false });
+
+    assert.equal(result.ok, false);
+    assert.equal(result.error.reason, 'operation_cancelled');
+    assert.equal(typeof result.retainedPartial.path, 'string');
+    assert.equal(fs.existsSync(result.retainedPartial.path), true);
+    assert.equal(path.dirname(result.retainedPartial.path), path.join(documentsPath, 'Jenny Archives'));
+    const warning = logs.find((entry) => entry.event === 'data_lifecycle.operation_failed');
+    assert.equal(warning.fields.partialRetained, true);
+    assert.equal(JSON.stringify(warning.fields).includes(root), false);
+  });
+
+  it('keeps an ordinary archive failure free of a retained-partial field', async () => {
+    const root = makeTempRoot();
+    try {
+      const service = new DataLifecycleService({
+        userDataPath: path.join(root, 'profile'),
+        documentsPath: path.join(root, 'Documents'),
+      });
+      const result = await service.createArchive({
+        encrypted: true,
+        passphrase: 'one passphrase',
+        passphraseConfirmation: 'another passphrase',
+      });
+      assert.equal(result.ok, false);
+      assert.equal(Object.prototype.hasOwnProperty.call(result, 'retainedPartial'), false);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }

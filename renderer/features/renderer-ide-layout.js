@@ -46,38 +46,45 @@
     const secondaryRequested = secondaryOpen
       ? Math.max(SECONDARY_WIDTH_FLOOR, Number(ide?.secondaryWidth) || SECONDARY_WIDTH_FLOOR)
       : 0;
-    const chatDockMax = Math.max(
-      CHAT_DOCK_WIDTH_FLOOR,
-      Math.min(
-        Math.floor(vw * CHAT_DOCK_VIEWPORT_RATIO),
-        Math.max(0, vw - editorMin - railRequested - secondaryRequested)
-      )
-    );
-    // Clamp only the display budget. The persisted request stays untouched so
-    // returning to a wider monitor restores the user's chosen width.
-    const dockWidth = ide?.chatDockOpen === true
-      ? Math.min(Number(ide.chatDockWidth) || 0, chatDockMax)
-      : 0;
-    const budget = Math.max(0, vw - editorMin - dockWidth);
+    // The chat dock yields to the side panels (its max below is whatever they
+    // leave), so their budget reserves only the dock's floor. Reserving the
+    // dock's CLAMPED width was circular: a dock wider than its clamp filled
+    // exactly what the rail left, so railMax always equalled the rail's current
+    // width and the rail could shrink but never grow back.
+    const dockReserve = ide?.chatDockOpen === true ? CHAT_DOCK_WIDTH_FLOOR : 0;
+    const budget = Math.max(0, vw - editorMin - dockReserve);
     const secondaryCurrent = secondaryOpen ? (Number(ide.secondaryWidth) || SECONDARY_WIDTH_FLOOR) : 0;
     // Deterministic order: the rail is clamped against the secondary's CURRENT
     // width, then the secondary against the (already clamped) rail. Floors are
     // never violated — when the budget is smaller than the floors, the editor
     // column takes the squeeze (its grid track is minmax(0, 1fr)).
     const railMax = Math.max(RAIL_WIDTH_FLOOR, budget - secondaryCurrent);
-    const railCurrent = Math.min(Number(ide?.railWidth) || RAIL_WIDTH_FLOOR, railMax);
-    const secondaryMax = Math.max(SECONDARY_WIDTH_FLOOR, budget - railCurrent);
+    const railShown = Math.min(railRequested, railMax);
+    const secondaryMax = Math.max(SECONDARY_WIDTH_FLOOR, budget - railShown);
+    const secondaryShown = Math.min(secondaryRequested, secondaryMax);
+    // The dock takes what the SHOWN side panels leave (a saved width above its
+    // viewport clamp is display-only and must not starve the dock).
+    const chatDockMax = Math.max(
+      CHAT_DOCK_WIDTH_FLOOR,
+      Math.min(
+        Math.floor(vw * CHAT_DOCK_VIEWPORT_RATIO),
+        Math.max(0, vw - editorMin - railShown - secondaryShown)
+      )
+    );
     return { railMax, secondaryMax, chatDockMax };
   }
 
-  // Root font-size ratio (16px browser default) — the cheap font/surface-scale
+  // The Text size multiplier (--font-scale on the root) — the font-scale
   // signal for the editor floor. Guarded for jsdom/absent computed styles.
   function resolveFontScale(shellEl) {
     try {
       const doc = shellEl?.ownerDocument;
       const view = doc?.defaultView;
-      const size = parseFloat(view?.getComputedStyle?.(doc.documentElement)?.fontSize);
-      return Number.isFinite(size) && size > 0 ? size / 16 : 1;
+      const root = doc?.documentElement;
+      const raw = root?.style?.getPropertyValue?.('--font-scale')
+        || view?.getComputedStyle?.(root)?.getPropertyValue?.('--font-scale');
+      const scale = parseFloat(String(raw || '').trim());
+      return Number.isFinite(scale) && scale > 0 ? scale : 1;
     } catch (_error) {
       return 1;
     }

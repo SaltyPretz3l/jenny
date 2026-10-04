@@ -161,8 +161,8 @@ describe('flag-off registers no IPC channel', () => {
     // what keeps this honest -- a hand-maintained literal list would rot.
     const controlIpc = createFakeIpcMain();
     const packetIpc = createFakeIpcMain();
-    registerGuidanceIpcHandlers(controlIpc, guidanceDouble(), guidanceDouble());
-    registerGuidanceIpcHandlers(packetIpc, guidanceDouble(), guidanceDouble());
+    registerGuidanceIpcHandlers(controlIpc, guidanceDouble());
+    registerGuidanceIpcHandlers(packetIpc, guidanceDouble());
 
     assert.equal(registerPluginsRuntime(packetIpc, flagOffDeps()), null);
 

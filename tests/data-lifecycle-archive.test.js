@@ -242,6 +242,139 @@ test('review-bound source digest rejects changed content and removes partial out
   assert.deepEqual(fs.existsSync(destinationRoot) ? fs.readdirSync(destinationRoot) : [], []);
 });
 
+function cancelAfterFirstEntry() {
+  let checks = 0;
+  return () => { checks += 1; return checks > 1; };
+}
+
+const CANCELED_ARCHIVE_ENTRIES = [
+  { logicalPath: 'sessions/private.json', category: 'chats', data: 'private chat text' },
+  { logicalPath: 'sessions/second.json', category: 'chats', data: '{}' },
+];
+
+test('a canceled archive whose partial cannot be removed reports the retained partial', async (t) => {
+  const root = tempRoot();
+  const destinationRoot = path.join(root, 'archives');
+  const originalRm = fs.promises.rm;
+  t.after(() => { fs.promises.rm = originalRm; });
+  fs.promises.rm = async function rmDenyingPartials(target, options) {
+    if (String(target).endsWith('.partial')) throw Object.assign(new Error('denied'), { code: 'EPERM' });
+    return originalRm.call(fs.promises, target, options);
+  };
+
+  await assert.rejects(createArchive({
+    destinationRoot,
+    archiveName: 'Canceled.jenny-archive',
+    encrypted: false,
+    entries: CANCELED_ARCHIVE_ENTRIES,
+    shouldCancel: cancelAfterFirstEntry(),
+  }), (error) => {
+    assert.equal(error.code, 'CMP-DATA-0001');
+    assert.equal(error.reason, 'operation_cancelled');
+    assert.equal(error.partialRetained, true);
+    assert.equal(fs.existsSync(error.partialPath), true);
+    assert.equal(path.dirname(error.partialPath), destinationRoot);
+    return true;
+  });
+});
+
+test('a canceled archive removes its partial and leaves no retained-partial marker', async () => {
+  const root = tempRoot();
+  const destinationRoot = path.join(root, 'archives');
+
+  await assert.rejects(createArchive({
+    destinationRoot,
+    archiveName: 'Canceled.jenny-archive',
+    encrypted: false,
+    entries: CANCELED_ARCHIVE_ENTRIES,
+    shouldCancel: cancelAfterFirstEntry(),
+  }), (error) => {
+    assert.equal(error.reason, 'operation_cancelled');
+    assert.equal(Object.prototype.hasOwnProperty.call(error, 'partialRetained'), false);
+    assert.equal(Object.prototype.hasOwnProperty.call(error, 'partialPath'), false);
+    return true;
+  });
+  assert.deepEqual(fs.readdirSync(destinationRoot), []);
+});
+
+test('a new archive sweeps stale owned partials and leaves everything else alone', async () => {
+  const root = tempRoot();
+  const destinationRoot = path.join(root, 'archives');
+  fs.mkdirSync(destinationRoot, { recursive: true });
+  const makePartial = (name, ageMs) => {
+    const target = path.join(destinationRoot, name);
+    fs.mkdirSync(path.join(target, 'data'), { recursive: true });
+    fs.writeFileSync(path.join(target, 'data', 'old.json'), 'old', 'utf8');
+    const when = new Date(Date.now() - ageMs);
+    fs.utimesSync(target, when, when);
+    return target;
+  };
+  const day = 24 * 60 * 60 * 1000;
+  const stale = makePartial('Old.jenny-archive.0123456789ab.partial', 2 * day);
+  const fresh = makePartial('Fresh.jenny-archive.ba9876543210.partial', 0);
+  const unrelated = makePartial('notes.partial', 2 * day);
+  const wrongSuffix = makePartial('Old.jenny-archive.XYZ.partial', 2 * day);
+  const staleFile = path.join(destinationRoot, 'File.jenny-archive.0123456789ab.partial');
+  fs.writeFileSync(staleFile, 'not a directory', 'utf8');
+  const when = new Date(Date.now() - 2 * day);
+  fs.utimesSync(staleFile, when, when);
+
+  const result = await createArchive({
+    destinationRoot,
+    archiveName: 'Next.jenny-archive',
+    encrypted: false,
+    entries: [{ logicalPath: 'settings/preferences.json', category: 'preferences', data: '{}' }],
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(fs.existsSync(stale), false);
+  for (const kept of [fresh, unrelated, wrongSuffix, staleFile]) {
+    assert.equal(fs.existsSync(kept), true, `${path.basename(kept)} must be left alone`);
+  }
+  assert.equal(fs.existsSync(result.archivePath), true);
+});
+
+test('a failing stale-partial removal does not fail the new archive', async (t) => {
+  const root = tempRoot();
+  const destinationRoot = path.join(root, 'archives');
+  const stale = path.join(destinationRoot, 'Old.jenny-archive.0123456789ab.partial');
+  fs.mkdirSync(stale, { recursive: true });
+  const when = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000);
+  fs.utimesSync(stale, when, when);
+  const originalRm = fs.promises.rm;
+  t.after(() => { fs.promises.rm = originalRm; });
+  fs.promises.rm = async function rmDenyingPartials(target, options) {
+    if (String(target).endsWith('.partial')) throw Object.assign(new Error('denied'), { code: 'EPERM' });
+    return originalRm.call(fs.promises, target, options);
+  };
+
+  const result = await createArchive({
+    destinationRoot,
+    archiveName: 'Next.jenny-archive',
+    encrypted: false,
+    entries: [{ logicalPath: 'settings/preferences.json', category: 'preferences', data: '{}' }],
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(fs.existsSync(stale), true);
+});
+
+test('the archive README says knowledge folders are not included', async () => {
+  const root = tempRoot();
+  for (const encrypted of [true, false]) {
+    const result = await createArchive({
+      destinationRoot: path.join(root, 'archives'),
+      archiveName: `Readme-${encrypted ? 'enc' : 'plain'}.jenny-archive`,
+      encrypted,
+      passphrase: encrypted ? 'correct-password-123' : '',
+      entries: [{ logicalPath: 'settings/preferences.json', category: 'preferences', data: '{}' }],
+    });
+    const readme = fs.readFileSync(path.join(result.archivePath, 'README.txt'), 'utf8');
+    assert.match(readme, /knowledge folder/i);
+    assert.match(readme, /not (part of|included in) this archive/i);
+  }
+});
+
 test('archive path and manifest validation rejects traversal, reserved names, and case collisions', () => {
   for (const unsafePath of ['../escape', '/absolute', 'C:/absolute', 'safe/../escape', 'safe/CON.txt', 'safe/name:stream']) {
     assert.throws(() => validateLogicalPath(unsafePath), { code: 'CMP-DATA-0003' });

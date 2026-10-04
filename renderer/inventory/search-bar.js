@@ -218,12 +218,22 @@
       if (!countEl) return;
       var totalNum = Number(total) || 0;
       var nextText;
+      var cappedTitle = '';
       if (totalNum <= 0) {
         nextText = jt('inventory.searchBar.noMatches', 'No matches');
       } else {
         var currentNum = Math.max(1, Math.min(totalNum, Number(current) || 0));
-        nextText = currentNum + ' of ' + totalNum + (options && options.truncated === true ? '+' : '');
+        // Capped: the list holds only the first matches, and the count says so.
+        var capped = Boolean(options && options.truncated === true);
+        nextText = capped
+          ? jt('inventory.searchBar.matchCountCapped', '{current} of first {total}', { current: currentNum, total: totalNum })
+          : jt('inventory.searchBar.matchCount', '{current} of {total}', { current: currentNum, total: totalNum });
+        cappedTitle = capped
+          ? jt('inventory.searchBar.matchCountCappedTitle', 'Only the first {total} matches are listed. Narrow the search to reach the rest.', { total: totalNum })
+          : '';
+        if (cappedTitle) countEl.setAttribute('title', cappedTitle);
       }
+      if (!cappedTitle && countEl.hasAttribute('title')) countEl.removeAttribute('title');
       // Skip identical writes — prevents aria-live re-announcing the same
       // count and avoids redundant DOM mutation when the user holds Enter.
       if (countEl.textContent !== nextText) countEl.textContent = nextText;

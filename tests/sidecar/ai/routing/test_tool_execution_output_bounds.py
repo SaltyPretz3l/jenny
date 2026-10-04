@@ -20,7 +20,7 @@ def test_oversized_json_result_remains_valid_and_preserves_terminal_metadata() -
         }
     )
 
-    output, truncated = tool_execution._bounded_tool_output(  # noqa: SLF001
+    output, truncated = tool_execution._bounded_tool_output(
         raw,
         tool_name="run_command",
     )
@@ -39,7 +39,7 @@ def test_oversized_json_result_remains_valid_and_preserves_terminal_metadata() -
 
 
 def test_oversized_plain_text_keeps_legacy_bounded_text_contract() -> None:
-    output, truncated = tool_execution._bounded_tool_output(  # noqa: SLF001
+    output, truncated = tool_execution._bounded_tool_output(
         "x" * (tool_execution.MAX_RESPONSE_CHARS + 100),
         tool_name="read_file",
     )
@@ -53,7 +53,7 @@ def test_deeply_nested_json_degrades_to_bounded_text_instead_of_crashing() -> No
     depth = 2_000
     raw = '{"nested":' * depth + '"value"' + '}' * depth
 
-    output, truncated = tool_execution._bounded_tool_output(  # noqa: SLF001
+    output, truncated = tool_execution._bounded_tool_output(
         raw,
         tool_name="remote_tool",
     )
@@ -66,7 +66,7 @@ def test_deeply_nested_json_degrades_to_bounded_text_instead_of_crashing() -> No
 def test_small_result_is_not_reformatted_or_marked_truncated() -> None:
     raw = '{"ok":true,"stdout":"done"}'
 
-    output, truncated = tool_execution._bounded_tool_output(  # noqa: SLF001
+    output, truncated = tool_execution._bounded_tool_output(
         raw,
         tool_name="run_command",
     )
@@ -85,7 +85,7 @@ def test_oversized_json_bounds_omitted_key_summary_without_losing_priority_field
         }
     )
 
-    output, truncated = tool_execution._bounded_tool_output(  # noqa: SLF001
+    output, truncated = tool_execution._bounded_tool_output(
         raw,
         tool_name="run_command",
     )

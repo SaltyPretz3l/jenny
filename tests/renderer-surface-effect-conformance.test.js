@@ -38,17 +38,43 @@ const NATIVE_EFFECT_MODULES = Object.freeze([
   }),
 ]);
 
-test('full-roster conformance driver exactly matches the five native registry entries', () => {
+// Owner direction (2026-09-30): no background effect reacts to the model, so
+// every v3 manager-input effect has activityMode 'none'.
+const EXPECTED_ACTIVITY_MODES = Object.freeze({
+  'reactive-grid': 'none',
+  'atomic-burst': 'none',
+  'circuit-trace': 'none',
+  'context-weave': 'none',
+  'playlist-scroll': 'none',
+});
+
+test('full-roster conformance driver exactly matches the five v3 manager-input registry entries', () => {
   const presets = getSurfaceEffectPresets().filter((preset) => preset.id !== 'none');
-  const registryNativeIds = presets
-    .filter((preset) => preset.contractVersion === 3
-      && preset.inputMode === 'manager'
-      && preset.activityMode === 'native')
+  const registryV3Ids = presets
+    .filter((preset) => preset.contractVersion === 3 && preset.inputMode === 'manager')
     .map((preset) => preset.id)
     .sort();
   assert.equal(presets.length, 5);
-  assert.equal(registryNativeIds.length, 5);
-  assert.deepEqual(NATIVE_EFFECT_MODULES.map((entry) => entry.id).sort(), registryNativeIds);
+  assert.equal(registryV3Ids.length, 5);
+  assert.deepEqual(NATIVE_EFFECT_MODULES.map((entry) => entry.id).sort(), registryV3Ids);
+  presets.forEach((preset) => {
+    assert.equal(preset.activityMode, EXPECTED_ACTIVITY_MODES[preset.id],
+      preset.id + ' registry activityMode');
+  });
+});
+
+test('real controllers expose setActivity/handleActivityImpulse exactly when activityMode is native', () => {
+  const presets = getSurfaceEffectPresets().filter((preset) => preset.id !== 'none');
+  NATIVE_EFFECT_MODULES.forEach((entry) => {
+    const preset = presets.find((candidate) => candidate.id === entry.id);
+    const controller = entry.factory({});
+    const expected = preset.activityMode === 'native' ? 'function' : 'undefined';
+    assert.equal(typeof controller.setActivity, expected,
+      entry.id + ' setActivity presence matches activityMode ' + preset.activityMode);
+    assert.equal(typeof controller.handleActivityImpulse, expected,
+      entry.id + ' handleActivityImpulse presence matches activityMode ' + preset.activityMode);
+    if (typeof controller.dispose === 'function') controller.dispose();
+  });
 });
 
 NATIVE_EFFECT_MODULES.forEach((entry) => {

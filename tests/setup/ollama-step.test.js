@@ -195,6 +195,157 @@ test('ensureServing reports not_installed without spawning', async () => {
   assert.equal(result.reason, 'not_installed');
 });
 
+function serveChild(pid = 4242) {
+  const child = new EventEmitter();
+  child.pid = pid;
+  child.unref = () => {};
+  return child;
+}
+
+const STOPPED_CLI_OUTPUT = 'Warning: could not connect to a running Ollama instance\nWarning: client version is 0.5.1\n';
+
+test('ensureServing reports serve_spawn_failed when the spawn error arrives asynchronously', async () => {
+  const child = serveChild();
+  let sleeps = 0;
+  const result = await ensureServing({
+    fetchImpl: downFetch(),
+    run: () => ({ status: 1, stdout: '' }),
+    spawnImpl: () => child,
+    // ENOENT is delivered as an 'error' event after spawn returns.
+    sleepImpl: async () => {
+      sleeps += 1;
+      child.emit('error', Object.assign(new Error('spawn ollama ENOENT'), { code: 'ENOENT' }));
+    },
+    initialDetect: { installed: true, running: false, version: '' },
+    attempts: 10,
+  });
+  assert.deepEqual(result, { running: false, started: false, reason: 'serve_spawn_failed' });
+  assert.equal(sleeps, 1, 'must not wait out the remaining attempts');
+});
+
+test('ensureServing reports serve_exited when the child exits while the server is not answering', async () => {
+  const child = serveChild();
+  let sleeps = 0;
+  const result = await ensureServing({
+    fetchImpl: downFetch(),
+    run: () => ({ status: 1, stdout: '' }),
+    spawnImpl: () => child,
+    sleepImpl: async () => {
+      sleeps += 1;
+      child.emit('exit', 1, null);
+    },
+    initialDetect: { installed: true, running: false, version: '' },
+    attempts: 10,
+  });
+  assert.deepEqual(result, { running: false, started: false, reason: 'serve_exited' });
+  assert.equal(sleeps, 1, 'must not wait out the remaining attempts');
+});
+
+test('ensureServing lets a probe that finds the server running win over a child exit', async () => {
+  const child = serveChild();
+  const result = await ensureServing({
+    fetchImpl: okFetch('0.30.10'),
+    run: () => ({ status: 1, stdout: '' }),
+    spawnImpl: () => child,
+    // `ollama serve` handed off to an already-running instance and exited.
+    sleepImpl: async () => {
+      child.emit('exit', 0, null);
+    },
+    initialDetect: { installed: true, running: false, version: '' },
+    attempts: 3,
+  });
+  assert.deepEqual(result, { running: true, started: true });
+});
+
+test('ensureServing adds the daemon pid to the timeout result and never kills it', async () => {
+  let unrefs = 0;
+  let kills = 0;
+  const child = serveChild(9191);
+  child.unref = () => { unrefs += 1; };
+  child.kill = () => { kills += 1; };
+  const result = await ensureServing({
+    fetchImpl: downFetch(),
+    run: () => ({ status: 1, stdout: '' }),
+    spawnImpl: () => child,
+    sleepImpl: async () => {},
+    initialDetect: { installed: true, running: false, version: '' },
+    attempts: 2,
+  });
+  assert.deepEqual(result, { running: false, started: true, reason: 'serve_timeout', pid: 9191 });
+  assert.equal(unrefs, 1);
+  assert.equal(kills, 0, 'the daemon is meant to outlive setup');
+});
+
+test('detectOllama reads the installed version from the CLI when the server is stopped and outdated', async () => {
+  const calls = [];
+  const result = await detectOllama({
+    fetchImpl: downFetch(),
+    run: (cmd, args = []) => {
+      calls.push([cmd, args]);
+      if (args[0] === '--version') return { status: 0, stdout: '', stderr: STOPPED_CLI_OUTPUT };
+      return { status: 0, stdout: 'ollama\n' };
+    },
+    fileExists: () => false,
+    platform: 'darwin',
+    env: {},
+  });
+  assert.equal(result.installed, true);
+  assert.equal(result.running, false);
+  assert.equal(result.version, '0.5.1');
+  assert.equal(result.upgradeRequired, true);
+  assert.equal(result.versionStatus, 'outdated');
+  assert.ok(calls.some(([cmd, args]) => cmd === 'ollama' && args.join(' ') === '--version'));
+});
+
+test('detectOllama accepts the ollama version line on stdout and keeps a current stopped install supported', async () => {
+  const result = await detectOllama({
+    fetchImpl: downFetch(),
+    run: (cmd, args = []) => (args[0] === '--version'
+      ? { status: 0, stdout: 'ollama version is 0.31.2\n', stderr: '' }
+      : { status: 0, stdout: 'ollama\n' }),
+    fileExists: () => false,
+    platform: 'darwin',
+    env: {},
+  });
+  assert.equal(result.version, '0.31.2');
+  assert.equal(result.upgradeRequired, false);
+  assert.equal(result.versionSupported, true);
+});
+
+test('detectOllama probes the resolved absolute binary when ollama is not on PATH', async () => {
+  const commands = [];
+  const result = await detectOllama({
+    fetchImpl: downFetch(),
+    run: (cmd, args = []) => {
+      commands.push(cmd);
+      if (args[0] === '--version') return { status: 0, stdout: '', stderr: STOPPED_CLI_OUTPUT };
+      return { status: 1, stdout: '' };
+    },
+    fileExists: () => true,
+    platform: 'win32',
+    env: { LOCALAPPDATA: 'C:/Users/x/AppData/Local', ProgramFiles: 'C:/Program Files' },
+  });
+  assert.equal(result.installed, true);
+  assert.equal(result.upgradeRequired, true);
+  assert.ok(commands.some((cmd) => /ollama\.exe$/.test(cmd)), 'the CLI probe must use the resolved binary path');
+});
+
+test('detectOllama keeps the unverified result when the CLI answer cannot be parsed', async () => {
+  const result = await detectOllama({
+    fetchImpl: downFetch(),
+    run: (cmd, args = []) => (args[0] === '--version'
+      ? { status: 1, stdout: '', stderr: 'garbled' }
+      : { status: 0, stdout: 'ollama\n' }),
+    fileExists: () => false,
+    platform: 'darwin',
+    env: {},
+  });
+  assert.equal(result.installed, true);
+  assert.equal(result.version, '');
+  assert.equal(result.upgradeRequired, false);
+  assert.equal(result.versionStatus, 'unverified');
+});
+
 function fakeChild() {
   const child = new EventEmitter();
   child.stdout = new EventEmitter();

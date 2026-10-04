@@ -2,7 +2,7 @@
 
 // Coverage for the chat-stream-managed-runtime-notifications.js
 // ingestPlanUsage hook: chat.done reads the raw usage.plan_usage key, chat.
-// error reads params.plan_usage, the flag gates both, an older-sidecar
+// error reads params.plan_usage, an older-sidecar
 // payload without the key is a no-op, and a throwing store never breaks turn
 // settlement. Uses the same fake ctx/service harness as the sibling
 // notification-dispatcher test file (see AGENTS.md pointer in the task brief).
@@ -12,7 +12,6 @@ const assert = require('node:assert/strict');
 
 test('live plan usage refreshes mid-turn independently of the context meter', () => {
   const ctx = makeCtx();
-  ctx.service.featureFlags = { context_usage_live: false, chatgpt_plan_meter: true };
   const ingestCalls = attachRecordingStore(ctx);
   for (const percent of [12, 13]) {
     handleNotification(ctx, {
@@ -23,10 +22,6 @@ test('live plan usage refreshes mid-turn independently of the context meter', ()
   assert.deepEqual(ingestCalls.map((call) => call.raw.primary.used_percent), [12, 13]);
   assert.deepEqual(ingestCalls[0].opts, { source: 'chat_progress' });
   assert.equal(callsOf(ctx, 'settleUnfinishedToolRows').length, 0);
-  ctx.service.featureFlags.chatgpt_plan_meter = false;
-  handleNotification(ctx, { method: 'chat.plan_usage', params: { plan_usage: PLAN_USAGE_PAYLOAD } },
-    { toolContext: {}, handleToolNotification: makeHandleToolNotification(ctx) });
-  assert.equal(ingestCalls.length, 2);
 });
 
 const { handleNotification } = require('../services/backend/chat-stream-managed-runtime-notifications');
@@ -132,21 +127,6 @@ test('an older-sidecar chat.error payload without plan_usage never calls ingest'
   handleNotification(
     ctx,
     { method: 'chat.error', params: { code: 'boom', message: 'boom' } },
-    { toolContext: {}, handleToolNotification: makeHandleToolNotification(ctx) }
-  );
-  assert.equal(ingestCalls.length, 0);
-});
-
-test('the chatgpt_plan_meter flag being off skips ingest even when plan_usage is present', () => {
-  const ctx = makeCtx();
-  const ingestCalls = attachRecordingStore(ctx);
-  ctx.service.featureFlags = { chatgpt_plan_meter: false };
-  handleNotification(
-    ctx,
-    {
-      method: 'chat.done',
-      params: { stop_reason: 'end_turn', usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2, plan_usage: PLAN_USAGE_PAYLOAD } },
-    },
     { toolContext: {}, handleToolNotification: makeHandleToolNotification(ctx) }
   );
   assert.equal(ingestCalls.length, 0);

@@ -15,7 +15,6 @@ const {
   syntheticAuthEnabled,
   triggerProviderSidecarReinit,
 } = require('../services/provider-auth-runtime');
-const { createPluginProviderAuthService } = require('../services/plugins/provider/provider-auth-service');
 
 test('legacy chatgptAuth renderer namespace is absent after the provider retrofit', () => {
   assert.deepEqual(Object.keys(JENNY_SHELL_BRIDGE_DESCRIPTORS)
@@ -75,26 +74,4 @@ test('provider sidecar refresh is guarded by current or preferred ChatGPT intent
   triggerProviderSidecarReinit(backendService, { getState: () => ({ preferredEngineType: 'chatgpt' }) }, null, 'provider_auth_started');
   await new Promise((resolve) => setImmediate(resolve));
   assert.deepEqual(calls, [['provider_auth_started', { requestedEngineType: 'chatgpt' }]]);
-});
-
-test('descriptor provider auth awaits reconfiguration and never returns credentials', async () => {
-  const order = [];
-  const owner = {
-    getStatus: () => ({ state: 'signed_in', email: 'person@example.com' }),
-    start: async () => { order.push('start'); return { state: 'signed_in' }; },
-    cancel: () => {},
-    signOut: async () => { order.push('sign_out'); return { state: 'signed_out' }; },
-    getAccessToken: async () => 'secret-token',
-    hasCredential: () => true,
-    onStatusChange: () => () => {},
-  };
-  const service = createPluginProviderAuthService({
-    chatgptAuthService: owner,
-    isProviderActive: () => true,
-    onAuthChanged: async ({ reason }) => { order.push(reason); },
-  });
-  const started = await service.start('chatgpt', {});
-  const signedOut = await service.signOut('chatgpt');
-  assert.deepEqual(order, ['start', 'provider_auth_started', 'sign_out', 'provider_auth_signed_out']);
-  assert.equal(JSON.stringify([started, signedOut]).includes('secret-token'), false);
 });

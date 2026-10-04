@@ -80,7 +80,7 @@ function createCanvasRecorder() {
     calls,
     beginPath() {}, moveTo() {}, lineTo() {}, closePath() {}, arc() {},
     fill() { calls.push({ type: 'fill', fillStyle: this._fillStyle }); },
-    stroke() { calls.push({ type: 'stroke', strokeStyle: this.strokeStyle }); },
+    stroke() { calls.push({ type: 'stroke', strokeStyle: this.strokeStyle, lineWidth: this.lineWidth }); },
     save() {}, restore() {}, scale() {}, translate() {}, rotate() {}, setTransform() {},
     clearRect() { calls.push({ type: 'clearRect' }); },
     set fillStyle(v) { this._fillStyle = v; }, get fillStyle() { return this._fillStyle || ''; },
@@ -102,6 +102,7 @@ function installCanvasRecorder(window) {
 function buildEnv(options = {}) {
   const dom = new JSDOM('<!doctype html><html><body></body></html>', { pretendToBeVisual: true });
   const { window } = dom;
+  window.document.hasFocus = () => true;
   const raf = createRafHarness();
   const ro = createResizeObserverHarness();
   const mql = createMediaQueryList(options.reducedMotion);
@@ -312,8 +313,8 @@ test('atomic burst manager layout refreshes update backing size without an effec
   controller.dispose();
 });
 
-test('atomic burst refresh rebuilds the field when spawn-avoidance rectangles change', async (t) => {
-  const { dom, mql, recorder, cleanupGlobals } = buildEnv({ reducedMotion: true });
+test('atomic burst avoidance-only refresh keeps the field and live rings, and skips avoided sparkles at draw time', async (t) => {
+  const { dom, raf, mql, recorder, cleanupGlobals } = buildEnv({ reducedMotion: false });
   t.after(async () => { recorder.restore(); cleanupGlobals(); await dom.window.close(); });
 
   const doc = dom.window.document;
@@ -322,10 +323,15 @@ test('atomic burst refresh rebuilds the field when spawn-avoidance rectangles ch
   const controller = createController(doc, mql);
   const initialContext = contextForHost(host);
   controller.bind(initialContext);
+  raf.flush(16);
   const initial = controller._internals.inspect().entries[0];
   const [x, y] = initial.sparkleSample[0];
-  const avoidanceRect = { left: x - 0.1, top: y - 0.1, width: 0.2, height: 0.2 };
+  assert.equal(initial.avoidedSparkleCount, 0);
 
+  controller.handleInput({ ...movePayload('click', x, y), timeStamp: raf.now });
+  assert.equal(controller._internals.inspect().entries[0].waveCount, 1);
+
+  const avoidanceRect = { left: x - 0.1, top: y - 0.1, width: 0.2, height: 0.2 };
   controller.refresh({
     ...initialContext,
     layout: {
@@ -336,12 +342,14 @@ test('atomic burst refresh rebuilds the field when spawn-avoidance rectangles ch
   });
 
   const refreshed = controller._internals.inspect().entries[0];
-  assert.ok(refreshed.sparkleCount < initial.sparkleCount, 'the newly avoided sparkle is removed');
-  assert.equal(
-    refreshed.sparkleSample.some(([sparkleX, sparkleY]) => sparkleX === x && sparkleY === y),
-    false,
-    'the rebuilt field no longer contains the sparkle inside the new avoidance rectangle',
-  );
+  assert.equal(refreshed.sparkleCount, initial.sparkleCount, 'the field is not rebuilt by an avoidance change');
+  assert.deepEqual(refreshed.sparkleSample, initial.sparkleSample);
+  assert.equal(refreshed.waveCount, 1, 'the live ring is not cleared');
+  assert.ok(refreshed.avoidedSparkleCount >= 1, 'the newly avoided sparkle is skipped when drawn');
+
+  // The avoided click origin can no longer spawn a new ring.
+  controller.handleInput(movePayload('click', x, y));
+  assert.equal(controller._internals.inspect().entries[0].waveCount, 1);
   controller.dispose();
 });
 
@@ -508,11 +516,10 @@ test('SFX-V3-S1: spawnWave caps concurrent waves at 4, evicting the oldest', asy
 
   const doc = dom.window.document;
 
-  // Returns the total draw-call count of the frame in which `clickCount` waves are all
-  // simultaneously alive (sparkle draws + wave draws). Sparkle draws are a constant
-  // per-frame term across all runs (same seeded field), so subtracting the clickCount=0
-  // baseline below isolates the wave-only contribution.
-  function waveFrameTotal(clickCount) {
+  // Strokes come only from rings (no pointer, so no links): each live ring draws
+  // exactly two. Sparkle fills are grouped by colour/alpha and breathe with time,
+  // so they are deliberately not part of this measurement.
+  function ringStrokes(clickCount) {
     const root = doc.createElement('div');
     const host = addHost(doc);
     root.append(host);
@@ -521,31 +528,20 @@ test('SFX-V3-S1: spawnWave caps concurrent waves at 4, evicting the oldest', asy
     controller.bind(contextForHost(host));
     const canvas = host.querySelector('.widget-atomic-burst-canvas');
     canvas.getBoundingClientRect = host.getBoundingClientRect;
-    raf.flush(16); // settle a sparkle-only frame before spawning any waves
-    const beforeWaves = recorder.contexts.get(canvas).calls.length;
-    // Click well outside the host rect so findNearestSparkle never matches and the
-    // per-sparkle click-flare decoration (an unrelated draw-call source) stays at zero.
+    raf.flush(16); // settle a ring-free frame before spawning any rings
+    const beforeRings = recorder.contexts.get(canvas).calls.length;
     for (let i = 0; i < clickCount; i++) {
-      controller.handleInput(movePayload('click', -1000, -1000));
+      controller.handleInput({ ...movePayload('click', -1000, -1000), timeStamp: raf.now });
     }
     raf.flush(16);
-    const afterWaves = recorder.contexts.get(canvas).calls.length;
+    const strokes = recorder.contexts.get(canvas).calls.slice(beforeRings).filter((call) => call.type === 'stroke').length;
     controller.dispose();
-    return afterWaves - beforeWaves;
+    return strokes;
   }
 
-  const zeroWaveTotal = waveFrameTotal(0);
-  const oneWaveTotal = waveFrameTotal(1);
-  const sixWaveTotal = waveFrameTotal(6);
-  const oneWaveContribution = oneWaveTotal - zeroWaveTotal;
-  const sixWaveContribution = sixWaveTotal - zeroWaveTotal;
-
-  assert.ok(oneWaveContribution > 0, 'a single wave must add draw calls to its frame');
-  assert.equal(
-    sixWaveContribution,
-    oneWaveContribution * 4,
-    'spawning 6 waves at once must still only draw MAX_ATOMIC_WAVES (4) concurrent waves (oldest evicted)',
-  );
+  assert.equal(ringStrokes(0), 0, 'no ring, no stroke');
+  assert.equal(ringStrokes(1), 2, 'a single ring draws its halo and core strokes');
+  assert.equal(ringStrokes(6), 8, 'spawning 6 rings at once still only draws MAX_ATOMIC_WAVES (4) concurrent rings (oldest evicted)');
 });
 
 test('SFX-V3-S1: refresh() re-reads tokens for an already-tracked host so a palette change takes effect without host churn', async (t) => {
@@ -575,7 +571,7 @@ test('SFX-V3-S1: refresh() re-reads tokens for an already-tracked host so a pale
   controller.refresh(contextForHost(host));
   assert.equal(host.querySelector('.widget-atomic-burst-canvas'), canvas, 'refresh() must not churn (recreate) the canvas for an already-tracked host');
 
-  raf.flush(16);
+  raf.flush(40);
   const after = recorder.contexts.get(canvas).calls.slice(before);
   const usedNewColor = after.some((c) => c.fillStyle === newColorA || c.fillStyle === newColorB || c.fillStyle === newColorC);
   assert.ok(usedNewColor, 'a frame drawn after refresh() must pick up the new palette tokens, not the stale ones read at addHost() time');

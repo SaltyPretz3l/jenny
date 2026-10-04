@@ -4,9 +4,12 @@ __pycache__/
 *.pyo
 *.egg-info/
 .venv/
+.venv.invalid-*/
 .ruff_cache/
 .mypy_cache/
 .pytest_cache/
+# pytest --basetemp scratch roots from agent/worktree runs
+.pytest-tmp-*/
 .coverage
 .coverage.*
 htmlcov/
@@ -76,9 +79,6 @@ vendor/unsloth/
 
 # Electron
 out/
-/restricted-host/target/
-/native/plugin-full-host-supervisor/target/
-/build/plugin-full-host-supervisor/
 
 # IDE
 .vscode/
@@ -94,6 +94,9 @@ scripts/plugins/*.pem
 # Logs
 *.log
 tmp-*.log
+# /land helper logs and the audit runtime's throwaway home
+.tmp-land-*.log
+.audit-runtime-home/
 
 # OS
 .DS_Store
@@ -112,7 +115,6 @@ docs/archive/*
 !docs/archive/TOOL_ROW_REDESIGN_SPEC.md
 !docs/archive/CHAT_TIMELINE_CODE_SURFACES_SPEC.md
 !docs/archive/CHAT_TIMELINE_PROSE_SPEC.md
-plugin-consent-preload.bundle.js
 gc3/
 face/
 
@@ -124,6 +126,7 @@ face/
 
 # Cross-session test-run serialization lock (scripts/run-node-tests-safe.js)
 .test-run.lock
+.test-run.lock.reclaim/
 
 # Safe-runner last-run record backing --last-failed (scripts/run-node-tests-safe.js)
 tests/.last-test-run.json
@@ -137,8 +140,6 @@ tests/.run-node-tests-safe-history.json
 # write here, e.g. workspace/hellodemo.md + .jenny state) — never source
 /workspace/
 
-# Disposable isolated Electron outputs used by Stage 8 packaged acceptance.
-/dist-stage8-smoke*/
 # Private hosted deployment inputs; never source or image build inputs.
 /config/host.json
 /secrets/

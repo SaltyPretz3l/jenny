@@ -57,14 +57,18 @@ function overflowNotice(filename) {
   return `<!-- The merged note was too large for one file; the remainder is in legacy/${filename}. -->`;
 }
 
-async function readTextIfExists(filePath, maxBytes) {
+async function readTextIfExists(service, filePath, maxBytes) {
   try {
     const stat = await fs.stat(filePath);
     if (!stat.isFile()) return { exists: false, text: '', oversized: false };
     if (stat.size > maxBytes) return { exists: true, text: '', oversized: true };
-    return { exists: true, text: await fs.readFile(filePath, 'utf8'), oversized: false };
+    const buffer = await service._readBoundedFile(filePath, maxBytes);
+    const oversized = buffer.length > maxBytes;
+    return { exists: true, text: oversized ? '' : buffer.toString('utf8'), oversized };
   } catch (error) {
     if (error?.code === 'ENOENT') return { exists: false, text: '', oversized: false };
+    // A linked legacy file is never read through; it is archived unmerged.
+    if (error?.code === 'CONTEXT_FILE_PATH_UNSAFE') return { exists: true, text: '', oversized: true };
     throw error;
   }
 }
@@ -97,13 +101,13 @@ async function resolveArchiveDestination(service, destinationPath) {
 async function moveFile(service, journal, sourcePath, destinationPath) {
   await ensureArchiveDirectory(service, path.dirname(destinationPath));
   const target = await resolveArchiveDestination(service, destinationPath);
-  await remember(service, journal, sourcePath);
-  await remember(service, journal, target);
   try {
     await fs.rename(sourcePath, target);
+    journal.push({ sourcePath, target });
   } catch (error) {
     if (error?.code !== 'EXDEV') throw error;
     await fs.copyFile(sourcePath, target);
+    journal.push({ sourcePath, target });
     await fs.rm(sourcePath, { force: true });
   }
   return path.basename(target);
@@ -173,7 +177,7 @@ async function buildMergedNote(service, journal, mergedFrom, archivedFiles) {
   const parts = [];
   for (const filename of MERGE_SOURCE_FILENAMES) {
     const filePath = path.join(service.workspacePath, filename);
-    const { exists, text, oversized } = await readTextIfExists(filePath, service.contextFileMaxBytes);
+    const { exists, text, oversized } = await readTextIfExists(service, filePath, service.contextFileMaxBytes);
     if (!exists) continue;
     if (oversized) {
       service._logMigrationEvent('WARN', 'merge_source_oversized', { file: filename });
@@ -264,7 +268,7 @@ async function writeNoteWithOverflow(service, journal, filePath, content, archiv
 
 async function writePersonalityNote(service, journal, mergedBody, dateKey, archivedFiles) {
   const filePath = path.join(service.workspacePath, 'PERSONALITY.md');
-  const existing = await readTextIfExists(filePath, service.contextFileMaxBytes);
+  const existing = await readTextIfExists(service, filePath, service.contextFileMaxBytes);
   const existingHasContent = existing.exists
     && (existing.oversized || normalizeBody(existing.text) !== '');
   if (existingHasContent) {
@@ -350,11 +354,29 @@ async function migratePersonalityWorkspaceToV3(service) {
       archived_files: archivedFiles,
       merged_from: mergedFrom,
     });
+    for (const entry of journal) {
+      if (entry.snapshot?.backupPath) await fs.rm(entry.snapshot.backupPath, { force: true }).catch(() => {});
+    }
   } catch (error) {
-    const results = await Promise.allSettled(
-      [...journal].reverse().map(({ filePath, snapshot }) => service.restoreFileSnapshot(filePath, snapshot))
-    );
-    const rollbackFailures = results.filter((result) => result.status === 'rejected').length;
+    let rollbackFailures = 0;
+    for (const entry of [...journal].reverse()) {
+      try {
+        if (entry.sourcePath) {
+          await fs.mkdir(path.dirname(entry.sourcePath), { recursive: true });
+          try {
+            await fs.rename(entry.target, entry.sourcePath);
+          } catch (moveError) {
+            if (moveError?.code !== 'EXDEV') throw moveError;
+            await fs.copyFile(entry.target, entry.sourcePath);
+            await fs.rm(entry.target, { force: true });
+          }
+        } else {
+          await service.restoreFileSnapshot(entry.filePath, entry.snapshot);
+        }
+      } catch (_error) {
+        rollbackFailures += 1;
+      }
+    }
     if (rollbackFailures && error && typeof error === 'object') {
       error.rollbackFailureCount = rollbackFailures;
     }

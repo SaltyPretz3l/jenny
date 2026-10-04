@@ -197,7 +197,7 @@ def apply_trash_retention(
 
 
 def _default_active_use_source(store: GuardedWorkspaceStore) -> ActiveUseAgeSource:
-    from sidecar.ai.tools.workspace_retention import active_use_age_source  # noqa: PLC0415
+    from sidecar.ai.tools.workspace_retention import active_use_age_source
 
     return active_use_age_source(store, "trash")
 

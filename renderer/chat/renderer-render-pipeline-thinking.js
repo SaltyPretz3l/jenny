@@ -16,6 +16,12 @@
   const terminalStatusVocabulary = globalRef.chatTerminalStatusVocabulary
     || (typeof require === 'function' ? require('./chat-terminal-status-vocabulary') : null)
     || {};
+  const spriteActivityUtils = globalRef.rendererSpriteActivity
+    || (typeof require === 'function' ? require('./renderer-sprite-activity') : null)
+    || {};
+  const spriteMorphUtils = globalRef.rendererSpriteMorph
+    || (typeof require === 'function' ? require('./renderer-sprite-morph') : null)
+    || {};
   const warningSpriteStatuses = new Set([
     terminalStatusVocabulary.CANCELLED_STATUS || 'cancelled',
     terminalStatusVocabulary.DENIED_STATUS || 'denied',
@@ -45,17 +51,20 @@
     } = dom;
     const {
       thinkingIndicator = null,
+      // This pane's durable send controller (pane 0's is the state slot).
+      getRuntimeSendController = () => state?.runtimeSendController || null,
     } = controllers;
     const {
-      spriteRuntime = { frameHandle: 0, targetMessageId: '', visible: false, streaming: false, currentY: 0, targetY: 0 },
+      spriteRuntime = { frameHandle: 0, targetMessageId: '', targetY: 0 },
     } = runtime;
     const {
       getCurrentSessionMessages = () => [],
+      // Split view W1-4a: this pane's session and its messages (one pane: current).
+      getPaneSessionId = () => String(state?.currentSessionId || '').trim(),
+      getSessionMessages = () => getCurrentSessionMessages?.(),
       getLatestUserMessageId = () => '',
       getLatestAssistantMessageId = () => '',
       escapeSelectorValue = (value) => String(value || ''),
-      isSendPreflightPending = () => false,
-      setSpriteHoloState = () => {},
     } = callbacks;
     const requestFrame = deps?.requestAnimationFrame
       || (typeof globalRef.requestAnimationFrame === 'function'
@@ -85,7 +94,7 @@
 
     const SPRITE_NON_CONTENT_KINDS = new Set(['tool_use', 'tool_result']);
     let disposed = false;
-    spriteRuntime.sessionId = state?.currentSessionId;
+    spriteRuntime.sessionId = getPaneSessionId();
     let positionRequestVersion = 0;
     function normalizeSpritePhase(message) {
       const status = String(message?.status || '').trim().toLowerCase();
@@ -119,91 +128,44 @@
       }
       return 'complete';
     }
-    function createHiddenSpriteState({ clearTarget = false, reason = 'hidden' } = {}) {
-      return {
-        visible: false,
-        targetMessageId: clearTarget ? '' : String(spriteRuntime.targetMessageId || ''),
-        targetY: Math.round(Number(spriteRuntime.targetY || 0)),
-        status: '',
-        phase: 'hidden',
-        suppressionReason: String(reason || 'hidden'),
-      };
-    }
-
-    function createVisibleSpriteState(targetMessage, targetY) {
-      return {
-        visible: true,
-        targetMessageId: String(targetMessage?.id || ''),
-        targetY: Math.round(Math.max(Number(targetY) || 0, 0)),
-        status: String(targetMessage?.status || ''),
-        phase: normalizeSpritePhase(targetMessage),
-        suppressionReason: '',
-      };
-    }
-
-    function sameSpriteState(left, right) {
-      return Boolean(
-        left
-        && right
-        && left.visible === right.visible
-        && left.targetMessageId === right.targetMessageId
-        && left.targetY === right.targetY
-        && left.status === right.status
-        && left.phase === right.phase
-        && left.suppressionReason === right.suppressionReason
-      );
-    }
-
-    function syncSpriteHolo(nextState) {
-      const live = nextState?.visible === true && nextState.phase === 'live';
-      setSpriteHoloState(live, live ? 'inference' : 'idle');
-    }
-
-    function applySpriteViewState(nextState, { refreshHolo = false } = {}) {
-      if (disposed || !chatSpriteLayer || !chatAssistantSprite || !nextState) {
-        return false;
-      }
-      const previousState = spriteRuntime.viewState || null;
-      if (sameSpriteState(previousState, nextState)) {
-        if (refreshHolo) {
-          syncSpriteHolo(nextState);
-        }
-        return false;
-      }
-
-      spriteRuntime.viewState = { ...nextState };
-      spriteRuntime.visible = nextState.visible;
-      spriteRuntime.streaming = nextState.phase === 'live';
-      spriteRuntime.targetMessageId = nextState.targetMessageId;
-      spriteRuntime.targetY = nextState.targetY;
-      spriteRuntime.currentY = nextState.targetY;
-
-      if (!nextState.visible) {
-        chatSpriteLayer.classList.remove('visible');
-        chatSpriteLayer.dataset.suppressionReason = nextState.suppressionReason;
-        chatAssistantSprite.classList.remove('is-streaming');
-        chatAssistantSprite.dataset.status = '';
-        chatAssistantSprite.dataset.spriteState = 'hidden';
-        syncSpriteHolo(nextState);
-        clearLiveReasoningShimmer();
-        return true;
-      }
-
-      chatAssistantSprite.style.transform = `translate3d(0, ${nextState.targetY}px, 0)`;
-      chatAssistantSprite.classList.toggle('is-streaming', nextState.phase === 'live');
-      chatAssistantSprite.dataset.status = nextState.status;
-      chatAssistantSprite.dataset.spriteState = nextState.phase;
-      delete chatSpriteLayer.dataset.suppressionReason;
-      chatSpriteLayer.classList.add('visible');
-      syncSpriteHolo(nextState);
-      return true;
+    const spriteTracker = spriteActivityUtils.createSpriteActivityTracker();
+    const spriteMorph = chatAssistantSprite
+      ? spriteMorphUtils.createSpriteMorph(chatAssistantSprite)
+      : null;
+    const {
+      createHiddenSpriteState,
+      createVisibleSpriteState,
+      applySpriteViewState,
+    } = spriteActivityUtils.createSpriteViewApplier({
+      chatSpriteLayer,
+      chatAssistantSprite,
+      spriteRuntime,
+      normalizeSpritePhase,
+      morph: spriteMorph,
+      isDisposed: () => disposed,
+      onHidden: () => {
+        spriteTracker.invalidate();
+        if (!getActiveThinkingStreamState().activeStreamId) clearLiveReasoningShimmer(); // keep a live row's shimmer
+      },
+    });
+    // state.streamWaits is created after this pipeline and can be replaced or nulled later.
+    let typedActivitySource = null;
+    let unsubscribeTypedActivity = null;
+    function syncTypedActivitySubscription() {
+      const next = state?.streamWaits || null;
+      if (next === typedActivitySource) return;
+      unsubscribeTypedActivity?.();
+      typedActivitySource = next;
+      unsubscribeTypedActivity = next?.onTypedActivityChange?.((event) => {
+        if (String(event?.sessionId || '').trim() === getPaneSessionId()) updateAssistantSpritePosition();
+      }) || null;
     }
 
     function getActiveThinkingStreamState(messages) {
-      const currentSessionId = String(state?.currentSessionId || '').trim();
+      const currentSessionId = getPaneSessionId();
       const multiStreamController = globalThis.rendererMultiStreamController || null;
       const currentMessagesCandidate = messages === undefined
-        ? getCurrentSessionMessages?.()
+        ? getSessionMessages(currentSessionId)
         : messages;
       const currentSessionMessages = Array.isArray(currentMessagesCandidate) ? currentMessagesCandidate : [];
       let latestStreamingMessageStreamId = '';
@@ -335,14 +297,16 @@
         thinkingText, thinkingId, activeMessageId, escapeSelectorValue,
       };
       chatThinkingUtils.syncLiveReasoningStatusLabel?.(chatTimeline, labelOptions);
-      if (state?.features?.featureFlags?.reasoning_status_v2 === true) {
-        const promoted = chatTimeline?.querySelectorAll?.('.reasoning-row-main--live-status') || [];
-        for (const label of promoted) label.classList.remove('reasoning-row-main--live-status');
-        const activeRow = chatThinkingUtils.resolveLiveReasoningStatusRow?.(chatTimeline, labelOptions);
-        const activeLabel = activeRow?.querySelector?.('.reasoning-row-main');
-        if (activeLabel && String(thinkingText || '').trim()) {
-          activeLabel.classList.add('reasoning-row-main--live-status');
-        }
+      const activeRow = chatThinkingUtils.resolveLiveReasoningStatusRow?.(chatTimeline, labelOptions);
+      const activeLabel = String(thinkingText || '').trim()
+        ? activeRow?.querySelector?.('.reasoning-row-main') : null;
+      // Unchanged-token classList add/remove still queues a mutation record (observer loop).
+      const promoted = chatTimeline?.querySelectorAll?.('.reasoning-row-main--live-status') || [];
+      for (const label of promoted) {
+        if (label !== activeLabel) label.classList.remove('reasoning-row-main--live-status');
+      }
+      if (activeLabel && !activeLabel.classList.contains('reasoning-row-main--live-status')) {
+        activeLabel.classList.add('reasoning-row-main--live-status');
       }
 
       const indicatorState = thinkingIndicator ? thinkingIndicator.getDisplayState() : null;
@@ -374,26 +338,27 @@
       applySpriteViewState(createHiddenSpriteState({ clearTarget, reason }));
     }
 
-    function applyAssistantSprite(targetMessage, targetY, options = {}, thinkingState = null) {
+    function applyAssistantSprite(targetMessage, targetY, thinkingState = null, spriteActivity = '') {
       if (!chatSpriteLayer || !chatAssistantSprite || !targetMessage) {
         hideAssistantSprite({ reason: 'missing_target' });
         return;
       }
-      applySpriteViewState(createVisibleSpriteState(targetMessage, targetY), options);
+      applySpriteViewState(createVisibleSpriteState(targetMessage, targetY, spriteActivity));
       renderLiveThinkingChip(thinkingState, targetMessage.id);
     }
 
-    function updateAssistantSpritePosition(messages, derivedState, options = {}) {
+    function updateAssistantSpritePosition(messages, derivedState) {
       if (disposed) {
         return;
       }
+      syncTypedActivitySubscription();
+      const sessionId = getPaneSessionId();
       if (messages === undefined) {
-        messages = getCurrentSessionMessages();
+        messages = getSessionMessages(sessionId);
       }
       messages = Array.isArray(messages) ? messages : [];
       positionRequestVersion += 1;
       const requestVersion = positionRequestVersion;
-      const sessionId = state?.currentSessionId;
       if (spriteRuntime.sessionId !== sessionId) {
         spriteRuntime.sessionId = sessionId;
         hideAssistantSprite({ clearTarget: true, reason: 'session_changed' });
@@ -408,7 +373,7 @@
           return;
         }
         spriteRuntime.frameHandle = 0;
-        if (sessionId !== state?.currentSessionId) {
+        if (sessionId !== getPaneSessionId()) {
           hideAssistantSprite({ clearTarget: true, reason: 'session_changed' });
           return;
         }
@@ -438,7 +403,11 @@
           ? thinkingIndicator.getDisplayState()
           : null;
         const indicatorActive = isThinkingIndicatorActive(indicatorState);
-        const sendPreflightActive = Boolean(isSendPreflightPending());
+        const sendPreflightActive = Boolean(
+          globalThis.rendererMultiStreamController?.getPreflight?.(sessionId)?.pending
+          || spriteActivityUtils.findPaneAdmissionWait(
+            { state, runtimeSendController: getRuntimeSendController() }, sessionId, messages)
+        );
         const candidateIndex = derivedState?.idToIndex;
         const idToIndex = candidateIndex
           && typeof candidateIndex.has === 'function'
@@ -536,7 +505,16 @@
             ).trim(),
           }
           : { ...outcomeMessage, id: baseTargetMessage.id };
-        applyAssistantSprite(targetMessage, targetYValue, options, thinkingState);
+        const { activity: spriteActivity } = spriteTracker.derive(
+          spriteActivityUtils.gatherSpriteActivityInput({ state, runtimeSendController: getRuntimeSendController() }, sessionId, {
+            messages,
+            streamId: targetMessage.streamId,
+            status: baseTargetMessage.status,
+            outcome: normalizeSpritePhase(outcomeMessage),
+          }),
+          { turnKey: `${sessionId}|${getLatestUserMessageId(messages)}`, visible: true },
+        );
+        applyAssistantSprite(targetMessage, targetYValue, thinkingState, spriteActivity);
       };
 
       if (typeof requestFrame === 'function') {
@@ -572,7 +550,9 @@
       mountObserver?.disconnect();
       chatTimeline?.removeEventListener?.('load', reconcileLayout, true);
       windowRef.removeEventListener?.('resize', reconcileLayout);
+      unsubscribeTypedActivity?.();
       hideAssistantSprite({ clearTarget: true, reason: 'disposed' });
+      spriteMorph?.dispose();
       disposed = true;
       positionRequestVersion += 1;
       if (spriteRuntime.frameHandle) {
@@ -584,7 +564,6 @@
     return {
       renderLiveThinkingChip,
       hideAssistantSprite,
-      applyAssistantSprite,
       updateAssistantSpritePosition,
       dispose,
     };

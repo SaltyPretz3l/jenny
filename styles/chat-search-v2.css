@@ -7,8 +7,15 @@
  * CSS Custom Highlight API.
  */
 
+/* F8 (owner pick B): a compact find pill floating at the stage's top inline-end,
+   inside the conversation utility cluster (28 px buttons with a --space-4
+   end margin; it sits at justify-self: end, so this mirrors with it in RTL),
+   so Close never sits under the Artifacts toggle. */
 .chat-search-overlay-host {
-  position: relative;
+  position: absolute;
+  top: var(--space-4);
+  inset-inline-end: calc(28px + 2 * var(--space-4) + var(--space-2));
+  width: min(28rem, calc(100% - 28px - 3 * var(--space-4) - var(--space-2)));
   z-index: var(--z-chat-search, 5);
   margin: 0;
   padding: 0;
@@ -24,12 +31,13 @@
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 8px 14px;
+  padding: 4px 6px;
   background: var(--chat-search-bg, var(--surface-toolbar-background));
   color: var(--chat-search-fg, var(--text-primary));
-  border-bottom: 1px solid var(--chat-search-border, var(--border-subtle));
+  border: 1px solid var(--chat-search-border, var(--border-subtle));
+  border-radius: 10px;
   box-shadow: 0 2px 8px var(--chat-search-shadow, rgba(0, 0, 0, 0.08));
-  font: var(--chat-search-font, 14px/1.4 var(--font-family-body, system-ui, sans-serif));
+  font: var(--chat-search-font, var(--font-size-body)/1.4 var(--font-family-body, system-ui, sans-serif));
 }
 
 .chat-search-bar-input {

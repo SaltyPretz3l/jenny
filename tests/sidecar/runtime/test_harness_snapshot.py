@@ -112,7 +112,7 @@ def test_harness_snapshot_builder_includes_history_and_memory_provenance(tmp_pat
             provenance="user_approved",
         )
         assert approved_memory.provenance == "user_approved"
-        memory_store._connection.execute(  # noqa: SLF001
+        memory_store._connection.execute(
             """
             INSERT INTO pending_memory_candidates (
                 session_id, source_request_id, title, lesson_text, lesson_kind,
@@ -136,7 +136,7 @@ def test_harness_snapshot_builder_includes_history_and_memory_provenance(tmp_pat
                 "2026-01-01T00:00:00+00:00",
             ),
         )
-        memory_store._connection.commit()  # noqa: SLF001
+        memory_store._connection.commit()
 
         router = SimpleNamespace(
             tools_status={
@@ -784,7 +784,7 @@ def _retired_inspect_harness_synthetic_tool_uses_snapshot_provider() -> None:
         harness_snapshot_provider=_provider,
     )
 
-    outcome = router._execute_tool(  # noqa: SLF001
+    outcome = router._execute_tool(
         ToolCallRequest(
             tool_id="inspect_harness",
             arguments={"sections": ["tools"], "recent_history_limit": 2},
@@ -830,7 +830,7 @@ def _retired_inspect_harness_synthetic_tool_normalizes_malformed_options() -> No
         harness_snapshot_provider=_provider,
     )
 
-    outcome = router._execute_tool(  # noqa: SLF001
+    outcome = router._execute_tool(
         ToolCallRequest(
             tool_id="inspect_harness",
             arguments={
@@ -897,7 +897,7 @@ def _retired_inspect_harness_synthetic_tool_returns_compact_json_when_snapshot_i
         },
     )
 
-    outcome = router._execute_tool(  # noqa: SLF001
+    outcome = router._execute_tool(
         ToolCallRequest(tool_id="inspect_harness", arguments={}),
         request_id="req_harness_large",
         read_snapshot_cache={},
@@ -957,7 +957,7 @@ def _retired_inspect_harness_synthetic_tool_returns_valid_compact_json_when_snap
         },
     )
 
-    outcome = router._execute_tool(  # noqa: SLF001
+    outcome = router._execute_tool(
         ToolCallRequest(tool_id="inspect_harness", arguments={}),
         request_id="req_harness_overflow",
         read_snapshot_cache={},
@@ -1013,7 +1013,7 @@ def test_server_process_message_dispatches_harness_inspect(monkeypatch, tmp_path
         # initialize built a REAL engine stack into the module-global
         # _BRAIN_CONTAINER. Leaving it open keeps its subprocess alive and
         # makes every later test in the run depend on this one's ordering.
-        server._BRAIN_CONTAINER.close()  # noqa: SLF001
+        server._BRAIN_CONTAINER.close()
 
 
 def test_runtime_section_includes_provider_capability_profiles(tmp_path: Path) -> None:
@@ -1094,7 +1094,6 @@ def test_runtime_section_provider_capabilities_unchanged(tmp_path: Path) -> None
             "openai-compatible",
             "codex-cli",
             "chatgpt",
-            "plugin_host",
             "replay",
             "mock",
         }
@@ -1398,3 +1397,23 @@ def test_tool_history_reads_the_split_session_layout(tmp_path: Path) -> None:
     assert len(split["read_file"]["recent_runs"]) == 1
     assert split["read_file"]["recent_runs"][0]["outcome"] == "success"
     assert split["read_file"]["recent_runs"][0]["session_title"] == "Harness Session"
+
+
+def test_split_history_reads_one_session_at_a_time(tmp_path, monkeypatch) -> None:
+    builder = object.__new__(HarnessSnapshotBuilder)
+    reads = []
+    monkeypatch.setattr(builder, "_resolve_state_path", lambda *args: tmp_path / "sessions.json")
+
+    def read(path):
+        reads.append(path.name)
+        if path.name == "_index.json":
+            return {"sessions": {"s1": {}, "s2": {}}}
+        if path.name == "sessions.json":
+            return {}
+        return {"session": {"title": path.stem, "messages": []}}
+
+    monkeypatch.setattr(builder, "_read_json_file", read)
+    sessions = iter(builder._load_sessions_with_messages())
+    assert reads == [], "history loader eagerly materialized the archive"
+    assert next(sessions)[0] == "s1"
+    assert "s2.json" not in reads

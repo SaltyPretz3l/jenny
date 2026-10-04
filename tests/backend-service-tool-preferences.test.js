@@ -122,8 +122,8 @@ test('backend service forwards known false toolPreferences toggles and ignores u
 
   const chatSendRequest = capturedRequests.find((entry) => entry.method === 'chat.send');
   assert.ok(chatSendRequest);
+  // Composer Chat panel (2026-09-30): per-chat switches travel as a deny-list only.
   assert.deepEqual(chatSendRequest.params.tool_preferences, {
-    enabled_tools: [],
     disabled_tools: ['fetch_url', 'web_search'],
   });
 });

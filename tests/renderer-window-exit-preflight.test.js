@@ -5,17 +5,22 @@ const assert = require('node:assert/strict');
 
 const {
   createWindowExitPreflight,
+  createDirtySurfaceRegistry,
 } = require('../renderer/features/renderer-window-exit-preflight');
 
 // Hand-built fake of the IDE close orchestrator (the real dirty-buffer
 // preflight primitive). `plan` is whatever the orchestrator would resolve for
 // the injected dirty set.
 function makeOrchestrator({ dirty = [], open = null, plan = { ready: true, decision: 'clean' } } = {}) {
-  const calls = { preflight: [], commit: 0, cancel: 0 };
+  const calls = { preflight: [], preflightOptions: [], commit: 0, cancel: 0 };
   const orch = {
     getDirtyPaths: () => dirty.slice(),
     openTabPaths: () => (open || dirty).slice(),
-    preflight: async (paths) => { calls.preflight.push(paths); return plan; },
+    preflight: async (paths, options) => {
+      calls.preflight.push(paths);
+      calls.preflightOptions.push(options);
+      return plan;
+    },
     commit: () => { calls.commit += 1; return { committed: true }; },
     cancel: () => { calls.cancel += 1; return { canceled: true }; },
   };
@@ -31,6 +36,8 @@ function makeCoordinator(overrides = {}) {
     root: overrides.root,
     getCloseOrchestrator: overrides.getCloseOrchestrator || (() => null),
     getShell: overrides.getShell || (() => null),
+    dirtySurfaces: overrides.dirtySurfaces || createDirtySurfaceRegistry(),
+    getConfirmDialog: overrides.getConfirmDialog,
     showToast: (message) => toasts.push(message),
     appendClientLog: (level, event, details) => logs.push({ level, event, details }),
   });
@@ -321,4 +328,127 @@ test('bind is idempotent and one dispose removes the only native-close listener'
 
   coordinator.dispose();
   assert.equal(listeners.size, 0);
+});
+
+// ── Action-aware intent + dirty-surface registry (real-app B4a / B4b) ─────────
+
+function makeSurface(registry, id, label, { saveResult = true } = {}) {
+  const state = { dirty: true, saves: 0 };
+  registry.register({
+    id,
+    label,
+    isDirty: () => state.dirty,
+    save: async () => {
+      state.saves += 1;
+      if (saveResult === true) state.dirty = false;
+      return saveResult;
+    },
+  });
+  return state;
+}
+
+for (const action of ['close', 'reload', 'update-restart']) {
+  test(`the ${action} action flows into the orchestrator preflight as its intent`, async () => {
+    const { orch, calls } = makeOrchestrator({ dirty: ['a.js'], plan: { ready: true, decision: 'discard' } });
+    const { coordinator } = makeCoordinator({ getCloseOrchestrator: () => orch });
+
+    await coordinator.preflightExit(action);
+
+    assert.equal(calls.preflightOptions[0].intent, action);
+  });
+}
+
+test('a dirty registered surface prompts through the orchestrator even with a clean IDE', async () => {
+  const registry = createDirtySurfaceRegistry();
+  const notes = makeSurface(registry, 'memory-notes', 'Long-term notes');
+  const { orch, calls } = makeOrchestrator({ dirty: [], open: ['a.js'], plan: { ready: true, decision: 'save' } });
+  const { coordinator } = makeCoordinator({ getCloseOrchestrator: () => orch, dirtySurfaces: registry });
+
+  const result = await coordinator.preflightExit('close');
+
+  assert.deepEqual(result, { proceed: true, reason: 'save' });
+  assert.equal(calls.preflight.length, 1, 'one prompt covers the surface');
+  assert.deepEqual(calls.preflightOptions[0].surfaces, [{ id: 'memory-notes', label: 'Long-term notes' }]);
+  assert.equal(notes.saves, 1, 'Save runs the surface save');
+  assert.equal(calls.cancel, 1, 'the plan is released, not committed');
+});
+
+test('Don’t Save proceeds without running any surface save', async () => {
+  const registry = createDirtySurfaceRegistry();
+  const notes = makeSurface(registry, 'memory-notes', 'Long-term notes');
+  const { orch } = makeOrchestrator({ dirty: ['a.js'], plan: { ready: true, decision: 'discard' } });
+  const { coordinator } = makeCoordinator({ getCloseOrchestrator: () => orch, dirtySurfaces: registry });
+
+  const result = await coordinator.preflightExit('reload');
+
+  assert.deepEqual(result, { proceed: true, reason: 'discard' });
+  assert.equal(notes.saves, 0);
+});
+
+test('a failed surface save aborts the exit, keeps the window and names the surface', async () => {
+  const registry = createDirtySurfaceRegistry();
+  makeSurface(registry, 'personality', 'Personality', { saveResult: false });
+  const later = makeSurface(registry, 'memory-notes', 'Long-term notes');
+  const { orch, calls } = makeOrchestrator({ dirty: [], plan: { ready: true, decision: 'save' } });
+  const { coordinator, toasts } = makeCoordinator({ getCloseOrchestrator: () => orch, dirtySurfaces: registry });
+
+  const result = await coordinator.preflightExit('close');
+
+  assert.deepEqual(result, { proceed: false, reason: 'save_failed', failedSurface: 'personality' });
+  assert.equal(later.saves, 0, 'a failed save stops the batch');
+  assert.equal(calls.cancel, 1);
+  assert.equal(toasts.length, 1);
+  assert.match(toasts[0], /Personality/);
+});
+
+test('a throwing surface save also aborts the exit', async () => {
+  const registry = createDirtySurfaceRegistry();
+  registry.register({ id: 'memory-notes', label: 'Long-term notes', isDirty: () => true, save: async () => { throw new Error('disk'); } });
+  const { orch } = makeOrchestrator({ dirty: [], plan: { ready: true, decision: 'save' } });
+  const { coordinator } = makeCoordinator({ getCloseOrchestrator: () => orch, dirtySurfaces: registry });
+
+  const result = await coordinator.preflightExit('close');
+
+  assert.equal(result.proceed, false);
+  assert.equal(result.reason, 'save_failed');
+});
+
+test('with no IDE mounted a dirty surface prompts through the fallback dialog with the intent', async () => {
+  const registry = createDirtySurfaceRegistry();
+  const notes = makeSurface(registry, 'memory-notes', 'Long-term notes');
+  const prompts = [];
+  const dialog = { confirmClose: async (payload) => { prompts.push(payload); return 'save'; } };
+  const { coordinator } = makeCoordinator({ dirtySurfaces: registry, getConfirmDialog: () => dialog });
+
+  const result = await coordinator.preflightExit('update-restart');
+
+  assert.deepEqual(result, { proceed: true, reason: 'save' });
+  assert.deepEqual(prompts, [{
+    dirtyPaths: [],
+    surfaces: [{ id: 'memory-notes', label: 'Long-term notes' }],
+    intent: 'update-restart',
+  }]);
+  assert.equal(notes.saves, 1);
+});
+
+test('with no IDE mounted, Cancel on a dirty surface keeps the window', async () => {
+  const registry = createDirtySurfaceRegistry();
+  const notes = makeSurface(registry, 'memory-notes', 'Long-term notes');
+  const dialog = { confirmClose: async () => 'cancel' };
+  const { coordinator } = makeCoordinator({ dirtySurfaces: registry, getConfirmDialog: () => dialog });
+
+  const result = await coordinator.preflightExit('close');
+
+  assert.deepEqual(result, { proceed: false, reason: 'canceled' });
+  assert.equal(notes.saves, 0);
+});
+
+test('with no IDE mounted and no dialog available a dirty surface blocks the exit', async () => {
+  const registry = createDirtySurfaceRegistry();
+  makeSurface(registry, 'memory-notes', 'Long-term notes');
+  const { coordinator } = makeCoordinator({ dirtySurfaces: registry, getConfirmDialog: () => null });
+
+  const result = await coordinator.preflightExit('close');
+
+  assert.deepEqual(result, { proceed: false, reason: 'canceled' });
 });

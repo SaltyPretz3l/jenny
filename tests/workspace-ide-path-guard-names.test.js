@@ -71,7 +71,12 @@ test('rename rejects reserved names and trailing dots or spaces', async () => {
   for (const target of ['evil.', 'evil ']) {
     await assert.rejects(
       service.rename({ from: sourceName, to: target }),
-      (error) => assertPathInvalid(error, 'A name can\'t end with a space or a period.')
+      (error) => assertPathInvalid(
+        error,
+        process.platform === 'win32'
+          ? 'A name can\'t end with a space or a period on Windows.'
+          : 'A name can\'t end with a space or a period.'
+      )
     );
   }
   assert.equal(fs.readFileSync(path.join(root, sourceName), 'utf8'), 'source');
@@ -88,10 +93,10 @@ test('rename validates only the destination leaf', async () => {
   assert.equal(fs.readFileSync(path.join(root, 'sub', 'newname.txt'), 'utf8'), 'source');
 });
 
-// NOTE: trailing-space/dot names are NOT usable through this service on any
-// platform — the lenient normalizer has always trimmed the string's ends, so
-// `trailing. ` was unaddressable before this wave too. The operability
-// guarantee covers untrimmed lenient names like `what?.txt` / `a:b` only.
+// NOTE: the normalizer never trims, so a POSIX trailing-space/dot name is
+// addressable exactly; Win32 rejects such names (it would silently strip them
+// and alias a different entry). This guarantee covers lenient names like
+// `what?.txt` / `a:b`.
 test('POSIX-existing lenient names remain readable, listable, movable, and deletable', {
   skip: process.platform === 'win32' ? 'Windows cannot create the lenient-only fixture name' : false,
 }, async () => {
@@ -125,8 +130,10 @@ test('relocation keeps a lenient legacy leaf movable while renames stay strict',
     'sub/what?.txt'
   );
   assert.equal(
-    normalizeWorkspaceRelPath('sub/trailing. ', { strictName: true, relocationFrom: 'dir/trailing. ' }),
-    'sub/trailing.'
+    normalizeWorkspaceRelPath('sub/trailing. ', {
+      strictName: true, relocationFrom: 'dir/trailing. ', platform: 'linux',
+    }),
+    'sub/trailing. '
   );
   // A CHANGED leaf is a naming act and stays strict.
   assert.throws(

@@ -24,7 +24,7 @@ function makeTree(getDom, extra) {
   });
 }
 
-test('with a switcher the header title is a listbox button carrying the project name, and clicking it opens the menu anchored on the button', async () => {
+test('with a switcher the header title is a menu button carrying the project name, and clicking it opens the menu anchored on the button', async () => {
   const { getDom } = buildIdeDom();
   const opened = [];
   let title = 'Ascend';
@@ -40,8 +40,8 @@ test('with a switcher the header title is a listbox button carrying the project 
   assert.ok(button, 'the header title is the project switcher button');
   assert.equal(button.tagName, 'BUTTON');
   assert.ok(button.classList.contains('ide-tree-header-title'));
-  assert.equal(button.getAttribute('aria-haspopup'), 'listbox');
-  assert.equal(button.getAttribute('aria-label'), 'Switch project');
+  assert.equal(button.getAttribute('aria-haspopup'), 'menu');
+  assert.equal(button.getAttribute('aria-label'), 'Switch project, current: Ascend', 'the accessible name carries the current project (D19)');
   assert.equal(button.querySelector('.ide-tree-header-project-name').textContent, 'Ascend');
   assert.ok(button.querySelector('svg'), 'the chevron is the only added mark');
   assert.equal(panel.querySelector('span.ide-tree-header-title'), null);

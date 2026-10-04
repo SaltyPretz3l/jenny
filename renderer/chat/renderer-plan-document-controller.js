@@ -26,11 +26,8 @@
     const focusedProposalRefs = new Set();
     let editSequence = 0;
 
-    function escapeHtml(value) {
-      if (typeof button?.escapeHtml === 'function') return button.escapeHtml(value);
-      return String(value || '').replace(/&/g, '&amp;').replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
-    }
+    const escapeHtml = ((typeof globalThis !== 'undefined' && globalThis.stringUtils)
+      || (typeof require === 'function' ? require('../shared/string-utils') : null)).escapeHtml;
 
     function planChanged(state) {
       return state.working.title !== state.original.title

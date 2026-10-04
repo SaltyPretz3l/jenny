@@ -253,7 +253,8 @@ test('F33: a folder picked elsewhere whose project already exists is not announc
   });
   await root.workspaceRootService.choose();
   assert.equal(root.workspaceRootService.peekProjectSwitcher().currentProject().id, 'project_fixture');
-  assert.deepEqual(toasts, []);
+  // Fork 2 A (2026-09-27): a committed switch announces the Workspace instead of replacing the chat.
+  assert.deepEqual(toasts, ['Workspace is now a2-fixture-project. New chats start here.']);
 });
 
 test('root service fails closed and reports controller initialization errors', async () => {

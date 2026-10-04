@@ -70,6 +70,7 @@ test('getCommandItems lists the Workspace commands when on the IDE view', () => 
     'ide:open-file-map',
     'ide:reveal-in-map',
     'ide:show-blast-radius',
+    'ide:toggle-exploded-view',
     'ide:toggle-minimap',
     'ide:reopen-closed-tab',
     'ide:toggle-bookmark',

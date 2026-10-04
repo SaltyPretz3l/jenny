@@ -32,15 +32,12 @@ function normalizeMaxLineBytes(value) {
  * corrupt the retained prefix).
  */
 function truncateToUtf8Bytes(text, maxBytes) {
-  // UTF-8 byte length is always >= JS string length, so a short string cannot
-  // exceed the bound. Skips the Buffer allocation on every ordinary log line.
-  if (text.length <= maxBytes) {
-    return { text, bytes: text.length, droppedBytes: 0 };
+  const bytes = Buffer.byteLength(text, 'utf8');
+  // Ordinary lines only need byte counting, not a truncation buffer.
+  if (bytes <= maxBytes) {
+    return { text, bytes, droppedBytes: 0 };
   }
   const buffer = Buffer.from(text, 'utf8');
-  if (buffer.length <= maxBytes) {
-    return { text, bytes: buffer.length, droppedBytes: 0 };
-  }
   let end = maxBytes;
   // Walk back off any continuation byte (0b10xxxxxx) so the cut lands on a
   // code-point boundary.

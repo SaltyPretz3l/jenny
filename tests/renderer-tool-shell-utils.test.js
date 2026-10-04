@@ -37,6 +37,40 @@ test('canonical result status keeps specific stop outcomes ahead of generic erro
   assert.equal(toolCallUtils.statusForToolResult({ error_code: 'CMP-APPROVAL-REJECTED', is_error: true }), 'denied');
 });
 
+// Dogfood HB-035: a guard refused the command before it ran. Nobody denied
+// anything, so the row must not say Denied.
+test('a command a guard refused before it ran reads as blocked, not denied', () => {
+  assert.equal(toolCallUtils.statusForToolResult({ error_code: 'CMP-TOOL-0007', is_error: true }), 'blocked');
+  assert.equal(toolCallUtils.statusForToolResult({ error_code: 'cmp-tool-0007', is_error: true }), 'blocked');
+  assert.equal(toolCallUtils.getStatusLabel('blocked'), 'Blocked');
+  // An explicit status and a real denial keep their own word.
+  assert.equal(toolCallUtils.statusForToolResult({ error_code: 'CMP-TOOL-0007', status: 'cancelled', is_error: true }), 'cancelled');
+  assert.equal(toolCallUtils.statusForToolResult({ error_code: 'CMP-TOOL-0001', is_error: true }), 'denied');
+});
+
+// F3: the sidecar's "aborted by user cancellation" result is the user's Stop.
+test('a tool the user stopped reads as cancelled, with no failure line', () => {
+  const stopped = { error_code: 'CMP-TOOL-0041', is_error: true };
+  assert.equal(toolCallUtils.statusForToolResult(stopped), 'cancelled');
+  assert.equal(toolCallUtils.statusForToolResult({ ...stopped, status: 'error' }), 'cancelled');
+  assert.equal(toolCallUtils.summarizeToolFailure({
+    isError: true, status: 'errored', errorCode: 'CMP-TOOL-0041',
+    outputText: 'python execution aborted by user cancellation',
+  }), '');
+});
+
+// Dogfood HB-035: the sidecar shell tool reports exit_code; the row label read
+// only the older exitCode, so a failed command never showed its exit status.
+test('a command row shows the exit status from either metadata casing', () => {
+  const input = { command: 'pytest -q' };
+  assert.equal(toolCallUtils.formatToolCallSummary('run_command', input, { metadata: { exit_code: 1 } }), 'Run pytest -q (exit 1)');
+  assert.equal(toolCallUtils.formatToolCallSummary('run_command', input, { metadata: { exitCode: 2 } }), 'Run pytest -q (exit 2)');
+  assert.equal(toolCallUtils.formatToolCallSummary('run_command', input, { metadata: {} }), 'Run pytest -q');
+  assert.equal(toolCallUtils.readToolExitCode({ exit_code: 0 }), 0);
+  assert.equal(toolCallUtils.readToolExitCode({ exit_code: 'nope' }), null);
+  assert.equal(toolCallUtils.readToolExitCode(null), null);
+});
+
 test('composite tool row keys escape component delimiters without collisions', () => {
   const first = toolCallUtils.buildToolRowKey({ sessionId: 'a|turn=b', turnId: 'c', rowId: 'r', callId: 'x' });
   const second = toolCallUtils.buildToolRowKey({ sessionId: 'a', turnId: 'b|turn=c', rowId: 'r', callId: 'x' });
@@ -324,4 +358,90 @@ test('buildToolHeaderInner shows the verify verdict in the meta slot, escaped', 
     { escapeHtml }
   );
   assert.match(html, /class="tool-call-meta">Gate · Failed · 4 of 142 &lt;b&gt;</);
+});
+
+
+// Dogfood B11: the shell tool stopped a command at its time limit
+// (CMP-TOOL-0006 with timed_out). The row read Errored, like a crash.
+test('a command stopped at its time limit reads as timed out, not errored', () => {
+  const timedOut = { error_code: 'CMP-TOOL-0006', is_error: true, metadata: { timed_out: true, timeout_seconds: 10 } };
+  assert.equal(toolCallUtils.statusForToolResult(timedOut), 'timed_out');
+  assert.equal(toolCallUtils.getStatusLabel('timed_out'), 'Timed out');
+  assert.equal(toolCallUtils.statusForToolResult({ ...timedOut, metadata: { timedOut: true } }), 'timed_out');
+  // The same code without the flag is still an error; a stop keeps its word.
+  assert.equal(toolCallUtils.statusForToolResult({ error_code: 'CMP-TOOL-0006', is_error: true }), 'errored');
+  assert.equal(toolCallUtils.statusForToolResult({ ...timedOut, status: 'cancelled' }), 'cancelled');
+  assert.equal(toolCallUtils.statusForToolResult({ ...timedOut, is_error: false }), 'completed');
+});
+
+test('a bash shell stopped at its time limit says timed out from the sidecar casing', (t) => {
+  const renderer = setupRenderer(t);
+  const html = renderer.renderToolShell({
+    toolKind: 'Bash',
+    callId: 'b11_bash_timeout',
+    displayToolName: 'Bash',
+    summary: 'ping -n 40 127.0.0.1',
+    status: 'timed_out',
+    statusLabel: 'Timed out',
+    isRunning: false,
+    durationLabel: '10.4s',
+    defaultExpanded: true,
+    input: { command: 'ping -n 40 127.0.0.1' },
+    inputJson: '{"command":"ping -n 40 127.0.0.1"}',
+    metadata: { timed_out: true, timeout_seconds: 10 },
+    outputText: '',
+  });
+  assert.ok(html);
+  assert.match(html, />timed out</);
+});
+
+// Dogfood HB-035 (B12): the B10 "(exit N)" text lived on a path the row
+// header never used. The header label itself now names the exit status.
+test('a command that exited non-zero is labelled with its exit status', () => {
+  assert.equal(toolCallUtils.getResultStatusLabel('errored', { metadata: { exit_code: 1 } }), 'exit 1');
+  assert.equal(toolCallUtils.getResultStatusLabel('error', { exit_code: 2, metadata: {} }), 'exit 2');
+  assert.equal(toolCallUtils.getResultStatusLabel('errored', { metadata: { exitCode: 3 } }), 'exit 3');
+  // No exit status, or a zero one, keeps the plain word; other states are untouched.
+  assert.equal(toolCallUtils.getResultStatusLabel('errored', { metadata: {} }), 'Error');
+  assert.equal(toolCallUtils.getResultStatusLabel('errored', { exit_code: null, metadata: { exit_code: 0 } }), 'Error');
+  assert.equal(toolCallUtils.getResultStatusLabel('errored', null), 'Error');
+  assert.equal(toolCallUtils.getResultStatusLabel('timed_out', { metadata: { exit_code: 1 } }), 'Timed out');
+  assert.equal(toolCallUtils.getResultStatusLabel('completed', { metadata: { exit_code: 0 } }), 'Success');
+});
+
+test('a failed command row shows the command\'s last output line, not the JSON brace', () => {
+  const output = (fields) => JSON.stringify({ command: 'pytest -q', exit_code: 1, ok: false, ...fields }, null, 2);
+  const line = (outputText) => toolCallUtils.summarizeToolFailure({
+    isError: true, status: 'errored', errorCode: 'CMP-TOOL-0008', outputText,
+  });
+  assert.equal(line(output({ stdout: '..F\n1 failed, 116 passed in 13.39s\n', stderr: '' })), '1 failed, 116 passed in 13.39s');
+  assert.equal(line(output({ stdout: 'collected 3 items\n', stderr: 'Traceback\nValueError: bad row\n' })), 'ValueError: bad row');
+  // Output that is not a whole JSON object never shows a bare brace.
+  assert.equal(line('{\n  "command": "pytest -q",\n  "stdout": "..F'), '"command": "pytest -q",');
+  assert.equal(line('{'), 'Tool failed');
+  assert.equal(line('plain failure text\nmore'), 'plain failure text');
+});
+
+// B12 review: a Docker sandbox receipt keeps the exit status under execution,
+// and the shell's truncation markers are not the command's last word.
+test('a sandboxed command that exited non-zero is labelled too; a run the sandbox stopped is not', () => {
+  const sandbox = (execution) => ({ metadata: { execution: { backend: 'docker', ...execution } } });
+  assert.equal(toolCallUtils.getResultStatusLabel('errored', sandbox({ status: 'completed', exit_code: 2 })), 'exit 2');
+  assert.equal(toolCallUtils.getResultStatusLabel('errored', sandbox({ status: 'failed', exit_code: 1 })), 'exit 1');
+  assert.equal(toolCallUtils.getResultStatusLabel('errored', sandbox({ status: 'timed_out', exit_code: 137 })), 'Error');
+  assert.equal(toolCallUtils.getResultStatusLabel('errored', sandbox({ status: 'cancelled', exit_code: 1 })), 'Error');
+});
+
+test('the failure line skips the tool\'s truncation markers', () => {
+  const line = (fields) => toolCallUtils.summarizeToolFailure({
+    isError: true, status: 'errored', errorCode: 'CMP-TOOL-0008',
+    outputText: JSON.stringify({ command: 'pytest -q', exit_code: 1, ok: false, ...fields }, null, 2),
+  });
+  assert.equal(line({ stdout: 'FAILED tests/test_a.py::test_x\n...[truncated]', stderr: '' }), 'FAILED tests/test_a.py::test_x');
+  assert.equal(
+    line({ stdout: '', stderr: 'boom\n...[512 output bytes discarded after the bounded capture limit]' }),
+    'boom',
+  );
+  // Nothing but a marker: fall through to the next stream, then to the plain fallback.
+  assert.equal(line({ stderr: '...[truncated]', stdout: 'last real line\n' }), 'last real line');
 });

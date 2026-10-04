@@ -54,11 +54,11 @@ MEMORY_DELETE_METHOD = "memory.delete"
 MEMORY_RECALL_METHOD = "memory.recall"
 MEMORY_RECALL_RECENT_METHOD = "memory.recall_recent"
 MEMORY_STATUS_METHOD = "memory.status"
+# Desktop project delete: move every memory row of one project to another
+# (General) in one transaction. Never exposed as a tool.
+MEMORY_MOVE_PROJECT_METHOD = "memory.move_project"
 SUGGESTIONS_GENERATE_METHOD = "suggestions.generate"
 COMMIT_GENERATE_MESSAGE_METHOD = "commit.generate_message"
-INLINE_COMPLETE_METHOD = "inline.complete"
-INLINE_LOADED_MODELS_METHOD = "inline.loaded_models"
-INLINE_UNLOAD_METHOD = "inline.unload"
 HARDWARE_PROFILE_METHOD = "hardware.profile"
 HARDWARE_VRAM_USAGE_METHOD = "hardware.vram_usage"
 HARNESS_INSPECT_METHOD = "harness.inspect"
@@ -111,11 +111,9 @@ INBOUND_VERSIONED_REQUEST_METHODS: frozenset[str] = frozenset(
         MEMORY_RECALL_METHOD,
         MEMORY_RECALL_RECENT_METHOD,
         MEMORY_STATUS_METHOD,
+        MEMORY_MOVE_PROJECT_METHOD,
         SUGGESTIONS_GENERATE_METHOD,
         COMMIT_GENERATE_MESSAGE_METHOD,
-        INLINE_COMPLETE_METHOD,
-        INLINE_LOADED_MODELS_METHOD,
-        INLINE_UNLOAD_METHOD,
         HARDWARE_PROFILE_METHOD,
         HARDWARE_VRAM_USAGE_METHOD,
         HARNESS_INSPECT_METHOD,
@@ -143,6 +141,15 @@ INBOUND_VERSIONED_REQUEST_METHODS: frozenset[str] = frozenset(
 # is a plain additive request field, so it needs no ALLOWED_NOTIFICATION_METHODS
 # entry and no new method constant. See docs/plans/WORKSPACE_MUTATION_JOURNAL.md
 # section 7 and sidecar/ai/tools/workspace_retention.py.
+# Owner decision D3 additive optional fields on the same CHAT_SEND_METHOD
+# request, following the WO-26 precedent (no new method, no notification):
+# ``params.safety_mode`` (``"normal"|"strict"|"paranoid"``) and
+# ``params.auto_approve_streak_cap`` (non-negative integer, clamped to 500).
+# Electron fills both from the live chatUi state at send time and OMITS them
+# (never ``null``) when that state is unavailable. The sidecar validates them
+# per request; a missing or invalid value falls back to the initialized
+# RuntimeConfig value and never fails the turn. See
+# sidecar/ai/routing/route_policy_runtime.py (``with_request_safety``).
 CHAT_TOKEN_METHOD = "chat.token"
 # Streamed assistant text token. Required payload: ``delta`` and ``role``.
 # Optional additive payload: ``sequence`` (monotonic token index) so Electron
@@ -179,8 +186,8 @@ CHAT_QUESTION_BATCH_METHOD = "chat.question_batch"
 # Additive optional plan-usage hint: ``chat.done.params.usage.plan_usage`` and
 # ``chat.error.params.plan_usage`` (sidecar/runtime/plan_usage_snapshot.py).
 # Key omitted entirely when there is no ChatGPT plan-usage snapshot for the
-# request or the ``chatgpt_plan_meter`` feature flag is off -- older/newer
-# sidecars and consumers that do not know this key are unaffected. The same
+# request -- older/newer sidecars and consumers that do not know this key are
+# unaffected. The same
 # snapshot also travels mid-turn on CHAT_PLAN_USAGE_METHOD below.
 # ``chat.done.params.resumable_stop`` is an additive optional scalar naming a
 # resumable budget stop: ``tool_cap``, ``diminishing_returns``,

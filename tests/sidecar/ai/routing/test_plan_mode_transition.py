@@ -87,6 +87,38 @@ def test_restored_tool_contract_overlay_describes_available_and_blocked_tools() 
         "Fix: none here."
     ) in overlay
     assert "capabilities are answered from this block" in overlay
+    assert "Not loaded this turn" not in overlay
+
+
+def test_restored_overlay_lists_not_loaded_tools() -> None:
+    def _deferred(name: str) -> RuntimeToolStatus:
+        return RuntimeToolStatus(
+            name=name,
+            display_name=name,
+            available=False,
+            reason="model/runtime does not expose this turn",
+            deferred=True,
+        )
+
+    statuses = (
+        RuntimeToolStatus(name="read_file", display_name="Read file", available=True),
+        _deferred("write_file"),
+        _deferred("edit_file"),
+    )
+
+    overlay = build_restored_tool_contract_overlay(
+        tool_statuses=(
+            *statuses,
+            RuntimeToolStatus(name="tool_search", display_name="Tool search", available=True),
+        )
+    )
+    assert "Available now:\n- `read_file`\n- `tool_search`\n" in overlay
+    assert overlay.endswith(
+        "Not loaded this turn (call `tool_search` with `select:<name>` to load, "
+        "then call it): edit_file, write_file"
+    )
+    # Without a usable tool_search nothing is loadable, so nothing is listed.
+    assert "Not loaded" not in build_restored_tool_contract_overlay(tool_statuses=statuses)
 
 
 def test_apply_restored_tool_contract_deduplicates_and_empty_is_noop() -> None:
@@ -305,6 +337,34 @@ def test_declined_transition_retains_context_and_warns(
     assert warning.data["declined_guard"] == declined_guard
 
 
+@pytest.mark.parametrize("decision", ["approved", "approved_auto"])
+def test_approved_exit_sets_plan_approved_in_turn(decision: str) -> None:
+    context = transition_after_exit_outcome(
+        request_context=_context(),
+        outcomes=[_outcome(decision)],
+        working_messages=[],
+    )
+
+    assert context.plan_approved_in_turn is True
+    assert _context().plan_approved_in_turn is False
+
+
+def test_rejected_or_accepted_exit_leaves_plan_approved_in_turn_false() -> None:
+    rejected = transition_after_exit_outcome(
+        request_context=_context(),
+        outcomes=[_outcome("rejected", cleared=False)],
+        working_messages=[],
+    )
+    accepted = transition_after_exit_outcome(
+        request_context=_context(),
+        outcomes=[_outcome("accepted", cleared=False)],
+        working_messages=[],
+    )
+
+    assert rejected.plan_approved_in_turn is False
+    assert accepted.plan_approved_in_turn is False
+
+
 def test_rejection_retains_plan_mode() -> None:
     rejected = transition_after_exit_outcome(
         request_context=_context(), outcomes=[_outcome("rejected", cleared=False)], working_messages=[]
@@ -470,3 +530,15 @@ def test_exit_transition_is_a_no_op_once_plan_mode_is_off(
         outcomes=[outcome],
         working_messages=working_messages,
     ) is never_in_plan_mode
+
+
+def test_approved_plan_overlay_says_the_plan_first_request_is_satisfied() -> None:
+    # TR-014 (dogfood G3): after a mid-turn compaction the original "plan it
+    # first, I'll approve before you build" prompt is re-pinned AFTER the
+    # summary, so it reads as the newest instruction. The overlay survives every
+    # compaction in the system block, so it must say the approval already
+    # satisfied that request.
+    overlay = build_approved_plan_overlay({"title": "G3", "steps": ["Write M4"]})
+    assert "request to see and approve a plan first is satisfied" in overlay
+    assert "do not re-present the plan or ask for approval of this plan again" in overlay
+    assert "context compaction" in overlay

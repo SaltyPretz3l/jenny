@@ -113,7 +113,7 @@
 .file-diff-body .diff-line {
   display: flex;
   min-width: max-content;
-  line-height: calc(20px * var(--chat-zoom-factor, 1));
+  line-height: 20px;
 }
 .file-diff-body .diff-line-add { background: color-mix(in srgb, var(--tl-status-ok) 9%, transparent); }
 .file-diff-body .diff-line-remove { background: color-mix(in srgb, var(--tl-status-error) 9%, transparent); }

@@ -92,4 +92,4 @@ def test_initialize_exposes_schema_versions(monkeypatch, tmp_path) -> None:
     finally:
         # initialize owns a real engine stack; leaving it open keeps its
         # subprocess alive after this focused test file has completed.
-        server._BRAIN_CONTAINER.close()  # noqa: SLF001
+        server._BRAIN_CONTAINER.close()

@@ -1,161 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { JSDOM } = require('jsdom');
 
-function createFrameScheduler() {
-  let nextHandle = 1;
-  const pending = new Map();
-  return {
-    request(callback) {
-      const handle = nextHandle++;
-      pending.set(handle, callback);
-      return handle;
-    },
-    cancel(handle) {
-      pending.delete(handle);
-    },
-    flushNext(timestamp = 16) {
-      const next = pending.entries().next().value;
-      if (!next) return false;
-      pending.delete(next[0]);
-      next[1](timestamp);
-      return true;
-    },
-    flushAll(limit = 20) {
-      let count = 0;
-      while (count < limit && this.flushNext(16 + count * 16)) count += 1;
-      return count;
-    },
-    get size() {
-      return pending.size;
-    },
-  };
-}
-
-function loadThinkingUtils() {
-  const modulePath = require.resolve('../renderer/chat/renderer-render-pipeline-thinking');
-  delete require.cache[modulePath];
-  return require(modulePath);
-}
-
-function createHarness({
-  messages = [],
-  preflight = false,
-  cancelFrames = true,
-  reasoningStatusV2 = false,
-} = {}) {
-  const scheduler = createFrameScheduler();
-  const dom = new JSDOM(`<!doctype html><html><body>
-    <div id="column">
-      <div id="layer"><div id="sprite"></div></div>
-      <div id="timeline"></div>
-    </div>
-  </body></html>`);
-  const documentRef = dom.window.document;
-  const timeline = documentRef.getElementById('timeline');
-  const layer = documentRef.getElementById('layer');
-  const sprite = documentRef.getElementById('sprite');
-  const column = documentRef.getElementById('column');
-  let layerDisplay = 'block';
-  const resizeObservers = [];
-  dom.window.ResizeObserver = class {
-    constructor(callback) { this.callback = callback; this.targets = new Set(); resizeObservers.push(this); }
-    observe(target) { this.targets.add(target); }
-    disconnect() { this.targets.clear(); }
-  };
-
-  global.window = dom.window;
-  global.document = documentRef;
-  const { createThinkingPipeline } = loadThinkingUtils();
-
-  dom.window.getComputedStyle = (element) => ({
-    display: element === layer ? layerDisplay : 'block',
-    visibility: 'visible',
-    rowGap: '16px',
-    gap: '16px',
-  });
-  layer.getBoundingClientRect = () => ({ top: 0, left: 0, right: 52, bottom: 800, width: 52, height: 800 });
-  sprite.getBoundingClientRect = () => ({ top: 0, left: 2, right: 32, bottom: 30, width: 30, height: 30 });
-
-  for (const [index, message] of messages.entries()) {
-    if (!message?.id) continue;
-    const node = documentRef.createElement('article');
-    node.dataset.messageId = message.id;
-    node.className = 'chat-entry';
-    node.getBoundingClientRect = () => ({
-      top: 100 + index * 100,
-      left: 60,
-      right: 500,
-      bottom: 160 + index * 100,
-      width: 440,
-      height: 60,
-    });
-    const bubble = documentRef.createElement('div');
-    bubble.className = 'chat-bubble';
-    bubble.getBoundingClientRect = node.getBoundingClientRect;
-    node.appendChild(bubble);
-    timeline.appendChild(node);
-  }
-
-  const state = {
-    currentSessionId: 'session-1',
-    activeStreamSessionId: '',
-    activeStreamId: '',
-    streamThinkingStatusByStream: new Map(),
-    features: { featureFlags: { reasoning_status_v2: reasoningStatusV2 } },
-    ui: { activeView: 'chat', chatMode: 'thread' },
-  };
-  const spriteRuntime = {};
-  const holoCalls = [];
-  const pipeline = createThinkingPipeline({
-    requestAnimationFrame: (callback) => scheduler.request(callback),
-    cancelAnimationFrame: cancelFrames
-      ? (handle) => scheduler.cancel(handle)
-      : () => {},
-    state,
-    constants: { MESSAGE_STATUS: { STREAMING: 'streaming', COMPLETE: 'complete', ERROR: 'error' } },
-    dom: {
-      chatTimeline: timeline,
-      chatThreadColumn: column,
-      chatSpriteLayer: layer,
-      chatAssistantSprite: sprite,
-    },
-    controllers: {
-      thinkingIndicator: {
-        getDisplayState() { return { mode: 'idle' }; },
-      },
-    },
-    runtime: { spriteRuntime },
-    callbacks: {
-      getCurrentSessionMessages: () => messages,
-      getLatestAssistantMessageId: (items) => {
-        const match = [...items].reverse().find((message) => message?.role === 'assistant');
-        return match?.id || '';
-      },
-      getLatestUserMessageId: (items) => {
-        const match = [...items].reverse().find((message) => message?.role === 'user');
-        return match?.id || '';
-      },
-      escapeSelectorValue: (value) => String(value),
-      isSendPreflightPending: () => preflight,
-      setSpriteHoloState: (active, mode) => holoCalls.push([active, mode]),
-    },
-  });
-
-  return {
-    dom,
-    resizeObservers,
-    holoCalls,
-    layer,
-    messages,
-    pipeline,
-    scheduler,
-    sprite,
-    spriteRuntime,
-    state,
-    setLayerDisplay: (value) => { layerDisplay = value; },
-  };
-}
+const { appendReasoningRow, createHarness, setLiveThinkingState } = require('./helpers/thinking-pipeline-harness');
 
 test('layout notifications remeasure the anchor and stop after disposal', async () => {
   const h = createHarness({ messages: [{ id: 'a1', role: 'assistant', content: 'Done', status: 'complete' }] });
@@ -189,13 +35,19 @@ test('session changes clear visible identity immediately and fence queued old ge
   h.pipeline.updateAssistantSpritePosition();
   h.scheduler.flushAll();
   h.pipeline.updateAssistantSpritePosition();
+  assert.notEqual(h.sprite.style.transform, '', 'precondition: the settled sprite sits at its row');
   h.state.currentSessionId = 'session-2';
   h.scheduler.flushAll();
   assert.equal(h.layer.classList.contains('visible'), false);
+  // The layer is an overflow-visible child of the scroller: a hidden sprite
+  // left thousands of pixels down kept the previous chat's scroll height, and
+  // a new chat followed "latest" into blank space (dogfood B16).
+  assert.equal(h.sprite.style.transform, '', 'a hidden sprite holds no position');
   h.pipeline.updateAssistantSpritePosition([]);
   assert.equal(h.spriteRuntime.targetMessageId, '');
   h.scheduler.flushAll();
   assert.equal(h.layer.dataset.suppressionReason, 'empty_thread');
+  assert.equal(h.sprite.style.transform, '');
   h.pipeline.dispose();
   h.dom.window.close();
 });
@@ -218,37 +70,10 @@ for (const status of ['error', 'cancelled', 'complete']) {
   });
 }
 
-function appendReasoningRow(article, {
-  thinkingId = 'shared-thinking',
-  status = 'streaming',
-  label = 'Original label',
-} = {}) {
-  const row = article.ownerDocument.createElement('div');
-  row.className = 'reasoning-row-block';
-  row.dataset.thinkingId = thinkingId;
-  row.dataset.reasoningStatus = status;
-  const main = article.ownerDocument.createElement('div');
-  main.className = 'reasoning-row-main';
-  main.textContent = label;
-  row.appendChild(main);
-  article.appendChild(row);
-  return { main, row };
-}
-
-function setLiveThinkingState(harness, {
-  streamId = 'stream-1',
-  thinkingId = 'shared-thinking',
-  text = 'Updated live status',
-} = {}) {
-  harness.state.activeStreamSessionId = 'session-1';
-  harness.state.activeStreamId = streamId;
-  harness.state.streamThinkingStatusByStream.set(streamId, { text, thinkingId });
-}
 
 test('live reasoning status selects the later streaming row within the active message', () => {
   const harness = createHarness({
     messages: [{ id: 'a1', role: 'assistant', status: 'streaming', content: 'Working' }],
-    reasoningStatusV2: true,
   });
   const article = harness.dom.window.document.querySelector('.chat-entry[data-message-id="a1"]');
   const earlier = appendReasoningRow(article, { status: 'complete', label: 'Earlier complete' });
@@ -267,26 +92,9 @@ test('live reasoning status selects the later streaming row within the active me
   harness.pipeline.dispose();
 });
 
-test('reasoning status V2 flag off preserves the existing live-label markup', () => {
+test('reasoning status does not mutate labels after disposal', () => {
   const harness = createHarness({
     messages: [{ id: 'a1', role: 'assistant', status: 'streaming', content: 'Working' }],
-    reasoningStatusV2: false,
-  });
-  const article = harness.dom.window.document.querySelector('.chat-entry[data-message-id="a1"]');
-  const active = appendReasoningRow(article);
-  setLiveThinkingState(harness);
-
-  harness.pipeline.renderLiveThinkingChip(null, 'a1');
-
-  assert.equal(active.main.textContent, 'Updated live status');
-  assert.equal(active.main.className, 'reasoning-row-main shimmer-active');
-  harness.pipeline.dispose();
-});
-
-test('reasoning status V2 does not mutate labels after disposal', () => {
-  const harness = createHarness({
-    messages: [{ id: 'a1', role: 'assistant', status: 'streaming', content: 'Working' }],
-    reasoningStatusV2: true,
   });
   const article = harness.dom.window.document.querySelector('.chat-entry[data-message-id="a1"]');
   const active = appendReasoningRow(article);
@@ -305,7 +113,6 @@ test('live reasoning status is scoped to the active message article', () => {
       { id: 'a1', role: 'assistant', status: 'complete', content: 'Earlier response' },
       { id: 'a2', role: 'assistant', status: 'streaming', content: 'Current response' },
     ],
-    reasoningStatusV2: true,
   });
   const articles = harness.dom.window.document.querySelectorAll('.chat-entry');
   const earlier = appendReasoningRow(articles[0], { label: 'Earlier article' });
@@ -354,19 +161,14 @@ test('settled sprite is a persistent static anchor and unchanged renders are ide
   harness.scheduler.flushNext();
   assert.equal(harness.layer.classList.contains('visible'), true);
   assert.equal(harness.sprite.dataset.spriteState, 'complete');
-  assert.deepEqual(harness.holoCalls, [[false, 'idle']]);
+  const observer = new harness.dom.window.MutationObserver(() => {});
+  observer.observe(harness.sprite, { attributes: true, subtree: true, childList: true });
 
   harness.pipeline.updateAssistantSpritePosition();
   harness.scheduler.flushNext();
-  assert.deepEqual(harness.holoCalls, [[false, 'idle']], 'unchanged passive state does not retrigger holo work');
-
-  harness.pipeline.updateAssistantSpritePosition(undefined, undefined, { refreshHolo: true });
+  harness.pipeline.updateAssistantSpritePosition();
   harness.scheduler.flushNext();
-  assert.deepEqual(
-    harness.holoCalls,
-    [[false, 'idle'], [false, 'idle']],
-    'an explicit appearance refresh re-evaluates unchanged holo eligibility without DOM churn'
-  );
+  assert.equal(observer.takeRecords().length, 0, 'an unchanged passive state does not touch the sprite DOM');
   harness.pipeline.dispose();
 });
 
@@ -378,7 +180,6 @@ test('sprite maps live, error, and canonical terminal metadata to distinct view 
   harness.scheduler.flushNext();
   assert.equal(harness.sprite.dataset.spriteState, 'live');
   assert.equal(harness.sprite.classList.contains('is-streaming'), true);
-  assert.deepEqual(harness.holoCalls.at(-1), [true, 'inference']);
 
   harness.state.activeStreamSessionId = 'session-1';
   harness.state.activeStreamId = 'stream-1';
@@ -393,7 +194,6 @@ test('sprite maps live, error, and canonical terminal metadata to distinct view 
   harness.pipeline.updateAssistantSpritePosition();
   harness.scheduler.flushNext();
   assert.equal(harness.sprite.dataset.spriteState, 'error');
-  assert.deepEqual(harness.holoCalls.at(-1), [false, 'idle']);
 
   message.terminal_status = 'interrupted';
   harness.pipeline.updateAssistantSpritePosition();
@@ -554,11 +354,9 @@ test('stale positioning callbacks are fenced when frame cancellation is unavaila
 
   harness.state.ui.activeView = 'chat';
   harness.pipeline.updateAssistantSpritePosition();
-  const holoCallCount = harness.holoCalls.length;
   harness.pipeline.dispose();
   harness.scheduler.flushAll();
   assert.equal(harness.spriteRuntime.frameHandle, 0);
-  assert.equal(harness.holoCalls.length, holoCallCount + 1, 'only disposal disables holo');
 });
 
 test('missing targets recover on a later mount without polling', async () => {

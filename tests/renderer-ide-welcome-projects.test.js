@@ -84,7 +84,7 @@ test('folder open: "Switch project…" opens the shared menu anchored on itself;
   const button = extra().querySelector('[data-ide-welcome-project-menu]');
   assert.ok(button);
   assert.equal(button.textContent.trim(), 'Switch project…');
-  assert.equal(button.getAttribute('aria-haspopup'), 'listbox');
+  assert.equal(button.getAttribute('aria-haspopup'), 'menu');
   assert.equal(extra().querySelector('[data-ide-welcome-choose-root]'), null);
   assert.equal(extra().querySelector('[data-ide-welcome-project]'), null, 'the project rows belong to the no-folder state');
   button.click();
@@ -112,4 +112,61 @@ test('a projects-changed event repaints the rows from the fresh list', async (t)
   dom.window.dispatchEvent(new dom.window.CustomEvent('jenny:projects-changed'));
   await settle();
   assert.equal(extra().querySelectorAll('[data-ide-welcome-project]').length, 2);
+});
+
+test('D18: the rows keep the switcher\'s one order (most recently used first), and a missing folder reads "Locate…" and locates instead of switching', async (t) => {
+  const { createProjectSwitcher } = require('../renderer/features/renderer-project-switcher');
+  const state = {
+    workspaceRoot: { path: '' },
+    sessions: [
+      { id: 's1', project_id: 'project_grants', updated_at: '2026-09-26T10:00:00Z' },
+      { id: 's2', project_id: 'project_budget', updated_at: '2026-09-20T10:00:00Z' },
+    ],
+  };
+  const real = createProjectSwitcher({
+    state,
+    menu: { isOpen: () => false, close() {}, show() { return null; }, dispose() {} },
+    getProjectsApi: () => ({ async list() { return { projects: [
+      { id: 'project_general', name: 'General', root_path: null },
+      { id: 'project_audit', name: 'Audit', root_path: 'D:\\Audit', folder_exists: true },
+      { id: 'project_budget', name: 'Budget FY27', root_path: 'C:\\Budget', folder_exists: true },
+      { id: 'project_grants', name: 'Grants archive', root_path: 'D:\\Archive\\Grants', folder_exists: false },
+    ] }; } }),
+  });
+  t.after(() => real.dispose());
+  await real.refresh();
+  const calls = { located: [], switched: [] };
+  const stub = {
+    refresh: async () => {},
+    getProjects: () => real.getProjects(),
+    switchToProject: async (id) => { calls.switched.push(id); },
+    locateProjectFolder: async (id, options) => { calls.located.push([id, options]); },
+    openSwitcher: async () => {},
+  };
+  const dom = new JSDOM('<!doctype html><html><body><div id="ideEmptyState"><p id="ideEmptyStateCopy"></p><div id="ideEmptyStateAction" class="hidden"></div></div></body></html>', { pretendToBeVisual: true, url: 'http://localhost/' });
+  const doc = dom.window.document;
+  const welcome = createIdeWelcome({
+    getDom: () => ({ ideEmptyState: doc.getElementById('ideEmptyState'), ideEmptyStateCopy: doc.getElementById('ideEmptyStateCopy'), ideEmptyStateAction: doc.getElementById('ideEmptyStateAction') }),
+    actionButton,
+    getFsApi: () => ({ async getRootState() { return { workspaceRoot: '' }; } }),
+    getProjects: () => stub.getProjects(),
+    getProjectSwitcher: async () => stub,
+  });
+  welcome.bindEvents();
+  t.after(() => welcome.dispose());
+  await welcome.render();
+  await settle();
+  const rows = Array.from(doc.querySelectorAll('[data-ide-welcome-project]'));
+  assert.deepEqual(rows.map((row) => row.getAttribute('data-ide-welcome-project')), ['project_grants', 'project_budget', 'project_audit']);
+  const missing = rows[0].querySelector('.ide-welcome-recent-dir');
+  assert.equal(missing.textContent, 'Locate…');
+  assert.ok(missing.classList.contains('project-menu-detail--danger'), 'the missing folder is marked in the danger text');
+  assert.equal(rows[0].title, 'D:\\Archive\\Grants', 'the path stays in the tooltip');
+  rows[0].click();
+  await settle();
+  assert.deepEqual(calls.located, [['project_grants', { openAfter: true }]]);
+  assert.deepEqual(calls.switched, []);
+  rows[1].click();
+  await settle();
+  assert.deepEqual(calls.switched, ['project_budget']);
 });

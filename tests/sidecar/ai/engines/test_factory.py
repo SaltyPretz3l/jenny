@@ -117,7 +117,7 @@ def test_create_engine_ollama_failure_falls_back_to_mock(monkeypatch) -> None:
         def __init__(self, **_: Any) -> None:
             pass
 
-        def load_model(self, model_path: str) -> None:  # noqa: ARG002
+        def load_model(self, model_path: str) -> None:
             raise RuntimeError("boom")
 
     monkeypatch.setattr("sidecar.ai.engines.factory.OllamaEngine", _FailingOllama)
@@ -139,7 +139,7 @@ def test_create_engine_closes_partially_initialized_provider_before_fallback(mon
             self.close_count = 0
             instances.append(self)
 
-        def load_model(self, model_path: str) -> None:  # noqa: ARG002
+        def load_model(self, model_path: str) -> None:
             raise RuntimeError("boom")
 
         def unload_model(self) -> None:
@@ -186,7 +186,7 @@ def test_create_engine_vllm_failure_falls_back_to_mock(monkeypatch) -> None:
         def __init__(self, **_: Any) -> None:
             pass
 
-        def load_model(self, model_path: str) -> None:  # noqa: ARG002
+        def load_model(self, model_path: str) -> None:
             raise RuntimeError("vllm not running")
 
     monkeypatch.setattr("sidecar.ai.engines.factory.VLLMEngine", _FailingVLLM)
@@ -306,7 +306,7 @@ def test_create_engine_openai_compatible_failure_falls_back_to_mock(monkeypatch)
         def __init__(self, **_: Any) -> None:
             pass
 
-        def load_model(self, model_path: str) -> None:  # noqa: ARG002
+        def load_model(self, model_path: str) -> None:
             raise RuntimeError("llama-server not running")
 
     monkeypatch.setattr(
@@ -322,6 +322,50 @@ def test_create_engine_openai_compatible_failure_falls_back_to_mock(monkeypatch)
     assert selection.model == "mock-v1"
     assert selection.fallback_from == "openai-compatible"
     assert "RuntimeError" in selection.fallback_reason
+
+
+class _ProbedOpenAICompat:
+    reachable = True
+
+    def __init__(self, **_: Any) -> None:
+        self.probed = False
+        self.loaded_model = ""
+
+    def probe_reachable(self) -> None:
+        self.probed = True
+        if not type(self).reachable:
+            raise ConnectionError("OpenAI-compatible server is not reachable.")
+
+    def load_model(self, model_path: str) -> None:
+        self.loaded_model = model_path
+
+
+def test_create_engine_openai_compatible_without_model_probes_the_endpoint(monkeypatch) -> None:
+    monkeypatch.setattr("sidecar.ai.engines.factory.OpenAICompatibleEngine", _ProbedOpenAICompat)
+    monkeypatch.setattr(_ProbedOpenAICompat, "reachable", True)
+
+    selection = create_engine(
+        RuntimeConfig(engine_type="openai-compatible", model="", api_url="http://127.0.0.1:8033")
+    )
+
+    assert selection.engine_type == "openai-compatible"
+    assert selection.model == ""
+    assert selection.engine.probed is True
+    assert selection.engine.loaded_model == ""
+    assert selection.fallback_from is None
+
+
+def test_create_engine_openai_compatible_without_model_on_a_dead_port_falls_back(monkeypatch) -> None:
+    monkeypatch.setattr("sidecar.ai.engines.factory.OpenAICompatibleEngine", _ProbedOpenAICompat)
+    monkeypatch.setattr(_ProbedOpenAICompat, "reachable", False)
+
+    selection = create_engine(
+        RuntimeConfig(engine_type="openai-compatible", model="", api_url="http://127.0.0.1:8033")
+    )
+
+    assert selection.engine_type == "mock"
+    assert selection.fallback_from == "openai-compatible"
+    assert "not reachable" in str(selection.fallback_reason or "")
 
 
 def test_create_engine_codex_cli_success(monkeypatch, tmp_path) -> None:
@@ -392,3 +436,10 @@ def test_create_engine_codex_cli_auth_unready_falls_back_to_mock(tmp_path) -> No
     assert selection.model == "mock-v1"
     assert selection.fallback_from == "codex-cli"
     assert "ChatGPT" in str(selection.fallback_reason)
+
+
+def test_create_engine_retired_plugin_host_type_falls_back_to_mock() -> None:
+    selection = create_engine(RuntimeConfig(engine_type="plugin_host", model="plugin:p/q/engine"))
+    assert selection.engine_type == "mock"
+    assert selection.fallback_from == "plugin_host"
+    assert "Unknown engine type" in selection.fallback_reason

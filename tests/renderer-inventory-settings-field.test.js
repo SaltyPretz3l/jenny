@@ -252,3 +252,69 @@ test('inventory barrel exposes settingsField with setFieldError/setFieldBusy/fin
   global.__inventoryHandlersInstalled = prevHandlersInstalled;
   global.inventorySettingsField = prevSettingsField;
 });
+
+
+test('row title, detail and revert slots keep their order and escape plain text', (t) => {
+  const dom = new JSDOM(settingsField({ id: 'detailRow', variant: 'row', label: 'Title', labelFor: 'control', titleId: 'title', help: 'Help', helpId: 'help',
+    detail: '<extra> "detail"', detailLabel: 'More "Title"', metaHtml: '<span class="settings-field-meta">Modified</span>',
+    revertSlot: true, revertSlotId: 'part', revertHtml: '<button data-setting-revert="part">Revert</button>', controlHtml: '<input id="control">' }));
+  t.after(() => dom.window.close());
+  const doc = dom.window.document;
+  const title = doc.querySelector('.settings-field-title');
+  assert.equal(title.tagName, 'LABEL');
+  assert.equal(title.htmlFor, 'control');
+  assert.equal(title.id, 'title');
+  assert.equal(doc.querySelector('.settings-field-help').id, 'help');
+  const detail = doc.querySelector('.settings-field-detail');
+  assert.equal(detail.dataset.tooltip, '<extra> "detail"');
+  assert.equal(detail.getAttribute('aria-label'), 'More "Title"');
+  // "Modified" and the revert share one tail on the title line, so they never split.
+  assert.deepEqual([...title.parentElement.children].map((el) => el.className), ['settings-field-title', 'settings-field-detail inv-tooltip-pin', 'settings-field-title-tail']);
+  const slot = doc.querySelector('[data-setting-revert-slot="part"]');
+  assert.equal(slot.parentElement.className, 'settings-field-title-tail');
+  assert.equal(slot.previousElementSibling.className, 'settings-field-meta');
+  assert.equal(doc.querySelector('.settings-field-control').firstElementChild.id, 'control');
+  assert.ok(slot.querySelector('button'));
+  assert.equal(doc.querySelector('extra'), null);
+});
+
+test('the detail button is described by its text at render time and still is after its tooltip shows and hides', (t) => {
+  const Tooltip = require('../renderer/inventory/tooltip');
+  const dom = new JSDOM(settingsField({ id: 'detailRow', variant: 'row', label: 'Title', detail: 'Longer detail.', detailLabel: 'More about Title' }));
+  t.after(() => dom.window.close());
+  const doc = dom.window.document;
+  const button = doc.querySelector('.settings-field-detail');
+  assert.equal(button.getAttribute('aria-description'), 'Longer detail.');
+  assert.equal(button.hasAttribute('aria-describedby'), false);
+  assert.equal(button.dataset.tooltipPlacement, 'below', 'the detail opens under the row');
+  Tooltip.show(button, button.dataset.tooltip);
+  assert.equal(doc.getElementById(button.getAttribute('aria-describedby')).textContent, 'Longer detail.', 'the shown tooltip is the description, once');
+  Tooltip.hide({ force: true });
+  assert.equal(button.hasAttribute('aria-describedby'), false);
+  assert.equal(button.getAttribute('aria-description'), 'Longer detail.');
+});
+
+test('selectField groups options and preserves the flat option markup', (t) => {
+  const selectField = require('../renderer/inventory/select-field');
+  const flat = [{ value: 'a', label: 'A' }, { value: 'b', label: 'B', disabled: true }];
+  assert.equal(selectField.optionsMarkup(flat, 'a'), '<option value="a" selected>A</option><option value="b" disabled>B</option>');
+  const options = [{ label: 'Group <one>', options: flat }, { value: 'c', label: 'C' }];
+  const dom = new JSDOM(selectField({ id: 'grouped', options, value: 'b' }));
+  t.after(() => dom.window.close());
+  const select = dom.window.document.querySelector('select');
+  assert.equal(select.querySelector('optgroup').label, 'Group <one>');
+  assert.equal(select.querySelector('optgroup').children.length, 2);
+  assert.equal(select.value, 'b');
+  select.innerHTML = selectField.optionsMarkup(options, 'c');
+  assert.equal(select.value, 'c');
+});
+
+test('setFieldError leaves an unchanged reason alone, so a poll does not announce the alert again', () => {
+  const { root } = buildFieldDom();
+  settingsField.setFieldError(root, 'Boom');
+  const written = root.querySelector('.settings-field-error').firstChild;
+  settingsField.setFieldError(root, 'Boom');
+  assert.equal(root.querySelector('.settings-field-error').firstChild, written);
+  settingsField.setFieldError(root, 'Other');
+  assert.equal(root.querySelector('.settings-field-error').textContent, 'Other');
+});

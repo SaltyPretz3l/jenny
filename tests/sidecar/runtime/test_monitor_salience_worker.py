@@ -42,7 +42,7 @@ class _FakeWorkerConnection:
     def recv(self) -> object:
         self.recv_calls += 1
         if self.recv_calls == 1:
-            return salience_module._WORKER_READY_MESSAGE  # noqa: SLF001
+            return salience_module._WORKER_READY_MESSAGE
         return self._response
 
     def close(self) -> None:
@@ -78,10 +78,10 @@ class _FakeWorkerContext:
         self.child = _FakeWorkerConnection(response)
         self.process = _FakeWorkerProcess()
 
-    def Pipe(self) -> tuple[object, object]:  # noqa: N802 - mirrors multiprocessing ctx
+    def Pipe(self) -> tuple[object, object]:  # mirrors multiprocessing ctx
         return self.parent, self.child
 
-    def Process(self, target: object, args: object) -> object:  # noqa: N802
+    def Process(self, target: object, args: object) -> object:
         _ = (target, args)
         return self.process
 
@@ -141,8 +141,8 @@ def test_worker_process_construction_failure_closes_both_pipe_endpoints() -> Non
 
     assert ctx.parent.closed is True
     assert getattr(ctx.child, "closed", False) is True
-    assert worker._parent_conn is None  # noqa: SLF001
-    assert worker._process is None  # noqa: SLF001
+    assert worker._parent_conn is None
+    assert worker._process is None
 
 
 def test_worker_process_start_failure_reaps_child_and_closes_pipes() -> None:
@@ -158,8 +158,8 @@ def test_worker_process_start_failure_reaps_child_and_closes_pipes() -> None:
     assert ctx.child.closed is True
     assert ctx.process.terminate_calls == 1
     assert ctx.process.join_calls >= 1
-    assert worker._parent_conn is None  # noqa: SLF001
-    assert worker._process is None  # noqa: SLF001
+    assert worker._parent_conn is None
+    assert worker._process is None
 
 
 
@@ -233,8 +233,8 @@ def test_malformed_worker_response_fails_open(response: object) -> None:
         worker.evaluate("keep me", timeout_seconds=5.0)
 
     # Reset on the way out, so the next call starts a fresh child.
-    assert worker._parent_conn is None  # noqa: SLF001
-    assert worker._process is None  # noqa: SLF001
+    assert worker._parent_conn is None
+    assert worker._process is None
     assert ctx.parent.closed is True
     assert ctx.process.alive is False
 

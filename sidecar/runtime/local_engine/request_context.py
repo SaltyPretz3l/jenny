@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
@@ -146,6 +147,31 @@ def request_id(engine: Any) -> str:
     if context is None:
         return ""
     return str(context.get("request_id") or "").strip()
+
+
+def current_time_to_first_visible_token_ms(engine: Any) -> float:
+    """Measured time to first visible token for the engine's request in flight.
+
+    Read from the turn diagnostics store so every local engine reports the
+    same client-side measurement to usage history. Best-effort: ``0`` when no
+    store is bound, the request snapshot is missing, or the value is
+    not a positive finite number.
+    """
+    store = current_diagnostics_store(engine)
+    active_request_id = request_id(engine)
+    if store is None or not active_request_id or not hasattr(store, "get_snapshot_for_request"):
+        return 0
+    try:
+        snapshot = store.get_snapshot_for_request(active_request_id)
+        if not isinstance(snapshot, dict):
+            return 0
+        observed_request_id = str(snapshot.get("request_id") or "")
+        if observed_request_id and observed_request_id != active_request_id:
+            return 0
+        value = float(snapshot.get("time_to_first_visible_token_ms") or 0)
+    except Exception:  # noqa: BLE001  # Diagnostics are best-effort and must not break generation.
+        return 0
+    return value if math.isfinite(value) and value > 0 else 0
 
 
 def debug_option_enabled(engine: Any, key: str) -> bool:

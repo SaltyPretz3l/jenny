@@ -7,7 +7,6 @@ const MAX_HOME_LINK_GROUPS = 12;
 const MAX_HOME_LINK_TILES_PER_GROUP = 24;
 const MAX_HOME_LINK_NAME_CHARS = 80;
 const MAX_HOME_LINK_ICON_CHARS = 300;
-const HOME_WEATHER_UNITS = Object.freeze(['metric', 'imperial']);
 const MAX_HOME_WIDGET_ORDER_IDS = 64;
 const MAX_HOME_WIDGET_HIDDEN_IDS = 32;
 const MAX_HOME_WIDGET_ID_CHARS = 48;
@@ -54,12 +53,6 @@ const HOME_LAYOUT_RAIL_WIDTH_MIN = 280;
 const HOME_LAYOUT_RAIL_WIDTH_MAX = 720;
 const HOME_LAYOUT_RAIL_WIDTH_DEFAULT = 360;
 
-const DEFAULT_HOME_WEATHER = Object.freeze({
-  lat: null,
-  lon: null,
-  units: 'metric',
-});
-
 const DEFAULT_HOME_WIDGETS = Object.freeze({
   order: Object.freeze([]),
   hidden: Object.freeze([]),
@@ -104,7 +97,6 @@ const DEFAULT_HOME_LAYOUT = Object.freeze({
 
 const DEFAULT_HOME = Object.freeze({
   links: Object.freeze([]),
-  weather: DEFAULT_HOME_WEATHER,
   widgets: DEFAULT_HOME_WIDGETS,
   scratchpad: DEFAULT_HOME_SCRATCHPAD,
   calendar: DEFAULT_HOME_CALENDAR,
@@ -218,33 +210,6 @@ function normalizeHomeLinks(value) {
     }
   }
   return groups;
-}
-
-function normalizeHomeWeatherCoordinate(value, limit) {
-  // Number(null) and Number('') are 0 — only real numeric input may yield a
-  // coordinate, otherwise an unset location round-trips back to unset.
-  if (value === null || value === undefined || value === '') {
-    return null;
-  }
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed) || Math.abs(parsed) > limit) {
-    return null;
-  }
-  return parsed;
-}
-
-function normalizeHomeWeather(value = {}) {
-  const source = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
-  const units = normalizeString(source.units).toLowerCase();
-  const lat = normalizeHomeWeatherCoordinate(source.lat, 90);
-  const lon = normalizeHomeWeatherCoordinate(source.lon, 180);
-  return {
-    // A location is only usable as a pair; a lone coordinate collapses to
-    // unset so the weather service never polls a half-configured location.
-    lat: lat !== null && lon !== null ? lat : null,
-    lon: lat !== null && lon !== null ? lon : null,
-    units: HOME_WEATHER_UNITS.includes(units) ? units : DEFAULT_HOME_WEATHER.units,
-  };
 }
 
 function normalizeHomeWidgetIdList(value, limit) {
@@ -458,7 +423,6 @@ function normalizeHomeConfig(value = {}) {
   const source = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
   return {
     links: normalizeHomeLinks(source.links),
-    weather: normalizeHomeWeather(source.weather),
     widgets: normalizeHomeWidgets(source.widgets),
     scratchpad: normalizeHomeScratchpad(source.scratchpad),
     calendar: normalizeHomeCalendar(source.calendar),
@@ -490,7 +454,6 @@ function listHomeSiteMonitorTargets(homeConfig) {
 
 module.exports = {
   DEFAULT_HOME,
-  DEFAULT_HOME_WEATHER,
   DEFAULT_HOME_WIDGETS,
   DEFAULT_HOME_SCRATCHPAD,
   DEFAULT_HOME_SCRATCHPAD_SETTINGS,
@@ -507,7 +470,6 @@ module.exports = {
   HOME_SCRATCHPAD_ROWS_MIN,
   HOME_SCRATCHPAD_ROWS_MAX,
   HOME_SCRATCHPAD_ROWS_DEFAULT,
-  HOME_WEATHER_UNITS,
   MAX_HOME_LINK_GROUPS,
   MAX_HOME_LINK_TILES_PER_GROUP,
   MAX_HOME_LINK_NAME_CHARS,
@@ -525,7 +487,6 @@ module.exports = {
   normalizeHomeLinkGroup,
   normalizeHomeLinkTile,
   normalizeHomeLinks,
-  normalizeHomeWeather,
   normalizeHomeWidgets,
   normalizeHomeScratchpad,
   normalizeHomeScratchpadNote,

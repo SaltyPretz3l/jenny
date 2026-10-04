@@ -17,15 +17,29 @@ function _normalizePhaseName(value) {
   return Object.hasOwn(PHASE_PERCENTILE_TARGETS, phase) ? phase : '';
 }
 
+// A missing marker is "not measured". Number(null) and Number('') are 0, which
+// used to land as a 0 ms sample and an epoch-sized ipc_latency_ms.
+function _finiteNumberOrNull(value) {
+  const numeric = typeof value === 'number' ? value
+    : (typeof value === 'string' && value.trim() ? Number(value) : NaN);
+  return Number.isFinite(numeric) ? numeric : null;
+}
+
 function _normalizeDurationMs(value) {
-  const numeric = Number(value);
-  return Number.isFinite(numeric) && numeric >= 0 ? numeric : null;
+  const numeric = _finiteNumberOrNull(value);
+  return numeric != null && numeric >= 0 ? numeric : null;
+}
+
+// Wall-clock markers are epoch ms; 0 is an "unknown start" fallback, not a time.
+function _normalizeEpochMs(value) {
+  const numeric = _finiteNumberOrNull(value);
+  return numeric != null && numeric > 0 ? numeric : null;
 }
 
 function normalizePhaseClientTiming(value) {
   const source = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
-  const sendStartedAtMs = _normalizeDurationMs(source.send_started_at_ms);
-  const optimisticRenderedAtMs = _normalizeDurationMs(source.optimistic_rendered_at_ms);
+  const sendStartedAtMs = _normalizeEpochMs(source.send_started_at_ms);
+  const optimisticRenderedAtMs = _normalizeEpochMs(source.optimistic_rendered_at_ms);
   const localRenderLatencyMs = _normalizeDurationMs(source.local_render_latency_ms);
   return {
     sendStartedAtMs,

@@ -66,6 +66,8 @@ function normalizeToolsStatus(rawToolsStatus, fallbackToolsAvailable = []) {
       const sourceKind = String(valueObject?.source_kind || valueObject?.sourceKind || '').trim();
       const toolFamily = String(valueObject?.tool_family || valueObject?.toolFamily || '').trim();
       const serverName = String(valueObject?.server_name || valueObject?.serverName || '').trim();
+      const connectionId = String(valueObject?.connection_id || valueObject?.connectionId || '').trim();
+      const sideEffecting = valueObject?.side_effecting ?? valueObject?.sideEffecting;
       const worktreeMetrics = normalizeWorktreeStatusMetrics(valueObject);
       normalized[normalizedName] = {
         available,
@@ -75,6 +77,8 @@ function normalizeToolsStatus(rawToolsStatus, fallbackToolsAvailable = []) {
       if (sourceKind) normalized[normalizedName].source_kind = sourceKind;
       if (toolFamily) normalized[normalizedName].tool_family = toolFamily;
       if (serverName) normalized[normalizedName].server_name = serverName;
+      if (connectionId) normalized[normalizedName].connection_id = connectionId;
+      if (typeof sideEffecting === 'boolean') normalized[normalizedName].side_effecting = sideEffecting;
       Object.assign(normalized[normalizedName], worktreeMetrics);
     }
   }
@@ -367,7 +371,14 @@ function normalizeLocalRuntime(rawLocalRuntime, fallback = {}) {
       : 'idle')
   ).trim().toLowerCase() || 'idle';
   const readinessReady = rawReadiness.ready === true || readinessStatus === 'ready';
-  const readinessModelLoaded =
+  // Cloud and CLI engines hold no local weights: loaded stays null, not false.
+  // The sidecar's residency wins; before it reports one, the provider engine type decides.
+  const engineType = String(rawEngine.type || fallback.engine || '').trim().toLowerCase();
+  const residency = ['remote', 'cli'].includes(rawModel.residency)
+    ? rawModel.residency
+    : ({ chatgpt: 'remote', 'codex-cli': 'cli' })[engineType] || 'local';
+  const providerResidency = residency !== 'local';
+  const readinessModelLoaded = providerResidency ? null :
     rawReadiness.model_loaded === true
     || rawReadiness.modelLoaded === true
     || rawModel.loaded === true
@@ -382,11 +393,15 @@ function normalizeLocalRuntime(rawLocalRuntime, fallback = {}) {
   return {
     contract_version: String(source.contract_version || source.contractVersion || fallback.contractVersion || '2').trim() || '2',
     engine: {
-      type: String(rawEngine.type || fallback.engine || '').trim().toLowerCase() || 'mock',
+      type: engineType || 'mock',
     },
     model: {
       id: String(rawModel.id || fallback.model || '').trim() || '',
-      loaded: rawModel.loaded === true || fallback.modelLoaded === true,
+      loaded: providerResidency ? null : rawModel.loaded === true || fallback.modelLoaded === true,
+      configured: typeof rawModel.configured === 'boolean'
+        ? rawModel.configured
+        : Boolean(String(rawModel.id || fallback.model || '').trim()),
+      residency,
     },
     readiness: {
       status: readinessStatus,

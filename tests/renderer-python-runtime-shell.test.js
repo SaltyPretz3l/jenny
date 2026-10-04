@@ -1,6 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { loadRendererApp, waitForUi } = require('./helpers/renderer-shell-harness');
+const { waitForUiState } = require('./helpers/wait-for-ui-state');
 
 async function loadRendererTestApp(t, options) {
   const app = await loadRendererApp(options);
@@ -90,7 +91,12 @@ test('renderer formats python_execute output with inline code, tables, images, a
   assert.match(header.textContent, /ZeroDivisionError/);
 
   header.click();
-  await waitForUi(window, 260);
+  await waitForUiState(window, () => header.getAttribute('aria-expanded') === 'true'
+    && details.hidden === false
+    && window.document.querySelectorAll('.python-output-image').length === 1, {
+    timeoutMs: 5000,
+    message: 'the python tool row did not expand with its image output',
+  });
 
   assert.equal(header.getAttribute('aria-expanded'), 'true');
   assert.equal(details.hidden, false);
@@ -104,13 +110,19 @@ test('renderer formats python_execute output with inline code, tables, images, a
   assert.match(details.textContent, /print\(2 \+ 2\)/);
 
   header.click();
-  await waitForUi(window, 260);
+  await waitForUiState(window, () => header.getAttribute('aria-expanded') === 'false' && details.hidden === true, {
+    timeoutMs: 5000,
+    message: 'the python tool row did not collapse after a second click',
+  });
 
   assert.equal(header.getAttribute('aria-expanded'), 'false');
   assert.equal(details.hidden, true);
 
   header.dispatchEvent(new window.KeyboardEvent('keydown', { key: ' ', bubbles: true }));
-  await waitForUi(window, 260);
+  await waitForUiState(window, () => header.getAttribute('aria-expanded') === 'true' && details.hidden === false, {
+    timeoutMs: 5000,
+    message: 'the python tool row did not re-expand on the space key',
+  });
 
   assert.equal(header.getAttribute('aria-expanded'), 'true');
   assert.equal(details.hidden, false);

@@ -918,3 +918,78 @@ describe('BrowserSessionService / inspect (W8-S4)', () => {
     await assert.rejects(service.inspect('ghost'));
   });
 });
+
+
+test('hung screenshot settles on its deadline', async () => {
+  const factory = createFakeBrowserWindowFactory({ captureResultFactory: () => new Promise(() => {}) });
+  const service = new BrowserSessionService({ browserWindowFactory: factory });
+  await service.open({ sessionId: 'hung_capture', url: 'https://example.com' });
+  const watchdog = setTimeout(() => {}, 1000);
+  try {
+    const outcome = await Promise.race([
+      service.screenshot('hung_capture', { timeout_ms: 10 }).then(() => 'resolved', error => error.message),
+      new Promise(resolve => setTimeout(() => resolve('still hung'), 200)),
+    ]);
+    assert.match(outcome, /screenshot timed out/);
+  } finally {
+    clearTimeout(watchdog);
+    service.disposeSync();
+  }
+});
+
+test('close destroys a producer while screenshot is hung', async () => {
+  const factory = createFakeBrowserWindowFactory({ captureResultFactory: () => new Promise(() => {}) });
+  const service = new BrowserSessionService({ browserWindowFactory: factory });
+  await service.open({ sessionId: 'hung_close', url: 'https://example.com' });
+  const pending = service.screenshot('hung_close').catch(() => null);
+  await new Promise(resolve => setImmediate(resolve));
+  const outcome = await Promise.race([
+    service.close('hung_close'),
+    new Promise(resolve => setTimeout(() => resolve({ closed: false }), 1500)),
+  ]);
+  try {
+    assert.equal(outcome.closed, true);
+    assert.equal(factory.windows[0].destroyed, true);
+  } finally {
+    service.disposeSync();
+  }
+  void pending;
+});
+
+
+for (const cleanup of ['cancelForStream', 'dispose']) {
+  test(`${cleanup} stops a hung screenshot producer`, async () => {
+    const factory = createFakeBrowserWindowFactory({ captureResultFactory: () => new Promise(() => {}) });
+    const service = new BrowserSessionService({ browserWindowFactory: factory });
+    await service.open({ sessionId: 'hung_cleanup', streamId: 'stream_hung', url: 'https://example.com' });
+    void service.screenshot('hung_cleanup').catch(() => null);
+    await new Promise(resolve => setImmediate(resolve));
+    let completed = false;
+    try {
+      await Promise.race([
+        service[cleanup]('stream_hung').then(() => { completed = true; }),
+        new Promise(resolve => setTimeout(resolve, 1500)),
+      ]);
+      assert.equal(completed, true);
+      assert.equal(factory.windows[0].destroyed, true);
+    } finally {
+      service.disposeSync();
+    }
+  });
+}
+
+test('abort settles a hung screenshot before its timeout', async () => {
+  const factory = createFakeBrowserWindowFactory({ captureResultFactory: () => new Promise(() => {}) });
+  const service = new BrowserSessionService({ browserWindowFactory: factory });
+  await service.open({ sessionId: 'hung_abort', url: 'https://example.com' });
+  const controller = new AbortController();
+  const pending = service.screenshot('hung_abort', { abortSignal: controller.signal });
+  const result = pending.then(() => 'resolved', error => error.name);
+  await new Promise(resolve => setImmediate(resolve));
+  controller.abort();
+  try {
+    assert.equal(await Promise.race([result, new Promise(resolve => setTimeout(() => resolve('still hung'), 200))]), 'AbortError');
+  } finally {
+    service.disposeSync();
+  }
+});

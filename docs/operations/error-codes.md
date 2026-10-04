@@ -128,7 +128,7 @@ Tool-execution failures: approval denials, workspace policy violations, IO error
 | `CMP_TOOL_SUBAGENT_INVALID_PROMPT` | `CMP-TOOL-0030` | A delegate task or hidden legacy prompt is blank, malformed, or exceeds its UTF-8 bound | No | `runtime_error` | "Sub-agent prompt invalid." | [sidecar/ai/routing/delegate_contracts.py](../../sidecar/ai/routing/delegate_contracts.py) |
 | `CMP_TOOL_SUBAGENT_INVALID_GRANTS` | `CMP-TOOL-0031` | Delegate arguments conflict, contain unknown fields, or use an ambiguous task-object shape; hidden legacy grant validation uses the same code | No | `runtime_error` | "Sub-agent grants invalid." | [sidecar/ai/routing/delegate_contracts.py](../../sidecar/ai/routing/delegate_contracts.py) |
 | `CMP_TOOL_SUBAGENT_DEPTH_LIMIT` | `CMP-TOOL-0032` | `delegate` or a hidden legacy executor was called from inside another sub-agent | No | `runtime_error` | "Sub-agents cannot nest." | [sidecar/ai/routing/delegate_contracts.py](../../sidecar/ai/routing/delegate_contracts.py) |
-| `CMP_TOOL_SUBAGENT_MUTATING_REQUIRES_WORKTREE` | `CMP-TOOL-0033` | A single-child or batch task requested a mutating family unavailable in the read-only MVP | No | `runtime_error` | "Mutating sub-agent requires a worktree." | [sidecar/ai/routing/subagent_run.py](../../sidecar/ai/routing/subagent_run.py) |
+| `CMP_TOOL_SUBAGENT_MUTATING_REQUIRES_WORKTREE` | `CMP-TOOL-0033` | A single-child or batch task requested a mutating family unavailable in the read-only MVP | No | `runtime_error` | "Mutating sub-agent requires a worktree." | retired with the V1 `subagent_run` executor (DLG-07, 2026-10-03); constant kept in [sidecar/ai/error_codes.py](../../sidecar/ai/error_codes.py) |
 | `CMP_TOOL_SUBAGENT_BUDGET_EXCEEDED` | `CMP-TOOL-0034` | Parent-derived child deadline or configured iteration safety ceiling was exhausted; delegate accepts a nonblank work-limit final as partial, while deadline without an answer, blank/hard exhaustion, and hidden legacy invalid finalization fail | No | `runtime_error` | Deadline: "Sub-agent reached the parent turn deadline before producing an answer." Work limit: "Sub-agent exceeded its budget." | [sidecar/ai/routing/subagent_scheduler.py](../../sidecar/ai/routing/subagent_scheduler.py) |
 | `CMP_TOOL_RICH_FILES_MIME_MISMATCH` | `CMP-TOOL-0035` | rich-file adapter received wrong MIME prefix | No | `runtime_error` | "File type does not match the requested adapter." | [sidecar/ai/tools/builtins/rich_files/base.py](../../sidecar/ai/tools/builtins/rich_files/base.py) |
 | `CMP_TOOL_RICH_FILES_TOO_LARGE` | `CMP-TOOL-0036` | rich-file source exceeds the per-call byte limit | No | `runtime_error` | "File exceeds the rich-file size limit." | [sidecar/ai/tools/builtins/rich_files/base.py](../../sidecar/ai/tools/builtins/rich_files/base.py) |
@@ -211,7 +211,7 @@ Tool-loop runtime: stop conditions, generation failures, validation.
 | `CMP_LOOP_MAX_ITERATIONS` | `CMP-LOOP-0001` | Loop hit max iteration cap | No | `runtime_error` | "Tool loop reached its iteration limit." | [sidecar/runtime/chat.py:873](../../sidecar/runtime/chat.py#L873) |
 | `CMP_LOOP_INVALID_TOOL_CALL` / `LOOP_PROTOCOL_ERROR_CODES.INVALID_TOOL_CALL` (Node) | `CMP-LOOP-0002` | Model emitted malformed tool call | No | `runtime_error` | "Invalid tool call from model." | [sidecar/ai/routing/tool_execution.py:121](../../sidecar/ai/routing/tool_execution.py#L121) |
 | `CMP_LOOP_GENERATION_FAILED` | `CMP-LOOP-0003` | Generation step raised | Conditional | `runtime_error` | "Generation failed: {detail}." | [sidecar/ai/routing/generation_runtime.py:404](../../sidecar/ai/routing/generation_runtime.py#L404) |
-| `LOOP_PROTOCOL_ERROR_CODES.TEXT_AND_TOOL_CALLS` (Node) | `CMP-LOOP-0004` | Assistant returned both text and tool calls | No | `runtime_error` | "Loop protocol error: text and tool calls in same response." | services/backend/tool-loop.js:350 |
+| `LOOP_PROTOCOL_ERROR_CODES.TEXT_AND_TOOL_CALLS` (Node) | `CMP-LOOP-0004` | Assistant returned both text and tool calls | No | `runtime_error` | "Loop protocol error: text and tool calls in same response." | reserved, no live emitter ([services/backend/error-codes.js:79](../../services/backend/error-codes.js#L79)) |
 | `CMP_LOOP_WALL_CLOCK_EXCEEDED` | `CMP-LOOP-0010` | Wall-clock budget exceeded | No | `timeout` | "Tool loop timed out." | [sidecar/ai/routing/loop_stop.py:118](../../sidecar/ai/routing/loop_stop.py#L118) |
 | `CMP_LOOP_BUDGET_EXCEEDED` | `CMP-LOOP-0011` | Token/cost budget exceeded | No | `runtime_error` | "Tool loop budget exceeded." | [sidecar/ai/routing/loop_stop.py:147](../../sidecar/ai/routing/loop_stop.py#L147) |
 | `CMP_LOOP_TOOL_INTERRUPTED` (Python) / `LOOP_PROTOCOL_ERROR_CODES.TOOL_INTERRUPTED` (Node) | `CMP-LOOP-0013` | Tool execution interrupted; emitted by recovery to fill orphaned tool_use slots | Yes | `cancelled` | "System error: tool execution interrupted. Retry if needed." | [services/session-recovery-service.js:109](../../services/session-recovery-service.js#L109) |
@@ -371,13 +371,15 @@ the section id (`personality` / `user` / `memory`).
 | `PERSONALITY_ERROR_CODES.FILE_TOO_LARGE` | `CMP-PERS-0002` | A personality file exceeds the bounded 64 KiB limit on read, would exceed it on write, or is being overwritten while its on-disk copy is over the limit (refused unless the caller passes `force: true`, since an oversized file reads back empty) | No | `ipc_result` | "That file is larger than the 64 KiB personality limit." | [services/personality-workspace-service.js](../../services/personality-workspace-service.js) |
 | `PERSONALITY_ERROR_CODES.MIGRATION_ROLLED_BACK` | `CMP-PERS-0003` | The v2 -> v3 workspace migration failed and every journalled mutation was rolled back; the recorded schema stays unadvanced | Yes | `internal` | internal-only (diagnostic) | [services/personality-workspace-migration.js](../../services/personality-workspace-migration.js) |
 
-## COMPANION - `CMP-COMPANION-NNNN` (1 Node code, 0 dead)
+## COMPANION - `CMP-COMPANION-NNNN` (3 Node codes, 0 dead)
 
 Electron-owned Home (formerly Companion Home) follow-up validation failures.
 
 | Constant | Wire code | Meaning | Retryable | Terminal class | User message | Example site |
 |---|---|---|---|---|---|---|
 | `COMPANION_ERROR_CODES.FOLLOW_UP_INVALID` | `CMP-COMPANION-0001` | Follow-up label/body exceeds companion limits | No | `runtime_error` | "Follow-up label/body exceeds the configured limit." | [services/shell-config-service.js](../../services/shell-config-service.js) |
+| `COMPANION_ERROR_CODES.FOLLOW_UP_NOT_FOUND` | `CMP-COMPANION-0002` | A Home open-loop mutation targeted an id that no longer exists (stale board, deleted elsewhere); raised by the IPC guard only, the task-board tool path stays silent | No | `runtime_error` | "That open loop no longer exists." | [services/shell-config-followup-actions.js](../../services/shell-config-followup-actions.js) |
+| `COMPANION_ERROR_CODES.FOLLOW_UP_STATE_CONFLICT` | `CMP-COMPANION-0003` | An open-loop transition is invalid for its current state (defer on a resolved/archived loop, archive on an unresolved loop) | No | `runtime_error` | "Completed open loops cannot be deferred. Reopen it first." or "Only resolved open loops can be archived." (localized as one generic sentence) | [services/shell-config-followup-actions.js](../../services/shell-config-followup-actions.js) |
 
 ## SRV — `CMP-SRV-NNNN` (1 code, 0 dead)
 
@@ -386,25 +388,6 @@ Service-lifecycle errors.
 | Constant | Wire code | Meaning | Retryable | Terminal class | User message | Example site |
 |---|---|---|---|---|---|---|
 | `CMP_SRV_INITIALIZE_FAILED` | `CMP-SRV-0001` | Service initialization failed | No | `runtime_error` | internal-only | [sidecar/runtime/request_dispatch.py:1348](../../sidecar/runtime/request_dispatch.py#L1348) |
-
-## REMOTE — `CMP-REMOTE-NNNN` (12 Node codes, 0 dead)
-
-Remote Control command admission, authority, bounded transport, and resynchronization errors. The runtime values are owned by `ERROR_CODES` in the remote wire contract.
-
-| Constant | Wire code | Meaning | Retryable | Terminal class | User message | Example site |
-|---|---|---|---|---|---|---|
-| `ERROR_CODES.unauthorized` | `CMP-REMOTE-0001` | Device or connection is not authorized for the requested remote operation | No | `runtime_error` | "This device is not authorized." | [services/remote/remote-contracts.js](../../services/remote/remote-contracts.js) |
-| `ERROR_CODES.not_reachable` | `CMP-REMOTE-0002` | Jenny or its backend is not currently reachable through Remote Control | Conditional | `runtime_error` | "Jenny is not reachable right now." | [services/remote/remote-contracts.js](../../services/remote/remote-contracts.js) |
-| `ERROR_CODES.session_not_shared` | `CMP-REMOTE-0003` | The requested session has not been shared with the remote device | No | `runtime_error` | "This conversation is not shared with your phone." | [services/remote/remote-contracts.js](../../services/remote/remote-contracts.js) |
-| `ERROR_CODES.stale_approval` | `CMP-REMOTE-0004` | A decision targets an approval or question that is no longer pending at the supplied revision | No | `runtime_error` | "This decision is no longer pending." | [services/remote/remote-contracts.js](../../services/remote/remote-contracts.js) |
-| `ERROR_CODES.session_busy` | `CMP-REMOTE-0005` | The session already has an active turn and remote sends are not queued | Yes | `runtime_error` | "This conversation is busy. Try again when the current response finishes." | [services/remote/remote-contracts.js](../../services/remote/remote-contracts.js) |
-| `ERROR_CODES.rate_limited` | `CMP-REMOTE-0006` | A per-device remote command, send, or session-creation limit was exceeded | Yes | `runtime_error` | "Too many remote requests. Wait before trying again." | [services/remote/remote-contracts.js](../../services/remote/remote-contracts.js) |
-| `ERROR_CODES.payload_too_large` | `CMP-REMOTE-0007` | The prompt, frame, transcript page, or queued payload exceeds its wire limit | No | `runtime_error` | "The remote request is too large." | [services/remote/remote-contracts.js](../../services/remote/remote-contracts.js) |
-| `ERROR_CODES.lockdown` | `CMP-REMOTE-0008` | Offline lockdown blocks remote listing, reading, sending, or decision authority for the session | No | `runtime_error` | "Remote Control is unavailable while this conversation is in offline lockdown." | [services/remote/remote-contracts.js](../../services/remote/remote-contracts.js) |
-| `ERROR_CODES.desktop_only` | `CMP-REMOTE-0009` | The pending decision requires facts or authority available only on desktop | No | `runtime_error` | "Continue this decision on desktop." | [services/remote/remote-contracts.js](../../services/remote/remote-contracts.js) |
-| `ERROR_CODES.resync_required` | `CMP-REMOTE-0010` | The connection can no longer replay every event after its last acknowledged sequence | Yes | `runtime_error` | "The phone must refresh this conversation." | [services/remote/remote-contracts.js](../../services/remote/remote-contracts.js) |
-| `ERROR_CODES.invalid_request` | `CMP-REMOTE-0011` | A remote frame or command violates the versioned wire contract | No | `runtime_error` | "The remote request is invalid." | [services/remote/remote-contracts.js](../../services/remote/remote-contracts.js) |
-| `ERROR_CODES.epoch_invalid` | `CMP-REMOTE-0012` | A command or frame belongs to an invalidated Remote Control live epoch | Yes | `runtime_error` | "Remote Control was restarted. Reconnect your phone." | [services/remote/remote-contracts.js](../../services/remote/remote-contracts.js) |
 
 ## RUNTIME — `CMP-RUNTIME-NNNN` (6 codes, 0 dead)
 
@@ -497,16 +480,17 @@ Workspace IDE page filesystem failures from `WorkspaceIdeService`, `VersionedWor
 
 ## TERMINAL - `CMP-TERMINAL-NNNN` (4 Node codes, 0 dead)
 
-Workspace IDE integrated terminal. `WorkspaceTerminalService` is the piped
-PowerShell session pinned to the tools workspace root; `WorkspacePtyService`
-is the real ConPTY sibling (default-off `workspace_pty_terminal` flag,
-`@lydell/node-pty`) and adds the `MODULE_LOAD_FAILED` fail-soft code.
+Workspace IDE integrated terminal. `WorkspacePtyService` is the real ConPTY
+session (`@lydell/node-pty`) pinned to the tools workspace root; it raises all
+four codes as structured `ok:false` results, never across the IPC seam. The
+piped `WorkspaceTerminalService` and its `workspace_pty_terminal` flag were
+retired in post-1.2.0 sweep S8.
 
 | Constant | Wire code | Meaning | Retryable | Terminal class | User message | Example site |
 |---|---|---|---|---|---|---|
-| `TERMINAL_ERROR_CODES.SPAWN_FAILED` | `CMP-TERMINAL-0001` | Shell executable failed to spawn | Conditional | `runtime_error` | "Could not start the terminal shell." | [services/workspace-terminal-service.js](../../services/workspace-terminal-service.js) |
-| `TERMINAL_ERROR_CODES.ROOT_MISSING` | `CMP-TERMINAL-0002` | Tools workspace root is not configured | No | `runtime_error` | "No workspace root is configured; choose a workspace folder first." | [services/workspace-terminal-service.js](../../services/workspace-terminal-service.js) |
-| `TERMINAL_ERROR_CODES.NO_SESSION` | `CMP-TERMINAL-0003` | write/signal arrived with no running session | No | `runtime_error` | "No terminal session is running." | [services/workspace-terminal-service.js](../../services/workspace-terminal-service.js) |
+| `TERMINAL_ERROR_CODES.SPAWN_FAILED` | `CMP-TERMINAL-0001` | Shell executable failed to spawn (also: resize/kill/wiring failure on a live session) | Conditional | `runtime_error` | "Could not start the terminal shell." | [services/workspace-pty-service.js](../../services/workspace-pty-service.js) |
+| `TERMINAL_ERROR_CODES.ROOT_MISSING` | `CMP-TERMINAL-0002` | Tools workspace root is not configured | No | `runtime_error` | "No workspace root is configured; choose a workspace folder first." | [services/workspace-pty-service.js](../../services/workspace-pty-service.js) |
+| `TERMINAL_ERROR_CODES.NO_SESSION` | `CMP-TERMINAL-0003` | write/resize arrived with no running session, or spawn after dispose | No | `runtime_error` | "No terminal session is running." | [services/workspace-pty-service.js](../../services/workspace-pty-service.js) |
 | `TERMINAL_ERROR_CODES.MODULE_LOAD_FAILED` | `CMP-TERMINAL-0004` | The `@lydell/node-pty` native module failed to load (missing prebuild / ABI mismatch) | No | `runtime_error` | "The terminal engine could not be loaded." | [services/workspace-pty-service.js](../../services/workspace-pty-service.js) |
 
 ## GIT - `CMP-GIT-NNNN` (8 Node codes, 0 dead)
@@ -712,6 +696,7 @@ This test catches the drift classes that affect runtime contracts: undocumented 
 
 ## Change log
 
+- **2026-10-02** - Removed the `REMOTE` domain (12 Node codes) with the Remote Control feature (owner decision; code recoverable from the tag `archive/remote-control`). Its numbers are retired and not reused.
 - **2026-07-10** - Added versioned workspace-file root-generation, strict UTF-8, and bounded atomic-write seam codes (`CMP-WORKSPACEFS-0008`, `0009`, `0013`, and `0021`-`0023`).
 - **2026-07-01** - Wave-1 hygiene re-derivation: corrected the drift inventory (31 claimed dead → 4 actually dead; mermaid, python-runtime, cap, apply-patch, CHAT/SRV/CLOUD/SIDECAR codes were live via aliases), refreshed Example site links, and removed 7 confirmed-dead constants from `sidecar/ai/error_codes.py`.
 - **2026-05-23** - Added the Node peer for `CMP-AI-0002` managed Ollama preflight failures and reconciled the AI registry notes with typed sidecar exception imports.

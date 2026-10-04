@@ -317,3 +317,12 @@ test('lastUsedTag must name an existing entry so a removed model never stays the
   const persisted = JSON.parse(fs.readFileSync(service.store.filePath, 'utf8'));
   assert.equal(persisted.localEngines.openaiCompatible.managed.lastUsedTag, '');
 });
+
+test('a saved retired plugin_host preferred engine falls back to the default engine', () => {
+  const { normalizePreferredEngineType } = require('../services/shell-config-engines');
+  assert.equal(normalizePreferredEngineType('plugin_host'), '');
+  assert.equal(normalizePreferredEngineType(' PLUGIN_HOST '), '');
+  assert.equal(normalizePreferredEngineType('vllm'), 'vllm');
+  const state = normalizeState({ preferredEngineType: 'plugin_host' });
+  assert.equal(state.preferredEngineType, '');
+});

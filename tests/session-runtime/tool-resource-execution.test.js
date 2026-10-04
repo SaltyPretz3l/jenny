@@ -2,7 +2,9 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
 const os = require('node:os');
+const path = require('node:path');
 const { SessionExecutionAuthority } = require('../../services/backend/session-execution-authority');
 const { ResourceBroker, capacityResource } = require('../../services/session-runtime/resource-broker');
 const { PhysicalPathResolver } = require('../../services/session-runtime/physical-paths');
@@ -13,10 +15,10 @@ const { executeResolvedTool } = require('../../services/tools/tool-execution-dis
 const { ToolExecutor } = require('../../services/tools/tool-executor');
 const { TOOL_ERROR_CODES } = require('../../services/backend/error-codes');
 
-function fixture() {
+function fixture(rootPath = os.tmpdir()) {
   let decision = 'auto';
-  const authority = Object.freeze({ project_id: 'project_test', root_path: os.tmpdir(),
-    root_id: 'root_test', root_revision: 1, device_id: null, inode: null });
+  const authority = Object.freeze({ project_id: 'project_test', root_path: rootPath,
+    root_id: rootPath === null ? null : 'root_test', root_revision: 1, device_id: null, inode: null });
   const permissionStore = { getSnapshot: () => ({ version: 3,
     legacy_policies: { jenny_status: decision, run_command: decision }, rules: [] }) };
   const executionAuthority = new SessionExecutionAuthority({
@@ -101,6 +103,21 @@ test('Electron execution brackets the actual producer and quarantines an unprove
     assert.equal(setup.broker.snapshot().lease_count, throws ? 1 : 0);
     setup.gateway.close({ producerSettled: false });
   }
+});
+
+// F27: the dispatcher dropped image_generate's model copy before the bridge saw it.
+test('a builtin image_generate result keeps its model image; other tools and failures do not', async () => {
+  const executor = { _logger() {}, _mergePolicyDecisionMetadata: value => value,
+    _evaluateToolPolicy: () => ({ decision: 'auto' }), _homeAssistantService: () => null };
+  const previewImage = { buffer: Buffer.from('png'), width: 1, height: 1, mime_type: 'image/png' };
+  const run = (toolName, { isError = false, category = 'builtin', input = {} } = {}) => executeResolvedTool(executor,
+    { callId: 'call_1', toolName, input }, {}, { startTime: Date.now(), approvalState: 'auto', tool: {
+      category, summarize: () => toolName, execute: async () => ({ content: 'done', isError, previewImage }) } });
+  assert.equal((await run('image_generate')).previewImage, previewImage);
+  assert.equal((await run('image_generate', { isError: true })).previewImage, undefined);
+  assert.equal((await run('image_generate', { category: 'plugin' })).previewImage, undefined);
+  assert.equal((await run('jenny_status')).previewImage, undefined);
+  assert.equal((await run('preview_test', { input: { screenshot: true } })).previewImage, previewImage);
 });
 
 test('producer start rechecks a policy that changes to deny during the handshake', async () => {
@@ -195,9 +212,13 @@ test('Electron cancellation or stale authority while ready never starts and rele
 });
 
 test('hosted command refuses authority revoked during the start handshake before broker submission', async () => {
-  const setup = fixture(); let submitted = 0; let acknowledged = false;
+  const project = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-project-'));
+  const setup = fixture(project); let submitted = 0; let acknowledged = false;
   const { executeHostedRunCommand } = require('../../services/backend/hosted-command-bridge');
+  const stagingRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-stage-'));
   const result = await executeHostedRunCommand({ sessionRuntime: {}, hostExecutionPolicyVersion: 2,
+    hostExecutionStagingRoot: stagingRoot,
+    configService: { getToolsWorkspaceRoot: () => os.tmpdir() },
     hostExecutionBroker: { status: () => ({ available: true }), execute: async (_input, options) => {
       await options.beforeAdmission(); submitted++;
       return { success: true, cleanup_confirmed: true };
@@ -209,4 +230,45 @@ test('hosted command refuses authority revoked during the start handshake before
     sanitizeBridgeMetadata: value => value, maxOutputChars: 1000 });
   assert.equal(acknowledged, true); assert.equal(submitted, 0); assert.equal(result.success, false);
   assert.equal(setup.broker.snapshot().lease_count, 0); setup.gateway.close({ producerSettled: true });
+});
+
+test('hosted command scopes input to the captured project and fails closed without that scope', async () => {
+  const { executeHostedRunCommand } = require('../../services/backend/hosted-command-bridge');
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-scope-'));
+  const stagingRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-stage-'));
+  const workspace = path.join(base, 'hosted-test-workspace');
+  fs.mkdirSync(path.join(workspace, 'projects', 'a'), { recursive: true });
+  for (const scenario of [
+    { root: path.join(workspace, 'projects', 'a'), workspace, expected: true },
+    { root: workspace, workspace, expected: true },
+    { root: path.join(base, 'hosted-test-workspace-sibling'), workspace },
+    { root: path.resolve(workspace, '..'), workspace },
+    { root: workspace, workspace: null },
+    { root: workspace, workspace, missingBinding: true },
+    { root: null, workspace },
+  ]) {
+    const setup = fixture(scenario.root);
+    const calls = [];
+    const result = await executeHostedRunCommand({ hostExecutionPolicyVersion: 2,
+      hostExecutionStagingRoot: stagingRoot,
+      configService: { getToolsWorkspaceRoot: () => scenario.workspace },
+      hostExecutionBroker: { status: () => ({ available: true }), execute: async (input, options) => {
+        calls.push(input); await options.beforeAdmission();
+        return { success: true, cleanup_confirmed: true, stdout: 'ok' };
+      } },
+    }, { input: { command: 'true', cwd: 'nested' }, sessionId: 'session_test', streamId: 'request_test',
+      executionAuthority: scenario.missingBinding ? undefined : setup.binding, callId: 'operation:1',
+    }, { bridgeFailure: (tool_name, output, error_code) => ({ tool_name, success: false, output, error_code }),
+      sanitizeBridgeMetadata: value => value, maxOutputChars: 1000 });
+    if (scenario.expected) {
+      assert.equal(result.success, true);
+      assert.match(calls[0].inputRoot, /^[a-f0-9-]{36}$/u);
+      assert.equal(calls[0].cwd, 'nested');
+    } else {
+      assert.equal(calls.length, 0);
+      assert.equal(result.error_code, TOOL_ERROR_CODES.EXECUTION_FAILED);
+      assert.equal(result.output, 'Hosted execution failed: project_root_outside_workspace.');
+    }
+    setup.gateway.close({ producerSettled: true });
+  }
 });

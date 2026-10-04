@@ -2,7 +2,8 @@ const { normalizeString: normalizeToken } = require('./shared/normalize');
 
 const STREAM_ENVELOPE_SCHEMA_VERSION = 2;
 const STREAM_ENVELOPE_CHANNELS = new Set(['reasoning', 'response', 'tool', 'phase', 'control']);
-const TOOL_CHAT_STREAM_TYPES = new Set(['tool_use', 'tool_result', 'tool_approval_needed', 'tool_approval_withdrawn']);
+const TOOL_CHAT_STREAM_TYPES = new Set(['tool_use', 'tool_result', 'tool_approval_needed', 'tool_approval_withdrawn',
+  'user_questions_withdrawn']);
 const TERMINAL_CHAT_STREAM_TYPES = new Set(['complete', 'question_batch', 'plan_proposal', 'error']);
 const ENVELOPE_PAYLOAD_METADATA_KEYS = [
   'aggregate',
@@ -110,7 +111,8 @@ function inferEnvelopeEventKind(type) {
   if (type === 'stream_reset') return 'reset';
   if (TERMINAL_CHAT_STREAM_TYPES.has(type)) return 'terminal';
   if (type === 'phase_started' || type === 'tool_use' || type === 'tool_approval_needed' || type === 'started') return 'started';
-  if (type === 'phase_completed' || type === 'tool_result' || type === 'tool_approval_withdrawn') return 'completed';
+  if (type === 'phase_completed' || type === 'tool_result' || type === 'tool_approval_withdrawn'
+    || type === 'user_questions_withdrawn') return 'completed';
   // W2-1 live tool-output batches must NOT classify as 'delta' — the bridge
   // coalesces same-key delta envelopes with a payload merge that replaces
   // `lines` (earlier batches would vanish). 'progress' passes through 1:1.
@@ -118,7 +120,8 @@ function inferEnvelopeEventKind(type) {
   // on one channel would coalesce into a single merged payload, so the ring
   // would jump instead of tracking the turn. 'progress' passes through 1:1.
   // Compaction activity and tool-input fragments likewise must remain 1:1.
-  if (['tool_output_chunk', 'context_usage', 'context_compacting', 'tool_input_delta'].includes(type)) return 'progress';
+  // A waiting notice is a one-shot state report: a later one replaces it whole.
+  if (['tool_output_chunk', 'context_usage', 'context_compacting', 'tool_input_delta', 'runtime_waiting'].includes(type)) return 'progress';
   return 'delta';
 }
 

@@ -58,6 +58,9 @@ async function capture(root, options = {}) {
     screenshot: BrowserSessionService.prototype.screenshot.bind({
       _runSessionOperation: async (_id, _opts, operation) => operation(session, null),
       _currentUrl: () => 'file:///fixture.html',
+      _withTimeout: BrowserSessionService.prototype._withTimeout,
+      _setTimeout: setTimeout,
+      _clearTimeout: clearTimeout,
     }),
   };
   const tool = createPreviewTestTool({ setTimeoutImpl: (callback) => { callback(); return null; } });

@@ -419,6 +419,31 @@ def test_settle_dropped_tool_calls_settles_every_reserved_call() -> None:
     ]
 
 
+def test_settle_dropped_tool_calls_names_the_call_the_batch_paused_on() -> None:
+    """The model learns why its call did not run, not just that it did not."""
+    outcomes: list[ToolExecutionOutcome] = []
+    runtime, _events = _runtime()
+
+    settle_dropped_tool_calls(
+        kernel=_Kernel(),
+        runtime=runtime,
+        result=SimpleNamespace(),
+        request_id="req-1",
+        session_id="session-1",
+        dropped_calls=(_call("edit_file", call_id="call-after-approved"),),
+        outcomes=outcomes,
+        working_messages=[],
+        iteration_calls=[],
+        streamed_event_types=set(),
+        approved_tool_id="delete_file",
+    )
+
+    assert outcomes[0].output.startswith("Tool 'edit_file' was not executed")
+    assert "paused for approval of 'delete_file'" in outcomes[0].output
+    assert "approved execution window" in outcomes[0].output
+    assert "Re-issue it now" in outcomes[0].output
+
+
 def test_settle_dropped_tool_calls_is_a_no_op_without_dropped_calls() -> None:
     kernel = _Kernel()
     runtime, events = _runtime()

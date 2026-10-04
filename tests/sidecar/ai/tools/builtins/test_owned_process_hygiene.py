@@ -140,8 +140,8 @@ def test_posix_spawn_shutdown_race_terminates_but_quarantines_without_tree_proof
     process = _Process()
 
     def _popen(*_args: object, **_kwargs: object) -> _Process:
-        with service._condition:  # noqa: SLF001 - force the registration race.
-            service._shutting_down = True  # noqa: SLF001
+        with service._condition:  # force the registration race.
+            service._shutting_down = True
         return process
 
     def _killpg(process_group_id: int, sent_signal: object) -> None:

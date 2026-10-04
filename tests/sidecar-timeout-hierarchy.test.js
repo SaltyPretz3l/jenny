@@ -1,7 +1,6 @@
 'use strict';
 
 // Cross-process timeout ordering for decision-driving models.unload and models.list.
-// It deliberately excludes inline.complete because abandoning a completion is harmless.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');

@@ -11,6 +11,15 @@ const {
   redactLogText,
 } = require('../renderer/shared/log-contract-utils');
 
+test('shared value redaction drops unsafe dynamic keys recursively without renaming them', () => {
+  const secretKey = 'sk-test-SYNTHETIC123';
+  const redacted = redactLogReportValue({
+    [secretKey]: 'hidden', ['x'.repeat(65)]: 1,
+    rows: [{ 'token=private': 2, ['x'.repeat(64)]: 3, token: 'private' }],
+  });
+  assert.deepEqual(redacted, { rows: [{ ['x'.repeat(64)]: 3, token: '[redacted]' }] });
+});
+
 test('log contract exposes the shared retention limits used by Logs V2', () => {
   assert.deepEqual(LOG_RETENTION, {
     mainStoreLimit: 400,

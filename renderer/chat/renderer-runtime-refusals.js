@@ -53,6 +53,11 @@
   var RUN_MODE_CHANGED = entry('loop', 'calm', null,
     jt('chat.runtimeRefusal.runModeChanged.title', 'Run mode changed mid-request'),
     jt('chat.runtimeRefusal.runModeChanged.hint', 'You switched modes while this ran, so the reply stopped. Send again to continue in the new mode.'));
+  /* An image render holds the GPU (chat-gpu-handoff.js): the send is refused,
+   * not queued, and works again once the render finishes. */
+  var IMAGE_RENDER = entry('loop', 'calm', null,
+    jt('chat.runtimeRefusal.imageRender.title', 'An image is being drawn'),
+    jt('chat.runtimeRefusal.imageRender.hint', 'Send again when it finishes — your draft is back in the composer.'));
   var SNAPSHOT_STALE = entry('loop', 'calm', null,
     jt('chat.runtimeRefusal.snapshotStale.title', 'The work list moved on'),
     jt('chat.runtimeRefusal.snapshotStale.hint', 'Refresh to see the current queue.'));
@@ -60,7 +65,7 @@
   /* Decisions. Something must change before this message can run. */
   var RUNTIME_DISABLED = entry('setup', 'danger', 'open_settings',
     jt('chat.runtimeRefusal.runtimeDisabled.title', 'Session runtime is off'),
-    jt('chat.runtimeRefusal.runtimeDisabled.hint', 'Turn it on in Settings › Runtime to queue and resume work.'));
+    jt('chat.runtimeRefusal.runtimeDisabled.hintDiagnosticsRuns', 'Your message is not queued. Queued work waits in Diagnostics › Runs until the runtime is back.'));
   var SESSION_QUEUE_FULL = entry('loop', 'danger', null,
     jt('chat.runtimeRefusal.sessionQueueFull.title', "This chat's queue is full"),
     jt('chat.runtimeRefusal.sessionQueueFull.hint', 'Withdraw a queued message or wait for a reply to finish.'));
@@ -75,7 +80,7 @@
     jt('chat.runtimeRefusal.messageTooLarge.hint', 'Shorten the message or remove attachments, then send again.'));
   var BUDGET_EXHAUSTED = entry('setup', 'danger', 'open_settings',
     jt('chat.runtimeRefusal.budgetExhausted.title', "This run's budget is used up"),
-    jt('chat.runtimeRefusal.budgetExhausted.hint', 'Start a new run with a higher limit from Settings › Developer › Runtime limits.'));
+    jt('chat.runtimeRefusal.budgetExhausted.hintNewMessage', 'This run used its whole budget. Start a new message to continue.'));
   var BUDGET_PROVIDER = entry('setup', 'danger', 'open_settings',
     jt('chat.runtimeRefusal.budgetProvider.title', 'Provider not allowed for this run'),
     jt('chat.runtimeRefusal.budgetProvider.hint', 'This run was started without that provider. Start a new run or switch model.'));
@@ -112,6 +117,11 @@
   var WORK_GONE = entry('loop', 'danger', null,
     jt('chat.runtimeRefusal.workGone.title', 'That work is gone'),
     jt('chat.runtimeRefusal.workGone.hint', 'The runtime no longer has this work. Refresh the list.'));
+  /* The invoked skill is not in this chat's catalog (another project's, or
+   * removed/disabled since it was picked). The message did not run. */
+  var SKILL_NOT_AVAILABLE = entry('setup', 'danger', null,
+    jt('chat.runtimeRefusal.unknown.title', "Jenny couldn't do that"),
+    jt('chat.runtimeRefusal.skillNotAvailable.hint', "That skill isn't available in this chat. Pick one from the / menu and send again."));
   var SUBMISSION_REFUSED = entry('transport', 'danger', 'open_diagnostics',
     jt('chat.runtimeRefusal.submissionRefused.title', "Jenny couldn't queue that"),
     jt('chat.runtimeRefusal.submissionRefused.hint', "The runtime didn't accept the message. Your draft is back in the composer."));
@@ -119,8 +129,11 @@
   var VOCABULARY = Object.freeze({
     session_busy: SESSION_BUSY,
     lane_capacity: LANE_CAPACITY,
+    runtime_model_switch_busy: LANE_CAPACITY,
     downstream_capacity: DOWNSTREAM_CAPACITY,
     runtime_closing: RUNTIME_CLOSING,
+    gpu_busy_plugin: IMAGE_RENDER,
+    gpu_lease_held: IMAGE_RENDER,
     runtime_disabled: RUNTIME_DISABLED,
     runtime_transcript_cache_pressure: TRANSCRIPT_PRESSURE,
     session_pending_capacity: SESSION_QUEUE_FULL,
@@ -147,6 +160,7 @@
     runtime_unavailable: SUBMISSION_REFUSED,
     runtime_submission_refused: SUBMISSION_REFUSED,
     runtime_submission_request_invalid: SUBMISSION_REFUSED,
+    skill_not_available: SKILL_NOT_AVAILABLE,
   });
 
   var RUNTIME_REFUSAL_REASONS = Object.freeze(Object.keys(VOCABULARY));
@@ -191,20 +205,26 @@
    * @param {Object|Error|string|null} input - IPC failure, thrown error, or reason
    * @returns {Readonly<{reason: string, classId: string, severity: string, title: string, hint: string, action: string|null}>}
    */
+  // The composer shows a calm refusal as one line: an unpunctuated title ends
+  // its sentence before the hint.
+  function noticeText(title, hint) {
+    var head = String(title || '');
+    var stop = !head || /[.!?…:。！？]$/.test(head) ? '' : '.';
+    return head + stop + ' ' + String(hint || '');
+  }
+
   function describeRuntimeRefusal(input) {
     var reason = resolveReason(input);
     var known = Object.prototype.hasOwnProperty.call(VOCABULARY, reason) ? VOCABULARY[reason] : null;
     if (known) {
       return Object.freeze({ reason: reason, classId: known.classId, severity: known.severity,
-        title: known.title, hint: known.hint, action: known.action });
+        title: known.title, hint: known.hint, action: known.action, notice: noticeText(known.title, known.hint) });
     }
+    var title = jt('chat.runtimeRefusal.unknown.title', "Jenny couldn't do that");
+    var hint = jt('chat.runtimeRefusal.unknown.hint', 'Reason: {reason}', { reason: reason });
     return Object.freeze({
-      reason: reason,
-      classId: 'unknown',
-      severity: 'danger',
-      action: null,
-      title: jt('chat.runtimeRefusal.unknown.title', "Jenny couldn't do that"),
-      hint: jt('chat.runtimeRefusal.unknown.hint', 'Reason: {reason}', { reason: reason }),
+      reason: reason, classId: 'unknown', severity: 'danger', action: null,
+      title: title, hint: hint, notice: noticeText(title, hint),
     });
   }
 

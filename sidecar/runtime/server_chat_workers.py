@@ -126,12 +126,12 @@ def _release_paused_worker_ownership(
     if plugin_runtime_admission is not None:
         try:
             plugin_runtime_admission.release()
-        except Exception:  # noqa: BLE001 - a pause must fail closed on cleanup.
+        except Exception:  # a pause must fail closed on cleanup.
             released = False
             logger.exception("failed to release paused chat plugin admission")
     try:
         transport.unregister_turn(request_id, expected_handle=cancel_handle)
-    except Exception:  # noqa: BLE001 - a pause must fail closed on cleanup.
+    except Exception:  # a pause must fail closed on cleanup.
         released = False
         logger.exception("failed to unregister paused chat turn")
     session_id = str(getattr(cancel_handle, "session_id", "") or "").strip()
@@ -142,7 +142,7 @@ def _release_paused_worker_ownership(
         try:
             if is_active(session_id):
                 released = False
-        except Exception:  # noqa: BLE001 - inability to prove release is failure.
+        except Exception:  # inability to prove release is failure.
             released = False
             logger.exception("failed to verify paused chat turn unregister")
     if not released:
@@ -182,7 +182,7 @@ def make_chat_send_worker(  # noqa: PLR0913
                 paused_outcome = outcome
             else:
                 send_outcome(outcome, multiplexer=transport)
-        except Exception as error:  # noqa: BLE001
+        except Exception as error:
             logger.exception("fatal chat.send worker error")
             try:
                 response = error_response(
@@ -215,7 +215,7 @@ def make_chat_send_worker(  # noqa: PLR0913
         ):
             try:
                 send_outcome(paused_outcome, multiplexer=transport)
-            except Exception:  # noqa: BLE001 - transport failure cannot expose a false pause.
+            except Exception:  # transport failure cannot expose a false pause.
                 logger.exception("failed to enqueue paused chat.send outcome")
 
     return _worker
@@ -473,7 +473,7 @@ def start_chat_send_worker_if_allowed(  # noqa: PLR0913
         worker_threads.add(thread)
         active_cancel_handles[thread] = cancel_handle
         thread.start()
-    except Exception as error:  # noqa: BLE001 -- startup failure must not leak the turn
+    except Exception as error:  # startup failure must not leak the turn
         if thread is not None:
             worker_threads.discard(thread)
             active_cancel_handles.pop(thread, None)

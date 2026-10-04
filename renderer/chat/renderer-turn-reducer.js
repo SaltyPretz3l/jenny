@@ -261,7 +261,7 @@
       turns_by_id: createNullProtoMap(),
       reconciled_rows_by_turn_id: createNullProtoMap(),
       pending_reconciliation_by_turn_id: createNullProtoMap(),
-      // DC1 flicker cure (chat_timeline_deterministic_row_id): when opted in,
+      // DC1 flicker cure: when opted in (every live row-model session),
       // each row-builder stamps a deterministic identity-tuple row_id at its
       // tail (via deriveDeterministicRowId). Default false => row_id stays
       // `row:${event_id}` and every downstream projection is byte-identical.
@@ -750,9 +750,9 @@
       }
       // tool_continuation resets preserve genuine pre-tool commentary — no
       // "restarted" stamp; every other/absent reason discards (EH-W5 marker).
-      // The one addition: with response_loop_display_v2 OFF main discards the
-      // commentary under that same reason (discard_scope 'all'), and text main
-      // erased has to carry the marker.
+      // The one addition: a transcript recorded before the post-1.2.0 flag
+      // collapse can carry discard_scope 'all' under that same reason, and
+      // text main erased has to carry the marker.
       const resetDiscardScope = resolveStreamResetDiscardScope(event);
       if (normalizeId(event.reason) !== 'tool_continuation' || resetDiscardScope === 'all') {
         markLatestAssistantRowsTruncated(turn);

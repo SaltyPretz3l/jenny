@@ -45,6 +45,7 @@ from sidecar.runtime.chat import (
     build_chat_send_response,  # noqa: F401
     resume_chat_send_response_from_approval_plan,  # noqa: F401
 )
+from sidecar.runtime.chatgpt_model_catalog import model_list_config
 from sidecar.runtime.diagnostics import (
     apply_logging_preferences,
     correlation_from_params,
@@ -58,7 +59,6 @@ from sidecar.runtime.request_dispatch_background import process_background_metho
 from sidecar.runtime.request_dispatch_commit import process_commit_method
 from sidecar.runtime.request_dispatch_compact import process_compact_method
 from sidecar.runtime.request_dispatch_harness import process_harness_method
-from sidecar.runtime.request_dispatch_inline import process_inline_method
 from sidecar.runtime.request_dispatch_mcp import process_mcp_method
 from sidecar.runtime.request_dispatch_memory import process_memory_method
 from sidecar.runtime.request_dispatch_suggestions import process_suggestions_method
@@ -107,7 +107,7 @@ def _hosted_method_rejection(message_id: Any) -> ProcessOutcome:
 # resolving on this hub. The moved code late-binds these (and the patch anchors
 # above) through ``import sidecar.runtime.request_dispatch as _rd_hub`` so a patch
 # set here is honored at call time. Import direction: support <- chat <- hub.
-from sidecar.runtime.request_dispatch_chat import process_chat_send_request  # noqa: E402,F401
+from sidecar.runtime.request_dispatch_chat import process_chat_send_request  # noqa: E402
 from sidecar.runtime.request_dispatch_chat_support import (  # noqa: E402,F401
     _approval_terminal_log_fields,
     _build_chat_response,
@@ -127,27 +127,22 @@ def _resolve_resident_models_engine(brain_container: Any) -> Any:
     """Pick the OllamaEngine to query for `/api/ps` residency data.
 
     Prefers the active stack engine when it is already an OllamaEngine (no
-    extra daemon round-trip / duplicate instance); otherwise falls back to a
-    transient Ollama engine against the app-managed daemon, same as the FIM
-    completion menu's live-loaded indicator (see
-    sidecar.runtime.inline_completion._build_ollama_fallback_engine). Returns
-    None if neither is available.
+    extra daemon round-trip / duplicate instance); otherwise builds a transient
+    engine against the app-managed daemon. Construction does no network I/O, so
+    the per-request instance needs no caching or lifecycle management (which the
+    BrainContainer request-boundary tripwire would otherwise flag). Returns None
+    if neither is available.
     """
     try:
-        from sidecar.ai.engines.ollama import OllamaEngine  # noqa: PLC0415
-
-        stack = getattr(brain_container, "stack", None)
-        engine = getattr(stack, "engine", None)
-        if isinstance(engine, OllamaEngine):
-            return engine
+        from sidecar.ai.engines.ollama import OllamaEngine
     except Exception:  # noqa: BLE001
-        pass
+        return None
+    stack = getattr(brain_container, "stack", None)
+    engine = getattr(stack, "engine", None)
+    if isinstance(engine, OllamaEngine):
+        return engine
     try:
-        from sidecar.runtime.inline_completion import (  # noqa: PLC0415
-            _build_ollama_fallback_engine,
-        )
-
-        return _build_ollama_fallback_engine()
+        return OllamaEngine()
     except Exception:  # noqa: BLE001
         return None
 
@@ -488,7 +483,7 @@ def process_message(
                     brain_container=brain_container,
                     progress_callback=emit_runtime_progress if request_id else None,
                 )
-            except Exception as error:  # noqa: BLE001
+            except Exception as error:
                 logger.exception("initialize failed")
                 return ProcessOutcome(
                     initialized=initialized,
@@ -617,8 +612,9 @@ def process_message(
                     notifications=[],
                 )
             models_params: Any = dict(params) if isinstance(params, dict) else {}
-            models_params["_runtime_config"] = brain_container.stack.config
-            models_params["_plugin_engine_models"] = brain_container._plugin_engine_model_ids()
+            models_params["_runtime_config"] = model_list_config(
+                models_params, brain_container.stack.config, brain_container.stack.engine
+            )
             return ProcessOutcome(
                 initialized=initialized,
                 shutdown_requested=False,
@@ -661,7 +657,7 @@ def process_message(
                 )
             try:
                 unloaded_model = _unload_stack_engine_under_lease(brain_container)
-            except Exception as error:  # noqa: BLE001
+            except Exception as error:
                 logger.exception("models.unload failed")
                 return ProcessOutcome(
                     initialized=initialized,
@@ -715,7 +711,7 @@ def process_message(
 
         # Lazy: the recovery family drags restore/staging into the import graph and
         # only runs on a user click, so it stays off the sidecar startup path.
-        from sidecar.runtime.workspace_recovery_rpc import (  # noqa: PLC0415
+        from sidecar.runtime.workspace_recovery_rpc import (
             process_workspace_recovery_method,
         )
 
@@ -753,11 +749,6 @@ def process_message(
         if compact_outcome is not None:
             return compact_outcome
 
-        inline_outcome = process_inline_method(*inference_args, write_message=write_message,
-            response_reader_factory=response_reader_factory)
-        if inline_outcome is not None:
-            return inline_outcome
-
         if method == HARDWARE_PROFILE_METHOD:
             log_event(
                 logger,
@@ -789,9 +780,14 @@ def process_message(
                     notifications=[],
                 )
             try:
+                from sidecar.runtime.capabilities import _runtime_api_url_for_engine
                 from sidecar.runtime.hardware_profile import get_hardware_profile
 
-                ollama_host = getattr(brain_container.stack.config, "api_url", None)
+                # Only the Ollama engine's URL is an Ollama host: on the managed
+                # llama-server it is that server, and the unauthenticated
+                # /api/version probe drew "Invalid API Key" (gate F28). None
+                # falls back to the default Ollama address.
+                ollama_host = _runtime_api_url_for_engine(brain_container.stack.config, "ollama")
                 model_catalog = params.get("model_catalog") if isinstance(params, dict) else None
                 profile = get_hardware_profile(
                     ollama_host=ollama_host, model_catalog=model_catalog
@@ -802,7 +798,7 @@ def process_message(
                     response=result_response(message_id, profile.to_dict()),
                     notifications=[],
                 )
-            except Exception as error:  # noqa: BLE001
+            except Exception as error:
                 logger.exception("hardware.profile failed")
                 return ProcessOutcome(
                     initialized=initialized,
@@ -856,7 +852,7 @@ def process_message(
                     response=result_response(message_id, payload),
                     notifications=[],
                 )
-            except Exception:  # noqa: BLE001
+            except Exception:
                 logger.exception("hardware.vram_usage failed")
                 return ProcessOutcome(
                     initialized=initialized,
@@ -908,7 +904,7 @@ def process_message(
                 )
             try:
                 payload = _build_models_resident_payload(brain_container)
-            except Exception:  # noqa: BLE001
+            except Exception:
                 logger.exception("models.resident failed")
                 payload = {"available": False, "reason": "internal_error", "models": []}
             return ProcessOutcome(
@@ -964,7 +960,7 @@ def process_message(
                         host=resolve_ollama_base_url(getattr(engine, "host", None)),
                         model_id=model_id,
                     )
-            except Exception:  # noqa: BLE001
+            except Exception:
                 logger.exception("models.ollama_blob failed")
                 payload = {
                     "model_id": str(model_id or ""),

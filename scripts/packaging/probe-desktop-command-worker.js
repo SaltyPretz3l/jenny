@@ -127,12 +127,12 @@ async function probeWire() {
   const inspected = await service.launcher.inspect(worker.containerId);
   console.log(JSON.stringify({ declaredMounts: inspected.HostConfig.Mounts, sourceMounts: inspected.Mounts.filter(m => m.Type === 'bind'), rootReadonly: inspected.HostConfig.ReadonlyRootfs }));
   const binding = { incarnation: status.incarnation, job_id: randomUUID() };
-  await worker.transport.request('submit', { ...binding, command: 'echo once >> counter; sleep 3; cat counter', cwd: '.', timeout_seconds: 8 });
-  assert.equal((await worker.transport.request('submit', { ...binding, command: 'echo once >> counter; sleep 3; cat counter', cwd: '.', timeout_seconds: 8 })).accepted, true);
-  await assert.rejects(worker.transport.request('submit', { ...binding, job_id: randomUUID(), command: 'echo wrong', cwd: '.', timeout_seconds: 8 }));
+  await worker.transport.request('submit', { ...binding, command: 'echo once >> counter; sleep 3; cat counter', cwd: '.', input_root: '.', timeout_seconds: 8 });
+  assert.equal((await worker.transport.request('submit', { ...binding, command: 'echo once >> counter; sleep 3; cat counter', cwd: '.', input_root: '.', timeout_seconds: 8 })).accepted, true);
+  await assert.rejects(worker.transport.request('submit', { ...binding, job_id: randomUUID(), command: 'echo wrong', cwd: '.', input_root: '.', timeout_seconds: 8 }));
   const settled = await worker.broker._settled(binding);
   assert.equal(settled.stdout.trim(), 'once');
-  await assert.rejects(worker.transport.request('submit', { ...binding, command: 'echo once >> counter; sleep 3; cat counter', cwd: '.', timeout_seconds: 8 }));
+  await assert.rejects(worker.transport.request('submit', { ...binding, command: 'echo once >> counter; sleep 3; cat counter', cwd: '.', input_root: '.', timeout_seconds: 8 }));
   console.log(JSON.stringify({ wireAuthenticationFramingAndDuplicate: 'passed', directory }));
  } finally {
   worker?.transport.dispose(); await service.close();

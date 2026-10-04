@@ -15,6 +15,13 @@ from sidecar.runtime.chat_decision_render import _chat_response_from_decision
 from sidecar.runtime.chat_models import ChatRequestContext
 
 
+@pytest.fixture(autouse=True)
+def _no_checkpoint_continuation(monkeypatch: pytest.MonkeyPatch) -> None:
+    # These pin terminal surfacing. A thinking_budget result on the last
+    # iteration now continues (TR-005), so hold the continuation off here.
+    monkeypatch.setenv("JENNY_ENABLE_THINKING_BUDGET_CONTINUATION", "0")
+
+
 class _Engine:
     def __init__(self, result: GenerationResult) -> None:
         self._result = result
@@ -162,3 +169,23 @@ def test_length_finish_reason_only_fails_closed_without_visible_text(
 
     assert decision.terminal_error_code == expected_code
     assert decision.terminal_error_retryable is (expected_code is not None)
+
+
+def test_incomplete_stream_error_copy_does_not_blame_output_tokens() -> None:
+    # TR-016: EOF with no [DONE] and no finish_reason is a connection close, and a
+    # real output-token stop is classified "length", so the copy must not claim it.
+    decision = _decision_for("incomplete", content="")
+
+    assert "output tokens" not in decision.response_text
+    assert "connection" in decision.response_text
+    assert "no end-of-stream marker" in decision.response_text
+    assert decision.terminal_error_code == "CMP-STREAM-INCOMPLETE"
+    assert decision.terminal_error_retryable is True
+
+
+def test_length_stop_keeps_the_output_budget_copy() -> None:
+    decision = _decision_for("length", content="")
+
+    assert "output budget" in decision.response_text
+    assert "connection" not in decision.response_text
+    assert decision.terminal_error_code == "CMP-STREAM-INCOMPLETE"

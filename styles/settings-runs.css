@@ -1,0 +1,404 @@
+/* styles/settings-runs.css - Diagnostics › Runs and Settings › Developer › Runtime limits (2026-09-27;
+ * limits rows on settings-field 2026-09-30; Runs moved from Settings to Diagnostics 2026-10-03,
+ * so no Runs selector here may assume a Settings ancestor).
+ * Runs rows mirror the Chats .session-row (radius, hover and selected fills);
+ * groups use the Chats .group-label kicker and its hairline. No cards, no
+ * nested boxes, no side accents, no motion. Buttons are the shared .btn. */
+
+/* The title kept the Settings card heading type when it left .settings-card. */
+.runs-title {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: var(--font-size-title);
+  font-family: var(--font-family-display);
+  letter-spacing: 0;
+  line-height: 1.2;
+}
+
+.runs-header {
+  align-items: baseline;
+  gap: var(--space-4);
+}
+
+.runs-count {
+  color: var(--text-secondary);
+  font-size: var(--font-size-caption);
+  font-variant-numeric: tabular-nums;
+}
+
+.runs-filter {
+  position: relative;
+  margin-inline-start: auto;
+}
+
+.runs-filter-menu {
+  position: absolute;
+  inset-inline-end: 0;
+  top: calc(100% + var(--space-2));
+  z-index: 60;
+  min-width: 220px;
+  max-width: min(320px, calc(100vw - 24px));
+  max-height: min(60vh, 420px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-block: var(--space-2);
+  border: 1px solid var(--mat-ephemeral-border);
+  border-radius: var(--radius-md);
+  background: var(--mat-ephemeral-bg);
+  box-shadow: var(--shadow-float);
+}
+
+/* The menu names what picking does; the popover edge frames it, so no hairline. */
+.runs-filter-heading {
+  padding: var(--space-2) var(--space-4) var(--space-1);
+}
+
+.runs-filter-heading::after {
+  content: none;
+}
+
+.runs-filter-item {
+  display: block;
+  width: 100%;
+  padding: var(--space-2) var(--space-4);
+  border: 0;
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  font-size: var(--font-size-body);
+  text-align: start;
+  cursor: pointer;
+}
+
+.runs-filter-item:hover,
+.runs-filter-item:focus-visible {
+  background: var(--surface-popover-row-hover, var(--surface-popover-row));
+}
+
+.runs-filter-item[aria-checked="true"] {
+  font-weight: 500;
+}
+
+.runs-filter-item:focus-visible {
+  outline: var(--focus-ring-width) solid var(--focus-ring-color);
+  outline-offset: calc(-1 * var(--focus-ring-width));
+}
+
+.runs-status,
+.runs-message {
+  margin: var(--space-2) 0 0;
+}
+
+.runs-empty {
+  margin: var(--space-6) 0 0;
+  color: var(--text-muted);
+}
+
+.runs-groups {
+  margin-top: var(--space-4);
+}
+
+/* Kicker type and hairline come from .group-label; only the inset changes,
+   because this card already has its own padding. */
+.runs-group-label {
+  padding-inline: var(--space-2);
+}
+
+.runs-group-toggle {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  cursor: pointer;
+}
+
+.runs-group-toggle:focus-visible {
+  outline: var(--focus-ring-width) solid var(--focus-ring-color);
+  outline-offset: 2px;
+}
+
+.runs-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.runs-row {
+  margin-bottom: var(--space-1);
+  border-radius: var(--rail-item-radius);
+}
+
+.runs-row:is(:hover, :focus-within) {
+  background: var(--rail-hover-bg);
+}
+
+.runs-row.is-selected,
+.runs-row.is-selected:is(:hover, :focus-within) {
+  background: var(--session-row-selected-bg);
+}
+
+.runs-row-line {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-4);
+  padding-inline-end: var(--space-4);
+}
+
+.runs-row-main {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  min-width: 0;
+  padding: var(--space-4) var(--space-5);
+  border: 0;
+  border-radius: var(--rail-item-radius);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+
+.runs-row-main:focus-visible {
+  outline: var(--focus-ring-width) solid var(--focus-ring-color);
+  outline-offset: calc(-1 * var(--focus-ring-width));
+}
+
+.runs-dot {
+  flex: 0 0 auto;
+  width: var(--session-row-dot-size);
+  height: var(--session-row-dot-size);
+  border-radius: var(--radius-pill);
+  background: var(--text-muted);
+}
+
+.runs-dot[data-tone="attention"] {
+  background: var(--state-warning);
+}
+
+.runs-dot[data-tone="running"] {
+  background: var(--state-success);
+}
+
+.runs-row-text {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.runs-row-title {
+  overflow: hidden;
+  color: var(--text-primary);
+  font-size: var(--font-size-body);
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.runs-row-meta {
+  overflow: hidden;
+  color: var(--text-secondary);
+  font-size: var(--font-size-caption);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.runs-row-actions {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
+
+.runs-confirm {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.runs-confirm-text {
+  color: var(--text-primary);
+  font-size: var(--font-size-caption);
+}
+
+/* Inline detail under the selected row: same column as the title, no box. */
+.runs-row-detail {
+  padding: 0 var(--space-5) var(--space-5) calc(var(--space-5) + var(--session-row-dot-size) + var(--space-4));
+}
+
+.runs-detail-list {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: var(--space-2) var(--space-6);
+  margin: 0 0 var(--space-4);
+  font-size: var(--font-size-caption);
+}
+
+.runs-detail-list dt {
+  color: var(--text-muted);
+}
+
+.runs-detail-list dd {
+  margin: 0;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+.runs-children {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.runs-children li {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+}
+
+.runs-child-state,
+.runs-detail-note {
+  color: var(--text-secondary);
+  font-size: var(--font-size-caption);
+}
+
+.runs-detail-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: var(--space-2);
+}
+
+.runs-open-link {
+  margin-top: var(--space-4);
+}
+
+/* Runtime limits: one settings row per limit (label and the shared Default /
+   Modified / Revert meta on the left, the number field on the right, the
+   machine-cap note under it). Row chrome and the hairline come from
+   .settings-field--row in settings-controls.css. */
+.limits-grid {
+  margin-top: var(--space-6);
+}
+
+.limits-row {
+  column-gap: var(--space-4);
+}
+
+/* The default sits against the field it describes: pushed to the end of the
+   text column, nearest the input, so the hints read as one column down the
+   list. Modified grows away from the input and never moves it. */
+.limits-row .settings-field-title-row {
+  flex-wrap: nowrap;
+  justify-content: space-between;
+}
+
+.limits-row .settings-field-title {
+  min-width: 0;
+}
+
+.limits-row .settings-field-meta {
+  flex: none;
+  flex-direction: row-reverse;
+  flex-wrap: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.limits-row .settings-field-control {
+  display: grid;
+  grid-template-columns: auto auto;
+  align-items: center;
+  justify-items: end;
+  gap: var(--space-1) var(--space-3);
+}
+
+/* The Revert sits to the right of the field and keeps its place while
+   hidden, so nothing moves when it appears. */
+.limits-row .settings-field-reset {
+  grid-column: 2;
+  grid-row: 1;
+}
+
+.limits-row .settings-field-reset[hidden] {
+  display: inline-flex;
+  visibility: hidden;
+}
+
+/* A machine-cap note is wider than the field. It hangs under the field and
+   runs back toward the label, so it never widens the control column and the
+   default hints keep their edge. */
+.limits-row .limits-note {
+  grid-column: 1;
+  grid-row: 2;
+  display: flex;
+  justify-content: flex-end;
+  width: 0;
+  min-width: 100%;
+  white-space: nowrap;
+}
+
+.limits-row .inv-number-input input {
+  width: 7rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.limits-note {
+  color: var(--text-muted);
+  font-size: var(--font-size-footnote);
+}
+
+.limits-note:empty {
+  display: none;
+}
+
+.limits-note--capped {
+  color: var(--state-warning);
+}
+
+.limits-actions {
+  justify-content: flex-end;
+  margin-top: var(--space-6);
+}
+
+@media (max-width: 760px) {
+  .runs-row-line {
+    grid-template-columns: minmax(0, 1fr);
+    padding-inline-end: 0;
+  }
+
+  .runs-row-actions {
+    justify-content: flex-start;
+    padding: 0 var(--space-5) var(--space-4);
+  }
+
+  .limits-row .settings-field-control {
+    justify-items: start;
+  }
+
+  .limits-row .settings-field-title-row {
+    flex-wrap: wrap;
+    justify-content: flex-start;
+  }
+
+  .limits-row .limits-note {
+    justify-content: flex-start;
+    width: auto;
+    white-space: normal;
+  }
+}
+
+@media (forced-colors: active) {
+  .runs-row.is-selected {
+    outline: 1px solid Highlight;
+  }
+
+  .runs-dot {
+    forced-color-adjust: none;
+    border: 1px solid CanvasText;
+  }
+}

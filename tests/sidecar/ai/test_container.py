@@ -26,7 +26,7 @@ def test_default_mcp_servers_forward_web_configuration(tmp_path: Path) -> None:
         tools_web_search_provider="bing",
     )
 
-    servers = _default_mcp_servers(config, tmp_path)  # noqa: SLF001
+    servers = _default_mcp_servers(config, tmp_path)
 
     assert len(servers) == 1
     args = list(servers[0].args)
@@ -59,7 +59,7 @@ def test_default_mcp_servers_forward_connections(tmp_path: Path) -> None:
         ),
     )
 
-    servers = _default_mcp_servers(config, tmp_path)  # noqa: SLF001
+    servers = _default_mcp_servers(config, tmp_path)
     args = list(servers[0].args)
 
     assert args[args.index("--connections-enabled") + 1] == "1"
@@ -134,7 +134,7 @@ def test_default_mcp_servers_forward_lsp_configuration(tmp_path: Path) -> None:
         tools_lsp_command_python="pyright-langserver",
     )
 
-    servers = _default_mcp_servers(config, tmp_path)  # noqa: SLF001
+    servers = _default_mcp_servers(config, tmp_path)
 
     assert len(servers) == 1
     args = list(servers[0].args)
@@ -150,7 +150,7 @@ def test_default_mcp_servers_forward_knowledge_configuration(tmp_path: Path) -> 
         knowledge_roots=("C:\\docs\\project-x", "D:\\handbook"),
     )
 
-    servers = _default_mcp_servers(config, tmp_path)  # noqa: SLF001
+    servers = _default_mcp_servers(config, tmp_path)
 
     assert len(servers) == 1
     args = list(servers[0].args)
@@ -166,7 +166,7 @@ def test_default_mcp_servers_omit_knowledge_roots_when_disabled(tmp_path: Path) 
         knowledge_roots=("C:\\docs\\project-x",),
     )
 
-    servers = _default_mcp_servers(config, tmp_path)  # noqa: SLF001
+    servers = _default_mcp_servers(config, tmp_path)
 
     args = list(servers[0].args)
     assert args[args.index("--knowledge-enabled") + 1] == "0"
@@ -185,7 +185,7 @@ def test_default_mcp_servers_forward_shell_security_and_git_tracking_flags(
         feature_flags={"shell_security": True, "git_tracking": True},
     )
 
-    servers = _default_mcp_servers(config, tmp_path)  # noqa: SLF001
+    servers = _default_mcp_servers(config, tmp_path)
 
     args = list(servers[0].args)
     assert args[args.index("--shell-security-enabled") + 1] == "1"
@@ -197,7 +197,7 @@ def test_default_mcp_servers_shell_security_and_git_tracking_default_off(
 ) -> None:
     config = RuntimeConfig()
 
-    servers = _default_mcp_servers(config, tmp_path)  # noqa: SLF001
+    servers = _default_mcp_servers(config, tmp_path)
 
     args = list(servers[0].args)
     assert args[args.index("--shell-security-enabled") + 1] == "0"
@@ -220,7 +220,7 @@ def test_default_mcp_servers_forward_skill_scope_roots(tmp_path: Path) -> None:
         skills_project_enabled=True,
     )
 
-    servers = _default_mcp_servers(config, tmp_path)  # noqa: SLF001
+    servers = _default_mcp_servers(config, tmp_path)
 
     assert len(servers) == 1
     args = list(servers[0].args)
@@ -236,7 +236,7 @@ def test_default_mcp_servers_forward_skill_scope_roots(tmp_path: Path) -> None:
 def test_default_mcp_servers_skill_scope_roots_default_off_and_empty(tmp_path: Path) -> None:
     config = RuntimeConfig()
 
-    servers = _default_mcp_servers(config, tmp_path)  # noqa: SLF001
+    servers = _default_mcp_servers(config, tmp_path)
 
     args = list(servers[0].args)
     assert args[args.index("--load-skill-enabled") + 1] == "1"
@@ -256,7 +256,7 @@ def test_default_mcp_servers_forward_sibling_tool_flags(tmp_path: Path) -> None:
         tools_web_searxng_url="http://searx.local:8080",
     )
 
-    servers = _default_mcp_servers(config, tmp_path)  # noqa: SLF001
+    servers = _default_mcp_servers(config, tmp_path)
 
     args = list(servers[0].args)
     assert args[args.index("--delete-file-enabled") + 1] == "0"
@@ -275,7 +275,7 @@ def test_default_mcp_servers_strip_searxng_url_credentials_before_argv(
         tools_web_searxng_url="https://scout:hunter2@searxng.example.com/search?q=x",
     )
 
-    servers = _default_mcp_servers(config, tmp_path)  # noqa: SLF001
+    servers = _default_mcp_servers(config, tmp_path)
 
     forwarded = list(servers[0].args)[
         list(servers[0].args).index("--web-searxng-url") + 1
@@ -296,7 +296,7 @@ def test_default_mcp_servers_use_packaged_builtin_server_entrypoint(
     monkeypatch.setattr(mcp_servers_mod.sys, "frozen", True, raising=False)
     monkeypatch.setattr(mcp_servers_mod.sys, "executable", "C:/Jenny/sidecar.exe")
 
-    servers = container_mod._default_mcp_servers(RuntimeConfig(), tmp_path)  # noqa: SLF001
+    servers = container_mod._default_mcp_servers(RuntimeConfig(), tmp_path)
 
     assert len(servers) == 1
     assert servers[0].command == "C:/Jenny/sidecar.exe"

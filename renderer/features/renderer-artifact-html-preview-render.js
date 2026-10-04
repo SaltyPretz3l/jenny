@@ -151,14 +151,9 @@
 
     surface.editorShell.classList.add('hidden');
     surface.previewContent.classList.remove('hidden');
-    const toolbar = state.features?.featureFlags?.artifact_panel_v3 === true || typeof deps.renderArtifactViewModeButton !== 'function'
-      ? ''
-      : '<div class="artifact-preview-mermaid-toolbar">'
-        + deps.renderArtifactViewModeButton(kind, 'preview', true, 'Preview', state.artifacts?.loading, escapeHtml)
-        + deps.renderArtifactViewModeButton(kind, 'edit', false, editable ? jt('artifacts.htmlPreview.editSource', 'Edit Source') : jt('artifacts.htmlPreview.viewSource', 'View Source'), state.artifacts?.loading, escapeHtml)
-        + '</div>';
+    // The Canvas chrome owns the preview/code view control (no body toolbar).
     surface.previewContent.innerHTML = (
-      toolbar + '<div class="artifact-html-preview-strip">'
+      '<div class="artifact-html-preview-strip">'
       + PLAY_GLYPH_SVG
       + '<span class="artifact-html-preview-label" data-html-preview-label>' + jt('artifacts.htmlPreview.running', 'Running…') + '</span>'
       + buildVersionStepper(artifact, state, escapeHtml)

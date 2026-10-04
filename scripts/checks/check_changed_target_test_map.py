@@ -103,14 +103,25 @@ def _load_mapping() -> tuple[dict[str, Any] | None, list[str]]:
 
 
 def _covers_required_prefix(*, required_prefix: str, rule_selectors: list[str]) -> bool:
-    for selector in rule_selectors:
-        if _selector_is_prefix(selector) and (
-            required_prefix.startswith(selector) or selector.startswith(required_prefix)
-        ):
-            return True
-        if not _selector_is_prefix(selector) and selector.startswith(required_prefix):
-            return True
-    return False
+    # Stem selectors guard a namespace, including future files. Directories
+    # require a rule for every current source, not just one descendant.
+    if required_prefix.endswith("-"):
+        return any(
+            _selector_is_prefix(selector) and required_prefix.startswith(selector)
+            for selector in rule_selectors
+        )
+    if any(
+        _selector_is_prefix(selector) and required_prefix.startswith(selector)
+        for selector in rule_selectors
+    ):
+        return True
+    sources = [path for path in (ROOT / required_prefix).rglob("*")
+               if path.is_file() and path.suffix in {".js", ".py"}]
+    return bool(sources) and all(
+        any(_selector_matches_path(selector=selector, path=path.relative_to(ROOT).as_posix())
+            for selector in rule_selectors)
+        for path in sources
+    )
 
 
 def _is_valid_mapped_test_path(test_path: str) -> bool:
@@ -122,6 +133,24 @@ def _is_valid_mapped_test_path(test_path: str) -> bool:
         normalized.startswith(NODE_TEST_ROOT_PREFIX)
         and normalized.endswith(".test.js")
     )
+
+
+def _target_selector_exists(selector: str) -> bool:
+    """A target must still name something a changed path can match.
+
+    Exact selectors must be an existing file and "dir/" selectors an existing
+    directory; otherwise a deleted target lingers as a rule that can never
+    match. "name-" stem selectors are namespace guards (the root "renderer-"
+    stem is required for future root renderer files and pinned by
+    the test-infrastructure hygiene test), so they may have no
+    current member and are not validated here.
+    """
+    if selector.endswith("-"):
+        return True
+    candidate = ROOT / selector
+    if selector.endswith("/"):
+        return candidate.is_dir()
+    return candidate.is_file()
 
 
 def _validate_mapping(mapping: dict[str, Any]) -> list[str]:
@@ -151,6 +180,11 @@ def _validate_mapping(mapping: dict[str, Any]) -> list[str]:
             violations.append(f"rule {index} must declare at least one required_tests entry")
 
         discovered_selectors.extend(target_selectors)
+        violations.extend(
+            f"rule {index} references missing target: {selector}"
+            for selector in target_selectors
+            if not _target_selector_exists(selector)
+        )
 
         for test_path in required_tests:
             if not _is_valid_mapped_test_path(test_path):
@@ -170,6 +204,18 @@ def _validate_mapping(mapping: dict[str, Any]) -> list[str]:
             rule_selectors=discovered_selectors,
         ):
             violations.append(f"no rule covers required target prefix: {required_prefix}")
+            violations.extend(
+                f"no rule covers required source: {path.relative_to(ROOT).as_posix()}"
+                for path in sorted((ROOT / required_prefix).rglob("*"))
+                if required_prefix.endswith("/") and path.is_file()
+                and path.suffix in {".js", ".py"}
+                and not any(
+                    _selector_matches_path(
+                        selector=selector, path=path.relative_to(ROOT).as_posix()
+                    )
+                    for selector in discovered_selectors
+                )
+            )
 
     return violations
 

@@ -3,6 +3,56 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { DiagnosticLogService, MAX_ENTRY_BYTES } = require('../services/diagnostic-log-service');
 
+test('canonical append removes secrets from correlation ids and still redacts messages', () => {
+  const service = new DiagnosticLogService({ runId: 'current' });
+  const secret = 'token=sk-test-SYNTHETIC123';
+  const entry = service.append({
+    ts: secret, message: secret, trace_id: secret, request_id: secret, session_id: secret,
+    origin_entry_id: secret,
+  });
+  assert.doesNotMatch(JSON.stringify(service.list()), /SYNTHETIC123/);
+  assert.equal(entry.trace_id, null);
+  assert.equal(entry.request_id, null);
+  assert.equal(entry.session_id, null);
+  assert.match(entry.message, /\[redacted\]/);
+  assert.equal(entry.redaction_mode, 'redacted');
+});
+
+test('sidecar sink-only losses disclose sink failures without claiming queue drops', async () => {
+  const service = new DiagnosticLogService({ runId: 'current' });
+  service.append({ layer: 'sidecar', event: 'sidecar.runtime.diagnostics_queue_dropped', data: { sink_failures: { file: 2 } } });
+  const { integrity } = service.getCurrentDiagnosticsMetadata();
+  assert.ok(integrity.partial_reasons.includes('sidecar_sink_failed'));
+  assert.equal(integrity.partial_reasons.includes('entries_dropped'), false);
+  assert.equal(integrity.sink_failures.sidecar.file, 2);
+  assert.equal(integrity.dropped_by_source.sidecar, 0);
+  assert.equal(integrity.complete, false);
+  const snapshot = await service.getSnapshot();
+  assert.equal(snapshot.active_run.integrity.sink_failures.sidecar.file, 2);
+});
+
+test('sidecar sink counts accumulate independently with bounded integer counts and origin deduplication', () => {
+  const service = new DiagnosticLogService({ runId: 'current' });
+  const append = (data, extra = {}) => service.append({ layer: 'sidecar', event: 'sidecar.runtime.diagnostics_queue_dropped', data, ...extra });
+  append({ dropped_count: 3, sink_failures: { file: 2, mirror: 4 } }, { origin_entry_id: 'loss:1' });
+  append({ dropped_count: 3, sink_failures: { file: 2, mirror: 4 } }, { origin_entry_id: 'loss:1' });
+  append({ sink_failures: { file: 1_000_000_001, mirror: 2 } });
+  append({ sink_failures: { file: -1, mirror: 1.5 } });
+  append({ sink_failures: { file: '5', mirror: Infinity, other: 7 } });
+  const { integrity } = service.getCurrentDiagnosticsMetadata();
+  assert.deepEqual(integrity.sink_failures, { sidecar: { file: 1_000_000_000, mirror: 6 } });
+  assert.equal(integrity.dropped_by_source.sidecar, 3);
+  assert.ok(integrity.partial_reasons.includes('entries_dropped'));
+  integrity.sink_failures.sidecar.file = 0;
+  assert.equal(service.getCurrentDiagnosticsMetadata().integrity.sink_failures.sidecar.file, 1_000_000_000);
+});
+
+test('history ingestion cannot restore secret-bearing run and entry identifiers', async () => {
+  const secret = 'token=sk-test-SYNTHETIC123';
+  const service = new DiagnosticLogService({ runId: 'current', filePath: 'test.log', historyReader: async () => ({ entries: [{ run_id: secret, entry_id: secret, event: 'prior.event' }] }) });
+  assert.doesNotMatch(JSON.stringify(await service.getSnapshot()), /SYNTHETIC123/);
+});
+
 test('canonical service assigns stable run fields, deduplicates renderer origins, and never echoes renderer ingestion', async () => {
   const broadcasts = []; const writes = [];
   const service = new DiagnosticLogService({ runId: 'run-current', now: () => new Date('2026-08-16T00:00:00Z'), writer: { write: (entry) => writes.push(entry) }, onEntry: (entry) => broadcasts.push(entry), historyReader: async () => ({ entries: [], malformed_count: 0, truncated: false, errors: [] }) });
@@ -55,7 +105,7 @@ test('UTF-8 entry and identity bounds cannot be bypassed by multibyte text', asy
   });
   assert.ok(Buffer.byteLength(JSON.stringify(entry), 'utf8') <= MAX_ENTRY_BYTES);
   assert.ok(Buffer.byteLength(entry.run_id, 'utf8') <= 160);
-  assert.ok(Buffer.byteLength(entry.origin_entry_id, 'utf8') <= 160);
+  assert.equal(entry.origin_entry_id, undefined);
   service.recordDrop('renderer', Infinity);
   service.recordDrop('renderer', -1);
   const snapshot = await service.getSnapshot();
@@ -120,4 +170,32 @@ test('snapshot byte-pressure is disclosed with per-source drop metadata', async 
   assert.ok(snapshot.integrity.dropped_by_source.sidecar > 0);
   assert.equal(snapshot.prior_run.integrity.complete, false);
   assert.ok(snapshot.prior_run.integrity.partial_reasons.includes('snapshot_truncated'));
+});
+
+
+test('sidecar queue loss changes integrity once per canonical arrival', () => {
+  const service = new DiagnosticLogService({ runId: 'queue-loss' });
+  const row = { layer: 'sidecar', event: 'sidecar.runtime.diagnostics_queue_dropped', origin_entry_id: 'loss:1', data: { dropped_count: 7 } };
+  service.append(row);
+  service.append(row);
+  service.append({ ...row, origin_entry_id: 'loss:invalid', data: { dropped_count: '999' } });
+  const metadata = service.getCurrentDiagnosticsMetadata();
+  assert.equal(metadata.integrity.complete, false);
+  assert.equal(metadata.integrity.dropped_by_source.sidecar, 7);
+});
+
+test('a prior run keeps the integrity its own loss records reported', async () => {
+  const prior = [
+    { run_id: 'prior', sequence: 1, layer: 'sidecar', event: 'sidecar.runtime.ready' },
+    { run_id: 'prior', sequence: 2, layer: 'sidecar', event: 'sidecar.runtime.diagnostics_queue_dropped', data: { dropped_count: 0, sink_failures: { file: 2 } } },
+    { run_id: 'prior', sequence: 3, layer: 'sidecar', event: 'sidecar.runtime.diagnostics_queue_dropped', data: { dropped_count: 4 } },
+  ];
+  const service = new DiagnosticLogService({ runId: 'current', filePath: 'test.log', historyReader: async () => ({ entries: prior, malformed_count: 0, truncated: false, errors: [] }) });
+  const integrity = (await service.getSnapshot()).prior_run.integrity;
+  assert.equal(integrity.complete, false);
+  assert.ok(integrity.partial_reasons.includes('sidecar_sink_failed'));
+  assert.ok(integrity.partial_reasons.includes('entries_dropped'));
+  assert.equal(integrity.sink_failures.sidecar.file, 2);
+  assert.equal(integrity.dropped_by_source.sidecar, 4);
+  assert.equal(integrity.partial_reasons.includes('prior_retention_truncated'), false);
 });

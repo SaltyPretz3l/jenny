@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextvars
 import math
 import time
 from concurrent.futures import Future, ThreadPoolExecutor, as_completed
@@ -23,16 +24,14 @@ from sidecar.ai.routing.sub_agent_invocation import (
     DELEGATE_OPERATION,
     SUBAGENT_CAPACITY_UNAVAILABLE_MESSAGE,
     SUBAGENT_DEADLINE_EXCEEDED_MESSAGE,
+    SUBAGENT_RUNTIME_UNAVAILABLE_MESSAGE,
     SubAgentIdentity,
     SubAgentInvocationResult,
     build_sub_agent_identity,
     invoke_sub_agent,
 )
 from sidecar.ai.routing.subagent_finalization import SUB_AGENT_REPORT_MODE_PLAIN_TEXT
-from sidecar.ai.routing.subagent_run import (
-    DEFAULT_ALLOWED_TOOL_FAMILIES,
-    build_subagent_tool_preferences,
-)
+from sidecar.ai.tools.tool_families import KNOWN_TOOL_FAMILIES
 from sidecar.runtime.chat_models import TerminalChatStateError
 from sidecar.runtime.subagent_slots import (
     SubAgentSlotLimitExceededError,
@@ -41,6 +40,21 @@ from sidecar.runtime.subagent_slots import (
 from sidecar.runtime.turn_state import TURN_STATE_CANCELLED
 
 PARENT_SYNTHESIS_RESERVE_MS = 60_000
+
+DEFAULT_ALLOWED_TOOL_FAMILIES = ("filesystem", "git", "code_intelligence")
+READ_ONLY_DISABLED_TOOLS = (
+    "subagent_run", "subagent_batch", "delegate",
+    "worktree_create", "worktree_select", "worktree_delete",
+)
+
+
+def build_subagent_tool_preferences(
+    allowed_tool_families: tuple[str, ...] | list[str],
+) -> dict[str, tuple[str, ...]]:
+    """Translate validated grants into existing request-scoped tool preferences."""
+    allowed = {str(item or "").strip() for item in allowed_tool_families if str(item or "").strip()}
+    disabled_families = tuple(sorted(KNOWN_TOOL_FAMILIES - allowed))
+    return {"disabled_tools": READ_ONLY_DISABLED_TOOLS, "disabled_tool_families": disabled_families}
 
 
 @dataclass(frozen=True)
@@ -304,7 +318,11 @@ def _run_parallel(  # noqa: PLR0913
             thread_name_prefix="jenny-delegate",
         ) as executor:
             for task, lease in zip(tasks, leases, strict=True):
+                # submit() starts the child on a bare context: run it inside a
+                # copy of the caller's so the request-scoped safety fields
+                # (routing.request_safety) reach the child's tool loop.
                 future = executor.submit(
+                    contextvars.copy_context().run,
                     _invoke_task,
                     router=router,
                     parent_context=parent_context,
@@ -361,10 +379,26 @@ def _invoke_task(  # noqa: PLR0913
     absolute_deadline: float | None = None,
     on_task_started: TaskStartedCallback | None = None,
 ) -> ScheduledInvocation:
-    if on_task_started is not None:
-        on_task_started(task, identity)
+    if slot_lease is None:
+        allocator = getattr(runtime, "sub_agent_slot_allocator", None)
+        if allocator is None:
+            return _unstarted_invocation(
+                task, identity, max_steps=max_steps, max_runtime_ms=max_runtime_ms,
+                error_code=CMP_TOOL_EXECUTION_FAILED,
+                error_message=SUBAGENT_RUNTIME_UNAVAILABLE_MESSAGE,
+            )
+        try:
+            slot_lease = allocator.acquire(
+                parent_agent_id=identity.parent_agent_id, agent_id=identity.agent_id
+            )
+        except (SubAgentSlotLimitExceededError, SubAgentSlotPerParentLimitExceededError):
+            return _capacity_invocation(
+                task, identity, max_steps=max_steps, max_runtime_ms=max_runtime_ms
+            )
     started_at = time.monotonic()
     try:
+        if on_task_started is not None:
+            on_task_started(task, identity)
         result = invoke_sub_agent(
             router=router,
             parent_context=parent_context,
@@ -404,6 +438,8 @@ def _invoke_task(  # noqa: PLR0913
             error_message="Sub-agent execution failed.",
             error_retryable=False,
         )
+    finally:
+        slot_lease.release()
     return ScheduledInvocation(
         task=task,
         identity=identity,

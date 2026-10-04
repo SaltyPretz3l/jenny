@@ -330,10 +330,14 @@ def test_manager_refuses_document_that_grows_past_cap_while_reading(
     )
     target = tmp_path / "module.py"
     target.write_text("small\n", encoding="utf-8")
+    from contextlib import contextmanager
+
+    @contextmanager
+    def growing_document(*_args, **_kwargs):
+        yield io.BytesIO(b"x" * (LSP_MAX_DOCUMENT_BYTES + 1))
+
     monkeypatch.setattr(
-        Path,
-        "open",
-        lambda *_args, **_kwargs: io.BytesIO(b"x" * (LSP_MAX_DOCUMENT_BYTES + 1)),
+        "sidecar.ai.tools.builtins.lsp.manager.open_regular_file", growing_document
     )
 
     result = manager.sync_document(session=session, language="python", file_path=target)
@@ -362,3 +366,96 @@ def test_manager_syncs_small_document_with_document_bound_metadata(tmp_path: Pat
     assert result.cap is None
     assert result.stale_content is False
     assert session.notifications[0][0] == "textDocument/didOpen"
+
+
+@pytest.mark.parametrize("publication_version", [1, None])
+def test_diagnostics_after_edit_reject_old_or_unversioned_publication(tmp_path, publication_version):
+    manager = LSPManager(session_factory=PullUnsupportedDiagnosticsSession)
+    session = manager.ensure_session(language="python", workspace_root=tmp_path, command=("fake",))
+    target = tmp_path / "module.py"
+    target.write_text("x = 1", encoding="utf-8")
+    first = manager.sync_document(session=session, language="python", file_path=target)
+    manager._record_notification(session, {"method": "textDocument/publishDiagnostics", "params": {
+        "uri": first.uri, "version": first.version, "diagnostics": []}})
+    target.write_text("x = broken", encoding="utf-8")
+    manager.sync_document(session=session, language="python", file_path=target)
+    session.notifications_to_drain.append({"method": "textDocument/publishDiagnostics", "params": {
+        "uri": first.uri, "version": publication_version, "diagnostics": []}})
+    with pytest.raises(LSPProtocolError):
+        manager.request_document_diagnostics(session=session, uri=first.uri)
+
+
+def test_current_version_diagnostics_after_edit_remain_available(tmp_path):
+    manager = LSPManager(session_factory=PullUnsupportedDiagnosticsSession)
+    session = manager.ensure_session(language="python", workspace_root=tmp_path, command=("fake",))
+    target = tmp_path / "module.py"
+    target.write_text("x = 1", encoding="utf-8")
+    manager.sync_document(session=session, language="python", file_path=target)
+    synced = manager.sync_document(session=session, language="python", file_path=target)
+    session.notifications_to_drain.append({"method": "textDocument/publishDiagnostics", "params": {
+        "uri": synced.uri, "version": synced.version, "diagnostics": []}})
+    assert manager.request_document_diagnostics(session=session, uri=synced.uri)["diagnostics"] == []
+
+
+def test_open_documents_are_bounded_and_evicted_documents_reopen(tmp_path):
+    manager = LSPManager(session_factory=FakeSession)
+    session = manager.ensure_session(language="python", workspace_root=tmp_path, command=("fake",))
+    for index in range(257):
+        target = tmp_path / f"module{index}.py"
+        target.write_text("x = 1", encoding="utf-8")
+        manager.sync_document(session=session, language="python", file_path=target)
+    closes = [params for method, params in session.notifications if method == "textDocument/didClose"]
+    assert closes == [{"textDocument": {"uri": (tmp_path / "module0.py").as_uri()}}]
+    manager.sync_document(session=session, language="python", file_path=tmp_path / "module0.py")
+    assert session.notifications[-1][0] == "textDocument/didOpen"
+    assert len(manager._document_versions) == 256
+
+
+def test_sync_document_refuses_file_outside_session_workspace(tmp_path):
+    root = tmp_path / "workspace"
+    root.mkdir()
+    outside = tmp_path / "secret.py"
+    outside.write_text("secret = 1", encoding="utf-8")
+    manager = LSPManager(session_factory=FakeSession)
+    session = manager.ensure_session(language="python", workspace_root=root, command=("fake",))
+    result = manager.sync_document(session=session, language="python", file_path=outside)
+    assert result.stale_content is True
+    assert session.notifications == []
+
+
+
+def test_diagnostics_timeout_does_not_return_cached_clean_verdict(tmp_path):
+    from sidecar.ai.tools.builtins.lsp.protocol import LSPRequestTimeout
+
+    manager = LSPManager(session_factory=PullUnsupportedDiagnosticsSession)
+    session = manager.ensure_session(language="python", workspace_root=tmp_path, command=("fake",))
+    uri = (tmp_path / "module.py").as_uri()
+    manager._record_notification(session, {"method": "textDocument/publishDiagnostics", "params": {
+        "uri": uri, "diagnostics": []}})
+    def timeout(*_args, **_kwargs):
+        raise LSPRequestTimeout("timed out")
+    session.request = timeout
+    with pytest.raises(LSPRequestTimeout):
+        manager.request_document_diagnostics(session=session, uri=uri)
+
+
+
+def test_sync_document_rejects_handle_swapped_outside_workspace(tmp_path, monkeypatch):
+    import builtins
+
+    root = tmp_path / "workspace"
+    root.mkdir()
+    target = root / "module.py"
+    target.write_text("safe = 1", encoding="utf-8")
+    outside = tmp_path / "secret.py"
+    outside.write_text("secret = 1", encoding="utf-8")
+    manager = LSPManager(session_factory=FakeSession)
+    session = manager.ensure_session(language="python", workspace_root=root, command=("fake",))
+    real_open = builtins.open
+    def swapped_open(path, *args, **kwargs):
+        return real_open(outside if Path(path) == target else path, *args, **kwargs)
+    monkeypatch.setattr(builtins, "open", swapped_open)
+    monkeypatch.setattr(io, "open", swapped_open)
+    result = manager.sync_document(session=session, language="python", file_path=target)
+    assert result.stale_content is True
+    assert session.notifications == []

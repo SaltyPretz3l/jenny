@@ -1,12 +1,13 @@
 'use strict';
 
-const { describe, it } = require('node:test');
+const { after, describe, it } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
 const {
+  createTerminalService,
   deleteVerifiedClone,
   inspectCloneRoot,
   removeGeneratedDependencies,
@@ -20,6 +21,13 @@ const { UNINSTALL_EXIT_CODES } = require('../services/data-lifecycle/uninstall-c
 function makeTempRoot() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-uninstall-script-'));
 }
+
+// runCli defaults rootPath to this checkout and, past a removal exit code,
+// offers to delete its node_modules and the clone itself. Every runCli call
+// here names this empty directory instead, so a regression in the code under
+// test cannot reach the real checkout.
+const SCRATCH_CLONE_ROOT = makeTempRoot();
+after(() => fs.rmSync(SCRATCH_CLONE_ROOT, { recursive: true, force: true }));
 
 describe('clone uninstall helpers', () => {
   it('resolves only platform-specific Jenny profile roots', () => {
@@ -141,10 +149,134 @@ describe('clone uninstall helpers', () => {
     }
   });
 
+  it('refuses the terminal uninstall before opening any store while Jenny is running', async () => {
+    let serviceCreated = false;
+    let cleanupCount = 0;
+    let promptCount = 0;
+    let closed = false;
+    const output = [];
+    const probed = [];
+    const result = await runCli({
+      rootPath: SCRATCH_CLONE_ROOT,
+      argv: ['--terminal'],
+      launchAssistant: () => { throw new Error('the assistant must not launch for --terminal'); },
+      detectRunning: (profilePath) => { probed.push(profilePath); return { inUse: true, evidence: 'lockfile' }; },
+      createService: () => { serviceCreated = true; return {}; },
+      cleanupData: async () => { cleanupCount += 1; return { ok: true }; },
+      prompter: {
+        ask: async () => { promptCount += 1; return 'yes'; },
+        close() { closed = true; },
+      },
+      output: { write: (value) => output.push(value) },
+    });
+    assert.equal(result, UNINSTALL_EXIT_CODES.HELPER_FAILURE);
+    assert.equal(serviceCreated, false);
+    assert.equal(cleanupCount, 0);
+    assert.equal(promptCount, 0);
+    assert.equal(closed, true);
+    assert.deepEqual(output, ['Jenny is still running. Close Jenny, then run the uninstall again.\n']);
+    assert.deepEqual(probed, [resolveProfilePath()]);
+  });
+
+  it('refuses profile cleanup when Jenny starts after the flow chose removal', async () => {
+    const states = [{ inUse: false, evidence: '' }, { inUse: true, evidence: 'lockfile' }];
+    let cleanupCount = 0;
+    let promptCount = 0;
+    const output = [];
+    const result = await runCli({
+      rootPath: SCRATCH_CLONE_ROOT,
+      argv: ['--terminal'],
+      detectRunning: () => states.shift(),
+      createService: () => ({
+        getOverview: async () => ({ workspace: { available: false } }),
+        prepareRemoval: async () => ({ ok: true }),
+      }),
+      cleanupData: async () => { cleanupCount += 1; return { ok: true }; },
+      prompter: {
+        ask: async (question) => { promptCount += 1; return /Choose/.test(question) ? '3' : 'REMOVE JENNY'; },
+        close() {},
+      },
+      output: { write: (value) => output.push(value) },
+    });
+    assert.equal(result, UNINSTALL_EXIT_CODES.HELPER_FAILURE);
+    assert.equal(cleanupCount, 0);
+    // Only the flow's own prompts ran: no shortcut removal and no clone cleanup prompts.
+    assert.equal(promptCount, 2);
+    assert.match(output.join(''), /Jenny is still running\. Close Jenny, then run the uninstall again\.\n$/);
+  });
+
+  it('refuses the post-assistant profile cleanup while Jenny is running', async () => {
+    let cleanupCount = 0;
+    let promptCount = 0;
+    const output = [];
+    const result = await runCli({
+      rootPath: SCRATCH_CLONE_ROOT,
+      launchAssistant: () => UNINSTALL_EXIT_CODES.PERMANENT,
+      detectRunning: () => ({ inUse: true, evidence: 'lockfile' }),
+      cleanupData: async () => { cleanupCount += 1; return { ok: true }; },
+      prompter: {
+        ask: async () => { promptCount += 1; return 'yes'; },
+        close() {},
+      },
+      output: { write: (value) => output.push(value) },
+    });
+    assert.equal(result, UNINSTALL_EXIT_CODES.HELPER_FAILURE);
+    assert.equal(cleanupCount, 0);
+    assert.equal(promptCount, 0);
+    assert.deepEqual(output, ['Jenny is still running. Close Jenny, then run the uninstall again.\n']);
+  });
+
+  it('cleans the profile after the assistant when Jenny is not running', async () => {
+    let cleanupCount = 0;
+    const result = await runCli({
+      rootPath: SCRATCH_CLONE_ROOT,
+      launchAssistant: () => UNINSTALL_EXIT_CODES.ARCHIVE_AND_REMOVE,
+      detectRunning: () => ({ inUse: false, evidence: '' }),
+      cleanupData: async () => { cleanupCount += 1; return { ok: true }; },
+      prompter: { ask: async () => 'no', close() {} },
+      output: { write() {} },
+    });
+    assert.equal(result, UNINSTALL_EXIT_CODES.ARCHIVE_AND_REMOVE);
+    assert.equal(cleanupCount, 1);
+  });
+
+  it('the terminal service forwards the workspace removal scope to the real cleanup', async () => {
+    const root = makeTempRoot();
+    try {
+      const profilePath = path.join(root, 'profile');
+      const homeDir = path.join(root, 'home');
+      const workspaceRoot = path.join(root, 'workspace');
+      fs.mkdirSync(profilePath, { recursive: true });
+      fs.mkdirSync(path.join(workspaceRoot, '.jenny', 'artifacts'), { recursive: true });
+      fs.mkdirSync(path.join(workspaceRoot, '.jenny', 'notes'));
+      fs.writeFileSync(path.join(workspaceRoot, '.jenny', 'notes', 'keep.md'), 'keep');
+      const service = createTerminalService({
+        profilePath, documentsPath: path.join(root, 'Documents'), homeDir,
+      });
+
+      const archived = await service.prepareForRemoval({
+        choice: 'archive_and_remove', removeWorkspaceData: true, workspaceRemovalScope: 'archived', workspaceRoot,
+      });
+      assert.equal(archived.ok, true);
+      assert.equal(fs.existsSync(path.join(workspaceRoot, '.jenny', 'artifacts')), false);
+      assert.equal(fs.readFileSync(path.join(workspaceRoot, '.jenny', 'notes', 'keep.md'), 'utf8'), 'keep');
+
+      const permanent = await service.prepareForRemoval({
+        choice: 'permanent', removeWorkspaceData: true, workspaceRemovalScope: 'all', workspaceRoot,
+      });
+      assert.equal(permanent.ok, true);
+      assert.equal(fs.existsSync(path.join(workspaceRoot, '.jenny')), false);
+      assert.equal(fs.existsSync(profilePath), true);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it('does not fall back to terminal or offer clone cleanup after helper failure', async () => {
     let serviceCreated = false;
     let promptCount = 0;
     const result = await runCli({
+      rootPath: SCRATCH_CLONE_ROOT,
       launchAssistant: () => UNINSTALL_EXIT_CODES.HELPER_FAILURE,
       createService: () => { serviceCreated = true; return {}; },
       prompter: {
@@ -160,7 +292,9 @@ describe('clone uninstall helpers', () => {
   it('stops before clone cleanup prompts when external data cleanup is incomplete', async () => {
     let promptCount = 0;
     const result = await runCli({
+      rootPath: SCRATCH_CLONE_ROOT,
       launchAssistant: () => UNINSTALL_EXIT_CODES.PERMANENT,
+      detectRunning: () => ({ inUse: false, evidence: '' }),
       cleanupData: async () => ({ ok: false, status: 'incomplete' }),
       prompter: {
         ask: async () => { promptCount += 1; return 'yes'; },

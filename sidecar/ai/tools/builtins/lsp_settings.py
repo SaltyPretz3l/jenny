@@ -5,7 +5,10 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, Literal, Mapping
 
 if TYPE_CHECKING:
-    from sidecar.ai.tools.builtins.lsp.manager import LSPServerCommand, LSPUnavailableResult
+    from sidecar.ai.tools.builtins.lsp.server_detection import (
+        LSPServerCommand,
+        LSPUnavailableResult,
+    )
 
 LSPLanguage = Literal["typescript", "javascript", "python"]
 

@@ -35,7 +35,7 @@
   max-height: none;
   overflow: visible;
   opacity: 1;
-  padding: calc(var(--space-2) * var(--chat-zoom-factor, 1)) 0 calc(var(--space-3) * var(--chat-zoom-factor, 1));
+  padding: var(--space-2) 0 var(--space-3);
   transform: none;
 }
 
@@ -48,31 +48,10 @@
 .tool-call-section + .tool-call-section { margin-top: var(--space-5); }
 
 .tool-call-empty {
-  font-size: calc(12px * var(--chat-zoom-factor, 1));
+  font-size: var(--tl-font-detail);
   font-style: italic;
   color: var(--text-muted);
   padding: var(--space-2) 0;
-}
-
-.tool-call-input,
-.tool-call-output {
-  font-family: var(--font-family-mono);
-  font-size: calc(12px * var(--chat-zoom-factor, 1));
-  line-height: 1.5;
-  color: var(--text-secondary);
-  background: none;
-  border-radius: 0;
-  border: none;
-  box-shadow: none;
-  padding: 0;
-  margin: 0;
-  white-space: pre-wrap;
-  word-break: break-word;
-  max-height: none;
-  overflow: visible;
-  cursor: text;
-  -webkit-user-select: text;
-  user-select: text;
 }
 
 /* Three-column args/result grid (label / value / meta). */
@@ -136,19 +115,19 @@
 
 .tool-call-output-meta {
   margin-top: var(--space-4);
-  font-size: calc(11px * var(--chat-zoom-factor, 1));
+  font-size: var(--tl-font-meta);
   line-height: 1.4;
   color: color-mix(in srgb, var(--widget-tool-color) 76%, transparent);
 }
 
 .tool-call-output-text {
-  font-size: calc(13px * var(--chat-zoom-factor, 1));
+  font-size: var(--tl-font-code);
   line-height: 1.55;
   color: color-mix(in srgb, var(--widget-tool-color) 88%, white 10%);
 }
 
 .tool-mermaid-preview {
-  border-radius: var(--radius-md);
+  border-radius: var(--tl-radius-bubble);
   border: 1px solid var(--border-default);
   background: var(--surface-input-background);
   min-height: 120px;
@@ -163,15 +142,14 @@
   background: transparent;
   min-width: 280px;
   min-height: 120px;
-  border-radius: var(--radius-base);
-  transition: height var(--motion-duration-regular) var(--motion-ease-standard);
+  border-radius: var(--tl-radius-panel);
 }
 
 .python-output-image {
   display: block;
   max-width: 100%;
   max-height: 280px;
-  border-radius: var(--radius-sm);
+  border-radius: var(--tl-radius-control);
   margin: var(--space-4) 0;
   object-fit: contain;
   background: var(--widget-tool-code-bg);
@@ -184,7 +162,7 @@
 
 .python-table-output table {
   border-collapse: collapse;
-  font-size: calc(13px * var(--chat-zoom-factor, 1));
+  font-size: var(--tl-font-detail);
   width: 100%;
 }
 
@@ -202,7 +180,7 @@
 /* ── Tool approval block ── */
 
 .tool-approval-block {
-  --tool-approval-button-min-height: calc(36px * var(--chat-zoom-factor, 1));
+  --tool-approval-button-min-height: 36px;
   --tool-approval-button-transition:
     transform var(--motion-duration-fast) var(--motion-ease-standard),
     background-color var(--motion-duration-fast) var(--motion-ease-standard),
@@ -220,7 +198,7 @@
 /* The intent headline: what will happen, in the reader's terms. Hierarchy here
    comes from type and spacing -- no rule, bar, or box marks this card out. */
 .tool-approval-prompt {
-  font-size: calc(13.5px * var(--chat-zoom-factor, 1));
+  font-size: var(--font-size-body);
   color: var(--widget-tool-color);
 }
 
@@ -228,7 +206,7 @@
 .tool-approval-intent-source {
   color: var(--text-secondary);
   font-size: var(--tl-font-detail);
-  font-weight: var(--tl-weight-emphasis);
+  font-weight: var(--tl-weight-label);
 }
 
 .tool-approval-consequence,
@@ -283,10 +261,10 @@
 .tool-approval-command {
   margin: 0;
   padding: var(--space-2) var(--space-3);
-  max-height: calc(9.5em * var(--chat-zoom-factor, 1));
+  max-height: 9.5em;
   overflow: auto;
   font-family: var(--font-family-mono);
-  font-size: calc(12px * var(--chat-zoom-factor, 1));
+  font-size: var(--tl-font-code);
   line-height: 1.45;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
@@ -309,12 +287,12 @@
   min-width: 0;
   min-height: var(--tool-approval-button-min-height);
   padding: var(--space-2) var(--space-8);
-  border-radius: var(--radius-pill);
+  border-radius: var(--tl-radius-chip);
   border: 1px solid var(--tool-approval-button-border);
   background: var(--tool-approval-button-bg);
   color: var(--tool-approval-button-color);
   font-size: var(--tl-font-detail);
-  font-weight: var(--tl-weight-emphasis);
+  font-weight: var(--tl-weight-label);
   cursor: pointer;
   transition: var(--tool-approval-button-transition);
 }
@@ -369,7 +347,7 @@
 .interactive-recap-block {
   width: min(100%, var(--chat-card-max-width));
   margin: var(--space-3) 0 var(--space-1);
-  border-radius: var(--radius-md);
+  border-radius: var(--tl-radius-bubble);
   border: 1px solid color-mix(in srgb, var(--widget-tool-border) 56%, transparent);
   background: color-mix(in srgb, var(--widget-tool-bg) 52%, transparent);
   overflow: hidden;
@@ -428,7 +406,7 @@
 .interactive-recap-label {
   min-width: 0;
   flex: 1 1 auto;
-  font-size: calc(13px * var(--chat-zoom-factor, 1));
+  font-size: var(--tl-font-ui);
   line-height: 1.35;
 }
 
@@ -457,15 +435,10 @@
   max-height: 0;
   opacity: 0;
   transform: translateY(-4px);
-  /* B6 (compositing): padding removed — see .tool-call-details note. */
-  transition:
-    max-height var(--motion-duration-regular) var(--motion-ease-standard),
-    opacity var(--motion-duration-fast) var(--motion-ease-standard),
-    transform var(--motion-duration-fast) var(--motion-ease-standard);
 }
 
 .interactive-recap-panel.expanded {
-  max-height: 380px;
+  max-height: none;
   opacity: 1;
   transform: translateY(0);
   padding: 0 var(--space-7) var(--space-6);
@@ -488,13 +461,13 @@
 
 .interactive-recap-question {
   color: color-mix(in srgb, var(--widget-tool-color) 70%, white 10%);
-  font-size: calc(13px * var(--chat-zoom-factor, 1));
+  font-size: var(--tl-font-detail);
   line-height: 1.45;
 }
 
 .interactive-recap-answer {
   color: color-mix(in srgb, var(--widget-tool-color) 90%, white 22%);
-  font-size: calc(13px * var(--chat-zoom-factor, 1));
+  font-size: var(--tl-font-detail);
   line-height: 1.45;
 }
 
@@ -504,7 +477,7 @@
   padding-inline-end: 0;
   border-inline-start: 2px solid color-mix(in srgb, var(--widget-tool-border) 70%, transparent);
   color: color-mix(in srgb, var(--widget-tool-color) 64%, white 8%);
-  font-size: calc(12.5px * var(--chat-zoom-factor, 1));
+  font-size: var(--tl-font-detail);
   line-height: 1.4;
 }
 
@@ -532,10 +505,10 @@
   display: inline-block;
   padding: var(--space-1) var(--space-5);
   margin: var(--space-3) var(--space-6) var(--space-4);
-  font-size: calc(11px * var(--chat-zoom-factor, 1));
+  font-size: var(--tl-font-meta);
   font-family: var(--font-family-mono);
-  border-radius: var(--radius-pill, 100px);
-  font-weight: 500;
+  border-radius: var(--tl-radius-chip);
+  font-weight: var(--tl-weight-label);
 }
 
 .bash-exit-success {
@@ -598,12 +571,12 @@
 
 .tool-monitor-description {
   color: var(--text-primary);
-  font-weight: 600;
+  font-weight: var(--tl-weight-label);
 }
 
 .tool-monitor-meta {
   color: var(--text-secondary);
-  font-size: calc(12px * var(--chat-zoom-factor, 1));
+  font-size: var(--tl-font-meta);
 }
 
 .tool-monitor-events {
@@ -617,7 +590,7 @@
   gap: var(--space-3);
   align-items: start;
   padding: var(--space-2) var(--space-3);
-  border-radius: var(--radius-sm);
+  border-radius: var(--tl-radius-control);
   background: color-mix(in srgb, var(--bg-surface-2) 72%, transparent);
   color: var(--text-primary);
 }
@@ -633,7 +606,7 @@
   overflow-wrap: anywhere;
   white-space: pre-wrap;
   font-family: var(--font-family-mono);
-  font-size: calc(12px * var(--chat-zoom-factor, 1));
+  font-size: var(--tl-font-code);
 }
 
 .approval-gap-row {
@@ -656,25 +629,15 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .tool-call-row,
-  .tool-result-row {
-    transition: none;
-    transform: none !important;
-  }
-  .tool-call-row[data-tool-status="running"] {
-    animation: none;
-  }
   /* Belt-and-braces: these durations already resolve to 0ms via the
      --motion-duration-* reduce override in foundation.css; the explicit
      transition:none matches the coverage style of the sibling chat files. */
   .tool-call-details,
-  .tool-mermaid-preview iframe,
   .tool-approve-btn,
   .tool-deny-btn,
   .interactive-recap-block,
   .interactive-recap-row,
-  .interactive-recap-caret,
-  .interactive-recap-panel {
+  .interactive-recap-caret {
     transition: none;
   }
 }
@@ -683,4 +646,17 @@
    wrap the single-row card. */
 .inv-artifact-action.inv-artifact-panel {
   flex: none;
+}
+
+@keyframes assistant-stream-pulse {
+  0%,
+  100% {
+    opacity: 0.35;
+    transform: scaleY(0.78);
+  }
+
+  50% {
+    opacity: 1;
+    transform: scaleY(1);
+  }
 }

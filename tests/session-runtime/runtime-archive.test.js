@@ -110,6 +110,41 @@ test('ledger export validates a stable per-work snapshot without performing reco
   assert.equal(archiveEntry.category, 'runtime_state');
 });
 
+test('ledger export tolerates the mutation recovery cursor and leaves it out of the archive', () => {
+  const profile = tempRoot('jenny-runtime-ledger-cursor');
+  const storeRoot = path.join(profile, 'session-runtime');
+  const store = new RuntimeStore(storeRoot);
+  const cancelled = submit(store, 'cursor');
+  store.transition(cancelled.work_id, {
+    expectedRevision: cancelled.revision,
+    to: 'cancelled',
+    reason: 'Cancelled.',
+    transitionId: 'transition_cursor_cancelled',
+  });
+  // The startup recovery scan writes this after stepping past a cancelled record.
+  store.advanceMutationRecoveryCursor(cancelled.work_id);
+  assert.ok(fs.existsSync(path.join(storeRoot, 'mutation-recovery-cursor.json')));
+
+  const payload = collectRuntimeLedgerPayload(profile);
+
+  assert.equal(payload.records.length, 1);
+  assert.equal(payload.records[0].status, 'cancelled');
+  const projection = projectRuntimeLedgerPayload(payload, { now: '2026-10-02T12:00:00.000Z' });
+  assert.deepEqual(projection.files.map((file) => file.relativePath).sort(),
+    ['index.json', path.join('work', 'work_cursor.json')].sort());
+});
+
+test('ledger export still refuses an unknown entry or a cursor that is not a file', () => {
+  const profile = tempRoot('jenny-runtime-ledger-unknown');
+  const storeRoot = path.join(profile, 'session-runtime');
+  new RuntimeStore(storeRoot);
+  fs.mkdirSync(path.join(storeRoot, 'mutation-recovery-cursor.json'));
+  assert.throws(() => collectRuntimeLedgerPayload(profile), { reason: 'runtime_ledger_source_invalid' });
+  fs.rmdirSync(path.join(storeRoot, 'mutation-recovery-cursor.json'));
+  fs.writeFileSync(path.join(storeRoot, 'stray.json'), '{}');
+  assert.throws(() => collectRuntimeLedgerPayload(profile), { reason: 'runtime_ledger_source_invalid' });
+});
+
 test('ledger import pauses every nonterminal record, invalidates authority, and preserves terminal receipts', () => {
   const profile = tempRoot('jenny-runtime-ledger-project');
   const store = new RuntimeStore(path.join(profile, 'session-runtime'));

@@ -13,10 +13,6 @@ const INTERACTIVE_SEQUENCE_IDLE = 'idle';
 const INTERACTIVE_SEQUENCE_STRUCTURED_ACTIVE = 'structured_active';
 const INTERACTIVE_SEQUENCE_FALLBACK_REQUESTED = 'fallback_requested';
 
-function clipTitle(value) {
-  return String(value || '').trim().slice(0, 80) || 'New Chat';
-}
-
 function normalizeInteractiveDisposition(value) {
   const token = String(value || '').trim().toLowerCase();
   return token === 'skipped' ? 'skipped' : 'answered';
@@ -100,11 +96,6 @@ function resolveInteractiveAnswerLabel(question, answers) {
   }
   const option = question.options.find((entry) => entry.id === answer.option_id);
   return String(answer.text || option?.label || '').trim();
-}
-
-function buildAutomaticSessionTitleCandidate(transcriptPrompt, interactiveResponse) {
-  const promptText = String(transcriptPrompt || '').trim();
-  return !interactiveResponse && promptText ? clipTitle(promptText) : '';
 }
 
 function isDefaultSessionTitle(value) {
@@ -228,13 +219,11 @@ module.exports = {
   INTERACTIVE_SEQUENCE_IDLE,
   INTERACTIVE_SEQUENCE_STRUCTURED_ACTIVE,
   MAX_INTERACTIVE_ROUNDS,
-  buildAutomaticSessionTitleCandidate,
   buildInteractiveQuestionBatchSummary,
   buildInteractiveQuestionBatchTranscript,
   buildInteractiveQuestionBatchVisibleText,
   buildInteractiveRoundRecapTranscript,
   buildInteractiveRoundRecap,
-  clipTitle,
   hasValidInteractiveQuestionCount,
   isDefaultSessionTitle,
   normalizeInteractiveResponse,

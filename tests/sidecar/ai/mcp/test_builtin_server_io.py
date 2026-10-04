@@ -57,5 +57,5 @@ def test_deeply_nested_json_is_forwarded_not_fatal(_plain_stdin) -> None:
         json.loads(_DEEP_JSON)
     _plain_stdin([_DEEP_JSON + "\n"])
 
-    assert builtin_server_io._intercept_cancellation(_DEEP_JSON) is False  # noqa: SLF001
+    assert builtin_server_io._intercept_cancellation(_DEEP_JSON) is False
     assert _drain(builtin_server_io.start_stdin_pump()) == [_DEEP_JSON, None]

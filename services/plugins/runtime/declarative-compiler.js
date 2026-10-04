@@ -6,19 +6,13 @@ const { validate } = require('../contracts/generated-plugin-contracts');
 const { getContent, sha256Hex } = require('../store/content-store');
 const { readPackageRecord } = require('../store/package-record-store');
 const { readSettingsState } = require('../store/settings-state-store');
-const { compileWorkflow } = require('./workflow-compiler');
-const {
-  RESTRICTED_KIND_SET,
-  compileRestrictedContributions,
-} = require('../restricted-host/contribution-compiler');
+const { RESTRICTED_KIND_SET } = require('../package/restricted-content-validator');
 const {
   OFFICIAL_PUBLISHER_ID, SUPPORTED_KINDS, SUPPORTED_KIND_SET, STAGE4B_KINDS,
   STAGE4B_KIND_SET, STAGE5_KINDS, STAGE5_KIND_SET, SNAPSHOT_ARRAY_BY_KIND,
-  EMPTY_DECLARATIVE_CONTENT, ELIGIBILITY_REASON_CODES,
+  EMPTY_DECLARATIVE_CONTENT, ELIGIBILITY_REASON_CODES, RETIRED_CONTRIBUTION_KIND_SET,
+  declaresRetiredKind,
 } = require('./declarative-compiler-constants');
-
-const RESTRICTED_ABI_DIGEST = '91b7c4c28018ec2f45d60a5473869324a5532e965cbe517de9f7400227a4bae8';
-const RESTRICTED_PROTOCOL_DIGEST = 'fcda067adbf055d08392b98193a7680e0f0c530b4544b84d7438f1fa523b8f9e';
 
 const { OFFICIAL_CURRENT_KEY_ID, STAGE7_KINDS, evaluateStage7Eligibility } = require('./stage7-eligibility');
 
@@ -32,12 +26,6 @@ function compareUtf8Identity(left, right) {
     if (compared !== 0) return compared;
   }
   return 0;
-}
-
-function dedupeWorkflowToolBindings(bindings) {
-  const identity = (binding) => `${binding.publisher_id}\0${binding.plugin_id}\0${binding.workflow_id}\0${binding.node_id}`;
-  return [...new Map(bindings.map((binding) => [identity(binding), binding])).values()]
-    .sort((left, right) => Buffer.compare(Buffer.from(identity(left), 'utf8'), Buffer.from(identity(right), 'utf8')));
 }
 
 function eligibility(reasonCode, contributionKinds = []) {
@@ -134,8 +122,16 @@ function verdictMatchesEntry(verdict, entry, packageRecord) {
   );
 }
 
-async function reverifyInstalledPackage({ facade, baseDir, pluginEntry, verifyPackage, now }) {
+async function reverifyInstalledPackage({
+  facade, baseDir, pluginEntry, verifyPackage, now, verifiedPackages,
+}) {
   if (!pluginEntry || typeof verifyPackage !== 'function') return fail('package_record_unavailable');
+  const cached = verifiedPackages?.get(pluginEntry.artifact_digest);
+  if (cached) {
+    // Reuse archive verification, but still bind it to each projected entry.
+    return verdictMatchesEntry(cached.verdict, pluginEntry, cached.package_record)
+      ? cached : fail('package_record_unavailable');
+  }
   const [content, packageRecord] = await Promise.all([
     getContent(facade, baseDir, pluginEntry.artifact_digest),
     readPackageRecord(facade, baseDir, pluginEntry.artifact_digest),
@@ -157,7 +153,9 @@ async function reverifyInstalledPackage({ facade, baseDir, pluginEntry, verifyPa
   if (!verdictMatchesEntry(verdict, pluginEntry, packageRecord.record)) {
     return fail('package_record_unavailable');
   }
-  return { ok: true, verdict, package_record: packageRecord.record };
+  const result = { ok: true, verdict, package_record: packageRecord.record };
+  verifiedPackages?.set(pluginEntry.artifact_digest, result);
+  return result;
 }
 
 function buildContributionDescriptor(entry, contribution) {
@@ -198,7 +196,6 @@ async function compileRuntimeSnapshot({ facade, baseDir, generation, pointer, ve
   const contentEnvelope = [];
   const settingsEnvelope = [];
   const settingsStates = [];
-  const workflowToolBindings = [];
   const activeEntries = generation.plugins.filter((entry) => entry.effective_state === 'active');
   for (const entry of activeEntries) {
     const reverified = await reverifyInstalledPackage({ facade, baseDir, pluginEntry: entry, verifyPackage, now });
@@ -216,7 +213,7 @@ async function compileRuntimeSnapshot({ facade, baseDir, generation, pointer, ve
         : null;
       const isV2 = reverified.verdict.manifest.manifest_schema_version === 2;
       if (isV2 && (!contributionState || contributionState.effective_enabled !== true)) continue;
-      if (contribution.kind === 'mcp_descriptor') continue;
+      if (RETIRED_CONTRIBUTION_KIND_SET.has(contribution.kind)) continue;
       const exact = validateExactContent(reverified.verdict, contribution);
       if (!exact.ok) return fail(exact.reason, { contribution_id: contribution.contribution_id });
       const parsed = JSON.parse(exact.content_json);
@@ -255,35 +252,12 @@ async function compileRuntimeSnapshot({ facade, baseDir, generation, pointer, ve
         });
       }
     }
-    if (reverified.verdict.manifest.manifest_schema_version === 2) {
-      const contents = reverified.verdict.declarative_contents;
-      const settingsFields = new Map(contents
-        .filter((content) => content.payload.kind === 'settings_schema')
-        .map((content) => [content.contribution_id, content.payload.fields]));
-      for (const command of contents.filter((content) => content.payload.kind === 'command')) {
-        const target = contents.find((content) => content.contribution_id === command.payload.target_contribution_id);
-        if (command.payload.target_kind === 'workflow' && target?.payload?.kind === 'workflow') {
-          const compiledWorkflow = compileWorkflow({
-            publisherId: entry.publisher_id,
-            pluginId: entry.plugin_id,
-            workflowId: target.contribution_id,
-            payload: target.payload,
-            contents,
-            settingsFields,
-            invocationFields: command.payload.inputs,
-          });
-          if (!compiledWorkflow.ok) return fail(compiledWorkflow.reason, compiledWorkflow.detail);
-          workflowToolBindings.push(...compiledWorkflow.tool_bindings);
-        }
-      }
-    }
   }
   for (const value of Object.values(declarativeContent)) value.sort(compareUtf8Identity);
   contentEnvelope.sort(compareUtf8Identity);
   settingsEnvelope.sort((left, right) => Buffer.compare(
     Buffer.from(left.state_digest, 'utf8'), Buffer.from(right.state_digest, 'utf8')
   ));
-  const uniqueWorkflowToolBindings = dedupeWorkflowToolBindings(workflowToolBindings);
 
   const snapshotCandidate = {
     kind: 'plugin_runtime_snapshot',
@@ -294,7 +268,7 @@ async function compileRuntimeSnapshot({ facade, baseDir, generation, pointer, ve
     active_generation_id: generation.generation_id,
     declarative_content: declarativeContent,
     ...(generation.generation_schema_version === 2 ? {
-      workflow_tool_bindings: uniqueWorkflowToolBindings,
+      workflow_tool_bindings: [],
       settings_states: settingsStates,
     } : {}),
   };
@@ -319,7 +293,7 @@ async function compileRuntimeSnapshot({ facade, baseDir, generation, pointer, ve
 }
 
 async function compileV3RuntimeSnapshot({
-  facade, baseDir, generation, pointer, verifyPackage, now, remoteMcpRuntime,
+  facade, baseDir, generation, pointer, verifyPackage, now,
 }) {
   if (!generation || !pointer) return fail('authority_snapshot_unavailable');
   if (generation.generation_id !== pointer.generation_id
@@ -328,7 +302,6 @@ async function compileV3RuntimeSnapshot({
   }
   const declarativeContent = [];
   const contentEnvelope = [];
-  const remoteMcpBindings = [];
   const activeEntries = generation.plugins.filter((entry) => entry.effective_state === 'active');
   for (const entry of activeEntries) {
     const reverified = await reverifyInstalledPackage({
@@ -341,7 +314,7 @@ async function compileV3RuntimeSnapshot({
     });
     if (!activation.activation_eligible) return fail(activation.activation_reason_code);
     for (const contribution of reverified.verdict.manifest.contributions) {
-      if (contribution.kind === 'mcp_descriptor') continue;
+      if (RETIRED_CONTRIBUTION_KIND_SET.has(contribution.kind)) continue;
       const exact = validateExactContent(reverified.verdict, contribution);
       if (!exact.ok) return fail(exact.reason, { contribution_id: contribution.contribution_id });
       const parsed = JSON.parse(exact.content_json);
@@ -357,23 +330,9 @@ async function compileV3RuntimeSnapshot({
         content_json: exact.content_json,
       });
     }
-    if ((entry.remote_binding_digests || []).length) {
-      if (!remoteMcpRuntime || typeof remoteMcpRuntime.compileBindings !== 'function') {
-        return fail('remote_runtime_participant_unavailable');
-      }
-      const compiledRemote = await remoteMcpRuntime.compileBindings({
-        entry,
-        verdict: reverified.verdict,
-        generation,
-        pointer,
-      });
-      if (!compiledRemote.ok) return fail(compiledRemote.reason);
-      remoteMcpBindings.push(...compiledRemote.runtimeBindings);
-    }
   }
   declarativeContent.sort(compareUtf8Identity);
   contentEnvelope.sort(compareUtf8Identity);
-  remoteMcpBindings.sort((left, right) => left.binding_digest.localeCompare(right.binding_digest));
   const snapshot = validate('PluginRuntimeSnapshotV3', {
     kind: 'plugin_runtime_snapshot',
     runtime_schema_version: 3,
@@ -382,7 +341,7 @@ async function compileV3RuntimeSnapshot({
     commit_epoch: pointer.commit_epoch,
     active_generation_id: generation.generation_id,
     declarative_content: declarativeContent,
-    remote_mcp_bindings: remoteMcpBindings,
+    remote_mcp_bindings: [],
   });
   if (!snapshot.ok) return fail('runtime_snapshot_invalid', snapshot.error);
   return {
@@ -396,8 +355,7 @@ async function compileV3RuntimeSnapshot({
 }
 
 async function compileV4RuntimeSnapshot({
-  facade, baseDir, generation, pointer, verifyPackage, now, remoteMcpRuntime,
-  lifecycleEpoch = 0, workspaceIncarnationId = 'workspace_default',
+  facade, baseDir, generation, pointer, verifyPackage, now, verifiedPackages = new Map(),
 }) {
   if (!generation || !pointer) return fail('authority_snapshot_unavailable');
   if (generation.generation_id !== pointer.generation_id
@@ -406,14 +364,10 @@ async function compileV4RuntimeSnapshot({
   }
   const declarativeContent = [];
   const contentEnvelope = [];
-  const remoteMcpBindings = [];
-  const restrictedContributions = [];
-  const restrictedDescriptors = [];
-  const restrictedComponents = new Map();
   const activeEntries = generation.plugins.filter((entry) => entry.effective_state === 'active');
   for (const entry of activeEntries) {
     const reverified = await reverifyInstalledPackage({
-      facade, baseDir, pluginEntry: entry, verifyPackage, now,
+      facade, baseDir, pluginEntry: entry, verifyPackage, now, verifiedPackages,
     });
     if (!reverified.ok) return fail(reverified.reason || 'package_record_unavailable');
     const activation = evaluateActivationEligibility({
@@ -421,84 +375,9 @@ async function compileV4RuntimeSnapshot({
       verdict: reverified.verdict,
     });
     if (!activation.activation_eligible) return fail(activation.activation_reason_code);
-    const manifestVersion = reverified.verdict.manifest.manifest_schema_version;
-    const v6Restricted = manifestVersion === 6
-      ? reverified.verdict.manifest.contributions.filter(
-        (item) => RESTRICTED_KIND_SET.has(item.kind)
-      ) : [];
-    if (manifestVersion === 4 || v6Restricted.length > 0) {
-      const restrictedManifest = manifestVersion === 6 ? {
-        ...reverified.verdict.manifest,
-        manifest_schema_version: 4,
-        contributions: v6Restricted,
-        requested_permissions: reverified.verdict.manifest.requested_permissions
-          .filter((permission) => [
-            'network.restricted_runtime', 'secret.brokered_use',
-          ].includes(permission)),
-      } : reverified.verdict.manifest;
-      const componentBytes = new Map((reverified.verdict.restricted_component_bytes || [])
-        .map((item) => [item.component_digest, item.bytes]));
-      const expectedDigests = restrictedManifest.contributions
-        .map((item) => item.component_sha256).sort();
-      const recordedDigests = [...(entry.restricted_module_digests || [])]
-        .filter((digest) => expectedDigests.includes(digest)).sort();
-      if (JSON.stringify(expectedDigests) !== JSON.stringify(recordedDigests)) {
-        return fail('restricted_generation_component_closure_mismatch');
-      }
-      const compiled = compileRestrictedContributions({
-        manifest: restrictedManifest,
-        contents: reverified.verdict.declarative_contents,
-        componentBytesByDigest: componentBytes,
-        authority: {
-          artifact_digest: entry.artifact_digest,
-          generation_id: generation.generation_id,
-          commit_epoch: pointer.commit_epoch,
-          lifecycle_epoch: lifecycleEpoch,
-          policy_revision: generation.policy_grant_ref.policy_revision,
-          workspace_incarnation_id: workspaceIncarnationId,
-        },
-        abiDigest: RESTRICTED_ABI_DIGEST,
-        protocolDigest: RESTRICTED_PROTOCOL_DIGEST,
-      });
-      if (!compiled.ok) return compiled;
-      for (const descriptor of compiled.descriptors) {
-        restrictedDescriptors.push(descriptor);
-        restrictedComponents.set(descriptor.component_digest, componentBytes.get(descriptor.component_digest));
-        restrictedContributions.push({
-          publisher_id: descriptor.publisher_id,
-          plugin_id: descriptor.plugin_id,
-          contribution_id: descriptor.contribution_id,
-          kind: descriptor.kind,
-          artifact_digest: descriptor.artifact_digest,
-          content_digest: descriptor.content_digest,
-          component_digest: descriptor.component_digest,
-          abi_digest: descriptor.abi_digest,
-          timeout_ms: descriptor.timeout_ms,
-        });
-        const exact = validateExactContent(
-          reverified.verdict,
-          reverified.verdict.manifest.contributions.find(
-            (item) => item.contribution_id === descriptor.contribution_id
-          )
-        );
-        if (!exact.ok) return exact;
-        contentEnvelope.push({
-          publisher_id: descriptor.publisher_id,
-          plugin_id: descriptor.plugin_id,
-          contribution_id: descriptor.contribution_id,
-          content_digest: descriptor.content_digest,
-          content_json: exact.content_json,
-        });
-      }
-      if (manifestVersion === 4) continue;
-    }
     for (const contribution of reverified.verdict.manifest.contributions) {
-      if (contribution.kind === 'mcp_descriptor'
-        || RESTRICTED_KIND_SET.has(contribution.kind)
-        || ['setup_scene', 'panel', 'artifact_renderer', 'provider_descriptor',
-          'native_mcp', 'session_provider', 'engine_adapter', 'hook'].includes(
-          contribution.kind
-        )) continue;
+      if (RETIRED_CONTRIBUTION_KIND_SET.has(contribution.kind)
+        || contribution.kind === 'panel' || contribution.kind === 'artifact_renderer') continue;
       const exact = validateExactContent(reverified.verdict, contribution);
       if (!exact.ok) return fail(exact.reason, { contribution_id: contribution.contribution_id });
       const parsed = JSON.parse(exact.content_json);
@@ -514,22 +393,9 @@ async function compileV4RuntimeSnapshot({
         content_json: exact.content_json,
       });
     }
-    if ((entry.remote_binding_digests || []).length) {
-      if (!remoteMcpRuntime || typeof remoteMcpRuntime.compileBindings !== 'function') {
-        return fail('remote_runtime_participant_unavailable');
-      }
-      const compiledRemote = await remoteMcpRuntime.compileBindings({
-        entry, verdict: reverified.verdict, generation, pointer,
-      });
-      if (!compiledRemote.ok) return fail(compiledRemote.reason);
-      remoteMcpBindings.push(...compiledRemote.runtimeBindings);
-    }
   }
   declarativeContent.sort(compareUtf8Identity);
   contentEnvelope.sort(compareUtf8Identity);
-  remoteMcpBindings.sort((left, right) => left.binding_digest.localeCompare(right.binding_digest));
-  restrictedContributions.sort(compareUtf8Identity);
-  restrictedDescriptors.sort(compareUtf8Identity);
   const snapshot = validate('PluginRuntimeSnapshotV4', {
     kind: 'plugin_runtime_snapshot',
     runtime_schema_version: 4,
@@ -538,8 +404,8 @@ async function compileV4RuntimeSnapshot({
     commit_epoch: pointer.commit_epoch,
     active_generation_id: generation.generation_id,
     declarative_content: declarativeContent,
-    remote_mcp_bindings: remoteMcpBindings,
-    restricted_contributions: restrictedContributions,
+    remote_mcp_bindings: [],
+    restricted_contributions: [],
   });
   if (!snapshot.ok) return fail('runtime_snapshot_invalid', snapshot.error);
   return {
@@ -549,8 +415,8 @@ async function compileV4RuntimeSnapshot({
       content_digest, content_json,
     })),
     contribution_evidence: contentEnvelope,
-    restricted_descriptors: Object.freeze(restrictedDescriptors),
-    restricted_components: restrictedComponents,
+    restricted_descriptors: Object.freeze([]),
+    restricted_components: new Map(),
   };
 }
 
@@ -578,14 +444,12 @@ module.exports = {
   STAGE7_KINDS,
   EMPTY_DECLARATIVE_CONTENT,
   ELIGIBILITY_REASON_CODES,
+  declaresRetiredKind,
   compareUtf8Identity,
-  dedupeWorkflowToolBindings,
   evaluateActivationEligibility,
   reverifyInstalledPackage,
   compileRuntimeSnapshot,
   compileV3RuntimeSnapshot,
   compileV4RuntimeSnapshot,
   compileCurrentRuntimeSnapshot,
-  RESTRICTED_ABI_DIGEST,
-  RESTRICTED_PROTOCOL_DIGEST,
 };

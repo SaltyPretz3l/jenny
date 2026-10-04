@@ -8,12 +8,18 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
 
+  const activityUtilsRef = () => globalThis.activityUtils
+    || (typeof require === 'function' ? require('../shared/activity-utils') : null);
+
   function createActivityPrefsController(deps) {
     const { state } = deps;
     const { ACTIVITY_SCOPE } = deps.constants;
     const { composerStatusNotice } = deps.dom;
     const {
       getCurrentRuntimePreferences,
+      // Split view W2-2a: a pane's rail names ITS session; its record is read
+      // through the lifecycle's getRuntimePreferencesFromSession.
+      getRuntimePreferencesFromSession,
       getActiveSession,
       patchSessionSummary,
       syncRuntimeDraftFromActiveSession,
@@ -31,6 +37,10 @@
       syncBackendNotice,
       renderSessions,
       setSessionPreferences,
+      // Split view W2-2a: re-syncs the composer of a pane that is not pane 0
+      // showing `sessionId` (the pane composition's composer route; a no-op
+      // with one pane). renderComposerState is pane 0's.
+      renderSessionComposer = () => {},
     } = deps.callbacks;
 
     // Persist through the injected session-preferences boundary instead of
@@ -48,6 +58,49 @@
     const COMPOSER_NOTICE_ACTIVITY_SCOPES = [
       ACTIVITY_SCOPE.composerRunMode,
     ];
+    // Split view W3-1: the preference saves a pane's rail shows as busy. Their
+    // activity is keyed by the saved session (activity-utils sessionScope) so a
+    // save on pane 1's session never marks pane 0's controls busy.
+    const SESSION_KEYED_SCOPES = new Set([
+      ACTIVITY_SCOPE.composerPreferredModel,
+      ACTIVITY_SCOPE.composerReasoningEffort,
+    ]);
+
+    function activityScopeFor(scope, sessionId) {
+      if (!SESSION_KEYED_SCOPES.has(scope)) return scope;
+      const utils = activityUtilsRef();
+      return typeof utils?.sessionScope === 'function' ? utils.sessionScope(scope, sessionId) : scope;
+    }
+
+    // `composer.preferredModel:<session>` -> ['composer.preferredModel', '<session>'].
+    function splitSessionScope(scope) {
+      for (const base of SESSION_KEYED_SCOPES) {
+        if (scope === base) return [base, ''];
+        if (scope.startsWith(`${base}:`)) return [base, scope.slice(base.length + 1)];
+      }
+      return [scope, ''];
+    }
+
+    // The session a pane shows (renderer-pane-visibility-utils.js); with one
+    // pane, pane 0 is currentSessionId and pane 1 holds nothing.
+    function paneSessionIdOf(paneId) {
+      const visibility = globalThis.rendererPaneVisibilityUtils;
+      if (typeof visibility?.resolvePaneSessionId === 'function') return visibility.resolvePaneSessionId(state, paneId);
+      return paneId === 0 ? normalizeSessionId(state.currentSessionId) : '';
+    }
+
+    // Split view W3-1: the one notice slot records its session
+    // (state.ui.composerStatusNoticeSessionId). A notice keyed to the session
+    // pane 1 shows (and pane 0 does not) is pane 1's, and with two panes one
+    // keyed to a session neither shows is no pane's (gate §D: pane 1 switched
+    // away). Every unkeyed notice is pane 0's, and with one pane so is every
+    // keyed one -- one pane is unchanged. Closing pane 1 drops its session's
+    // notice (renderer-app-pane-composition.js handleLayoutChanged).
+    function isNoticeOwnedByOtherPane() {
+      const noticeSessionId = normalizeSessionId(state.ui.composerStatusNoticeSessionId);
+      if (!noticeSessionId || noticeSessionId === paneSessionIdOf(0)) return false;
+      return Boolean(paneSessionIdOf(1));
+    }
 
     function getStatusRowRenderer() {
       return globalThis.inventory && typeof globalThis.inventory.statusRow === 'function'
@@ -92,8 +145,18 @@
       return resolvedScope ? `activity:${resolvedScope}` : '';
     }
 
-    function getRuntimePreferenceSnapshot() {
-      const current = getCurrentRuntimePreferences();
+    // The preferences of the session `sessionId` names, or null (no id, no
+    // reader, or a session not in the list): callers then take today's path.
+    function getSessionRuntimePreferences(sessionId) {
+      const id = String(sessionId || '').trim();
+      if (!id || typeof getRuntimePreferencesFromSession !== 'function') return null;
+      const session = (Array.isArray(state.sessions) ? state.sessions : [])
+        .find((entry) => String(entry?.id || '').trim() === id);
+      return session ? getRuntimePreferencesFromSession(session) : null;
+    }
+
+    function getRuntimePreferenceSnapshot(sessionId) {
+      const current = getSessionRuntimePreferences(sessionId) || getCurrentRuntimePreferences();
       return {
         preferredModel: current.preferredModel,
         reasoningEffort: current.reasoningEffort,
@@ -155,10 +218,13 @@
       applyRuntimePreferenceSnapshot(sessionId || getActiveSession()?.id, snapshot);
     }
 
-    function beginPreferenceReceipt(patch, scopes) {
-      const sessionId = normalizeSessionId(getActiveSession()?.id);
+    function beginPreferenceReceipt(patch, scopes, targetSessionId) {
+      const targetPreferences = getSessionRuntimePreferences(targetSessionId);
+      const sessionId = targetPreferences
+        ? normalizeSessionId(targetSessionId)
+        : normalizeSessionId(getActiveSession()?.id);
       const id = `preference_receipt_${Date.now().toString(36)}_${(++nextPreferenceReceiptSequence).toString(36)}`;
-      const previousPreferences = mergeRuntimePreferences(getCurrentRuntimePreferences(), {});
+      const previousPreferences = mergeRuntimePreferences(targetPreferences || getCurrentRuntimePreferences(), {});
       const receipt = Object.freeze({
         id,
         sessionId,
@@ -166,7 +232,7 @@
         nextPreferences: Object.freeze(mergeRuntimePreferences(previousPreferences, patch)),
       });
       latestPreferenceReceiptBySession.set(sessionId || '__draft__', id);
-      for (const scope of scopes) latestPreferenceReceiptByScope.set(scope, id);
+      for (const scope of scopes) latestPreferenceReceiptByScope.set(activityScopeFor(scope, sessionId), id);
       applyRuntimePreferenceSnapshot(sessionId, receipt.nextPreferences);
       renderComposerState();
       if (state.ui.activeView === 'settings') renderSettings();
@@ -189,15 +255,23 @@
       }
     }
 
-    function renderComposerStatusNoticeView() {
+    /* No argument: pane 0's #composerStatusNotice (a notice another pane owns
+     * renders nothing here). A target `{ node, sessionId }` renders the notice
+     * keyed to that pane's session into the pane's own node (split view W3-1). */
+    function renderComposerStatusNoticeView(target) {
+      if (target && typeof target === 'object' && target.node) {
+        renderPaneComposerStatusNotice(target);
+        return;
+      }
       if (!composerStatusNotice) {
         return;
       }
-      const owner = String(state.ui.composerStatusNoticeOwner || '').trim();
+      const ownNotice = !isNoticeOwnedByOtherPane();
+      const owner = ownNotice ? String(state.ui.composerStatusNoticeOwner || '').trim() : '';
       const scope = owner.startsWith('activity:') ? owner.slice('activity:'.length) : '';
-      const compactionActivity = globalThis.rendererCompactionCoordinator?.getCompactionActivity?.(state, state.currentSessionId) || null;
+      const compactionActivity = globalThis.rendererCompactionCoordinator?.getCompactionActivity?.(state, paneSessionIdOf(0)) || null;
       const snapshot = compactionActivity || (scope ? getActivitySnapshot(scope) : null);
-      const message = String(compactionActivity?.message || state.ui.composerStatusNotice || '').trim();
+      const message = String(compactionActivity?.message || (ownNotice ? state.ui.composerStatusNotice : '') || '').trim();
       composerStatusNotice.classList.toggle('hidden', !message);
       if (!message) {
         composerStatusNotice.innerHTML = '';
@@ -237,6 +311,38 @@
       );
     }
 
+    const paneNoticeSignatures = new WeakMap();
+    function renderPaneComposerStatusNotice({ node, sessionId }) {
+      const wanted = normalizeSessionId(sessionId);
+      const ownSession = Boolean(wanted) && wanted !== paneSessionIdOf(0);
+      const keyed = ownSession && normalizeSessionId(state.ui.composerStatusNoticeSessionId) === wanted;
+      // Gate §D follow-up: this pane's session's compaction progress wins over
+      // the slot, exactly as pane 0 renders its own (the coordinator's render
+      // routes a composer sync to the pane showing the compacting session).
+      const compaction = (ownSession && globalThis.rendererCompactionCoordinator?.getCompactionActivity?.(state, wanted)) || null;
+      const message = String(compaction?.message || (keyed ? state.ui.composerStatusNotice : '') || '').trim();
+      const tone = compaction ? String(compaction.tone || 'default') : String(state.ui.composerStatusNoticeTone || 'default');
+      const badgeText = compaction
+        ? (compaction.pending ? 'Compacting' : 'Context')
+        : String(state.ui.composerStatusNoticeBadgeText || '');
+      const spinner = compaction ? compaction.state === 'pending' : state.ui.composerStatusNoticeSpinner === true;
+      const label = compaction ? jt('shell.activity.context', 'Context') : '';
+      const signature = message ? [message, tone, badgeText, spinner, label, compaction?.state || ''].join('\u0000') : '';
+      if (paneNoticeSignatures.get(node) === signature) return;
+      paneNoticeSignatures.set(node, signature);
+      node.classList.toggle('hidden', !message);
+      applyActivityAttributes(node, message ? compaction : null, { setAriaBusy: true });
+      if (!message) {
+        node.innerHTML = '';
+        return;
+      }
+      const statusRow = getStatusRowRenderer();
+      if (statusRow) node.innerHTML = statusRow({ tone, label, message, badgeText, spinner, compact: true });
+      else node.textContent = message;
+      const row = node.querySelector('.inv-status-row');
+      if (row && compaction) applyActivityAttributes(row, compaction, { setAriaBusy: true });
+    }
+
     function syncComposerActivityNotice() {
       const winning = getMostRecentActivity(COMPOSER_NOTICE_ACTIVITY_SCOPES);
       const owner = winning ? getActivityOwner(winning.scope) : '';
@@ -261,10 +367,12 @@
       if (scope.startsWith('composer.')) {
         syncComposerActivityNotice();
         renderComposerState();
+        const [baseScope, scopeSessionId] = splitSessionScope(scope);
         if (
-          scope === ACTIVITY_SCOPE.composerPreferredModel ||
-          scope === ACTIVITY_SCOPE.composerReasoningEffort
+          baseScope === ACTIVITY_SCOPE.composerPreferredModel ||
+          baseScope === ACTIVITY_SCOPE.composerReasoningEffort
         ) {
+          if (scopeSessionId) renderSessionComposer(scopeSessionId); // W3-1: the pane showing that session
           renderSettings();
         }
         return;
@@ -282,22 +390,26 @@
       }
     }
 
-    async function runRuntimePreferenceActivity({ patch, scopes, previousValue, failureMessage, successMessage }) {
-      const scopeList = Array.isArray(scopes) ? scopes.filter(Boolean) : [];
-      const receipt = beginPreferenceReceipt(patch, scopeList);
+    async function runRuntimePreferenceActivity({ patch, scopes, previousValue, failureMessage, successMessage, sessionId }) {
+      const receipt = beginPreferenceReceipt(patch, Array.isArray(scopes) ? scopes.filter(Boolean) : [], sessionId);
+      // W3-1: begin/resolve/fail the session-keyed scope a pane's rail reads.
+      const scopeList = (Array.isArray(scopes) ? scopes.filter(Boolean) : []).map((scope) => activityScopeFor(scope, receipt.sessionId));
       scopeList.forEach((scope) => beginActivity(scope, {
         emphasis: 'subtle',
         previousValue,
       }));
+      renderSessionComposer(receipt.sessionId);
 
       try {
         await persistRuntimePreferences(patch, { receipt });
         settleOwnedScopes(scopeList, receipt, (scope) => resolveActivity(scope, {
           message: typeof successMessage === 'function' ? successMessage(scope) : String(successMessage || '').trim(),
         }));
+        renderSessionComposer(receipt.sessionId);
       } catch (error) {
         if (!isLatestPreferenceReceipt(receipt)) {
           settleOwnedScopes(scopeList, receipt, (scope) => resolveActivity(scope, { message: '' }));
+          renderSessionComposer(receipt.sessionId);
           return { ignored: true, reason: 'superseded' };
         }
         restoreRuntimePreferenceSnapshot(previousValue, receipt.sessionId);
@@ -311,6 +423,7 @@
             ? failureMessage(error, scope)
             : String(failureMessage || '').trim(),
         }));
+        renderSessionComposer(receipt.sessionId);
         throw error;
       }
     }

@@ -465,7 +465,7 @@ describe('home tool registration and gating', () => {
     );
   });
 
-  test('a read-only request refuses the home tool because it is not read-only', async () => {
+  test('a read-only request keeps the home read actions and refuses its writes', async () => {
     const service = stubService();
     const executor = new ToolExecutor({
       registry: createDefaultRegistry({ toolsHomeEnabled: true }),
@@ -478,15 +478,22 @@ describe('home tool registration and gating', () => {
       homeAssistantService: () => service,
     });
 
-    const result = await executor.execute(
+    // HB-002: Plan Mode (read-only) may read the calendar; it must not write.
+    const write = await executor.executePreApproved(
+      { callId: 'call_ro_write', toolName: 'home', input: { action: 'event_upsert', title: 'x' } },
+      { readOnly: true }
+    );
+    assert.equal(write.isError, true);
+    assert.equal(write.errorCode, TOOL_ERROR_CODES.DISABLED);
+    assert.match(write.content, /read-only/);
+    assert.deepEqual(service.calls, []);
+
+    const read = await executor.executePreApproved(
       { callId: 'call_ro', toolName: 'home', input: { action: 'calendar_list' } },
       { readOnly: true }
     );
-
-    assert.equal(result.isError, true);
-    assert.equal(result.errorCode, TOOL_ERROR_CODES.DISABLED);
-    assert.match(result.content, /read-only/);
-    assert.deepEqual(service.calls, []);
+    assert.equal(read.isError, false, read.content);
+    assert.ok(service.calls.length > 0);
   });
 
   test('the executor threads the live home facade into the execution context', async () => {
@@ -502,7 +509,7 @@ describe('home tool registration and gating', () => {
       homeAssistantService: () => service,
     });
 
-    const result = await executor.execute(
+    const result = await executor.executePreApproved(
       { callId: 'call_ok', toolName: 'home', input: { action: 'scratchpad_read' } },
       {}
     );

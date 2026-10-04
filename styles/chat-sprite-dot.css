@@ -1,0 +1,856 @@
+/* Timeline activity dot (spec: docs/plans/TIMELINE_ACTIVITY_DOT_SPEC_2026-10-02.md).
+ * One 30 px dot replaces the old J disc. renderer-sprite-morph.js builds
+ * .chat-sprite-dot inside .chat-assistant-sprite and sets data-activity; this
+ * sheet owns every form, tone, loop and reduced-motion pose. All geometry is
+ * in px relative to the root's center. The root alone takes the breakpoint
+ * scale; the sprite element's transform belongs to the positioning pipeline.
+ *
+ * Parity rule: for every looping element the static declaration in its state
+ * rule equals that loop's 0% keyframe, so the engine can ease the frozen frame
+ * into the entry pose and start the loop without a jump.
+ * No compositor promotion hint: nothing here is promoted at rest. */
+
+:root {
+  --sprite-dot-active: var(--tl-status-active);
+  --sprite-dot-warn: var(--tl-status-warn);
+  --sprite-dot-error: var(--tl-status-error);
+  --sprite-dot-ok: var(--tl-status-ok);
+  --sprite-dot-muted: var(--tl-status-muted);
+  --sprite-dot-scale: 1;
+  --sprite-morph-duration: 280ms;
+  --sprite-morph-urgent: 140ms;
+  --sprite-morph-ease: cubic-bezier(0.2, 0.7, 0.2, 1);
+  --sprite-j-duration: 360ms;
+}
+
+/* Light palettes: the production status tokens fall below 3:1 against the
+ * light chat grounds, so the smallest essential stroke is re-toned per
+ * palette. Dark palettes keep the defaults above. Jenny Day carries the
+ * owner-approved mockup tones, darkened 2-7% to reach 3:1 on --bg-base. */
+:root[data-palette="jenny-day"] {
+  --sprite-dot-active: #2c8790;
+  --sprite-dot-warn: #9b7611;
+  --sprite-dot-error: #b53d34;
+  --sprite-dot-ok: rgba(32, 133, 76, 0.92);
+  --sprite-dot-muted: #6c7f85;
+}
+
+:root[data-palette="paper"] {
+  --sprite-dot-active: #157ec7;
+  --sprite-dot-warn: #b27512;
+  --sprite-dot-error: #c03848;
+  --sprite-dot-ok: rgba(30, 130, 72, 0.94);
+  --sprite-dot-muted: #5f6677;
+}
+
+:root[data-palette="woolly"] {
+  --sprite-dot-active: #3176b1;
+  --sprite-dot-warn: #956b0b;
+  --sprite-dot-error: #b03040;
+  --sprite-dot-ok: rgba(38, 112, 24, 0.96);
+  --sprite-dot-muted: #685c4b;
+}
+
+/* At the 22-24 px sprite breakpoint (chat-media-queries.css: --chat-sprite-size
+ * is 24 px wherever the rail still shows) only the inner root scales. */
+@media (max-width: 700px) {
+  .chat-view {
+    --sprite-dot-scale: 0.8;
+  }
+}
+
+/* -- Root, group, particles, ring and check -- */
+.chat-sprite-dot {
+  --sprite-dot-morph: var(--sprite-morph-duration);
+  position: absolute;
+  inset-block-start: 50%;
+  inset-inline-start: 50%;
+  width: 30px;
+  height: 30px;
+  margin: -15px;
+  color: var(--sprite-dot-active);
+  pointer-events: none;
+  transform: scale(var(--sprite-dot-scale));
+  transition: color var(--sprite-dot-morph) var(--sprite-morph-ease);
+}
+
+/* Urgent states (approve, stopped, error) commit within 140 ms. */
+.chat-sprite-dot[data-morph-urgent] {
+  --sprite-dot-morph: var(--sprite-morph-urgent);
+}
+
+.chat-sprite-dot .w {
+  position: absolute;
+  inset: 0;
+  transition: transform var(--sprite-dot-morph) var(--sprite-morph-ease);
+}
+
+/* p1 is "the dot"; p2 and p3 are its split-offs; r is a ring it can grow. */
+.chat-sprite-dot .p,
+.chat-sprite-dot .r {
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  transition:
+    width var(--sprite-dot-morph) var(--sprite-morph-ease),
+    height var(--sprite-dot-morph) var(--sprite-morph-ease),
+    border-radius var(--sprite-dot-morph) var(--sprite-morph-ease),
+    transform var(--sprite-dot-morph) var(--sprite-morph-ease),
+    opacity var(--sprite-dot-morph) var(--sprite-morph-ease);
+}
+
+.chat-sprite-dot .p1 {
+  z-index: 1;
+}
+
+.chat-sprite-dot .p2,
+.chat-sprite-dot .p3 {
+  width: 4px;
+  height: 4px;
+  opacity: 0;
+}
+
+.chat-sprite-dot .r {
+  opacity: 0;
+  border: 1.6px solid currentColor;
+}
+
+.chat-sprite-dot .q {
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
+  background: currentColor;
+  transition:
+    transform var(--sprite-dot-morph) var(--sprite-morph-ease),
+    opacity var(--sprite-dot-morph) var(--sprite-morph-ease);
+}
+
+.chat-sprite-check {
+  position: absolute;
+  inset: 0;
+  width: 30px;
+  height: 30px;
+  overflow: visible;
+}
+
+.chat-sprite-check .ck {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  opacity: 0;
+  transition: opacity var(--sprite-dot-morph) var(--sprite-morph-ease);
+}
+
+/* Suspended (sprite hidden or document backgrounded): every loop holds. Each
+ * form's animation shorthand resets the play state with higher specificity,
+ * so the pause must be important. */
+.chat-sprite-dot[data-suspended],
+.chat-sprite-dot[data-suspended] * {
+  animation-play-state: paused !important;
+}
+
+/* -- The brand J: shown as today until the dot exists, then only at rest -- */
+.chat-assistant-sprite-glyph {
+  opacity: 0.84;
+  transform: scale(1);
+  transition:
+    opacity var(--sprite-j-duration) var(--sprite-morph-ease),
+    transform var(--sprite-j-duration) var(--sprite-morph-ease);
+}
+
+.chat-sprite-dot:not([data-activity="rest"]) ~ .chat-assistant-sprite-glyph {
+  opacity: 0;
+  transform: scale(0.55);
+}
+
+/* -- The inline activity row -- */
+/* Where the rail dot shows the activity (the pipeline sets .visible only when
+ * the layer is displayed), the row keeps its words and drops its own throbber.
+ * visibility keeps the row's alignment. Split, compact, phone and the IDE dock
+ * hide the layer, so the row keeps its throbber there. */
+.chat-sprite-layer.visible ~ .chat-timeline .turn-activity-row > .status-dot,
+.chat-sprite-layer.visible ~ .chat-timeline .turn-activity-row > .turn-activity-glyph {
+  visibility: hidden;
+}
+
+/* -- Forms (entry pose = loop 0% frame) -- */
+
+/* THINK: one moon circles an ellipse and the dot's gaze follows it. The moon
+ * passes behind p1 at the top (z 0) and in front at the bottom (z 2). */
+.chat-sprite-dot[data-activity="think"] .p1 .q {
+  transform: translate(0px, -0.8px);
+  animation: sprite-gaze 3200ms linear infinite;
+}
+
+.chat-sprite-dot[data-activity="think"] .p2 {
+  width: 3.2px;
+  height: 3.2px;
+  opacity: 1;
+  z-index: 0;
+  animation: sprite-moon-z 3200ms step-end infinite;
+}
+
+.chat-sprite-dot[data-activity="think"] .p2 .q {
+  transform: translate(0px, -3.99px) scale(0.56);
+  opacity: 0.55;
+  animation: sprite-moon 3200ms linear infinite;
+}
+
+/* WRITE: a pen, tilted about 30 degrees about its middle, writes one line.
+ * It crosses at a steady pace while its tip rises through five letter humps
+ * and its tilt rocks; the line grows linearly over the same span, so its edge
+ * stays under the tip. At the end the pen lifts, glides back and sets down.
+ * The line sits 2 px toward the start so the slanted pen and the line together
+ * stay centered. */
+.chat-sprite-dot[data-activity="write"] .p1 {
+  width: 2px;
+  height: 9px;
+  border-radius: 1px;
+  transform: translate(0px, -1px);
+}
+
+.chat-sprite-dot[data-activity="write"] .p1 .q {
+  transform: translate(-7px, 0px) rotate(30deg);
+  opacity: 1;
+  animation: sprite-type-caret 2400ms linear infinite;
+}
+
+.chat-sprite-dot[data-activity="write"] .p2 {
+  width: 14px;
+  height: 2px;
+  border-radius: 1px;
+  opacity: 1;
+  transform: translate(-2px, 3.5px);
+}
+
+.chat-sprite-dot[data-activity="write"] .p2 .q {
+  transform: scaleX(0);
+  opacity: 1;
+  transform-origin: left center; /* rtl:physical */
+  animation: sprite-type-line 2400ms linear infinite;
+}
+
+[dir="rtl"] .chat-sprite-dot[data-activity="write"] .p1 .q {
+  transform: translate(7px, 0px) rotate(-30deg);
+  opacity: 1;
+  animation: sprite-type-caret-rtl 2400ms linear infinite;
+}
+
+[dir="rtl"] .chat-sprite-dot[data-activity="write"] .p2 {
+  transform: translate(2px, 3.5px);
+}
+
+[dir="rtl"] .chat-sprite-dot[data-activity="write"] .p2 .q {
+  transform-origin: right center; /* rtl:physical */
+}
+
+/* COMPOSE: composing a tool call. Three dots hop, staggered. TOOL (below)
+ * shares the three 4 px dots. */
+.chat-sprite-dot[data-activity="compose"] .p,
+.chat-sprite-dot[data-activity="tool"] .p {
+  width: 4px;
+  height: 4px;
+  opacity: 1;
+}
+
+.chat-sprite-dot[data-activity="compose"] .p2 {
+  transform: translate(-6.5px, 0px);
+}
+
+.chat-sprite-dot[data-activity="compose"] .p3 {
+  transform: translate(6.5px, 0px);
+}
+
+.chat-sprite-dot[data-activity="compose"] .p1 .q,
+.chat-sprite-dot[data-activity="compose"] .p2 .q,
+.chat-sprite-dot[data-activity="compose"] .p3 .q {
+  transform: translateY(0px);
+  opacity: 0.45;
+  animation: sprite-hop 1200ms var(--sprite-morph-ease) infinite;
+}
+
+.chat-sprite-dot[data-activity="compose"] .p1 .q {
+  animation-delay: 150ms;
+}
+
+.chat-sprite-dot[data-activity="compose"] .p3 .q {
+  animation-delay: 300ms;
+}
+
+/* CHECK: three lines that write themselves, top to bottom. */
+.chat-sprite-dot[data-activity="check"] .p {
+  width: 12px;
+  height: 2.4px;
+  border-radius: 2px;
+  opacity: 1;
+}
+
+.chat-sprite-dot[data-activity="check"] .p1 {
+  transform: translate(0px, -5px);
+}
+
+.chat-sprite-dot[data-activity="check"] .p3 {
+  transform: translate(0px, 5px);
+}
+
+.chat-sprite-dot[data-activity="check"] .q {
+  transform: scaleX(0.18);
+  opacity: 0.5;
+  transform-origin: left center; /* rtl:physical */
+  animation: sprite-draw 2400ms var(--sprite-morph-ease) infinite backwards;
+}
+
+.chat-sprite-dot[data-activity="check"] .p2 .q {
+  animation-delay: 320ms;
+}
+
+.chat-sprite-dot[data-activity="check"] .p3 .q {
+  animation-delay: 640ms;
+}
+
+[dir="rtl"] .chat-sprite-dot[data-activity="check"] .q {
+  transform-origin: right center; /* rtl:physical */
+}
+
+/* SEARCH: a magnifier that scans side to side. */
+.chat-sprite-dot[data-activity="search"] .r {
+  width: 9px;
+  height: 9px;
+  opacity: 1;
+  transform: translate(-1.6px, -1.6px);
+}
+
+.chat-sprite-dot[data-activity="search"] .p1 {
+  width: 2.2px;
+  height: 5.5px;
+  border-radius: 1.5px;
+  transform: translate(4.2px, 4.2px) rotate(-45deg);
+}
+
+.chat-sprite-dot[data-activity="search"] .w {
+  transform: translateX(-2.5px) rotate(-6deg);
+  animation: sprite-scan 1800ms ease-in-out infinite alternate;
+}
+
+/* TOOL: three dots chase each other around a 6 px orbit. */
+.chat-sprite-dot[data-activity="tool"] .p1 {
+  transform: translate(0px, -6px);
+}
+
+.chat-sprite-dot[data-activity="tool"] .p2 {
+  opacity: 0.7;
+  transform: translate(5.2px, 3px);
+}
+
+.chat-sprite-dot[data-activity="tool"] .p3 {
+  opacity: 0.4;
+  transform: translate(-5.2px, 3px);
+}
+
+.chat-sprite-dot[data-activity="tool"] .w {
+  transform: rotate(0deg);
+  animation: sprite-orbit 1000ms linear infinite;
+}
+
+/* COMPACT: the outer two dots squeeze inward and release. */
+.chat-sprite-dot[data-activity="compact"] .p {
+  width: 4.5px;
+  height: 4.5px;
+  opacity: 1;
+}
+
+.chat-sprite-dot[data-activity="compact"] .p2 {
+  transform: translate(-8px, 0px);
+}
+
+.chat-sprite-dot[data-activity="compact"] .p3 {
+  transform: translate(8px, 0px);
+}
+
+.chat-sprite-dot[data-activity="compact"] .p2 .q,
+.chat-sprite-dot[data-activity="compact"] .p3 .q {
+  transform: translateX(0px);
+  opacity: 0.9;
+}
+
+.chat-sprite-dot[data-activity="compact"] .p2 .q {
+  animation: sprite-fold-l 2400ms var(--sprite-morph-ease) infinite;
+}
+
+.chat-sprite-dot[data-activity="compact"] .p3 .q {
+  animation: sprite-fold-r 2400ms var(--sprite-morph-ease) infinite;
+}
+
+/* WAIT: a three-dot hourglass. The top bulb drains, a grain falls through the
+ * neck, the bottom fills, then the group turns over. Muted: it is not work. */
+.chat-sprite-dot[data-activity="wait"] {
+  color: var(--sprite-dot-muted);
+}
+
+.chat-sprite-dot[data-activity="wait"] .p1,
+.chat-sprite-dot[data-activity="wait"] .p2 {
+  width: 5.5px;
+  height: 5.5px;
+}
+
+.chat-sprite-dot[data-activity="wait"] .p1 {
+  transform: translate(0px, -4.2px);
+}
+
+.chat-sprite-dot[data-activity="wait"] .p2 {
+  opacity: 1;
+  transform: translate(0px, 4.2px);
+}
+
+.chat-sprite-dot[data-activity="wait"] .p3 {
+  width: 1.7px;
+  height: 1.7px;
+  opacity: 1;
+}
+
+.chat-sprite-dot[data-activity="wait"] .p1 .q {
+  transform: scale(1);
+  animation: sprite-hg-a 6000ms ease-in-out infinite;
+}
+
+.chat-sprite-dot[data-activity="wait"] .p2 .q {
+  transform: scale(0.4);
+  animation: sprite-hg-b 6000ms ease-in-out infinite;
+}
+
+.chat-sprite-dot[data-activity="wait"] .p3 .q {
+  transform: translateY(-2px);
+  opacity: 0;
+  animation: sprite-hg-grain 6000ms linear infinite;
+}
+
+.chat-sprite-dot[data-activity="wait"] .w {
+  transform: rotate(0deg);
+  animation: sprite-hourglass 6000ms var(--sprite-morph-ease) infinite;
+}
+
+/* Warn tone: stuck, approve and stopped. */
+.chat-sprite-dot[data-activity="stuck"],
+.chat-sprite-dot[data-activity="approve"],
+.chat-sprite-dot[data-activity="stopped"] {
+  color: var(--sprite-dot-warn);
+}
+
+/* STUCK: a blocked sign that now and then tries to turn and cannot. */
+.chat-sprite-dot[data-activity="stuck"] .r {
+  width: 12px;
+  height: 12px;
+  opacity: 1;
+}
+
+.chat-sprite-dot[data-activity="stuck"] .p1 {
+  width: 1.6px;
+  height: 11px;
+  border-radius: 1px;
+  transform: rotate(45deg);
+}
+
+.chat-sprite-dot[data-activity="stuck"] .w {
+  transform: rotate(0deg);
+  animation: sprite-strain 3600ms var(--sprite-morph-ease) infinite;
+}
+
+/* APPROVE: a warning dot that sends out one ping, then rests. */
+.chat-sprite-dot[data-activity="approve"] .p1,
+.chat-sprite-dot[data-activity="approve"] .r {
+  width: 8px;
+  height: 8px;
+}
+
+.chat-sprite-dot[data-activity="approve"] .r {
+  transform: scale(1);
+  opacity: 0.9;
+  animation: sprite-ping 2400ms var(--sprite-morph-ease) infinite;
+}
+
+/* DONE: the nib waits at the start of the check; the engine draws the stroke
+ * (WAAPI on the path's dash offset) and then settles to rest. */
+.chat-sprite-dot[data-activity="done"] {
+  color: var(--sprite-dot-ok);
+}
+
+.chat-sprite-dot[data-activity="done"] .p1 {
+  width: 2.6px;
+  height: 2.6px;
+  transform: translate(-5.5px, 0.5px);
+}
+
+.chat-sprite-dot[data-activity="done"] .ck {
+  opacity: 1;
+}
+
+/* STOPPED: the dot squares off. ERROR: it stretches into "!". Both persist on
+ * the settled anchor. */
+.chat-sprite-dot[data-activity="stopped"] .p1 {
+  width: 9px;
+  height: 9px;
+  border-radius: 2px;
+}
+
+.chat-sprite-dot[data-activity="error"] {
+  color: var(--sprite-dot-error);
+}
+
+.chat-sprite-dot[data-activity="error"] .p1 {
+  width: 3px;
+  height: 9px;
+  border-radius: 1.5px;
+  transform: translate(0px, -2.5px);
+}
+
+.chat-sprite-dot[data-activity="error"] .p2 {
+  width: 3px;
+  height: 3px;
+  opacity: 1;
+  transform: translate(0px, 5.5px);
+}
+
+/* REST: the particles collapse; the brand J (above) fades in. */
+.chat-sprite-dot[data-activity="rest"] {
+  color: var(--widget-sprite-color);
+}
+
+.chat-sprite-dot[data-activity="rest"] .p {
+  width: 0;
+  height: 0;
+  opacity: 0;
+}
+
+/* -- Loops -- */
+@keyframes sprite-type-caret {
+  0% { transform: translate(-7px, 0px) rotate(30deg); }
+  2.5% { transform: translate(-6.5px, -0.31px) rotate(31.27deg); }
+  5% { transform: translate(-6px, -0.89px) rotate(29.19deg); }
+  7.5% { transform: translate(-5.5px, -1.09px) rotate(26.1deg); }
+  10% { transform: translate(-5px, -0.67px) rotate(25.52deg); }
+  12.5% { transform: translate(-4.5px, -0.12px) rotate(28.09deg); }
+  15% { transform: translate(-4px, -0.04px) rotate(30.91deg); }
+  17.5% { transform: translate(-3.5px, -0.4px) rotate(30.78deg); }
+  20% { transform: translate(-3px, -0.76px) rotate(27.85deg); }
+  22.5% { transform: translate(-2.5px, -0.71px) rotate(25.44deg); }
+  25% { transform: translate(-2px, -0.31px) rotate(26.27deg); }
+  27.5% { transform: translate(-1.5px, -0.01px) rotate(29.41deg); }
+  30% { transform: translate(-1px, -0.26px) rotate(31.3deg); }
+  32.5% { transform: translate(-0.5px, -1px) rotate(29.8deg); }
+  35% { transform: translate(0px, -1.4px) rotate(26.61deg); }
+  37.5% { transform: translate(0.5px, -1px) rotate(25.34deg); }
+  40% { transform: translate(1px, -0.26px) rotate(27.43deg); }
+  42.5% { transform: translate(1.5px, -0.01px) rotate(30.51deg); }
+  45% { transform: translate(2px, -0.35px) rotate(31.1deg); }
+  47.5% { transform: translate(2.5px, -0.8px) rotate(28.53deg); }
+  50% { transform: translate(3px, -0.86px) rotate(25.71deg); }
+  52.5% { transform: translate(3.5px, -0.45px) rotate(25.83deg); }
+  55% { transform: translate(4px, -0.04px) rotate(28.76deg); }
+  57.5% { transform: translate(4.5px, -0.13px) rotate(31.17deg); }
+  60% { transform: translate(5px, -0.73px) rotate(30.34deg); }
+  62.5% { transform: translate(5.5px, -1.18px) rotate(27.21deg); }
+  65% { transform: translate(6px, -0.97px) rotate(25.31deg); }
+  67.5% { transform: translate(6.5px, -0.34px) rotate(26.81deg); }
+  70% { transform: translate(7px, 0px) rotate(30deg); animation-timing-function: ease-in-out; }
+  80% { transform: translate(6px, -2.2px) rotate(34deg); animation-timing-function: ease-in-out; }
+  94% { transform: translate(-7px, -2.2px) rotate(30deg); animation-timing-function: ease-in-out; }
+  100% { transform: translate(-7px, 0px) rotate(30deg); }
+}
+
+@keyframes sprite-type-caret-rtl {
+  0% { transform: translate(7px, 0px) rotate(-30deg); }
+  2.5% { transform: translate(6.5px, -0.31px) rotate(-31.27deg); }
+  5% { transform: translate(6px, -0.89px) rotate(-29.19deg); }
+  7.5% { transform: translate(5.5px, -1.09px) rotate(-26.1deg); }
+  10% { transform: translate(5px, -0.67px) rotate(-25.52deg); }
+  12.5% { transform: translate(4.5px, -0.12px) rotate(-28.09deg); }
+  15% { transform: translate(4px, -0.04px) rotate(-30.91deg); }
+  17.5% { transform: translate(3.5px, -0.4px) rotate(-30.78deg); }
+  20% { transform: translate(3px, -0.76px) rotate(-27.85deg); }
+  22.5% { transform: translate(2.5px, -0.71px) rotate(-25.44deg); }
+  25% { transform: translate(2px, -0.31px) rotate(-26.27deg); }
+  27.5% { transform: translate(1.5px, -0.01px) rotate(-29.41deg); }
+  30% { transform: translate(1px, -0.26px) rotate(-31.3deg); }
+  32.5% { transform: translate(0.5px, -1px) rotate(-29.8deg); }
+  35% { transform: translate(0px, -1.4px) rotate(-26.61deg); }
+  37.5% { transform: translate(-0.5px, -1px) rotate(-25.34deg); }
+  40% { transform: translate(-1px, -0.26px) rotate(-27.43deg); }
+  42.5% { transform: translate(-1.5px, -0.01px) rotate(-30.51deg); }
+  45% { transform: translate(-2px, -0.35px) rotate(-31.1deg); }
+  47.5% { transform: translate(-2.5px, -0.8px) rotate(-28.53deg); }
+  50% { transform: translate(-3px, -0.86px) rotate(-25.71deg); }
+  52.5% { transform: translate(-3.5px, -0.45px) rotate(-25.83deg); }
+  55% { transform: translate(-4px, -0.04px) rotate(-28.76deg); }
+  57.5% { transform: translate(-4.5px, -0.13px) rotate(-31.17deg); }
+  60% { transform: translate(-5px, -0.73px) rotate(-30.34deg); }
+  62.5% { transform: translate(-5.5px, -1.18px) rotate(-27.21deg); }
+  65% { transform: translate(-6px, -0.97px) rotate(-25.31deg); }
+  67.5% { transform: translate(-6.5px, -0.34px) rotate(-26.81deg); }
+  70% { transform: translate(-7px, 0px) rotate(-30deg); animation-timing-function: ease-in-out; }
+  80% { transform: translate(-6px, -2.2px) rotate(-34deg); animation-timing-function: ease-in-out; }
+  94% { transform: translate(7px, -2.2px) rotate(-30deg); animation-timing-function: ease-in-out; }
+  100% { transform: translate(7px, 0px) rotate(-30deg); }
+}
+
+@keyframes sprite-type-line {
+  0% { transform: scaleX(0); opacity: 1; }
+  70%, 88% { transform: scaleX(1); opacity: 1; }
+  96%, 100% { transform: scaleX(1); opacity: 0; }
+}
+
+@keyframes sprite-hop {
+  0%, 60%, 100% { transform: translateY(0px); opacity: 0.45; }
+  25% { transform: translateY(-3px); opacity: 1; }
+}
+
+@keyframes sprite-draw {
+  0%, 8% { transform: scaleX(0.18); opacity: 0.5; }
+  40%, 80% { transform: scaleX(1); opacity: 1; }
+  100% { transform: scaleX(1); opacity: 0.4; }
+}
+
+@keyframes sprite-scan {
+  from { transform: translateX(-2.5px) rotate(-6deg); }
+  to { transform: translateX(2.5px) rotate(6deg); }
+}
+
+@keyframes sprite-orbit {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+@keyframes sprite-fold-l {
+  0%, 15%, 100% { transform: translateX(0px); opacity: 0.9; }
+  55%, 70% { transform: translateX(8px); opacity: 0.25; }
+}
+
+@keyframes sprite-fold-r {
+  0%, 15%, 100% { transform: translateX(0px); opacity: 0.9; }
+  55%, 70% { transform: translateX(-8px); opacity: 0.25; }
+}
+
+@keyframes sprite-hourglass {
+  0%, 40% { transform: rotate(0deg); }
+  50%, 90% { transform: rotate(180deg); }
+  100% { transform: rotate(360deg); }
+}
+
+@keyframes sprite-hg-a {
+  0% { transform: scale(1); }
+  40%, 50% { transform: scale(0.4); }
+  90%, 100% { transform: scale(1); }
+}
+
+@keyframes sprite-hg-b {
+  0% { transform: scale(0.4); }
+  40%, 50% { transform: scale(1); }
+  90%, 100% { transform: scale(0.4); }
+}
+
+@keyframes sprite-hg-grain {
+  0% { transform: translateY(-2px); opacity: 0; }
+  3% { opacity: 1; }
+  11% { transform: translateY(2.6px); opacity: 0; }
+  12% { transform: translateY(-2px); opacity: 0; }
+  15% { opacity: 1; }
+  23% { transform: translateY(2.6px); opacity: 0; }
+  24% { transform: translateY(-2px); opacity: 0; }
+  27% { opacity: 1; }
+  35% { transform: translateY(2.6px); opacity: 0; }
+  36%, 50% { transform: translateY(2px); opacity: 0; }
+  53% { opacity: 1; }
+  61% { transform: translateY(-2.6px); opacity: 0; }
+  62% { transform: translateY(2px); opacity: 0; }
+  65% { opacity: 1; }
+  73% { transform: translateY(-2.6px); opacity: 0; }
+  74% { transform: translateY(2px); opacity: 0; }
+  77% { opacity: 1; }
+  85% { transform: translateY(-2.6px); opacity: 0; }
+  86%, 100% { transform: translateY(-2px); opacity: 0; }
+}
+
+@keyframes sprite-strain {
+  0%, 78% { transform: rotate(0deg); }
+  83% { transform: rotate(11deg); }
+  88% { transform: rotate(-6deg); }
+  92% { transform: rotate(3deg); }
+  96%, 100% { transform: rotate(0deg); }
+}
+
+@keyframes sprite-ping {
+  0% { transform: scale(1); opacity: 0.9; }
+  45% { transform: scale(2.6); opacity: 0; }
+  100% { transform: scale(2.6); opacity: 0; }
+}
+
+/* T2 moon and gaze: precomputed, 32 steps. Ellipse R 9.5, y-tilt 0.42, gaze
+ * radius 1.9; the moon scales 0.56-1.0 and fades 0.55-1.0 with depth, and
+ * z-index is 2 in front (below p1) and 0 behind (above p1). */
+@keyframes sprite-moon {
+  0% { transform: translate(0px, -3.99px) scale(0.56); opacity: 0.55; }
+  3.125% { transform: translate(1.85px, -3.91px) scale(0.564); opacity: 0.554; }
+  6.25% { transform: translate(3.64px, -3.69px) scale(0.577); opacity: 0.567; }
+  9.375% { transform: translate(5.28px, -3.32px) scale(0.597); opacity: 0.588; }
+  12.5% { transform: translate(6.72px, -2.82px) scale(0.624); opacity: 0.616; }
+  15.625% { transform: translate(7.9px, -2.22px) scale(0.658); opacity: 0.65; }
+  18.75% { transform: translate(8.78px, -1.53px) scale(0.696); opacity: 0.689; }
+  21.875% { transform: translate(9.32px, -0.78px) scale(0.737); opacity: 0.731; }
+  25% { transform: translate(9.5px, 0px) scale(0.78); opacity: 0.775; }
+  28.125% { transform: translate(9.32px, 0.78px) scale(0.823); opacity: 0.819; }
+  31.25% { transform: translate(8.78px, 1.53px) scale(0.864); opacity: 0.861; }
+  34.375% { transform: translate(7.9px, 2.22px) scale(0.902); opacity: 0.9; }
+  37.5% { transform: translate(6.72px, 2.82px) scale(0.936); opacity: 0.934; }
+  40.625% { transform: translate(5.28px, 3.32px) scale(0.963); opacity: 0.962; }
+  43.75% { transform: translate(3.64px, 3.69px) scale(0.983); opacity: 0.983; }
+  46.875% { transform: translate(1.85px, 3.91px) scale(0.996); opacity: 0.996; }
+  50% { transform: translate(0px, 3.99px) scale(1); opacity: 1; }
+  53.125% { transform: translate(-1.85px, 3.91px) scale(0.996); opacity: 0.996; }
+  56.25% { transform: translate(-3.64px, 3.69px) scale(0.983); opacity: 0.983; }
+  59.375% { transform: translate(-5.28px, 3.32px) scale(0.963); opacity: 0.962; }
+  62.5% { transform: translate(-6.72px, 2.82px) scale(0.936); opacity: 0.934; }
+  65.625% { transform: translate(-7.9px, 2.22px) scale(0.902); opacity: 0.9; }
+  68.75% { transform: translate(-8.78px, 1.53px) scale(0.864); opacity: 0.861; }
+  71.875% { transform: translate(-9.32px, 0.78px) scale(0.823); opacity: 0.819; }
+  75% { transform: translate(-9.5px, 0px) scale(0.78); opacity: 0.775; }
+  78.125% { transform: translate(-9.32px, -0.78px) scale(0.737); opacity: 0.731; }
+  81.25% { transform: translate(-8.78px, -1.53px) scale(0.696); opacity: 0.689; }
+  84.375% { transform: translate(-7.9px, -2.22px) scale(0.658); opacity: 0.65; }
+  87.5% { transform: translate(-6.72px, -2.82px) scale(0.624); opacity: 0.616; }
+  90.625% { transform: translate(-5.28px, -3.32px) scale(0.597); opacity: 0.588; }
+  93.75% { transform: translate(-3.64px, -3.69px) scale(0.577); opacity: 0.567; }
+  96.875% { transform: translate(-1.85px, -3.91px) scale(0.564); opacity: 0.554; }
+  100% { transform: translate(0px, -3.99px) scale(0.56); opacity: 0.55; }
+}
+
+@keyframes sprite-moon-z {
+  0%, 78.125%, 100% { z-index: 0; }
+  25% { z-index: 2; }
+}
+
+@keyframes sprite-gaze {
+  0% { transform: translate(0px, -0.8px); }
+  3.125% { transform: translate(0.37px, -0.78px); }
+  6.25% { transform: translate(0.73px, -0.74px); }
+  9.375% { transform: translate(1.06px, -0.66px); }
+  12.5% { transform: translate(1.34px, -0.56px); }
+  15.625% { transform: translate(1.58px, -0.44px); }
+  18.75% { transform: translate(1.76px, -0.31px); }
+  21.875% { transform: translate(1.86px, -0.16px); }
+  25% { transform: translate(1.9px, 0px); }
+  28.125% { transform: translate(1.86px, 0.16px); }
+  31.25% { transform: translate(1.76px, 0.31px); }
+  34.375% { transform: translate(1.58px, 0.44px); }
+  37.5% { transform: translate(1.34px, 0.56px); }
+  40.625% { transform: translate(1.06px, 0.66px); }
+  43.75% { transform: translate(0.73px, 0.74px); }
+  46.875% { transform: translate(0.37px, 0.78px); }
+  50% { transform: translate(0px, 0.8px); }
+  53.125% { transform: translate(-0.37px, 0.78px); }
+  56.25% { transform: translate(-0.73px, 0.74px); }
+  59.375% { transform: translate(-1.06px, 0.66px); }
+  62.5% { transform: translate(-1.34px, 0.56px); }
+  65.625% { transform: translate(-1.58px, 0.44px); }
+  68.75% { transform: translate(-1.76px, 0.31px); }
+  71.875% { transform: translate(-1.86px, 0.16px); }
+  75% { transform: translate(-1.9px, 0px); }
+  78.125% { transform: translate(-1.86px, -0.16px); }
+  81.25% { transform: translate(-1.76px, -0.31px); }
+  84.375% { transform: translate(-1.58px, -0.44px); }
+  87.5% { transform: translate(-1.34px, -0.56px); }
+  90.625% { transform: translate(-1.06px, -0.66px); }
+  93.75% { transform: translate(-0.73px, -0.74px); }
+  96.875% { transform: translate(-0.37px, -0.78px); }
+  100% { transform: translate(0px, -0.8px); }
+}
+
+/* -- Reduced motion: no loops; each state parks in a pose that still says it -- */
+@media (prefers-reduced-motion: reduce) {
+  .chat-sprite-dot,
+  .chat-sprite-dot * {
+    animation: none !important;
+  }
+
+  .chat-sprite-dot {
+    --sprite-morph-duration: var(--sprite-morph-urgent);
+  }
+
+  .chat-assistant-sprite-glyph {
+    transition-duration: var(--sprite-morph-urgent);
+  }
+
+  /* think: the moon parked front-right, the gaze leaning toward it. */
+  .chat-sprite-dot[data-activity="think"] .p1 .q {
+    transform: translate(1.3px, 0.55px);
+  }
+
+  .chat-sprite-dot[data-activity="think"] .p2 {
+    z-index: 2;
+  }
+
+  .chat-sprite-dot[data-activity="think"] .p2 .q {
+    transform: translate(6.7px, 2.8px) scale(1);
+    opacity: 1;
+  }
+
+  /* write: the line partly written, the pen at its edge. */
+  .chat-sprite-dot[data-activity="write"] .p1 .q {
+    transform: translate(1.4px, 0px) rotate(30deg);
+  }
+
+  .chat-sprite-dot[data-activity="write"] .p2 .q {
+    transform: scaleX(0.6);
+  }
+
+  [dir="rtl"] .chat-sprite-dot[data-activity="write"] .p1 .q {
+    transform: translate(-1.4px, 0px) rotate(-30deg);
+  }
+
+  /* compose: a frozen wave, the middle dot raised. */
+  .chat-sprite-dot[data-activity="compose"] .p1 .q {
+    transform: translateY(-2.5px);
+    opacity: 1;
+  }
+
+  /* check: three lines at 1 / 0.7 / 0.4. */
+  .chat-sprite-dot[data-activity="check"] .p1 .q {
+    transform: scaleX(1);
+    opacity: 1;
+  }
+
+  .chat-sprite-dot[data-activity="check"] .p2 .q {
+    transform: scaleX(0.7);
+    opacity: 1;
+  }
+
+  .chat-sprite-dot[data-activity="check"] .p3 .q {
+    transform: scaleX(0.4);
+    opacity: 1;
+  }
+
+  /* search: the magnifier centered. */
+  .chat-sprite-dot[data-activity="search"] .w {
+    transform: translateX(0px) rotate(0deg);
+  }
+
+  /* compact: a frozen squeeze, the outer dots at x -5 / +5. */
+  .chat-sprite-dot[data-activity="compact"] .p2 .q {
+    transform: translateX(3px);
+    opacity: 0.45;
+  }
+
+  .chat-sprite-dot[data-activity="compact"] .p3 .q {
+    transform: translateX(-3px);
+    opacity: 0.45;
+  }
+
+  /* approve: the ping ring shown static. */
+  .chat-sprite-dot[data-activity="approve"] .r {
+    transform: scale(1.8);
+    opacity: 0.4;
+  }
+}

@@ -264,8 +264,10 @@ class VersionedWorkspaceFileService {
         'Path must be a workspace-relative string.'
       );
     }
-    const raw = value.trim().replace(/\\/g, '/');
-    if (!raw || raw.includes('\0') || raw.startsWith('/') || /^[A-Za-z]:/.test(raw) || raw.startsWith('//')) {
+    // Whitespace in a name is identity: the path is never trimmed (typed-input callers trim first).
+    const raw = value.replace(/\\/g, '/');
+    const lead = raw.trimStart();
+    if (!lead || raw.includes('\0') || lead.startsWith('/') || /^[A-Za-z]:/.test(lead)) {
       throw workspaceFsError(
         VERSIONED_WORKSPACE_FILE_ERROR_CODES.PATH_INVALID,
         'Path must be a workspace-relative path.'
@@ -276,6 +278,12 @@ class VersionedWorkspaceFileService {
       throw workspaceFsError(
         VERSIONED_WORKSPACE_FILE_ERROR_CODES.PATH_INVALID,
         'Path must stay inside the workspace.'
+      );
+    }
+    if (this._platform === 'win32' && segments.some((segment) => /[. ]$/.test(segment))) {
+      throw workspaceFsError(
+        VERSIONED_WORKSPACE_FILE_ERROR_CODES.PATH_INVALID,
+        'A name can\'t end with a space or a period on Windows.'
       );
     }
     return segments.join('/');

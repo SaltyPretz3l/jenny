@@ -1,4 +1,5 @@
-/* renderer/shell/renderer-header-utils.js – titlebar metric strip + header button state (UMD) */
+/* renderer/shell/renderer-header-utils.js – the title bar's machine-load read-out, the
+   offline-lockdown badge and New Chat gating (UMD) */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) {
     module.exports = factory();
@@ -15,28 +16,30 @@
     'sidecar_spawned', 'model_acquiring', 'model_loading', 'starting', 'retrying',
   ]);
 
+  // Machine-load read-out slots: [kind, value-slot width class]. The first
+  // slot is GPU utilization (CPU without it), the second VRAM (RAM without it).
+  const READOUT_SLOTS = [['load', 'percent'], ['memory', 'memory']];
+  const UNKNOWN_VALUE = '–';
+
   function createHeaderController(deps) {
     const { state } = deps;
-    const {
-      metricList,
-      sessionActionButton, newChatButton,
-    } = deps.dom;
+    const { metricList, newChatButton } = deps.dom || {};
     const {
       escapeHtml = (v) => String(v ?? ''),
-      isSendBusy = () => false,
       isAnySendBusy = () => false,
       isSendPreflightPending = () => false,
-      updateTokenDisplay = () => {},
-      refreshSystemStats = async () => null,
-      // Bounds a wedged refresh invoke so one hung promise cannot permanently
-      // latch the single-flight guard and kill the affordance for the session.
-      refreshTimeoutMs = 10000,
     } = deps.callbacks || {};
+    const documentRef = deps.documentRef || metricList?.ownerDocument || (typeof document !== 'undefined' ? document : null);
+    const shell = deps.shell || (typeof window !== 'undefined' ? window.jennyShell : null) || null;
     // Read lazily: renderer feature flags hydrate asynchronously after
     // controllers are constructed, so a construction-time capture would pin
     // the flag to its pre-hydration value (usually off) for the whole session.
     function isTelemetryFlagOn() {
       return state.features?.featureFlags?.titlebar_gpu_telemetry === true;
+    }
+
+    function isReadoutEnabled() {
+      return state.ui?.appearance?.titlebarLoad === true;
     }
 
     function isGpuTelemetryBlocked(arch, platform) {
@@ -46,31 +49,118 @@
     }
 
     function formatPercent(value) {
-      const parsed = Number(value);
-      if (!Number.isFinite(parsed)) {
-        return '0.0%';
-      }
-      return `${parsed.toFixed(1)}%`;
+      const parsed = value === null || value === undefined || value === '' ? NaN : Number(value);
+      return Number.isFinite(parsed) ? `${Math.round(parsed)}%` : UNKNOWN_VALUE;
     }
 
-    function formatVramGbValue(gpuMemory) {
+    function formatVramUsed(gpuMemory) {
       const usedMb = Number(gpuMemory && gpuMemory.usedMb);
       const totalMb = Number(gpuMemory && gpuMemory.totalMb);
       if (!Number.isFinite(usedMb) || !Number.isFinite(totalMb) || totalMb <= 0) {
         return '';
       }
-      const usedGb = usedMb / 1024;
-      const totalGb = totalMb / 1024;
-      return `${usedGb.toFixed(1)}/${totalGb.toFixed(1)} GB`;
+      return `${(usedMb / 1024).toFixed(1)} GB`;
     }
 
-    let _lastMetricsMarkup = null;
-    let refreshInFlight = false;
+    function resolveStaleTitle(telemetryFlagOn, gpuMemory) {
+      if (!telemetryFlagOn || !gpuMemory || gpuMemory.stale !== true) return '';
+      const staleAgeMs = Number(gpuMemory.ageMs);
+      const staleAgeSeconds = Number.isFinite(staleAgeMs) ? Math.max(0, Math.round(staleAgeMs / 10000) * 10) : 0;
+      // A 0s bucket means stale-by-failure (or an unparseable timestamp), not
+      // stale-by-age: "0s old" would contradict the dimmed visual.
+      return staleAgeSeconds > 0
+        ? jt('titlebar.gpuSampleAge', 'GPU sample is {seconds}s old', { seconds: staleAgeSeconds })
+        : jt('titlebar.gpuSampleStale', 'GPU sample may be stale');
+    }
+
+    // The two slot values for the current stats: { label, value, gpuDerived }.
+    function resolveReadout(stats) {
+      const telemetryFlagOn = isTelemetryFlagOn();
+      const blocked = isGpuTelemetryBlocked(stats.arch, telemetryFlagOn ? stats.platform : undefined);
+      const gpuMemory = stats.gpuMemory && typeof stats.gpuMemory === 'object' ? stats.gpuMemory : null;
+      const load = telemetryFlagOn && !blocked && gpuMemory && gpuMemory.utilAvailable === true
+        ? { label: jt('titlebar.metrics.gpu', 'GPU'), value: formatPercent(gpuMemory.utilPercent), gpuDerived: true }
+        : { label: jt('titlebar.metrics.cpu', 'CPU'), value: formatPercent(stats.cpuPercent), gpuDerived: false };
+      const vram = !blocked && gpuMemory && gpuMemory.available === true ? formatVramUsed(gpuMemory) : '';
+      const memory = vram
+        ? { label: jt('titlebar.metrics.vram', 'VRAM'), value: vram, gpuDerived: true }
+        : { label: jt('titlebar.metrics.ram', 'RAM'), value: formatPercent(stats.ramPercent), gpuDerived: false };
+      return { slots: [load, memory], staleTitle: resolveStaleTitle(telemetryFlagOn, gpuMemory) };
+    }
+
     let disposed = false;
-    let refreshAttached = false;
-    let removeMetricRefresh = () => {};
+    let readoutShown = false;
+    let readoutNodes = null; // [{ item, label, value }] per slot, built once
     let lockdownMount = null;
     let lastLockdownState = null;
+
+    function buildReadoutNodes() {
+      if (readoutNodes || !documentRef || !metricList) return readoutNodes;
+      readoutNodes = READOUT_SLOTS.map(([kind, slot]) => {
+        const item = documentRef.createElement('span');
+        item.className = 'metric-item';
+        item.dataset.metric = kind;
+        const label = documentRef.createElement('span');
+        label.className = 'metric-item-label';
+        const value = documentRef.createElement('span');
+        value.className = 'metric-item-value';
+        value.dataset.slot = slot;
+        item.append(label, ' ', value);
+        return { item, label, value };
+      });
+      metricList.replaceChildren(...readoutNodes.map((node) => node.item));
+      return readoutNodes;
+    }
+
+    function setText(node, text) {
+      if (node.textContent !== text) node.textContent = text;
+    }
+
+    function setStale(item, staleTitle) {
+      if (staleTitle) {
+        if (item.dataset.stale !== 'true') item.dataset.stale = 'true';
+        if (item.getAttribute('title') !== staleTitle) item.setAttribute('title', staleTitle);
+      } else if (item.dataset.stale !== undefined) {
+        delete item.dataset.stale;
+        item.removeAttribute('title');
+      }
+    }
+
+    // The 2 s tick lands here: text nodes only, only while the read-out is on
+    // and the document is visible. Off, it touches the DOM once (to hide).
+    // Tells main whether the read-out is on screen so the stats tick runs at
+    // 2 s only while it is (else 15 s). Sent on change only; never throws.
+    let watchSent = null;
+    function syncStatsWatch(watched) {
+      if (watched === watchSent) return;
+      watchSent = watched;
+      try {
+        Promise.resolve(shell?.system?.setStatsWatch?.({ source: 'titlebar', watched })).catch(() => {});
+      } catch (_error) { /* best effort */ }
+    }
+
+    function renderSystemLoad() {
+      if (disposed || !metricList) return;
+      syncStatsWatch(isReadoutEnabled());
+      if (!isReadoutEnabled()) {
+        if (readoutShown || metricList.hidden !== true) metricList.hidden = true;
+        readoutShown = false;
+        return;
+      }
+      if (documentRef && documentRef.hidden === true) return;
+      const nodes = buildReadoutNodes();
+      if (!nodes) return;
+      const { slots, staleTitle } = resolveReadout(state.systemStats || {});
+      slots.forEach((slot, index) => {
+        setText(nodes[index].label, slot.label);
+        setText(nodes[index].value, slot.value);
+        setStale(nodes[index].item, slot.gpuDerived ? staleTitle : '');
+      });
+      if (!readoutShown) {
+        metricList.hidden = false;
+        readoutShown = true;
+      }
+    }
 
     function isOfflineLockdownActive() {
       if (state.features?.featureFlags?.session_offline_lockdown !== true) return false;
@@ -111,68 +201,10 @@
       lastLockdownState = active;
     }
 
+    // Session, settings and backend changes land here (renderAll and its
+    // peers); the stats tick does not (renderSystemLoad owns it).
     function renderHeader() {
       renderLockdownBadge();
-      const telemetryFlagOn = isTelemetryFlagOn();
-      syncMetricRefresh(telemetryFlagOn);
-      const stats = state.systemStats || {};
-      const gpuTelemetryBlocked = isGpuTelemetryBlocked(
-        stats.arch,
-        telemetryFlagOn ? stats.platform : undefined,
-      );
-      const gpuMemory = stats.gpuMemory && typeof stats.gpuMemory === 'object' ? stats.gpuMemory : null;
-      const hasGpuVramMetric = !gpuTelemetryBlocked && gpuMemory && gpuMemory.available === true;
-      const vramValue = hasGpuVramMetric ? formatVramGbValue(gpuMemory) : '';
-      const memoryMetric = hasGpuVramMetric && vramValue
-        ? { label: jt('titlebar.metrics.vram', 'VRAM'), value: vramValue, gpuDerived: true }
-        : { label: jt('titlebar.metrics.ram', 'RAM'), value: formatPercent(stats.ramPercent) };
-      const metrics = [
-        { label: jt('titlebar.metrics.cpu', 'CPU'), value: formatPercent(stats.cpuPercent) },
-        ...(telemetryFlagOn && !gpuTelemetryBlocked && gpuMemory && gpuMemory.utilAvailable === true
-          ? [{
-              label: jt('titlebar.metrics.gpu', 'GPU'),
-              value: `${Number.isFinite(Number(gpuMemory.utilPercent)) ? Math.round(Number(gpuMemory.utilPercent)) : 0}%`,
-              gpuDerived: true,
-            }]
-          : []),
-        memoryMetric,
-      ];
-
-      if (metricList) {
-        const metricsMarkup = metrics
-          .map((metric) => {
-            const staleAgeMs = Number(gpuMemory && gpuMemory.ageMs);
-            const staleAgeSeconds = Number.isFinite(staleAgeMs)
-              ? Math.max(0, Math.round(staleAgeMs / 10000) * 10)
-              : 0;
-            // A 0s bucket means stale-by-failure (or unparseable timestamp),
-            // not stale-by-age — "0s old" would contradict the dimmed visual.
-            const staleTitle = staleAgeSeconds > 0
-              ? jt('titlebar.gpuSampleAge', 'GPU sample is {seconds}s old', { seconds: staleAgeSeconds })
-              : jt('titlebar.gpuSampleStale', 'GPU sample may be stale');
-            const staleAttributes = telemetryFlagOn
-              && metric.gpuDerived === true
-              && gpuMemory
-              && gpuMemory.stale === true
-              ? ` data-stale="true" title="${staleTitle}"`
-              : '';
-            return `
-            <span class="metric-item"${staleAttributes}>${escapeHtml(metric.label)}: ${escapeHtml(metric.value)}</span>
-          `;
-          })
-          .join('<span class="stat-divider" aria-hidden="true"></span>');
-        if (metricsMarkup !== _lastMetricsMarkup) {
-          metricList.innerHTML = metricsMarkup;
-          _lastMetricsMarkup = metricsMarkup;
-        }
-      }
-
-      if (sessionActionButton) {
-        sessionActionButton.textContent = jt('titlebar.session.end', 'End Session');
-        sessionActionButton.disabled =
-          !state.auth.authenticated ||
-          ((!state.currentSessionId && !isAnySendBusy()) || isSendPreflightPending());
-      }
       if (newChatButton) {
         // New Chat mirrors the composer's backend gate: it stays usable while
         // the model is unavailable (sending retries the load) and while the
@@ -185,88 +217,33 @@
           || isSendPreflightPending()
           || (!NEW_CHAT_BACKEND_PHASES.has(state.backend.phase) && !isAnySendBusy());
       }
-      updateTokenDisplay();
+      renderSystemLoad();
     }
 
-    // Attach/detach follows the flag's current value so late flag hydration
-    // (or a live flag flip) is picked up on the next render.
-    function syncMetricRefresh(flagOn) {
-      if (disposed || !metricList || typeof metricList.addEventListener !== 'function') {
-        return;
-      }
-      if (flagOn && !refreshAttached) {
-        attachMetricRefresh();
-      } else if (!flagOn && refreshAttached) {
-        removeMetricRefresh();
-      }
-    }
-
-    function attachMetricRefresh() {
-
-      async function refreshMetrics() {
-        if (refreshInFlight || disposed) return;
-        refreshInFlight = true;
-        metricList.classList.add('is-refreshing');
-        let timeoutId = null;
-        try {
-          const payload = await Promise.race([
-            refreshSystemStats(),
-            new Promise((resolve) => {
-              timeoutId = setTimeout(() => resolve(null), refreshTimeoutMs);
-            }),
-          ]);
-          if (payload && !disposed) {
-            state.systemStats = payload;
-            renderHeader();
-          }
-        } catch (_error) {
-          // Refresh is a best-effort titlebar affordance; scheduled polling remains active.
-        } finally {
-          if (timeoutId !== null) clearTimeout(timeoutId);
-          refreshInFlight = false;
-          metricList.classList.remove('is-refreshing');
-        }
-      }
-
-      function onClick() {
-        void refreshMetrics();
-      }
-
-      function onKeydown(event) {
-        if (event.key !== 'Enter' && event.key !== ' ') return;
-        if (event.key === ' ') event.preventDefault();
-        void refreshMetrics();
-      }
-
-      // No aria-label here: it would override name-from-content and hide every
-      // metric value from screen readers. The span text is the accessible name.
-      metricList.setAttribute('role', 'button');
-      metricList.setAttribute('tabindex', '0');
-      metricList.setAttribute('title', jt('titlebar.metrics.refreshTitle', 'Click to refresh system stats'));
-      metricList.addEventListener('click', onClick);
-      metricList.addEventListener('keydown', onKeydown);
-      refreshAttached = true;
-      removeMetricRefresh = () => {
-        metricList.removeEventListener?.('click', onClick);
-        metricList.removeEventListener?.('keydown', onKeydown);
-        metricList.removeAttribute('role');
-        metricList.removeAttribute('tabindex');
-        metricList.removeAttribute('title');
-        metricList.classList.remove('is-refreshing');
-        refreshAttached = false;
-      };
+    // The header owns its stats feed: the payload lands in state (the health
+    // popover and diagnostics read it) and only the read-out repaints.
+    let unsubscribeStats = null;
+    try {
+      const unsubscribe = shell?.system?.onStats?.((payload) => {
+        if (disposed) return;
+        state.systemStats = payload;
+        renderSystemLoad();
+      });
+      unsubscribeStats = typeof unsubscribe === 'function' ? unsubscribe : null;
+    } catch (_error) {
+      unsubscribeStats = null;
     }
 
     function dispose() {
+      if (watchSent === true) syncStatsWatch(false);
       disposed = true;
-      refreshInFlight = false;
-      removeMetricRefresh();
+      try { unsubscribeStats?.(); } catch (_error) { /* best effort */ }
+      unsubscribeStats = null;
       lockdownMount?.remove?.();
       lockdownMount = null;
     }
 
-    syncMetricRefresh(isTelemetryFlagOn());
-    return { renderHeader, dispose };
+    return { renderHeader, renderSystemLoad, dispose };
   }
 
   return { createHeaderController };

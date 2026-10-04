@@ -17,7 +17,7 @@ const {
   resolveRequestedEngineType,
 } = require('../services/backend/backend-service-utils');
 
-function makeDefaultModelFallbackService(predicate) {
+function makeDefaultModelFallbackService() {
   const logs = [];
   return {
     defaultModel: 'gpt-5.3-codex',
@@ -25,35 +25,15 @@ function makeDefaultModelFallbackService(predicate) {
       requested_engine: 'chatgpt',
       reason: 'ResponsesDescriptorError',
     },
-    ...(predicate === undefined ? {} : { _providerRuntimeApplyPending: predicate }),
     _emitServiceLog(level, event, details) { logs.push({ level, event, details }); },
     logs,
   };
 }
 
-test('autoLoadDefaultModel defers a fallback while provider runtime apply is pending', () => {
-  const service = makeDefaultModelFallbackService(() => true);
-
-  autoLoadDefaultModel(service);
-
-  assert.deepEqual(service.logs, [{
-    level: 'INFO',
-    event: 'backend.default_model_load_deferred',
-    details: {
-      model: 'gpt-5.3-codex',
-      requested_engine: 'chatgpt',
-      message: 'ResponsesDescriptorError',
-    },
-  }]);
-});
-
-for (const [name, predicate] of [
-  ['absent', undefined],
-  ['throwing', () => { throw new Error('predicate failed'); }],
-  ['false', () => false],
-]) {
-  test(`autoLoadDefaultModel keeps the fallback warning when the provider predicate is ${name}`, () => {
-    const service = makeDefaultModelFallbackService(predicate);
+{
+  // The ChatGPT descriptor is core since stage 2: a fallback is never deferred.
+  test('autoLoadDefaultModel reports an engine fallback as a warning', () => {
+    const service = makeDefaultModelFallbackService();
 
     autoLoadDefaultModel(service);
 
@@ -264,6 +244,26 @@ test('Astra explicit engine provenance still wins over inference and cached hint
   service.currentModel = '';
   await loadModel(service, { model: 'gpt-6-astra', engine_type: 'openai-compatible' });
   assert.equal(service.initCalls[1].requestedEngineType, 'openai-compatible');
+});
+
+test('a successful chatgpt loadModel remembers the model; other engines and fallbacks leave it', async () => {
+  const service = makeLoadModelService({ preferredEngineType: 'chatgpt' });
+  const writes = [];
+  service.configService.updateLastChatgptModel = (value) => { writes.push(value); };
+
+  await loadModel(service, { model: 'gpt-6-luna', engine_type: 'chatgpt' });
+  assert.deepEqual(writes, ['gpt-6-luna']);
+
+  await loadModel(service, { model: 'ornith:9b', engine_type: 'ollama' });
+  await loadModel(service, { model: 'custom/model', engine_type: 'openai-compatible' });
+  assert.deepEqual(writes, ['gpt-6-luna'], 'a load on another engine never overwrites it');
+
+  service._initializeManagedSidecar = async () => {
+    service._lastEngineFallback = { requested_engine: 'chatgpt', reason: 'not signed in' };
+  };
+  await assert.rejects(loadModel(service, { model: 'gpt-5.5', engine_type: 'chatgpt' }),
+    /Could not load chatgpt engine/);
+  assert.deepEqual(writes, ['gpt-6-luna'], 'a load that fell back to mock is not remembered');
 });
 
 test('loadModel forwards the pinned engine instead of the model-derived fallback', async () => {
@@ -742,4 +742,17 @@ test('getHardwareVramUsage treats the sidecar runtime_fallback shape as no answe
   });
 
   assert.equal(result, null, 'a laundered internal-exception sample must fall through to the direct probe');
+});
+
+// B13 review: the saved model is a startup hint, so a config write that fails
+// must not turn a load that took into a failed send.
+test('a failed save of the last chatgpt model does not fail the load', async () => {
+  const service = makeLoadModelService({ preferredEngineType: 'chatgpt' });
+  const logs = [];
+  service._emitServiceLog = (level, event) => { logs.push(`${level} ${event}`); };
+  service.configService.updateLastChatgptModel = () => { throw new Error('EBUSY: config locked'); };
+
+  const result = await loadModel(service, { model: 'gpt-6-luna', engine_type: 'chatgpt' });
+  assert.equal(result.status, 'ok');
+  assert.ok(logs.includes('WARN backend.last_chatgpt_model_save_failed'));
 });

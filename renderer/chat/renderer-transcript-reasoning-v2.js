@@ -24,6 +24,8 @@
     buildReasoningPreview,
     deriveReasoningStatus,
     resolveLiveWindowStart,
+    resolveDetachedTailEnd,
+    LIVE_WINDOW_DETACHED_CHARS,
     LIVE_WINDOW_ELIDED_FINGERPRINT,
     LIVE_WINDOW_NOTE_FINGERPRINT,
     LIVE_WINDOW_NOTE_HTML,
@@ -140,7 +142,12 @@
       thinkingController,
     } = deps || {};
     const settledBodyCache = new Map();
-    const settledBodyCacheLimit = 32;
+    // 256, up from 32 (timeline-perf 2026-09-30): a 40-row managed turn plus
+    // the settled rows of earlier turns thrashed a 32-entry scan on every
+    // render drain. Hits refresh insertion order (LRU), so the rows the drain
+    // keeps re-rendering stay resident. Bodies with fenced code are still
+    // never cached (see below).
+    const settledBodyCacheLimit = 256;
     let settledBodyContext = [];
 
     function renderSettledBody(cacheKey, markdown) {
@@ -159,7 +166,11 @@
         settledBodyContext = context;
       }
       const cached = settledBodyCache.get(cacheKey);
-      if (cached && cached.markdown === markdown) return cached.html;
+      if (cached && cached.markdown === markdown) {
+        settledBodyCache.delete(cacheKey);
+        settledBodyCache.set(cacheKey, cached);
+        return cached.html;
+      }
       const html = renderMarkdown(markdown, { mermaid: 'plain' });
       settledBodyCache.delete(cacheKey);
       // Fenced code depends on private Monaco warm-up/grammar state and,
@@ -181,13 +192,17 @@
       iteration,
       isStreamingTail,
       groupCount,
+      transcriptView,
+      controller,
     }) {
       const thinkingId = String(group?.thinkingId || '');
       const phaseKey = String(group?.phaseKey || group?.phaseId || thinkingId || `legacy_phase_${iteration}`);
       const entries = Array.isArray(group?.entries) ? group.entries : [];
+      const streamCacheKey = `${String(message?.id || '')}::${phaseKey}`;
+      const bodyMarkdown = joinReasoningEntriesMarkdown(entries, { scope: streamCacheKey });
       // The sidecar supplies a generic phase summary; prefer an entry-derived summary whenever entries exist.
       const metadataSummary = String(metadata?.summary || '').trim();
-      const derivedSummary = String(summaryFromEntries(entries) || '').trim();
+      const derivedSummary = String(summaryFromEntries(bodyMarkdown ? [{ text: bodyMarkdown }] : entries) || '').trim();
       const summary = metadataSummary && metadataSummary.toLowerCase() !== GENERIC_PHASE_SUMMARY
         ? metadataSummary
         : (derivedSummary || metadataSummary);
@@ -197,22 +212,18 @@
         phaseCompleted: metadata?.completed === true,
       });
       const isPhaseStreaming = isStreamingTail && status === 'streaming';
-      const streamCacheKey = `${String(message?.id || '')}::${phaseKey}`;
       if (!isPhaseStreaming) streamStateCache.delete(streamCacheKey);
       else settledBodyCache.delete(streamCacheKey);
       const tone = reasoningStatusTone(status, { isStreaming: isPhaseStreaming });
-      const autoExpand = shouldAutoExpandReasoningV2(status, { isStreaming: isPhaseStreaming });
-      const expanded = thinkingController.isPhaseExpanded(message.id, phaseKey, autoExpand);
+      // A settled body-less phase has nothing to open: the view default (e.g.
+      // everything) must not rotate its caret over a hidden empty panel.
+      const autoExpand = shouldAutoExpandReasoningV2(status, { isStreaming: isPhaseStreaming, transcriptView })
+        && (isPhaseStreaming || Boolean(bodyMarkdown));
+      const expanded = controller.isPhaseExpanded(message.id, phaseKey, autoExpand);
 
       // Settled phases prefer the settled "Thought for Xs" duration; while
       // streaming (or when timing is absent) fall back to the live tok/s rate.
-      // Gated on response_loop_display_v2 (reflected on the root dataset by the
-      // render pipeline, mirroring the commentary path) so flag-off keeps the
-      // pre-feature tok/s secondary meta byte-identical.
-      const responseLoopDisplayV2 = typeof document !== 'undefined'
-        && !!document.documentElement
-        && document.documentElement.dataset.responseLoopDisplay === 'true';
-      const durationLabel = responseLoopDisplayV2 && typeof formatReasoningDuration === 'function'
+      const durationLabel = typeof formatReasoningDuration === 'function'
         ? formatReasoningDuration(
           metadata && (metadata.startedAt || metadata.started_at),
           metadata && (metadata.completedAt || metadata.completed_at),
@@ -223,7 +234,6 @@
         ? jt('chat.reasoning.thoughtFor', 'Thought for {duration}', { duration: durationLabel })
         : formatReasoningSecondaryMeta({ tokensPerSecond: metadata?.tokensPerSecond });
 
-      const bodyMarkdown = joinReasoningEntriesMarkdown(entries);
       // mermaid: 'plain' — reasoning is a working surface, not the answer:
       // a diagram the model drafts while thinking must not render as a
       // duplicate interactive chart here.
@@ -238,6 +248,7 @@
             : Date.now();
           const streamModel = renderStreamingMarkdownUnits(bodyMarkdown, {
             mermaid: 'plain',
+            allowTailRewrite: true,
             previousUnits: cached ? cached.units : [],
             previousStreamState: cached ? cached.streamState : null,
           });
@@ -248,6 +259,7 @@
           try {
             globalThis.rendererStreamClientMetricsModule?.getShared?.()
               ?.noteReasoningBodyRender?.({
+                streamId: message.streamId,
                 mode: streamModel.renderMode,
                 fallbackReason: streamModel.fallbackReason,
                 durationMs: renderCompletedAt - renderStartedAt,
@@ -262,11 +274,21 @@
           // Trailing live window: earlier units become empty placeholders once
           // the body outgrows the window (see resolveLiveWindowStart); the
           // elided character count is threaded through the cache so it never retracts.
+          // A reader scrolled away from the live edge freezes the floor: no unit
+          // above them is emptied under their eyes while the block streams.
+          // The DOM is bounded from the tail instead (resolveDetachedTailEnd);
+          // held-back units appear once follow re-latches (HB-024).
+          const readerAway = typeof controller?.isReaderAway === 'function'
+            && controller.isReaderAway() === true;
           const liveWindowStart = typeof resolveLiveWindowStart === 'function'
             ? resolveLiveWindowStart(streamModel.units, cached ? cached.liveWindowStart : 0, {
               previousElidedChars: cached ? cached.liveWindowElidedChars : 0,
+              windowChars: readerAway ? Number.MAX_SAFE_INTEGER : undefined,
             })
             : 0;
+          const liveWindowEnd = readerAway && typeof resolveDetachedTailEnd === 'function'
+            ? resolveDetachedTailEnd(streamModel.units, liveWindowStart, LIVE_WINDOW_DETACHED_CHARS)
+            : (Array.isArray(streamModel.units) ? streamModel.units.length : 0);
           setCachedStreamState(streamCacheKey, streamModel, liveWindowStart, cached ? cached.liveWindowElidedChars : 0);
           bodyHtml = streamModel.html;
           // Wrap each markdown unit so the live patch can reveal only newly
@@ -277,6 +299,7 @@
           const units = Array.isArray(streamModel.units) ? streamModel.units : [];
           if (units.length) {
             bodyUnitsHtml = units
+              .slice(0, liveWindowEnd)
               .map((unit, unitIndex) => {
                 if (unitIndex < liveWindowStart) {
                   const note = unitIndex === liveWindowStart - 1;
@@ -298,7 +321,7 @@
       // shell (entries still streaming in) otherwise renders as a tall blank
       // box (.expanded sets max-height + padding with nothing inside).
       const panelExpanded = expanded && Boolean(bodyHtml);
-      const a11y = thinkingController.getPhaseToggleA11y(message.id, phaseKey, panelExpanded);
+      const a11y = controller.getPhaseToggleA11y(message.id, phaseKey, panelExpanded);
       const toggleId = `${a11y.panelId}-toggle`;
 
       const collapsedPreview = !expanded && !isPhaseStreaming
@@ -323,7 +346,7 @@
       }
       // Clean the CHOSEN label (metadata summary, derived summary, or preview
       // alike) — cleaning inside the derivation helpers would miss a bold
-      // sidecar metadata.summary. The markdown body stays raw.
+      // sidecar metadata.summary. joinReasoningEntriesMarkdown prettifies the body at display time.
       const chosenLabel = isPhaseStreaming ? summary : (summary || collapsedPreview);
       const rawHeaderLabel = typeof markdownToPlainReasoningLabel === 'function'
         ? markdownToPlainReasoningLabel(chosenLabel)
@@ -333,6 +356,14 @@
       const ariaLabel = groupCount > 1
         ? jt('chat.reasoning.toggleStep', 'Toggle reasoning step {step}', { step: iteration })
         : jt('chat.reasoning.toggle', 'Toggle reasoning');
+      // Answers renders a disabled plain progress line (po-review C1): no toggle
+      // semantics, so the visible "Thinking · …" text is its accessible name.
+      const toggleA11yAttrs = transcriptView === 'answers'
+        ? ' disabled'
+        : `
+            aria-label="${escapeHtml(ariaLabel)}"
+            aria-expanded="${a11y.ariaExpanded}"
+            aria-controls="${escapeHtml(a11y.ariaControls)}"`;
       const settledFingerprint = isPhaseStreaming
         ? ''
         : fingerprintSettledPhase([status, headerLabel, secondaryMeta, bodyMarkdown]);
@@ -354,10 +385,7 @@
             data-message-id="${escapeHtml(message.id)}"
             data-thinking-id="${escapeHtml(thinkingId)}"
             data-phase-key="${escapeHtml(phaseKey)}"
-            data-default-expanded="${autoExpand ? 'true' : 'false'}"
-            aria-label="${escapeHtml(ariaLabel)}"
-            aria-expanded="${a11y.ariaExpanded}"
-            aria-controls="${escapeHtml(a11y.ariaControls)}"
+            data-default-expanded="${autoExpand ? 'true' : 'false'}"${toggleA11yAttrs}
           >
             <span class="status-dot status-dot--${escapeHtml(tone)}" aria-hidden="true"></span>
             <span class="reasoning-row-name">${escapeHtml(nameText)}</span>
@@ -378,7 +406,7 @@
           >
             ${
               bodyHtml
-                ? `<div class="reasoning-row-panel-body chat-bubble-markdown">${bodyMarkup}</div>`
+                ? `<div class="reasoning-row-panel-body chat-bubble-markdown" dir="auto">${bodyMarkup}</div>`
                 : ''
             }
           </div>
@@ -395,7 +423,12 @@
       `;
     }
 
-    function renderReasoningRow(message, latestAssistantMessageId) {
+    function renderReasoningRow(message, latestAssistantMessageId, options) {
+      // Transcript view arrives per call: this renderer is one shared instance
+      // and split-view panes can show different views.
+      const transcriptView = String(options?.transcriptView || '');
+      // Each split-view pane renders against its own reasoning controller.
+      const controller = options?.thinkingController || thinkingController;
       const entries = Array.isArray(getReasoningEntries?.(message)) ? getReasoningEntries(message) : [];
       const groupedPhases = Array.isArray(groupReasoningByPhase?.(entries))
         ? groupReasoningByPhase(entries)
@@ -425,6 +458,8 @@
           iteration,
           isStreamingTail: isStreaming && index === lastPhaseIndex,
           groupCount: phaseGroups.length,
+          transcriptView,
+          controller,
         });
       }).join('');
 
@@ -437,11 +472,11 @@
       `;
     }
 
-    function renderThinkingWidget(message, latestAssistantMessageId) {
+    function renderThinkingWidget(message, latestAssistantMessageId, options) {
       if (!shouldShowThinkingToggle(message, { latestAssistantMessageId })) {
         return '';
       }
-      return renderReasoningRow(message, latestAssistantMessageId);
+      return renderReasoningRow(message, latestAssistantMessageId, options);
     }
 
     return {

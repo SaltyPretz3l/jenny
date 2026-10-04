@@ -6,22 +6,16 @@ import hashlib
 import json
 import time
 from collections import OrderedDict
-from dataclasses import dataclass
-from typing import Any, cast
+from dataclasses import dataclass, replace
+from typing import Any
 
 from sidecar.ai.plugins.runtime_registry import (
-    PluginEngineBinding,
-    PluginNativeToolDescriptor,
     PluginRuntimeGeneration,
     PluginRuntimeRegistry,
 )
 
 MAX_CANDIDATES = 4
 CANDIDATE_TTL_SECONDS = 60.0
-# Self-declared side_effecting is honored only for first-party/signed publishers.
-# All other native tools are forced side-effecting so read-only and plan mode fail
-# closed (H3, PLAN_MODE_V2_SPEC).
-TRUSTED_SIDE_EFFECT_PUBLISHERS: frozenset[str] = frozenset({"jenny-official"})
 
 
 def _digest(value: object) -> str:
@@ -45,6 +39,7 @@ class PluginRuntimeApplyStage8:
         self, generation: PluginRuntimeGeneration, *, applied: bool
     ) -> dict[str, object]:
         authority = generation.authority
+        # Frozen wire value: the attested participant set predates the retirement.
         participants = ["sidecar", "native_mcp", "engine_adapter"]
         authority_tuple = [
             authority.registry_revision,
@@ -105,20 +100,30 @@ class PluginRuntimeApplyStage8:
         self._candidates.clear()
 
 
+# The privileged tier (full host, native MCP, session providers, engine adapters,
+# hooks) is retired. The host still sends the frozen V6 snapshot shape with these
+# arrays empty; a non-empty one is refused rather than ignored.
+PRIVILEGED_ARRAYS: tuple[str, ...] = (
+    "full_host_descriptors",
+    "native_mcp_bindings",
+    "session_providers",
+    "engine_adapters",
+    "hook_descriptors",
+    "containment_profiles",
+)
+
+
 def build_generation_v6(
     snapshot: dict[str, Any], content_envelope: object
 ) -> PluginRuntimeGeneration:
-    """Build V6 by extending the frozen V5 projection with privileged bindings."""
-    from sidecar.ai.plugins.runtime_apply import (  # noqa: PLC0415
+    """Build V6 as V5: every privileged array must be empty."""
+    from sidecar.ai.plugins.runtime_apply import (
         _contract_rejection,
-        _generation_id,
-        _reject_duplicate_keys,
-        _reject_json_constant,
-    )
-    from sidecar.ai.plugins.runtime_apply_stage7 import (  # noqa: PLC0415
         build_generation_v5,
     )
 
+    if any(snapshot[field] for field in PRIVILEGED_ARRAYS):
+        raise _contract_rejection("runtime_privileged_descriptor_unsupported")
     legacy_snapshot = {
         "kind": "plugin_runtime_snapshot",
         "runtime_schema_version": 5,
@@ -133,81 +138,4 @@ def build_generation_v6(
         "provider_descriptors": snapshot["provider_descriptors"],
     }
     base = build_generation_v5(legacy_snapshot, content_envelope)
-
-    native_tools: list[PluginNativeToolDescriptor] = []
-    for binding in cast(list[dict[str, Any]], snapshot["native_mcp_bindings"]):
-        binding_publisher = cast(str, binding["publisher_id"])
-        for tool in cast(list[dict[str, Any]], binding["tools"]):
-            schema_json = cast(str, tool["schema_json"])
-            if hashlib.sha256(schema_json.encode("utf-8")).hexdigest() != tool["schema_digest"]:
-                raise _contract_rejection(
-                    "runtime_native_schema_digest_mismatch",
-                    cast(str, binding["contribution_id"]),
-                )
-            try:
-                input_schema = json.loads(
-                    schema_json,
-                    object_pairs_hook=_reject_duplicate_keys,
-                    parse_constant=_reject_json_constant,
-                )
-            except (TypeError, ValueError) as error:
-                raise _contract_rejection(
-                    "runtime_native_schema_invalid",
-                    cast(str, binding["contribution_id"]),
-                ) from error
-            if not isinstance(input_schema, dict):
-                raise _contract_rejection("runtime_native_schema_invalid")
-            declared = cast(bool, tool["side_effecting"])
-            side_effecting = (
-                declared if binding_publisher in TRUSTED_SIDE_EFFECT_PUBLISHERS else True
-            )
-            native_tools.append(PluginNativeToolDescriptor(
-                name=cast(str, tool["namespaced_name"]),
-                description=cast(str, tool["description"]),
-                input_schema=input_schema,
-                binding_digest=cast(str, binding["binding_digest"]),
-                publisher_id=binding_publisher,
-                plugin_id=cast(str, binding["plugin_id"]),
-                contribution_id=cast(str, binding["contribution_id"]),
-                side_effecting=side_effecting,
-                server_tool_name=cast(str, tool["remote_name"]),
-            ))
-    native_tuple = tuple(sorted(native_tools, key=lambda item: item.name.encode("utf-8")))
-    if len({item.name for item in native_tuple}) != len(native_tuple):
-        raise _contract_rejection("runtime_native_tool_duplicate")
-
-    engines = tuple(sorted((
-        PluginEngineBinding(
-            authority=base.authority,
-            adapter_id=cast(str, row["adapter_id"]),
-            binding_digest=cast(str, row["binding_digest"]),
-            descriptor=dict(row),
-        )
-        for row in cast(list[dict[str, Any]], snapshot["engine_adapters"])
-    ), key=lambda item: item.adapter_id.encode("utf-8")))
-    if len({item.adapter_id for item in engines}) != len(engines):
-        raise _contract_rejection("runtime_engine_adapter_duplicate")
-
-    return PluginRuntimeGeneration(
-        authority=base.authority,
-        sidecar_plugin_generation=_generation_id(
-            base.authority,
-            list(base.contributions),
-            base.declarative,
-            base.settings,
-            base.workflow_tool_bindings,
-            base.remote_tools,
-            base.providers,
-            native_tuple,
-            engines,
-        ),
-        contributions=base.contributions,
-        declarative=base.declarative,
-        settings=base.settings,
-        workflow_tool_bindings=base.workflow_tool_bindings,
-        remote_tools=base.remote_tools,
-        providers=base.providers,
-        native_tools=native_tuple,
-        engine_bindings=engines,
-        expected_rejections_digest=_digest(snapshot["expected_rejections"]),
-    )
+    return replace(base, expected_rejections_digest=_digest(snapshot["expected_rejections"]))

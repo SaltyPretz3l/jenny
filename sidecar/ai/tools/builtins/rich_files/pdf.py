@@ -20,6 +20,7 @@ from sidecar.ai.tools.builtins.rich_files.base import (
     RichPreviewResult,
     build_unsupported_result,
     preview_artifact_metadata,
+    read_bounded_file_bytes,
     rich_inspect_result_payload,
     rich_inspect_result_to_tool_result,
     string_argument,
@@ -95,7 +96,12 @@ def _inspect_pdf_with_fitz(
     previews: list[dict[str, object]] = []
     generated_artifacts: list[dict[str, object]] = []
 
-    raw_pdf = source.absolute_path.read_bytes()
+    raw_pdf = read_bounded_file_bytes(
+        source.absolute_path,
+        max_bytes=filesystem_content.MAX_MEDIA_FILE_BYTES,
+        authorized_root=workspace.require_root(),
+        message="PDF source changed beyond rich-file size limit",
+    )
     digest = pdf_text.document_digest(raw_pdf)
     with fitz.open(stream=raw_pdf, filetype="pdf") as document:
         page_count = int(document.page_count)
@@ -118,7 +124,7 @@ def _inspect_pdf_with_fitz(
             warnings_out.append("preview skipped: session context unavailable")
 
         # Lazy: keeps pdf_ocr out of the sidecar.server import graph.
-        from sidecar.ai.tools.builtins import pdf_ocr  # noqa: PLC0415
+        from sidecar.ai.tools.builtins import pdf_ocr
 
         ocr_session = pdf_ocr.PdfOcrSession()
         text_less_pages: list[int] = []
@@ -179,7 +185,10 @@ def _inspect_pdf_with_fitz(
             "selected_pages": selected_pages,
             "pages": pages,
             **continuation,
-            "truncated": page_count > len(selected_pages) or "cursor" in continuation,
+            "truncated": (
+                page_count > len(selected_pages)
+                or any(page.get("text_truncated") for page in pages)
+            ),
         }
         if unread_pages:
             summary["unread_pages"] = unread_pages

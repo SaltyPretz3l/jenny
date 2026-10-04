@@ -54,6 +54,7 @@ function buildSessionSummary(session) {
     archived_at: session.archived_at || null,
     context_preferences: session.context_preferences,
     tool_category_overrides: session.tool_category_overrides,
+    tool_connection_overrides: session.tool_connection_overrides,
     compaction_context: summarizeCompactionSnapshot(session.compaction_snapshot),
     context_usage: session.context_usage || null,
     linked_session_ids: session.linked_session_ids,

@@ -28,7 +28,10 @@ test('check-for-updates row fills the version note and runs a user-initiated che
 
   const summary = doc.getElementById('updateSettingsSummary');
   assert.ok(summary, 'update settings summary note exists');
-  assert.match(summary.textContent, /Jenny 9\.9\.9-test/);
+  // Before any check there is no verdict to show; the version has its own line.
+  assert.equal(summary.textContent, '');
+  assert.equal(summary.hidden, true);
+  assert.match(doc.getElementById('aboutVersionLine').textContent, /9\.9\.9-test/);
 
   // No startup polling: the check must not run until the user asks.
   assert.equal(checkCalls, 0);

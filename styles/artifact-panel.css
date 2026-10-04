@@ -1,35 +1,10 @@
-/* Artifact Panel V2 rules are scoped to .artifact-review-panel.artifact-panel-v2, installed only
-   when the flag is enabled; the panel edge owns the artifact frame. */
+/* Artifact Panel V2 rules are scoped to .artifact-review-panel.artifact-panel-v2 (installed with
+   the V3 chrome); the panel edge owns the artifact frame. Every row inside the panel (header,
+   controls, output toolbar, code body, detail note, footer) starts and ends on
+   --side-panel-gutter (foundation.css) so the edges line up. */
 
 .artifact-review-panel.artifact-panel-v2 {
   padding: 0;
-}
-
-.artifact-panel-v2-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-4);
-  padding: 10px 12px;
-  border-bottom: 1px solid var(--border-default);
-  flex-shrink: 0;
-}
-
-.artifact-panel-v2-title {
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--text-primary);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  min-width: 0;
-}
-
-.artifact-panel-v2-header-actions {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  flex-shrink: 0;
 }
 
 .artifact-panel-v2-icon-btn {
@@ -72,55 +47,6 @@
   outline-offset: 1px;
 }
 
-.artifact-panel-v2-delete-btn {
-  color: var(--text-muted);
-}
-
-.artifact-panel-v2-delete-btn:hover:not(:disabled),
-.artifact-panel-v2-delete-btn:focus-visible {
-  color: var(--text-danger, var(--text-secondary));
-}
-
-.artifact-panel-v2-toolbar {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  padding: 6px 12px;
-  border-top: 1px solid var(--border-default);
-  border-bottom: 1px solid var(--border-default);
-  flex-shrink: 0;
-}
-
-.artifact-panel-v2-save-revert {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-3);
-}
-
-.artifact-panel-v2-text-btn {
-  border: none;
-  background: none;
-  padding: 2px 4px;
-  font-size: 12px;
-  color: var(--text-secondary);
-  cursor: pointer;
-}
-
-.artifact-panel-v2-save-btn {
-  color: var(--accent, var(--text-primary));
-}
-
-.artifact-panel-v2-text-btn:hover,
-.artifact-panel-v2-text-btn:focus-visible {
-  color: var(--text-primary);
-}
-
-.artifact-panel-v2-toolbar-spacer {
-  margin-inline-start: auto;
-  display: inline-flex;
-  align-items: center;
-}
-
 .artifact-panel-v2-stepper {
   display: inline-flex;
   align-items: center;
@@ -128,7 +54,7 @@
 }
 
 .artifact-panel-v2-stepper-count {
-  font-size: 11px;
+  font-size: var(--font-size-caption);
   color: var(--text-secondary);
 }
 
@@ -151,9 +77,9 @@
 }
 
 .artifact-panel-v2-empty {
-  padding: 20px 12px;
+  padding: var(--space-10) var(--side-panel-gutter);
   text-align: center;
-  font-size: 12px;
+  font-size: var(--font-size-footnote);
   color: var(--text-secondary);
 }
 
@@ -166,7 +92,7 @@
 }
 
 .artifact-panel-v2-content-host .artifact-preview-content {
-  padding: 12px 16px;
+  padding: var(--space-6) var(--side-panel-gutter);
 }
 
 /* Mermaid / SVG / image / chart previews center on the panel surface with no
@@ -187,25 +113,6 @@
   border-radius: 0;
 }
 
-.artifact-panel-v2-footer {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  padding: 7px 12px;
-  border-top: 1px solid var(--border-default);
-  flex-shrink: 0;
-  position: relative;
-}
-
-.artifact-panel-v2-footer-meta {
-  font-size: 11px;
-  color: var(--text-muted);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  min-width: 0;
-}
-
 .artifact-panel-v2-footer-action {
   margin-inline-start: auto;
   flex-shrink: 0;
@@ -216,7 +123,7 @@
   animation: fade-up var(--motion-duration-fast) var(--motion-ease-emphasis);
   position: absolute;
   bottom: calc(100% + 6px);
-  inset-inline-end: 12px;
+  inset-inline-end: var(--side-panel-gutter);
   min-width: 220px;
   max-width: 320px;
   max-height: 260px;
@@ -236,24 +143,38 @@
 /* V3 Canvas chrome. */
 .artifact-review-panel.artifact-panel-v3 { position: relative; }
 
+/* One 36px header row, the tab rail's height. The end edge trades part of the
+   gutter for the icon buttons' internal padding so the glyphs (not the hit
+   boxes) sit on the gutter. */
 .artifact-panel-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: var(--space-4);
   height: 36px;
-  padding: 0 10px;
+  padding-block: 0;
+  padding-inline: var(--side-panel-gutter) calc(var(--side-panel-gutter) - var(--space-3));
   border-bottom: 1px solid var(--border-default);
   flex-shrink: 0;
 }
 
+/* Title first. The failed state and the kind caption wrap onto a clipped
+   second line when the row runs out of room, so they drop whole instead of
+   ellipsizing to "tool o…". */
 .artifact-panel-header-primary {
   display: flex;
+  flex-wrap: wrap;
+  align-content: flex-start;
   align-items: center;
-  gap: var(--space-4);
+  column-gap: var(--space-4);
+  row-gap: 14px;
   flex: 1 1 auto;
   min-width: 0;
+  height: 28px;
+  overflow: hidden;
 }
+
+.artifact-panel-header-primary > * { height: 28px; }
 
 .artifact-panel-header-actions,
 .artifact-panel-controls-actions,
@@ -299,6 +220,20 @@
   opacity: 0.45;
 }
 
+/* Header icons sit on 28px hit areas; the glyph stays 15px. */
+.artifact-panel-header .artifact-panel-icon-btn {
+  width: 28px;
+  height: 28px;
+  padding: 6.5px;
+}
+
+/* Pressed Wrap and Restore read as pressed by more than a colour shift. */
+.artifact-panel-wrap[aria-pressed="true"],
+.artifact-panel-maximize[aria-pressed="true"] {
+  background: var(--widget-action-bg);
+  color: var(--text-primary);
+}
+
 .artifact-panel-icon-btn:focus-visible,
 .artifact-panel-text-btn:focus-visible,
 .artifact-panel-title:focus-visible {
@@ -311,7 +246,7 @@
   border: none;
   background: none;
   color: var(--text-secondary);
-  font-size: 12px;
+  font-size: var(--font-size-body);
   cursor: pointer;
 }
 
@@ -322,8 +257,8 @@
 
 .artifact-panel-kind-glyph {
   display: inline-flex;
+  align-items: center;
   width: 14px;
-  height: 14px;
   color: var(--text-secondary);
   flex: 0 0 auto;
 }
@@ -334,15 +269,16 @@
   display: inline-flex;
   align-items: center;
   gap: 4px;
+  flex: 0 1 auto;
   min-width: 0;
-  max-width: 100%;
+  max-width: calc(100% - 14px - var(--space-4));
   padding: 2px 4px;
   overflow: hidden;
   border: none;
   border-radius: var(--radius-xs);
   background: transparent;
   color: var(--text-primary);
-  font-size: 13px;
+  font-size: var(--font-size-heading);
   font-weight: 500;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -359,6 +295,41 @@ button.artifact-panel-title:focus-visible { background: var(--rail-hover-bg); }
   white-space: nowrap;
 }
 
+/* Middle ellipsis: the head shrinks, the last eight characters never do. */
+.artifact-panel-title-text:has(.artifact-panel-title-tail) { display: inline-flex; }
+.artifact-panel-title-head {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  /* pre, not nowrap: as a flex item the head is its own block, and nowrap
+     would collapse the trailing space of "Read " into "Readhello.py". */
+  white-space: pre;
+}
+.artifact-panel-title-tail {
+  flex: none;
+  white-space: pre;
+}
+
+/* A failed call keeps its "failed" beside the title. */
+.artifact-panel-header-primary:has(.artifact-panel-title-status) .artifact-panel-title { max-width: calc(100% - 14px - 7ch - 2 * var(--space-4)); }
+.artifact-panel-title-status {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+  font-size: var(--font-size-caption);
+  color: var(--state-danger);
+  white-space: nowrap;
+}
+
+.artifact-panel-kind-caption {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+  font-size: var(--font-size-caption);
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
 .artifact-panel-title-chevron {
   width: 12px;
   height: 12px;
@@ -368,18 +339,8 @@ button.artifact-panel-title:focus-visible { background: var(--rail-hover-bg); }
 
 .artifact-panel-title-chevron svg { display: block; width: 12px; height: 12px; }
 
-.artifact-panel-type-chip {
-  padding: 2px 6px;
-  border-radius: var(--radius-xs);
-  background: color-mix(in srgb, var(--accent) 14%, transparent);
-  color: var(--holo-periwinkle);
-  font-family: var(--font-family-mono);
-  font-size: 10px;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-}
-
 .artifact-panel-dirty-dot {
+  align-self: center;
   width: 6px;
   height: 6px;
   border-radius: 50%;
@@ -393,10 +354,18 @@ button.artifact-panel-title:focus-visible { background: var(--rail-hover-bg); }
   justify-content: space-between;
   gap: var(--space-3);
   height: 32px;
-  padding: 0 10px;
-  border-bottom: 1px solid var(--border-default);
+  padding-block: 0;
+  padding-inline: var(--side-panel-gutter) calc(var(--side-panel-gutter) - var(--space-2));
   flex-shrink: 0;
 }
+
+/* The second row exists only when it holds a real control: the Preview / Code
+   switch, the version stepper, or save/revert. */
+.artifact-panel-controls:not(:has(
+  [data-artifact-panel-view-slot] > *,
+  [data-artifact-panel-v2-stepper-slot] > *,
+  .artifact-panel-text-btn:not(.hidden)
+)) { display: none; }
 
 .artifact-panel-controls-view { min-width: 0; }
 .artifact-panel-controls-actions { margin-inline-start: auto; }
@@ -413,8 +382,9 @@ button.artifact-panel-title:focus-visible { background: var(--rail-hover-bg); }
   display: flex;
   align-items: center;
   gap: var(--space-3);
-  height: 26px;
-  padding: 0 10px;
+  height: 28px;
+  padding-block: 0;
+  padding-inline: var(--side-panel-gutter) calc(var(--side-panel-gutter) - var(--space-2));
   border-top: 1px solid var(--border-default);
   flex-shrink: 0;
 }
@@ -423,7 +393,7 @@ button.artifact-panel-title:focus-visible { background: var(--rail-hover-bg); }
   min-width: 0;
   overflow: hidden;
   color: var(--text-muted);
-  font-size: 11px;
+  font-size: var(--font-size-caption);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -431,7 +401,7 @@ button.artifact-panel-title:focus-visible { background: var(--rail-hover-bg); }
 .artifact-panel-save-state {
   margin-inline-start: auto;
   color: var(--text-muted);
-  font-size: 11px;
+  font-size: var(--font-size-caption);
   opacity: 1;
   transition: opacity var(--motion-duration-feedback) var(--motion-ease-standard);
 }
@@ -440,6 +410,22 @@ button.artifact-panel-title:focus-visible { background: var(--rail-hover-bg); }
 .artifact-panel-status .artifact-panel-v2-footer-action { margin-inline-start: 0; }
 
 .artifact-panel-hidden-actions { display: none; }
+
+/* Detail note: the setDetailNote seam carries loading, error, and sandbox
+   notes. A quiet muted line inside the gutter, never a card; the note owns its
+   padding so the detail panel needs no row gap. */
+.artifact-panel-v3 .artifact-review-detail-panel { gap: 0; }
+
+.artifact-panel-v3 #artifactReviewDetailNote {
+  margin: 0;
+  padding: var(--space-4) var(--side-panel-gutter);
+  color: var(--text-muted);
+  font-size: var(--font-size-footnote);
+  font-weight: 400;
+  line-height: 1.5;
+}
+
+.artifact-panel-v3 #artifactReviewDetailNote.detail-note-error { color: var(--widget-stop-color); }
 
 /* V3 tool output: an integrated editor well rather than a nested card. */
 .artifact-panel-v3 .artifact-panel-v2-scroll:has(.artifact-output-viewer) { overflow: hidden; }
@@ -489,7 +475,7 @@ button.artifact-panel-title:focus-visible { background: var(--rail-hover-bg); }
 
 .artifact-output-viewer {
   display: grid;
-  grid-template-rows: 32px minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
   height: 100%;
   min-height: 0;
   overflow: hidden;
@@ -499,38 +485,11 @@ button.artifact-panel-title:focus-visible { background: var(--rail-hover-bg); }
   background: transparent;
 }
 
-/* Flat full-width toolbar row: only the bottom hairline separates it from the
-   body it labels. */
-.artifact-output-toolbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 0 12px;
-  border-bottom: 1px solid color-mix(in srgb, var(--border-default) 72%, transparent);
-  color: var(--text-muted);
-  font-size: 11px;
-  font-weight: 600;
-}
-
-.artifact-output-wrap {
-  padding: 3px 5px;
-  border: 0;
-  border-radius: var(--radius-xs);
-  background: transparent;
-  color: var(--text-muted);
-  font: inherit;
-  cursor: pointer;
-}
-
-.artifact-output-wrap:hover,
-.artifact-output-wrap[aria-pressed="true"] { color: var(--text-secondary); }
-.artifact-output-wrap:focus-visible { outline: var(--focus-ring-width) solid var(--focus-ring-color); }
-
 .artifact-output-body {
   min-height: 0;
   overflow: auto;
   color: var(--text-primary);
-  font: 13px/1.6 var(--font-family-mono);
+  font: var(--font-size-code)/1.6 var(--font-family-mono);
   scrollbar-width: thin;
   scrollbar-color: var(--widget-scrollbar-color) transparent;
 }
@@ -547,21 +506,21 @@ button.artifact-panel-title:focus-visible { background: var(--rail-hover-bg); }
   line-height: 1.55;
 }
 .artifact-output-body .diff-hunk-header {
-  padding: var(--space-2) var(--space-6);
+  padding: var(--space-2) var(--side-panel-gutter);
   color: var(--text-decorative);
   font-size: var(--tl-font-meta);
   font-style: italic;
   border-bottom: 1px solid var(--widget-tool-border);
 }
 .artifact-output-body .diff-hunk-separator {
-  padding: var(--space-1) var(--space-6);
+  padding: var(--space-1) var(--side-panel-gutter);
   border-top: 1px solid var(--widget-tool-border);
   border-bottom: 1px solid var(--widget-tool-border);
   color: var(--text-decorative);
   font-size: var(--tl-font-meta);
   text-align: center;
 }
-.artifact-output-body .diff-line { display: flex; min-height: 20px; }
+.artifact-output-body .diff-line { display: flex; min-height: 20px; padding-inline-start: var(--side-panel-gutter); }
 .artifact-output-body .diff-line-context { background: transparent; }
 .artifact-output-body .diff-line-meta { background: color-mix(in srgb, var(--widget-tool-border) 18%, transparent); }
 .artifact-output-body .diff-gutter {
@@ -569,7 +528,7 @@ button.artifact-panel-title:focus-visible { background: var(--rail-hover-bg); }
   padding: 0 var(--space-3);
   color: var(--text-decorative);
   font-size: var(--tl-font-meta);
-  line-height: calc(20px * var(--chat-zoom-factor, 1));
+  line-height: 20px;
   text-align: right; /* rtl:physical */
   user-select: none;
 }
@@ -578,7 +537,7 @@ button.artifact-panel-title:focus-visible { background: var(--rail-hover-bg); }
 .artifact-output-body .diff-marker {
   flex: 0 0 16px;
   font-weight: 600;
-  line-height: calc(20px * var(--chat-zoom-factor, 1));
+  line-height: 20px;
   text-align: center;
   user-select: none;
 }
@@ -587,9 +546,9 @@ button.artifact-panel-title:focus-visible { background: var(--rail-hover-bg); }
 .artifact-output-body .diff-line-context .diff-marker { color: transparent; }
 .artifact-output-body .diff-content {
   flex: 1 1 auto;
-  padding-right: var(--space-6); /* rtl:physical */
+  padding-inline-end: var(--side-panel-gutter);
   color: var(--widget-tool-code-color);
-  line-height: calc(20px * var(--chat-zoom-factor, 1));
+  line-height: 20px;
   overflow: visible;
   white-space: pre;
   word-break: normal;
@@ -599,7 +558,7 @@ button.artifact-panel-title:focus-visible { background: var(--rail-hover-bg); }
   display: flex;
   align-items: center;
   gap: var(--space-5);
-  padding: var(--space-4) var(--space-6);
+  padding: var(--space-4) var(--side-panel-gutter);
   color: var(--widget-tool-color);
   font: var(--tl-font-ui)/1.4 var(--font-family-mono);
 }
@@ -607,7 +566,7 @@ button.artifact-panel-title:focus-visible { background: var(--rail-hover-bg); }
 .artifact-output-body .diff-summary-remove { color: var(--widget-tool-error-color); font-weight: 600; }
 .artifact-output-body .diff-summary-note { color: var(--widget-tool-denied-color); font-style: italic; }
 .artifact-output-body .diff-status {
-  padding: var(--space-3) var(--space-6);
+  padding: var(--space-3) var(--side-panel-gutter);
   color: var(--widget-tool-denied-color);
   font-size: var(--tl-font-code);
 }
@@ -616,6 +575,7 @@ button.artifact-panel-title:focus-visible { background: var(--rail-hover-bg); }
   display: grid;
   grid-template-columns: 42px 16px minmax(0, 1fr);
   min-width: 100%;
+  padding-inline-start: var(--side-panel-gutter);
 }
 
 .artifact-output-line-number {
@@ -627,13 +587,17 @@ button.artifact-panel-title:focus-visible { background: var(--rail-hover-bg); }
 }
 
 .artifact-output-line-marker { padding: 1px 0 1px 7px; /* rtl:physical */ }
-.artifact-output-line-content { min-width: 0; padding: 1px 14px 1px 4px; /* rtl:physical */ }
-.artifact-output-viewer.is-wrapped .artifact-output-line-content,
-.artifact-output-viewer.is-wrapped .diff-content { overflow-wrap: anywhere; white-space: pre-wrap; }
-.artifact-output-viewer.is-wrapped .diff-hunk { min-width: 0; }
-.artifact-output-viewer.is-nowrap .artifact-output-line { width: max-content; }
-.artifact-output-viewer.is-nowrap .artifact-output-line-content,
-.artifact-output-viewer.is-nowrap .diff-content { white-space: pre; }
+.artifact-output-line-content { min-width: 0; padding-block: 1px; padding-inline: 4px var(--side-panel-gutter); }
+/* Hanging indent: wrapped continuation lines sit 2ch in from the first character. */
+/* Wrap is panel state (.artifact-panel-nowrap, flipped by the header Wrap),
+   never a class on the re-rendered body. */
+.artifact-review-panel:not(.artifact-panel-nowrap) .artifact-output-line-content { padding-inline-start: calc(4px + 2ch); text-indent: -2ch; }
+.artifact-review-panel:not(.artifact-panel-nowrap) .artifact-output-line-content,
+.artifact-review-panel:not(.artifact-panel-nowrap) .artifact-output-body .diff-content { overflow-wrap: anywhere; white-space: pre-wrap; }
+.artifact-review-panel:not(.artifact-panel-nowrap) .artifact-output-body .diff-hunk { min-width: 0; }
+.artifact-review-panel.artifact-panel-nowrap .artifact-output-line { width: max-content; }
+.artifact-review-panel.artifact-panel-nowrap .artifact-output-line-content,
+.artifact-review-panel.artifact-panel-nowrap .artifact-output-body .diff-content { white-space: pre; }
 
 .artifact-output-line--file { color: var(--text-secondary); }
 .artifact-output-line--hunk,
@@ -645,14 +609,12 @@ button.artifact-panel-title:focus-visible { background: var(--rail-hover-bg); }
 .artifact-output-line--add,
 .artifact-output-body .diff-line-add {
   background: color-mix(in srgb, var(--widget-tool-success-color) 9%, transparent);
-  box-shadow: inset 2px 0 0 color-mix(in srgb, var(--widget-tool-success-color) 76%, transparent);
   color: color-mix(in srgb, var(--widget-tool-success-color) 76%, var(--text-primary));
 }
 
 .artifact-output-line--remove,
 .artifact-output-body .diff-line-remove {
   background: color-mix(in srgb, var(--widget-tool-error-color) 9%, transparent);
-  box-shadow: inset 2px 0 0 color-mix(in srgb, var(--widget-tool-error-color) 76%, transparent);
   color: color-mix(in srgb, var(--widget-tool-error-color) 76%, var(--text-primary));
 }
 .artifact-output-body .diff-line-add .diff-content { color: color-mix(in srgb, var(--widget-tool-success-color) 76%, var(--text-primary)); }
@@ -661,11 +623,25 @@ button.artifact-panel-title:focus-visible { background: var(--rail-hover-bg); }
 .artifact-output-body .diff-summary,
 .artifact-output-body .diff-status { border-bottom: 1px solid color-mix(in srgb, var(--border-default) 60%, transparent); }
 .artifact-output-body .diff-container { margin: 0; overflow: visible; border: 0; border-radius: 0; background: none; }
-.artifact-output-pre { min-width: max-content; margin: 0; padding: 14px 16px; color: inherit; font: inherit; white-space: pre; }
-.artifact-output-viewer.is-wrapped .artifact-output-pre { min-width: 0; overflow-wrap: anywhere; white-space: pre-wrap; }
+/* read_file's header (path / requested / returned): caption-weight key and
+   value in the body font, unnumbered, never tokenized. */
+.artifact-output-line--meta .artifact-output-line-content {
+  font-family: var(--font-family-body);
+  font-size: var(--font-size-caption);
+  color: var(--text-secondary);
+}
+.artifact-output-meta-key { color: var(--text-muted); }
 
-.artifact-review-panel.is-narrow .artifact-panel-copy,
-.artifact-review-panel.is-narrow .artifact-panel-download { display: none; }
+/* Past the row limit: say so instead of silently dropping the gutter. */
+.artifact-output-footnote {
+  padding-block: var(--space-4);
+  padding-inline: var(--side-panel-gutter);
+  font-family: var(--font-family-body);
+  font-size: var(--font-size-caption);
+  color: var(--text-muted);
+}
+
+.artifact-review-panel[data-panel-narrow="true"] .artifact-panel-copy { display: none; }
 
 .artifact-review-panel.artifact-review-overlay .artifact-panel-maximize { display: none; }
 
@@ -673,10 +649,18 @@ button.artifact-panel-title:focus-visible { background: var(--rail-hover-bg); }
   grid-template-columns: minmax(0, 1fr);
 }
 
-.chat-view.artifact-review-maximized > .hero-stage,
+/* Pane 0's children sit inside div.chat-pane (display: contents with one
+   pane), so they are hidden through it; the utility cluster stays, as before.
+   The two bare thread-stage/composer selectors cover the IDE dock's restore,
+   which re-inserts those two into #chatView itself until W1-4 retargets it to
+   the pane root. Two panes: styles/chat-panes.css. */
+.chat-view.artifact-review-maximized > .chat-pane > .hero-stage,
+.chat-view.artifact-review-maximized > .chat-pane > .chat-thread-stage,
+.chat-view.artifact-review-maximized > .chat-pane > .composer-wrap,
 .chat-view.artifact-review-maximized > .chat-thread-stage,
 .chat-view.artifact-review-maximized > .composer-wrap,
-.chat-view.artifact-review-maximized > .artifact-review-resizer {
+.chat-view.artifact-review-maximized > .artifact-review-resizer,
+.chat-view.artifact-review-maximized > .chat-pane-resizer {
   display: none;
 }
 
@@ -821,7 +805,6 @@ button.artifact-panel-title:focus-visible { background: var(--rail-hover-bg); }
   align-items: flex-start;
   gap: var(--space-3);
   min-height: 1.45em;
-  border-left: 2px solid transparent; /* rtl:physical */
   padding-left: var(--space-2); /* rtl:physical */
 }
 
@@ -861,7 +844,6 @@ button.artifact-panel-title:focus-visible { background: var(--rail-hover-bg); }
 
 .artifact-file-preview-row.is-cited {
   background: color-mix(in srgb, var(--accent) 12%, transparent);
-  border-left-color: var(--accent); /* rtl:physical */
   border-radius: 0;
 }
 

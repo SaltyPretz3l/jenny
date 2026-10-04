@@ -12,18 +12,20 @@
  *
  * Projects v2 (2026-09-20) also owns the composer's project pill
  * (#composerProjectPillSlot, beside the run-mode and model pills): it names
- * the current chat's project (General included) and opens the shared project
- * menu to move THIS chat (the existing idle-only assign). It never switches
- * the Workspace, and it is not gated by the nudge flag.
+ * the current chat's project (General included) and opens the shared
+ * "Move this chat to" menu (the switcher's one move engine, idle-only). It
+ * never switches the Workspace, and it is not gated by the nudge flag.
  *
- * Truthful "no workspace root" signal: `state.workspaceRoot.path`, populated
+ * Project names come from the switcher's one cache (never listed here, 2026-09-27).
+ *
+ * Truthful "no Workspace folder" signal: `state.workspaceRoot.path`, populated
  * by `refreshWorkspaceRootState()` from
  * `window.jennyShell.workspaceRoot.getState()`. Status can legitimately be
  * `checking` while a persisted or newly selected directory is probed, so it
  * must not drive this one-time configuration hint. Invalid-root guidance is
  * owned by Settings rather than a misleading "No workspace root set" chip.
  *
- * "Set workspace root" reuses the existing picker seam, the same one the
+ * "Set Workspace folder" reuses the existing picker seam, the same one the
  * Settings › Tools surface's "Choose folder…" button calls: does NOT build a
  * new picker or mint a new IPC channel.
  *
@@ -48,15 +50,9 @@
   var CHIP_ID = 'workspaceRootNudge';
   var COMPOSER_WRAP_SELECTOR = '#composerWrap';
   var GENERAL_PROJECT_ID = 'project_general';
-  // Project roots change rarely; the list is re-read on the shell's own
-  // 15s snapshot cadence at most, and only for non-General chats.
-  var PROJECTS_TTL_MS = 15000;
 
-  function escapeHtml(value) {
-    return String(value == null ? '' : value)
-      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
-  }
+  const escapeHtml = ((typeof globalThis !== 'undefined' && globalThis.stringUtils)
+    || (typeof require === 'function' ? require('../shared/string-utils') : null)).escapeHtml;
 
   function folderName(rootPath) {
     var parts = String(rootPath || '').split(/[\\/]+/).filter(Boolean);
@@ -74,8 +70,8 @@
       plain: true,
       className: 'workspace-root-nudge-dismiss',
       label: '✕',
-      ariaLabel: jt('workspace.rootNudge.dismiss', 'Dismiss workspace root hint'),
-      title: jt('workspace.rootNudge.dismiss', 'Dismiss workspace root hint'),
+      ariaLabel: jt('projects.nudge.dismiss', 'Dismiss Workspace folder hint'),
+      title: jt('projects.nudge.dismiss', 'Dismiss Workspace folder hint'),
       dataset: { 'workspace-root-nudge-action': 'dismiss' },
     });
   }
@@ -89,11 +85,11 @@
   function buildChipHtml() {
     var actionButton = resolveActionButton();
     return chipOpen('set-root', 'set-root')
-      + '<span class="workspace-root-nudge-text">' + escapeHtml(jt('workspace.rootNudge.message', 'No workspace root set — file tools are off for this chat.')) + '</span>'
+      + '<span class="workspace-root-nudge-text">' + escapeHtml(jt('projects.nudge.noFolder', 'No Workspace folder set — file tools are off for this chat.')) + '</span>'
       + actionButton({
         plain: true,
         className: 'workspace-root-nudge-action',
-        label: jt('workspace.rootNudge.setRoot', 'Set workspace root'),
+        label: jt('projects.nudge.setFolder', 'Set Workspace folder'),
         dataset: { 'workspace-root-nudge-action': 'set-root' },
       })
       + dismissButtonHtml(actionButton)
@@ -153,13 +149,13 @@
     var documentRef = d.documentRef || windowRef.document || null;
     var appendClientLog = typeof d.appendClientLog === 'function' ? d.appendClientLog : function noop() {};
     var chooseWorkspaceRoot = typeof d.chooseWorkspaceRoot === 'function' ? d.chooseWorkspaceRoot : null;
+    // projects.adoptWorkspace only; project names come from the switcher.
     var getProjectsApi = typeof d.getProjectsApi === 'function'
       ? d.getProjectsApi
       : function () { return windowRef && windowRef.jennyShell ? windowRef.jennyShell.projects : null; };
     var refreshSessions = typeof d.refreshSessions === 'function' ? d.refreshSessions : null;
     // Projects v2: resolves the lazily loaded project switcher (shared menu).
     var getProjectSwitcher = typeof d.getProjectSwitcher === 'function' ? d.getProjectSwitcher : null;
-    var now = typeof d.now === 'function' ? d.now : function () { return Date.now(); };
     var disposalFence = asyncFence.createDisposalFence();
 
     // Session-scoped dismiss: lives on the controller instance, not on
@@ -168,8 +164,12 @@
     var dismissed = false;
     var dismissedChats = {};
     var projectsById = null;
-    var projectsFetchedAt = 0;
-    var projectsFetchInFlight = false;
+    var projectsKey = null;
+    // Projects this window adopted before the switcher's list caught up.
+    var adoptedProjects = {};
+    var switcherRef = null;
+    var switcherRequested = false;
+    var unsubscribeProjects = null;
     var adoptInFlight = '';
 
     function isFeatureEnabled() {
@@ -218,32 +218,86 @@
       return projectsById && Object.prototype.hasOwnProperty.call(projectsById, projectId) ? projectsById[projectId] : null;
     }
 
-    // 'unbound' | 'bound' | 'unknown' (unknown schedules one list fetch).
+    // 'unbound' | 'bound' | 'unknown'. Asking keeps the switcher's cache
+    // fresh (a no-op inside its 15 s window); changes arrive by subscription.
     function projectRootState(projectId) {
       if (!projectId || projectId === GENERAL_PROJECT_ID) return 'unbound';
-      var fresh = projectsById && (now() - projectsFetchedAt) < PROJECTS_TTL_MS;
+      requestProjects();
       var known = knownProject(projectId);
-      if (fresh && known) {
-        return known.rootPath ? 'bound' : 'unbound';
-      }
-      if (projectsById && !fresh) fetchProjects();
-      else if (!projectsById) fetchProjects();
       return known ? (known.rootPath ? 'bound' : 'unbound') : 'unknown';
+    }
+
+    function projectEntry(project) {
+      var id = String(project && project.id || '').trim();
+      if (!id) return null;
+      var rootPath = typeof project.rootPath === 'string' ? project.rootPath
+        : (typeof project.root_path === 'string' ? project.root_path : '');
+      return { id: id, name: String(project.name || '').trim() || id, rootPath: rootPath.trim() };
     }
 
     function rememberProjects(list) {
       var next = {};
       for (var i = 0; i < list.length; i += 1) {
-        var project = list[i];
-        var id = String(project && project.id || '').trim();
-        if (!id) continue;
-        next[id] = {
-          name: String(project.name || '').trim() || id,
-          rootPath: typeof project.root_path === 'string' ? project.root_path.trim() : '',
-        };
+        var entry = projectEntry(list[i]);
+        if (!entry) continue;
+        next[entry.id] = { name: entry.name, rootPath: entry.rootPath };
+        delete adoptedProjects[entry.id];
       }
+      Object.keys(adoptedProjects).forEach(function (id) { next[id] = adoptedProjects[id]; });
       projectsById = next;
-      projectsFetchedAt = now();
+    }
+
+    function projectsSignature(list) {
+      return (Array.isArray(list) ? list : []).map(function (project) {
+        var entry = projectEntry(project);
+        return entry ? [entry.id, entry.name, entry.rootPath].join('\u001f') : '';
+      }).sort().join('\u001e'); // order-free: a most-recently-used reorder is not a change here
+    }
+
+    function absorbProjects(list) {
+      if (disposalFence.isDisposed()) return;
+      var key = projectsSignature(list);
+      if (key === projectsKey) return;
+      projectsKey = key;
+      rememberProjects(Array.isArray(list) ? list : []);
+      var slot = pillSlot();
+      if (slot) slot.__jennyPillKey = '';
+      render();
+    }
+
+    function logProjectsFailure(error) {
+      appendClientLog('WARN', 'workspace_root_nudge.projects_list_failed', {
+        message: error && error.message ? error.message : String(error),
+      });
+    }
+
+    function refreshFromSwitcher(force) {
+      var switcher = switcherRef;
+      if (!switcher) return;
+      var read = null;
+      if (typeof switcher.refreshProjects === 'function') read = switcher.refreshProjects({ force: force === true });
+      else if (typeof switcher.getProjects === 'function') read = switcher.getProjects();
+      if (!read) return;
+      Promise.resolve(read).then(disposalFence.guard(absorbProjects)).catch(disposalFence.guard(logProjectsFailure));
+    }
+
+    function attachSwitcher(switcher) {
+      switcherRef = switcher;
+      if (typeof switcher.onProjectsChanged === 'function') {
+        unsubscribeProjects = switcher.onProjectsChanged(disposalFence.guard(absorbProjects));
+      }
+      refreshFromSwitcher(false);
+    }
+
+    // The switcher loads lazily; the first non-General chat asks for it once.
+    function requestProjects() {
+      if (disposalFence.isDisposed()) return;
+      if (switcherRef) { refreshFromSwitcher(false); return; }
+      if (switcherRequested || !getProjectSwitcher) return;
+      switcherRequested = true;
+      Promise.resolve(getProjectSwitcher())
+        .then(disposalFence.guard(function (switcher) { if (switcher) attachSwitcher(switcher); }))
+        .catch(disposalFence.guard(logProjectsFailure));
     }
 
     // The composer pill: the current chat's project, General included. Unknown
@@ -286,32 +340,7 @@
       slot.__jennyPillKey = model.key;
       slot.innerHTML = buildProjectPillHtml(model);
       var pill = slot.querySelector('#' + PILL_ID);
-      if (pill) pill.setAttribute('aria-haspopup', 'listbox');
-    }
-
-    function fetchProjects() {
-      if (projectsFetchInFlight || disposalFence.isDisposed()) return;
-      var api = getProjectsApi();
-      if (!api || typeof api.list !== 'function') return;
-      projectsFetchInFlight = true;
-      var pending;
-      try {
-        pending = Promise.resolve(api.list());
-      } catch (error) {
-        pending = Promise.reject(error);
-      }
-      pending
-        .then(disposalFence.guard(function (payload) {
-          projectsFetchInFlight = false;
-          rememberProjects(Array.isArray(payload && payload.projects) ? payload.projects : []);
-          render();
-        }))
-        .catch(disposalFence.guard(function (error) {
-          projectsFetchInFlight = false;
-          appendClientLog('WARN', 'workspace_root_nudge.projects_list_failed', {
-            message: error && error.message ? error.message : String(error),
-          });
-        }));
+      if (pill) pill.setAttribute('aria-haspopup', 'menu');
     }
 
     function unboundChatCandidate() {
@@ -387,13 +416,15 @@
       if (!model || !getProjectSwitcher) return;
       Promise.resolve(getProjectSwitcher())
         .then(disposalFence.guard(function (switcher) {
-          if (!switcher) return;
-          return switcher.openMoveChatMenu({
-            anchor: anchor,
-            sessionId: model.sessionId,
-            projectId: model.projectId,
-            idle: model.idle,
-            onMoved: disposalFence.guard(function () { projectsFetchedAt = 0; render(); }),
+          if (!switcher || typeof switcher.openMoveMenu !== 'function') return;
+          if (!switcherRef) attachSwitcher(switcher);
+          return switcher.openMoveMenu(anchor, [model.sessionId], {
+            source: 'composer',
+            onMoved: disposalFence.guard(function () {
+              var slot = pillSlot();
+              if (slot) slot.__jennyPillKey = '';
+              render();
+            }),
           });
         }))
         .catch(disposalFence.guard(function (error) {
@@ -438,13 +469,13 @@
           sessions[i].project_id = String(session.project_id || '').trim();
         }
       }
-      if (project && project.id) {
+      var entry = projectEntry(project);
+      if (entry) {
         if (!projectsById) projectsById = {};
-        projectsById[String(project.id).trim()] = {
-          name: String(project.name || '').trim() || String(project.id).trim(),
-          rootPath: typeof project.root_path === 'string' ? project.root_path.trim() : '',
-        };
-        projectsFetchedAt = now();
+        adoptedProjects[entry.id] = { name: entry.name, rootPath: entry.rootPath };
+        projectsById[entry.id] = adoptedProjects[entry.id];
+        // Adoption can provision a project: the one cache re-reads.
+        refreshFromSwitcher(true);
       }
     }
 
@@ -499,13 +530,6 @@
       render();
     }
 
-    function handleProjectsChanged() {
-      projectsFetchedAt = 0;
-      var slot = pillSlot();
-      if (slot) slot.__jennyPillKey = '';
-      render();
-    }
-
     function handleClick(event) {
       var target = event && event.target;
       if (!target || typeof target.closest !== 'function') {
@@ -544,9 +568,6 @@
       }
       documentRef.addEventListener('click', handleClick);
       documentRef.addEventListener('composer-state-rendered', handleComposerRendered);
-      if (windowRef && typeof windowRef.addEventListener === 'function') {
-        windowRef.addEventListener('jenny:projects-changed', handleProjectsChanged);
-      }
     }
 
     function dispose() {
@@ -555,9 +576,9 @@
         documentRef.removeEventListener('click', handleClick);
         documentRef.removeEventListener('composer-state-rendered', handleComposerRendered);
       }
-      if (windowRef && typeof windowRef.removeEventListener === 'function') {
-        windowRef.removeEventListener('jenny:projects-changed', handleProjectsChanged);
-      }
+      if (typeof unsubscribeProjects === 'function') unsubscribeProjects();
+      unsubscribeProjects = null;
+      switcherRef = null;
       var slot = pillSlot();
       if (slot) { slot.innerHTML = ''; slot.__jennyPillKey = ''; }
       removeExistingChip();

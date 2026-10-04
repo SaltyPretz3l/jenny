@@ -150,7 +150,7 @@ def test_run_bounded_reaps_the_child_when_the_wait_is_interrupted(monkeypatch, t
             original = process.communicate
             calls = {"count": 0}
 
-            def _communicate(input=None, timeout=None):  # noqa: A002
+            def _communicate(input=None, timeout=None):
                 calls["count"] += 1
                 if calls["count"] == 1:
                     time.sleep(2)  # let the probe reach its grandchild spawn

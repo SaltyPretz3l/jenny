@@ -218,6 +218,38 @@
         : escapeHtml(text);
     }
 
+    // Combobox pattern (same as the shared picker overlay): DOM focus stays in
+    // the text control, so the selected row reaches assistive technology
+    // through aria-activedescendant rather than focus.
+    function syncActiveOption(control, list) {
+      if (!control || !list) {
+        return;
+      }
+      let activeId = '';
+      list.querySelectorAll('[role="option"]').forEach((row, index) => {
+        row.id = `${list.id}-option-${index}`;
+        if (row.getAttribute('aria-selected') === 'true') {
+          activeId = row.id;
+        }
+      });
+      if (activeId) {
+        control.setAttribute('aria-activedescendant', activeId);
+      } else {
+        control.removeAttribute('aria-activedescendant');
+      }
+    }
+
+    function markCombobox(control, list) {
+      if (!control || !list) {
+        return;
+      }
+      control.setAttribute('role', 'combobox');
+      control.setAttribute('aria-autocomplete', 'list');
+      control.setAttribute('aria-haspopup', 'listbox');
+      control.setAttribute('aria-controls', list.id);
+      control.setAttribute('aria-expanded', 'false');
+    }
+
     // Shared row container (class/role/selected state + the branch-row marker);
     // callers supply the extra attributes and the inner markup.
     function rowShell(index, attrs, inner) {
@@ -262,6 +294,7 @@
           status = jt('ide.branches.pressEnterCreate', 'Press Enter to create “{name}”.', { name: validation.value });
         }
         resultsEl.innerHTML = `<div class="ide-picker-status ide-quick-open-status">${escapeHtml(status)}</div>`;
+        syncActiveOption(inputEl, resultsEl);
         return;
       }
       const query = String(inputEl?.value || '').trim();
@@ -290,6 +323,7 @@
           : buildBranchRowMarkup(entry, index));
       }
       resultsEl.innerHTML = parts.join('');
+      syncActiveOption(inputEl, resultsEl);
       const selected = resultsEl.querySelector('.ide-quick-open-row--selected');
       selected?.scrollIntoView?.({ block: 'nearest' });
     }
@@ -431,13 +465,14 @@
           ariaLabel: jt('ide.branches.switchLabel', 'Switch branch'),
           dataset: { 'ide-branch-input': '1' },
         })
-        + '<div class="ide-picker-results ide-quick-open-results" role="listbox" aria-label="' + escapeHtml(jt('ide.branches.resultsLabel', 'Branches')) + '"></div>'
+        + '<div class="ide-picker-results ide-quick-open-results" id="ideBranchPickerListbox" role="listbox" aria-label="' + escapeHtml(jt('ide.branches.resultsLabel', 'Branches')) + '"></div>'
         + '</div>';
       stage.appendChild(overlayEl);
       inputEl = overlayEl.querySelector('[data-ide-branch-input]')
         || overlayEl.querySelector('.inv-text-field-control')
         || null;
       resultsEl = overlayEl.querySelector('.ide-quick-open-results');
+      markCombobox(inputEl, resultsEl);
       overlayEl.addEventListener('click', handleOverlayClick);
       inputEl?.addEventListener('keydown', handleInputKeydown);
       inputEl?.addEventListener('input', handleInput);
@@ -537,13 +572,20 @@
           showError(describeGitError(stashed, jt('ide.branches.shelveFailed', 'Couldn’t shelve your changes.')));
           return;
         }
+        // ok + stashed:false is a successful no-op (nothing_to_stash): the switch
+        // still runs, but nothing was shelved so no recovery is promised.
+        const didShelve = stashed.stashed === true;
         const result = await gitClient.checkout({ ref: name });
         await refreshGit();
         if (result && result.ok) {
-          showToast(jt('ide.branches.switchedWithShelvedChanges', 'Switched to “{branch}”. Your changes are shelved — restore them anytime.', { branch: name }));
+          showToast(didShelve
+            ? jt('ide.branches.switchedWithShelvedChanges', 'Switched to “{branch}”. Your changes are shelved — restore them anytime.', { branch: name })
+            : jt('ide.branches.switched', 'Switched to “{branch}”.', { branch: name }));
         } else {
-          showError(`${describeGitError(result, jt('ide.branches.switchFailed', 'Couldn’t switch to “{branch}”.', { branch: name }))} `
-            + jt('ide.branches.switchFailedShelvedHint', 'Your changes are safely shelved — restore them with “Restore shelved changes”.'));
+          const switchFailed = describeGitError(result, jt('ide.branches.switchFailed', 'Couldn’t switch to “{branch}”.', { branch: name }));
+          showError(didShelve
+            ? `${switchFailed} ${jt('ide.branches.switchFailedShelvedHint', 'Your changes are safely shelved — restore them with “Restore shelved changes”.')}`
+            : switchFailed);
         }
       });
     }
@@ -644,6 +686,7 @@
       mode = 'list';
       visible = true;
       overlayEl.classList.remove('hidden');
+      inputEl?.setAttribute('aria-expanded', 'true');
       if (inputEl) {
         inputEl.value = '';
         inputEl.placeholder = jt('ide.branches.switchPlaceholder', 'Switch branch…');
@@ -673,6 +716,8 @@
       visible = false;
       mode = 'list';
       overlayEl?.classList.add('hidden');
+      inputEl?.setAttribute('aria-expanded', 'false');
+      inputEl?.removeAttribute('aria-activedescendant');
       onClosed();
     }
 

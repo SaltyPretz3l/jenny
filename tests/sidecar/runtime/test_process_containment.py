@@ -123,7 +123,7 @@ def test_windows_job_object_reports_and_reaps_a_real_child() -> None:
             args=["0"],
             task_key="win:real-tree",
         )
-        containment = manager._children["win:real-tree"].containment  # noqa: SLF001
+        containment = manager._children["win:real-tree"].containment
         assert containment is not None
         assert containment.kind == "windows_job_object"
         assert containment.verify() is True, "IsProcessInJob must confirm membership"

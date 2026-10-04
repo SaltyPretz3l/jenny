@@ -221,7 +221,7 @@ def _add_runtime_feature_bindings(
         bindings["check_background_job"] = check_background_job_tool
         bindings["stop_background_job"] = stop_background_job_tool
     if _extract_flag_enabled(config, "tools_web_enabled", default=False):
-        from sidecar.ai.tools.builtins.web import (  # noqa: PLC0415
+        from sidecar.ai.tools.builtins.web import (
             configure_web_tools,
             fetch_url_tool,
             web_search_tool,
@@ -235,7 +235,7 @@ def _add_runtime_feature_bindings(
         "tools_python_runtime_enabled",
         default=False,
     ):
-        from sidecar.ai.tools.builtins.python_runtime import (  # noqa: PLC0415
+        from sidecar.ai.tools.builtins.python_runtime import (
             configure_python_runtime,
             python_execute_tool,
         )
@@ -243,22 +243,22 @@ def _add_runtime_feature_bindings(
         configure_python_runtime(config)
         bindings["python_execute"] = python_execute_tool
     if _extract_flag_enabled(config, "tools_todo_enabled", default=False):
-        from sidecar.ai.tools.builtins.todo import todo_read_tool, todo_write_tool  # noqa: PLC0415
+        from sidecar.ai.tools.builtins.todo import todo_read_tool, todo_write_tool
 
         bindings["todo_write"] = todo_write_tool
         bindings["todo_read"] = todo_read_tool
     if _extract_flag_enabled(config, "tools_connections_enabled", default=True):
-        from sidecar.ai.tools.builtins.connections import (  # noqa: PLC0415
+        from sidecar.ai.tools.builtins.connections import (
             build_connections_tool,
         )
 
         bindings["connections_list"] = build_connections_tool(config)
     if _extract_flag_enabled(config, "tools_mermaid_enabled", default=False):
-        from sidecar.ai.tools.builtins.mermaid import mermaid_generate_tool  # noqa: PLC0415
+        from sidecar.ai.tools.builtins.mermaid import mermaid_generate_tool
 
         bindings["mermaid_generate"] = mermaid_generate_tool
     if _extract_flag_enabled(config, "tools_workspace_manifest_enabled", default=False):
-        from sidecar.ai.tools.builtins.workspace_manifest_tool import (  # noqa: PLC0415
+        from sidecar.ai.tools.builtins.workspace_manifest_tool import (
             workspace_manifest_read_tool,
         )
 
@@ -273,7 +273,7 @@ def _add_knowledge_bindings(
     config: Any | None,
     enabled: bool,
 ) -> None:
-    from sidecar.ai.tools.builtins.knowledge.roots import (  # noqa: PLC0415
+    from sidecar.ai.tools.builtins.knowledge.roots import (
         configure_knowledge_tools,
     )
 
@@ -285,17 +285,17 @@ def _add_knowledge_bindings(
     # adapters return structured dependency-missing results themselves, so no
     # importability gating is needed here (unlike _add_rich_file_bindings,
     # which would otherwise advertise standalone tools that cannot run).
-    from sidecar.ai.tools.builtins.rich_files.document import (  # noqa: PLC0415
+    from sidecar.ai.tools.builtins.rich_files.document import (
         document_inspect_tool,
     )
-    from sidecar.ai.tools.builtins.rich_files.notebook import (  # noqa: PLC0415
+    from sidecar.ai.tools.builtins.rich_files.notebook import (
         notebook_inspect_tool,
     )
-    from sidecar.ai.tools.builtins.rich_files.pdf import pdf_inspect_tool  # noqa: PLC0415
-    from sidecar.ai.tools.builtins.rich_files.presentation import (  # noqa: PLC0415
+    from sidecar.ai.tools.builtins.rich_files.pdf import pdf_inspect_tool
+    from sidecar.ai.tools.builtins.rich_files.presentation import (
         presentation_inspect_tool,
     )
-    from sidecar.ai.tools.builtins.rich_files.spreadsheet import (  # noqa: PLC0415
+    from sidecar.ai.tools.builtins.rich_files.spreadsheet import (
         spreadsheet_inspect_tool,
     )
 

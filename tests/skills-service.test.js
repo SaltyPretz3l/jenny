@@ -468,9 +468,9 @@ test('unchanged skills use one stat-only walk and a changed tree reparses', () =
   let skillReads = 0;
   const fsImpl = {
     existsSync: (targetPath) => fs.existsSync(targetPath),
-    readdirSync: (targetPath, options) => {
+    opendirSync: (targetPath) => {
       walkedPaths.push(targetPath);
-      return fs.readdirSync(targetPath, options);
+      return fs.opendirSync(targetPath);
     },
     readFileSync: (targetPath, encoding) => {
       if (path.basename(targetPath) === 'SKILL.md') {
@@ -518,9 +518,9 @@ test('bundled skills are resolved once and reused for later refreshes', () => {
   let skillReads = 0;
   const fsImpl = {
     existsSync: (targetPath) => fs.existsSync(targetPath),
-    readdirSync: (targetPath, options) => {
+    opendirSync: (targetPath) => {
       walkedPaths.push(targetPath);
-      return fs.readdirSync(targetPath, options);
+      return fs.opendirSync(targetPath);
     },
     readFileSync: (targetPath, encoding) => {
       if (path.basename(targetPath) === 'SKILL.md') {

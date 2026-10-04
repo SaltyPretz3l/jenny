@@ -45,30 +45,6 @@ function captureJennyShellPreload() {
   return captured;
 }
 
-function captureOverlayPreload() {
-  const captured = { apis: [], invokeCalls: [], subscriptions: [] };
-  loadWithElectronMock('../preload-overlay.js', {
-    contextBridge: {
-      exposeInMainWorld(name, api) {
-        captured.apis.push({ name, api });
-      },
-    },
-    ipcRenderer: {
-      invoke(channel, ...args) {
-        captured.invokeCalls.push({ channel, args });
-        return Promise.resolve({ ok: true });
-      },
-      on(channel, listener) {
-        captured.subscriptions.push({ channel, listener });
-      },
-      removeListener(channel, listener) {
-        captured.subscriptions.push({ channel, listener, removed: true });
-      },
-    },
-  });
-  return captured;
-}
-
 test('preload forwards plugin session view authority without restoring image IPC', async () => {
   const captured = captureJennyShellPreload();
   assert.equal(captured.api.api.imageGen, undefined);
@@ -228,17 +204,15 @@ test('preload exposes Codex CLI engine bridge on jennyShell', async () => {
 
   assert.equal(captured.api.name, 'jennyShell');
   assert.equal(typeof captured.api.api.codexCli.getState, 'function');
-  assert.equal(typeof captured.api.api.codexCli.openLoginTerminal, 'function');
+  assert.equal(captured.api.api.codexCli.openLoginTerminal, undefined);
   assert.equal(typeof captured.api.api.codexCli.refresh, 'function');
   assert.equal(captured.api.api.diagnostics.frontier, undefined);
 
   await captured.api.api.codexCli.getState();
-  await captured.api.api.codexCli.openLoginTerminal();
   await captured.api.api.codexCli.refresh();
 
   assert.deepEqual(captured.invokeCalls, [
     { channel: 'codex-cli:get-state', args: [] },
-    { channel: 'codex-cli:open-login-terminal', args: [] },
     { channel: 'codex-cli:refresh', args: [] },
   ]);
 });
@@ -304,4 +278,26 @@ test('preload exposes MCP discovery bridge on jennyShell', async () => {
     { channel: 'mcp-discovery:refresh', args: [] },
     { channel: 'mcp-discovery:test-server', args: [{ name: 'local' }] },
   ]);
+});
+
+test('preload sends only webUtils-resolved drop paths on the preload-internal channel', async () => {
+  const captured = { api: null, invokeCalls: [] };
+  const granted = { name: 'granted.txt' };
+  const pageBuilt = { name: 'forged.txt' };
+  loadWithElectronMock('../preload.js', {
+    contextBridge: { exposeInMainWorld(name, api) { captured.api = api; } },
+    ipcRenderer: {
+      invoke(channel, ...args) { captured.invokeCalls.push({ channel, args }); return Promise.resolve({ accepted: [], rejected: [] }); },
+      on() {}, removeListener() {}, send() {},
+    },
+    webUtils: { getPathForFile: (file) => (file === granted ? 'D:\\outside\\granted.txt' : '') },
+  });
+  const attachments = captured.api.attachments;
+  // The internal channel is never a page method; only the File-taking one is.
+  assert.equal(attachments.prepareDroppedPaths, undefined);
+  await attachments.prepareDroppedFiles([granted, pageBuilt, 'C:\\secret.txt'], { session_id: 's1' });
+  assert.deepEqual(captured.invokeCalls, [{
+    channel: 'attachments:prepare-dropped-paths',
+    args: [['D:\\outside\\granted.txt'], { session_id: 's1' }],
+  }]);
 });

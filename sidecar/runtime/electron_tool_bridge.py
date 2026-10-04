@@ -65,6 +65,10 @@ _PATH_METADATA_KEYS = {
     "generated_artifacts",
     "preview_image", "previewImage", "data_base64", "trusted_attachments",
 }
+# Tools whose bounded PNG may reach a vision chat model; see preview_vision.
+_PREVIEW_IMAGE_TOOLS = frozenset({"preview_test", "image_generate"})
+
+
 def _is_safe_display_path(value: str) -> bool:
     normalized = str(value or "").strip().replace("\\", "/")
     if not normalized or "\x00" in normalized or ".." in normalized:
@@ -295,7 +299,7 @@ def _normalize_result_payload(
         metadata=metadata,
         preview_image=(
             dict(result["preview_image"])
-            if fallback_tool_name == "preview_test" and preview_call_id
+            if fallback_tool_name in _PREVIEW_IMAGE_TOOLS and preview_call_id
             and result.get("tool_name") == fallback_tool_name
             and isinstance(result.get("preview_image"), dict)
             and result["preview_image"].get("call_id") == preview_call_id
@@ -415,7 +419,10 @@ def execute_electron_tool(request: ElectronToolBridgeRequest) -> MCPToolResult:
                 response.get("result"),
                 fallback_tool_name=request.tool_name,
                 preview_call_id=(
-                    request.tool_call_id if request.arguments.get("screenshot") is True else ""
+                    request.tool_call_id
+                    if request.tool_name == "image_generate"
+                    or request.arguments.get("screenshot") is True
+                    else ""
                 ),
             )
             log_event(
@@ -457,7 +464,7 @@ def _resource_gate_fields(request: ElectronToolBridgeRequest) -> dict:
 def _continue_resource_start(request: ElectronToolBridgeRequest, payload: dict) -> MCPToolResult:
     # Both responses are consumed with their reader closed before publication or
     # the next exchange. Multiplexer readers accept exactly one response each.
-    from sidecar.ai.routing.tool_resource_deferral import (  # noqa: PLC0415
+    from sidecar.ai.routing.tool_resource_deferral import (
         ToolResourceDeferred,
         ToolResourceWait,
     )
@@ -501,7 +508,7 @@ def _question_decision_fields(request: ElectronToolBridgeRequest) -> dict:
 
 def _suspend_question(request: ElectronToolBridgeRequest, payload: dict) -> None:
     # Local import avoids auto_checkpoint -> electron bridge -> deferral cycle.
-    from sidecar.ai.routing.tool_resource_deferral import (  # noqa: PLC0415
+    from sidecar.ai.routing.tool_resource_deferral import (
         DecisionSuspensionError,
         ToolLoopSuspended,
     )

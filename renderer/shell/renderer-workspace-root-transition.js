@@ -592,6 +592,7 @@
           degraded: !closeCommitted || Boolean(uiError),
           ...(!closeCommitted ? { code: 'renderer_close_commit_failed' } : {}),
           ...(uiError ? { uiError } : {}),
+          ...(backendResult?.project_provisioning ? { project_provisioning: backendResult.project_provisioning } : {}),
         };
       } finally {
         if (lifecycleStarted) {

@@ -16,14 +16,14 @@
 .ide-prb-empty {
   padding: 6px 2px 2px;
   color: var(--text-secondary);
-  font-size: 12px;
+  font-size: var(--font-size-body);
 }
 
 .ide-prb-empty-hint {
   margin: 0;
   padding: 0 2px;
   color: var(--text-muted);
-  font-size: 11px;
+  font-size: var(--font-size-footnote);
   line-height: 1.5;
 }
 
@@ -40,8 +40,8 @@
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  font-size: 11px;
-  font-weight: 600;
+  font-size: var(--font-size-caption);
+  font-weight: 500;
 }
 
 .ide-prb-chip-icon {
@@ -90,8 +90,8 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 12px;
-  font-weight: 600;
+  font-size: var(--font-size-body);
+  font-weight: 500;
 }
 
 .ide-prb-file-dir {
@@ -101,14 +101,14 @@
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--text-muted);
-  font-size: 11px;
+  font-size: var(--font-size-caption);
 }
 
 .ide-prb-file-count {
   flex: 0 0 auto;
   margin-inline-start: auto;
   color: var(--text-muted);
-  font-size: 11px;
+  font-size: var(--font-size-caption);
   font-weight: 500;
 }
 
@@ -153,20 +153,20 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 12px;
+  font-size: var(--font-size-body);
 }
 
 .ide-prb-row-source {
   flex: 0 0 auto;
   color: var(--text-muted);
-  font-size: 10px;
+  font-size: var(--font-size-caption);
   opacity: 0.85;
 }
 
 .ide-prb-row-loc {
   flex: 0 0 auto;
   color: var(--text-muted);
-  font-size: 10px;
+  font-size: var(--font-size-caption);
 }
 
 /* ── Statusbar error/warning badge (lit up in the Problems statusbar slice) ── */

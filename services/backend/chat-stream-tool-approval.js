@@ -16,12 +16,6 @@ const _clearTimeout = clearTimeout;
 
 async function waitForApproval(service, streamId, sessionId, requestId, params, controller,
   turnEventCollector, executionAuthority, persistTerminalApprovalResult) {
-  let workspaceRoot = '';
-  try {
-    const rootPath = executionAuthority
-      && service.sessionExecutionAuthority?.toExecutionContext?.(executionAuthority)?.root_path;
-    if (typeof rootPath === 'string' && rootPath.trim()) workspaceRoot = rootPath;
-  } catch (_error) { /* model replay path handling must not affect approval */ }
   const toolName = String(params.tool_name || '').trim();
   const callId = resolveApprovalCallId(toolName, params.tool_call_id);
   const policyDecisionId = String(
@@ -56,7 +50,6 @@ async function waitForApproval(service, streamId, sessionId, requestId, params, 
       approvalId, policyDecisionId, reason, oneOffOnly,
       toolName,
       input,
-      workspaceRoot,
       inputSnapshot: persistedInputSnapshot,
       summary,
       status: 'pending_approval',
@@ -174,7 +167,6 @@ async function waitForApproval(service, streamId, sessionId, requestId, params, 
         service.sessionStore.updateMessage(sessionId, toolUseMessageId, {
           tool_call: buildToolCallPayload({
             callId, approvalId, policyDecisionId, reason, policyScope, policyConsequence, oneOffOnly, toolName, input,
-            workspaceRoot,
             inputSnapshot: persistedInputSnapshot, summary,
             status: resolvedState, approvalState: resolvedState, streamId,
           }),

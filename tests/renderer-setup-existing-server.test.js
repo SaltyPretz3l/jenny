@@ -27,8 +27,12 @@ test('workspace and existing endpoint satisfy model access without Ollama detect
   const h = harness(t, connected, { ...connected, setupComplete: true });
   assert.equal(computeSetupHealth(connected).state, 'complete');
   assert.equal(h.host.querySelector('[data-setup-derived="local-engine"]'), null);
-  assert.match(h.host.textContent, /Connect an existing server/);
+  assert.match(h.host.textContent, /An existing server \(local or private network\)/);
   assert.equal(h.calls.detect, 0);
+  assert.equal(h.host.querySelector('input[value="endpoint"]').checked, true);
+  assert.equal(h.host.querySelector('[data-setup-model-route] .setup-hub-glyph').getAttribute('aria-label'), 'Done');
+  assert.equal(h.host.querySelector('[data-setup-model-route] [data-action="openStep"]').dataset.stepId, 'endpoint');
+  assert.equal(h.host.querySelector('.setup-hub-health').textContent, 'Ready to chat and use file tools');
   h.host.querySelector('[data-step-modal-action="finishSetup"]').click(); await settle();
   assert.equal(h.calls.finish, 1);
 });

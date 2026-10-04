@@ -16,9 +16,7 @@ const {
 
 const HTML_FILES = [
   'index.html',
-  'overlay.html',
   'mermaid-frame.html',
-  'plugin-consent.html',
   'uninstall.html',
   'html-artifact-frame.html',
 ];
@@ -197,6 +195,10 @@ function printScannerErrors(errors, stream = process.stderr) {
 }
 
 function scanCommand(options, artifacts) {
+  if (artifacts.ledger.errors.length) {
+    printScannerErrors(artifacts.ledger.errors);
+    return 2;
+  }
   for (const [relative, bytes] of Object.entries(artifacts.files)) writeFile(options.root, relative, bytes);
   if (options.writeBaseline) {
     const pendingIds = artifacts.occurrences
@@ -206,10 +208,6 @@ function scanCommand(options, artifacts) {
     writeFile(options.root, BASELINE_PATH, jsonBytes(pendingIds));
   }
   console.log(totalsLine('SCAN:', artifacts));
-  if (artifacts.ledger.errors.length) {
-    printScannerErrors(artifacts.ledger.errors);
-    return 2;
-  }
   return 0;
 }
 

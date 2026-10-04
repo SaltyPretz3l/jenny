@@ -65,7 +65,7 @@ test('flag OFF (default): the raw marker renders untouched — byte-identical to
   assert.match(html, /<p>The tower was completed in 1889【web:1】\.<\/p>/);
 });
 
-test('flag ON: a streaming assistant bubble is left untouched (markers only strip once settled)', () => {
+test('flag ON: a streaming assistant bubble holds back a marker still arriving instead of flashing it', () => {
   const renderer = createRenderer({ getFeatureFlags: () => ({ source_citations: true }) });
   const row = citationMarkerRow('partial answer 【web:1');
   const html = renderer.buildTurnRowListMarkup(
@@ -73,5 +73,6 @@ test('flag ON: a streaming assistant bubble is left untouched (markers only stri
     [{ id: 'assistant_web', role: 'assistant', content: 'partial answer 【web:1', streamId: 'turn_web' }],
     { isStreaming: true, streamingRowId: 'turn_web:assistant_text:0', streamingMessageId: 'assistant_web' }
   );
-  assert.match(html, /partial answer 【web:1/);
+  assert.match(html, /partial answer/);
+  assert.doesNotMatch(html, /【|web:1/);
 });

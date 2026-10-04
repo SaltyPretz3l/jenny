@@ -18,7 +18,7 @@ def _write_fixture(tmp_path: Path, payload: dict) -> Path:
 
 def test_matched_lookup_returns_recorded_payload_and_records_access(tmp_path: Path) -> None:
     messages = [{"role": "user", "content": "hello"}]
-    key = VCREngine._hash_messages(messages)  # noqa: SLF001
+    key = VCREngine._hash_messages(messages)
     engine = VCREngine(_write_fixture(tmp_path, {key: {"content": "world"}}))
 
     assert engine.generate(prompt="", messages=messages) == "world"
@@ -46,7 +46,7 @@ def test_strict_raises_on_miss_instead_of_silent_fallback(tmp_path: Path) -> Non
 
 def test_unused_keys_flags_stale_recorded_entries(tmp_path: Path) -> None:
     used = [{"role": "user", "content": "used"}]
-    used_key = VCREngine._hash_messages(used)  # noqa: SLF001
+    used_key = VCREngine._hash_messages(used)
     engine = VCREngine(
         _write_fixture(
             tmp_path,

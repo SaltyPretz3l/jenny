@@ -70,6 +70,40 @@ test('appears only after the silence threshold, inside the live article', (t) =>
   assert.equal(node.getAttribute('role'), 'status');
 });
 
+test('asks the viewport to follow when the row lands at the tail, not on every tick', (t) => {
+  // Owner report, 2026-09-30: the row is a direct DOM patch that bypasses the
+  // render pipeline, so nothing requested a viewport sync and it appeared below
+  // the fold (under the composer) instead of being followed into view.
+  const mounts = [];
+  const { timeline, clock, row } = makeHarness(t, {
+    overrides: { onRowMounted: (sessionId, node) => mounts.push({ sessionId, node }) },
+  });
+  noteEvent(row, 'delta');
+  clock.nowMs = 1600;
+  row.tick();
+  const node = findRow(timeline);
+  assert.equal(mounts.length, 1, 'mounting requests one follow');
+  assert.equal(mounts[0].sessionId, 'session-1');
+  assert.equal(mounts[0].node, node);
+  clock.nowMs = 2100;
+  row.tick();
+  assert.equal(mounts.length, 1, 'an in-place label tick does not re-request');
+  node.parentNode.appendChild(timeline.ownerDocument.createElement('div'));
+  clock.nowMs = 2600;
+  row.tick();
+  assert.equal(mounts.length, 2, 'moving back to the tail requests a follow again');
+});
+
+test('a throwing follow hook never breaks the row', (t) => {
+  const { timeline, clock, row } = makeHarness(t, {
+    overrides: { onRowMounted: () => { throw new Error('viewport gone'); } },
+  });
+  noteEvent(row, 'delta');
+  clock.nowMs = 1600;
+  row.tick();
+  assert.ok(findRow(timeline));
+});
+
 test('does not arm on started alone (turn start belongs to the thinking indicator)', (t) => {
   const { timeline, clock, row } = makeHarness(t);
   noteEvent(row, 'started');
@@ -351,4 +385,162 @@ test('file-operation motion is disabled under prefers-reduced-motion', () => {
   assert.match(reducedMotionBlocks, /\.tool-call-file-composing \.tool-call-file-icon[\s\S]*?animation:\s*none/);
   // The settled state has no keyframe (the composing->settled class flip is a
   // transition, covered by the first assertion), so nothing to disable here.
+});
+
+// FG-006: checklist and task-board writes name the list work in plain words
+// behind the checklist glyph, instead of a raw tool id and a byte count.
+function noteTodoDelta(row, argumentsDelta, sequence) {
+  noteEvent(row, 'tool_input_delta', {
+    toolCallId: 'call-todo', toolName: 'todo_write', argumentsDelta, sequence,
+  });
+}
+
+test('the generic pool never sounds like list-keeping', () => {
+  assert.equal(ACTIVITY_COPY.length, 2);
+  assert.equal(ACTIVITY_COPY.some((copy) => /in order/i.test(copy)), false);
+});
+
+test('a todo_write call shows the checklist glyph, the item being written, and its count', (t) => {
+  const { timeline, clock, row } = makeHarness(t);
+  noteTodoDelta(row, '{"purpose":"Track the build","todos":[', 0);
+  const node = findRow(timeline);
+  assert.ok(node, 'checklist input renders without waiting for silence');
+  assert.equal(node.dataset.turnActivityKind, 'checklist');
+  assert.equal(node.querySelectorAll('.turn-activity-glyph > .turn-activity-glyph-row').length, 3);
+  assert.equal(node.querySelector('.turn-activity-glyph').getAttribute('aria-hidden'), 'true');
+  assert.equal(node.querySelector('.turn-activity-name').textContent, 'Updating checklist');
+  assert.equal(node.querySelector('.turn-activity-label').textContent, 'Composing…');
+  assert.equal(node.querySelector('.turn-activity-elapsed').textContent, '0:00', 'no count before the first item');
+
+  // The first key arrives split across deltas and must count once.
+  noteTodoDelta(row, '{"con', 1);
+  noteTodoDelta(row, 'tent": "Parse the \\"bank\\" exports","status":"completed"},', 2);
+  noteTodoDelta(row, '{"content":"Match cleared checks\\nto the led', 3);
+  clock.nowMs = 6000;
+  row.tick();
+  assert.equal(node.querySelector('.turn-activity-label').textContent, 'Match cleared checks to the led',
+    'the partial newest item streams in, escapes decoded');
+  assert.equal(node.querySelector('.turn-activity-label').classList.contains('turn-activity-label--path'), false);
+  const elapsed = node.querySelector('.turn-activity-elapsed');
+  assert.equal(elapsed.textContent, 'item 2 · 0:06');
+  assert.equal(elapsed.hasAttribute('data-turn-elapsed'), false, 'the shared clock must not erase the count');
+});
+
+test('todo items keep counting past the 4 KB head and a trailing escape never leaks', (t) => {
+  const { timeline, row } = makeHarness(t);
+  noteTodoDelta(row, '{"todos":[', 0);
+  let sequence = 1;
+  for (let index = 1; index <= 60; index += 1) {
+    noteTodoDelta(row, `{"content":"Step ${index} ${'x'.repeat(80)}","status":"pending"},`, sequence);
+    sequence += 1;
+  }
+  noteTodoDelta(row, '{"content":"Last \\u00e9 \\', sequence);
+  const node = findRow(timeline);
+  assert.equal(node.querySelector('.turn-activity-elapsed').textContent, 'item 61 · 0:00');
+  assert.equal(node.querySelector('.turn-activity-label').textContent, 'Last é');
+});
+
+test('the argument scanner carries JSON state across deltas (Astra FG-006 repros)', (t) => {
+  const label = (node) => node.querySelector('.turn-activity-label').textContent;
+  const meta = (node) => node.querySelector('.turn-activity-elapsed').textContent;
+
+  // Any JSON whitespace around the colon.
+  const spaced = makeHarness(t);
+  noteTodoDelta(spaced.row, '{"todos":[{"content" :         "First","status":"pending"}', 0);
+  let node = findRow(spaced.timeline);
+  assert.equal(label(node), 'First');
+  assert.equal(meta(node), 'item 1 · 0:00');
+  // A new item never shows the previous item's text.
+  noteTodoDelta(spaced.row, ',{"content":"', 1);
+  assert.equal(label(node), 'Composing…');
+  assert.equal(meta(node), 'item 2 · 0:00');
+  // Key text inside an item's own value is not a key.
+  noteTodoDelta(spaced.row, 'Quote \\"content\\": \\"x\\" here","status":"pending"}', 2);
+  assert.equal(label(node), 'Quote "content": "x" here');
+  assert.equal(meta(node), 'item 2 · 0:00');
+
+  // A long escaped item keeps updating up to the preview bound.
+  const long = makeHarness(t);
+  noteTodoDelta(long.row, '{"todos":[{"content":"', 0);
+  noteTodoDelta(long.row, '\\u0061'.repeat(83), 1);
+  noteTodoDelta(long.row, '\\u0062'.repeat(20), 2);
+  noteTodoDelta(long.row, '\\u00', 3); // unicode escape split across deltas
+  noteTodoDelta(long.row, '63'.concat('\\u0063'.repeat(19)), 4);
+  node = findRow(long.timeline);
+  assert.equal(label(node), `${'a'.repeat(83)}${'b'.repeat(20)}${'c'.repeat(20)}`);
+
+  // An escaped backslash is literal text, not an unfinished escape.
+  const board = makeHarness(t);
+  board.row.noteStreamEvent({
+    type: 'tool_input_delta', streamId: 'stream-board', sessionId: 'session-1',
+    toolCallId: 'call-board', toolName: 'task_board', argumentsDelta: '{"action":"add","title":"Document \\\\u123"}', sequence: 0,
+  });
+  node = findRow(board.timeline);
+  assert.equal(label(node), 'Document \\u123');
+  assert.equal(node.querySelector('.turn-activity-name').textContent, 'Adding a task');
+});
+
+test('task_board names the action and shows the task title', (t) => {
+  const cases = [
+    ['add', 'Adding a task'],
+    ['update', 'Updating a task'],
+    ['complete', 'Completing a task'],
+    ['list', 'Reading the task board'],
+    ['', 'Updating the task board'],
+  ];
+  for (const [action, expected] of cases) {
+    const { timeline, row } = makeHarness(t);
+    const actionField = action ? `"action":"${action}",` : '';
+    row.noteStreamEvent({
+      type: 'tool_input_delta', streamId: `stream-${action || 'none'}`, sessionId: 'session-1',
+      toolCallId: `call-${action}`, toolName: 'task_board',
+      argumentsDelta: `{${actionField}"title":"Handle CHECK # and Scheck Nr.`, sequence: 0,
+    });
+    const node = findRow(timeline);
+    assert.equal(node.dataset.turnActivityKind, 'checklist', action);
+    assert.equal(node.querySelector('.turn-activity-name').textContent, expected, action);
+    assert.equal(node.querySelector('.turn-activity-label').textContent, 'Handle CHECK # and Scheck Nr.', action);
+    assert.equal(node.querySelector('.turn-activity-elapsed').textContent, '0:00', `${action}: elapsed only`);
+  }
+});
+
+test('other tools compose under their transcript display name', (t) => {
+  const { getToolDisplayName } = require('../renderer/chat/tool-call-utils');
+  const { timeline, row } = makeHarness(t, { overrides: { getToolDisplayName } });
+  noteEvent(row, 'tool_input_delta', {
+    toolCallId: 'call-w', toolName: 'write_file', argumentsDelta: '{"path":"src/a.js"', sequence: 0,
+  });
+  const node = findRow(timeline);
+  assert.equal(node.dataset.turnActivityKind, 'tool_input');
+  assert.equal(node.querySelector('.turn-activity-name').textContent, 'Write');
+  assert.equal(node.querySelector('.turn-activity-label').textContent, 'src/a.js');
+});
+
+test('the default display-name resolver reads toolCallUtils at render time', (t) => {
+  const previous = globalThis.toolCallUtils;
+  globalThis.toolCallUtils = { getToolDisplayName: (name) => `Named ${name}` };
+  t.after(() => {
+    if (previous === undefined) delete globalThis.toolCallUtils;
+    else globalThis.toolCallUtils = previous;
+  });
+  const { timeline, row } = makeHarness(t);
+  noteEvent(row, 'tool_input_delta', {
+    toolCallId: 'call-r', toolName: 'run_command', argumentsDelta: '{', sequence: 0,
+  });
+  assert.equal(findRow(timeline).querySelector('.turn-activity-name').textContent, 'Named run_command');
+});
+
+test('the checklist glyph replaces the dot and stills under reduced motion', () => {
+  const css = fs.readFileSync(path.join(__dirname, '..', 'styles', 'chat-activity-row.css'), 'utf8');
+  const entry = fs.readFileSync(path.join(__dirname, '..', 'styles.css'), 'utf8');
+  assert.match(entry, /@import url\("\.\/styles\/chat-machinery\.css"\);\n@import url\("\.\/styles\/chat-activity-row\.css"\);/,
+    'the activity-row sheet loads right after the machinery grammar it extends');
+  assert.match(css, /\[data-turn-activity-kind="checklist"\] > \.status-dot \{ display: none; \}/);
+  assert.match(css, /\.turn-activity-glyph-row::after \{[^}]*animation: turn-activity-checklist-draw var\(--motion-duration-pulse-slow\)/);
+  const reducedMotionBlocks = [...css.matchAll(/@media\s*\(prefers-reduced-motion:\s*reduce\)\s*\{([\s\S]*?)\n\}/g)]
+    .map((match) => match[1])
+    .join('\n');
+  assert.match(reducedMotionBlocks, /\.turn-activity-glyph-row::after,[\s\S]*?animation:\s*none/);
+  const animations = fs.readFileSync(path.join(__dirname, '..', 'styles', 'chat-activity-row.css'), 'utf8');
+  assert.match(animations, /@keyframes turn-activity-checklist-draw/);
 });

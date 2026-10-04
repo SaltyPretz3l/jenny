@@ -448,7 +448,8 @@ test('shell config service archiveFollowUp rejects non-resolved loops and unarch
 
   assert.throws(
     () => service.archiveFollowUp('followup-1'),
-    /Only resolved open loops can be archived\./i
+    (error) => error.code === COMPANION_ERROR_CODES.FOLLOW_UP_STATE_CONFLICT
+      && /^CMP-COMPANION-0003: Only resolved open loops can be archived\.$/.test(error.message)
   );
 
   service.resolveFollowUp('followup-1');
@@ -457,6 +458,173 @@ test('shell config service archiveFollowUp rejects non-resolved loops and unarch
 
   assert.equal(nextState.followUps[0].status, 'resolved');
   assert.equal(nextState.followUps[0].archivedAt, '');
+});
+
+function createClockedService(prefix, startIso) {
+  const userDataPath = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  trackDirectory(userDataPath);
+  const clock = { now: new Date(startIso) };
+  const service = new ShellConfigService({ userDataPath, nowProvider: () => new Date(clock.now) });
+  const changes = [];
+  service.on('changed', (_snapshot, context) => {
+    changes.push(context?.reason || '');
+  });
+  const find = (id) => service.getState().followUps.find((entry) => entry.id === id);
+  return { service, clock, changes, find };
+}
+
+test('updateFollowUp recomputes deferredUntil when the edit picks a different preset', () => {
+  const { service, clock, find } = createClockedService('jenny-shell-config-followup-represet-', '2026-03-19T15:00:00.000Z');
+  service.upsertFollowUp({ id: 'followup-1', label: 'Loop', status: 'deferred', deferPreset: 'tomorrow' });
+  const tomorrowUntil = find('followup-1').deferredUntil;
+
+  clock.now = new Date('2026-03-19T16:00:00.000Z');
+  service.updateFollowUp('followup-1', { label: 'Loop', status: 'deferred', deferPreset: 'next_week' });
+
+  const updated = find('followup-1');
+  assert.equal(updated.deferPreset, 'next_week');
+  assert.equal(updated.deferredUntil, calculateDeferredUntilForPreset('next_week', clock.now));
+  assert.notEqual(updated.deferredUntil, tomorrowUntil);
+  assert.equal(updated.history[0].detail, 'Updated timing.');
+});
+
+test('updateFollowUp applies a snake_case preset alias to both the preset and its deadline', () => {
+  const { service, clock, find } = createClockedService('jenny-shell-config-followup-snake-', '2026-03-19T15:00:00.000Z');
+  service.upsertFollowUp({ id: 'followup-1', label: 'Loop', status: 'deferred', deferPreset: 'tomorrow' });
+
+  service.updateFollowUp('followup-1', { defer_preset: 'next_week' });
+
+  const updated = find('followup-1');
+  assert.equal(updated.deferPreset, 'next_week');
+  assert.equal(updated.deferredUntil, calculateDeferredUntilForPreset('next_week', clock.now));
+});
+
+test('updateFollowUp gives a due deferred loop a fresh future deferral for the same preset', () => {
+  const { service, clock, find } = createClockedService('jenny-shell-config-followup-due-', '2026-03-19T15:00:00.000Z');
+  service.upsertFollowUp({
+    id: 'followup-1',
+    label: 'Due loop',
+    status: 'deferred',
+    deferPreset: 'tomorrow',
+    deferredUntil: '2026-03-19T09:00:00.000Z',
+  });
+
+  service.updateFollowUp('followup-1', { label: 'Due loop', status: 'deferred', deferPreset: 'tomorrow' });
+
+  const updated = find('followup-1');
+  assert.equal(updated.deferredUntil, calculateDeferredUntilForPreset('tomorrow', clock.now));
+  assert.ok(Date.parse(updated.deferredUntil) > clock.now.valueOf());
+});
+
+test('updateFollowUp keeps a still-future deferral when the preset is unchanged', () => {
+  const { service, clock, find } = createClockedService('jenny-shell-config-followup-same-preset-', '2026-03-19T15:00:00.000Z');
+  service.upsertFollowUp({
+    id: 'followup-1',
+    label: 'Future loop',
+    status: 'deferred',
+    deferPreset: 'tomorrow',
+    deferredUntil: '2026-03-20T09:00:00.000Z',
+  });
+
+  clock.now = new Date('2026-03-19T18:00:00.000Z');
+  service.updateFollowUp('followup-1', { label: 'Renamed loop', status: 'deferred', deferPreset: 'tomorrow' });
+
+  const updated = find('followup-1');
+  assert.equal(updated.label, 'Renamed loop');
+  assert.equal(updated.deferredUntil, '2026-03-20T09:00:00.000Z');
+  assert.equal(updated.history[0].detail, 'Updated details.');
+});
+
+test('updateFollowUp no-op edit writes no history and keeps updatedAt', () => {
+  const { service, clock, changes, find } = createClockedService('jenny-shell-config-followup-noop-edit-', '2026-03-19T15:00:00.000Z');
+  service.upsertFollowUp({ id: 'active-1', label: 'Active', body: 'Body.', status: 'active' });
+  service.upsertFollowUp({
+    id: 'deferred-1',
+    label: 'Deferred',
+    status: 'deferred',
+    deferPreset: 'tomorrow',
+    deferredUntil: '2026-03-20T09:00:00.000Z',
+  });
+  const before = JSON.parse(JSON.stringify(service.getState().followUps));
+  const changeCount = changes.length;
+
+  clock.now = new Date('2026-03-19T16:00:00.000Z');
+  service.updateFollowUp('active-1', { label: 'Active', body: 'Body.', status: 'active', deferPreset: '' });
+  service.updateFollowUp('deferred-1', { label: 'Deferred', body: '', status: 'deferred', deferPreset: 'tomorrow' });
+
+  assert.equal(changes.length, changeCount);
+  assert.deepEqual(service.getState().followUps, before);
+  assert.equal(find('active-1').history.length, 1);
+});
+
+test('updateFollowUp no-op edit of a legacy record without timestamps writes nothing', () => {
+  const userDataPath = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-shell-config-followup-legacy-noop-'));
+  trackDirectory(userDataPath);
+  fs.writeFileSync(path.join(userDataPath, 'shell-config.json'), JSON.stringify({
+    version: CONFIG_VERSION,
+    followUps: [
+      { id: 'legacy-active', label: 'Legacy', body: 'Old body.', status: 'active' },
+      { id: 'legacy-resolved', label: 'Legacy done', body: '', status: 'resolved' },
+    ],
+  }, null, 2));
+  const clock = { now: new Date('2026-03-19T15:00:00.000Z') };
+  const service = new ShellConfigService({ userDataPath, nowProvider: () => new Date(clock.now) });
+  const changes = [];
+  service.on('changed', (_snapshot, context) => changes.push(context?.reason || ''));
+  const before = JSON.parse(JSON.stringify(service.getState().followUps));
+  assert.equal(before[0].createdAt, '', 'fixture must be a legacy record without createdAt');
+  assert.equal(before[1].resolvedAt, '', 'fixture must be a resolved record without resolvedAt');
+
+  service.updateFollowUp('legacy-active', { label: 'Legacy', body: 'Old body.', status: 'active' });
+  service.updateFollowUp('legacy-resolved', { label: 'Legacy done', body: '' });
+
+  assert.equal(changes.length, 0);
+  assert.deepEqual(service.getState().followUps, before);
+
+  // A real edit still persists the backfilled createdAt.
+  service.updateFollowUp('legacy-active', { label: 'Legacy renamed' });
+  const edited = service.getState().followUps.find((entry) => entry.id === 'legacy-active');
+  assert.equal(edited.label, 'Legacy renamed');
+  assert.equal(edited.createdAt, clock.now.toISOString());
+  assert.equal(edited.history[0].kind, 'edited');
+});
+
+test('deferFollowUp refuses resolved and archived loops with a state-conflict code', () => {
+  const { service, changes, find } = createClockedService('jenny-shell-config-followup-defer-conflict-', '2026-03-19T15:00:00.000Z');
+  service.upsertFollowUp({ id: 'resolved-1', label: 'Done loop', status: 'active' });
+  service.resolveFollowUp('resolved-1');
+  service.upsertFollowUp({ id: 'archived-1', label: 'Archived loop', status: 'active' });
+  service.resolveFollowUp('archived-1');
+  service.archiveFollowUp('archived-1');
+  const before = JSON.parse(JSON.stringify(service.getState().followUps));
+  const changeCount = changes.length;
+
+  for (const id of ['resolved-1', 'archived-1']) {
+    assert.throws(
+      () => service.deferFollowUp(id, 'tomorrow'),
+      (error) => error.code === COMPANION_ERROR_CODES.FOLLOW_UP_STATE_CONFLICT
+        && error.errorCode === 'CMP-COMPANION-0003'
+        && error.message.startsWith('CMP-COMPANION-0003: ')
+    );
+  }
+  assert.equal(changes.length, changeCount);
+  assert.deepEqual(service.getState().followUps, before);
+  assert.ok(find('archived-1').archivedAt);
+  assert.ok(find('resolved-1').resolvedAt);
+});
+
+test('assertFollowUpExists throws the not-found code for unknown ids and returns the record otherwise', () => {
+  const { service } = createClockedService('jenny-shell-config-followup-exists-', '2026-03-19T15:00:00.000Z');
+  service.upsertFollowUp({ id: 'followup-1', label: 'Present' });
+
+  assert.equal(service.assertFollowUpExists(' followup-1 ').id, 'followup-1');
+  for (const id of ['missing', '', null]) {
+    assert.throws(
+      () => service.assertFollowUpExists(id),
+      (error) => error.code === COMPANION_ERROR_CODES.FOLLOW_UP_NOT_FOUND
+        && error.message === 'CMP-COMPANION-0002: That open loop no longer exists.'
+    );
+  }
 });
 
 test('shell config service follow-up mutations are no-ops when nothing changes', () => {

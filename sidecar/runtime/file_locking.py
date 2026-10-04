@@ -30,7 +30,7 @@ class FileLockAttempt:
 
 def _prepare_file_lock(lock_path: Path) -> FileLock:
     """Create the lock directory and return a ready FileLock instance."""
-    from filelock import FileLock  # noqa: PLC0415
+    from filelock import FileLock
 
     normalized_lock_path = _normalize_lock_path(lock_path)
     try:
@@ -53,7 +53,7 @@ def _normalize_lock_path(lock_path: Path) -> Path:
 @contextmanager
 def acquire_file_lock(lock_path: Path, *, timeout_seconds: float) -> Iterator[None]:
     """Hold a per-file lock for the duration of a write transaction."""
-    from filelock import Timeout as FileLockTimeout  # noqa: PLC0415
+    from filelock import Timeout as FileLockTimeout
 
     lock = _prepare_file_lock(lock_path)
     try:
@@ -74,7 +74,7 @@ def acquire_regenerable_file_lock(
     timeout_seconds: float = BACKGROUND_WRITE_TIMEOUT_SECONDS,
 ) -> Iterator[FileLockAttempt]:
     """Attempt a best-effort lock for background work that can be skipped safely."""
-    from filelock import Timeout as FileLockTimeout  # noqa: PLC0415
+    from filelock import Timeout as FileLockTimeout
 
     lock = _prepare_file_lock(lock_path)
     try:

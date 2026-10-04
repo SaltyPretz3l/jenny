@@ -58,12 +58,12 @@ class _ScriptedWorker:
 def _make_manager(tmp_path: Path, worker: object | None = None) -> MonitorManager:
     manager = MonitorManager(runtime_root=tmp_path / "runtime")
     if worker is not None:
-        manager._salience_worker_factory = lambda active: worker  # noqa: SLF001
+        manager._salience_worker_factory = lambda active: worker
     return manager
 
 
 def _record_path(manager: MonitorManager, monitor_id: str) -> Path:
-    return manager._status_store.record_path(monitor_id)  # noqa: SLF001
+    return manager._status_store.record_path(monitor_id)
 
 
 def _make_active(
@@ -115,12 +115,12 @@ def test_budget_exhaustion_latches_pass_through(tmp_path: Path) -> None:
     manager = _make_manager(tmp_path, worker)
     active = _make_active(manager)
 
-    manager._record_output_event(active, stream="stdout", text="line 1")  # noqa: SLF001
+    manager._record_output_event(active, stream="stdout", text="line 1")
     assert active.events == []
     assert active.salience_budget_spent_seconds == pytest.approx(1.2)
     assert active.salience_gate_disabled is False
 
-    manager._record_output_event(active, stream="stdout", text="line 2")  # noqa: SLF001
+    manager._record_output_event(active, stream="stdout", text="line 2")
     _drain_timer(active)
     # The second verdict still applies (the line is suppressed) and only THEN
     # does the latch trip.
@@ -131,7 +131,7 @@ def test_budget_exhaustion_latches_pass_through(tmp_path: Path) -> None:
     assert worker.closed == 1
 
     for index in range(3, 6):
-        manager._record_output_event(active, stream="stdout", text=f"line {index}")  # noqa: SLF001
+        manager._record_output_event(active, stream="stdout", text=f"line {index}")
     _drain_timer(active)
 
     # Pass-through: unmatched lines are now emitted, and the worker is never
@@ -152,12 +152,12 @@ def test_gate_disabled_warns_exactly_once(
     active = _make_active(manager)
 
     with caplog.at_level(logging.WARNING):
-        manager._record_output_event(active, stream="stdout", text="first")  # noqa: SLF001
+        manager._record_output_event(active, stream="stdout", text="first")
         assert active.salience_gate_disabled is True
         assert len(_gate_disabled_records(caplog)) == 1
 
         for index in range(4):
-            manager._record_output_event(active, stream="stdout", text=f"more {index}")  # noqa: SLF001
+            manager._record_output_event(active, stream="stdout", text=f"more {index}")
         _drain_timer(active)
 
     records = _gate_disabled_records(caplog)
@@ -175,7 +175,7 @@ def test_evaluation_timeout_spends_the_whole_budget(
     active = _make_active(manager)
 
     with caplog.at_level(logging.WARNING):
-        manager._record_output_event(active, stream="stdout", text="no keep here")  # noqa: SLF001
+        manager._record_output_event(active, stream="stdout", text="no keep here")
     _drain_timer(active)
 
     # Fail-open: the line the worker could not judge is emitted, not dropped.
@@ -194,8 +194,8 @@ def test_worker_failure_latches_with_worker_failed_reason(
     active = _make_active(manager)
 
     with caplog.at_level(logging.WARNING):
-        manager._record_output_event(active, stream="stdout", text="no keep here")  # noqa: SLF001
-        manager._record_output_event(active, stream="stdout", text="still no keep")  # noqa: SLF001
+        manager._record_output_event(active, stream="stdout", text="no keep here")
+        manager._record_output_event(active, stream="stdout", text="still no keep")
     _drain_timer(active)
 
     assert [event["text"] for event in active.events] == ["no keep here", "still no keep"]
@@ -212,10 +212,10 @@ def test_worker_factory_failure_latches_with_worker_failed_reason(tmp_path: Path
     def _boom(active: _ActiveMonitor) -> object:
         raise OSError("no process slots")
 
-    manager._salience_worker_factory = _boom  # noqa: SLF001
+    manager._salience_worker_factory = _boom
     active = _make_active(manager)
 
-    manager._record_output_event(active, stream="stdout", text="no keep here")  # noqa: SLF001
+    manager._record_output_event(active, stream="stdout", text="no keep here")
     _drain_timer(active)
 
     assert [event["text"] for event in active.events] == ["no keep here"]
@@ -228,7 +228,7 @@ def test_patternless_monitor_never_touches_the_worker(tmp_path: Path) -> None:
     active = _make_active(manager)
     active.match_patterns = []
 
-    manager._record_output_event(active, stream="stdout", text="anything")  # noqa: SLF001
+    manager._record_output_event(active, stream="stdout", text="anything")
     _drain_timer(active)
 
     assert [event["text"] for event in active.events] == ["anything"]
@@ -244,8 +244,8 @@ def test_dedupe_duplicate_does_not_spend_budget(tmp_path: Path) -> None:
     active = _make_active(manager)
     active.dedupe = True
 
-    manager._record_output_event(active, stream="stdout", text="keep me")  # noqa: SLF001
-    manager._record_output_event(active, stream="stdout", text="keep me")  # noqa: SLF001
+    manager._record_output_event(active, stream="stdout", text="keep me")
+    manager._record_output_event(active, stream="stdout", text="keep me")
     _drain_timer(active)
 
     assert [event["text"] for event in active.events] == ["keep me"]
@@ -277,18 +277,18 @@ def test_terminal_monitor_does_not_respawn_worker(tmp_path: Path) -> None:
 
     factory = _CountingFactory()
     manager = MonitorManager(runtime_root=tmp_path / "runtime")
-    manager._salience_worker_factory = factory  # noqa: SLF001
+    manager._salience_worker_factory = factory
     active = _make_active(manager, monitor_id="mon_0000000000b7")
-    manager._active[active.monitor_id] = active  # noqa: SLF001
+    manager._active[active.monitor_id] = active
 
-    manager._record_output_event(active, stream="stdout", text="keep me")  # noqa: SLF001
+    manager._record_output_event(active, stream="stdout", text="keep me")
     _drain_timer(active)
     assert [event["text"] for event in active.events] == ["keep me"]
     assert factory.spawned == 1
     assert factory.worker.calls == 1
 
     # Terminate exactly the way production does: the worker is reaped here.
-    manager._finish_active(  # noqa: SLF001
+    manager._finish_active(
         active,
         state="completed",
         terminal_reason="exit",
@@ -299,7 +299,7 @@ def test_terminal_monitor_does_not_respawn_worker(tmp_path: Path) -> None:
     assert active.salience_worker is None
 
     # A straggler from a still-draining reader thread.
-    manager._record_output_event(active, stream="stdout", text="straggler")  # noqa: SLF001
+    manager._record_output_event(active, stream="stdout", text="straggler")
     _drain_timer(active)
 
     assert factory.spawned == 1
@@ -344,11 +344,11 @@ def test_latch_during_termination_is_visible_in_terminal_snapshot(tmp_path: Path
 
     factory = _CountingFactory()
     manager = MonitorManager(runtime_root=tmp_path / "runtime")
-    manager._salience_worker_factory = factory  # noqa: SLF001
+    manager._salience_worker_factory = factory
     active = _make_active(manager, monitor_id="mon_0000000000b8")
 
     reader = threading.Thread(
-        target=manager._record_output_event,  # noqa: SLF001
+        target=manager._record_output_event,
         kwargs={"active": active, "stream": "stdout", "text": "pathological"},
         daemon=True,
     )
@@ -356,7 +356,7 @@ def test_latch_during_termination_is_visible_in_terminal_snapshot(tmp_path: Path
     assert started.wait(30.0), "worker was never consulted"
 
     finisher = threading.Thread(
-        target=manager._finish_active,  # noqa: SLF001
+        target=manager._finish_active,
         args=(active,),
         kwargs={
             "state": "completed",
@@ -405,25 +405,25 @@ def test_latch_is_visible_in_metadata_terminal_and_digest(tmp_path: Path) -> Non
     manager = _make_manager(tmp_path, worker)
     active = _make_active(manager)
 
-    manager._record_output_event(active, stream="stdout", text="keep me")  # noqa: SLF001
+    manager._record_output_event(active, stream="stdout", text="keep me")
     _drain_timer(active)
 
-    metadata = manager._metadata(active)  # noqa: SLF001
+    metadata = manager._metadata(active)
     assert metadata["salience_gate_disabled"] is True
     assert metadata["salience_gate_disabled_reason"] == "budget_exhausted"
 
-    terminal = manager._terminal_status(active)  # noqa: SLF001
+    terminal = manager._terminal_status(active)
     assert terminal["salience_gate_disabled"] is True
     assert terminal["salience_gate_disabled_reason"] == "budget_exhausted"
 
     with active.lock:
-        digest = manager._build_poll_digest_locked(active, 0)  # noqa: SLF001
+        digest = manager._build_poll_digest_locked(active, 0)
     assert digest["salience_gate_disabled"] is True
     assert digest["salience_gate_disabled_reason"] == "budget_exhausted"
 
     # The line was EMITTED (matched=True), so a pending batch must exist -- asserting
     # "None or ..." would pass vacuously if batching regressed to never batching.
-    batch = manager._take_pending_output_batch_locked(active)  # noqa: SLF001
+    batch = manager._take_pending_output_batch_locked(active)
     assert batch is not None
     assert batch["salience_gate_disabled"] is True
     assert batch["salience_gate_disabled_reason"] == "budget_exhausted"
@@ -435,13 +435,13 @@ def test_healthy_monitor_reports_gate_enabled(tmp_path: Path) -> None:
     )
     manager = _make_manager(tmp_path, worker)
     active = _make_active(manager, monitor_id="mon_0000000000b2")
-    manager._active[active.monitor_id] = active  # noqa: SLF001
+    manager._active[active.monitor_id] = active
 
-    manager._record_output_event(active, stream="stdout", text="keep me")  # noqa: SLF001
+    manager._record_output_event(active, stream="stdout", text="keep me")
     _drain_timer(active)
 
-    assert manager._metadata(active)["salience_gate_disabled"] is False  # noqa: SLF001
-    assert manager._metadata(active)["salience_gate_disabled_reason"] is None  # noqa: SLF001
+    assert manager._metadata(active)["salience_gate_disabled"] is False
+    assert manager._metadata(active)["salience_gate_disabled_reason"] is None
     digest = manager.poll_monitor(active.monitor_id, since_sequence=0)
     assert digest["salience_gate_disabled"] is False
     assert digest["salience_gate_disabled_reason"] is None

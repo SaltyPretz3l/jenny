@@ -58,7 +58,7 @@ class StructuredSystemPrompt:
             return "\n\n".join(non_cacheable)
         return "\n\n".join([*cacheable, SYSTEM_PROMPT_DYNAMIC_BOUNDARY, *non_cacheable])
 
-    def __str__(self) -> str:  # noqa: D105
+    def __str__(self) -> str:
         return self.to_text()
 
 

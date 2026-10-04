@@ -4,12 +4,14 @@ const assert = require('node:assert/strict');
 const {
   prettifyReasoningMarkdown,
   hasSparseNewlines,
+  isProseBoundary,
 } = require('../renderer/chat/reasoning-prettify-utils');
 
 const { joinReasoningEntriesMarkdown } = require('../renderer/chat/chat-thinking-utils');
 
 const PARAGRAPH_MARKER_RE = /([.!?]['")\]’”]?) (?=(?:Actually|Alternatively|But wait|Let me|Wait|Hmm|Okay|OK|Now|Also|First|Next|Then|So|Good|But)[ ,])/g;
 
+// The pre-batch backward-scan synthesizer, kept verbatim as the oracle.
 function oldSynthesizeParagraphs(prose) {
   return prose.replace(PARAGRAPH_MARKER_RE, (match, ender, offset) => {
     const lineStart = prose.lastIndexOf('\n', offset) + 1;
@@ -17,7 +19,7 @@ function oldSynthesizeParagraphs(prose) {
   });
 }
 
-test('synthesizeParagraphs matches the prior backward-scan algorithm', () => {
+test('paragraph synthesis matches the backward scan on walls and leaves a formatted short block alone', () => {
   const fixtures = Array.from({ length: 36 }, (_, index) => {
     const sections = [
       `Fixture ${index} starts here. Actually, inspect this part. Then, continue carefully.`,
@@ -29,8 +31,85 @@ test('synthesizeParagraphs matches the prior backward-scan algorithm', () => {
   });
 
   for (const fixture of fixtures) {
-    assert.equal(prettifyReasoningMarkdown(fixture), oldSynthesizeParagraphs(fixture));
+    const paragraphs = fixture.split('\n\n');
+    if (paragraphs.length === 1) {
+      assert.equal(prettifyReasoningMarkdown(fixture), oldSynthesizeParagraphs(fixture));
+      continue;
+    }
+    // Formatted text: the short opening block is byte-identical and the very
+    // long trailing block is synthesized exactly like the backward scan.
+    assert.equal(paragraphs.length, 2);
+    assert.equal(prettifyReasoningMarkdown(fixture), `${paragraphs[0]}\n\n${oldSynthesizeParagraphs(paragraphs[1])}`);
   }
+});
+
+const FORMATTED_LONG_PARAGRAPH = [
+  'Para one.', 'Para two.', 'Para three.',
+  `${'x'.repeat(200)}. So the cache holds. ${'y'.repeat(150)}. Now the flags. ${'z'.repeat(60)}. Also done.`,
+].join('\n\n');
+
+const BLOCK_REPAIR_FIXTURES = [
+  {
+    name: 'late real list preserves paragraphs in a 5K wall',
+    raw: `${(`${'x'.repeat(1275)} X. So we check the loader.\n\n`).repeat(4)}Plan:\n- a\n- b\n- c\n- d\n- e`,
+    expected: 'X.\n\nSo we check',
+  },
+  { name: 'formatted text with a long paragraph stays byte-identical', raw: FORMATTED_LONG_PARAGRAPH, expected: FORMATTED_LONG_PARAGRAPH, exact: true },
+  {
+    name: 'formatted text with a glued long paragraph is repaired',
+    raw: `Para one.\n\n${'x'.repeat(200)} misses.Let me check. ${'y'.repeat(200)}. So we go.`,
+    expected: 'misses.\n\nLet me check.',
+  },
+  { name: 'glue at the 400-character eligibility edge', raw: `${'x'.repeat(387)} end.Now go.\n\nTail`, expected: 'end.\n\nNow go.' },
+  { name: 'glue at the 1200-character eligibility edge', raw: `${'x'.repeat(1187)} end.Now go.\n\nTail`, expected: 'end.\n\nNow go.' },
+  { name: 'capitalized one-word sentence glue', raw: 'Okay.Let me think', expected: 'Okay.\n\nLet me think', exact: true },
+  { name: 'filler glue before a comma marker', raw: 'Hmm.Wait, that is off', expected: 'Hmm.\n\nWait, that is off', exact: true },
+  { name: 'proper noun before a sentence starter', raw: 'I use Python.Then I run it', expected: 'I use Python.\n\nThen I run it', exact: true },
+  { name: 'exclamation and question glue', raw: 'Done!Now inspect the cache. Why?Let me check.', expected: 'Done!\n\nNow inspect the cache. Why?\n\nLet me check.', exact: true },
+  {
+    name: 'long synthesized list line releases later paragraph markers',
+    raw: `Notes:- first item- second item. So we check the loader. Then ${(`${'x'.repeat(180)}.So we check the loader. Then keep going. `).repeat(3)}`.trimEnd(),
+    expected: '\n\nSo we check',
+  },
+  { name: 'uppercase dotted identifiers', raw: 'React.Component Console.WriteLine Path.Combine', expected: 'React.Component Console.WriteLine Path.Combine', exact: true },
+  { name: 'PascalCase member token at the end of the text', raw: 'models.User', expected: 'models.User', exact: true },
+  { name: 'camel-case right token', raw: 'models.UserModel', expected: 'models.UserModel', exact: true },
+  { name: 'ordinary sentence glue', raw: 'cache misses.Let me check', expected: 'cache misses.\n\nLet me check', exact: true },
+  { name: 'fenced blank lines', raw: '```text\na\n\n\nb\n```', expected: '```text\na\n\n\nb\n```', exact: true },
+  { name: 'tilde fence', raw: '~~~python\nvalue = "Done.So check"\n~~~', expected: '~~~python\nvalue = "Done.So check"\n~~~', exact: true },
+  { name: 'open tilde fence', raw: '~~~python\nvalue = "Done.So check"', expected: '~~~python\nvalue = "Done.So check"', exact: true },
+  { name: 'unfinished inline span', raw: 'Use `React.Component', expected: 'Use `React.Component', exact: true },
+  { name: 'longer language-prefix word', raw: 'Use ```jsonify(data)``` here.', expected: '\njsonify(data)\n', excluded: '```json\n' },
+];
+
+for (const { name, raw, expected, exact, excluded } of BLOCK_REPAIR_FIXTURES) {
+  test(`block repair: ${name}`, () => {
+    const out = prettifyReasoningMarkdown(raw);
+    if (exact) assert.equal(out, expected, name);
+    else assert.ok(out.includes(expected), name);
+    if (excluded) assert.ok(!out.includes(excluded), name);
+    assert.equal(prettifyReasoningMarkdown(out), out, `${name}: idempotence`);
+    const hadDocument = Object.prototype.hasOwnProperty.call(globalThis, 'document');
+    const priorDocument = globalThis.document;
+    globalThis.document = { documentElement: { dataset: { reasoningPrettify: 'false' } } };
+    try {
+      assert.equal(joinReasoningEntriesMarkdown([{ id: name, text: raw }]), raw, `${name}: flag-off bytes`);
+    } finally {
+      if (hadDocument) globalThis.document = priorDocument;
+      else delete globalThis.document;
+    }
+  });
+}
+
+test('isProseBoundary accepts only a prefix that ends in prose with balanced quotes', () => {
+  assert.equal(isProseBoundary('plain prose'), true);
+  assert.equal(isProseBoundary(''), true);
+  assert.equal(isProseBoundary('`"` said "hi'), false, 'odd quote in the trailing prose segment');
+  assert.equal(isProseBoundary('a "b" c `"`'), true, 'a quote inside closed inline code does not count');
+  assert.equal(isProseBoundary('A ```x ~~~``` b ~~~ c'), false, 'tilde fence left open');
+  assert.equal(isProseBoundary('```js\ncode\n```'), true);
+  assert.equal(isProseBoundary('```js\ncode'), false);
+  assert.equal(isProseBoundary('use `open'), false);
 });
 
 test('prettifies a 200K newline-free reasoning wall within 100 ms', () => {
@@ -291,6 +370,10 @@ test('keeps glued language prefixes and recognizes complete language tokens', ()
     '\n\n```python\nx = 1\n```\n\n',
   );
   assert.equal(
+    prettifyReasoningMarkdown('```js(reset())```'),
+    '\n\n```js\n(reset())\n```\n\n',
+  );
+  assert.equal(
     prettifyReasoningMarkdown('```pythonx = 1```'),
     '\n\n```python\nx = 1\n```\n\n',
   );
@@ -331,7 +414,10 @@ test('synthesizes paragraphs at discourse markers only in sparse text', () => {
   );
   // A model that already writes paragraphs is left byte-identical.
   const formatted = 'First paragraph ends here. Actually this stays inline because the text is already formatted.\n\nSecond paragraph. Let me also stay put.\n\nThird paragraph.\n\nFourth line.\n';
-  assert.equal(prettifyReasoningMarkdown(formatted), formatted);
+  assert.equal(
+    prettifyReasoningMarkdown(formatted),
+    formatted,
+  );
 });
 
 test('prose rules never touch code segments', () => {

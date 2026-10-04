@@ -214,6 +214,75 @@ function normalizeAgentName(value) {
   return String(value ?? '').trim() || DEFAULT_AGENT_NAME;
 }
 
+// Keep the preview pipeline in lockstep with sidecar personality.sanitization.
+const PYTHON_WHITESPACE = /[\u0009-\u000d\u001c-\u0020\u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]+/u; // eslint-disable-line no-control-regex -- Python str.split whitespace.
+const PYTHON_WORD_BOUNDARY = '(?:(?<![\\p{L}\\p{N}_])(?=[\\p{L}\\p{N}_])|(?<=[\\p{L}\\p{N}_])(?![\\p{L}\\p{N}_]))';
+
+function previewPattern(pattern) {
+  let source = pattern.source.replace(/\[\\s\\S\]|\[\^\\s[^\]]*\]|\\s/g,
+    token => token.startsWith('[') ? token.replace('\\s', '\\s\\u0085') : '[\\s\\u0085]');
+  if (pattern.ignoreCase) source = source.replace(/[iI]/g, '[iI\\u0130\\u0131]')
+    .replace(/\[A-Za-z/g, '[A-Za-z\\u0130\\u0131');
+  return new RegExp(source.replace(/\\b/g, PYTHON_WORD_BOUNDARY), `${pattern.flags}u`);
+}
+
+const INJECTION_PATTERNS = [
+  /<!--(?=[\s\S]{0,1000}?(?:ignore|disregard|reveal|system\s+prompt|developer\s+prompt|instructions?|exfiltrat|upload|send|post))[\s\S]*?-->/gi,
+  /\b(?:base64|encode|zip|tar|cat|read|copy|extract)[\s\S]{0,120}\b(?:secret|token|password|api[_-]?key|credential|\.env|id_rsa|ssh|private\s+key)[\s\S]{0,160}\b(?:https?:\/\/|post|send|upload|exfiltrat|curl|wget)/gi,
+  /ignore\s+all\s+previous\s+instructions/gi,
+  /(?:ignore|disregard)\s+(?:all\s+)?(?:prior|previous|above)\s+(?:instructions|directives|rules)/gi,
+  /ignore\s+the\s+system\s+prompt/gi,
+  /reveal\s+(?:the\s+)?(?:system|developer)\s+prompt/gi,
+  /act\s+as\s+system/gi,
+  /pretend\s+to\s+be\s+(?:the\s+)?(?:system|developer)/gi,
+  /\bdo\s+not\s+follow\s+the\s+rules\b/gi,
+  /\byou\s+are\s+now\b/gi,
+  /(?:new|updated|override)\s+instructions/gi,
+  /(?:begin|start)\s+(?:a\s+)?new\s+(?:conversation|session)/gi,
+  /(?:output|repeat|print)\s+(?:the\s+)?(?:above|previous|system)/gi,
+  /\[(?:SYSTEM|USER|ASSISTANT)\]/g,
+].map(previewPattern);
+const SECRET_PATTERNS = [
+  /\bsk-[A-Za-z0-9]{8,}\b/g,
+  /\b(?:ghp|gho|ghs|ghr|ghu)_[A-Za-z0-9]{16,}\b/g,
+  /\bgithub_pat_[A-Za-z0-9_]{20,}\b/g,
+  /\bAKIA[0-9A-Z]{16}\b/g,
+  /\bxox[baprs]-[A-Za-z0-9-]{10,}\b/g,
+  /\b(api[_-]?key|api-key|authorization|token|secret|password|dsn)\s*[:=]\s*(?:Bearer\s+)?([^\s,;'"{}]+)/gi,
+  /\bBearer\s+[A-Za-z0-9._~+/=-]{8,}\b/gi,
+  /\b(?:X-Amz-(?:Signature|Credential|Security-Token)|signature|sig)\s*[:=]\s*([^\s,;'"{}&]+)/gi,
+  /\beyJ[A-Za-z0-9_=-]+\.eyJ[A-Za-z0-9_=-]+\.[A-Za-z0-9_.+/=-]{8,}\b/g,
+].map(previewPattern);
+const LANGUAGE_NAMES = {
+  es: 'Spanish', fr: 'French', de: 'German', it: 'Italian', 'pt-br': 'Brazilian Portuguese',
+  nl: 'Dutch', pl: 'Polish', ru: 'Russian', uk: 'Ukrainian', tr: 'Turkish', ar: 'Arabic',
+  hi: 'Hindi', id: 'Indonesian', vi: 'Vietnamese', ja: 'Japanese', ko: 'Korean',
+  'zh-cn': 'Simplified Chinese', 'zh-tw': 'Traditional Chinese',
+};
+
+function sanitizePersonalityPreview(value) {
+  let text = Array.from(String(value || ''), char => /^[\uD800-\uDFFF]$/.test(char) ? '\ufffd' : char).join('')
+    // eslint-disable-next-line no-control-regex -- Mirrors Python's bootstrap control-character removal.
+    .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '')
+    .replace(/\r\n?/g, '\n').normalize('NFKC')
+    .replace(/[\u00ad\u200b-\u200f\u2060\ufeff]/g, '')
+    .replace(previewPattern(/<\|(?:im_start|im_end|endoftext|system|user|assistant|tool_response|tool_call|eot_id|start_header_id|end_header_id|end|pad)\|>|<\|(?:tool_response|tool_call)>|\[\/?INST\]|<\/?s>|<(?:eos|bos|pad|end_of_turn|start_of_turn)>|<channel\|>|<\|channel\|>/gi), '[TOKEN_REDACTED]');
+  for (const pattern of INJECTION_PATTERNS) text = text.replace(pattern, '[FILTERED_INSTRUCTION]');
+  text = text.replace(previewPattern(/<!--\s*CACHE_BOUNDARY\s*-->/gi), '<!-- CACHE_BOUNDARY (escaped) -->')
+    .replace(previewPattern(/<<\s*\/\s*SYS\s*>>/gi), '[SYS_CLOSE_ESCAPED]')
+    .replace(previewPattern(/<<\s*SYS\s*>>/gi), '[SYS_OPEN_ESCAPED]');
+  for (const pattern of SECRET_PATTERNS) text = text.replace(pattern, '[REDACTED]');
+  return text.replace(/^[\s\u0085]+|[\s\u0085]+$/g, '');
+}
+
+function promptAgentName(value) {
+  if (typeof value !== 'string') return DEFAULT_AGENT_NAME;
+  const normalized = value.split(PYTHON_WHITESPACE).filter(Boolean).join(' ');
+  if (!normalized || sanitizePersonalityPreview(normalized) !== normalized) return DEFAULT_AGENT_NAME;
+  const name = normalized.replace(/[^\p{L}\p{N} ._'-]/gu, ' ').trim().split(/\s+/u).join(' ');
+  return Array.from(name).slice(0, 80).join('') || DEFAULT_AGENT_NAME;
+}
+
 /**
  * Build the full `## Personality` system message (heading + name line +
  * sections). Mirrors `build_personality_system_message` in the sidecar.
@@ -222,11 +291,15 @@ function normalizeAgentName(value) {
  * @param {string} content compiled section text (may be empty)
  * @returns {string}
  */
-function buildPersonalityMessage(agentName, content) {
-  const header = `${PERSONALITY_HEADING}\n${
-    PERSONALITY_PRECEDENCE_TEMPLATE.replace('{name}', normalizeAgentName(agentName))
+function buildPersonalityMessage(agentName, content, { uiLanguage = 'en' } = {}) {
+  let header = `${PERSONALITY_HEADING}\n${
+    PERSONALITY_PRECEDENCE_TEMPLATE.replace('{name}', promptAgentName(agentName))
   }`;
-  const body = String(content || '').trim();
+  const languageToken = typeof uiLanguage === 'string'
+    ? uiLanguage.split(PYTHON_WHITESPACE).filter(Boolean).join(' ').toLowerCase().replace(/\u017f/g, 's') : '';
+  const language = Object.prototype.hasOwnProperty.call(LANGUAGE_NAMES, languageToken) ? LANGUAGE_NAMES[languageToken] : '';
+  if (language) header += `\nReply in ${language} unless the user writes in another language; then match the user's language.`;
+  const body = sanitizePersonalityPreview(content);
   return body ? `${header}\n\n${body}` : header;
 }
 

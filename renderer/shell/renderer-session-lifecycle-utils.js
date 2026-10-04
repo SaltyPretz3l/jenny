@@ -172,6 +172,9 @@
             : {},
         streamId,
         sessionId: normalizedSessionId,
+        // Restored from the persisted turn, not asked just now: the desktop
+        // notifier never toasts a wait the person already has on screen.
+        rehydrated: true,
         summary: String(pendingApproval.summary || toolUseMessage.tool_call?.summary || '').trim(),
         // The same policy fields the live producer carries, read off the
         // persisted approval and tool call, so a rehydrated approval renders
@@ -303,6 +306,7 @@
         )
       );
       state.sessions = [...preservedOptimisticSessions, ...listedSessions];
+      state.sessionListLoaded = true; // workspace restore validates tabs against this list
       await reconcileSessionCaches();
       await sessionCacheController.evictColdSessionCaches();
       if (listSeq < appliedSessionListSeq) return staleResult();
@@ -335,12 +339,14 @@
       if (!state.auth.authenticated) {
         const multiStreamController = getMultiStreamController();
         state.sessions = [];
+        state.sessionListLoaded = false;
         state.currentSessionId = '';
         state.messagesBySession.clear();
         state.turnEventsBySession?.clear?.();
         state.sessionMessageAccessOrder.clear();
         state.pendingStreams.clear();
         state.streamThinkingStatusByStream.clear();
+        state.streamDeltaKindByStream?.clear?.();
         state.toolCallsByStream.clear();
         state.pendingToolApprovals.clear();
         state.queuedSendBySession?.clear?.();
@@ -429,6 +435,12 @@
       state.sessionMessageAccessOrder?.set(sessionId, Date.now());
       clearComposerStatusNotice();
       syncRuntimeDraftFromActiveSession();
+      // A session another pane already shows lands there (the layout moves
+      // focus to it after this runs), even while pane 0 is still focused.
+      const splitPanes = Array.isArray(state.panes?.panes) && state.panes.panes.length > 1 ? state.panes.panes : null;
+      const heldByOtherPane = Boolean(splitPanes) && splitPanes.some((entry, paneId) => paneId > 0
+        && String((entry && typeof entry === 'object' ? entry.sessionId : entry) || '').trim() === incomingSessionId);
+      const landsInPaneZero = !splitPanes || (!heldByOtherPane && state.panes.focusedPaneId === 0);
       if (composerSessionState) {
         // A cache-miss refresh (loadSessions calling
         // openSession(state.currentSessionId, ...) to refetch messages)
@@ -439,15 +451,22 @@
         // captured it, since captureActive above is skipped for the same
         // reason) and pointlessly bump the record generation, invalidating
         // any attachment token that began during this same session.
-        if (outgoingSessionId !== incomingSessionId || composerSessionState.has?.(incomingSessionId) === false) {
+        // Split view W2-2b: #chatInput and the live queue are pane 0's. A switch
+        // that lands in another pane (that pane is focused) leaves them alone;
+        // that pane renders its session's record queue itself.
+        if (landsInPaneZero && (outgoingSessionId !== incomingSessionId || composerSessionState.has?.(incomingSessionId) === false)) {
           composerSessionState.restoreForSession(incomingSessionId);
         }
       } else {
         resetAttachmentQueue();
       }
       clearActiveFileContext();
-      thinkingController.resumeAutoScroll();
-      setFollowLatest(true);
+      // These are pane 0's follow intent and reasoning pauses; a session landing
+      // in another pane re-latches that pane's own (pane composition).
+      if (landsInPaneZero) {
+        thinkingController.resumeAutoScroll();
+        setFollowLatest(true);
+      }
       const activeSession = getActiveSession();
       if (!(activeSession?.local_draft === true && activeSession?.optimistic_local === true)) {
         const payload = await jennyShell.sessions.getMessages(sessionId);

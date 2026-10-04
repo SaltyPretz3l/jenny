@@ -1,5 +1,9 @@
-* text=auto
+# Every text file checks out LF on every platform, overriding a machine-wide
+# core.autocrlf=true. Mixed CRLF/LF working trees made tools write the wrong
+# ending into .py/.md files. Windows batch scripts are the only CRLF exception.
+* text=auto eol=lf
 *.cmd text eol=crlf
+*.bat text eol=crlf
 *.vbs text eol=crlf
 # Runtime source, renderer byte-budget inputs, and package/signing inputs are
 # consumed as exact bytes. Keep them stable across Windows and POSIX checkouts.
@@ -30,12 +34,10 @@ config/plugins/v6/*.json text eol=lf
 config/plugins/contract-lock-v6.json text eol=lf
 config/plugins/extensions/session-provider-v1/*.json text eol=lf
 config/plugins/contract-lock-session-provider-v1.json text eol=lf
-plugins/official/local-image-generation/runtime/upstream/** -whitespace text eol=lf
 config/plugins/capability-abi-lock-v1.json text eol=lf
 config/plugins/capability-abi/v1/*.wit text eol=lf
 # The reviewed offline signer is hash-pinned before it receives the owner key.
 scripts/plugins/jenny-plugin-packager.mjs text eol=lf
-scripts/plugins/jenny-plugin-v4-packager.mjs text eol=lf
 # Release-compat payloads are hash-pinned binary fixtures; never rewrite bytes.
 tests/release-compat/fixtures/jenny-archive-v1-plain/data/preferences/fixture.txt -text
 archive/** linguist-generated

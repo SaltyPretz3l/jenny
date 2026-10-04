@@ -127,6 +127,11 @@
     // double-fire guard.
     let writingMessage = false;
     let committing = false;
+    // An open IME composition in the commit textarea: a re-render never writes it.
+    let composing = false;
+    // The repo panel root this instance last painted in full + its list markup.
+    let paintedRoot = null;
+    let paintedList = '';
 
     function actionBtn(label, action, title, extraClass) {
       if (!actionButton) {
@@ -191,6 +196,11 @@
         + '</div>';
     }
 
+    // One source for the Write-message label (full paint and in-place patch).
+    function writeLabelText() {
+      return writingMessage ? 'Writing…' : jt('ide.sourceControl.writeMessage', 'Write message');
+    }
+
     function buildCommitMarkup(stagedCount) {
       if (!textField || !actionButton) {
         return '';
@@ -223,7 +233,7 @@
           disabled: stagedCount === 0 || writingMessage,
           dataset: { 'ide-scm-action': 'write-message' },
           trustedHtml: SPARKLE_ICON
-            + `<span class="ide-scm-write-label">${escapeHtml(writingMessage ? 'Writing…' : jt('ide.sourceControl.writeMessage', 'Write message'))}</span>`,
+            + `<span class="ide-scm-write-label">${escapeHtml(writeLabelText())}</span>`,
         })
         : '';
       const hint = commitHint
@@ -270,7 +280,12 @@
         + '</div>';
     }
 
-    function buildPanelMarkup() {
+    // The panel view: `markup` is the full panel (also the host content-hash
+    // key); for a repo it is split into `listMarkup` (branch line, notices and
+    // file groups) and the commit box so a re-render can swap the list alone
+    // and patch the commit box in place (the textarea keeps focus, caret and
+    // IME composition across git status / fs-event / chat re-renders).
+    function buildPanelView() {
       let snapshot;
       try {
         snapshot = store ? store.getSnapshot() : null;
@@ -279,10 +294,10 @@
         snapshot = null;
       }
       if (!snapshot || !snapshot.available) {
-        return '<div class="ide-scm"><div class="ide-scm-empty">' + escapeHtml(jt('ide.sourceControl.unavailable', 'Source control isn’t available for this workspace.')) + '</div></div>';
+        return { markup: '<div class="ide-scm"><div class="ide-scm-empty">' + escapeHtml(jt('ide.sourceControl.unavailable', 'Source control isn’t available for this workspace.')) + '</div></div>' };
       }
       if (!snapshot.isRepo) {
-        return '<div class="ide-scm"><div class="ide-scm-empty">' + escapeHtml(jt('ide.sourceControl.notRepository', 'This folder isn’t a Git repository yet.')) + '</div></div>';
+        return { markup: '<div class="ide-scm"><div class="ide-scm-empty">' + escapeHtml(jt('ide.sourceControl.notRepository', 'This folder isn’t a Git repository yet.')) + '</div></div>' };
       }
       const files = Array.isArray(snapshot.files) ? snapshot.files : [];
       // The store's capped, render-facing view when present (real getStatus
@@ -305,7 +320,37 @@
       // it after this markup is written (kept empty here so a panel re-render
       // and a History refresh stay independent).
       const historyMount = history ? '<div class="ide-scm-history" data-ide-scm-history></div>' : '';
-      return `<div class="ide-scm">${branchLine}${notices}${body}${buildCommitMarkup(staged.length)}${historyMount}</div>`;
+      const listMarkup = `${branchLine}${notices}${body}`;
+      const commitMarkup = buildCommitMarkup(staged.length);
+      return {
+        markup: `<div class="ide-scm">${listMarkup}${commitMarkup}${historyMount}</div>`,
+        listMarkup: commitMarkup ? listMarkup : null,
+        stagedCount: staged.length,
+      };
+    }
+
+    // Patch the stable commit box in place (never recreate the textarea). The
+    // value is written only when it differs from the draft (generated message,
+    // commit clear, root reset) and never mid-composition; typing keeps them
+    // equal, so the caret is untouched.
+    function patchCommitBox(commitEl, stagedCount) {
+      const input = commitEl.querySelector('[data-ide-scm-input="commit"]');
+      if (input && !composing && input.value !== commitMessage) input.value = commitMessage;
+      let hintEl = commitEl.querySelector('.ide-scm-commit-hint');
+      if (commitHint && !hintEl) {
+        commitEl.querySelector('.ide-scm-commit-actions')?.insertAdjacentHTML('beforebegin', '<div class="ide-scm-commit-hint" role="status"></div>');
+        hintEl = commitEl.querySelector('.ide-scm-commit-hint');
+      }
+      if (hintEl && !commitHint) hintEl.remove();
+      else if (hintEl && hintEl.textContent !== commitHint) hintEl.textContent = commitHint;
+      const commitButton = commitEl.querySelector('[data-ide-scm-action="commit"]');
+      if (commitButton) commitButton.disabled = stagedCount === 0 || committing;
+      const writeButton = commitEl.querySelector('[data-ide-scm-action="write-message"]');
+      if (!writeButton) return;
+      writeButton.disabled = stagedCount === 0 || writingMessage;
+      const label = writeButton.querySelector('.ide-scm-write-label');
+      const text = writeLabelText();
+      if (label && label.textContent !== text) label.textContent = text;
     }
 
     function renderSourceControlPanel() {
@@ -313,11 +358,29 @@
       if (!panel || !isActivePanel()) {
         return;
       }
-      const markup = buildPanelMarkup();
+      const view = buildPanelView();
+      const markup = view.markup;
       if (panel.__jennyIdeRailMarkup === markup) {
         return;
       }
-      panel.innerHTML = markup;
+      // Still our repo panel in this host: swap only the list region (before
+      // the commit box) and patch the commit box; it and the History mount
+      // stay the same nodes. Anything else (first paint, another panel painted
+      // this host, a non-repo state) repaints in full.
+      const commitEl = typeof view.listMarkup === 'string' && paintedRoot && paintedRoot.parentNode === panel
+        && panel.childElementCount === 1 ? paintedRoot.querySelector(':scope > .ide-scm-commit') : null;
+      if (commitEl) {
+        if (paintedList !== view.listMarkup) {
+          while (commitEl.previousSibling) commitEl.previousSibling.remove();
+          commitEl.insertAdjacentHTML('beforebegin', view.listMarkup);
+          paintedList = view.listMarkup;
+        }
+        patchCommitBox(commitEl, view.stagedCount);
+      } else {
+        panel.innerHTML = markup;
+        paintedRoot = typeof view.listMarkup === 'string' ? panel.firstElementChild : null;
+        paintedList = view.listMarkup || '';
+      }
       panel.__jennyIdeRailMarkup = markup;
       // Repaint cached commits into the fresh (just-replaced) container, then
       // load the log once (first open). Staging/unstaging re-render this panel
@@ -559,6 +622,14 @@
       }
     }
 
+    function handleComposition(event) {
+      const target = event.target;
+      if (target && target.dataset && target.dataset.ideScmInput === 'commit') {
+        composing = event.type === 'compositionstart';
+        commitMessage = String(target.value || '');
+      }
+    }
+
     // Commit-history cards are role="button" tabindex="0" divs (not native
     // buttons — their content is block-level), so Enter/Space activation is
     // wired here to honor the ARIA role (WCAG 2.1.1). Scoped to the card so it
@@ -596,6 +667,8 @@
         host.addEventListener('click', handleClick);
         host.addEventListener('input', handleInput);
         host.addEventListener('keydown', handleKeydown);
+        host.addEventListener('compositionstart', handleComposition);
+        host.addEventListener('compositionend', handleComposition);
       }
     }
 
@@ -605,6 +678,8 @@
         host.removeEventListener('click', handleClick);
         host.removeEventListener('input', handleInput);
         host.removeEventListener('keydown', handleKeydown);
+        host.removeEventListener('compositionstart', handleComposition);
+        host.removeEventListener('compositionend', handleComposition);
       }
       boundHosts = [];
     }
@@ -640,6 +715,7 @@
       commitHint = '';
       committing = false;
       writingMessage = false;
+      composing = false;
       resetHistory();
     }
 

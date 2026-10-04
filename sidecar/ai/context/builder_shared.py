@@ -7,12 +7,17 @@ import re
 from dataclasses import dataclass
 from importlib import import_module
 from pathlib import Path
-from typing import Any, Final, cast
+from typing import Any, Final, Iterable, cast
 
+# Explicit re-exports: builder.py and builder_render.py import these headings from here.
 from sidecar.ai.context.runtime_message_markers import (
-    CONTEXT_PRESSURE_ADVISORY_HEADING,
-    MEMORY_RECALL_HEADING,
-    RUNTIME_SYSTEM_MESSAGE_HEADINGS,
+    CONTEXT_PRESSURE_ADVISORY_HEADING as CONTEXT_PRESSURE_ADVISORY_HEADING,
+)
+from sidecar.ai.context.runtime_message_markers import (
+    MEMORY_RECALL_HEADING as MEMORY_RECALL_HEADING,
+)
+from sidecar.ai.context.runtime_message_markers import (
+    RUNTIME_SYSTEM_MESSAGE_HEADINGS as RUNTIME_SYSTEM_MESSAGE_HEADINGS,
 )
 from sidecar.ai.error_codes import CMP_CTX_SKILL_INVALID
 from sidecar.ai.tools import argument_coercion as _argument_coercion
@@ -153,7 +158,35 @@ class RuntimeToolStatus:
     input_schema: dict[str, Any] | None = None
     applicable: bool = True
     unmet_preconditions: tuple[str, ...] = ()
+    connection_id: str | None = None
+    side_effecting: bool = False
+    # Withheld this turn (budget filter or tool search) though nothing blocks it;
+    # loadable only while a usable ``tool_search`` is in the same contract.
+    deferred: bool = False
 
+
+NOT_LOADED_TOOLS_PREFIX = (
+    "Not loaded this turn (call `tool_search` with `select:<name>` to load, then call it): "
+)
+
+
+def loadable_tool_names(tool_statuses: Iterable[RuntimeToolStatus] | None) -> tuple[str, ...]:
+    """Sorted names of deferred tools the model can load with ``tool_search`` now.
+
+    A deferred status alone does not prove the tool is loadable: hosted mode
+    never offers ``tool_search``, and an unusable one carries the same reason
+    string. Sorted so the prompt copy stays a pure function of the contract.
+    """
+    statuses = tuple(tool_statuses or ())
+    if not any(status.name == "tool_search" and status.available is True for status in statuses):
+        return ()
+    return tuple(
+        sorted({status.name for status in statuses if status.deferred is True and status.name})
+    )
+
+
+def render_not_loaded_tools_line(names: tuple[str, ...]) -> str:
+    return NOT_LOADED_TOOLS_PREFIX + ", ".join(names) if names else ""
 
 
 def _split_frontmatter(content: str) -> tuple[str, str]:
@@ -224,8 +257,8 @@ def _extract_frontmatter(  # noqa: C901, PLR0912
     # PyYAML costs ~90ms to import and this module is pulled into the
     # builtin-tools subprocess graph the sidecar blocks on during `initialize`.
     # Only skills with frontmatter need it, so it is resolved on first use.
-    from yaml import YAMLError, safe_load, scan  # type: ignore[import-untyped] # noqa: PLC0415
-    from yaml.tokens import AliasToken, AnchorToken  # type: ignore[import-untyped] # noqa: PLC0415
+    from yaml import YAMLError, safe_load, scan  # type: ignore[import-untyped]
+    from yaml.tokens import AliasToken, AnchorToken  # type: ignore[import-untyped]
 
     try:
         if len(frontmatter.encode("utf-8", errors="replace")) > MAX_SKILL_FRONTMATTER_BYTES:
@@ -312,7 +345,7 @@ def _skill_dedupe_key(skill_path: Path) -> tuple[Any, ...]:
 REASONING_STATUS_MIN_WORDS: Final[int] = 2
 REASONING_STATUS_MAX_WORDS: Final[int] = 6
 
-# Reasoning Status V2 prompt block (flag `reasoning_status_v2`): the word window is
+# Reasoning Status V2 prompt block: the word window is
 # shared with `sidecar.runtime.reasoning_status` so prompt and extractor agree.
 REASONING_STATUS_BLOCK_V2: Final[str] = (
     "## Reasoning Status Markers\n"
@@ -332,26 +365,6 @@ REASONING_STATUS_BLOCK_V2: Final[str] = (
     f"- Keep the summary between {REASONING_STATUS_MIN_WORDS} and "
     f"{REASONING_STATUS_MAX_WORDS} words with no terminal punctuation\n"
     "- Start each genuinely new logical phase with one marker - do not over-annotate\n"
-    "- Never emit markers in your response, code blocks, tool calls, or quoted output\n"
-    "- If unsure whether to add a marker, omit it\n\n"
-)
-
-# Legacy (flag off) prompt block; byte-for-byte the pre-V2 text.
-REASONING_STATUS_BLOCK_LEGACY: Final[str] = (
-    "## Reasoning Status Markers\n"
-    "When using your internal thinking/reasoning process, signal each new logical "
-    "phase with a status marker on its own line:\n\n"
-    "\u27e8STATUS: 3-5 word summary\u27e9\n\n"
-    "IMPORTANT: These markers belong ONLY in your internal thinking output. "
-    "Never include \u27e8STATUS:\u27e9 markers in your visible response to the user.\n\n"
-    "Examples (for your thinking blocks only):\n\n"
-    "\u27e8STATUS: Analyzing user constraints\u27e9\n"
-    "\u27e8STATUS: Comparing implementation options\u27e9\n"
-    "\u27e8STATUS: Drafting final response\u27e9\n\n"
-    "Constraints:\n"
-    "- Use exactly the characters \u27e8 (U+27E8) and \u27e9 (U+27E9) as delimiters\n"
-    "- Keep the summary between 2 and 6 words with no terminal punctuation\n"
-    "- One marker per logical phase - do not over-annotate\n"
     "- Never emit markers in your response, code blocks, tool calls, or quoted output\n"
     "- If unsure whether to add a marker, omit it\n\n"
 )

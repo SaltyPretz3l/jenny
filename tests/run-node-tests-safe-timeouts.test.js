@@ -13,6 +13,75 @@ const ROOT = path.resolve(__dirname, '..');
 const RUNNER_PATH = path.join(ROOT, 'scripts', 'run-node-tests-safe.js');
 const safeRunner = require('../scripts/run-node-tests-safe');
 
+test('real inherited pipes cannot keep a settled runner alive after green output', () => {
+  const producer = [
+    "const { spawn } = require('child_process');",
+    "const descendant = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 10000)'],",
+    "  { stdio: 'inherit', detached: true, windowsHide: true });",
+    'descendant.unref();',
+    "descendant.once('spawn', () => { console.log('green output'); process.exit(0); });",
+  ].join('\n');
+  const harness = [
+    `const { runCapturedChild } = require(${JSON.stringify(RUNNER_PATH)});`,
+    `runCapturedChild(['-e', ${JSON.stringify(producer)}], {`,
+    '  activeChildren: new Set(), timeoutMs: 20000,',
+    '}).then(result => { console.log(JSON.stringify(result)); process.exitCode = result.code; });',
+  ].join('\n');
+  const result = spawnSync(process.execPath, ['-e', harness], {
+    encoding: 'utf8', timeout: 8000, windowsHide: true,
+  });
+  assert.equal(result.status, 1, 'runner must exit with a cleanup failure instead of hanging after green output');
+  assert.match(result.stdout, /orphaned descendants.*pipes/);
+  assert.match(result.stdout, /"terminationFailed":false/);
+});
+
+test('post-exit undrained pipes fail that file and release the exited child', async (t) => {
+  // The runner's drain timer is unref'd and this fake child holds no handles, so
+  // keep the loop alive until the grace fires (Linux would otherwise exit first).
+  const keepAlive = setInterval(() => {}, 1000);
+  t.after(() => clearInterval(keepAlive));
+  const child = new EventEmitter();
+  child.pid = 4545;
+  child.stdout = new PassThrough();
+  child.stderr = new PassThrough();
+  child.unref = () => {};
+  const activeChildren = new Set();
+  const resultPromise = safeRunner.runCapturedChild([], {
+    activeChildren, timeoutMs: 10_000, spawnImpl: () => child,
+  });
+  child.emit('exit', 0, null);
+  const trackedAfterExit = activeChildren.has(child);
+  const result = await resultPromise;
+  assert.equal(trackedAfterExit, false, 'an exited child leaves the kill set while its pipes drain');
+  assert.equal(result.code, 1, 'undrained pipes must not yield a green result');
+  assert.equal(result.terminationFailed, false, 'an exited child must not abort sibling files');
+  assert.equal(result.timedOut, false);
+  assert.equal(child.stdout.destroyed, true);
+  assert.equal(child.stderr.destroyed, true);
+  assert.equal(activeChildren.has(child), false, 'an exited pid is no handle for a later tree kill');
+  assert.match(result.output, /orphaned descendants.*pipes/);
+});
+
+test('post-exit pipes draining within grace preserve the real exit code', async () => {
+  const child = new EventEmitter();
+  child.stdout = new PassThrough();
+  child.stderr = new PassThrough();
+  const activeChildren = new Set();
+  const resultPromise = safeRunner.runCapturedChild([], {
+    activeChildren, timeoutMs: 10_000, spawnImpl: () => child,
+  });
+  child.emit('exit', 0, null);
+  child.stdout.write('final output\n');
+  child.emit('close', 0, null);
+  const result = await resultPromise;
+  child.stdout.destroy();
+  child.stderr.destroy();
+  assert.equal(result.code, 0);
+  assert.equal(result.terminationFailed, false);
+  assert.equal(activeChildren.size, 0);
+  assert.equal(result.output, 'final output\n');
+});
+
 test('real-store durability replay keeps contention headroom in the heavy wave', () => {
   const overrides = safeRunner.loadTimeoutOverrides(ROOT);
 

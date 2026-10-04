@@ -47,7 +47,7 @@ def test_start_chat_send_worker_rejects_when_worker_cap_is_reached() -> None:
     live_threads = {_AliveThread() for _ in range(server.MAX_ACTIVE_CHAT_WORKERS)}
     active_cancel_handles = {thread: _FakeCancelHandle() for thread in live_threads}
 
-    started = server._start_chat_send_worker_if_allowed(  # noqa: SLF001
+    started = server._start_chat_send_worker_if_allowed(
         message={
             "jsonrpc": "2.0",
             "id": 101,
@@ -90,7 +90,7 @@ def test_make_chat_send_worker_sends_terminal_error_when_worker_raises() -> None
         unregister_turn=lambda _request_id, expected_handle=None: None,
     )
 
-    def _raise(*_args, **_kwargs):  # noqa: ANN002, ANN003
+    def _raise(*_args, **_kwargs):
         raise RuntimeError("boom")
 
     worker = server_chat_workers.make_chat_send_worker(
@@ -119,13 +119,13 @@ def test_chat_send_adapter_forwards_prepared_plugin_runtime_admission(monkeypatc
     expected_outcome = object()
     captured: dict[str, object] = {}
 
-    def _capture(**kwargs):  # noqa: ANN003, ANN202
+    def _capture(**kwargs):
         captured.update(kwargs)
         return expected_outcome
 
     monkeypatch.setattr(server, "runtime_process_chat_send_request", _capture)
 
-    outcome = server._run_chat_send_with_optional_approval(  # noqa: SLF001
+    outcome = server._run_chat_send_with_optional_approval(
         {"jsonrpc": "2.0", "id": 103, "method": "chat.send", "params": {}},
         plugin_runtime_admission=admission,
     )
@@ -139,7 +139,7 @@ def test_cancel_and_join_live_chat_workers_logs_abandoned(caplog) -> None:
     handle = _FakeCancelHandle()
 
     with caplog.at_level(logging.WARNING):
-        server._cancel_and_join_live_chat_workers(  # noqa: SLF001
+        server._cancel_and_join_live_chat_workers(
             worker_threads={live},
             active_cancel_handles={live: handle},
             shutdown_worker_grace_seconds=0.0,

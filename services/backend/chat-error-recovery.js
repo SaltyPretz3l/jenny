@@ -55,6 +55,10 @@ const RECOVERY_COPY = Object.freeze({
     title: 'Turn cancelled',
     hint: 'This turn was cancelled before it completed.',
   }),
+  app_shutdown: Object.freeze({
+    title: 'Stopped when Jenny closed',
+    hint: 'Jenny closed while this reply was running, so it stopped. Retry to run it again.',
+  }),
   denied: Object.freeze({
     title: 'Tool denied',
     hint: 'The requested tool did not run because approval was denied.',
@@ -164,10 +168,22 @@ function isRateLimitPayload(errorPayload) {
   ));
 }
 
-function recoveryCopyForClass(recoveryClass, errorPayload, nextAction) {
-  const key = recoveryClass === 'provider' && isRateLimitPayload(errorPayload)
-    ? 'provider_rate_limited'
-    : recoveryClass;
+function recoveryCopyKey(recoveryClass, errorPayload, terminalSubcode = '') {
+  if (recoveryClass === 'provider' && isRateLimitPayload(errorPayload)) {
+    return 'provider_rate_limited';
+  }
+  // A turn the app's own shutdown cancelled stays in the calm cancelled class
+  // but names its cause (dogfood TR-012).
+  const payload = errorPayload && typeof errorPayload === 'object' ? errorPayload : {};
+  if (recoveryClass === 'cancelled'
+    && normalizeToken(payload.terminal_subcode || terminalSubcode || payload.cancel_reason) === 'app_shutdown') {
+    return 'app_shutdown';
+  }
+  return recoveryClass;
+}
+
+function recoveryCopyForClass(recoveryClass, errorPayload, nextAction, terminalSubcode = '') {
+  const key = recoveryCopyKey(recoveryClass, errorPayload, terminalSubcode);
   const copy = RECOVERY_COPY[key] || RECOVERY_COPY.unknown;
   return {
     recovery_title: copy.title,
@@ -303,7 +319,7 @@ function buildAssistantErrorRecoveryMetadata(errorPayload, options = {}) {
     recovery_class: recoveryClass,
     next_action: nextAction,
     recovery_actions: recoveryActions,
-    ...recoveryCopyForClass(recoveryClass, errorPayload, nextAction),
+    ...recoveryCopyForClass(recoveryClass, errorPayload, nextAction, options.terminalSubcode),
   };
 }
 

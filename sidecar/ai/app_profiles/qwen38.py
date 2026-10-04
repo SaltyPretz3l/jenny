@@ -42,12 +42,8 @@ QWEN38_PROFILE: AppProfile = AppProfile(
             name="27b",
             aliases=("27b", "qwen3.8-27b", "qwen38-27b"),
             label="Qwen3.8 27B",
-            param_billions=27.0,
-            active_param_billions=27.0,
             native_context_length=262_144,
             is_moe=False,
-            family_supports_vision=False,
-            family_supports_audio=False,
             overrides=ConfigOverrides(context_length=131_072),
             behavior=RequestBehavior(
                 engine_types=("ollama", "openai-compatible"),

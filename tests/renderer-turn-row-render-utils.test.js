@@ -98,13 +98,8 @@ test('turn row renderer builds assistant text rows with stable ids and source at
   assert.match(html, /<p>Hello row world<\/p>/);
 });
 
-test('reasoning row ids honor stamped row_id when deterministic row ids are enabled', () => {
-  const enabledRenderer = createRenderer({
-    getFeatureFlags: () => ({ chat_timeline_deterministic_row_id: true }),
-  });
-  const disabledRenderer = createRenderer({
-    getFeatureFlags: () => ({ chat_timeline_deterministic_row_id: false }),
-  });
+test('reasoning row ids honor the stamped row_id, falling back to phase_id when absent', () => {
+  const renderer = createRenderer();
   const row = {
     row_id: 'row:reasoning:turn_1:thinking_shared',
     turn_id: 'turn_1',
@@ -117,13 +112,13 @@ test('reasoning row ids honor stamped row_id when deterministic row ids are enab
   };
 
   assert.equal(
-    enabledRenderer.buildRowId(row),
+    renderer.buildRowId(row),
     'turn_1:reasoning:row:reasoning:turn_1:thinking_shared'
   );
   assert.equal(
-    disabledRenderer.buildRowId(row),
+    renderer.buildRowId({ ...row, row_id: '' }),
     'turn_1:reasoning:hydrated_phase',
-    'flag-off keeps the legacy phase_id-derived DOM key'
+    'a row without a stamped row_id keys on its phase_id'
   );
 });
 
@@ -195,7 +190,7 @@ test('turn row renderer builds reasoning rows from the projected phase payload',
     { id: 'assistant_reasoning', role: 'assistant', status: 'complete' },
   ]);
 
-  assert.match(html, /data-row-id="turn_2:reasoning:phase_pre"/);
+  assert.match(html, /data-row-id="turn_2:reasoning:row:reasoning"/);
   assert.match(html, /class="reasoning-test"/);
   assert.match(html, /data-message-id="assistant_reasoning"/);
   assert.match(html, /data-thinking-id="think_pre"/);
@@ -434,7 +429,7 @@ test('turn row renderer builds decomposable canonical row ids for key row kinds'
       kind: 'reasoning',
       payload: { phase_id: 'phase_7' },
     }),
-    'turn_5:reasoning:phase_7'
+    'turn_5:reasoning:row:any'
   );
   assert.equal(
     renderer.buildRowId({
@@ -953,11 +948,9 @@ test('legacy plan_object row routes through the collapsed inert plan receipt', (
   assert.doesNotMatch(html, /data-plan-actions/);
 });
 
-test('the turn row list renders one flat mode: no coalescing wrappers regardless of options', () => {
-  // The explorer-minimal preset and the response_loop_display_v2 grouped-step
-  // <details> were retired 2026-07-05 (quiet-timeline overhaul): every
-  // machinery row renders as its own flat .chat-row one-liner. A stale
-  // timelineStyleId (e.g. persisted 'explorer-minimal') must not change that.
+test('the turn row list renders one flat mode: no coalescing wrappers', () => {
+  // The grouped-step <details> were retired 2026-07-05 (quiet-timeline
+  // overhaul): every machinery row renders as its own flat .chat-row one-liner.
   const renderer = createRenderer();
   const rows = [
     {
@@ -986,17 +979,11 @@ test('the turn row list renders one flat mode: no coalescing wrappers regardless
     }
   ];
 
-  for (const options of [
-    { timelineStyleId: 'default' },
-    { timelineStyleId: 'explorer-minimal' },
-    { responseLoopDisplayV2: true, turnActivityEnvelope: true },
-  ]) {
-    const html = renderer.buildTurnRowListMarkup(rows, [], options);
-    assert.doesNotMatch(html, /<details/, `no coalescing <details> for ${JSON.stringify(options)}`);
-    assert.doesNotMatch(html, /timeline-explorer|chat-turn-step|chat-turn-activity/);
-    assert.match(html, /data-row-kind="reasoning"/);
-    // tool_call + tool_result pair into ONE card row; the flat list keeps that.
-    assert.match(html, /data-row-kind="tool_call"/);
-    assert.match(html, /data-row-kind="assistant_text"/);
-  }
+  const html = renderer.buildTurnRowListMarkup(rows, []);
+  assert.doesNotMatch(html, /<details/, 'no coalescing <details>');
+  assert.doesNotMatch(html, /timeline-explorer|chat-turn-step|chat-turn-activity/);
+  assert.match(html, /data-row-kind="reasoning"/);
+  // tool_call + tool_result pair into ONE card row; the flat list keeps that.
+  assert.match(html, /data-row-kind="tool_call"/);
+  assert.match(html, /data-row-kind="assistant_text"/);
 });

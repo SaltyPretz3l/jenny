@@ -18,9 +18,6 @@ from sidecar.ai.context.messages import sanitize_semantic_message
 from sidecar.ai.context.prompt_cache import resolve_current_date
 from sidecar.ai.context.runtime_overlays import build_dynamic_system_messages  # noqa: F401
 from sidecar.ai.engines.vision_input import VisionImage
-from sidecar.ai.feature_flags import (
-    is_chatgpt_plan_meter_enabled,
-)
 from sidecar.ai.memory.contracts import GENERAL_PROJECT_ID, MemoryPolicy
 from sidecar.ai.routing import vision_turn as _vision_turn
 from sidecar.ai.routing.agent_executor import AgentExecutor  # noqa: F401
@@ -60,7 +57,7 @@ from sidecar.runtime.chat_models import (  # noqa: F401
     TerminalChatStateError,
     continuation_identity_from_params,
 )
-from sidecar.runtime.chat_normalization import (  # noqa: F401
+from sidecar.runtime.chat_normalization import (
     approved_plan_from_params,
     memory_policy_from_params,
     normalize_context_blocks,
@@ -83,7 +80,7 @@ from sidecar.runtime.chat_streaming import (  # noqa: F401
 from sidecar.runtime.chat_tool_observations import (
     chat_response_with_tool_observations,
 )
-from sidecar.runtime.chat_vision import (  # noqa: F401
+from sidecar.runtime.chat_vision import (
     build_vision_chat_response,
 )
 from sidecar.runtime.diagnostics import log_event
@@ -149,7 +146,7 @@ from sidecar.runtime.chat_resume import (  # noqa: E402,F401
     _validate_approval_plan_live_context,
     resume_chat_send_response_from_approval_plan,
 )
-from sidecar.runtime.chat_router import (  # noqa: E402,F401
+from sidecar.runtime.chat_router import (  # noqa: E402
     _build_router_response,
 )
 
@@ -160,6 +157,7 @@ def _maybe_refresh_repo_anchor(
     *,
     session_id: str | None,
     brain_container: BrainContainer,
+    execution_context: Any | None = None,
 ) -> None:
     """Run-end: refresh this session's repo anchor (the next turn's delta base).
 
@@ -175,13 +173,17 @@ def _maybe_refresh_repo_anchor(
     if not str(session_id or "").strip():
         return
     try:
-        workspace_root = stack.router._context_builder.workspace_root
+        from sidecar.ai.context.runtime_overlays import repo_delta_workspace_root
         from sidecar.ai.repo_delta.service import refresh_repo_anchor
+
+        root = repo_delta_workspace_root(config, stack.router._context_builder, execution_context)
+        if root is None:
+            return
 
         refresh_repo_anchor(
             config=config,
             session_id=session_id,
-            workspace_root=workspace_root,
+            workspace_root=root,
         )
     except Exception as error:  # noqa: BLE001
         log_event(
@@ -200,10 +202,12 @@ def _maybe_run_post_response_tasks(
     *,
     session_id: str | None,
     brain_container: BrainContainer,
+    execution_context: Any | None = None,
 ) -> None:
     _maybe_refresh_repo_anchor(
         session_id=session_id,
         brain_container=brain_container,
+        execution_context=execution_context,
     )
 
 
@@ -430,7 +434,7 @@ def build_chat_send_response(
     try:
         bind_live_plan_usage(
             stack.engine, writer=notification_writer if stream_notifications else None,
-            enabled=is_chatgpt_plan_meter_enabled(feature_flags), session_id=session_id,
+            session_id=session_id,
         )
         # Unified mode: any turn may answer a clarifying question.
         # interactive_response present-but-None-after-normalize means a
@@ -499,6 +503,7 @@ def build_chat_send_response(
                     post_response_callback=lambda _response_text: _maybe_run_post_response_tasks(
                         session_id=session_id,
                         brain_container=brain_container,
+                        execution_context=execution_context,
                     ),
                 ),
             )
@@ -546,6 +551,7 @@ def build_chat_send_response(
                         _maybe_run_post_response_tasks(
                             session_id=session_id,
                             brain_container=brain_container,
+                            execution_context=execution_context,
                         )
                     ),
                 ),
@@ -578,11 +584,7 @@ def build_chat_send_response(
         # `chat.error.plan_usage` on the wire for the limit banner.
         if error.data is None:
             error.data = {}
-        attach_plan_usage(
-            error.data,
-            stack.engine,
-            enabled=is_chatgpt_plan_meter_enabled(feature_flags),
-        )
+        attach_plan_usage(error.data, stack.engine)
         raise
     except _vision_turn.VisionAnchorError as error:
         raise ChatRequestError(

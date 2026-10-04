@@ -11,13 +11,14 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from sidecar.ai.execution_policy import (
+    ELECTRON_TOOL_BRIDGE_SERVER_NAME,
     desktop_command_descriptor_fields,
     desktop_policy_from_config,
     desktop_tool_decision,
 )
 from sidecar.ai.host_policy import host_execution_worker_enabled, host_run_command_schema
 from sidecar.ai.tools.config_utils import ConfigField, config_value, normalize_config_field
-from sidecar.ai.tools.manifest_validation import (  # noqa: F401
+from sidecar.ai.tools.manifest_validation import (
     BUILTIN_MCP_SURFACE,
     MANAGED_SIDECAR_SURFACE,
     validate_manifest_aliases,
@@ -118,6 +119,7 @@ class CanonicalToolDescriptor:
     config_schema: tuple[ConfigField, ...] = ()
     preconditions: tuple[PreconditionSpec, ...] = ()
     actions: dict[str, ToolActionSpec] | None = None
+    connection_id: str | None = None
 
 
 def tool_manifest_path() -> Path:
@@ -506,6 +508,10 @@ def normalize_runtime_descriptor(descriptor: Any) -> CanonicalToolDescriptor:
         server_name=server_name,
     )
     defer_eligible = source_kind == "mcp"
+    connection_id = str(getattr(descriptor, "connection_id", "") or "").strip() or None
+    if (not connection_id and source_kind == "mcp" and server_name
+            and server_name not in {BUILTIN_MCP_SERVER_NAME, ELECTRON_TOOL_BRIDGE_SERVER_NAME}):
+        connection_id = f"mcp:{server_name}"
     actions = getattr(descriptor, "actions", None)
     side_effecting = coerce_scalar_side_effecting(
         bool(getattr(descriptor, "side_effecting", False)), actions
@@ -524,6 +530,7 @@ def normalize_runtime_descriptor(descriptor: Any) -> CanonicalToolDescriptor:
         surfaces=_default_surfaces(source_kind),
         availability=CanonicalToolAvailability(defer_eligible=defer_eligible),
         server_name=server_name,
+        connection_id=connection_id,
         runtime_registered=True,
         search_hint=str(getattr(descriptor, "search_hint", "") or "").strip(),
         actions=actions,

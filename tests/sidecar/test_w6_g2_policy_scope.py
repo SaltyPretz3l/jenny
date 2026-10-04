@@ -35,40 +35,20 @@ def test_check_no_utf8_bom_scans_services_javascript_and_root_entrypoints(
     assert "main.js" in output
 
 
-def test_check_no_utf8_bom_scans_styles_and_skips_vendored_upstream(
-    tmp_path, monkeypatch, capsys
-) -> None:
+def test_check_no_utf8_bom_scans_styles(tmp_path, monkeypatch, capsys) -> None:
     module = _load_script_module("check_no_utf8_bom.py")
     repo_root = tmp_path / "repo"
     style_file = repo_root / "styles" / "chat.css"
-    vendored_file = (
-        repo_root
-        / "plugins"
-        / "official"
-        / "local-image-generation"
-        / "runtime"
-        / "upstream"
-        / "models"
-        / "utils.py"
-    )
     style_file.parent.mkdir(parents=True, exist_ok=True)
-    vendored_file.parent.mkdir(parents=True, exist_ok=True)
     style_file.write_bytes(module.UTF8_BOM + b".chat {}\n")
-    vendored_file.write_bytes(module.UTF8_BOM + b"VALUE = 1\n")
     monkeypatch.setattr(module, "ROOT", repo_root)
-    monkeypatch.setattr(
-        module, "_git_visible_paths", lambda: [style_file, vendored_file]
-    )
+    monkeypatch.setattr(module, "_git_visible_paths", lambda: [style_file])
 
     exit_code = module.main()
     output = capsys.readouterr().out.replace("\\", "/")
 
     assert exit_code == 1
     assert "styles/chat.css" in output
-    assert (
-        "plugins/official/local-image-generation/runtime/upstream/models/utils.py"
-        not in output
-    )
 
 
 def test_check_no_utf8_bom_only_scans_git_visible_files(

@@ -17,7 +17,34 @@ const TURN_DIAGNOSTIC_SCHEMA_VERSION = 1;
 const HARNESS_TURN_NOT_FOUND_CODE = HARNESS_ERROR_CODES.TURN_NOT_FOUND;
 const DEFAULT_DIAGNOSTIC_MAX_AGE_DAYS = 30;
 const DEFAULT_DIAGNOSTIC_MAX_FILES = 5000;
+// Desktop had an age/count bound but no byte bound; server mode keeps its
+// tighter 100 MiB override below.
+const DEFAULT_DIAGNOSTIC_MAX_TOTAL_BYTES = 200 * 1024 * 1024;
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
+const _clientTimingOperations = new Map();
+const _publishingStreams = new Set();
+
+function _streamTimingKey(userDataPath, streamId) {
+  return `${userDataPath}\0${streamId}`;
+}
+
+async function _serializeClientTiming(key, operation) {
+  const previous = _clientTimingOperations.get(key) || Promise.resolve();
+  const current = previous.catch(() => null).then(operation);
+  _clientTimingOperations.set(key, current);
+  try {
+    return await current;
+  } finally {
+    if (_clientTimingOperations.get(key) === current) _clientTimingOperations.delete(key);
+  }
+}
+
+async function _mergeClientTimingFile(filePath, timing) {
+  const payload = JSON.parse(await fs.promises.readFile(filePath, 'utf8'));
+  payload.client_timing = { ...(_normalizeClientTiming(payload.client_timing) || {}), ...timing };
+  await _writeFileAtomic(filePath, `${JSON.stringify(payload, null, 2)}\n`);
+}
+
 function _dateSegmentForNow() {
   const now = new Date();
   const yyyy = String(now.getUTCFullYear()).padStart(4, '0');
@@ -189,7 +216,7 @@ async function pruneTurnDiagnostics({
   now = new Date(),
   maxAgeDays = DEFAULT_DIAGNOSTIC_MAX_AGE_DAYS,
   maxFiles = DEFAULT_DIAGNOSTIC_MAX_FILES,
-  maxTotalBytes = Number.POSITIVE_INFINITY,
+  maxTotalBytes = DEFAULT_DIAGNOSTIC_MAX_TOTAL_BYTES,
 } = {}) {
   const root = _trimmedOrNull(userDataPath) ? _diagnosticsRoot(userDataPath) : null;
   if (!root) {
@@ -286,6 +313,9 @@ async function dumpTurnDiagnostic({
   clientTiming,
   contextAssemblyBreakdown,
   redactionPrefixes,
+  providerDiagnostics,
+  // FG-008: { entries, omitted } from turn-diagnostic-compactions forDump().
+  compactions,
 }) {
   const resolvedRequestId = _trimmedOrNull(requestId) || _trimmedOrNull(streamId);
   const resolvedStreamId = _trimmedOrNull(streamId) || _trimmedOrNull(requestId);
@@ -309,10 +339,12 @@ async function dumpTurnDiagnostic({
     }
   };
 
-  const providerDiagnostics = await fetchTurnProviderDiagnostics({
-    service,
-    requestId: resolvedRequestId,
-  });
+  if (providerDiagnostics === undefined) {
+    providerDiagnostics = await fetchTurnProviderDiagnostics({
+      service,
+      requestId: resolvedRequestId,
+    });
+  }
 
   const payload = {
     schema_version: TURN_DIAGNOSTIC_SCHEMA_VERSION,
@@ -335,7 +367,10 @@ async function dumpTurnDiagnostic({
     terminal_error: _normalizeTerminalError(terminalError),
     counts: (counts && typeof counts === 'object') ? counts : null,
     client_timing: _normalizeClientTiming(clientTiming),
+    compactions: Array.isArray(compactions?.entries) ? compactions.entries : null,
   };
+  const compactionsOmitted = Math.max(0, Math.trunc(Number(compactions?.omitted) || 0));
+  if (compactionsOmitted > 0) payload.compactions_omitted = compactionsOmitted;
   const redactedPayload = redactLogValue(payload, {
     prefixes: [
       userDataPath,
@@ -361,54 +396,77 @@ async function dumpTurnDiagnostic({
     });
   }
 
-  let pendingTiming = null;
-  try {
-    ensureDir(dir);
-    pendingTiming = _takePendingClientTiming(emitLog, userDataPath, resolvedStreamId);
-    if (pendingTiming) {
-      redactedPayload.client_timing = {
-        ...(redactedPayload.client_timing || {}),
-        ...pendingTiming,
-      };
-    }
-    await _writeFileAtomic(filePath, `${JSON.stringify(redactedPayload, null, 2)}\n`);
-    if (pendingTiming) {
-      emitLog('INFO', 'chat.turn_diagnostic_client_timing_merged', {
+  const timingKey = _streamTimingKey(userDataPath, resolvedStreamId);
+  return _serializeClientTiming(timingKey, async () => {
+    _publishingStreams.add(timingKey);
+    let pendingTiming = null;
+    try {
+      ensureDir(dir);
+      pendingTiming = _takePendingClientTiming(emitLog, userDataPath, resolvedStreamId);
+      if (pendingTiming) {
+        redactedPayload.client_timing = {
+          ...(redactedPayload.client_timing || {}),
+          ...pendingTiming,
+        };
+      }
+      await _writeFileAtomic(filePath, `${JSON.stringify(redactedPayload, null, 2)}\n`);
+      // Reports arriving during any atomic write stay pending until the same
+      // published file contains them. The final take and release have no await.
+      let lateTiming;
+      while ((lateTiming = _takePendingClientTiming(emitLog, userDataPath, resolvedStreamId))) {
+        const merged = { ...(pendingTiming || {}), ...lateTiming };
+        try {
+          await _mergeClientTimingFile(filePath, merged);
+          pendingTiming = merged;
+        } catch (error) {
+          // The dump itself is published; only the late timing missed it.
+          emitLog('WARN', 'chat.turn_diagnostic_client_timing_merge_failed', {
+            streamId: resolvedStreamId,
+            path: filePath,
+            message: String(error?.message || error),
+          });
+          break;
+        }
+      }
+      _publishingStreams.delete(timingKey);
+      if (pendingTiming) {
+        emitLog('INFO', 'chat.turn_diagnostic_client_timing_merged', {
+          streamId: resolvedStreamId,
+          path: filePath,
+          source: 'pending',
+        });
+      }
+      emitLog('INFO', 'chat.turn_diagnostic_dumped', {
+        sessionId: redactedPayload.session_id,
         streamId: resolvedStreamId,
+        traceId: redactedPayload.trace_id,
         path: filePath,
-        source: 'pending',
+        terminalStatus: redactedPayload.terminal_status,
       });
+      return filePath;
+    } catch (error) {
+      if (pendingTiming) {
+        _storePendingClientTiming(
+          emitLog,
+          userDataPath,
+          resolvedStreamId,
+          pendingTiming,
+          { preferExisting: true }
+        );
+      }
+      emitLog('WARN', 'chat.turn_diagnostic_dump_failed', {
+        sessionId: redactedPayload.session_id,
+        streamId: resolvedStreamId,
+        traceId: redactedPayload.trace_id,
+        path: filePath,
+        terminalStatus: redactedPayload.terminal_status,
+        message: String(error?.message || error),
+      });
+      return null;
+    } finally {
+      _publishingStreams.delete(timingKey);
     }
-  } catch (error) {
-    if (pendingTiming) {
-      _storePendingClientTiming(
-        emitLog,
-        userDataPath,
-        resolvedStreamId,
-        pendingTiming,
-        { preferExisting: true }
-      );
-    }
-    emitLog('WARN', 'chat.turn_diagnostic_dump_failed', {
-      sessionId: redactedPayload.session_id,
-      streamId: resolvedStreamId,
-      traceId: redactedPayload.trace_id,
-      path: filePath,
-      terminalStatus: redactedPayload.terminal_status,
-      message: String(error?.message || error),
-    });
-    return null;
-  }
-
-  emitLog('INFO', 'chat.turn_diagnostic_dumped', {
-    sessionId: redactedPayload.session_id,
-    streamId: resolvedStreamId,
-    traceId: redactedPayload.trace_id,
-    path: filePath,
-    terminalStatus: redactedPayload.terminal_status,
   });
-
-  return filePath;
 }
 
 async function _findTurnDiagnosticFile(userDataPath, streamId) {
@@ -445,14 +503,12 @@ async function _findTurnDiagnosticFile(userDataPath, streamId) {
 
 // Merges renderer-side paint counters into an already-dumped turn diagnostic.
 // The dump is written while the main process handles the terminal event; the
-// renderer reports its counters slightly later, so this retries briefly for
-// the file to appear before giving up with a WARN.
+// renderer usually reports its counters slightly later; a report that arrives
+// first waits in the bounded pending store for the dump to take it.
 async function mergeClientTimingIntoTurnDiagnostic({
   service,
   streamId,
   clientTiming,
-  attempts = 6,
-  delayMs = 250,
 } = {}) {
   const resolvedStreamId = _trimmedOrNull(streamId);
   const userDataPath = _trimmedOrNull(service?.options?.userDataPath);
@@ -471,42 +527,41 @@ async function mergeClientTimingIntoTurnDiagnostic({
     }
   };
 
-  let filePath = null;
-  for (let attempt = 0; attempt < Math.max(attempts, 1); attempt += 1) {
-    filePath = await _findTurnDiagnosticFile(userDataPath, resolvedStreamId);
-    if (filePath) break;
-    await new Promise((resolve) => setTimeout(resolve, delayMs));
-  }
-  if (!filePath) {
-    _storePendingClientTiming(emitLog, userDataPath, resolvedStreamId, normalizedTiming);
+  // Park the report first, synchronously: a dump that has not taken its final
+  // pending snapshot yet consumes it. Only an already-published dump needs a
+  // merge, and finding it never holds the per-stream lock the dump waits on.
+  const timingKey = _streamTimingKey(userDataPath, resolvedStreamId);
+  _storePendingClientTiming(emitLog, userDataPath, resolvedStreamId, normalizedTiming);
+  const filePath = _publishingStreams.has(timingKey)
+    ? null
+    : await _findTurnDiagnosticFile(userDataPath, resolvedStreamId);
+  if (!filePath || _publishingStreams.has(timingKey)) {
     emitLog('INFO', 'chat.turn_diagnostic_client_timing_pending', {
       streamId: resolvedStreamId,
       message: 'Renderer stream metrics are waiting for the turn diagnostic dump.',
     });
     return null;
   }
-
-  try {
-    const payload = JSON.parse(await fs.promises.readFile(filePath, 'utf8'));
-    payload.client_timing = {
-      ...(payload.client_timing && typeof payload.client_timing === 'object' ? payload.client_timing : {}),
-      ...normalizedTiming,
-    };
-    await _writeFileAtomic(filePath, `${JSON.stringify(payload, null, 2)}\n`);
-    emitLog('INFO', 'chat.turn_diagnostic_client_timing_merged', {
-      streamId: resolvedStreamId,
-      path: filePath,
-    });
-    return filePath;
-  } catch (error) {
-    _storePendingClientTiming(emitLog, userDataPath, resolvedStreamId, normalizedTiming);
-    emitLog('WARN', 'chat.turn_diagnostic_client_timing_merge_failed', {
-      streamId: resolvedStreamId,
-      path: filePath,
-      message: String(error?.message || error),
-    });
-    return null;
-  }
+  return _serializeClientTiming(timingKey, async () => {
+    const timing = _takePendingClientTiming(emitLog, userDataPath, resolvedStreamId);
+    if (!timing) return filePath;
+    try {
+      await _mergeClientTimingFile(filePath, timing);
+      emitLog('INFO', 'chat.turn_diagnostic_client_timing_merged', {
+        streamId: resolvedStreamId,
+        path: filePath,
+      });
+      return filePath;
+    } catch (error) {
+      _storePendingClientTiming(emitLog, userDataPath, resolvedStreamId, timing);
+      emitLog('WARN', 'chat.turn_diagnostic_client_timing_merge_failed', {
+        streamId: resolvedStreamId,
+        path: filePath,
+        message: String(error?.message || error),
+      });
+      return null;
+    }
+  });
 }
 
 module.exports = {

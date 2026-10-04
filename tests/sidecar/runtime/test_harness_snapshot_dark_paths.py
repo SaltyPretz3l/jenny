@@ -56,7 +56,6 @@ from sidecar.runtime.harness_snapshot import (
     _section_error_payload,
 )
 
-
 # ---------------------------------------------------------------------------
 # Helpers shared across tests
 # ---------------------------------------------------------------------------
@@ -79,7 +78,7 @@ class _StubMcp:
         return None
 
 
-def _make_builder(
+def _make_builder(  # noqa: PLR0913  # fixture
     tmp_path: Path,
     *,
     workspace_root: str | None = None,

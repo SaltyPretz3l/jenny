@@ -31,6 +31,7 @@ services:
       - "host.docker.internal:host-gateway"
     volumes:
       - jenny_control:/run/jenny-worker:ro
+      - jenny_staging:/run/jenny-staging
       - jenny_profile:/data
       - jenny_workspace:/workspaces/default
       - ./config:/etc/jenny:ro
@@ -80,7 +81,7 @@ services:
     stop_grace_period: 10s
     volumes:
       - jenny_control:/run/jenny-worker
-      - jenny_workspace:/inputs:ro
+      - jenny_staging:/inputs:ro
     tmpfs:
       - /workspace:size=536870912,nr_inodes=16384,mode=0700,uid=10001,gid=10001,nosuid,nodev
       - /tmp:size=67108864,nr_inodes=4096,mode=1777,nosuid,nodev
@@ -103,3 +104,4 @@ volumes:
   jenny_control:
   jenny_profile:
   jenny_workspace:
+  jenny_staging:

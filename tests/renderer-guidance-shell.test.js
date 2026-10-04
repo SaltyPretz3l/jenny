@@ -23,25 +23,6 @@ test('renderer shows skills in Plugins & Extensions and retires the Tips setting
           };
         },
       },
-      tips: {
-        async getState() {
-          return {
-            featureEnabled: true,
-            settings: {
-              enabled: true,
-              sessionCount: 2,
-              historyByTipId: {},
-            },
-            relevantTips: [],
-            activeTip: {
-              id: 'workspace-root',
-              title: 'Point Jenny at a workspace',
-              body: 'Set a workspace root to unlock project skills.',
-              settingsSection: 'tips',
-            },
-          };
-        },
-      },
     },
   });
   t.after(async () => {
@@ -60,29 +41,7 @@ test('renderer shows skills in Plugins & Extensions and retires the Tips setting
 });
 
 test('renderer keeps Tools settings navigation available without a workspace tip chip', async (t) => {
-  const { window } = await loadRendererApp({
-    shell: {
-      tips: {
-        async getState() {
-          return {
-            featureEnabled: true,
-            settings: {
-              enabled: true,
-              sessionCount: 1,
-              historyByTipId: {},
-            },
-            relevantTips: [],
-            activeTip: {
-              id: 'workspace-root',
-              title: 'Point Jenny at a workspace',
-              body: 'Set a workspace root to unlock project skills.',
-              settingsSection: 'tools',
-            },
-          };
-        },
-      },
-    },
-  });
+  const { window } = await loadRendererApp();
   t.after(async () => {
     await window.close();
   });
@@ -146,25 +105,6 @@ test('renderer keeps Home navigation and skill actions available without tip chi
             },
             scopes: [],
             counts: { total: 1, always: 0 },
-          };
-        },
-      },
-      tips: {
-        async getState() {
-          return {
-            featureEnabled: true,
-            settings: {
-              enabled: true,
-              sessionCount: 3,
-              historyByTipId: {},
-            },
-            relevantTips: [],
-            activeTip: {
-              id: 'skills-surface',
-              title: 'Skills stay file-backed',
-              body: 'Open the Skills settings to manage folders directly.',
-              settingsSection: 'home',
-            },
           };
         },
       },
@@ -243,7 +183,7 @@ test('renderer shows an error toast when opening a skill folder fails', async (t
   assert.match(toastViewport.textContent, /simulated shell\.openPath failure/i);
 });
 
-test('renderer refreshes skills and accepts tip updates without rendering chips', async (t) => {
+test('renderer refreshes skills without rendering tip chips', async (t) => {
   const { window, shell } = await loadRendererApp({
     shell: {
       skills: {
@@ -258,32 +198,6 @@ test('renderer refreshes skills and accepts tip updates without rendering chips'
             scopes: [],
             warnings: [],
             counts: { total: 0, always: 0, warnings: 0 },
-          };
-        },
-      },
-      tips: {
-        async getState() {
-          return {
-            featureEnabled: true,
-            settings: {
-              enabled: true,
-              sessionCount: 1,
-              historyByTipId: {},
-            },
-            relevantTips: [
-              {
-                id: 'skills-surface',
-                title: 'Skills stay file-backed',
-                body: 'Open the Skills settings to manage folders directly.',
-                settingsSection: 'skills',
-              },
-            ],
-            activeTip: {
-              id: 'skills-surface',
-              title: 'Skills stay file-backed',
-              body: 'Open the Skills settings to manage folders directly.',
-              settingsSection: 'skills',
-            },
           };
         },
       },
@@ -314,16 +228,6 @@ test('renderer refreshes skills and accepts tip updates without rendering chips'
     ],
     counts: { total: 1, always: 0, warnings: 1 },
   });
-  await shell.__emitTipsChanged({
-    featureEnabled: true,
-    settings: {
-      enabled: true,
-      sessionCount: 2,
-      historyByTipId: {},
-    },
-    relevantTips: [],
-    activeTip: null,
-  });
   await waitForUi(window, 40);
 
   assert.match(
@@ -331,8 +235,7 @@ test('renderer refreshes skills and accepts tip updates without rendering chips'
     /1 skill file skipped: Simulated load warning\./i,
   );
   assert.equal(window.document.getElementById('tipsCurrentPreview'), null);
-  assert.equal(window.__rendererState.tips.activeTip, null);
-  assert.equal(window.__rendererState.tips.settings.sessionCount, 2);
+  assert.equal(window.__rendererState.tips, undefined, 'the retired tips cache is gone');
   assert.equal(window.document.getElementById('promptGrid'), null);
 });
 
@@ -512,12 +415,10 @@ test('tools card keeps authority and internal guardrail controls out of Settings
   const doc = window.document;
   const card = doc.querySelector('section.settings-card[data-settings-section="tools"]');
 
-  // Tools exposes workspace status, optional capabilities, the opt-in PDF
-  // add-on, command isolation, and saved approval rules through accessible groups.
-  const groups = card.querySelectorAll(':scope > .settings-group');
+  const groups = card.querySelectorAll('#toolsConfigFieldList > .settings-group');
   assert.deepEqual(Array.from(groups, (group) => group.getAttribute('aria-labelledby')), [
-    'toolsWorkspaceHeading', 'toolsCapabilitiesHeading', 'toolsPdfAddonHeading',
-    'toolsCommandSandboxHeading', 'toolsApprovalRulesHeading',
+    'toolsPermissionsHeading', 'toolsApprovalRulesHeading', 'toolsFilesHeading',
+    'toolsWebHeading', 'toolsCodeHeading',
   ]);
   for (const group of groups) {
     assert.equal(group.getAttribute('role'), 'group');
@@ -534,20 +435,6 @@ test('tools card keeps authority and internal guardrail controls out of Settings
 test('renderer has no hidden Tips master or retired Tips settings section', async (t) => {
   const { window } = await loadRendererApp({
     shell: {
-      tips: {
-        async getState() {
-          return {
-            featureEnabled: false,
-            settings: {
-              enabled: true,
-              sessionCount: 0,
-              historyByTipId: {},
-            },
-            relevantTips: [],
-            activeTip: null,
-          };
-        },
-      },
       features: {
         async getState() {
           return {
@@ -649,7 +536,14 @@ test('profile and setup card wraps the local profile editor in a labelled group'
   assert.ok(card);
 
   const groups = card.querySelectorAll(':scope > .settings-group');
-  assert.equal(groups.length, 1);
+  assert.deepEqual([...groups].map(group => group.getAttribute('data-settings-merged-section')), [null, null, 'dataPrivacy', 'aboutUpdates', null]);
+  // The settings live review (2026-10-03) gave uninstall its own closing group.
+  assert.ok(groups[4].querySelector('#dataLifecycleRemoveMount'));
+  for (const id of ['dataPrivacy', 'aboutUpdates']) {
+    assert.equal(doc.querySelector(`.settings-card[data-settings-section="${id}"]`), null, 'a folded-in section has no card of its own');
+  }
+  assert.ok(card.querySelector('#dataLifecycleSettingsMount'));
+  assert.ok(card.querySelector('#checkUpdatesButton'));
   const profileGroup = groups[0];
   assert.equal(profileGroup.getAttribute('role'), 'group');
   const headingId = profileGroup.getAttribute('aria-labelledby');
@@ -658,7 +552,7 @@ test('profile and setup card wraps the local profile editor in a labelled group'
   assert.ok(profileGroup.querySelector('[data-action="save-local-profile"]'));
   assert.equal(card.querySelector('#openAuthButton'), null);
   assert.equal(card.querySelector('#settingsLogoutButton'), null);
-  assert.ok(card.querySelector('.settings-setup-row .settings-setup-row-title'));
+  assert.ok(card.querySelector('.settings-setup-row #setupSettingsActions'));
   assert.equal(doc.getElementById('accountSummary').getAttribute('aria-live'), 'polite');
   assert.equal(doc.getElementById('backendSummary').getAttribute('aria-live'), 'polite');
 });

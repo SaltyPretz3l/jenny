@@ -14,7 +14,6 @@ _ENGINE_ORDER = (
     "openai-compatible",
     "codex-cli",
     "chatgpt",
-    "plugin_host",
     "replay",
     "mock",
 )
@@ -86,17 +85,6 @@ def build_provider_capabilities(config: RuntimeConfig) -> dict[str, ProviderCapa
         secret_configured=bool(chatgpt_access_token),
         reason=(None if chatgpt_access_token else "chatgpt engine unavailable: not signed in"),
         reasoning_effort_support=_reasoning_effort_support("chatgpt"),
-    )
-    plugin_host_available = str(
-        getattr(config, "engine_type", "") or ""
-    ).strip().lower() == "plugin_host" and bool(str(getattr(config, "model", "") or "").strip())
-    capabilities["plugin_host"] = ProviderCapability(
-        engine="plugin_host",
-        available=plugin_host_available,
-        requires_secret=False,
-        secret_configured=False,
-        reason=None if plugin_host_available else "plugin host engine unavailable",
-        reasoning_effort_support="unsupported",
     )
     capabilities["replay"] = ProviderCapability(
         engine="replay",

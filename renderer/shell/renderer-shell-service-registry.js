@@ -63,10 +63,9 @@
       personalityEditorUtils = {},
       proactiveUtils = {},
       skillsUtils = {},
-      tipsUtils = {},
       offlineUtils = {},
       memoryManagerUtils = {},
-      ideControllerUtils = {},
+      ideControllerUtils, getIdeControllerUtils,
       companionUtils = {},
       dashboardUtils = {},
       setupServiceUtils = {},
@@ -150,11 +149,6 @@
     let updateSkillsSettings = noopAsync;
     let openSkillsScopeFolder = noopAsync;
     let applySkillsPayload = noopObj;
-
-    let tipsController = null;
-    let tipsShellEventsBound = false;
-    let refreshTipsState = noopAsync;
-    let applyTipsPayload = noopObj;
 
     let offlineController = null;
     let offlineShellEventsBound = false;
@@ -307,35 +301,6 @@
       return skillsController;
     }
 
-    function bindTipsShellEventsIfNeeded(force) {
-      if (tipsShellEventsBound || !tipsController || (!force && state.tips?.featureEnabled !== true)) {
-        return;
-      }
-      const disposeTipBindings = tipsController?.bindShellEvents?.();
-      if (typeof disposeTipBindings === 'function') {
-        tipsShellEventsBound = true;
-        registerCleanup(function disposeTipsShellEvents() {
-          tipsShellEventsBound = false;
-          disposeTipBindings();
-        });
-      }
-    }
-
-    function ensureTipsController() {
-      if (tipsController) {
-        return tipsController;
-      }
-      tipsController = tipsUtils.createTipsManager?.({
-        state,
-      }) || null;
-      ({
-        applyTipsPayload = noopObj,
-        refreshTipsState = noopAsync,
-      } = tipsController || {});
-      bindTipsShellEventsIfNeeded(false);
-      return tipsController;
-    }
-
     function ensureOfflineController() {
       if (offlineController) {
         return offlineController;
@@ -348,7 +313,6 @@
         },
         getDom: function getOfflineDom() {
           return {
-            offlineBadge: documentRef?.getElementById?.('offlineBadge') || null,
             offlineSummary: documentRef?.getElementById?.('offlineSummary') || null,
             offlineStatus: documentRef?.getElementById?.('offlineStatus') || null,
             offlineLocalOnlyList: documentRef?.getElementById?.('offlineLocalOnlyList') || null,
@@ -442,7 +406,7 @@
       state,
       windowRef,
       surfaceDom,
-      ideControllerUtils,
+      ideControllerUtils, getIdeControllerUtils,
       registerCleanup,
       constants: { TOAST_SOURCE },
       callbacks: {
@@ -466,13 +430,19 @@
         refreshSessions: () => loadSessions(state.currentSessionId, { skipOpenCurrent: true }),
       },
     }) || null;
+    if (windowRef.rendererActiveViewPersistence?.readPersistedActiveView?.() === 'ide') ideRootService?.ensureIdeLoaded?.();
     const workspaceRootService = ideRootService?.workspaceRootService || null;
     const getProjectSwitcher = () => (typeof workspaceRootService?.getProjectSwitcher === 'function' ? workspaceRootService.getProjectSwitcher() : Promise.resolve(null));
     // Projects v2: deleting the project the Workspace is bound to closes the Workspace.
     const clearWorkspaceRoot = (request) => (typeof workspaceRootService?.clear === 'function' ? workspaceRootService.clear(request || {}) : Promise.resolve(null));
     let ideController = null;
     function ensureIdeController() {
-      ideController = ideRootService?.ensureIdeController?.() || null;
+      const controller = ideRootService?.ensureIdeController?.();
+      if (typeof controller?.then === 'function') {
+        controller.catch((error) => appendClientLog('ERROR', 'shell.controller_init_failed', { ensure: 'ensureIdeController', message: String(error?.message || error) }));
+        return null;
+      }
+      ideController = controller || null;
       return ideController;
     }
     const openIdeHelpOverlay = (...args) => ensureIdeController()?.openHelpOverlay?.(...args);
@@ -515,6 +485,7 @@
             appendClientLog: (...args) => appendClientLog(...args),
             showToastMessage: (...args) => showToastMessage(...args),
             showShellErrorToast: (...args) => showShellErrorToast(...args),
+            dismissToast: (...args) => dismissToast(...args),
             toErrorMessage: (...args) => toErrorMessage(...args),
             renderAll: (...args) => renderAll(...args),
             renderComposerState: (...args) => renderComposerState(...args),
@@ -726,15 +697,11 @@
         getSettingsShellController: (...args) => getSettingsShellController(...args),
         ensureProactiveController: (...args) => ensureProactiveController(...args),
         ensureSkillsController: (...args) => ensureSkillsController(...args),
-        ensureTipsController: (...args) => ensureTipsController(...args),
         applyProactivePayload: (...args) => applyProactivePayload(...args),
         applySkillsPayload: (...args) => applySkillsPayload(...args),
-        applyTipsPayload: (...args) => applyTipsPayload(...args),
         bindSkillsShellEventsIfNeeded: (...args) => bindSkillsShellEventsIfNeeded(...args),
-        bindTipsShellEventsIfNeeded: (...args) => bindTipsShellEventsIfNeeded(...args),
         refreshProactiveStateSafe: (...args) => refreshProactiveStateSafe(...args),
         refreshSkillsStateSafe: (...args) => refreshSkillsStateSafe(...args),
-        refreshTipsStateSafe: (...args) => refreshTipsStateSafe(...args),
         refreshPersonalityWorkspaceSafe: (...args) => refreshPersonalityWorkspaceSafe(...args),
         refreshCompanionStateSafe: (...args) => refreshCompanionStateSafe(...args),
       },
@@ -762,7 +729,36 @@
     const proactiveSafe = (invoke) => safeInvoke(ensureProactiveController, invoke);
     const offlineSafe = (invoke) => safeInvoke(ensureOfflineController, invoke);
     const memorySafe = (invoke) => safeInvoke(ensureMemoryController, invoke);
-    const ideSafe = (invoke) => safeInvoke(ensureIdeController, invoke);
+    const ensureIdeLoaded = () => ideRootService?.ensureIdeLoaded?.() || Promise.resolve(false);
+    let ideRefresh = null;
+    let ideLoadFailed = false;
+    // After a failed load only an explicit trigger (activation) retries; render passes do not.
+    const ideSafe = (invoke, { retry = false } = {}) => (...args) => {
+      let controller;
+      try {
+        controller = ensureIdeController();
+      } catch (error) {
+        appendClientLog('ERROR', 'shell.controller_init_failed', { ensure: 'ensureIdeController', message: String(error?.message || error) });
+        return undefined;
+      }
+      if (controller) return invoke(...args);
+      if (ideLoadFailed && !retry) return null;
+      if (!ideRefresh) {
+        ideLoadFailed = false;
+        ideRefresh = ensureIdeLoaded().then((loaded) => {
+          ideLoadFailed = !loaded;
+          if (loaded && state.ui?.activeView === 'ide') {
+            const controller = ensureIdeController();
+            controller?.renderIde?.();
+            return controller?.activateIde?.();
+          }
+          return null;
+        }).catch((error) => {
+          appendClientLog('WARN', 'ide.boot_activation_failed', { message: String(error?.message || error) });
+        }).finally(() => { ideRefresh = null; });
+      }
+      return null;
+    };
 
     const getPersonalityActiveFileSafe = personalitySafe((...args) => getPersonalityActiveFile(...args));
     const setPersonalityDraftSafe = personalitySafe((...args) => setPersonalityDraft(...args));
@@ -799,20 +795,6 @@
       return bindSkillsShellEventsIfNeeded(...args);
     };
 
-    const refreshTipsStateSafe = (...args) => {
-      ensureTipsController();
-      return Promise.resolve(refreshTipsState(...args)).then(function handleTipsRefresh(result) {
-        // Contextual tips are Home-owned and must stay live without visiting a
-        // retired Settings section first.
-        bindTipsShellEventsIfNeeded(true);
-        return result;
-      });
-    };
-    const bindTipsShellEventsSafe = (...args) => {
-      ensureTipsController();
-      return bindTipsShellEventsIfNeeded(...args);
-    };
-
     const refreshOfflineStateSafe = (...args) => {
       ensureOfflineController();
       bindOfflineShellEventsIfNeeded();
@@ -834,13 +816,25 @@
     const handleApprovedMemoryDeleteSafe = memorySafe((...args) => handleApprovedMemoryDelete(...args));
     const upsertApprovedMemoryDraftSafe = memorySafe((...args) => upsertApprovedMemoryDraft(...args));
 
+    // A construction throw declines (false) so callers fall back instead of re-entering the IDE.
+    function openIdeAfterLoad(method) {
+      return async (...args) => {
+        if (!await ensureIdeLoaded()) return false;
+        try {
+          return ensureIdeController()?.[method]?.(...args);
+        } catch (error) {
+          appendClientLog('ERROR', 'shell.controller_init_failed', { ensure: 'ensureIdeController', message: String(error?.message || error) });
+          return false;
+        }
+      };
+    }
     const renderIdeSafe = ideSafe((...args) => ensureIdeController()?.renderIde?.(...args));
-    const activateIdeSafe = ideSafe((...args) => ensureIdeController()?.activateIde?.(...args));
+    const activateIdeSafe = ideSafe((...args) => ideRefresh || ensureIdeController()?.activateIde?.(...args), { retry: true });
     const layoutIdeEditorSafe = ideSafe((...args) => ensureIdeController()?.layoutIdeEditor?.(...args));
     const reconcileChatDockHostSafe = () => { try { return ideController?.chatDock?.reconcile?.() === true; } catch (error) { appendClientLog('WARN', 'ide_chat_dock.reconcile_failed', { message: String(error?.message || error).slice(0, 200) }); return false; } }; // chat render must not construct the IDE controller
     const prepareChatDockSessionTransitionSafe = (...args) => { try { return ideController?.chatDock?.prepareSessionTransition?.(...args) === true; } catch (error) { appendClientLog('WARN', 'ide_chat_dock.anchor_capture_failed', { message: String(error?.message || error).slice(0, 200) }); return false; } };
     const getIdeCommandItemsSafe = ideSafe((...args) => ensureIdeController()?.getIdeCommandItems?.(...args) || []);
-    const openIdeHelpOverlaySafe = ideSafe((...args) => openIdeHelpOverlay(...args)); const openIdeChangeDiffSafe = ideSafe((...args) => ideController?.openLedgerChangeById?.(...args)); const openIdeFileAtLineSafe = ideSafe((...args) => ideController?.openFileAtLine?.(...args)); // an explicit user click may construct it
+    const openIdeHelpOverlaySafe = ideSafe((...args) => openIdeHelpOverlay(...args)); const openIdeChangeDiffSafe = openIdeAfterLoad('openLedgerChangeById'); const openIdeFileAtLineSafe = openIdeAfterLoad('openFileAtLine'); // an explicit user click may construct it
     const clearApprovedMemoryDraftSafe = memorySafe((...args) => clearApprovedMemoryDraft(...args));
     const getApprovedMemoryByIdSafe = memorySafe((...args) => getApprovedMemoryById(...args));
     const hasApprovedMemoryDraftChangesSafe = memorySafe((...args) => hasApprovedMemoryDraftChanges(...args));
@@ -929,8 +923,6 @@
       updateSkillsSettingsSafe,
       openSkillsScopeFolderSafe,
       bindSkillsShellEventsSafe,
-      refreshTipsStateSafe,
-      bindTipsShellEventsSafe,
       refreshOfflineStateSafe,
       renderOfflineManagerSafe,
       bindOfflineShellEventsSafe,
@@ -943,7 +935,7 @@
       handleApprovedMemorySaveSafe,
       handleApprovedMemoryDeleteSafe,
       upsertApprovedMemoryDraftSafe,
-      ensureIdeController,
+      ensureIdeController, ensureIdeLoaded,
       renderIdeSafe,
       activateIdeSafe,
       layoutIdeEditorSafe, reconcileChatDockHostSafe, prepareChatDockSessionTransitionSafe, openIdeChangeDiffSafe, openIdeFileAtLineSafe,

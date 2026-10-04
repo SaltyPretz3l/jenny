@@ -33,9 +33,22 @@
   pointer-events: none;
 }
 
-.chat-view.chat-empty #timelineCollapseExpandToggle,
+.chat-view.chat-empty > .chat-pane[data-pane-id="0"] .chat-timeline-view-toggle,
+.chat-pane.chat-empty .chat-timeline-view-toggle,
 .chat-view.chat-empty .chat-timeline-wayfinder-host {
   display: none;
+}
+
+/* Transcript view control (renderer-transcript-view-utils.js): one button,
+   three icons; the button's data-transcript-view picks the icon. */
+.chat-timeline-view-toggle svg {
+  display: none;
+}
+
+.chat-timeline-view-toggle[data-transcript-view="answers"] svg[data-view="answers"],
+.chat-timeline-view-toggle[data-transcript-view="thinking"] svg[data-view="thinking"],
+.chat-timeline-view-toggle[data-transcript-view="everything"] svg[data-view="everything"] {
+  display: block;
 }
 
 .chat-timeline-utility-button {
@@ -61,8 +74,10 @@
   display: none;
 }
 
+/* Pressed reads by more than colour: the tab rail's active fill too. */
 .chat-timeline-utility-button[aria-pressed="true"] {
   color: var(--toprail-item-active-color);
+  background: var(--toprail-item-active-bg);
 }
 
 .chat-timeline-utility-button:hover {
@@ -204,7 +219,7 @@
     margin-inline-end: var(--space-3);
   }
 
-  .chat-timeline-utility-cluster #timelineCollapseExpandToggle {
+  .chat-timeline-utility-cluster .chat-timeline-view-toggle {
     display: none;
   }
 }

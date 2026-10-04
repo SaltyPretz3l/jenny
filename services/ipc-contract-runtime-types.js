@@ -29,6 +29,7 @@
  * @property {number} submission_sequence
  * @property {string} created_at
  * @property {string} updated_at
+ * @property {{reason: 'session_busy'|'model_busy'|'cleanup_unconfirmed', since: string, blocking_session_id: string|null}|null} admission_wait
  */
 
 /**
@@ -53,8 +54,9 @@
  * @property {Object} [tool_preferences]
  * @property {string} [approval_mode]
  * @property {Object} [debug_options]
- * @property {Object} [plugin_command_invocation]
  * @property {Object} [skill_invocation]
+ * @property {{send_started_at_ms?: number, optimistic_rendered_at_ms?: number, local_render_latency_ms?: number}} [client_timing]
+ *   Renderer send-phase telemetry; malformed values are dropped, and it is never persisted in the durable input.
  */
 
 /**

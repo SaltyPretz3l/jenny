@@ -67,7 +67,7 @@ test('resolveModelGroup uses the contracted first-match ordering', () => {
     key: 'openai-compatible', label: 'OpenAI-compatible', order: 25,
   });
   assert.deepEqual(utils.resolveModelGroup({ engineType: 'plugin_host' }), {
-    key: 'plugins', label: 'Plugins', order: 60,
+    key: 'other', label: 'Other', order: 90,
   });
   assert.deepEqual(utils.resolveModelGroup({}), {
     key: 'other', label: 'Other', order: 90,
@@ -155,12 +155,11 @@ test('groupCatalogEntries preserves entry order and sorts groups by priority', (
     { id: 'first', engine_type: 'ollama' },
     { id: 'gpt-5', engine_type: 'chatgpt' },
     { id: 'codex-cli/gpt-5', engine_type: 'ollama' },
-    { id: 'plugin-model', engine_type: 'plugin_host' },
     { id: '   ' },
   ], { loadedModel: 'FIRST:LATEST', canonicalize });
 
   assert.deepEqual(groups.map((group) => group.key), [
-    'ollama', 'huggingface', 'chatgpt', 'codex-cli', 'plugins', 'other',
+    'ollama', 'huggingface', 'chatgpt', 'codex-cli', 'other',
   ]);
   assert.deepEqual(groups[0].entries.map((entry) => entry.id), ['second', 'first']);
   assert.equal(groups[0].entries[0].loaded, false);

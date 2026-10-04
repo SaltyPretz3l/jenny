@@ -50,9 +50,6 @@
       queueRender,
       setComposerStatusNotice,
       clearComposerStatusNotice,
-      setTurnStatusPill,
-      clearTurnStatusPill,
-      clearTurnStatusPillSources,
       showToastMessage,
       dismissToast,
       toastSource,
@@ -99,16 +96,6 @@
       : async () => {};
     const safeSetComposerNotice = typeof setComposerStatusNotice === 'function' ? setComposerStatusNotice : () => {};
     const safeClearComposerNotice = typeof clearComposerStatusNotice === 'function' ? clearComposerStatusNotice : () => {};
-    const safeSetTurnStatusPill = typeof setTurnStatusPill === 'function' ? setTurnStatusPill : () => {};
-    const safeClearTurnStatusPill = typeof clearTurnStatusPill === 'function' ? clearTurnStatusPill : () => {};
-    const safeClearTurnStatusPillSources = typeof clearTurnStatusPillSources === 'function'
-      ? clearTurnStatusPillSources
-      : (list) => {
-        const items = Array.isArray(list) ? list : [];
-        for (let i = 0; i < items.length; i += 1) {
-          safeClearTurnStatusPill(items[i]);
-        }
-      };
     const safeShowToast = typeof showToastMessage === 'function' ? showToastMessage : () => {};
     const safeDismissToast = typeof dismissToast === 'function' ? dismissToast : () => {};
     const TOAST_SOURCE = toastSource || { chatStream: 'chat-stream' };
@@ -127,6 +114,7 @@
         eventType,
         visible: isVisibleChatSession(payload?.sessionId),
         current: isCurrentSession(payload?.sessionId),
+        activeView: state.ui?.activeView,
       });
     }
 
@@ -458,24 +446,6 @@
       }
     }
 
-    function setSessionTurnStatusPill(sessionId, source, payload) {
-      if (isCurrentSession(sessionId)) {
-        safeSetTurnStatusPill(source, payload);
-      }
-    }
-
-    function clearSessionTurnStatusPill(sessionId, source) {
-      if (isCurrentSession(sessionId)) {
-        safeClearTurnStatusPill(source);
-      }
-    }
-
-    function clearSessionTurnStatusPillSources(sessionId, sources) {
-      if (isCurrentSession(sessionId)) {
-        safeClearTurnStatusPillSources(sources);
-      }
-    }
-
     function activateApprovalSession(sessionId) {
       const normalizedSessionId = normalizeId(sessionId);
       if (!normalizedSessionId) {
@@ -548,9 +518,6 @@
       refreshSessionMetadata,
       setSessionComposerNotice,
       clearSessionComposerNotice,
-      setSessionTurnStatusPill,
-      clearSessionTurnStatusPill,
-      clearSessionTurnStatusPillSources,
       activateApprovalSession,
       showApprovalToast,
       dismissApprovalToast,

@@ -49,14 +49,6 @@ win:
       to: sidecar
       filter:
         - "**/*"
-    - from: build/restricted-host
-      to: restricted-host
-      filter:
-        - "**/*"
-    - from: build/plugin-full-host-supervisor
-      to: native
-      filter:
-        - "**/*"
     - from: vendor/python-embed
       to: python-embed
       filter:
@@ -120,14 +112,6 @@ mac:
         - "*.py"
     - from: build/sidecar
       to: sidecar
-      filter:
-        - "**/*"
-    - from: build/restricted-host
-      to: restricted-host
-      filter:
-        - "**/*"
-    - from: build/plugin-full-host-supervisor
-      to: native
       filter:
         - "**/*"
     - from: plugins
@@ -229,14 +213,13 @@ files:
   # racy stamp never ships a dead bundle to a user. Do NOT rely on preload.js source at
   # runtime under sandbox:true (see main-window-composition.js).
   - "*.js"
-  # Dev/test-only root entrypoints -- never loaded by the packaged app.
-  - "!capture-*.js"
-  - "!smoke-shell-ui.js"
+  # Dev/test-only root entrypoints -- never loaded by the packaged app
+  # (capture-*.js and smoke-shell-ui.js now live under scripts/dev/, which
+  # this list never includes).
   - "!start.js"
   - "!preload.js"
   - "!uninstall-preload.js"
   - "!plugin-view-preload.js"
-  - "!plugin-consent-preload.js"
   - "!renderer/shell/renderer-surface-gallery-utils.js"
   - "!styles/views-surface-gallery.css"
   - "*.html"
@@ -252,9 +235,7 @@ files:
   # UI catalogs (locales/<tag>.catalog.js + .json) loaded by renderer/shared/i18n-bootstrap.js and services/i18n-main.js.
   - locales/**/*
   - config/**/*
-  - comet/**/*
   - skills/**/*
-  - "!remote/**"
   - vendor/pretext-layout.umd.js
   - package.json
   # The app loads Monaco's AMD build (min/vs) only; drop the ESM/dev builds

@@ -17,7 +17,6 @@ from sidecar.ai.feature_flags import (
     FEATURE_CANONICAL_TURN_EVENTS,
     FEATURE_CONTEXT_COMPACTION,
     FEATURE_TOKEN_BUDGET,
-    is_chatgpt_plan_meter_enabled,
     is_feature_flag_enabled,
 )
 from sidecar.ai.routing.router import ChatDecision
@@ -306,11 +305,7 @@ def _chat_response_from_decision(
             "message": error_message,
             "retryable": retryable,
         }
-        attach_plan_usage(
-            error_payload,
-            stack.engine,
-            enabled=is_chatgpt_plan_meter_enabled(feature_flags),
-        )
+        attach_plan_usage(error_payload, stack.engine)
         error_notification = notification(CHAT_ERROR_METHOD, error_payload)
         if live_notification_writer is not None:
             live_notification_writer(error_notification)
@@ -466,11 +461,7 @@ def _chat_response_from_decision(
     if context_tokens is not None:
         usage_payload["context_tokens_estimate"] = context_tokens
     attach_context_window(usage_payload, stack.engine)
-    attach_plan_usage(
-        usage_payload,
-        stack.engine,
-        enabled=is_chatgpt_plan_meter_enabled(feature_flags),
-    )
+    attach_plan_usage(usage_payload, stack.engine)
     # Only forward the compaction trigger when compaction can actually fire
     # (both flags on); otherwise the meter would advertise an auto-compact
     # point that the disabled runtime will never act on.
@@ -561,5 +552,6 @@ def _chat_response_from_decision(
         post_settlement_callback=lambda: _chat_hub._maybe_run_post_response_tasks(
             session_id=session_id,
             brain_container=brain_container,
+            execution_context=request_context.execution_context,
         ),
     )

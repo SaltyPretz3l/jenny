@@ -1,0 +1,81 @@
+.model-library-image-engine {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.model-library-image-engine-help,
+.model-library-image-engine-note {
+  color: var(--text-muted);
+  /* The footnote role, like the descriptions beside it. */
+  font-size: var(--font-size-footnote);
+  max-width: 64ch;
+}
+
+.model-library-image-engine-note:empty {
+  display: none;
+}
+
+.model-library-image-engine-subtitle {
+  margin-top: 6px;
+  color: var(--text-secondary);
+  font-size: var(--font-size-body);
+  font-weight: 500;
+}
+
+.model-library-image-engine-actions,
+.model-library-image-engine-folder {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.model-library-image-engine-folder .model-library-folders-path {
+  flex: 1 1 200px;
+}
+
+.model-library-image-engine-slots {
+  display: grid;
+  gap: 6px;
+  max-width: 640px;
+}
+
+.model-library-image-engine-sets {
+  display: grid;
+  gap: 4px;
+  max-width: 680px;
+}
+
+.model-library-image-engine-set {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 10px;
+  align-items: center;
+}
+
+.model-library-image-engine-set-text {
+  display: grid;
+  min-width: 0;
+}
+
+.model-library-image-engine-set-name {
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.model-library-image-engine-set-meta {
+  color: var(--text-muted);
+  font-size: var(--font-size-caption);
+}
+
+.model-library-image-engine-default {
+  color: var(--status-fg-success);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}

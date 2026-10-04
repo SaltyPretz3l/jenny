@@ -872,10 +872,9 @@ def _write_file_locked(
             return ToolHandlerResult(
                 output=f"No changes written to {relative_path}.",
                 success=True,
-                metadata={
-                    **build_write_metadata(path=relative_path, bytes_written=0),
-                    "changed": False,
-                },
+                metadata={**build_write_metadata(
+                    path=relative_path, bytes_written=0, written=(resolved, encoded),
+                ), "changed": False},
             )
         old_text = existing_state.text
         expected_bytes = existing_state.raw_bytes
@@ -933,7 +932,7 @@ def _write_file_locked(
     metadata = build_write_metadata(
         path=relative_path,
         bytes_written=len(encoded),
-        checkpoint=checkpoint,
+        checkpoint=checkpoint, written=(resolved, encoded),
     )
     metadata["changed"] = True
     if prepared is not None and journal is not None:
@@ -968,7 +967,7 @@ def _checkpoint_failure_result(
     )
 
 
-def _materialize_write_checkpoint(  # noqa: PLR0913 - explicit recovery context.
+def _materialize_write_checkpoint(  # explicit recovery context.
     *,
     workspace: WorkspaceGuard,
     target: Path,

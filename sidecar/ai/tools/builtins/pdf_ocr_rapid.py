@@ -50,7 +50,7 @@ def rapid_ocr_enabled() -> bool:
 
 def import_rapidocr() -> Any:
     try:
-        import rapidocr  # type: ignore[import-not-found]  # noqa: PLC0415
+        import rapidocr  # type: ignore[import-not-found]
     except ImportError:
         configured_site_dir = read_environment_value("JENNY_PDF_OCR_SITE_DIR")
         if not configured_site_dir:
@@ -60,7 +60,7 @@ def import_rapidocr() -> Any:
         if not site_dir.is_dir() or site_dir_text in sys.path:
             raise
         sys.path.append(site_dir_text)
-        import rapidocr  # type: ignore[import-not-found]  # noqa: PLC0415
+        import rapidocr  # type: ignore[import-not-found]
 
     return rapidocr
 
@@ -97,8 +97,8 @@ def render_dpi(page: Any) -> int:
 
 
 def page_to_rgb_array(page: Any, *, dpi: int) -> Any:
-    import numpy as np  # noqa: PLC0415
-    import pymupdf as fitz  # type: ignore[import-not-found]  # noqa: PLC0415
+    import numpy as np
+    import pymupdf as fitz  # type: ignore[import-not-found]
 
     pix = page.get_pixmap(dpi=dpi, colorspace=fitz.csRGB, alpha=False)
     return np.frombuffer(pix.samples, dtype=np.uint8).reshape(pix.height, pix.width, pix.n)

@@ -691,7 +691,7 @@ def _copy_recovery_object(
         raise WorkspaceRestoreError(
             "restore_state_ambiguous", "Restore target changed during recovery."
         )
-    if temp.is_dir() and target.is_dir():  # noqa: E701 - preserve capped source layout.
+    if temp.is_dir() and target.is_dir():  # preserve capped source layout.
         _remove_exact(target)
     try:
         os.replace(temp, target)

@@ -11,7 +11,6 @@
       state,
       composerLayoutRuntime,
       chatInput,
-      composerModelSelect,
       updateComposerSafeOffset,
     } = deps || {};
 
@@ -76,16 +75,9 @@
       return context.measureText(label).width;
     }
 
-    function doSyncComposerModelSelectWidth() {
-      if (!composerModelSelect) return;
-      /* The model picker owns the pill label; keep this caller-facing shim. */
-      globalThis.rendererComposerModelPicker?.instance?.syncPill?.();
-    }
-
     return {
       syncComposerInputHeight,
       measureInlineTextWidth: doMeasureInlineTextWidth,
-      syncComposerModelSelectWidth: doSyncComposerModelSelectWidth,
     };
   }
 

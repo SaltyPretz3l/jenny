@@ -12,7 +12,6 @@
     const appendClientLog = typeof callbacks.appendClientLog === 'function' ? callbacks.appendClientLog : function noop() {};
     const persistenceAdaptersUtils = root.rendererSettingsPersistenceAdapters || {};
     const appearanceUtils = root.appearanceUtils || null;
-    const chatZoomUtils = root.chatZoomUtils || null;
 
     // Some sandboxed/opaque-origin documents (and jsdom without a URL) throw
     // synchronously on localStorage access rather than returning null --
@@ -42,27 +41,6 @@
       }
     }
 
-    let zoomAdapter = null;
-    if (chatZoomUtils && typeof persistenceAdaptersUtils.createZoomAdapter === 'function') {
-      try {
-        zoomAdapter = persistenceAdaptersUtils.createZoomAdapter({
-          chatZoomUtils,
-          getCurrent: () => (state && state.ui ? state.ui.chatZoomPercent : undefined),
-          updateSettings: (patch) => windowRef && windowRef.jennyShell && windowRef.jennyShell.chatUi
-            && windowRef.jennyShell.chatUi.updateSettings
-            ? windowRef.jennyShell.chatUi.updateSettings(patch)
-            : undefined,
-          applyZoom: (percent) => {
-            if (state && state.ui) {
-              state.ui.chatZoomPercent = chatZoomUtils.applyChatZoomToDocument(documentRef, percent);
-            }
-          },
-          log: (message) => appendClientLog('WARN', 'quick_settings.zoom_adapter', { message }),
-        });
-      } catch (_error) {
-        zoomAdapter = null;
-      }
-    }
 
     let offlineAdapter = null;
     if (typeof persistenceAdaptersUtils.createOfflineAdapter === 'function') {
@@ -97,7 +75,7 @@
       },
     } : null;
 
-    return { appearance: appearanceAdapter, zoom: zoomAdapter, offline: offlineAdapter, sessionOpen: sessionOpenAdapter };
+    return { appearance: appearanceAdapter, offline: offlineAdapter, sessionOpen: sessionOpenAdapter };
   }
 
   function bindQuickSettings(ctx) {

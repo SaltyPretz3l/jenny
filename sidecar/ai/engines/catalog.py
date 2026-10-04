@@ -18,6 +18,7 @@ from sidecar.ai.engines.model_name import (
     canonical_model_token,
     extract_family_tokens,
     is_bonsai2_model,
+    is_ornith15_model,
     is_qwen38_model,
     model_token_matches,
     supports_ollama_reasoning_levels,
@@ -408,7 +409,7 @@ def resolve_template_diagnostics(
     engine modules can call through ``catalog`` without adding a direct
     import of ``ollama_templates`` (avoids import fan-out violations).
     """
-    from sidecar.ai.engines.ollama_templates import template_diagnostics  # noqa: PLC0415
+    from sidecar.ai.engines.ollama_templates import template_diagnostics
 
     return template_diagnostics(model_name, info)
 
@@ -419,7 +420,7 @@ def _resolve_entry_template_family(entry: dict[str, Any]) -> str:
     if not isinstance(details, dict):
         return ""
     try:
-        from sidecar.ai.engines.ollama_templates import resolve_template  # noqa: PLC0415
+        from sidecar.ai.engines.ollama_templates import resolve_template
 
         family = str(details.get("family") or "").strip().lower()
         families_raw = details.get("families")
@@ -451,7 +452,7 @@ def _bounded_entry_str(value: Any, max_len: int) -> str:
     return text[:max_len] if text else ""
 
 
-def _normalize_ollama_catalog_entry(entry: Any) -> ModelCatalogEntry | None:
+def _normalize_ollama_catalog_entry(entry: Any) -> ModelCatalogEntry | None:  # noqa: C901  # normalizer
     if not isinstance(entry, dict):
         return None
     model_name = str(entry.get("name") or "").strip()
@@ -476,7 +477,14 @@ def _normalize_ollama_catalog_entry(entry: Any) -> ModelCatalogEntry | None:
     quantization_level = _bounded_entry_str(details.get("quantization_level"), 32)
     digest = _bounded_entry_str(entry.get("digest"), 128)
 
-    if capabilities or template_family or size is not None or parameter_size or quantization_level or digest:
+    if (
+        capabilities
+        or template_family
+        or size is not None
+        or parameter_size
+        or quantization_level
+        or digest
+    ):
         result: dict[str, Any] = {"id": model_name}
         if capabilities:
             result["capabilities"] = capabilities
@@ -778,8 +786,10 @@ def _parse_vllm_models_payload(
     values; Bonsai 2 shares that template but not ``low``; other recognized
     thinking models retain the conservative boolean control. Only these
     OpenAI-compatible controls add the Qwen3.8 contract's separator variants
-    (``Ternary_Bonsai_2_27B``) to prefix-based thinking detection, matching
-    that engine. Leave vLLM's existing catalog contract unchanged.
+    (``Ternary_Bonsai_2_27B``) and Ornith 1.5 (whose template takes
+    ``enable_thinking`` but no effort level, so None is its one choice) to
+    prefix-based thinking detection, matching that engine. Leave vLLM's
+    existing catalog contract unchanged.
     """
     if not isinstance(payload, dict):
         return None
@@ -796,7 +806,8 @@ def _parse_vllm_models_payload(
             if is_vllm_vision_model(model_id):
                 capabilities["vision"] = True
             if _is_likely_thinking_model(model_id) or (
-                openai_compatible_controls and uses_qwen38_chat_contract(model_id)
+                openai_compatible_controls
+                and (uses_qwen38_chat_contract(model_id) or is_ornith15_model(model_id))
             ):
                 capabilities["thinking"] = True
                 if openai_compatible_controls:
@@ -890,6 +901,5 @@ def models_for_engine(engine_type: str) -> list[str]:
         "openai-compatible": [],
         "codex-cli": ["codex-cli/default"],
         "replay": ["replay-default"],
-        "plugin_host": [],
     }
     return defaults.get(normalized, ["mock-v1"])

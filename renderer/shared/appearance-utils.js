@@ -20,9 +20,17 @@
     typographyId: 'system',
     surfaceEffectId: 'none',
     composerHoloId: 'on',
-    timelineStyleId: 'default',
     fontScaleId: 'default',
-    chatWidthId: 'default',
+    chatWidthId: 'standard',
+    // The boot curtain's starfield (status loader, 2026-09-29). Default on;
+    // a record written before the field existed normalizes to on, which is
+    // the whole migration: no other field changes, so it is lossless.
+    startupAnimation: true,
+    // The title bar's machine-load read-out (top chrome, 2026-09-29). Default
+    // off; a record without the field normalizes to off, a lossless migration.
+    // CPU, GPU and VRAM always stay in the health popover.
+    titlebarLoad: false,
+    artifactAutoOpen: false,
   };
   // DEFAULT_FRESH_APPEARANCE is for brand-new profiles; existing profiles retain
   // stored preferences, and its no-effect surface choice intentionally matches
@@ -30,8 +38,24 @@
   var DEFAULT_FRESH_APPEARANCE = Object.assign({}, DEFAULT_APPEARANCE, {
     paletteId: 'slate',
     typographyId: 'technical',
-    fontScaleId: 'xlarge',
   });
+  // Type-scale generation stamped on every persisted record. Only the storage
+  // load path migrates; a live UI choice is never remapped. Each entry maps a
+  // stored fontScaleId written under generation N to its generation N+1 id;
+  // an unstamped record is generation 1 and walks every step in order.
+  //   Generation 2 (2026-09-28) rebased the role tokens ~17-20% larger, so a
+  //   generation-1 record steps down one preset to keep roughly the size its
+  //   owner picked.
+  //   Generation 3 (2026-09-29) rebased the presets around the old Extra Large
+  //   (1.2 is now Default, with one step either side) and retired `xlarge`.
+  //   A generation-2 record keeps its multiplier where one still exists
+  //   (xlarge -> default, large -> small); the two smaller old presets land on
+  //   the new Small, the closest remaining size.
+  var TYPE_SCALE_VERSION = 3;
+  var FONT_SCALE_MIGRATIONS = {
+    1: { xlarge: 'large', large: 'default' },
+    2: { xlarge: 'default', large: 'small', default: 'small' },
+  };
   var PALETTE_PRESETS = {
     midnight: {
       id: 'midnight',
@@ -111,53 +135,55 @@
       description: jt('appearance.typography.technical.description', 'Utilitarian sans stack with stronger code/editor influence.'),
     },
   };
-  /* Typography-scale axis (independent of palette/typography family).
+  /* Text size axis (independent of palette/typography family).
      `value` is the numeric multiplier applied to the --font-scale CSS variable;
-     it scales the app-shell font-size tokens. The chat column is governed by its
-     own --chat-zoom-factor and is intentionally not affected. */
+     it scales every role font-size token app-wide: shell, chat, IDE chrome, and
+     (through resolveCodeFontPx) the code editors, terminal, and diagrams.
+     Default is 1.2 (the owner found 1.0 too small; 2026-09-29), with one
+     0.1 step either side; styles/foundation.css seeds the same 1.2 so the
+     pre-script paint matches. */
   var FONT_SCALE_PRESETS = {
     small: {
       id: 'small',
       label: jt('appearance.typography.fontScale.small.name', 'Small'),
-      description: jt('appearance.typography.fontScale.small.description', 'Denser shell text for more on screen.'),
-      value: 0.85,
+      description: jt('appearance.typography.fontScale.small.description', 'Denser text for more on screen.'),
+      value: 1.1,
     },
     default: {
       id: 'default',
       label: jt('appearance.typography.fontScale.default.name', 'Default'),
       description: jt('appearance.typography.fontScale.default.description', 'Standard Jenny text size.'),
-      value: 1,
+      value: 1.2,
     },
     large: {
       id: 'large',
       label: jt('appearance.typography.fontScale.large.name', 'Large'),
-      description: jt('appearance.typography.fontScale.large.description', 'Larger, easier-to-read shell text.'),
-      value: 1.15,
-    },
-    xlarge: {
-      id: 'xlarge',
-      label: jt('appearance.typography.fontScale.xlarge.name', 'Extra Large'),
-      description: jt('appearance.typography.fontScale.xlarge.description', 'Maximum shell text size.'),
+      description: jt('appearance.typography.fontScale.large.description', 'Larger, easier-to-read text.'),
       value: 1.3,
     },
   };
   /* Chat reading-measure axis (independent of palette, typography, and the
-     chat zoom factor). `wide` raises the transcript + composer cap from 760px
-     to 1100px by swapping --chat-measure-max; the actual geometry lives in
-     styles/foundation.css under :root[data-chat-width="wide"]. Palette files
-     set only color tokens, so this axis is palette-agnostic by construction. */
+     chat zoom factor). `standard` (the default, owner 2026-10-02) raises the
+     transcript + composer cap from the 760px `narrow` base to 1100px by
+     swapping --chat-measure-max; the geometry lives in styles/foundation.css
+     under :root[data-chat-width="standard"]. Palette files set only color
+     tokens, so this axis is palette-agnostic by construction. */
   var CHAT_WIDTH_PRESETS = {
-    default: {
-      id: 'default',
-      label: jt('appearance.typography.chatWidth.default.name', 'Default'),
-      description: jt('appearance.typography.chatWidth.default.description', 'Standard 760px reading measure.'),
+    narrow: {
+      id: 'narrow',
+      label: jt('appearance.typography.chatWidth.narrow.name', 'Narrow'),
+      description: jt('appearance.typography.chatWidth.narrow.description', 'Shorter lines, capped at 760px.'),
     },
-    wide: {
-      id: 'wide',
-      label: jt('appearance.typography.chatWidth.wide.name', 'Wide'),
-      description: jt('appearance.typography.chatWidth.wide.description', 'Roughly 45% more text per line, capped at 1100px.'),
+    standard: {
+      id: 'standard',
+      label: jt('appearance.typography.chatWidth.standard.name', 'Standard'),
+      description: jt('appearance.typography.chatWidth.standard.description', 'Roomy reading measure, capped at 1100px.'),
     },
   };
+  /* Ids stored before the 2026-10-02 rename. `default` was written for every
+     profile whether or not the user chose it, so both old ids land on the new
+     Standard default; Narrow is one click away. */
+  var LEGACY_CHAT_WIDTH_IDS = { default: 'standard', wide: 'standard' };
   var SURFACE_EFFECT_PRESETS = {
     none: {
       id: 'none',
@@ -170,7 +196,8 @@
       description: jt('appearance.effect.surface.reactiveGrid.description', 'Animated dot grid that responds to pointer movement.'),
       contractVersion: 3,
       inputMode: 'manager',
-      activityMode: 'native',
+      // Owner direction 2026-09-30: the grid answers the pointer, never the model.
+      activityMode: 'none',
       renderer: 'canvas2d',
       interaction: Object.freeze({ hover: true, click: true, press: false, captureOnPress: false }),
       costClass: 'medium',
@@ -179,7 +206,6 @@
       requiredTokens: Object.freeze([
         '--widget-reactive-grid-dot-idle',
         '--widget-reactive-grid-dot-active',
-        '--widget-reactive-grid-dot-glow',
       ]),
       freshInstallCandidate: false,
     },
@@ -189,7 +215,8 @@
       description: jt('appearance.effect.surface.playlistScroll.description', 'Music-sequencer arrangement backdrop with scrolling lanes and bar markers.'),
       contractVersion: 3,
       inputMode: 'manager',
-      activityMode: 'native',
+      // Owner direction 2026-09-30: background effects never react to the model.
+      activityMode: 'none',
       renderer: 'canvas2d',
       interaction: Object.freeze({ hover: true, click: true, press: true, captureOnPress: true }),
       costClass: 'low',
@@ -206,8 +233,8 @@
         '--playlist-scroll-bar-width',
         '--playlist-scroll-speed',
         '--playlist-scroll-sub-alpha',
-        '--playlist-scroll-band-alpha',
         '--playlist-scroll-edge-fade',
+        '--playlist-scroll-contrast',
       ]),
       freshInstallCandidate: false,
     },
@@ -217,7 +244,8 @@
       description: jt('appearance.effect.surface.atomicBurst.description', 'Sparse Y2K twinkles that breathe and flare under the pointer — XJ-9 sparkle field.'),
       contractVersion: 3,
       inputMode: 'manager',
-      activityMode: 'native',
+      // Owner direction 2026-09-30: background effects never react to the model.
+      activityMode: 'none',
       renderer: 'canvas2d',
       interaction: Object.freeze({ hover: true, click: true, press: false, captureOnPress: false }),
       costClass: 'medium',
@@ -230,10 +258,8 @@
         '--widget-atomic-burst-flare-color',
         '--widget-atomic-burst-link-color',
         '--widget-atomic-burst-wave-color',
-        '--widget-atomic-burst-bloom',
         '--widget-atomic-burst-link-radius',
         '--widget-atomic-burst-link-max',
-        '--widget-atomic-burst-wave-speed',
         '--widget-atomic-burst-wave-lifetime',
       ]),
       freshInstallCandidate: false,
@@ -241,12 +267,13 @@
     'circuit-trace': {
       id: 'circuit-trace',
       label: jt('appearance.effect.surface.circuitTrace.name', 'Circuit Trace'),
-      description: jt('appearance.effect.surface.circuitTrace.description', 'Faint hex grid with flowing trace heads — XJ-9 internal HUD / motherboard.'),
+      description: jt('appearance.effect.surface.circuitTrace.description', 'Routed circuit board: hover probes a signal, click sends current node to node.'),
       contractVersion: 3,
       inputMode: 'manager',
-      activityMode: 'native',
+      // Owner direction 2026-09-30: background effects never react to the model.
+      activityMode: 'none',
       renderer: 'canvas2d',
-      interaction: Object.freeze({ hover: true, click: true, press: true, captureOnPress: true }),
+      interaction: Object.freeze({ hover: true, click: true, press: false, captureOnPress: false }),
       costClass: 'high',
       paletteSupport: 'all',
       recommendedPalettes: Object.freeze(['obsidian']),
@@ -255,14 +282,11 @@
         '--widget-circuit-trace-line-color',
         '--widget-circuit-trace-glow-color',
         '--widget-circuit-trace-accent-color',
-        '--widget-circuit-trace-version',
-        '--widget-circuit-trace-hex-size',
+        '--widget-circuit-trace-inner-color',
+        '--widget-circuit-trace-shadow-color',
+        '--widget-circuit-trace-pitch',
         '--widget-circuit-trace-density',
-        '--widget-circuit-trace-trail-length',
         '--widget-circuit-trace-speed',
-        '--widget-circuit-trace-bloom',
-        '--widget-circuit-trace-lift-px',
-        '--widget-circuit-trace-energy',
       ]),
       // No effect preset is a fresh-install candidate while the fresh default uses no surface effect.
       freshInstallCandidate: false,
@@ -273,7 +297,8 @@
       description: jt('appearance.effect.surface.contextWeave.description', 'A woven cloth of warp and weft threads that catches the light around your pointer; click to pluck a thread.'),
       contractVersion: 3,
       inputMode: 'manager',
-      activityMode: 'native',
+      // Owner direction 2026-09-30: background effects never react to the model.
+      activityMode: 'none',
       renderer: 'canvas2d',
       // The static lattice has no press interaction because there is no spring simulation to gather beneath a held pointer.
       interaction: Object.freeze({ hover: true, click: true, press: false, captureOnPress: false }),
@@ -288,6 +313,7 @@
         '--widget-context-weave-interlace',
         '--widget-context-weave-weft-alpha',
         '--widget-context-weave-lit-gain',
+        '--widget-context-weave-motion-scale',
       ]),
       freshInstallCandidate: false,
     },
@@ -303,17 +329,6 @@
       id: 'on',
       label: jt('appearance.effect.composerHolo.on.name', 'On'),
       description: jt('appearance.effect.composerHolo.on.description', 'Show a cycling holographic gradient border on the chat input bar while typing.'),
-    },
-  };
-
-  var TIMELINE_STYLE_PRESETS = {
-    // explorer-minimal was retired by the 2026-07-05 quiet-timeline overhaul
-    // (per-row one-liners superseded its coalesced runs). normalizePresetId
-    // maps any persisted 'explorer-minimal' preference back to 'default'.
-    default: {
-      id: 'default',
-      label: jt('appearance.effect.timeline.default.name', 'Default'),
-      description: jt('appearance.effect.timeline.default.description', 'Standard chat row timeline.'),
     },
   };
 
@@ -352,25 +367,6 @@
       '--composer-holo-draw-alpha-scale': '1',
       '--composer-holo-draw-glow-alpha-scale': '1',
     },
-  };
-
-  var DISABLED_SPRITE_HOLO_CSS_VARIABLES = {
-    '--sprite-holo-opacity-idle': '0',
-    '--sprite-holo-filter-idle': 'none',
-    '--sprite-holo-ring-width-idle': '0px',
-    '--sprite-holo-shadow-idle':
-      '0 10px 22px rgba(0, 0, 0, 0.2), inset 0 1px 0 color-mix(in srgb, var(--text-primary) 8%, transparent)',
-    '--sprite-holo-opacity-streaming': '0',
-    '--sprite-holo-filter-streaming': 'none',
-    '--sprite-holo-ring-width-streaming': '0px',
-    '--sprite-holo-shadow-streaming':
-      '0 0 0 1px rgba(0, 0, 0, 0.2), 0 10px 22px rgba(109, 130, 255, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.08)',
-    '--sprite-holo-border-width': '0px',
-    '--sprite-holo-draw-enabled': '0',
-    '--sprite-holo-draw-stroke-scale': '0',
-    '--sprite-holo-draw-glow-scale': '0',
-    '--sprite-holo-draw-alpha-scale': '0',
-    '--sprite-holo-draw-glow-alpha-scale': '0',
   };
 
   var LEGACY_THREAD_STYLE_VARIABLE_NAMES = [
@@ -487,12 +483,20 @@
     return Object.prototype.hasOwnProperty.call(collection, token) ? token : fallback;
   }
 
+  function normalizeChatWidthId(value) {
+    var token = String(value || '').trim().toLowerCase();
+    if (Object.prototype.hasOwnProperty.call(LEGACY_CHAT_WIDTH_IDS, token)) return LEGACY_CHAT_WIDTH_IDS[token];
+    return normalizePresetId(token, CHAT_WIDTH_PRESETS, DEFAULT_APPEARANCE.chatWidthId);
+  }
+
   function normalizeBinaryHoloId(value) {
     var token = String(value || '').trim().toLowerCase();
     return token === 'off' ? 'off' : 'on';
   }
 
   function normalizeAppearancePreferences(raw) {
+    // spriteHoloId is still accepted in stored preferences and ignored: the
+    // sprite holo was retired 2026-10-02.
     var source = raw && typeof raw === 'object' ? raw : {};
     return {
       paletteId: normalizePresetId(source.paletteId, PALETTE_PRESETS, DEFAULT_APPEARANCE.paletteId),
@@ -503,10 +507,39 @@
       ),
       surfaceEffectId: normalizePresetId(source.surfaceEffectId, SURFACE_EFFECT_PRESETS, DEFAULT_APPEARANCE.surfaceEffectId),
       composerHoloId: normalizeBinaryHoloId(source.composerHoloId),
-      timelineStyleId: normalizePresetId(source.timelineStyleId, TIMELINE_STYLE_PRESETS, DEFAULT_APPEARANCE.timelineStyleId),
       fontScaleId: normalizePresetId(source.fontScaleId, FONT_SCALE_PRESETS, DEFAULT_APPEARANCE.fontScaleId),
-      chatWidthId: normalizePresetId(source.chatWidthId, CHAT_WIDTH_PRESETS, DEFAULT_APPEARANCE.chatWidthId),
+      chatWidthId: normalizeChatWidthId(source.chatWidthId),
+      startupAnimation: source.startupAnimation === false ? false : DEFAULT_APPEARANCE.startupAnimation,
+      titlebarLoad: source.titlebarLoad === true,
+      artifactAutoOpen: source.artifactAutoOpen === true,
     };
+  }
+
+  // Persisted copies carry the type-scale stamp; in-memory preferences do not.
+  function stampTypeScale(preferences) {
+    return Object.assign({}, preferences, { typeScaleVersion: TYPE_SCALE_VERSION });
+  }
+
+  // Storage-boundary migration for records written under an earlier
+  // type-scale generation. Idempotent: a current-generation record passes
+  // through untouched; an older one walks FONT_SCALE_MIGRATIONS from its
+  // generation up to the current one.
+  function migrateStoredAppearancePreferences(raw) {
+    var source = raw && typeof raw === 'object' ? raw : {};
+    var storedVersion = Number(source.typeScaleVersion);
+    if (storedVersion >= TYPE_SCALE_VERSION) {
+      return normalizeAppearancePreferences(source);
+    }
+    var generation = Number.isFinite(storedVersion) && storedVersion >= 1 ? Math.floor(storedVersion) : 1;
+    var fontScaleId = String(source.fontScaleId || '').trim().toLowerCase();
+    for (; generation < TYPE_SCALE_VERSION; generation += 1) {
+      var step = FONT_SCALE_MIGRATIONS[generation];
+      if (step && Object.prototype.hasOwnProperty.call(step, fontScaleId)) {
+        fontScaleId = step[fontScaleId];
+      }
+    }
+    var migrated = Object.assign({}, source, { fontScaleId: fontScaleId });
+    return normalizeAppearancePreferences(migrated);
   }
 
   function getPalettePresets() {
@@ -538,10 +571,6 @@
     return clonePresetCollection(COMPOSER_HOLO_OPTIONS);
   }
 
-  function getTimelineStylePresets() {
-    return clonePresetCollection(TIMELINE_STYLE_PRESETS);
-  }
-
   function cloneThemeBundle(bundle) {
     if (!bundle || typeof bundle !== 'object') {
       return null;
@@ -569,13 +598,13 @@
   }
 
   // Theme bundles own coordinated palette, typography, surface, and Composer
-  // effect choices. They do not own fontScaleId, timelineStyleId, or
-  // chatWidthId -- normalizeAppearancePreferences() fills every missing field
-  // with DEFAULT_APPEARANCE's value regardless, so a naive "apply the bundle's
+  // effect choices. They do not own fontScaleId or chatWidthId --
+  // normalizeAppearancePreferences() fills every missing field with
+  // DEFAULT_APPEARANCE's value regardless, so a naive "apply the bundle's
   // full normalized preferences" (or "compare every normalized field")
-  // silently reset an Extra Large / non-default text size (and the timeline
-  // style) back to Default on every bundle switch. Keep this list in sync
-  // with what THEME_BUNDLES entries actually set.
+  // silently reset a non-default text size back to Default on every bundle
+  // switch. Keep this list in sync with what THEME_BUNDLES
+  // entries actually set.
   var THEME_BUNDLE_APPLY_AXES = [
     'paletteId',
     'typographyId',
@@ -586,9 +615,8 @@
   // Project a (possibly partial) preferences object down to only the
   // documented bundle axes, normalized. Used to APPLY a bundle (merge onto
   // -- never replace -- the caller's current preferences), so a bundle
-  // switch never touches fontScaleId/timelineStyleId/chatWidthId (no bundle
-  // defines any of them, but normalizeAppearancePreferences fills them
-  // regardless).
+  // switch never touches fontScaleId/chatWidthId (no bundle defines either,
+  // but normalizeAppearancePreferences fills them regardless).
   function pickThemeBundleAxes(preferences) {
     var normalized = normalizeAppearancePreferences(preferences);
     var picked = {};
@@ -643,15 +671,6 @@
     });
   }
 
-  function removeCssVariables(target, variables) {
-    if (!target || !target.style || typeof target.style.removeProperty !== 'function' || !variables) {
-      return;
-    }
-    Object.keys(variables).forEach(function removeVariable(name) {
-      target.style.removeProperty(name);
-    });
-  }
-
   function buildThreadAppearanceVariables(normalized) {
     var composerScale = THREAD_HOLO_SCALE[normalized.composerHoloId] || THREAD_HOLO_SCALE[DEFAULT_APPEARANCE.composerHoloId];
     return {
@@ -665,28 +684,26 @@
     if (!rootElement) {
       return normalized;
     }
-    var spriteHoloEnabled = normalized.paletteId === 'slate';
     rootElement.dataset.palette = normalized.paletteId;
     rootElement.dataset.typography = normalized.typographyId;
     rootElement.dataset.motion = 'standard';
     rootElement.dataset.surfaceEffect = normalized.surfaceEffectId;
     rootElement.dataset.composerHolo = normalized.composerHoloId;
-    rootElement.dataset.spriteHolo = spriteHoloEnabled ? 'on' : 'off';
     rootElement.dataset.threadStyle = 'subtle';
-    rootElement.dataset.timelineStyle = normalized.timelineStyleId;
     rootElement.dataset.fontScale = normalized.fontScaleId;
     rootElement.dataset.chatWidth = normalized.chatWidthId;
+    // Read by the boot curtain (renderer-lifecycle-progress-utils.js) at mount;
+    // theme-bootstrap.js applies this before first paint.
+    rootElement.dataset.startupAnimation = normalized.startupAnimation ? 'on' : 'off';
+    // Not styled: it lets the portable-preferences sync observer see the change.
+    rootElement.dataset.titlebarLoad = normalized.titlebarLoad ? 'on' : 'off';
+    rootElement.dataset.artifactAutoOpen = normalized.artifactAutoOpen ? 'on' : 'off';
     if (typeof rootElement.style?.removeProperty === 'function') {
       LEGACY_THREAD_STYLE_VARIABLE_NAMES.forEach(function removeLegacyThreadVariable(name) {
         rootElement.style.removeProperty(name);
       });
     }
     applyCssVariables(rootElement, COMPOSER_HOLO_CSS_VARIABLES[normalized.composerHoloId]);
-    if (spriteHoloEnabled) {
-      removeCssVariables(rootElement, DISABLED_SPRITE_HOLO_CSS_VARIABLES);
-    } else {
-      applyCssVariables(rootElement, DISABLED_SPRITE_HOLO_CSS_VARIABLES);
-    }
     applyCssVariables(rootElement, buildThreadAppearanceVariables(normalized));
     applyCssVariables(rootElement, {
       '--font-scale': String(resolveFontScaleValue(normalized.fontScaleId)),
@@ -703,9 +720,9 @@
       if (!raw) {
         var legacyRaw = storage.getItem(LEGACY_STORAGE_KEY);
         if (legacyRaw) {
-          var migrated = normalizeAppearancePreferences(JSON.parse(legacyRaw));
+          var migrated = migrateStoredAppearancePreferences(JSON.parse(legacyRaw));
           try {
-            storage.setItem(STORAGE_KEY, JSON.stringify(migrated));
+            storage.setItem(STORAGE_KEY, JSON.stringify(stampTypeScale(migrated)));
             if (typeof storage.removeItem === 'function') storage.removeItem(LEGACY_STORAGE_KEY);
           } catch (_migrationError) {
             // The normalized legacy value remains usable for this run. A later
@@ -717,10 +734,29 @@
       if (!raw) {
         return getDefaultAppearancePreferences();
       }
-      return normalizeAppearancePreferences(JSON.parse(raw));
+      var parsed = JSON.parse(raw);
+      var loaded = migrateStoredAppearancePreferences(parsed);
+      if (!(parsed && Number(parsed.typeScaleVersion) >= TYPE_SCALE_VERSION)) {
+        try {
+          storage.setItem(STORAGE_KEY, JSON.stringify(stampTypeScale(loaded)));
+        } catch (_stampError) {
+          // The migrated value is still used for this run and the next save
+          // stamps it. Until then the unstamped record re-migrates to the
+          // same result on every load.
+        }
+      }
+      return loaded;
     } catch (error) {
       return getDefaultAppearancePreferences();
     }
+  }
+
+  function getAppearanceToggleFields({ jt, composerHoloOption, appearancePreferences, startupAnimationFlagOff }) {
+    return [
+      { id: 'appearanceComposerHoloToggle', label: jt('settings.appearance.holographicTypingBorderLabel', 'Holographic typing border'), checked: composerHoloOption.id !== 'off' },
+      { id: 'appearanceStartupAnimationToggle', checked: appearancePreferences.startupAnimation !== false, disabled: startupAnimationFlagOff },
+      { id: 'appearanceTitlebarLoadToggle', checked: appearancePreferences.titlebarLoad === true },
+    ];
   }
 
   function saveAppearancePreferences(storage, preferences) {
@@ -728,7 +764,7 @@
     if (!storage || typeof storage.setItem !== 'function') {
       return normalized;
     }
-    storage.setItem(STORAGE_KEY, JSON.stringify(normalized));
+    storage.setItem(STORAGE_KEY, JSON.stringify(stampTypeScale(normalized)));
     if (typeof storage.removeItem === 'function') {
       try {
         storage.removeItem(LEGACY_STORAGE_KEY);
@@ -746,16 +782,19 @@
     applyAppearanceToDocument: applyAppearanceToDocument,
     getDefaultAppearancePreferences: getDefaultAppearancePreferences,
     getComposerHoloOptions: getComposerHoloOptions,
+    getAppearanceToggleFields: getAppearanceToggleFields,
     getPalettePresets: getPalettePresets,
     getSurfaceEffectPresets: getSurfaceEffectPresets,
     getThemeBundles: getThemeBundles,
     pickThemeBundleAxes: pickThemeBundleAxes,
-    getTimelineStylePresets: getTimelineStylePresets,
     getTypographyPresets: getTypographyPresets,
     getFontScalePresets: getFontScalePresets,
     getChatWidthPresets: getChatWidthPresets,
     loadAppearancePreferences: loadAppearancePreferences,
     normalizeAppearancePreferences: normalizeAppearancePreferences,
+    migrateStoredAppearancePreferences: migrateStoredAppearancePreferences,
+    stampTypeScale: stampTypeScale,
+    TYPE_SCALE_VERSION: TYPE_SCALE_VERSION,
     detectActiveThemeBundle: detectActiveThemeBundle,
     resolveThemeBundle: resolveThemeBundle,
     saveAppearancePreferences: saveAppearancePreferences,

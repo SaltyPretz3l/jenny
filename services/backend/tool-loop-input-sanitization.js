@@ -69,15 +69,27 @@ function redactPathLikeText(value) {
     });
 }
 
-function redactSensitiveLikeText(value) {
-  return redactPathLikeText(value)
+function redactSecretLikeText(value) {
+  return String(value || '')
     .replace(SENSITIVE_ASSIGNMENT_RE, `$1"${REDACTED_VALUE_TOKEN}"`)
     .replace(BEARER_TOKEN_RE, REDACTED_VALUE_TOKEN)
     .replace(SENSITIVE_VALUE_RE, REDACTED_VALUE_TOKEN);
 }
 
+// Paths AND secrets: for text that leaves the transcript (remote relay,
+// bridge errors, subagent report metadata).
+function redactSensitiveLikeText(value) {
+  return redactSecretLikeText(redactPathLikeText(value));
+}
+
+// The persisted transcript (tool rows, their inputs, approval reasons) keeps
+// real absolute paths (HB-012, owner rule 2026-09-28): the timeline presents
+// them and history replays them to the model, which copied a [redacted:path]
+// placeholder back as a literal argument. Only secrets are redacted here;
+// paths are anonymised when a transcript is exported
+// (transcript-export-redaction.js).
 function sanitizeToolSummary(value) {
-  const redacted = redactSensitiveLikeText(value);
+  const redacted = redactSecretLikeText(value);
   return redacted.length > MAX_TOOL_INPUT_STRING_CHARS
     ? `${redacted.slice(0, MAX_TOOL_INPUT_STRING_CHARS)}...`
     : redacted;
@@ -94,7 +106,7 @@ function sanitizeApprovalReason(value) {
   // Bidi overrides and other format controls could reorder the sentence the
   // user is approving; the renderer strips them too, but a persisted reason
   // must already be clean.
-  const normalized = redactSensitiveLikeText(value)
+  const normalized = redactSecretLikeText(value)
     .replace(/\s+/g, ' ')
     .replace(/[\p{Cc}\p{Cf}]/gu, '')
     .trim();
@@ -118,7 +130,7 @@ function sanitizeToolInputValue(value, depth = 0) {
     return '[truncated]';
   }
   if (typeof value === 'string') {
-    const redacted = redactSensitiveLikeText(value);
+    const redacted = redactSecretLikeText(value);
     return redacted.length > MAX_TOOL_INPUT_STRING_CHARS
       ? `${redacted.slice(0, MAX_TOOL_INPUT_STRING_CHARS)}...`
       : redacted;
@@ -185,48 +197,8 @@ function buildPersistedToolInputSnapshot(input) {
   };
 }
 
-function escapeRegExp(value) {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
-// Matches the workspace root as a whole path prefix inside any string: not
-// preceded by a path character (so /x/home/ws is not the root /home/ws), and
-// not followed by a character that would continue its last segment (so
-// C:\ws2 and C:\ws.bak are not C:\ws, while "cd C:\ws; dir" is).
-function buildWorkspaceRootRegExp(root) {
-  const rootPattern = Array.from(root.replace(/[\\/]+$/, '') || root)
-    .map((character) => (character === '\\' || character === '/' ? '[\\\\/]' : escapeRegExp(character)))
-    .join('');
-  const segmentContinues = '[\\w.~@#$%+=-]';
-  // Windows drive and UNC paths are case-insensitive; POSIX paths are not.
-  const caseInsensitive = /^(?:[A-Za-z]:[\\/]|\\\\|\/\/)/.test(root);
-  return new RegExp(
-    `(?<![\\w.~\\\\/-])${rootPattern}(?:[\\\\/]+(?![^\\s"'\`<>|;&,)])|(?!${segmentContinues}))`,
-    caseInsensitive ? 'gi' : 'g'
-  );
-}
-
-// The persisted input_json redacts absolute paths to [redacted:path], which the
-// model copies back as a literal argument when history replays its own calls.
-// This model-facing copy states workspace paths relative to the root instead;
-// secrets, paths outside the workspace and size bounds follow input_json.
-function buildModelReplayToolInputJson(input, workspaceRoot) {
-  const root = typeof workspaceRoot === 'string' ? workspaceRoot.trim() : '';
-  if (!root) return '';
-  const rootRegExp = buildWorkspaceRootRegExp(root);
-  let rewritten;
-  try {
-    rewritten = JSON.parse(JSON.stringify(input ?? {}), (_key, value) => (
-      typeof value === 'string' ? value.replace(rootRegExp, '.') : value
-    ));
-  } catch (_error) {
-    return '';
-  }
-  return buildPersistedToolInputSnapshot(rewritten).inputJson;
-}
-
 function buildRedactedRawArgumentsPreview(rawArguments) {
-  const preview = redactSensitiveLikeText(rawArguments);
+  const preview = redactSecretLikeText(rawArguments);
   if (preview.length <= MAX_TOOL_INPUT_STRING_CHARS) {
     return preview;
   }
@@ -281,12 +253,12 @@ module.exports = {
   REDACTED_PATH_TOKEN,
   redactPathLikeText,
   redactSensitiveLikeText,
+  redactSecretLikeText,
   sanitizeApprovalReason,
   sanitizeApprovalPolicyText,
   sanitizeToolSummary,
   sanitizeToolInputValue,
   buildPersistedToolInputSnapshot,
-  buildModelReplayToolInputJson,
   buildRedactedRawArgumentsPreview,
   buildInvalidToolArgumentsMessage,
   normalizeGeneratedArtifactsFromToolResult,

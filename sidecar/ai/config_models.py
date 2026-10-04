@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Any
 
 from sidecar.ai.personality import DEFAULT_ASSISTANT_NAME, DEFAULT_PERSONALITY_BASE_PROMPT
 from sidecar.ai.tools.tool_search import DEFAULT_AUTO_TOOL_SEARCH_PERCENTAGE
@@ -188,10 +189,11 @@ class RuntimeConfig:
     chatgpt_access_token: str | None = None
     openai_compatible_api_key: str | None = field(default=None, repr=False)
     chatgpt_account_id: str | None = None
+    chatgpt_model_catalog: tuple[dict[str, Any], ...] = ()
     chatgpt_base_url: str | None = None
     tools_execution_timeout_seconds: float = 120.0
-    # 2026-08-30: local working-time default raised to 1800s (schema lockstep).
-    max_loop_wall_seconds: float = 1800.0
+    # Lockstep with config.py and renderer/shared/engine-tuning-schema.js.
+    max_loop_wall_seconds: float = 3600.0
     max_loop_iterations: int = 8
     max_chat_loop_iterations: int = 8
     max_task_loop_iterations: int = 30
@@ -250,12 +252,12 @@ class RuntimeConfig:
     electron_tool_bridge_enabled: bool = False
     tools_worktree_enabled: bool = False
     tools_subagents_enabled: bool = True
-    tools_subagent_batch_enabled: bool = False
     tools_mcp_resources_enabled: bool = False
     tools_automations_enabled: bool = False
     tools_workspace_present_enabled: bool = False
     tools_preview_test_enabled: bool = False
     tools_verify_enabled: bool = False
+    tools_image_generate_enabled: bool = False
     tools_home_enabled: bool = False
     tools_task_board_enabled: bool = False
     tools_rich_files_enabled: bool = True
@@ -298,12 +300,12 @@ class RuntimeConfig:
     max_tools_per_turn: int = 20
     max_web_tool_calls_per_turn: int = 10
     max_code_intelligence_tool_calls_per_turn: int = 16
-    max_tool_calls_per_session: int = 200
+    max_tool_calls_per_session: int = 2_000
     # Cloud-engine loop profile (see sidecar/ai/routing/iteration_limits.py).
     # These are the widened counterparts of the resource-discipline knobs above,
     # selected only when the ACTIVE (post-fallback) engine is a cloud frontier
-    # engine and the `cloud_loop_profile` feature flag is on. Every other engine
-    # — and any cloud engine that fell back to `mock` — keeps the local values.
+    # engine. Every other engine — and any cloud engine that fell back to
+    # `mock` — keeps the local values.
     cloud_max_chat_loop_iterations: int = 40
     cloud_max_task_loop_iterations: int = 300
     cloud_max_loop_wall_seconds: float = 28_800.0

@@ -9,7 +9,8 @@
 // through run-node-tests-safe.js, failing if either lane fails. This is a
 // convenience/speed lane, not a correctness gate: any ambiguity (an unmapped
 // source, no changed sources, or git being unavailable) falls back to the full
-// stable lane (`tests/` under --parallel-only) so a narrow selection NEVER
+// stable lane (`tests/` under --parallel-only, plus the sidecar fast lane when
+// Python selection is uncertain) so a narrow selection NEVER
 // silently under-runs coverage. Adds no dependency; does not modify the
 // working tree.
 //
@@ -32,13 +33,11 @@ const {
 const ROOT = path.resolve(__dirname, '..');
 const RUNNER_PATH = path.join('scripts', 'run-node-tests-safe.js');
 const STABLE_TIMEOUT_MS = 600000;
-// scripts/ is excluded from isProductionSource wholesale, but the
-// changed-target map is the repo's own statement that a handful of scripts
-// DO have required tests. Read it through mutation-smoke so all three
-// readers of this file share one definition of what a selector matches.
-const MAPPED_SCRIPT_SELECTORS = loadCoarseMap(ROOT)
-  .flatMap((rule) => (Array.isArray(rule.target_prefixes) ? rule.target_prefixes : []))
-  .filter((selector) => String(selector).startsWith('scripts/'));
+// The map admits required targets beyond mutation-smoke's JS catalog.
+const MAPPED_SELECTORS = loadCoarseMap(ROOT)
+  .flatMap((rule) => (Array.isArray(rule.target_prefixes) ? rule.target_prefixes : []));
+// Same bounded sidecar fast lane as the worktree-agent helper.
+const SIDECAR_FAST_TEST = 'tests/sidecar/test_server.py';
 
 // mutation-smoke's isProductionSource is JS-only (it feeds the JS mutation
 // catalog). The affected lane additionally covers sidecar Python sources so
@@ -46,7 +45,9 @@ const MAPPED_SCRIPT_SELECTORS = loadCoarseMap(ROOT)
 function isAffectedSource(relPath) {
   const rel = String(relPath).split('\\').join('/');
   if (isProductionSource(rel)) return true;
-  if (MAPPED_SCRIPT_SELECTORS.some((selector) => targetSelectorMatches(rel, selector))) return true;
+  if (MAPPED_SELECTORS.some((selector) => targetSelectorMatches(rel, selector)
+    && ((!selector.endsWith('/') && !selector.endsWith('-')) || /\.(js|py)$/.test(rel)))) return true;
+  if (rel.startsWith('server/') && rel.endsWith('.js')) return true;
   return rel.startsWith('sidecar/') && rel.endsWith('.py');
 }
 
@@ -74,6 +75,7 @@ function computeAffectedPlan({ root = ROOT } = {}, overrides = {}) {
     const bannerLine = '[affected] git unavailable -> falling back to stable lane';
     return {
       mode: 'fallback',
+      pythonFallback: true,
       tests: [],
       mappedCount: 0,
       stemCount: 0,
@@ -89,6 +91,7 @@ function computeAffectedPlan({ root = ROOT } = {}, overrides = {}) {
     const bannerLine = '[affected] 0 sources -> falling back to stable lane';
     return {
       mode: 'fallback',
+      pythonFallback: true,
       tests: [],
       mappedCount: 0,
       stemCount: 0,
@@ -131,6 +134,7 @@ function computeAffectedPlan({ root = ROOT } = {}, overrides = {}) {
       `${unmappedSources.length} unmapped -> falling back to stable lane`;
     return {
       mode: 'fallback',
+      pythonFallback: unmappedSources.some((source) => source.startsWith('sidecar/') && source.endsWith('.py')),
       tests: testsInOrder,
       mappedCount,
       stemCount,
@@ -173,13 +177,14 @@ function partitionTests(tests) {
 // Pure arg construction so tests can assert lane routing without spawning.
 // Either lane is null when it has nothing to run.
 function buildLanePlan(plan) {
+  const { nodeTests, pyTests } = partitionTests(plan.tests);
   if (plan.mode === 'fallback') {
+    const fallbackPyTests = [...new Set([...(plan.pythonFallback ? [SIDECAR_FAST_TEST] : []), ...pyTests])];
     return {
       nodeArgs: ['tests/', '--parallel-only', `--timeout-ms=${STABLE_TIMEOUT_MS}`],
-      pytestArgs: null,
+      pytestArgs: fallbackPyTests.length > 0 ? ['-m', 'pytest', '-q', ...fallbackPyTests] : null,
     };
   }
-  const { nodeTests, pyTests } = partitionTests(plan.tests);
   return {
     nodeArgs: nodeTests.length > 0 ? [...nodeTests, `--timeout-ms=${STABLE_TIMEOUT_MS}`] : null,
     pytestArgs: pyTests.length > 0 ? ['-m', 'pytest', '-q', ...pyTests] : null,
@@ -202,7 +207,7 @@ function runLane(executable, args) {
 
 function runChild(plan) {
   const { nodeArgs, pytestArgs } = buildLanePlan(plan);
-  const { nodeTests, pyTests } = partitionTests(plan.mode === 'affected' ? plan.tests : []);
+  const { nodeTests } = partitionTests(plan.mode === 'affected' ? plan.tests : []);
   let nodeExit = 0;
   let pyExit = 0;
   if (nodeArgs) {
@@ -213,7 +218,7 @@ function runChild(plan) {
     nodeExit = runLane(process.execPath, [path.join(ROOT, RUNNER_PATH), ...nodeArgs]);
   }
   if (pytestArgs) {
-    console.log(`[affected] python lane: ${pyTests.length} test file(s) -> pytest -q`);
+    console.log(`[affected] python lane: ${pytestArgs.length - 3} test file(s) -> pytest -q`);
     pyExit = runLane(resolvePythonExecutable(), pytestArgs);
   }
   // Both lanes always run; a failure in either fails the whole selection.
@@ -241,6 +246,8 @@ function main() {
       for (const test of pyTests) console.log(`  [python] ${test}`);
     } else {
       console.log('[affected] dry-run: would run the stable lane (tests/ --parallel-only)');
+      const { pytestArgs } = buildLanePlan(plan);
+      if (pytestArgs) console.log(`[affected] dry-run: python lane: ${pytestArgs.slice(3).join(', ')}`);
     }
     process.exitCode = 0;
     return;

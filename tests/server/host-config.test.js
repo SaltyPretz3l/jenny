@@ -108,7 +108,7 @@ test('requires the closed offline-copy execution contract and policy version two
   assert.throws(() => loadHostConfig(configPath), (error) => error.reason === 'execution_workspace_root_fixed');
   write({ ...base, host_execution_policy_version: 2, execution: { mode: 'offline-copy' }, workspace_root: '/workspaces/default' });
   const enabled = loadHostConfig(configPath);
-  assert.deepEqual(enabled.execution, { mode: 'offline-copy' });
+  assert.deepEqual(enabled.execution, { mode: 'offline-copy', stagingRoot: '/run/jenny-staging' });
   assert.equal(Object.isFrozen(enabled.execution), true);
   assert.equal(enabled.hostExecutionPolicyVersion, 2);
   write({ ...base, execution: { mode: 'offline-copy', control_path: '/tmp/operator.sock' }, workspace_root: '/workspaces/default' });

@@ -46,10 +46,10 @@ def test_approval_resume_gives_the_tool_loop_a_budget_tracker(
     )
     assert decision.approval_plan is not None
     config = dataclasses.replace(
-        router._config,  # noqa: SLF001 - harness config injection
-        feature_flags={**(router._config.feature_flags or {}), FEATURE_TOKEN_BUDGET: token_budget},  # noqa: SLF001
+        router._config,  # harness config injection
+        feature_flags={**(router._config.feature_flags or {}), FEATURE_TOKEN_BUDGET: token_budget},
     )
-    router._config = config  # noqa: SLF001 - one config object, as in the real stack
+    router._config = config  # one config object, as in the real stack
     trackers: list[object] = []
     real_run_tool_loop = tool_loop.run_tool_loop
 
@@ -64,7 +64,7 @@ def test_approval_resume_gives_the_tool_loop_a_budget_tracker(
         brain_container=SimpleNamespace(
             stack=SimpleNamespace(
                 config=config,
-                engine=router._engine,  # noqa: SLF001
+                engine=router._engine,
                 router=router,
                 tool_observations=None,
             ),
@@ -105,10 +105,10 @@ def test_approval_resume_checks_context_before_its_first_call(
     )
     assert decision.approval_plan is not None
     config = dataclasses.replace(
-        router._config,  # noqa: SLF001 - harness config injection
-        feature_flags={**(router._config.feature_flags or {}), FEATURE_TOKEN_BUDGET: True},  # noqa: SLF001
+        router._config,  # harness config injection
+        feature_flags={**(router._config.feature_flags or {}), FEATURE_TOKEN_BUDGET: True},
     )
-    router._config = config  # noqa: SLF001 - one config object, as in the real stack
+    router._config = config  # one config object, as in the real stack
     checks: list[int] = []
     real_compact = tool_loop_compaction.compact_tool_loop_context
 
@@ -123,7 +123,7 @@ def test_approval_resume_checks_context_before_its_first_call(
         brain_container=SimpleNamespace(
             stack=SimpleNamespace(
                 config=config,
-                engine=router._engine,  # noqa: SLF001
+                engine=router._engine,
                 router=router,
                 tool_observations=None,
             ),

@@ -37,6 +37,12 @@ MAX_WRAPPER_PIPE_BYTES = 512 * 1024
 _WRAPPER_PIPE_READ_CHUNK_BYTES = 64 * 1024
 
 
+class SandboxExecutionCancelled(RuntimeError):
+    def __init__(self, *, cleanup_confirmed: bool) -> None:
+        super().__init__("python execution aborted by user cancellation")
+        self.cleanup_confirmed = cleanup_confirmed
+
+
 @dataclass(frozen=True)
 class SandboxExecutionResult:
     work_dir: Path
@@ -94,9 +100,18 @@ def _wait_for_wrapper_process(
     captures: tuple[_PipeCapture, _PipeCapture],
     *,
     timeout_seconds: int,
+    abort_event: threading.Event | None = None,
 ) -> None:
     deadline = time.monotonic() + max(0.0, float(timeout_seconds))
     while proc.poll() is None:
+        if abort_event is not None and abort_event.is_set():
+            with suppress(OSError):
+                _kill_sandbox_tree(proc)
+            try:
+                proc.wait(timeout=5.0)
+            except subprocess.TimeoutExpired as error:
+                raise SandboxExecutionCancelled(cleanup_confirmed=False) from error
+            raise SandboxExecutionCancelled(cleanup_confirmed=True)
         if any(capture.exceeded for capture in captures):
             _kill_sandbox_tree(proc)
             proc.wait(timeout=1.0)
@@ -114,6 +129,7 @@ def _capture_wrapper_output(
     proc: subprocess.Popen,
     *,
     timeout_seconds: int,
+    abort_event: threading.Event | None = None,
 ) -> tuple[str, str]:
     stdout = getattr(proc, "stdout", None)
     stderr = getattr(proc, "stderr", None)
@@ -148,6 +164,7 @@ def _capture_wrapper_output(
         proc,
         captures,
         timeout_seconds=timeout_seconds,
+        abort_event=abort_event,
     )
     for reader in readers:
         reader.join(timeout=1.0)
@@ -343,14 +360,17 @@ def _child_environment(
     return env
 
 
-def execute_sandboxed(
+def execute_sandboxed(  # noqa: PLR0913 - keyword-only sandbox inputs.
     *,
     code: str,
     venv_python: Path,
     timeout_seconds: int,
     memory_limit_mb: int,
     working_directory: Path | None = None,
+    abort_event: threading.Event | None = None,
 ) -> SandboxExecutionResult:
+    if abort_event is not None and abort_event.is_set():
+        raise SandboxExecutionCancelled(cleanup_confirmed=True)
     work_dir = Path(tempfile.mkdtemp(prefix="jenny-pyexec-"))
     launch_directory = working_directory or work_dir
     script_path = work_dir / "_script.py"
@@ -401,6 +421,7 @@ def execute_sandboxed(
             _, wrapper_stderr = _capture_wrapper_output(
                 proc,
                 timeout_seconds=timeout_seconds,
+                abort_event=abort_event,
             )
         if not result_path.exists():
             raise RuntimeError(
@@ -413,16 +434,35 @@ def execute_sandboxed(
             payload=payload,
             returncode=int(proc.returncode if proc is not None else 1),
         )
-    except Exception:
-        if proc is not None and proc.poll() is None:
+    except Exception as error:
+        _cleanup_failed_execution(proc, work_dir, error)
+        raise
+
+
+def _cleanup_failed_execution(
+    proc: subprocess.Popen[str] | None,
+    work_dir: Path,
+    error: Exception,
+) -> None:
+    if proc is not None and proc.poll() is None:
+        if isinstance(error, SandboxExecutionCancelled):
+            with suppress(OSError, subprocess.TimeoutExpired):
+                _kill_sandbox_tree(proc)
+                proc.wait(timeout=1.0)
+        else:
             _kill_sandbox_tree(proc)
             proc.wait(timeout=1.0)
-        if proc is not None:
-            for pipe in (getattr(proc, "stdout", None), getattr(proc, "stderr", None)):
-                if pipe is not None:
-                    try:
-                        pipe.close()
-                    except OSError:
-                        pass
+    if proc is not None:
+        for pipe in (getattr(proc, "stdout", None), getattr(proc, "stderr", None)):
+            if pipe is not None:
+                try:
+                    pipe.close()
+                except OSError:
+                    pass
+    if isinstance(error, SandboxExecutionCancelled):
+        try:
+            _remove_tree(work_dir)
+        except OSError:
+            error.cleanup_confirmed = False
+    else:
         _remove_tree(work_dir)
-        raise

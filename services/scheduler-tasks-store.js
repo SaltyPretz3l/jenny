@@ -4,7 +4,7 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
-const { normalizeString } = require('../renderer/shared/string-utils');
+const { normalizeString } = require('./shared/normalize');
 const { safeEmitLog } = require('./backend/session-store-logging');
 const {
   SCHEDULED_TASKS_SCHEMA_VERSION,
@@ -78,9 +78,15 @@ function hasNewerScheduledTasksVersion(payload) {
 function readScheduledTasksJsonPayload(tasksPath, { fsImpl = fs } = {}) {
   try {
     const raw = fsImpl.readFileSync(tasksPath, 'utf8');
-    return JSON.parse(raw);
-  } catch (_error) {
-    return null;
+    const payload = JSON.parse(raw);
+    if (!payload || typeof payload !== 'object' || Array.isArray(payload)
+      || (!hasNewerScheduledTasksVersion(payload) && !Array.isArray(payload.tasks))) {
+      throw new Error('Malformed task list');
+    }
+    return payload;
+  } catch (error) {
+    if (error?.code === 'ENOENT') return null;
+    throw new Error('Scheduled tasks storage is malformed or unreadable. Restore it before saving changes.', { cause: error });
   }
 }
 

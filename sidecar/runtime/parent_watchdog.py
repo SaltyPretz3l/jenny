@@ -189,7 +189,7 @@ class ParentDeathWatchdog:
         self._fired = True
         try:
             self._on_parent_lost()
-        except Exception:  # noqa: BLE001
+        except Exception:
             logger.exception("parent-death watchdog teardown failed")
 
 

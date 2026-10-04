@@ -87,6 +87,19 @@ class SystemStatsMonitor extends EventEmitter {
     }
   }
 
+  // Re-times a running monitor in place; a stopped monitor only records the
+  // new interval. Restarting goes through this.start/this.stop so a wrapper
+  // installed on the instance (the visibility pause) keeps its bookkeeping.
+  setIntervalMs(intervalMs) {
+    const next = Math.max(1000, Number(intervalMs) || this.intervalMs);
+    if (next === this.intervalMs) return;
+    this.intervalMs = next;
+    if (!this.timer) return;
+    clearInterval(this.timer);
+    this.timer = null;
+    this.start();
+  }
+
   stop() {
     if (!this.timer) {
       return;

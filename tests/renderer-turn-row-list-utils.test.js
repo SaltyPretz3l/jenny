@@ -182,3 +182,25 @@ test('turn row list output remains byte-identical when no divider map is supplie
     '<div class="turn-row-list" data-turn-row-list="true"><div class="chat-row" data-row-id="turn:assistant_text:row" data-row-kind="assistant_text" data-source-message-id="message" data-render-message-id="message" data-source-message-ids="message"><span class="chat-row-node-dot" aria-hidden="true"></span><span>Body</span></div></div>'
   );
 });
+
+test('turn row list segment sink splits the list body per child, dividers before their row, byte-identical when joined', () => {
+  const rowList = createDividerAwareRowList();
+  const rows = [
+    { row_id: 'empty', turn_id: 'turn-divider', kind: 'assistant_text', render_message_id: 'message-target', bodyMarkup: '' },
+    { row_id: 'visible', turn_id: 'turn-divider', kind: 'assistant_text', render_message_id: 'message-target', bodyMarkup: '<span>Painted content</span>' },
+    { row_id: 'second', turn_id: 'turn-divider', kind: 'assistant_text', render_message_id: 'message-other', bodyMarkup: '<span>More</span>' },
+  ];
+  const options = { timelineDividerByMessageId: new Map([['message-target', { beforeMessageId: 'message-target' }]]) };
+  const html = rowList.buildTurnRowListMarkup(rows, [], options);
+  const sink = [];
+  const withSink = rowList.buildTurnRowListMarkup(rows, [], { ...options, rowListSegmentSink: sink });
+  assert.equal(withSink, html, 'the sink never changes the returned markup');
+  assert.deepEqual(sink.map((segment) => [segment.kind, segment.id]), [
+    ['divider', 'message-target'],
+    ['row', 'turn-divider:assistant_text:visible'],
+    ['row', 'turn-divider:assistant_text:second'],
+  ], 'one segment per emitted child in document order (row ids as rendered); the empty row emits nothing');
+  assert.match(html, /data-row-id="turn-divider:assistant_text:visible"/, 'the segment id is the rendered data-row-id');
+  const body = html.slice(html.indexOf('>') + 1, html.lastIndexOf('</div>'));
+  assert.equal(sink.map((segment) => segment.markup).join(''), body, 'joined segments are the list body');
+});

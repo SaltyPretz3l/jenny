@@ -204,23 +204,21 @@
         const currentNow = normalizeId(sessionId) === normalizeId(state.currentSessionId);
         // Widened render gate (ide_chat_dock): the open Workspace dock counts as
         // a live chat surface; falls back to the pre-dock predicate flag-off.
-        const visibleNow = currentNow && (
+        const visibleNow = (currentNow && (
           (globalThis.rendererChatSurfaceLiveUtils || {}).isChatSurfaceLive?.(state)
           ?? (state.ui?.activeView === 'chat')
-        );
+        // Split view W1-4c: a session another pane shows is visible too; the
+        // render frame routes its messages render to that pane only.
+        )) || (globalThis.rendererPaneVisibilityUtils || {}).isSessionVisibleInAnyPane?.(state, sessionId) === true;
         if (updated && visibleNow) {
-          queueRender({ messages: true });
+          queueRender({ messages: true }, { sessionId });
         } else if (updated && currentNow) {
           timelineVisibilityTracker?.markRenderableEvent?.(sessionId, {
             streamId: entry?.payload?.streamId,
             eventType: normalizeString(entry?.payload?.type) || 'stream_commit',
             visible: false,
             current: true,
-          });
-          safeAppendClientLog('DEBUG', 'stream.delta_current_not_visible', {
-            sessionId: String(entry.payload.sessionId || '').slice(0, 30),
             activeView: state.ui?.activeView,
-            aggregateLen: entry.payload.aggregateLength ?? String(entry.aggregate || '').length,
           });
           queueRender({ chrome: true });
         } else {

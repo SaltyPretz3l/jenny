@@ -23,7 +23,9 @@ test.afterEach(async () => {
 // The launch fails (the child exits before readiness) — deliberately: the point
 // is what reached the sink while the child was alive, which is also the only
 // state a stalled decode is ever observed in.
-async function launch({ stderr = [], stdout = [], onEngineActivity = null } = {}) {
+async function launch({
+  stderr = [], stdout = [], onEngineActivity = null, logger = () => {},
+} = {}) {
   const userDataPath = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-llama-activity-'));
   trackDirectory(userDataPath);
   const child = new FakeChildProcess(45001);
@@ -51,19 +53,26 @@ async function launch({ stderr = [], stdout = [], onEngineActivity = null } = {}
     },
     spawnSyncImpl: () => ({ status: 0 }),
     isProcessAliveImpl: () => false,
-    logger: () => {},
+    logger,
   }).then(() => null, () => null);
 }
 
 test('llama-server decode telemetry reaches the liveness sink', async () => {
   let beats = 0;
+  const logged = [];
   await launch({
     stderr: ['13.45.081.978 I slot print_timing: id  2 | task 20326 | n_gen = 159, tg = 52.47 t/s'],
     onEngineActivity: () => {
       beats += 1;
     },
+    logger: (level, event, details) => logged.push({ level, event, details }),
   });
   assert.equal(beats, 1);
+  // HB-025: the progress tick feeds the watchdog but is dropped from the log sinks.
+  const echoed = logged.filter(
+    (entry) => entry.event === 'llama.server.output' && /print_timing/.test(entry.details?.line || '')
+  );
+  assert.deepEqual(echoed, []);
 });
 
 test('ambient server chatter and stdout never beat', async () => {

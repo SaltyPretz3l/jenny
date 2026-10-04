@@ -59,7 +59,7 @@ def runtime_continuation_resume_from_params(  # noqa: PLR0913
     if _FIELD not in params:
         return None
     # Resume execution is request-only; eager loading expands the server startup graph.
-    from sidecar.runtime.chat_continuation_resume import (  # noqa: PLC0415
+    from sidecar.runtime.chat_continuation_resume import (
         HydratedBeforeToolDispatchResume,
     )
 

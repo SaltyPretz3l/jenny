@@ -13,6 +13,9 @@ COPY renderer/shared ./renderer/shared
 COPY renderer/chat ./renderer/chat
 COPY renderer/features/renderer-plan-document.js ./renderer/features/renderer-plan-document.js
 COPY renderer/inventory ./renderer/inventory
+COPY renderer/shell/renderer-orchestration-controller.js ./renderer/shell/renderer-orchestration-controller.js
+COPY renderer/shell/renderer-runs-view.js ./renderer/shell/renderer-runs-view.js
+COPY renderer/shell/renderer-runtime-limits-view.js ./renderer/shell/renderer-runtime-limits-view.js
 COPY scripts/build-browser.js ./scripts/build-browser.js
 COPY locales/*.json ./locales/
 RUN node scripts/build-browser.js \
@@ -41,7 +44,7 @@ RUN apt-get update \
     && install -d -m 0700 -o 10001 -g 10001 /data \
       /workspaces/default /run/jenny-secrets /etc/jenny /tmp \
     && install -d -m 0770 -o 0 -g 10003 /run/jenny-worker \
-    && install -d -m 0700 -o 10001 -g 10001 /inputs /workspace
+    && install -d -m 0700 -o 10001 -g 10001 /inputs /workspace /run/jenny-staging
 
 # Stable runtime allowlist. Tests, source-control metadata, plugins, and user
 # data are excluded by .dockerignore and are never copied into this stage.

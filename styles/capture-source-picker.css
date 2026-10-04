@@ -19,10 +19,8 @@
 
 .capture-source-section-label {
   margin: 0 0 var(--space-2, 8px);
-  font-size: var(--font-size-base);
-  font-weight: 600;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+  font-size: var(--font-size-caption);
+  font-weight: 500;
   color: var(--text-muted, #8a93a4);
 }
 
@@ -73,7 +71,7 @@
 }
 
 .capture-source-name {
-  font-size: var(--font-size-md);
+  font-size: var(--font-size-body);
   color: var(--text-secondary, #aab3c0);
   white-space: nowrap;
   overflow: hidden;
@@ -84,7 +82,7 @@
   margin: 0;
   padding: var(--space-4, 16px) 0;
   color: var(--text-muted, #8a93a4);
-  font-size: var(--font-size-lg);
+  font-size: var(--font-size-body);
   text-align: center;
 }
 
@@ -101,7 +99,7 @@
   border: 1px solid var(--border-default, #2a3140);
   border-radius: var(--radius-md, 12px);
   color: var(--text-secondary, #aab3c0);
-  font-size: var(--font-size-lg);
+  font-size: var(--font-size-body);
   cursor: pointer;
   transition: background-color var(--transition-fast), color var(--transition-fast), border-color var(--transition-fast);
 }

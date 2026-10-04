@@ -5,6 +5,7 @@ import argparse
 import os
 import re
 import subprocess
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Sequence
@@ -343,11 +344,11 @@ def _validate_domain_manifest(
     )
 
 
-def _run_git_command(arguments: Sequence[str]) -> tuple[int, str, str]:
+def _run_git_command(arguments: Sequence[str], *, root: Path | None = None) -> tuple[int, str, str]:
     try:
         completed = subprocess.run(
             ["git", *arguments],
-            cwd=ROOT,
+            cwd=ROOT if root is None else root,
             check=False,
             capture_output=True,
             text=True,
@@ -370,7 +371,8 @@ def _parse_changed_paths(lines: str) -> list[str]:
     return changed
 
 
-def _parse_status_paths(lines: str) -> list[str]:
+def _parse_status_paths(lines: str, *, root: Path | None = None) -> list[str]:
+    root = ROOT if root is None else root
     changed: list[str] = []
     seen: set[str] = set()
     for raw_line in lines.splitlines():
@@ -385,12 +387,12 @@ def _parse_status_paths(lines: str) -> list[str]:
         normalized = _normalize_repo_path(path_text)
         if not normalized or normalized in seen:
             continue
-        candidate = ROOT / normalized
+        candidate = root / normalized
         if candidate.is_dir():
             for child in candidate.rglob("*"):
                 if not child.is_file():
                     continue
-                child_normalized = _normalize_repo_path(child.relative_to(ROOT))
+                child_normalized = _normalize_repo_path(child.relative_to(root))
                 if not child_normalized or child_normalized in seen:
                     continue
                 changed.append(child_normalized)
@@ -401,11 +403,18 @@ def _parse_status_paths(lines: str) -> list[str]:
     return changed
 
 
-def _collect_git_changed_files(base_ref: str | None, head_ref: str | None) -> tuple[list[str], str | None]:
-    if not (ROOT / ".git").exists():
-        return [], f"no .git metadata under {_normalize_repo_path(str(ROOT))}"
+def _collect_git_changed_files(
+    base_ref: str | None, head_ref: str | None, *, root: Path | None = None,
+    run_git: Callable[[Sequence[str]], tuple[int, str, str]] | None = None,
+) -> tuple[list[str], str | None]:
+    root = ROOT if root is None else root
+    if run_git is None:
+        run_git = (_run_git_command if root is ROOT
+                   else lambda args: _run_git_command(args, root=root))
+    if not (root / ".git").exists():
+        return [], f"no .git metadata under {_normalize_repo_path(str(root))}"
 
-    return_code, stdout, stderr = _run_git_command(["rev-parse", "--is-inside-work-tree"])
+    return_code, stdout, stderr = run_git(["rev-parse", "--is-inside-work-tree"])
     if return_code != 0 or stdout.strip().lower() != "true":
         detail = stderr.strip() or stdout.strip() or "not a git work tree"
         return [], f"git repository check failed: {detail}"
@@ -413,7 +422,7 @@ def _collect_git_changed_files(base_ref: str | None, head_ref: str | None) -> tu
     if base_ref or head_ref:
         base = (base_ref or "HEAD~1").strip() or "HEAD~1"
         head = (head_ref or "HEAD").strip() or "HEAD"
-        return_code, stdout, stderr = _run_git_command(
+        return_code, stdout, stderr = run_git(
             ["diff", "--name-only", "--diff-filter=ACDMR", f"{base}...{head}"]
         )
         if return_code != 0:
@@ -425,7 +434,7 @@ def _collect_git_changed_files(base_ref: str | None, head_ref: str | None) -> tu
     merge_base_errors: list[str] = []
     merge_base_diff_succeeded = False
     for merge_base_ref in DEFAULT_MERGE_BASE_REFS:
-        merge_base_code, merge_base_stdout, merge_base_stderr = _run_git_command(
+        merge_base_code, merge_base_stdout, merge_base_stderr = run_git(
             ["merge-base", merge_base_ref, "HEAD"]
         )
         if merge_base_code != 0 or not merge_base_stdout.strip():
@@ -436,7 +445,7 @@ def _collect_git_changed_files(base_ref: str | None, head_ref: str | None) -> tu
             continue
 
         merge_base_commit = merge_base_stdout.strip()
-        diff_code, diff_stdout, diff_stderr = _run_git_command(
+        diff_code, diff_stdout, diff_stderr = run_git(
             ["diff", "--name-only", "--diff-filter=ACDMR", f"{merge_base_commit}...HEAD"]
         )
         if diff_code == 0:
@@ -450,7 +459,7 @@ def _collect_git_changed_files(base_ref: str | None, head_ref: str | None) -> tu
         )
     merge_base_error = "; ".join(merge_base_errors) or None
 
-    status_code, status_stdout, status_stderr = _run_git_command(
+    status_code, status_stdout, status_stderr = run_git(
         ["status", "--porcelain", "--untracked-files=normal"]
     )
     if status_code != 0:
@@ -461,7 +470,7 @@ def _collect_git_changed_files(base_ref: str | None, head_ref: str | None) -> tu
             return [], f"{merge_base_error}; git status failed: {detail}"
         return [], f"git status failed: {detail}"
 
-    status_changed = _parse_status_paths(status_stdout)
+    status_changed = _parse_status_paths(status_stdout, root=root)
     if merge_base_changed:
         combined: list[str] = []
         seen: set[str] = set()

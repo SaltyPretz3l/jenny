@@ -15,7 +15,7 @@ def _validate_resume_state(  # noqa: C901, PLR0912 - ordered recovery-state vali
     plan: Sequence[Mapping[str, Any]],
     staging: Sequence[Mapping[str, Any]],
 ) -> None:
-    from sidecar.ai.tools.workspace_restore import (  # noqa: PLC0415
+    from sidecar.ai.tools.workspace_restore import (
         WorkspaceRestoreError,
         _decision_map,
         _preflight_conflicts,
@@ -114,7 +114,7 @@ def _step_paths(
 def _validate_completed_step(
     root: Path, step: Mapping[str, Any], decision: Mapping[str, Any] | None
 ) -> None:
-    from sidecar.ai.tools.workspace_restore import (  # noqa: PLC0415
+    from sidecar.ai.tools.workspace_restore import (
         WorkspaceRestoreError,
         _safe_path,
         _signature,
@@ -146,7 +146,7 @@ def _stage_move_sources(
     plan: Sequence[Mapping[str, Any]],
     staging: Sequence[Mapping[str, Any]],
 ) -> None:
-    from sidecar.ai.tools.workspace_restore import (  # noqa: PLC0415
+    from sidecar.ai.tools.workspace_restore import (
         WorkspaceRestoreError,
         _assert_signature,
         _fsync_directory,

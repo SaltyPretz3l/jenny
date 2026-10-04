@@ -324,6 +324,31 @@ class ModelTuningService {
     };
   }
 
+  /* Why a runtime-refreshing change cannot be applied right now, or ''. The
+   * chat GPU handoff (an image render owns the GPU, llama-server is parked or
+   * relaunching) is named first: its parked turn is also an active stream, and
+   * "finish the reply" would be the wrong advice. */
+  _runtimeBusyReason() {
+    let leaseHeld = false;
+    try {
+      leaseHeld = this.backendService?.chatGpuHandoff?.launchRefusal?.() === 'gpu_lease_held';
+    } catch (_error) { /* an unreadable handoff falls through to the stream check */ }
+    if (leaseHeld) return 'gpu_lease_held';
+    if (this.backendService?.activeStreams?.size) return 'active_stream';
+    return '';
+  }
+
+  /* A busy refusal writes nothing, and is logged so it is never silent. */
+  _refuseBusy(modelId, reason, contextLength) {
+    this._emit('WARN', 'model_tuning.apply_refused', {
+      modelId,
+      status: 'rejected',
+      reason,
+      requestedContextLength: contextLength,
+    });
+    return { status: 'rejected', reason, state: this.getState() };
+  }
+
   async _refreshOrThrow(reason) {
     if (!this.backendService || typeof this.backendService.refreshManagedConfig !== 'function') {
       throw new Error('managed_runtime_unavailable');
@@ -424,9 +449,8 @@ class ModelTuningService {
         return { status: 'rejected', reason: 'config_write_failed', state: this.getState() };
       }
     }
-    if (this.backendService?.activeStreams?.size) {
-      return { status: 'rejected', reason: 'active_stream', state: this.getState() };
-    }
+    const busyReason = this._runtimeBusyReason();
+    if (busyReason) return this._refuseBusy(modelId, busyReason, contextLength);
     const previousRead = this._readState();
     if (!previousRead.ok) {
       return { status: 'rejected', reason: 'config_read_failed', state: previousRead.state };
@@ -447,9 +471,8 @@ class ModelTuningService {
         return { status: 'rejected', reason: preflight.reason, preflight, state: this.getState() };
       }
       if (this.disposed) return { status: 'rejected', reason: 'disposed', preflight, state: this.getState() };
-      if (this.backendService?.activeStreams?.size) {
-        return { status: 'rejected', reason: 'active_stream', preflight, state: this.getState() };
-      }
+      const lateBusyReason = this._runtimeBusyReason();
+      if (lateBusyReason) return { ...this._refuseBusy(modelId, lateBusyReason, contextLength), preflight };
       if (hasStreamTimeout || resetGenerationProfile || hasGenerationProfile) {
         const modelPatch = { modelId };
         if (hasStreamTimeout) modelPatch.streamInactivitySeconds = streamInactivitySeconds;
@@ -493,16 +516,15 @@ class ModelTuningService {
     } catch (_error) {
       try {
         if (hasStreamTimeout || resetGenerationProfile || hasGenerationProfile) {
-          const previousProfile = previous.generationProfilesByModel?.[modelId];
-          const rollbackModelPatch = { modelId };
+          const currentConfig = this.shellConfigService.getState();
+          const modelTuning = { ...currentConfig.modelTuning };
           if (hasStreamTimeout) {
-            rollbackModelPatch.streamInactivitySeconds = previous.streamInactivitySecondsByModel?.[modelId] ?? null;
+            modelTuning.streamInactivitySecondsByModel = previous.streamInactivitySecondsByModel;
           }
           if (resetGenerationProfile || hasGenerationProfile) {
-            rollbackModelPatch.generationProfile = previousProfile || {};
-            rollbackModelPatch.resetGenerationProfile = !previousProfile;
+            modelTuning.generationProfilesByModel = previous.generationProfilesByModel;
           }
-          this.shellConfigService.updateModelTuning(rollbackModelPatch);
+          this.shellConfigService.replaceState({ ...currentConfig, modelTuning }, 'model_tuning_rollback');
         }
         if (hasContextLength || hasRatio || hasCustomPrompt) {
           const rollbackCompactionPatch = {};

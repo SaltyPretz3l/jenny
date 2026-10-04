@@ -45,9 +45,12 @@
     var state = options.state;
     var navigationIntent = navigationIntentUtils.getOrCreateNavigationIntentOwner(state);
     var jennyShellSessions = options.jennyShellSessions || null;
+    // Split view W1-4b: the session this controller's pane holds (renderer-pane-session-context.js).
+    var sessionContext = options.sessionContext
+      || (globalThis.rendererPaneSessionContext || require('./renderer-pane-session-context')).createPaneSessionContext({ state: state, paneId: options.paneId });
     var getCurrentSessionId = typeof options.getCurrentSessionId === 'function'
       ? options.getCurrentSessionId
-      : function () { return normalizeId(state.currentSessionId); };
+      : function () { return sessionContext.getSessionId(); };
     var getCurrentSessionMessages = typeof options.getCurrentSessionMessages === 'function'
       ? options.getCurrentSessionMessages
       : function () { return []; };
@@ -151,7 +154,7 @@
           if (navigationGuard && navigationGuard.isCurrent() !== true) {
             return;
           }
-          state.currentSessionId = normalizeId(branchSessionId);
+          sessionContext.setSessionId(normalizeId(branchSessionId));
           renderAll();
         };
         var navigationResult = await navigationIntent.navigateOrNotify(navigationToken, branch.id, {

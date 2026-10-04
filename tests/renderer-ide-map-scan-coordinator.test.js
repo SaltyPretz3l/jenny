@@ -231,13 +231,14 @@ test('coordinator: execute throw is contained; a throwing applyResult reports ap
 
 test('production script graph loads controller-utils + scan-coordinator before the map controller', (t) => {
   const root = path.resolve(__dirname, '..');
-  const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
-  const utilsOffset = html.indexOf('renderer-ide-map-controller-utils.js');
-  const coordOffset = html.indexOf('renderer-ide-map-scan-coordinator.js');
-  const controllerOffset = html.indexOf('renderer-ide-map-controller.js"');
-  assert.ok(utilsOffset >= 0, 'controller-utils declared in production index.html');
-  assert.ok(coordOffset >= 0, 'scan-coordinator declared in production index.html');
-  assert.ok(controllerOffset >= 0, 'controller declared in production index.html');
+  // The IDE group loads on first use in the order of its manifest.
+  const scripts = require('../renderer/shell/renderer-ide-script-manifest').map(([src]) => path.basename(src));
+  const utilsOffset = scripts.indexOf('renderer-ide-map-controller-utils.js');
+  const coordOffset = scripts.indexOf('renderer-ide-map-scan-coordinator.js');
+  const controllerOffset = scripts.indexOf('renderer-ide-map-controller.js');
+  assert.ok(utilsOffset >= 0, 'controller-utils declared in the IDE script manifest');
+  assert.ok(coordOffset >= 0, 'scan-coordinator declared in the IDE script manifest');
+  assert.ok(controllerOffset >= 0, 'controller declared in the IDE script manifest');
   assert.ok(utilsOffset < controllerOffset, 'controller-utils loads before the controller');
   assert.ok(coordOffset < controllerOffset, 'scan-coordinator loads before the controller');
 

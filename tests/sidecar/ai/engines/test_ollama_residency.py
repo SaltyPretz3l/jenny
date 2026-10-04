@@ -36,7 +36,7 @@ def _engine(*, model: str = "qwen3.5:9b", num_ctx: int | None = 32768) -> Ollama
     engine = OllamaEngine(host="http://localhost:11434")
     engine.model_name = model
     engine.set_configured_context_length(num_ctx)
-    engine._claim_residency()  # noqa: SLF001 -- load_model's claim point.
+    engine._claim_residency()  # load_model's claim point.
     return engine
 
 
@@ -45,7 +45,7 @@ def _record_posts(engine: OllamaEngine, sink: list[dict[str, Any]]) -> None:
         sink.append({"endpoint": endpoint, "data": data})
         return {"done": True}
 
-    engine._post = _post  # type: ignore[method-assign]  # noqa: SLF001
+    engine._post = _post  # type: ignore[method-assign]
 
 
 # ---------------------------------------------------------------------------
@@ -108,7 +108,7 @@ class TestEngineDispose:
 
         assert previous_posts == [], "the successor still holds this runner"
         assert previous.model_name is None, "instance state is still torn down"
-        assert previous._ready is False  # noqa: SLF001
+        assert previous._ready is False
 
         successor.unload_model()
 

@@ -202,11 +202,10 @@ test('client_timing keeps the renderer full_render_reasons histogram (bounded, c
   assert.equal(payload.client_timing.full_renders, 7);
   assert.deepEqual(payload.client_timing.full_render_reasons, {
     'cannot_patch:streaming_id_mismatch': 5,
-    projection_revision_changed: 2,
-    ['k'.repeat(64)]: 1,
+    other: 3,
   });
 
-  // Bounded to 32 reasons; an all-junk histogram is dropped, not emitted empty.
+  // Unknown keys share one bucket; an all-junk histogram is dropped.
   await mergeClientTimingIntoTurnDiagnostic({
     service,
     streamId: 'stream_reasons_1',
@@ -215,7 +214,7 @@ test('client_timing keeps the renderer full_render_reasons histogram (bounded, c
     delayMs: 1,
   });
   const bounded = JSON.parse(fs.readFileSync(filePath, 'utf8'));
-  assert.equal(Object.keys(bounded.client_timing.full_render_reasons).length, 32);
+  assert.deepEqual(bounded.client_timing.full_render_reasons, { other: 40 });
   assert.equal(await mergeClientTimingIntoTurnDiagnostic({
     service,
     streamId: 'stream_reasons_1',
@@ -422,6 +421,8 @@ test('atomic dump publication and merge read failures keep late client timing pe
   releaseRename();
   await dumpPromise;
   fs.promises.rename = originalRename;
+  const published = JSON.parse(fs.readFileSync(publishing.filePath, 'utf8'));
+  assert.equal(published.client_timing.deltas_received, 3);
 
   fs.promises.readFile = async (filePath, ...args) => {
     if (filePath === publishing.filePath) {
@@ -439,11 +440,12 @@ test('atomic dump publication and merge read failures keep late client timing pe
   assert.equal(failedMerge, null);
   fs.promises.readFile = originalReadFile;
 
-  const rewritten = await dumpTurnDiagnostic({
+  const rewritten = await mergeClientTimingIntoTurnDiagnostic({
     service,
-    sessionId: 'session-interleaved',
     streamId: 'stream_interleaved',
-    terminalStatus: 'completed',
+    clientTiming: { full_renders: 2 },
+    attempts: 1,
+    delayMs: 0,
   });
   const payload = JSON.parse(fs.readFileSync(rewritten, 'utf8'));
   assert.equal(payload.client_timing.deltas_received, 3);

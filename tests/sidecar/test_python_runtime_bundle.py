@@ -56,7 +56,7 @@ def _parse_lock_fixture(
     checker = _load_script("scripts/checks/check_python_runtime_bundle.py", module_suffix)
     lock_path = tmp_path / "requirements-lock.txt"
     lock_path.write_text(contents, encoding="utf-8")
-    return checker._parse_hashed_lock(lock_path)  # noqa: SLF001
+    return checker._parse_hashed_lock(lock_path)
 
 
 def _sha256(path: Path) -> str:
@@ -289,7 +289,7 @@ def test_parse_hashed_lock_accepts_repository_locks(lock_name: str) -> None:
         f"checker_repository_{lock_name}",
     )
 
-    pins, errors = checker._parse_hashed_lock(ROOT / lock_name)  # noqa: SLF001
+    pins, errors = checker._parse_hashed_lock(ROOT / lock_name)
 
     assert pins
     assert errors == []
@@ -390,7 +390,7 @@ def test_builder_download_command_is_hash_locked_to_cp313_win_amd64(
     builder = _load_script("scripts/build-python-runtime-bundle.py", "builder_pip")
     observed: list[str] = []
 
-    def _fake_run(command, **kwargs):  # noqa: ANN001
+    def _fake_run(command, **kwargs):
         del kwargs
         observed.extend(command)
         return subprocess.CompletedProcess(command, 0)
@@ -463,7 +463,7 @@ def test_embeddable_runtime_rejects_unsafe_pip_wheel_paths(
         archive.writestr(unsafe_name, "unsafe")
 
     with pytest.raises(interpreter.PythonRuntimeWheelhouseIntegrityError, match="unsafe"):
-        interpreter._extract_verified_pip_wheel(  # noqa: SLF001
+        interpreter._extract_verified_pip_wheel(
             pip_wheel,
             site_packages,
         )

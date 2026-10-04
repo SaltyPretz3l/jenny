@@ -10,12 +10,11 @@ const {
   renderHtmlArtifactKind,
   renderSvgArtifactKind,
 } = require('../renderer/features/renderer-artifacts-render-web.js');
-const { renderArtifactViewModeButton } = require('../renderer/features/renderer-artifacts-render.js');
 
 const escapeHtml = (value) => String(value ?? '')
   .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
-function makeCtx(t, { content, viewMode = 'preview', editable = false, artifactPanelV3 = false } = {}) {
+function makeCtx(t, { content, viewMode = 'preview', editable = false } = {}) {
   const dom = new JSDOM('<body></body>');
   // Stand-in for the preload bridge's artifactFrame.stage (the HTML frame
   // factory's default staging transport): records staged documents.
@@ -37,7 +36,7 @@ function makeCtx(t, { content, viewMode = 'preview', editable = false, artifactP
   const surface = { key: 'full', previewContent: el(), editorShell: el(), detailNote: el() };
   const setDocumentCalls = [];
   const deps = {
-    state: { artifacts: { loading: false, lastError: '' }, features: { featureFlags: { artifact_panel_v3: artifactPanelV3 } } },
+    state: { artifacts: { loading: false, lastError: '' }, features: { featureFlags: {} } },
     escapeHtml,
     setDetailNote: (s, text, isError) => {
       s.detailNote.textContent = text;
@@ -46,7 +45,6 @@ function makeCtx(t, { content, viewMode = 'preview', editable = false, artifactP
     ensureEditor: () => ({ setDocument: (docSpec) => { setDocumentCalls.push(docSpec); return Promise.resolve(); } }),
     getPreferredEditorValue: () => content,
     getArtifactViewMode: () => viewMode,
-    renderArtifactViewModeButton,
   };
   // The flag-on HTML/SVG path mounts a sandbox iframe whose factory arms a
   // REFERENCED 8s settle timeout (DEFAULT_TIMEOUT_MS in
@@ -90,21 +88,11 @@ test('html kind renders a sanitized preview: scripts, handlers, javascript: URLs
   assert.equal(surface.editorShell.classList.contains('hidden'), true);
 });
 
-test('html kind emits the generalized view-mode toolbar attributes', (t) => {
-  const { ctx, surface } = makeCtx(t, { content: '<p>x</p>', editable: true });
-  renderHtmlArtifactKind(ctx);
-  const html = surface.previewContent.innerHTML;
-  assert.ok(html.includes('data-artifact-view-kind="html"'), html);
-  assert.ok(html.includes('data-artifact-view-mode="preview"'), html);
-  assert.ok(html.includes('data-artifact-view-mode="edit"'), html);
-  assert.ok(!html.includes('data-artifact-mermaid-mode'), 'html toolbar must not reuse the mermaid attr');
-});
-
-test('Artifact Panel V3 suppresses the in-content HTML/SVG view toolbar', (t) => {
-  const html = makeCtx(t, { content: '<p>x</p>', editable: true, artifactPanelV3: true });
+test('the Canvas chrome owns the view control: no in-content HTML/SVG toolbar', (t) => {
+  const html = makeCtx(t, { content: '<p>x</p>', editable: true });
   renderHtmlArtifactKind(html.ctx);
   assert.equal(html.surface.previewContent.querySelector('[data-artifact-view-kind]'), null);
-  const svg = makeCtx(t, { content: '<svg><rect width="1" height="1"></rect></svg>', artifactPanelV3: true });
+  const svg = makeCtx(t, { content: '<svg><rect width="1" height="1"></rect></svg>' });
   renderSvgArtifactKind(svg.ctx);
   assert.equal(svg.surface.previewContent.querySelector('[data-artifact-view-kind]'), null);
 });
@@ -156,7 +144,7 @@ test('svg kind renders sanitized svg markup into the web shell', (t) => {
   assert.ok(html.includes('<svg'), `svg missing: ${html}`);
   assert.ok(html.includes('rect'), html);
   assert.ok(!html.includes('<script'), `script survived svg sanitize: ${html}`);
-  assert.ok(html.includes('data-artifact-view-kind="svg"'), html);
+  assert.ok(html.includes('data-artifact-web-kind="svg"'), html);
 });
 
 test('svg kind falls back to raw source when the sanitizer strips everything', (t) => {

@@ -108,7 +108,8 @@
         disabled: busy,
         dataset: { 'ollama-health-action': 'recheck' },
       })
-      + actionButton({
+      // The tray actions have nothing to act on unless the tray app or its Startup shortcut was found.
+      + (view.status.detected ? actionButton({
         plain: true,
         className: 'settings-primary',
         label: view.busyAction === 'quit' ? jt('models.ollama.health.quitting', 'Quitting…') : jt('models.ollama.health.quitTrayApp', 'Quit tray app'),
@@ -121,7 +122,7 @@
         label: view.busyAction === 'disable' ? jt('models.ollama.health.disabling', 'Disabling…') : jt('models.ollama.health.disableStartupShortcut', 'Disable Startup shortcut'),
         disabled: busy || disabledForPlatform,
         dataset: { 'ollama-health-action': 'disable' },
-      })
+      }) : '')
       + actionButton({
         plain: true,
         className: 'settings-secondary',
@@ -137,14 +138,22 @@
         dataset: { 'ollama-health-action': 'diagnostics' },
       });
 
-    return ''
-      + '<div class="settings-group ollama-health-group" role="group" aria-labelledby="ollamaHealthHeading" id="' + GROUP_ID + '">'
-      + '<h4 class="settings-group-heading" id="ollamaHealthHeading">' + escapeHtml(jt('models.ollama.health.heading', 'Ollama engine health')) + '</h4>'
+    var bodyHtml = ''
       + '<p class="settings-group-copy">' + escapeHtml(jt('models.ollama.health.description', 'Check for the Ollama tray app, which can silently kill Jenny\'s managed engine.')) + '</p>'
       + platformNoteHtml
       + rowsHtml
       + '<div class="settings-actions">' + buttonsHtml + '</div>'
-      + '<div class="settings-note ollama-health-status" aria-live="polite">' + escapeHtml(view.statusMessage || '') + '</div>'
+      + '<div class="settings-note ollama-health-status" aria-live="polite">' + escapeHtml(view.statusMessage || '') + '</div>';
+    // While another engine runs and no tray app was found, the checks are
+    // troubleshooting only: they fold away under the heading.
+    if (view.folded === true) {
+      bodyHtml = '<details class="settings-fold ollama-health-fold"' + (view.foldOpen === true ? ' open' : '') + '><summary>'
+        + escapeHtml(jt('models.ollama.health.troubleshooting', 'Troubleshooting')) + '</summary>' + bodyHtml + '</details>';
+    }
+    return ''
+      + '<div class="settings-group ollama-health-group" role="group" aria-labelledby="ollamaHealthHeading" id="' + GROUP_ID + '">'
+      + '<h4 class="settings-group-heading" id="ollamaHealthHeading">' + escapeHtml(jt('models.ollama.health.heading', 'Ollama engine health')) + '</h4>'
+      + bodyHtml
       + '</div>';
   }
 
@@ -175,6 +184,13 @@
       );
     }
 
+    // Folded while a known engine other than Ollama runs and no tray app was
+    // found; an unknown engine or a detected tray app keeps it open.
+    function isFolded() {
+      var engine = String((state.offline && state.offline.currentEngine) || '').trim().toLowerCase();
+      return Boolean(engine) && engine !== 'ollama' && view.status.detected !== true;
+    }
+
     function findModelsCard() {
       if (!documentRef || typeof documentRef.querySelector !== 'function') {
         return null;
@@ -201,10 +217,17 @@
       if (!card) {
         return;
       }
-      var html = buildGroupHtml(view);
       var existing = card.querySelector('#' + GROUP_ID);
+      // A fold the user opened stays open across re-renders (a Re-check repaints it).
+      var foldOpen = Boolean(existing && existing.querySelector('details.ollama-health-fold[open]'));
+      var html = buildGroupHtml(Object.assign({}, view, { folded: isFolded(), foldOpen: foldOpen }));
+      var libraryExtras = card.querySelector('#modelLibrarySectionExtrasHost');
       var libraryToolbar = card.querySelector('#modelLibrarySectionToolbarHost');
-      if (libraryToolbar) {
+      if (libraryExtras) {
+        // Engine health follows the library, which leads the page.
+        if (existing) existing.remove();
+        libraryExtras.insertAdjacentHTML('afterend', html);
+      } else if (libraryToolbar) {
         if (existing) existing.remove();
         libraryToolbar.insertAdjacentHTML('beforebegin', html);
       } else if (existing) {

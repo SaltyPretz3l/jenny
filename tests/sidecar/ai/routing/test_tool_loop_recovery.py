@@ -13,8 +13,8 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-import pytest  # noqa: E402
-from test_tool_loop import (  # noqa: E402 — shared loop harness.
+import pytest
+from test_tool_loop import (  # shared loop harness.
     _build_router,
     _mermaid_descriptor,
     _StubMCPClient,
@@ -22,30 +22,30 @@ from test_tool_loop import (  # noqa: E402 — shared loop harness.
     _ToolPlan,
 )
 
-from sidecar.ai.error_codes import (  # noqa: E402
+from sidecar.ai.error_codes import (
     CMP_LOOP_INVALID_TOOL_CALL,
     CMP_LOOP_TOOL_INTERRUPTED,
     CMP_MODE_TOOL_BLOCKED,
     CMP_TOOL_DISABLED,
 )
-from sidecar.ai.mcp.models import MCPToolDescriptor  # noqa: E402
-from sidecar.ai.routing import tool_loop_recovery  # noqa: E402,F401 — coverage map.
-from sidecar.ai.routing.loop_events import (  # noqa: E402
+from sidecar.ai.mcp.models import MCPToolDescriptor
+from sidecar.ai.routing import tool_loop_recovery  # coverage map.
+from sidecar.ai.routing.loop_events import (
     ThinkingEvent,
     ToolExecutingEvent,
     ToolResultEvent,
 )
-from sidecar.ai.routing.loop_runtime import LoopRuntime  # noqa: E402
-from sidecar.ai.routing.tool_call_canonicalization import (  # noqa: E402
+from sidecar.ai.routing.loop_runtime import LoopRuntime
+from sidecar.ai.routing.tool_call_canonicalization import (
     canonicalize_tool_calls,
 )
-from sidecar.ai.tools.models import (  # noqa: E402
+from sidecar.ai.tools.models import (
     GenerationResult,
     ToolCallRequest,
 )
-from sidecar.protocol import CHAT_THINKING_KIND_STATUS  # noqa: E402
-from sidecar.runtime.chat_models import TerminalChatStateError  # noqa: E402
-from sidecar.runtime.multiplexer import TurnCancellationHandle  # noqa: E402
+from sidecar.protocol import CHAT_THINKING_KIND_STATUS
+from sidecar.runtime.chat_models import TerminalChatStateError
+from sidecar.runtime.multiplexer import TurnCancellationHandle
 
 
 def _read_file_descriptor() -> MCPToolDescriptor:

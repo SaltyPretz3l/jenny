@@ -81,9 +81,9 @@
     var sources = resolveSources();
     var boundHost = null;
     var disposed = false;
-    // Add folder… and a folder's Remove: the latest answer wins. An Add GGUF
-    // model… or a Remove from library keeps its own answer.
+    // Picker answers are fenced; folder writes run in order against saved roots.
     var generation = 0;
+    var rootsWrite = Promise.resolve();
     // One Add GGUF model… at a time: a click while one runs is ignored.
     var adding = false;
     // The row's live region, made once and moved into every render, so each
@@ -173,19 +173,23 @@
       return !disposed && generation === token;
     }
 
-    function updateRoots(nextRoots, token) {
+    function updateRoots(mutateRoots, token) {
       var engines = windowRef.jennyShell && windowRef.jennyShell.engines;
       if (!engines || typeof engines.updateSettings !== 'function') return Promise.resolve(null);
-      return Promise.resolve(engines.updateSettings({ managed: { libraryRoots: nextRoots } }))
+      rootsWrite = rootsWrite.then(function () {
+        if (disposed) return null;
+        return engines.updateSettings({ managed: { libraryRoots: mutateRoots(roots()) } });
+      })
         .then(function (result) {
-          if (!isCurrent(token)) return null;
+          if (disposed) return null;
           if (result && result.localEngines) onSettings(result.localEngines);
-          return refresh();
+          return isCurrent(token) ? refresh() : null;
         })
         .catch(function () {
           if (isCurrent(token)) showOwnStatus(jt('models.library.folders.updateFailed', 'Could not update GGUF folders.'));
           return null;
         });
+      return rootsWrite;
     }
 
     function addFolder() {
@@ -203,7 +207,7 @@
         if (!isCurrent(token)) return null;
         if (result && result.ok !== false && result.path) {
           showOwnStatus('');
-          return updateRoots(roots().concat([result.path]), token);
+          return updateRoots(function (currentRoots) { return currentRoots.concat([result.path]); }, token);
         }
         if (result && result.ok === false) {
           // Main refuses a folder on another machine; a mapped drive letter works.
@@ -222,8 +226,12 @@
       var currentRoots = roots();
       if (!Number.isInteger(index) || index < 0 || index >= currentRoots.length) return;
       var token = ++generation;
-      currentRoots.splice(index, 1);
-      void updateRoots(currentRoots, token);
+      var removedRoot = currentRoots[index];
+      void updateRoots(function (savedRoots) {
+        var savedIndex = savedRoots.indexOf(removedRoot);
+        if (savedIndex >= 0) savedRoots.splice(savedIndex, 1);
+        return savedRoots;
+      }, token);
     }
 
     function library() {

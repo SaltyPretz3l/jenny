@@ -45,5 +45,5 @@ test('client_timing preserves bounded reasoning body render telemetry', async (t
   assert.equal(payload.client_timing.reasoning_body_full_renders, 3);
   assert.equal(payload.client_timing.reasoning_body_render_ms_max, 4.57);
   assert.equal(payload.client_timing.reasoning_peak_entry_chars, 4096);
-  assert.equal(Object.keys(payload.client_timing.reasoning_body_fallback_reasons).length, 32);
+  assert.deepEqual(payload.client_timing.reasoning_body_fallback_reasons, { other: 820 });
 });

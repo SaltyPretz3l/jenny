@@ -31,6 +31,9 @@
       },
     };
   const { normalizeString, normalizeId } = _stringUtils;
+  const { toolRowKeySessionPrefix } = typeof globalThis !== 'undefined' && globalThis.toolCallUtils
+    ? globalThis.toolCallUtils
+    : require('./tool-call-utils');
   const extractToolCallId = typeof turnNormalizationUtils.extractToolCallId === 'function'
     ? turnNormalizationUtils.extractToolCallId
     : function fallbackExtractToolCallId(payload) {
@@ -157,6 +160,14 @@
       clear() {
         overrides.clear();
       },
+      clearSession(sessionId) {
+        const normalized = normalizeId(sessionId);
+        if (!normalized) return;
+        const prefix = toolRowKeySessionPrefix(normalized);
+        for (const key of Array.from(overrides.keys())) {
+          if (key.startsWith(prefix)) overrides.delete(key);
+        }
+      },
     };
   }
 
@@ -191,6 +202,12 @@
     transcriptRendererRegistry.forEach((entry) => entry.clearToolCallExpansionOverrides());
   }
 
+  // Transcript view switch: one session's overrides only (row keys carry the
+  // session prefix from buildToolRowKey).
+  function clearToolCallExpansionOverridesForSession(sessionId) {
+    transcriptRendererRegistry.forEach((entry) => entry.clearToolCallExpansionOverridesForSession(sessionId));
+  }
+
   function createTranscriptToolCallRenderer(deps) {
     const {
       escapeHtml,
@@ -201,7 +218,9 @@
     /* Per-renderer expansion store. Reads from the override before falling
      * back to the status-derived default in buildToolCallViewModelFromParts. */
     const expansionStore = createExpansionStore();
+    let disposed = false;
     function setToolCallExpansion(rowKey, expanded) {
+      if (disposed) return;
       expansionStore.set(rowKey, expanded);
     }
     function getToolCallExpansion(rowKey) {
@@ -209,6 +228,17 @@
     }
     function clearToolCallExpansionOverrides() {
       expansionStore.clear();
+    }
+    function clearToolCallExpansionOverridesForSession(sessionId) {
+      expansionStore.clearSession(sessionId);
+    }
+
+    function dispose() {
+      if (disposed) return;
+      disposed = true;
+      transcriptRendererRegistry.delete(instance);
+      expansionStore.clear();
+      _artifactCardUtils?.releaseInlineImages?.();
     }
 
     const _toolShellUtils = typeof globalThis !== 'undefined' && globalThis.toolShellUtils
@@ -252,9 +282,9 @@
       return normalizeString(catalogDisplayName) || getToolKind(toolName) || 'Tool';
     }
 
-    function shouldAutoExpandToolDetails(status) {
+    function shouldAutoExpandToolDetails(status, options) {
       return typeof toolCallUtils.shouldAutoExpandToolDetails === 'function'
-        ? toolCallUtils.shouldAutoExpandToolDetails(status)
+        ? toolCallUtils.shouldAutoExpandToolDetails(status, options)
         : false;
     }
 
@@ -450,9 +480,11 @@
       const approvalCard = (status === 'awaiting_approval' && typeof getApprovalCardState === 'function'
         && getApprovalCardState({ sessionId: source.sessionId, turnId: source.turnId, callId: source.callId })) || {};
       const approvalCardLabel = { paused: jt('approval.block.paused', 'Paused'), inactive: jt('chat.toolCall.withdrawn', 'Withdrawn') }[approvalCard.state];
-      const statusLabel = approvalCardLabel
-        || (toolCallUtils.getStatusLabel ? toolCallUtils.getStatusLabel(status) : status);
       const resultMeta = source.resultMeta && typeof source.resultMeta === 'object' ? source.resultMeta : null;
+      // A command that exited non-zero reads "exit N" (the result carries the code).
+      const statusLabel = approvalCardLabel
+        || (resultMeta && toolCallUtils.getResultStatusLabel ? toolCallUtils.getResultStatusLabel(status, resultMeta)
+          : (toolCallUtils.getStatusLabel ? toolCallUtils.getStatusLabel(status) : status));
       const input = source.input && typeof source.input === 'object' && !Array.isArray(source.input)
         ? source.input
         : {};
@@ -520,7 +552,7 @@
       /* Status-derived auto-expand wins for action-required states
        * (errored, awaiting_approval, etc.) UNLESS the user has explicitly
        * collapsed this row in the current session. */
-      const statusAutoExpand = shouldAutoExpandToolDetails(status);
+      const statusAutoExpand = shouldAutoExpandToolDetails(status, { transcriptView: source.transcriptView });
       const userOverride = getToolCallExpansion(rowKey);
       const defaultExpanded = userOverride === undefined ? statusAutoExpand : userOverride;
       // Status-driven attention rows retain their existing nested-diff default;
@@ -537,6 +569,7 @@
         : null;
       return {
         callId,
+        sessionId: normalizeId(source.sessionId),
         rowKey,
         domToken,
         approvalId: normalizeId(source.approvalId),
@@ -628,6 +661,7 @@
         durationMs: tc.duration_ms,
         runningStartedAtMs: tc.running_started_at_ms,
         retryMessageId: renderOptions.retryMessageId,
+        transcriptView: renderOptions.transcriptView,
         forceMaterializeToolDetails: renderOptions.forceMaterializeToolDetails === true,
       });
     }
@@ -784,6 +818,7 @@
         runningStartedAtMs: payload.running_started_at_ms || toolUse.running_started_at_ms,
         reviewableChange,
         retryMessageId: renderOptions.retryMessageId,
+        transcriptView: renderOptions.transcriptView,
         forceMaterializeToolDetails: renderOptions.forceMaterializeToolDetails === true,
       });
     }
@@ -799,6 +834,13 @@
         )
         : buildLegacyToolCallViewModel(message, allMessages, renderOptions);
       return viewModel;
+    }
+
+    function collectLiveDelegationSteps(allMessages, callId) {
+      const key = normalizeString(callId);
+      if (!key || !Array.isArray(allMessages)) return [];
+      return allMessages.flatMap((entry) => (Array.isArray(entry?.agent_status_steps) ? entry.agent_status_steps : []))
+        .filter((step) => normalizeString(step?.toolCallId || step?.tool_call_id) === key);
     }
 
     function renderToolCallBlock(message, allMessages, options) {
@@ -817,10 +859,22 @@
           parentResponding,
         });
         if (monitorMarkup) return monitorMarkup;
+        // Still running: the call's own row carries the live summary (the turn's
+        // agent_status steps sit on another message that renders no widget here).
+        const liveSteps = collectLiveDelegationSteps(allMessages, viewModel.callId);
+        const liveMarkup = liveSteps.length && typeof subagentView.renderLiveSummary === 'function'
+          ? subagentView.renderLiveSummary(liveSteps, { key: viewModel.callId })
+          : '';
+        if (liveMarkup) return liveMarkup;
       }
+      // Persisted tool_call rows ask for the subagent summary alone and keep
+      // their own row markup when the call carries no terminal report.
+      if (options && options.subagentSummaryOnly === true) return '';
       const artifactCards = viewModel.generatedArtifacts.length && _artifactCardUtils?.renderArtifactCards
-        ? _artifactCardUtils.renderArtifactCards(viewModel.generatedArtifacts, viewModel.callId)
+        ? _artifactCardUtils.renderArtifactCards(viewModel.generatedArtifacts, viewModel.callId, { seed: viewModel.metadata?.provenance?.seed, prompt: viewModel.metadata?.provenance?.image_prompt, negativePrompt: viewModel.metadata?.provenance?.image_negative_prompt, sessionId: viewModel.sessionId })
         : '';
+      const pendingFigure = viewModel.toolName === 'image_generate' && viewModel.isRunning && !viewModel.generatedArtifacts.length
+        ? (_artifactCardUtils?.renderImagePendingFigure?.({ width: viewModel.input.width, height: viewModel.input.height }) || '') : '';
       const calendarMarkup = Object.keys(viewModel.metadata).length && _calendarChatBlock
         && typeof _calendarChatBlock.buildHomeResultBlockMarkup === 'function'
         ? _calendarChatBlock.buildHomeResultBlockMarkup(viewModel.metadata, {
@@ -831,7 +885,7 @@
         return renderToolDisclosureShell(
           viewModel,
           `${renderToolHeader(viewModel)}${renderDeferredToolDetails(viewModel)}`,
-          calendarMarkup + artifactCards
+          calendarMarkup + artifactCards + pendingFigure
         );
       }
       // Mermaid's asynchronous preview requires its specialized shell; ordinary detail bodies use renderer-tool-detail-body.
@@ -847,16 +901,18 @@
       return renderToolDisclosureShell(
         viewModel,
         `${renderToolHeader(viewModel)}${renderToolDetails(viewModel)}`,
-        calendarMarkup + artifactCards
+        calendarMarkup + artifactCards + pendingFigure
       );
     }
 
     const instance = {
+      dispose,
       buildToolCallViewModel,
       renderToolCallBlock,
       setToolCallExpansion,
       getToolCallExpansion,
       clearToolCallExpansionOverrides,
+      clearToolCallExpansionOverridesForSession,
     };
     transcriptRendererRegistry.add(instance);
     return instance;
@@ -867,5 +923,6 @@
     setToolCallExpansion,
     getToolCallExpansion,
     clearToolCallExpansionOverrides,
+    clearToolCallExpansionOverridesForSession,
   };
 });

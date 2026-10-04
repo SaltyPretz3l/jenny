@@ -19,7 +19,7 @@ from sidecar.ai.engines import catalog
     ],
 )
 def test_force_ipv4_localhost_handles_case_and_no_port(url: str, expected: str) -> None:
-    assert catalog._force_ipv4_localhost(url) == expected  # noqa: SLF001
+    assert catalog._force_ipv4_localhost(url) == expected
 
 
 @pytest.mark.parametrize(

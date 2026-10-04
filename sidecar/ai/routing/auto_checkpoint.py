@@ -1,12 +1,18 @@
 """First-repo-mutation auto-checkpoint hook for the tool loop.
 
-Default-on (flag ``auto_checkpoint``): before the *first*
+Always on for desktop runs: before the *first*
 repo-mutating tool call of an agent run is dispatched, request a
 git-ref checkpoint from the Electron side over the internal
 ``__jenny_git_checkpoint`` tool-bridge call so the user has a restore
 point predating the run's changes. The Electron handler owns turning
 that request into an actual git ref; this module only decides *when*
 to ask and never inspects the result beyond logging it.
+
+The retired ``auto_checkpoint`` feature flag (1.2.1) survives only as a
+sidecar-internal policy key: ``sidecar.ai.config`` writes
+``feature_flags["auto_checkpoint"] = False`` for the hosted and desktop
+execution-sandbox policies, and an explicit ``False`` is the only value that
+disables the hook. A missing key (Electron no longer ships it) means on.
 
 Best-effort by design: any failure (no bridge available, timeout,
 ``MCPError``, or anything else) is logged as a warning and swallowed --
@@ -30,11 +36,10 @@ from sidecar.runtime.electron_tool_bridge import (
     ElectronToolBridgeRequest,
     execute_electron_tool,
 )
-from sidecar.runtime.tool_execution_support import is_feature_flag_enabled
 
 logger = logging.getLogger(__name__)
 
-AUTO_CHECKPOINT_FLAG = "auto_checkpoint"
+AUTO_CHECKPOINT_POLICY_KEY = "auto_checkpoint"
 
 # Tools that mutate the active repo root and therefore warrant a checkpoint
 # before the first one runs. Deliberately EXCLUDES:
@@ -57,12 +62,12 @@ def should_create_checkpoint(
 ) -> bool:
     """Pure decision: is this the moment to fire an auto-checkpoint?
 
-    True iff the flag is enabled, no checkpoint has been created yet this
-    run, and at least one of ``tool_ids`` is repo-mutating.
+    True iff no execution policy disabled it, no checkpoint has been created
+    yet this run, and at least one of ``tool_ids`` is repo-mutating.
     """
     if already_created:
         return False
-    if not is_feature_flag_enabled(feature_flags or {}, AUTO_CHECKPOINT_FLAG):
+    if (feature_flags or {}).get(AUTO_CHECKPOINT_POLICY_KEY) is False:
         return False
     return any(tool_id in REPO_MUTATING_TOOL_NAMES for tool_id in tool_ids)
 
@@ -121,9 +126,9 @@ def maybe_create_auto_checkpoint(loop_run: Any, remaining: list[tuple[Any, int]]
     if host_policy_is_enforced(config):
         return
     feature_flags = getattr(config, "feature_flags", None)
-    # tool_ids stays lazy (a generator): should_create_checkpoint tests the flag
-    # before it consumes them, so the dispatch set is never walked on the common
-    # flag-off path.
+    # tool_ids stays lazy (a generator): should_create_checkpoint tests the
+    # policy key before it consumes them, so a policy-disabled run never walks
+    # the dispatch set.
     if not should_create_checkpoint(
         feature_flags=feature_flags,
         already_created=False,

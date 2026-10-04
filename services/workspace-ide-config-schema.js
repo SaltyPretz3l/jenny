@@ -22,7 +22,10 @@ const WORKSPACE_IDE_MAX_OPEN_TABS = 64;
 const WORKSPACE_IDE_MAX_EXPANDED_DIRS = 200;
 // Editor preference bounds/whitelists (exposed via the Settings "Editor"
 // section + the statusbar chips).
-const WORKSPACE_IDE_FONT_SIZE_DEFAULT = 13;
+// 0 = "Match text size" (the renderer resolves 13px x --font-scale). The
+// pre-rebase default 13 was persisted for every workspace, so it reads as 0.
+const WORKSPACE_IDE_FONT_SIZE_DEFAULT = 0;
+const WORKSPACE_IDE_FONT_SIZE_LEGACY_DEFAULT = 13;
 const WORKSPACE_IDE_FONT_SIZE_MIN = 8;
 const WORKSPACE_IDE_FONT_SIZE_MAX = 40;
 const WORKSPACE_IDE_TAB_SIZES = Object.freeze([2, 4, 8]);
@@ -67,12 +70,10 @@ const WORKSPACE_IDE_CHAT_DOCK_WIDTH_DEFAULT = 380;
 const WORKSPACE_IDE_CHAT_DOCK_WIDTH_MIN = 320;
 const WORKSPACE_IDE_CHAT_DOCK_WIDTH_MAX = 2400;
 const WORKSPACE_IDE_CHAT_DOCK_SIDES = Object.freeze(['left', 'right']);
-// Inline autocomplete (CONFIG_VERSION 29): a quick on/off toggle (default on,
-// the whole feature is still gated by the default-on workspace_inline_suggest
-// flag), a selected Ollama model tag for the fill-in-the-middle completion
-// model, and an advanced "run on GPU" opt-in (default off => CPU-pinned so the
-// FIM model never evicts the chat model on a single GPU).
-const WORKSPACE_IDE_MODEL_TAG_MAX = 200;
+// The v29 inline-autocomplete preferences were removed with the feature
+// (owner, 2026-10-01). Preferences are rebuilt from DEFAULT_WORKSPACE_IDE's
+// keys, so a legacy store that still carries them drops them on its next
+// normalize; no CONFIG_VERSION step is needed to forget an app-owned toggle.
 // Editor column rulers (CONFIG_VERSION 34): vertical guides at the given 1-based
 // columns. Bounded so a hand-edited config can't push a huge/duplicate set into
 // Monaco's `rulers` option; [] = no rulers (the default).
@@ -133,12 +134,9 @@ const DEFAULT_WORKSPACE_IDE = Object.freeze({
   lineNumbers: 'on',
   renderWhitespace: 'selection',
   eol: '',
-  inlineSuggestEnabled: true,
-  inlineSuggestModel: '',
   // Debounced auto-save (CONFIG_VERSION 31). DEFAULT-OFF: this writes the user's
   // files, so only the literal boolean true enables it (the inverse of the
-  // default-on minimap/inlineSuggestEnabled toggles). This preference is the
-  // sole auto-save gate.
+  // default-on minimap toggle). This preference is the sole auto-save gate.
   autoSaveEnabled: false,
   // Save-time hygiene (CONFIG_VERSION 34): all DEFAULT-OFF (only a literal true
   // enables, the autoSaveEnabled idiom) — format-on-save runs Monaco's formatter,
@@ -159,11 +157,12 @@ const WORKSPACE_IDE_PREFERENCE_KEYS = Object.freeze(
 // POSIX-separated; anything absolute, drive-lettered, UNC, or `..`-escaping
 // collapses to empty and is dropped (the main process re-validates on use).
 function normalizeWorkspaceIdeRelativePath(value) {
-  const raw = String(value || '').trim().replace(/\\/g, '/');
-  if (!raw || raw.includes('\0') || raw.startsWith('/') || raw.startsWith('//')) {
+  const raw = String(value || '').replace(/\\/g, '/');
+  const lead = raw.trimStart();
+  if (!lead || raw.includes('\0') || lead.startsWith('/')) {
     return '';
   }
-  if (/^[A-Za-z]:/.test(raw)) {
+  if (/^[A-Za-z]:/.test(lead)) {
     return '';
   }
   const segments = raw.split('/').filter((segment) => segment.length > 0 && segment !== '.');
@@ -220,18 +219,6 @@ function coercePanelLocations(value) {
     map[WORKSPACE_IDE_RAIL_PANELS[0]] = 'primary';
   }
   return map;
-}
-
-// Sanitize a persisted Ollama model tag (e.g. 'qwen2.5-coder:1.5b-base',
-// 'JetBrains/Mellum-4b-sft-all:latest'). Whitelist the tag character set so no
-// control chars / shell metacharacters can survive into a generate request;
-// require an alphanumeric first char and cap the length. Anything else -> ''.
-function normalizeInlineSuggestModel(value) {
-  const raw = String(value || '').trim();
-  if (!raw || raw.length > WORKSPACE_IDE_MODEL_TAG_MAX) {
-    return '';
-  }
-  return /^[A-Za-z0-9][A-Za-z0-9._:/-]*$/.test(raw) ? raw : '';
 }
 
 // Sanitize a persisted rulers array: unique positive integer columns within
@@ -367,11 +354,11 @@ function normalizeWorkspaceIde(value = {}, { platform = process.platform } = {})
   const explorerSortMode = WORKSPACE_IDE_EXPLORER_SORT_MODES.includes(source.explorerSortMode)
     ? source.explorerSortMode
     : DEFAULT_WORKSPACE_IDE.explorerSortMode;
-  // fontSize: numeric clamp (mirrors railWidth).
-  const fontSizeRaw = Number(source.fontSize);
-  const fontSize = Number.isFinite(fontSizeRaw)
-    ? Math.min(WORKSPACE_IDE_FONT_SIZE_MAX, Math.max(WORKSPACE_IDE_FONT_SIZE_MIN, Math.trunc(fontSizeRaw)))
-    : DEFAULT_WORKSPACE_IDE.fontSize;
+  // fontSize: 0 (Match text size) or a numeric clamp (mirrors railWidth).
+  const fontSizeRaw = Math.trunc(Number(source.fontSize));
+  const fontSize = !Number.isFinite(fontSizeRaw) || fontSizeRaw <= 0 || fontSizeRaw === WORKSPACE_IDE_FONT_SIZE_LEGACY_DEFAULT
+    ? WORKSPACE_IDE_FONT_SIZE_DEFAULT
+    : Math.min(WORKSPACE_IDE_FONT_SIZE_MAX, Math.max(WORKSPACE_IDE_FONT_SIZE_MIN, fontSizeRaw));
   // tabSize: enum {2,4,8} (a clamp would let 3/5/6/7 through; the UI offers a fixed set).
   const tabSize = WORKSPACE_IDE_TAB_SIZES.includes(Number(source.tabSize))
     ? Number(source.tabSize)
@@ -386,13 +373,8 @@ function normalizeWorkspaceIde(value = {}, { platform = process.platform } = {})
     ? source.renderWhitespace
     : DEFAULT_WORKSPACE_IDE.renderWhitespace;
   const eol = WORKSPACE_IDE_EOL.includes(source.eol) ? source.eol : DEFAULT_WORKSPACE_IDE.eol;
-  // Inline autocomplete: enabled default-on (only literal false disables, mirrors
-  // minimap); model = sanitized tag ('' when unset/invalid). Compute placement is
-  // selected by the live runtime rather than persisted as a user preference.
-  const inlineSuggestEnabled = source.inlineSuggestEnabled === false ? false : true;
-  const inlineSuggestModel = normalizeInlineSuggestModel(source.inlineSuggestModel);
   // Auto-save: DEFAULT-OFF, so only the literal boolean true enables it (the
-  // inverse of minimap/inlineSuggestEnabled which only literal false disables).
+  // inverse of minimap, which only literal false disables).
   const autoSaveEnabled = source.autoSaveEnabled === true;
   const formatOnSave = source.formatOnSave === true;
   const trimTrailingWhitespace = source.trimTrailingWhitespace === true;
@@ -427,8 +409,6 @@ function normalizeWorkspaceIde(value = {}, { platform = process.platform } = {})
     lineNumbers,
     renderWhitespace,
     eol,
-    inlineSuggestEnabled,
-    inlineSuggestModel,
     autoSaveEnabled,
     formatOnSave,
     trimTrailingWhitespace,
@@ -647,7 +627,6 @@ module.exports = {
   WORKSPACE_IDE_CHAT_DOCK_WIDTH_MIN,
   WORKSPACE_IDE_REPLACE_JOURNAL_MAX_APPLIED,
   WORKSPACE_IDE_REPLACE_JOURNAL_QUERY_MAX,
-  normalizeInlineSuggestModel,
   normalizeRulers,
   normalizeWorkspaceIde,
   isWorkspaceIdeRecord,

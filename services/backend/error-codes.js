@@ -199,8 +199,7 @@ const TERMINAL_ERROR_CODES = Object.freeze({
   ROOT_MISSING: 'CMP-TERMINAL-0002',
   NO_SESSION: 'CMP-TERMINAL-0003',
   // 0004: the @lydell/node-pty native module failed to load (missing prebuild
-  // / electron ABI mismatch). Emitted only by the real ConPTY WorkspacePtyService
-  // fail-soft path; the piped WorkspaceTerminalService never raises it.
+  // / electron ABI mismatch). Emitted by the WorkspacePtyService fail-soft path.
   MODULE_LOAD_FAILED: 'CMP-TERMINAL-0004',
 });
 
@@ -311,6 +310,8 @@ const PLUGIN_ERROR_CODES = Object.freeze({
 
 const COMPANION_ERROR_CODES = Object.freeze({
   FOLLOW_UP_INVALID: 'CMP-COMPANION-0001',
+  FOLLOW_UP_NOT_FOUND: 'CMP-COMPANION-0002',
+  FOLLOW_UP_STATE_CONFLICT: 'CMP-COMPANION-0003',
 });
 
 const DATA_ERROR_CODES = Object.freeze({

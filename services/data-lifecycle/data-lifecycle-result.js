@@ -11,6 +11,11 @@ function boundedDataError(error) {
   };
 }
 
+function retainedPartial(error) {
+  const partialPath = typeof error?.partialPath === 'string' ? error.partialPath.slice(0, 1024) : '';
+  return error?.partialRetained === true && partialPath ? { path: partialPath } : null;
+}
+
 function dataLifecycleResult(status, fields = {}, operationId = '') {
   const source = fields && typeof fields === 'object' && !Array.isArray(fields) ? fields : {};
   return {
@@ -26,6 +31,7 @@ function dataLifecycleResult(status, fields = {}, operationId = '') {
 }
 
 function dataLifecycleFailure(error, operationId = '') {
+  const partial = retainedPartial(error);
   return {
     ok: false,
     operationId: String(operationId || ''),
@@ -33,6 +39,7 @@ function dataLifecycleFailure(error, operationId = '') {
     counts: {},
     warnings: [],
     error: boundedDataError(error),
+    ...(partial ? { retainedPartial: partial } : {}),
   };
 }
 
@@ -45,6 +52,7 @@ function unauthorizedDataLifecycleResult() {
 
 module.exports = {
   boundedDataError,
+  retainedPartial,
   dataLifecycleFailure,
   dataLifecycleResult,
   unauthorizedDataLifecycleResult,

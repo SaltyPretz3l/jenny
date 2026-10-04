@@ -6,6 +6,7 @@ from __future__ import annotations
 import contextlib
 import json
 import logging
+import time
 from collections.abc import Generator
 from typing import TYPE_CHECKING, Any
 
@@ -13,6 +14,7 @@ import httpx
 
 from sidecar.ai.engines.base import EngineMessage, clamp_timeout_to_deadline
 from sidecar.ai.engines.engine_events import EngineEvent
+from sidecar.ai.engines.provider_call_finalize import ProviderCallFinalizer
 from sidecar.ai.engines.vision_input import (
     VisionInput,
     VisionInputError,
@@ -31,7 +33,9 @@ from sidecar.ai.engines.vllm_tool_stream import (
     _log_native_reasoning_suppressed,
     _raise_if_cancelled,
     _stream_tool_response,
+    log_guard_trip,
     log_guard_verdict,
+    log_rejected_tool_input,
     log_truncated_tool_calls,
 )
 from sidecar.ai.routing.provider_stream_normalizer import (
@@ -40,7 +44,6 @@ from sidecar.ai.routing.provider_stream_normalizer import (
     FINISH_REASON_THINKING_BUDGET,
     NormalizedStreamEvent,
     ProviderStreamNormalizer,
-    record_counters_to_diagnostics,
 )
 from sidecar.ai.thinking_guard import (
     budget_trip_check,
@@ -81,6 +84,25 @@ _EVENT = THINKING_BUDGET_ABORT_EVENT
 _STREAM_TIMEOUT_SECONDS = 120.0
 _SSE_DATA_PREFIX = "data: "
 _SSE_DONE_SENTINEL = "[DONE]"
+
+
+def _terminal_gap_diagnostics(
+    normalizer: ProviderStreamNormalizer,
+    truncated: list[NormalizedStreamEvent],
+    started_at: float,
+) -> dict[str, Any]:
+    """Counts and names only (never message text) for the terminal-gap event.
+
+    ``ms_since_last_chunk`` and ``bytes_read`` are not here: the SSE reader
+    owns those clocks and does not surface them (TR-016 follow-up).
+    """
+    counters = normalizer.counters
+    return {
+        "chunk_count": counters.total_chunk_count,
+        "tool_args_streaming": counters.tool_call_delta_count > 0,
+        "truncated_call_names": [str(event.tool_name or "") for event in truncated],
+        "elapsed_ms": int((time.monotonic() - started_at) * 1000),
+    }
 
 
 
@@ -130,15 +152,21 @@ class _VLLMGenerationMixin:
             tool_capable: bool,
             tool_payload_bytes: int = 0,
             provider_sampler: dict[str, Any] | None = None,
+            final_output_tokens: int | None = None,
+            thinking_headroom_tokens: int = 0,
         ) -> None: ...
 
         def _record_first_chunk(self) -> None: ...
 
         def _record_provider_usage(self, body: dict[str, Any] | None) -> None: ...
 
+        def _current_time_to_first_token_ms(self) -> float: ...
+
         def _record_visible_output(self, text: str) -> None: ...
 
-        def _complete_provider_request(self, *, outcome: str = "completed") -> None: ...
+        def _complete_provider_request(
+            self, *, outcome: str = "completed", finish_reason: str | None = None
+        ) -> None: ...
 
         @staticmethod
         def _sanitize_thinking(text: str) -> str: ...
@@ -175,7 +203,7 @@ class _VLLMGenerationMixin:
 
         def _effective_repeat_penalty(self) -> float | None: ...
 
-    def generate(  # noqa: PLR0917 - BaseEngine transport contract.
+    def generate(  # BaseEngine transport contract.
         self,
         prompt: str,
         max_tokens: int = 256,
@@ -245,7 +273,7 @@ class _VLLMGenerationMixin:
             finish_reason="length" if finish_reason == "length" else "stop",
         )
 
-    def stream(  # noqa: C901, PLR0912, PLR0915, PLR0917 - BaseEngine transport contract.
+    def stream(  # noqa: C901, PLR0912, PLR0915 - BaseEngine transport contract.
         self,
         prompt: str,
         max_tokens: int = 256,
@@ -276,6 +304,7 @@ class _VLLMGenerationMixin:
             response_format=response_format,
         )
         payload["stream"] = True
+        num_predict = self._fit_output_to_window(payload)
         # Opt into the OpenAI-style final usage chunk so streaming turns can
         # surface provider-reported prompt/completion token counts (and, when
         # the server has prefix caching enabled, cached_tokens for cache hit-
@@ -290,38 +319,42 @@ class _VLLMGenerationMixin:
         reasoning_output_enabled = self._reasoning_output_enabled()
         self._record_provider_request(
             think_enabled=reasoning_output_enabled,
-            num_predict=max_tokens,
+            num_predict=num_predict,
             temperature=float(payload.get("temperature") or temperature),
             message_count=message_count,
             tool_count=0,
             tool_capable=False,
             provider_sampler=payload,
+            final_output_tokens=max_tokens,
+            thinking_headroom_tokens=max(num_predict - max_tokens, 0),
         )
 
-        reasoning_parser = self._create_request_reasoning_parser()
-        thinking_guard = (
-            ThinkingRepetitionGuard(
-                max_chars=resolve_thinking_budget_chars(self, max_tokens)
-            )
-            if reasoning_output_enabled
-            else None
-        )
-        budget_tripped = budget_trip_check(thinking_guard)
-        thinking_suppression_logged = False
-        native_thinking_seen = False
-        # Layered alongside the existing parser: see ollama_runtime for the
-        # rationale; the normalizer tracks counters and reasoning-only state.
-        normalizer = ProviderStreamNormalizer(provider="vllm")
-        # Terminal-evidence tracking (F10): the sentinel is not the only clean
-        # ending -- a chunk carrying ``finish_reason`` is provider truth too,
-        # and the normalizer already records it.
-        saw_sentinel = False
-        inband_error = ""
-        stream_usage: GenerationUsage | None = None
-        thinking_budget_aborted = False
-        outcome = "failed"
-
+        finalizer = ProviderCallFinalizer(self)
         try:
+            reasoning_parser = self._create_request_reasoning_parser()
+            thinking_guard = (
+                ThinkingRepetitionGuard(
+                    max_chars=resolve_thinking_budget_chars(self, max_tokens)
+                )
+                if reasoning_output_enabled
+                else None
+            )
+            budget_tripped = budget_trip_check(thinking_guard)
+            thinking_suppression_logged = False
+            native_thinking_seen = False
+            # Layered alongside the existing parser: see ollama_runtime for the
+            # rationale; the normalizer tracks counters and reasoning-only state.
+            normalizer = ProviderStreamNormalizer(provider="vllm")
+            finalizer.normalizer = normalizer
+            # Terminal-evidence tracking (F10): the sentinel is not the only clean
+            # ending -- a chunk carrying ``finish_reason`` is provider truth too,
+            # and the normalizer already records it.
+            saw_sentinel = False
+            inband_error = ""
+            stream_usage: GenerationUsage | None = None
+            thinking_budget_aborted = False
+            started_at = time.monotonic()
+
             request_timeout = clamp_timeout_to_deadline(
                 _STREAM_TIMEOUT_SECONDS,
                 wall_clock_deadline,
@@ -366,13 +399,11 @@ class _VLLMGenerationMixin:
                             chunk,
                             model_name=self.model_name,
                             provider=self._PROVIDER_LABEL,
+                            time_to_first_token_ms=self._current_time_to_first_token_ms(),
                         )
                         if parsed_usage is not None:
                             stream_usage = parsed_usage
-                    try:
-                        normalizer.feed(chunk)
-                    except Exception:  # noqa: BLE001 — diagnostic-only.
-                        pass
+                    normalizer.feed(chunk)  # diagnostic-only; logs and never raises
                     choices = chunk.get("choices")
                     if not isinstance(choices, list) or not choices:
                         continue
@@ -390,19 +421,8 @@ class _VLLMGenerationMixin:
                                 cleaned
                             )
                             if suppressed:
-                                if not thinking_suppression_logged:
-                                    logger.info(
-                                        "Suppressing %s thinking stream after guard tripped.",
-                                        self._DISPLAY_NAME,
-                                        extra={
-                                            "model": self.model_name,
-                                            "reason": (
-                                                thinking_guard.stop_reason
-                                                if thinking_guard
-                                                else None
-                                            ),
-                                        },
-                                    )
+                                if not thinking_suppression_logged and thinking_guard:
+                                    log_guard_trip(self, thinking_guard)
                                     thinking_suppression_logged = True
                             else:
                                 yield StreamingEvent(kind="thinking", text=cleaned)
@@ -433,19 +453,8 @@ class _VLLMGenerationMixin:
                                 reasoning_text
                             )
                             if suppressed:
-                                if not thinking_suppression_logged:
-                                    logger.info(
-                                        "Suppressing %s thinking stream after guard tripped.",
-                                        self._DISPLAY_NAME,
-                                        extra={
-                                            "model": self.model_name,
-                                            "reason": (
-                                                thinking_guard.stop_reason
-                                                if thinking_guard
-                                                else None
-                                            ),
-                                        },
-                                    )
+                                if not thinking_suppression_logged and thinking_guard:
+                                    log_guard_trip(self, thinking_guard)
                                     thinking_suppression_logged = True
                             else:
                                 yield StreamingEvent(kind="thinking", text=reasoning_text)
@@ -510,8 +519,10 @@ class _VLLMGenerationMixin:
                             self,
                             finish_reason=stream_finish_reason,
                             inband_error=inband_error,
+                            diagnostics=_terminal_gap_diagnostics(normalizer, [], started_at),
                         )
-                outcome = "completed"
+                finalizer.finish_reason = stream_finish_reason
+                finalizer.finalize(cancel_handle=cancel_handle)
                 yield StreamingEvent(
                     kind="done",
                     finish_reason=stream_finish_reason,
@@ -532,16 +543,9 @@ class _VLLMGenerationMixin:
             _raise_if_cancelled(cancel_handle)
             raise GenerationError(f"{self._DISPLAY_NAME} streaming failed: {exc}") from exc
         finally:
-            # Same contract as ``stream_with_tools``: counters and the
-            # outcome publish however the stream ended, including an
-            # abandoned generator (``GeneratorExit``), so the ledger entry
-            # never stays ``started`` with the previous call's counters.
-            with contextlib.suppress(Exception):
-                normalizer.finalize_for_counters()
-            record_counters_to_diagnostics(self, normalizer)
-            self._complete_provider_request(outcome=outcome)
+            finalizer.finalize(cancel_handle=cancel_handle)
 
-    def stream_with_tools(  # noqa: PLR0913, PLR0917 - BaseEngine transport contract.
+    def stream_with_tools(  # BaseEngine transport contract.
         self,
         prompt: str,
         tools: list[dict[str, Any]],
@@ -574,17 +578,19 @@ class _VLLMGenerationMixin:
         tool_calls: list[ToolCallRequest] = []
         truncated_calls: list[NormalizedStreamEvent] = []
         usage: GenerationUsage | None = None
-        outcome = "failed"
-        reasoning_parser = self._create_request_reasoning_parser()
-        needs_guard = self._reasoning_output_enabled() or reasoning_parser is not None
-        thinking_guard = (
-            ThinkingRepetitionGuard(
-                max_chars=resolve_thinking_budget_chars(self, max_tokens)
-            )
-            if needs_guard
-            else None
-        )
+        finalizer = ProviderCallFinalizer(self)
+        finalizer.normalizer = normalizer
         try:
+            started_at = time.monotonic()
+            reasoning_parser = self._create_request_reasoning_parser()
+            needs_guard = self._reasoning_output_enabled() or reasoning_parser is not None
+            thinking_guard = (
+                ThinkingRepetitionGuard(
+                    max_chars=resolve_thinking_budget_chars(self, max_tokens)
+                )
+                if needs_guard
+                else None
+            )
             request_timeout = clamp_timeout_to_deadline(
                 _STREAM_TIMEOUT_SECONDS,
                 wall_clock_deadline,
@@ -627,10 +633,7 @@ class _VLLMGenerationMixin:
                 list(normalizer.finalize()), tool_calls, truncated=truncated_calls
             )
             log_truncated_tool_calls(
-                self,
-                truncated_calls,
-                terminal_finish_reason=normalizer.terminal_finish_reason,
-                rejected=normalizer.tool_input_rejected,
+                self, truncated_calls, terminal_finish_reason=normalizer.terminal_finish_reason
             )
             log_guard_verdict(self, thinking_guard, aborted=thinking_budget_aborted)
             if thinking_budget_aborted:
@@ -647,13 +650,30 @@ class _VLLMGenerationMixin:
                     # Same actionable event as stream(): without it a socket EOF
                     # mid-tool-turn looked like a clean completion in the logs.
                     log_vllm_stream_terminal_gap(
-                        self, finish_reason=finish_reason, inband_error=inband_error
+                        self,
+                        finish_reason=finish_reason,
+                        inband_error=inband_error,
+                        diagnostics=_terminal_gap_diagnostics(
+                            normalizer, truncated_calls, started_at
+                        ),
                     )
-            tool_call_truncated = finish_reason == "length" and (
-                bool(truncated_calls) or normalizer.tool_input_rejected
+            # A cap rejection drops the call under ANY finish: a model that closed
+            # an over-cap call cleanly (``stop``) left only its preamble, which is
+            # not an answer (sweep W3-B1). A cut-off call counts only at ``length``.
+            rejection_reason = normalizer.tool_input_rejection_reason
+            if rejection_reason:
+                log_rejected_tool_input(
+                    self,
+                    reason=rejection_reason,
+                    finish_reason=finish_reason,
+                    terminal_finish_reason=normalizer.terminal_finish_reason,
+                )
+            tool_call_truncated = bool(rejection_reason) or (
+                finish_reason == "length" and bool(truncated_calls)
             )
+            finalizer.finish_reason = finish_reason
+            finalizer.finalize(cancel_handle=cancel_handle)
             yield StreamingEvent(kind="done", finish_reason=finish_reason)
-            outcome = "completed"
             return GenerationResult(
                 content="".join(content_parts).strip(),
                 tool_calls=tuple(tool_calls),
@@ -661,6 +681,7 @@ class _VLLMGenerationMixin:
                 usage=usage,
                 thinking_text="".join(thinking_parts).strip(),
                 tool_call_truncated=tool_call_truncated,
+                tool_call_rejected_reason=rejection_reason,
             )
         except Exception as error:
             _raise_if_cancelled(cancel_handle)
@@ -670,12 +691,9 @@ class _VLLMGenerationMixin:
                 f"{self._DISPLAY_NAME} tool streaming failed: {type(error).__name__}"
             ) from error
         finally:
-            # Counters are published even when the call raised: a clean-stop
-            # malformed tool call used to leave the dump saying 0 malformed.
-            record_counters_to_diagnostics(self, normalizer)
-            self._complete_provider_request(outcome=outcome)
+            finalizer.finalize(cancel_handle=cancel_handle)
 
-    def _build_tool_stream_payload(  # noqa: PLR0913 - mirrors stream contract.
+    def _build_tool_stream_payload(  # mirrors stream contract.
         self,
         *,
         prompt: str,
@@ -703,10 +721,11 @@ class _VLLMGenerationMixin:
             payload["tools"] = tool_defs
         payload["stream"] = True
         payload["stream_options"] = {"include_usage": True}
+        num_predict = self._fit_output_to_window(payload)
         payload_messages = payload.get("messages")
         self._record_provider_request(
             think_enabled=self._reasoning_output_enabled(),
-            num_predict=max_tokens,
+            num_predict=num_predict,
             temperature=float(payload.get("temperature") or temperature),
             message_count=(
                 len(payload_messages) if isinstance(payload_messages, list) else 0
@@ -715,10 +734,12 @@ class _VLLMGenerationMixin:
             tool_capable=bool(tool_defs),
             tool_payload_bytes=len(json.dumps(tool_defs)) if tool_defs else 0,
             provider_sampler=payload,
+            final_output_tokens=max_tokens,
+            thinking_headroom_tokens=max(num_predict - max_tokens, 0),
         )
         return payload
 
-    def generate_with_tools(  # noqa: PLR0917 - BaseEngine transport contract.
+    def generate_with_tools(  # BaseEngine transport contract.
         self,
         prompt: str,
         tools: list[dict[str, Any]],
@@ -745,35 +766,43 @@ class _VLLMGenerationMixin:
         if tool_defs:
             payload["tools"] = tool_defs
         tool_payload_bytes = len(json.dumps(tool_defs)) if tool_defs else 0
+        num_predict = self._fit_output_to_window(payload)
         payload_messages = payload.get("messages")
         message_count = len(payload_messages) if isinstance(payload_messages, list) else 0
         self._record_provider_request(
             think_enabled=self._reasoning_output_enabled(),
-            num_predict=max_tokens,
+            num_predict=num_predict,
             temperature=float(payload.get("temperature") or temperature),
             message_count=message_count,
             tool_count=len(tool_defs),
             tool_capable=bool(tool_defs),
             tool_payload_bytes=tool_payload_bytes,
             provider_sampler=payload,
+            final_output_tokens=max_tokens,
+            thinking_headroom_tokens=max(num_predict - max_tokens, 0),
         )
 
+        finalizer = ProviderCallFinalizer(self)
         try:
             body = self._service.post_json("/chat/completions", payload)
             self._record_first_chunk()
             self._record_provider_usage(body)
             result = self._parse_tool_completion(body)
-        except BaseException:
-            self._complete_provider_request(outcome="failed")
-            raise
-        self._complete_provider_request()
-        return result
+            # An HTTP 200 body without a usable choice (an in-band error or a malformed reply)
+            # keeps today's empty result but is a failed call, not a completed one.
+            choices = body.get("choices") if isinstance(body, dict) else None
+            if isinstance(choices, list) and choices and isinstance(choices[0], dict):
+                finalizer.finish_reason = result.finish_reason
+            return result
+        finally:
+            finalizer.finalize()
 
     def _parse_tool_completion(self, body: dict[str, Any]) -> GenerationResult:
         usage = _parse_usage(
             body,
             model_name=self.model_name,
             provider=self._PROVIDER_LABEL,
+            time_to_first_token_ms=self._current_time_to_first_token_ms(),
         )
         choices = body.get("choices")
         if not isinstance(choices, list) or not choices:
@@ -812,6 +841,14 @@ class _VLLMGenerationMixin:
             usage=usage,
             thinking_text=thinking_text.strip(),
         )
+
+    def _fit_output_to_window(self, payload: dict[str, Any]) -> int:
+        """Return the finished payload's wire ``max_tokens``.
+
+        Called once the prompt and tools are attached. Plain vLLM enforces its
+        own ceiling; subclasses that know their served window fit it here.
+        """
+        return int(payload.get("max_tokens") or 0)
 
     def _build_payload(
         self,

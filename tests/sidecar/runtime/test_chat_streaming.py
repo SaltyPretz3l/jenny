@@ -57,8 +57,8 @@ def _stub_context_builder() -> object:
         def build_system_prompt(self, system_prompt: str, **_kwargs: object) -> str:
             return system_prompt
 
-        def build_skills_system_message(self, *, tool_statuses: object = None) -> str:
-            _ = tool_statuses
+        def build_skills_system_message(self, *, tool_statuses: object = None, skill_authority: object = None) -> str:
+            _ = tool_statuses, skill_authority
             return ""
 
         def build_memory_recall_system_message(self, recalled_memories: object = None) -> str:
@@ -800,7 +800,7 @@ def test_synthesized_status_emits_canonical_event_when_flag_enabled() -> None:
     assert len(status_events) >= 1
 
 
-def test_reasoning_status_v2_logs_one_redacted_event_per_emitted_status(
+def test_reasoning_status_logs_one_redacted_event_per_emitted_status(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     long_reasoning = (
@@ -815,7 +815,6 @@ def test_reasoning_status_v2_logs_one_redacted_event_per_emitted_status(
     )
     brain = _make_brain_container(
         engine,
-        feature_flags={"reasoning_status_v2": True},
         engine_type="ollama",
     )
 
@@ -852,75 +851,6 @@ def test_reasoning_status_v2_logs_one_redacted_event_per_emitted_status(
     forbidden = ("Inspecting current constraints", long_reasoning.strip())
     assert all(not any(value in record.getMessage() for value in forbidden) for record in records)
     assert all("status_text" not in record.__dict__ and "reasoning_text" not in record.__dict__ for record in records)
-
-
-def test_reasoning_status_v2_flag_off_emits_no_telemetry(caplog: pytest.LogCaptureFixture) -> None:
-    engine = _make_engine(
-        [
-            SimpleNamespace(kind="thinking", text="\u27e8STATUS: Inspecting current constraints\u27e9"),
-            SimpleNamespace(kind="done", text=""),
-        ]
-    )
-
-    with caplog.at_level(logging.INFO, logger="sidecar.runtime.chat_streaming"):
-        build_live_streaming_chat_response(
-            request_id="req-status-telemetry-off",
-            trace_id=None,
-            session_id=None,
-            latest_user_content="x",
-            messages=[],
-            brain_container=_make_brain_container(
-                engine, feature_flags={"reasoning_status_v2": False}
-            ),
-            reasoning_effort=None,
-            learned_lessons=None,
-            max_tokens=4096,
-        )
-
-    assert not any(
-        getattr(record, "event", "") == "runtime.chat_streaming.reasoning_status_emitted"
-        for record in caplog.records
-    )
-
-
-def test_reasoning_status_v2_flag_off_preserves_legacy_status_sequence() -> None:
-    threshold_split = ("Analyzing paths " * 7) + "\u27e8STATUS:"
-    completed_marker = " Reviewing current constraints\u27e9"
-    duplicate_marker = "\u27e8STATUS: Reviewing current constraints\u27e9"
-    assert len(threshold_split) == 120
-    engine = _make_engine(
-        [
-            SimpleNamespace(kind="thinking", text=threshold_split),
-            SimpleNamespace(kind="thinking", text=completed_marker),
-            SimpleNamespace(kind="thinking", text=duplicate_marker),
-            SimpleNamespace(kind="content", text="Done."),
-            SimpleNamespace(kind="done", text=""),
-        ]
-    )
-
-    response = build_live_streaming_chat_response(
-        request_id="req-status-v2-off-parity",
-        trace_id=None,
-        session_id=None,
-        latest_user_content="x",
-        messages=[],
-        brain_container=_make_brain_container(
-            engine, feature_flags={"reasoning_status_v2": False}
-        ),
-        reasoning_effort=None,
-        learned_lessons=None,
-        max_tokens=4096,
-    )
-
-    statuses = [
-        note["params"]["delta"]
-        for note in _notifications_by_method(response, "chat.thinking")
-        if note["params"].get("kind") == CHAT_THINKING_KIND_STATUS
-    ]
-    assert statuses == [
-        "Analyzing paths Analyzing paths Analyzing paths",
-        "Reviewing current constraints",
-    ]
 
 
 # ---------------------------------------------------------------------------
@@ -1049,7 +979,7 @@ def test_stream_exception_still_emits_chat_done_before_reraise() -> None:
     assert methods.index(CHAT_DONE_METHOD) > methods.index(CHAT_TOKEN_METHOD)
 
 
-def test_diagnostics_sink_failure_during_live_stream_cannot_suppress_chat_done() -> None:
+def test_diagnostics_saturation_during_live_stream_cannot_suppress_chat_done() -> None:
     class _PartialEngine:
         def stream(self, **kwargs: object):  # type: ignore[return]
             _ = kwargs
@@ -1099,7 +1029,9 @@ def test_diagnostics_sink_failure_during_live_stream_cannot_suppress_chat_done()
         root.setLevel(previous_level)
 
     methods = [note.get("method") for note in written]
-    assert sink_failed is True
+    assert sink_failed is False
+    loss = queue.take_loss_snapshot(force=True)
+    assert loss is not None and loss.dropped_count > 0
     assert methods.count(CHAT_DONE_METHOD) == 1
     assert methods.index(CHAT_DONE_METHOD) > methods.index(CHAT_TOKEN_METHOD)
     assert (
@@ -1943,7 +1875,7 @@ def test_live_stream_chat_done_and_chat_error_carry_plan_usage_when_enabled() ->
             latest_user_content="say something",
             messages=[],
             brain_container=_make_brain_container(
-                done_engine, feature_flags={"chatgpt_plan_meter": True}
+                done_engine, feature_flags={}
             ),
             reasoning_effort=None,
             learned_lessons=None,
@@ -1971,7 +1903,7 @@ def test_live_stream_chat_done_and_chat_error_carry_plan_usage_when_enabled() ->
             latest_user_content="say something",
             messages=[],
             brain_container=_make_brain_container(
-                error_engine, feature_flags={"chatgpt_plan_meter": True}
+                error_engine, feature_flags={}
             ),
             reasoning_effort=None,
             learned_lessons=None,
@@ -1982,35 +1914,6 @@ def test_live_stream_chat_done_and_chat_error_carry_plan_usage_when_enabled() ->
     error_notifications = _notifications_by_method(error_response, CHAT_ERROR_METHOD)
     assert len(error_notifications) == 1
     assert error_notifications[0]["params"]["plan_usage"] == _PLAN_USAGE_SNAPSHOT
-
-
-def test_live_stream_flag_off_omits_plan_usage_from_both_branches() -> None:
-    done_engine = _make_engine(
-        [
-            SimpleNamespace(kind="content", text="hi"),
-            SimpleNamespace(kind="done", text="", finish_reason="stop"),
-        ]
-    )
-    install_request_context(done_engine, request_id="req-plan-usage-stream-off-done")
-    try:
-        current_request_context(done_engine)["plan_usage"] = _PLAN_USAGE_SNAPSHOT
-        done_response = build_live_streaming_chat_response(
-            request_id="req-plan-usage-stream-off-done",
-            trace_id=None,
-            session_id=None,
-            latest_user_content="say something",
-            messages=[],
-            brain_container=_make_brain_container(
-                done_engine, feature_flags={"chatgpt_plan_meter": False}
-            ),
-            reasoning_effort=None,
-            learned_lessons=None,
-            max_tokens=256,
-        )
-    finally:
-        clear_request_context(done_engine)
-    done_notifications = _notifications_by_method(done_response, CHAT_DONE_METHOD)
-    assert "plan_usage" not in done_notifications[0]["params"]["usage"]
 
 
 def test_live_stream_attaches_images_to_last_user_and_counts_surcharge(

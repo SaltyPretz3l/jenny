@@ -4,7 +4,7 @@
  * workspace presentation push (WORKSPACE_PREVIEW_AND_MAP_PANELS_PLAN.md
  * Phase 6). The `workspace_present` builtin tool validates a request and this
  * service emits exactly one `workspacePresentation.onRequest` bridge event to
- * the MAIN workspace window (never overlay/comet windows — sendBridgeEvent is
+ * the MAIN workspace window (never a secondary window — sendBridgeEvent is
  * structurally main-window-only, see main.js sendToWindow). Deliberately NOT
  * transcript-metadata projection: a live push can never replay on reload,
  * rehydrate, or transcript re-render.

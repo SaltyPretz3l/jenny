@@ -63,7 +63,7 @@ def test_outbound_frames_are_encoded_once_end_to_end(monkeypatch) -> None:
 def test_frame_size_property_matches_encoded_body() -> None:
     message = _message(1)
     body = framing.encode_framed_body(message)
-    frame = multiplexer._OutboundFrame(  # noqa: SLF001
+    frame = multiplexer._OutboundFrame(
         body=body,
         message=message,
         lane="data",
@@ -100,7 +100,7 @@ def test_frames_carry_no_message_copy_when_a_body_writer_is_wired() -> None:
     )
     entered = threading.Event()
     release = threading.Event()
-    writer._write_frame_body = lambda _body: (  # noqa: SLF001
+    writer._write_frame_body = lambda _body: (
         entered.set(), release.wait(timeout=2.0)
     )
     writer.enqueue({"jsonrpc": "2.0", "id": 1, "result": {}}, control=True)
@@ -108,7 +108,7 @@ def test_frames_carry_no_message_copy_when_a_body_writer_is_wired() -> None:
     writer.enqueue(_message(1), control=False)
 
     try:
-        queued = writer._data_queue.queue[0].frames[0]  # noqa: SLF001
+        queued = writer._data_queue.queue[0].frames[0]
         assert queued.message is None
         assert queued.body == framing.encode_framed_body(_message(1))
         assert queued.encoded_size == len(queued.body)

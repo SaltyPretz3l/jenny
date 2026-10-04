@@ -5,6 +5,8 @@ const path = require('path');
 const AGENT_FLAG = '--agent';
 const WORKSPACE_ROOT_FLAG = '--workspace-root';
 
+const WORKSPACE_ROOT_EXPLICIT_ENV = 'JENNY_TOOLS_WORKSPACE_ROOT_EXPLICIT';
+
 // Resolve the tools workspace root to forward into the agent profile.
 // Precedence, most explicit first:
 //   1. an explicit `--workspace-root <path>` / `--workspace-root=<path>` flag
@@ -39,6 +41,8 @@ function resolveAgentWorkspaceRoot({ explicitRoot, inheritedRoot, cwd }) {
 function resolveLaunch({ argv = [], env = {}, cwd }) {
   const childEnv = { ...env };
   delete childEnv.ELECTRON_RUN_AS_NODE;
+  // Only this launcher's own `--workspace-root` may mark the root explicit.
+  delete childEnv[WORKSPACE_ROOT_EXPLICIT_ENV];
 
   const forwardedArgs = [];
   let agentMode = /^(1|true|yes|on)$/i.test(String(childEnv.JENNY_AGENT_DEV || '').trim());
@@ -107,11 +111,21 @@ function resolveLaunch({ argv = [], env = {}, cwd }) {
     // isolated profile already persisted wins on relaunch). To launch
     // intentionally rootless, point --workspace-root at an empty profile and
     // clear the persisted root, or start the real (non-agent) app.
+    //
+    // An explicit `--workspace-root` is different: the caller named the folder
+    // for THIS launch, so it replaces a persisted root (dogfood HB-032: the
+    // flag was echoed in the launch line and then ignored, and a turn ran in
+    // the previously saved folder). The marker below tells the shell config
+    // the root came from the flag rather than from the cwd default or an
+    // inherited env var.
     childEnv.JENNY_TOOLS_WORKSPACE_ROOT = resolveAgentWorkspaceRoot({
       explicitRoot: explicitWorkspaceRoot,
       inheritedRoot: childEnv.JENNY_TOOLS_WORKSPACE_ROOT,
       cwd,
     });
+    if (String(explicitWorkspaceRoot == null ? '' : explicitWorkspaceRoot).trim()) {
+      childEnv[WORKSPACE_ROOT_EXPLICIT_ENV] = '1';
+    }
   }
 
   return { agentMode, env: childEnv, forwardedArgs };
@@ -154,6 +168,7 @@ function launch() {
     console.log(
       `Jenny agent mode: userData=${env.JENNY_USER_DATA_DIR} ` +
         `workspaceRoot=${env.JENNY_TOOLS_WORKSPACE_ROOT} ` +
+        `(${env[WORKSPACE_ROOT_EXPLICIT_ENV] ? 'explicit: replaces a saved root' : 'seed: a root the profile already saved wins'}) ` +
         `args=${forwardedArgs.join(' ') || '(none)'}`
     );
   }

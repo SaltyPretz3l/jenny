@@ -1,27 +1,17 @@
 'use strict';
 
-// Artifact Panel V2 boot-install regression (artifact_panel_v2, default-ON).
+// Artifact panel boot-install regression.
 //
-// Reproduces the owner's 2026-07-02 report: with the flag default-ON the LIVE
-// app still rendered the LEGACY artifact review surface. Root cause is a
-// feature-flag hydration race, not the V2 renderer itself:
-//
-//   * The V2 chrome is installed by a ONE-SHOT ensurePanelV2() the first time
-//     ensureArtifactSurface() builds the surface controller. installed() gates
-//     on state.features.featureFlags.artifact_panel_v2 === true.
-//   * The renderer boot seed (renderer-bootstrap-utils.js) does NOT carry the
-//     artifact_panel_v2 key, so it is `undefined` until the async feature
-//     payload lands via refreshFeatureState() partway through boot.
-//   * A user who had the review panel enabled (persisted localStorage prefs)
-//     makes isArtifactReviewVisible() true at the FIRST bootstrap renderAll(),
-//     which runs BEFORE hydration. The surface builds against the static
-//     (legacy) shell, installed() sees the flag undefined -> false, and the
-//     controller is cached forever. Nothing re-installs V2 after hydration.
-//
-// The existing V2 coverage constructs createArtifactPanelV2() with the flag
-// already true, so it is vacuous with respect to this boot ordering. This test
-// boots the FULL shell on the real bootstrap path with default flags and the
-// panel visible at cold boot, and asserts the V2 chrome wins.
+// Reproduces the owner's 2026-07-02 report: the LIVE app rendered the LEGACY
+// artifact review surface. The chrome is installed by a ONE-SHOT
+// ensurePanelV2() the first time ensureArtifactSurface() builds the surface
+// controller, and a user who had the review panel enabled (persisted
+// localStorage prefs) builds that surface at the FIRST bootstrap renderAll(),
+// before the feature payload hydrates. The chrome used to be flag-gated and
+// lost that race; since the post-1.2.0 flag collapse it is unconditional, so
+// the cold-boot build must install the Canvas chrome with no feature payload.
+// This test boots the FULL shell on the real bootstrap path with the panel
+// visible at cold boot and asserts the Canvas chrome wins.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -29,8 +19,7 @@ const { loadRendererApp, waitForUi } = require('./helpers/renderer-shell-harness
 
 // Boot options that recreate the owner's environment: review panel enabled from
 // a prior session (persisted prefs) + a wide viewport so the panel clears the
-// 1080px min-stage width at the FIRST render, and artifact_panel_v2 default-ON
-// on the backend feature payload (the renderer seed still omits it).
+// 1080px min-stage width at the FIRST render.
 function bootOptions() {
   return {
     windowInnerWidth: 1600,
@@ -42,23 +31,10 @@ function bootOptions() {
       width: 460,
       userDismissed: false,
     },
-    // Backend feature payload (returned by the harness features.getState stub):
-    // artifact_panel_v2 default-ON, exactly as the live buildEffectiveFeatureFlags
-    // reports it. The renderer boot seed still omits the key, so it stays
-    // undefined until this payload hydrates partway through boot.
-    shell: {
-      features: {
-        state: {
-          featureFlags: {
-            artifact_panel_v2: true,
-          },
-        },
-      },
-    },
   };
 }
 
-test('boots the Artifact Panel V3 chrome (not legacy) with the flag default-ON and the panel visible at cold boot', async (t) => {
+test('boots the Artifact Panel V3 chrome (not legacy) with the panel visible at cold boot', async (t) => {
   const app = await loadRendererApp(bootOptions());
   t.after(() => app.dispose());
   const { window } = app;
@@ -83,7 +59,7 @@ test('boots the Artifact Panel V3 chrome (not legacy) with the flag default-ON a
   assert.equal(
     hasLegacyKicker,
     false,
-    'legacy "Artifact Review" kicker must not be present when artifact_panel_v2 is on'
+    'legacy "Artifact Review" kicker must not be present'
   );
   assert.equal(
     hasLegacyMetaSection,

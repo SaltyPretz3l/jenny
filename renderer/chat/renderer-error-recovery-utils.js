@@ -24,14 +24,8 @@
   'use strict';
 
   var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
-  function escapeHtml(value) {
-    return String(value || '')
-      .replaceAll('&', '&amp;')
-      .replaceAll('<', '&lt;')
-      .replaceAll('>', '&gt;')
-      .replaceAll('"', '&quot;')
-      .replaceAll("'", '&#39;');
-  }
+  const escapeHtml = ((typeof globalThis !== 'undefined' && globalThis.stringUtils)
+    || (typeof require === 'function' ? require('../shared/string-utils') : null)).escapeHtml;
 
   /* ── Error classification ── */
 
@@ -128,6 +122,14 @@
     runtime_closing: true,
     lane_capacity: true,
     downstream_capacity: true,
+  };
+
+  /* Terminal subcodes for the user's own Stop (cancel reason user_cancel,
+   * services/backend/chat-stream-terminal-utils.js); same set as
+   * isUserInitiatedStop in renderer/shared/error-intake.js. */
+  var USER_STOP_SUBCODES = {
+    user_cancel: true,
+    user_explicit: true,
   };
 
   /**
@@ -481,6 +483,18 @@
     var hint = severity === 'calm'
       ? serverHint
       : (serverHint || getRecoveryHint(errorClass, decisionMessage));
+    /* A user Stop is one turn-level note. The backend title, transport
+     * message ("Stream cancelled.") and hint all restate it, so they collapse
+     * to one localized title that reads the same live (no recovery fields
+     * yet) and after the persisted row replaces the live bubble. The code
+     * stays on the head chip and data-error-code. */
+    if (severity === 'calm' && !isLockdownRefusal
+      && USER_STOP_SUBCODES[terminalSubcode] === true
+      && (!backendRecoveryClass || backendRecoveryClass === 'cancelled')) {
+      title = jt('chat.terminalState.cancelledAriaLabel', 'Turn cancelled');
+      message = '';
+      hint = '';
+    }
     var nextActionLabel = normalizeActionText(o.nextActionLabel) || normalizeActionText(o.next_action_label);
     var nextAction = normalizeActionText(o.nextAction) || normalizeActionText(o.next_action);
     /* Retryability follows the SAME source as errorClass: a backend-classified

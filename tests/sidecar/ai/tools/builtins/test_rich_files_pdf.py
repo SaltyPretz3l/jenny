@@ -129,7 +129,7 @@ def test_pdf_inspect_corrupt_pdf_returns_unsupported(tmp_path: Path) -> None:
 
     result = _pdf_tool()({"path": "broken.pdf"}, WorkspaceGuard(str(workspace_root)))
 
-    assert result.success is True
+    assert result.success is False
     assert result.metadata["status"] == "unsupported"
     assert result.metadata["failure"]["reason"] == "pdf_parse_failed"
 
@@ -196,14 +196,14 @@ def test_pdf_preview_skips_oversized_render_without_pixmap(tmp_path: Path) -> No
         def get_pixmap(self, **_kwargs: object) -> object:
             raise AssertionError("oversized preview should not render")
 
-    context = module.PdfPreviewContext(  # noqa: SLF001
+    context = module.PdfPreviewContext(
         workspace=WorkspaceGuard(str(tmp_path)),
         session_id="session-rich",
         source_path=Path("sample.pdf"),
         fitz=object(),
     )
 
-    result = module._create_pdf_page_preview(  # noqa: SLF001
+    result = module._create_pdf_page_preview(
         context=context,
         page=Page(),
         page_number=1,
@@ -250,18 +250,18 @@ def test_pdf_preview_skips_oversized_png_bytes(
 
     class Fitz:
         @staticmethod
-        def Matrix(_x_scale: float, _y_scale: float) -> object:  # noqa: N802
+        def Matrix(_x_scale: float, _y_scale: float) -> object:
             return object()
 
     monkeypatch.setattr(module.filesystem_content, "MAX_MEDIA_FILE_BYTES", 8)
-    context = module.PdfPreviewContext(  # noqa: SLF001
+    context = module.PdfPreviewContext(
         workspace=WorkspaceGuard(str(tmp_path)),
         session_id="session-rich",
         source_path=Path("sample.pdf"),
         fitz=Fitz(),
     )
 
-    result = module._create_pdf_page_preview(  # noqa: SLF001
+    result = module._create_pdf_page_preview(
         context=context,
         page=Page(),
         page_number=1,
@@ -305,7 +305,7 @@ def test_pdf_inspect_page_without_text_layer_uses_ocr(
         def __init__(self, parent: object) -> None:
             self.parent = parent
 
-        def extractWORDS(self, *args: object, **kwargs: object):  # noqa: N802
+        def extractWORDS(self, *args: object, **kwargs: object):
             return ocr_textpage.extractWORDS(*args, **kwargs)
 
     def _stub_ocr(page: object, *, tessdata_dir: Path) -> _BorrowedTextPage:
@@ -527,7 +527,7 @@ def test_pdf_inspect_scanned_page_uses_ocr_textpage_lines(
         def __init__(self, parent: object) -> None:
             self.parent = parent
 
-        def extractWORDS(self, *args: object, **kwargs: object):  # noqa: N802
+        def extractWORDS(self, *args: object, **kwargs: object):
             return textpage.extractWORDS(*args, **kwargs)
 
     monkeypatch.setenv("JENNY_ENABLE_PDF_OCR_RAPID", "0")
@@ -539,7 +539,7 @@ def test_pdf_inspect_scanned_page_uses_ocr_textpage_lines(
     monkeypatch.setattr(
         pdf_ocr,
         "ocr_page_textpage",
-        lambda page, *, tessdata_dir: _BorrowedTextPage(page),
+        lambda page, *, tessdata_dir: _BorrowedTextPage(page),  # noqa: PLW0108  # signature
     )
     try:
         result = _pdf_tool()(

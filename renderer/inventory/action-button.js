@@ -14,8 +14,9 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
 
+  // Kept local: uninstall.html loads this primitive without renderer/shared/string-utils.js.
   function escapeHtml(value) {
-    return String(value || '')
+    return String(value == null ? '' : value)
       .replaceAll('&', '&amp;')
       .replaceAll('<', '&lt;')
       .replaceAll('>', '&gt;')

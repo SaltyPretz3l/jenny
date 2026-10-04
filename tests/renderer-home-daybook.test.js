@@ -258,10 +258,10 @@ test('C5: a rows persist preserves font, captureMode, markdown, and globalCaptur
   assert.equal(patch.settings.captureMode, 'prepend');
   assert.equal(patch.settings.markdown, true);
   assert.equal(patch.settings.globalCapture, false);
-  // ...and so does everything else in the section the patch replaces.
-  assert.deepEqual(patch.notes, homeConfig.scratchpad.notes);
-  assert.equal(patch.activeNoteId, 'note-1');
-  assert.deepEqual(patch.pins, ['note-1']);
+  // HOM-03: the rows write never carries note text or pointers (the main-side
+  // merge keeps them per section); a stale copy here could overwrite a newer
+  // text save.
+  assert.deepEqual(Object.keys(patch), ['settings']);
 });
 
 /* C6 REGRESSION. The clock timer rewrites the strip every 30s. */
@@ -511,7 +511,6 @@ test('a persisted railWidth survives the config echo and the next paint', async 
   const state = { ui: { activeView: 'home' } };
   const served = {
     links: [],
-    weather: {},
     widgets: { order: [], hidden: [] },
     scratchpad: { ...defaultScratchpad(), pins: [] },
     calendar: {},

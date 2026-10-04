@@ -4,7 +4,7 @@ import json
 import re
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Iterator
 
 from sidecar.ai.config import RuntimeConfig
 from sidecar.ai.context.builder import ContextBuilder
@@ -15,7 +15,7 @@ from sidecar.ai.memory.unavailable import (
 )
 from sidecar.ai.routing import iteration_limits as _iteration_limits
 from sidecar.ai.routing.tool_observation import ToolObservationStore
-from sidecar.ai.tools.builtins.lsp.manager import (
+from sidecar.ai.tools.builtins.lsp.server_detection import (
     LSPLanguage,
     LSPServerCommand,
     LSPUnavailableResult,
@@ -463,33 +463,25 @@ class HarnessSnapshotBuilder:
             return policies[tool_name]
         return "auto" if read_only else "ask"
 
-    def _load_sessions_with_messages(self) -> dict[str, Any]:
-        """Return {session_id: session} across both on-disk session layouts.
-
-        The Electron store used to keep every session inline in a monolithic
-        ``sessions.json``. It now migrates to a split layout -- a ``sessions/``
-        directory holding ``_index.json`` (summaries only, no messages) plus one
-        file per session -- and does NOT leave a ``sessions.json`` behind.
-        Reading only the monolithic file therefore reported an EMPTY tool
-        history on every migrated install, which is to say on every real one.
-        """
+    def _load_sessions_with_messages(self) -> Iterator[tuple[str, Any]]:
+        """Yield one session at a time across the inline and split layouts."""
         monolithic = self._read_json_file(
             self._resolve_state_path("electron_sessions_path", "sessions.json")
         )
         sessions = _as_dict(monolithic.get("sessions"))
         if sessions:
-            return sessions
+            yield from sessions.items()
+            return
 
         sessions_path = self._resolve_state_path("electron_sessions_path", "sessions.json")
         if sessions_path is None:
-            return {}
+            return
         split_root = sessions_path.parent / "sessions"
         index = self._read_json_file(split_root / "_index.json")
         summaries = _as_dict(index.get("sessions"))
         if not summaries:
-            return {}
+            return
 
-        resolved: dict[str, Any] = {}
         for session_id, summary in summaries.items():
             record = self._read_json_file(split_root / f"{session_id}.json")
             # Per-session files nest the record under "session". Fall back to the
@@ -497,13 +489,12 @@ class HarnessSnapshotBuilder:
             # rather than dropping the session outright.
             session = _as_dict(record.get("session")) or _as_dict(summary)
             if session:
-                resolved[str(session_id)] = session
-        return resolved
+                yield str(session_id), session
 
     def _load_tool_history(self, *, history_limit: int) -> dict[str, Any]:
         sessions = self._load_sessions_with_messages()
-        runs_by_tool: dict[str, list[dict[str, Any]]] = {}
-        for session_id, raw_session in sessions.items():
+        history: dict[str, Any] = {}
+        for session_id, raw_session in sessions:
             if not isinstance(raw_session, dict):
                 continue
             session_title = (
@@ -592,56 +583,36 @@ class HarnessSnapshotBuilder:
                 tool_name = str(run.get("tool_name") or "").strip()
                 if not tool_name:
                     continue
-                runs_by_tool.setdefault(tool_name, []).append(run)
-
-        history: dict[str, Any] = {}
-        for tool_name, runs in runs_by_tool.items():
-            sorted_runs = sorted(
-                runs,
-                key=lambda item: (str(item.get("timestamp") or ""), str(item.get("call_id") or "")),
-                reverse=True,
-            )
-            approval_breakdown = {
-                "auto": 0,
-                "ask": 0,
-                "approved": 0,
-                "denied": 0,
-                "unknown": 0,
-            }
-            success_count = 0
-            error_count = 0
-            for run in sorted_runs:
-                approval_state = (
-                    str(run.get("approval_state") or "unknown").strip().lower() or "unknown"
+                stats = history.setdefault(tool_name, {
+                    "use_count": 0, "success_count": 0, "error_count": 0,
+                    "approval_breakdown": dict.fromkeys(("auto", "ask", "approved", "denied", "unknown"), 0),
+                    "last_used_at": None, "recent_runs": [],
+                })
+                stats["use_count"] += 1
+                approval = str(run.get("approval_state") or "unknown").strip().lower()
+                if approval not in stats["approval_breakdown"]:
+                    approval = "unknown"
+                stats["approval_breakdown"][approval] += 1
+                if run.get("outcome") in {"success", "error"}:
+                    stats[f"{run['outcome']}_count"] += 1
+                timestamp = run.get("timestamp")
+                if str(timestamp or "") > str(stats["last_used_at"] or ""):
+                    stats["last_used_at"] = timestamp
+                stats["recent_runs"].append({
+                    "call_id": str(run.get("call_id") or "").strip(),
+                    "session_id": str(run.get("session_id") or "").strip(),
+                    "session_title": str(run.get("session_title") or "").strip() or "Untitled Session",
+                    "timestamp": timestamp,
+                    "approval_state": str(run.get("approval_state") or "unknown").strip() or "unknown",
+                    "outcome": str(run.get("outcome") or "pending").strip() or "pending",
+                    "summary": str(run.get("summary") or "").strip() or None,
+                })
+                stats["recent_runs"].sort(
+                    key=lambda item: (str(item.get("timestamp") or ""), str(item.get("call_id") or "")),
+                    reverse=True,
                 )
-                if approval_state not in approval_breakdown:
-                    approval_state = "unknown"
-                approval_breakdown[approval_state] += 1
-                if run.get("outcome") == "success":
-                    success_count += 1
-                elif run.get("outcome") == "error":
-                    error_count += 1
-            history[tool_name] = {
-                "use_count": len(sorted_runs),
-                "success_count": success_count,
-                "error_count": error_count,
-                "approval_breakdown": approval_breakdown,
-                "last_used_at": sorted_runs[0].get("timestamp") if sorted_runs else None,
-                "recent_runs": [
-                    {
-                        "call_id": str(run.get("call_id") or "").strip(),
-                        "session_id": str(run.get("session_id") or "").strip(),
-                        "session_title": str(run.get("session_title") or "").strip()
-                        or "Untitled Session",
-                        "timestamp": run.get("timestamp"),
-                        "approval_state": str(run.get("approval_state") or "unknown").strip()
-                        or "unknown",
-                        "outcome": str(run.get("outcome") or "pending").strip() or "pending",
-                        "summary": str(run.get("summary") or "").strip() or None,
-                    }
-                    for run in sorted_runs[:history_limit]
-                ],
-            }
+                del stats["recent_runs"][history_limit:]
+
         return history
 
     def _build_memories_section(self) -> dict[str, Any]:

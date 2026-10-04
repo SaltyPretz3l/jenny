@@ -4,6 +4,7 @@ and identify reasoning-only completion.
 
 from __future__ import annotations
 
+import logging
 from collections import Counter
 from dataclasses import dataclass, field
 from typing import Any, Iterator, Mapping
@@ -15,6 +16,7 @@ from sidecar.ai.routing.provider_tool_limits import (
     MAX_TOOL_CALL_ARGUMENT_BYTES,
     safe_unique_tool_call_id,
     serialized_tool_arguments,
+    tool_argument_byte_cap,
 )
 from sidecar.ai.tools.models import coerce_tool_arguments
 from sidecar.runtime.local_engine.request_context import (
@@ -22,6 +24,8 @@ from sidecar.runtime.local_engine.request_context import (
     current_request_context,
 )
 from sidecar.runtime.vllm_engine_support import extract_reasoning_delta
+
+_LOGGER = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Public data contracts
@@ -116,6 +120,7 @@ class StreamCounters:
     empty_chunk_count: int = 0
     malformed_tool_arguments_count: int = 0
     tool_call_incomplete_count: int = 0
+    tool_call_rejected_count: int = 0
     failed_count: int = 0
     total_chunk_count: int = 0
     provider: str = ""
@@ -130,6 +135,7 @@ class StreamCounters:
             "empty_chunk_count": self.empty_chunk_count,
             "malformed_tool_arguments_count": self.malformed_tool_arguments_count,
             "tool_call_incomplete_count": self.tool_call_incomplete_count,
+            "tool_call_rejected_count": self.tool_call_rejected_count,
             "failed_count": self.failed_count,
             "total_chunk_count": self.total_chunk_count,
             "provider": self.provider,
@@ -146,6 +152,15 @@ class StreamCounters:
 # ``_parse_tool_calls`` cannot drift apart on what "malformed" means. Kept
 # under the original private name for this module's existing call sites.
 _coerce_tool_arguments = coerce_tool_arguments
+
+
+def _whole_call_argument_bytes(raw_arguments: Any) -> int:
+    """Bytes charged for one whole call's arguments (string or parsed dict)."""
+    if isinstance(raw_arguments, str):
+        return len(raw_arguments.encode("utf-8"))
+    if isinstance(raw_arguments, Mapping):
+        return len(serialized_tool_arguments(raw_arguments))
+    return 0
 
 
 def record_counters_to_diagnostics(engine: Any, normalizer: ProviderStreamNormalizer) -> None:
@@ -279,8 +294,10 @@ class ProviderStreamNormalizer:
         self._tool_call_count = 0
         self._aggregate_argument_bytes = 0
         self._tool_input_rejected = False
+        self._tool_input_rejection_reason = ""
         self._counts: Counter[str] = Counter()
         self._total_chunk_count = 0
+        self._feed_failures = 0
 
     # ------------------------------------------------------------------ public
 
@@ -302,6 +319,7 @@ class ProviderStreamNormalizer:
             tool_call_incomplete_count=self._counts.get(
                 NORMALIZED_KIND_TOOL_CALL_INCOMPLETE, 0
             ),
+            tool_call_rejected_count=int(self._tool_input_rejected),
             failed_count=self._counts.get(NORMALIZED_KIND_FAILED, 0),
             total_chunk_count=self._total_chunk_count,
             provider=self._provider,
@@ -314,6 +332,16 @@ class ProviderStreamNormalizer:
     @property
     def tool_input_rejected(self) -> bool:
         return self._tool_input_rejected
+
+    @property
+    def tool_input_rejection_reason(self) -> str:
+        """The cap that rejected tool input.
+
+        ``argument_bytes`` (generic per-call or per-response bytes),
+        ``tool_argument_bytes`` (the smaller cap of a path-only tool) or
+        ``tool_call_count``.
+        """
+        return self._tool_input_rejection_reason
 
     @property
     def terminal_finish_reason(self) -> str:
@@ -332,9 +360,24 @@ class ProviderStreamNormalizer:
         the canonical event producer and only the normalizer's classification
         side-effects are needed. Avoids per-event ``NormalizedStreamEvent``
         allocation in the per-chunk hot path.
+
+        Classification here is secondary to the engine's own parser, so a
+        classifier crash never fails the stream. It is logged: WARNING for the
+        first failure of a stream, DEBUG after that, so a per-chunk crash
+        cannot flood the log.
         """
-        for _ in self.process_chunk(raw_chunk):
-            pass
+        try:
+            for _ in self.process_chunk(raw_chunk):
+                pass
+        except Exception:  # noqa: BLE001 - diagnostic
+            self._feed_failures += 1
+            _LOGGER.log(
+                logging.WARNING if self._feed_failures == 1 else logging.DEBUG,
+                "stream normalizer failed on a %s chunk (failure %d this stream)",
+                self._provider or "provider",
+                self._feed_failures,
+                exc_info=True,
+            )
 
     def finalize_for_counters(self) -> None:
         """Non-yielding variant of :py:meth:`finalize` for counter-only callers."""
@@ -446,10 +489,26 @@ class ProviderStreamNormalizer:
             <= MAX_TOOL_CALL_AGGREGATE_ARGUMENT_BYTES
         )
 
+    def _argument_cap_reason(
+        self, tool_name: str | None, *, call_bytes: int, added_bytes: int
+    ) -> str | None:
+        """The cap one call's arguments would pass, or ``None`` when they fit.
+
+        A path-only tool's smaller cap applies once its name is known, and
+        counts every fragment that arrived before the name did.
+        """
+        tool_cap = tool_argument_byte_cap(tool_name)
+        if tool_cap < MAX_TOOL_CALL_ARGUMENT_BYTES and call_bytes + added_bytes > tool_cap:
+            return "tool_argument_bytes"
+        if not self._arguments_fit(call_bytes=call_bytes, added_bytes=added_bytes):
+            return "argument_bytes"
+        return None
+
     def _reject_tool_input(self, *, reason: str) -> Iterator[NormalizedStreamEvent]:
         if self._tool_input_rejected:
             return
         self._tool_input_rejected = True
+        self._tool_input_rejection_reason = reason
         for state in self._tool_calls.values():
             state.argument_fragments.clear()
             state.finalized = True
@@ -541,15 +600,12 @@ class ProviderStreamNormalizer:
             batch_call_count += 1
             if self._tool_call_count + batch_call_count > MAX_PROVIDER_TOOL_CALLS:
                 return "tool_call_count"
-            raw_arguments = function.get("arguments")
-            if isinstance(raw_arguments, str):
-                argument_bytes = len(raw_arguments.encode("utf-8"))
-            elif isinstance(raw_arguments, Mapping):
-                argument_bytes = len(serialized_tool_arguments(raw_arguments))
-            else:
-                argument_bytes = 0
-            if argument_bytes > MAX_TOOL_CALL_ARGUMENT_BYTES:
-                return "argument_bytes"
+            argument_bytes = _whole_call_argument_bytes(function.get("arguments"))
+            call_reason = self._argument_cap_reason(
+                str(function.get("name") or ""), call_bytes=0, added_bytes=argument_bytes
+            )
+            if call_reason is not None:
+                return call_reason
             batch_argument_bytes += argument_bytes
             if (
                 self._aggregate_argument_bytes + batch_argument_bytes
@@ -578,14 +634,10 @@ class ProviderStreamNormalizer:
             yield from self._reject_tool_input(reason="tool_call_count")
             return
         raw_arguments = function.get("arguments")
-        if isinstance(raw_arguments, str):
-            argument_bytes = len(raw_arguments.encode("utf-8"))
-        elif isinstance(raw_arguments, Mapping):
-            argument_bytes = len(serialized_tool_arguments(raw_arguments))
-        else:
-            argument_bytes = 0
-        if not self._arguments_fit(call_bytes=0, added_bytes=argument_bytes):
-            yield from self._reject_tool_input(reason="argument_bytes")
+        argument_bytes = _whole_call_argument_bytes(raw_arguments)
+        reason = self._argument_cap_reason(tool_name, call_bytes=0, added_bytes=argument_bytes)
+        if reason is not None:
+            yield from self._reject_tool_input(reason=reason)
             return
         self._aggregate_argument_bytes += argument_bytes
         arguments_dict, malformed_raw = _coerce_tool_arguments(raw_arguments)
@@ -754,44 +806,22 @@ class ProviderStreamNormalizer:
             return
         if isinstance(tool_name_value, str) and tool_name_value:
             state.tool_name = tool_name_value
-        fragment = ""
-        if isinstance(arguments_value, str):
-            fragment = arguments_value
-        elif isinstance(arguments_value, Mapping):
-            # Provider already sent a parsed dict — finalize immediately.
-            argument_bytes = len(serialized_tool_arguments(arguments_value))
-            # The dict replaces the accumulated fragments; refund their charge.
-            self._aggregate_argument_bytes -= state.argument_bytes
-            state.argument_bytes = 0
-            if not self._arguments_fit(
-                call_bytes=state.argument_bytes,
-                added_bytes=argument_bytes,
-            ):
-                yield from self._reject_tool_input(reason="argument_bytes")
-                return
-            self._aggregate_argument_bytes += argument_bytes
-            state.argument_bytes = argument_bytes
-            state.argument_fragments.clear()
-            self._counts[NORMALIZED_KIND_TOOL_CALL_COMPLETED] += 1
-            state.finalized = True
-            tool_name_str = state.tool_name or (
-                str(tool_name_value) if isinstance(tool_name_value, str) else ""
-            )
-            yield self._build(
-                NORMALIZED_KIND_TOOL_CALL_COMPLETED,
-                tool_call_id=call_id,
-                tool_name=tool_name_str or None,
-                arguments_delta=dict(arguments_value),
-            )
+        if isinstance(arguments_value, Mapping):
+            yield from self._complete_vllm_dict_arguments(state, arguments_value)
+            return
+        fragment = arguments_value if isinstance(arguments_value, str) else ""
+        fragment_bytes = len(fragment.encode("utf-8"))
+        # Checked even for an empty fragment: the chunk that first names a
+        # path-only tool may carry none, and the fragments before it count.
+        reason = self._argument_cap_reason(
+            state.tool_name,
+            call_bytes=state.argument_bytes,
+            added_bytes=fragment_bytes,
+        )
+        if reason is not None:
+            yield from self._reject_tool_input(reason=reason)
             return
         if fragment:
-            fragment_bytes = len(fragment.encode("utf-8"))
-            if not self._arguments_fit(
-                call_bytes=state.argument_bytes,
-                added_bytes=fragment_bytes,
-            ):
-                yield from self._reject_tool_input(reason="argument_bytes")
-                return
             state.argument_fragments.append(fragment)
             state.argument_bytes += fragment_bytes
             self._aggregate_argument_bytes += fragment_bytes
@@ -802,6 +832,32 @@ class ProviderStreamNormalizer:
                 tool_name=state.tool_name,
                 arguments_delta=fragment,
             )
+
+    def _complete_vllm_dict_arguments(
+        self, state: _ToolCallState, arguments_value: Mapping[str, Any]
+    ) -> Iterator[NormalizedStreamEvent]:
+        """Finalize a call whose provider already sent parsed dict arguments."""
+        argument_bytes = len(serialized_tool_arguments(arguments_value))
+        # The dict replaces the accumulated fragments; refund their charge.
+        self._aggregate_argument_bytes -= state.argument_bytes
+        state.argument_bytes = 0
+        reason = self._argument_cap_reason(
+            state.tool_name, call_bytes=0, added_bytes=argument_bytes
+        )
+        if reason is not None:
+            yield from self._reject_tool_input(reason=reason)
+            return
+        self._aggregate_argument_bytes += argument_bytes
+        state.argument_bytes = argument_bytes
+        state.argument_fragments.clear()
+        self._counts[NORMALIZED_KIND_TOOL_CALL_COMPLETED] += 1
+        state.finalized = True
+        yield self._build(
+            NORMALIZED_KIND_TOOL_CALL_COMPLETED,
+            tool_call_id=state.call_id,
+            tool_name=state.tool_name or None,
+            arguments_delta=dict(arguments_value),
+        )
 
     def _finalize_pending_tool_calls(self) -> Iterator[NormalizedStreamEvent]:
         """Attempt to parse every still-open tool_call accumulator.

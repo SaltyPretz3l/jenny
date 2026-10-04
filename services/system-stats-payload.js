@@ -49,6 +49,7 @@ function normalizeGpuMemorySample(sample = {}) {
     gpuType: String(sample.gpuType ?? sample.gpu_type ?? '').trim(),
     source: String(sample.source || '').trim() || 'unavailable',
     sampledAt: String(sample.sampledAt ?? sample.sampled_at ?? '').trim() || new Date().toISOString(),
+    ...(Array.isArray(sample.devices) ? { devices: sample.devices } : {}),
   };
 }
 

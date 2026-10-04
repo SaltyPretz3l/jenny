@@ -218,6 +218,7 @@ function createHarness(options = {}) {
     calls,
     multiStreamController,
     restore() {
+      controller.dispose?.();
       global.window = originalWindow;
       global.rendererComposerSessionStateController = originalComposerSessionStateController;
     },

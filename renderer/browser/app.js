@@ -28,6 +28,7 @@
       busy: false,
       error: '',
       statusMessage: '',
+      signOutUnconfirmed: false,
       connectionState: 'offline',
       sessions: [],
       selectedSessionId: '',
@@ -130,7 +131,7 @@
           focusTarget: options.focusTarget || this.root?.ownerDocument?.defaultView,
         })
         : null;
-      this.identity = new identityModule.BrowserIdentity(this, createState, normalizeReason);
+      this.identity = new identityModule.BrowserIdentity(this, createState, normalizeReason, options.storage);
       this.mutationRecovery = new BrowserMutationRecovery(this);
       this.orchestration = orchestrationModule?.attachBrowserOrchestration?.(this) || null;
       this.projects = projectsModule?.attachBrowserProjects?.(this, normalizeReason) || null;
@@ -169,7 +170,7 @@
       if (this.disposed || !this.state.authenticated) return null;
       return this.bridge.connectEvents({
         cursor: this.bridge.cursor,
-        onEvent: (event) => this._handleEvent(event),
+        onEvent: (event) => this.conversation?.handleEvent(event),
         onError: () => {
           this.state.statusMessage = jt("app.theHostSentAnInvalidLiveEventJennyWill", "The host sent an invalid live event. Jenny will resync on the next update.");
           this.render();
@@ -202,18 +203,6 @@
     }
     _recoverFromEpoch() { return this.identity.recover(); }
 
-    _handleEvent(event) {
-      return this.conversation?.handleEvent(event);
-    }
-
-    _applyControlEvent(event) {
-      return this.conversation?.applyControlEvent(event);
-    }
-
-    _applyStreamEvent(event) {
-      return this.conversation?.applyStreamEvent(event);
-    }
-
     async _handleClick(event) {
       const action = event.target?.closest?.('[data-action]');
       if (!action || this.disposed) return;
@@ -223,6 +212,7 @@
         if (this.root?.querySelector('#login-password')) this.root.querySelector('#login-password').value = '';
         await this.login(password);
       } else if (id === 'logout') await this.logout();
+      else if (id === 'retry-logout') await this.identity.retryLogout();
       else if (id === 'new-session') await this.createSession();
       else if (id === 'select-session') await this.selectSession(sessionIdFromDataset(action));
       else if (id === 'load-older') await this.loadOlder();
@@ -240,8 +230,8 @@
       else if (id === 'send-chat') await this.send();
       else if (id === 'cancel-chat') await this.cancel();
       else if (id === 'choose-attachment') this.fileInput?.click?.();
-      else if (id === 'remove-attachment') this._removeAttachment(text(action.dataset.queueId));
-      else if (id === 'retry-attachment') await this._retryAttachment(text(action.dataset.queueId));
+      else if (id === 'remove-attachment') this.assets?.removeAttachment(text(action.dataset.queueId));
+      else if (id === 'retry-attachment') await this.assets?.retryAttachment(text(action.dataset.queueId));
       else if (id === 'open-attachment') await this._openAttachment(text(action.dataset.attachmentId));
       else if (id === 'load-full-message') await this.loadFullMessage(text(action.dataset.messageId));
       else if (id === 'preview-artifact') await this._downloadArtifact(text(action.dataset.artifactId), { preview: true });
@@ -250,7 +240,7 @@
         this.state.authSessionsOpen = !this.state.authSessionsOpen;
         if (this.state.authSessionsOpen) this.state.projectsOpen = false;
         this.render();
-        if (this.state.authSessionsOpen) await this._loadAuthSessions();
+        if (this.state.authSessionsOpen) await this.deviceSessions?.load();
       } else if (id === 'revoke-auth-session') await this._revokeAuthSession(text(action.dataset.sessionId));
       else if (id === 'approve-tool' || id === 'deny-tool') await this.resolveApproval(action, id === 'approve-tool');
       else if (id === 'answer-questions') await this.answerQuestions(action);
@@ -327,14 +317,6 @@
       return this.conversation?.releaseControl();
     }
 
-    _startHeartbeat() {
-      return this.conversation?.startHeartbeat();
-    }
-
-    _stopHeartbeat() {
-      return this.conversation?.stopHeartbeat();
-    }
-
     async _heartbeat() {
       return this.conversation?.heartbeat();
     }
@@ -379,36 +361,8 @@
       return this.assets?.queueFiles(files);
     }
 
-    _uploadAttachmentItem(item) {
-      return this.assets?.uploadAttachmentItem(item);
-    }
-
-    _removeAttachment(clientId) {
-      return this.assets?.removeAttachment(clientId);
-    }
-
-    _retryAttachment(clientId) {
-      return this.assets?.retryAttachment(clientId);
-    }
-
-    _clearAttachmentQueue() {
-      return this.assets?.clearAttachmentQueue();
-    }
-
     _resetBinaryState() {
       return this.assets?.reset();
-    }
-
-    _abortFullMessageLoads() {
-      return this.assets?.abortFullMessageLoads();
-    }
-
-    _abortAttachmentDownloads() {
-      return this.assets?.abortAttachmentDownloads();
-    }
-
-    _revokeAttachmentUrls() {
-      return this.assets?.revokeAttachmentUrls();
     }
 
     _openAttachment(attachmentId) {
@@ -423,24 +377,8 @@
       return this.assets?.loadFullMessage(messageId);
     }
 
-    _trackArtifactUrl(key, blob) {
-      return this.assets?.trackArtifactUrl(key, blob);
-    }
-
     _downloadArtifact(artifactId, options = {}) {
       return this.assets?.downloadArtifact(artifactId, options);
-    }
-
-    _abortArtifactDownloads() {
-      return this.assets?.abortArtifactDownloads();
-    }
-
-    _revokeArtifactUrls() {
-      return this.assets?.revokeArtifactUrls();
-    }
-
-    async _loadAuthSessions() {
-      return this.deviceSessions?.load();
     }
 
     async _revokeAuthSession(sessionId) {
@@ -566,7 +504,7 @@
       if (this.disposed) return;
       this.disposed = true;
       this.reconnect?.stop();
-      this._stopHeartbeat();
+      this.conversation?.stopHeartbeat();
       if (this.eventsBound) {
         this.root.removeEventListener('click', this._onClick);
         this.root.removeEventListener('input', this._onInput);

@@ -228,15 +228,23 @@ test('every non-none surface-effect preset declares full Rev 2 registry metadata
 });
 
 test('S9 native migration roster contains all five shipped effects', () => {
-  const nativeIds = getNonNonePresets()
-    .filter((preset) => preset.contractVersion === 3
-      && preset.inputMode === 'manager'
-      && preset.activityMode === 'native')
+  const v3Ids = getNonNonePresets()
+    .filter((preset) => preset.contractVersion === 3 && preset.inputMode === 'manager')
     .map((preset) => preset.id)
     .sort();
-  assert.deepEqual(nativeIds, [
+  assert.deepEqual(v3Ids, [
     'atomic-burst', 'circuit-trace', 'context-weave', 'playlist-scroll', 'reactive-grid',
   ]);
+  // Owner direction (2026-09-30): no v3 effect consumes model activity.
+  const activityModes = {};
+  getNonNonePresets().forEach((preset) => { activityModes[preset.id] = preset.activityMode; });
+  assert.deepEqual(activityModes, {
+    'atomic-burst': 'none',
+    'circuit-trace': 'none',
+    'context-weave': 'none',
+    'playlist-scroll': 'none',
+    'reactive-grid': 'none',
+  });
 
   const reactiveGrid = getNonNonePresets().find((preset) => preset.id === 'reactive-grid');
   assert.deepEqual(reactiveGrid.interaction, {
@@ -282,7 +290,7 @@ test('no surface effect claims fresh-install candidacy and the fresh defaults ma
   assert.equal(defaultPreferences.surfaceEffectId, 'none');
   assert.equal(defaultPreferences.paletteId, 'slate');
   assert.equal(defaultPreferences.typographyId, 'technical');
-  assert.equal(defaultPreferences.fontScaleId, 'xlarge');
+  assert.equal(defaultPreferences.fontScaleId, 'default');
 });
 
 test('recommendedPalettes preserve the intentional effect-to-palette recommendations', () => {
@@ -295,6 +303,43 @@ test('recommendedPalettes preserve the intentional effect-to-palette recommendat
   // colour per palette means it no longer favours any particular canvas.
   ['reactive-grid', 'playlist-scroll', 'atomic-burst', 'context-weave'].forEach((id) => {
     assert.deepEqual(byId[id].recommendedPalettes, [], `${id}.recommendedPalettes should be empty`);
+  });
+});
+
+test('circuit-trace routed-board contract: interaction, tokens, schema rows and retired tokens', () => {
+  const preset = getSurfaceEffectPresets().find((entry) => entry.id === 'circuit-trace');
+  const prefix = '--widget-circuit-trace-';
+  const expectedTokens = [
+    'grid-color', 'line-color', 'glow-color', 'accent-color', 'inner-color',
+    'shadow-color', 'pitch', 'density', 'speed',
+  ].map((name) => prefix + name);
+
+  assert.deepEqual({ ...preset.interaction }, { hover: true, click: true, press: false, captureOnPress: false });
+  assert.deepEqual([...preset.requiredTokens], expectedTokens);
+
+  const schemas = surfaceEffectRuntime.SURFACE_EFFECT_TOKEN_SCHEMAS;
+  const schemaNames = Object.keys(schemas).filter((name) => name.startsWith(prefix));
+  assert.deepEqual([...schemaNames].sort(), [...expectedTokens].sort(), 'schema rows match the registry tokens');
+  assert.equal(schemas[prefix + 'pitch'].type, 'length-px');
+  assert.equal(schemas[prefix + 'pitch'].fallback, 14);
+  assert.equal(schemas[prefix + 'pitch'].min, 10);
+  assert.equal(schemas[prefix + 'pitch'].max, 28);
+  assert.equal(schemas[prefix + 'accent-color'].fallback, 'rgba(160, 142, 255, 0.72)');
+  assert.equal(schemas[prefix + 'inner-color'].type, 'color');
+  assert.equal(schemas[prefix + 'shadow-color'].type, 'color');
+
+  // Retired with the hex-lattice design: none may survive in CSS, the registry or the schema.
+  const retired = ['hex-size', 'trail-length', 'bloom', 'lift-px'].map((name) => prefix + name);
+  const haystacks = [
+    ...fs.readdirSync(STYLES_DIR).filter((name) => name.endsWith('.css'))
+      .map((name) => [`styles/${name}`, fs.readFileSync(path.join(STYLES_DIR, name), 'utf8')]),
+    ['registry', JSON.stringify(getSurfaceEffectPresets())],
+    ['schema', JSON.stringify(Object.keys(schemas))],
+  ];
+  retired.forEach((token) => {
+    haystacks.forEach(([label, text]) => {
+      assert.ok(!text.includes(token), `${token} must not appear in ${label}`);
+    });
   });
 });
 
@@ -396,6 +441,30 @@ test('every requiredTokens entry appears as a literal string somewhere under sty
         stylesBlob.includes(token),
         `${preset.id} requiredTokens entry "${token}" should appear literally under styles/`
       );
+    });
+  });
+});
+
+test('every requiredTokens entry is declared; reactive-grid colors in foundation and every palette', () => {
+  const stylesBlob = readStylesBlob();
+  getNonNonePresets().forEach((preset) => {
+    preset.requiredTokens.forEach((token) => {
+      assert.ok(
+        stylesBlob.includes(token + ':'),
+        `${preset.id} requiredTokens entry "${token}" should be declared as a custom property under styles/`
+      );
+    });
+  });
+
+  const reactiveGrid = getNonNonePresets().find((preset) => preset.id === 'reactive-grid');
+  const declaring = ['foundation.css'].concat(
+    fs.readdirSync(STYLES_DIR).filter((name) => /^palette-.*[.]css$/.test(name))
+  );
+  assert.equal(declaring.length, 12);
+  declaring.forEach((name) => {
+    const css = fs.readFileSync(path.join(STYLES_DIR, name), 'utf8');
+    reactiveGrid.requiredTokens.forEach((token) => {
+      assert.ok(css.includes(token + ':'), `${name} should declare reactive-grid token "${token}"`);
     });
   });
 });

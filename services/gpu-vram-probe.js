@@ -43,6 +43,7 @@ function parseNvidiaMemoryCsv(stdout) {
   let totalUsed = 0;
   let totalCapacity = 0;
   let maxUtilization = null;
+  const devices = [];
   for (const line of lines) {
     const parts = line.split(',').map((part) => part.trim());
     if (parts.length < 2) {
@@ -53,6 +54,7 @@ function parseNvidiaMemoryCsv(stdout) {
     if (!Number.isFinite(usedMb) || !Number.isFinite(totalMb)) {
       return null;
     }
+    devices.push({ index: devices.length, usedMb, totalMb });
     // Number('') is 0 — an empty third column must read as unavailable, not 0%,
     // matching the Python probe's ValueError behavior.
     const utilization = parts.length >= 3 && parts[2] !== '' ? Number(parts[2]) : Number.NaN;
@@ -78,6 +80,7 @@ function parseNvidiaMemoryCsv(stdout) {
     totalMb: totalCapacity,
     utilAvailable: maxUtilization !== null,
     utilPercent: maxUtilization === null ? 0 : Math.max(Math.min(maxUtilization, 100), 0),
+    devices,
   };
 }
 
@@ -115,6 +118,7 @@ async function probeNvidiaSmiVram({ execFile = nodeExecFile, timeoutMs = DEFAULT
     gpuType: 'cuda',
     source: 'nvidia-smi',
     sampledAt,
+    devices: parsed.devices,
   });
 }
 

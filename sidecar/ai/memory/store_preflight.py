@@ -100,9 +100,10 @@ def _validate_wal_file(wal_path: Path) -> int | None:
         int.from_bytes(header[28:32], "big"),
     ):
         _raise_invalid_wal()
+    # Only whole frames count, as in SQLite's own WAL recovery: a tail shorter
+    # than one frame is what `journal_size_limit` leaves when it truncates a
+    # restarted log (or a torn, never-committed append), not corruption.
     frame_size = _WAL_FRAME_HEADER_BYTES + page_size
-    if (size - _WAL_HEADER_BYTES) % frame_size != 0:
-        _raise_invalid_wal()
     return _read_committed_wal_user_version(
         wal_path,
         page_size=page_size,
@@ -130,12 +131,15 @@ def _read_committed_wal_user_version(
             for _ in range(frame_count):
                 frame_header = handle.read(_WAL_FRAME_HEADER_BYTES)
                 page = handle.read(page_size)
-                if (
-                    len(frame_header) != _WAL_FRAME_HEADER_BYTES
-                    or len(page) != page_size
-                    or frame_header[8:16] != validation.expected_salts
-                ):
+                if len(frame_header) != _WAL_FRAME_HEADER_BYTES or len(page) != page_size:
                     _raise_invalid_wal()
+                if frame_header[8:16] != validation.expected_salts:
+                    # The log ends here. SQLite restarts a checkpointed WAL at
+                    # frame 1 under new salts without truncating the file, so
+                    # an older, longer generation's frames legitimately follow
+                    # the live ones (a second store opened beside a live one
+                    # sees exactly this). SQLite ignores them; so must we.
+                    break
                 checksum = _wal_checksum(
                     frame_header[:8] + page,
                     initial=checksum,

@@ -13,6 +13,7 @@
   const formatRelativeTimestamp = logViewUtils.formatRelativeTime;
 
   function formatMs(value) {
+    if (value == null || String(value).trim() === '') return '\u2014';
     const numeric = Number(value);
     if (!Number.isFinite(numeric)) return '--';
     if (numeric >= 1000) return (numeric / 1000).toFixed(2) + 's';

@@ -17,7 +17,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const { BackendService } = require('../services/backend/backend-service');
-const { buildCompactPayloadMessages } = require('../services/backend/backend-compact-payload');
+const { buildCompactPayload } = require('../services/backend/backend-compact-payload');
 const { createFakeSafeStorage } = require('./helpers/fake-safe-storage');
 const {
   cleanupTrackedResources,
@@ -149,7 +149,7 @@ test('compactContextNow maps plain canonical messages to exact {role, content} r
 });
 
 test('compactContextNow carries chat.send-shaped tool identity without leaking canonical-store fields', async () => {
-  assert.equal(typeof buildCompactPayloadMessages, 'function');
+  assert.equal(typeof buildCompactPayload, 'function');
   const { service } = createMinimalService();
   const calls = [];
 
@@ -179,8 +179,15 @@ test('compactContextNow carries chat.send-shaped tool identity without leaking c
     },
     timestamp: '2026-01-01T00:00:01.000Z', secret: 'must-not-leak',
   });
+  // W3-F11: rows are the send path's prepared rows, so a tool call carries no
+  // stored label text and an orphaned result is dropped exactly as chat.send
+  // drops it; call-2 therefore has its tool_use.
   service.sessionStore.appendMessage('sess-tools', {
-    id: 'm3', role: 'tool', kind: 'tool_result', content: 'write complete',
+    id: 'm2b', role: 'assistant', kind: 'tool_use', content: 'write_file',
+    tool_call: { call_id: 'call-2', tool_name: 'write_file', input_json: '{}' },
+  });
+  service.sessionStore.appendMessage('sess-tools', {
+    id: 'm3', role: 'tool', kind: 'tool_result', content: 'write_file',
     tool_result: {
       call_id: 'call-2', tool_name: 'write_file', output_text: 'write complete',
       is_error: false, secret: 'must-not-leak',
@@ -193,7 +200,7 @@ test('compactContextNow carries chat.send-shaped tool identity without leaking c
   assert.deepEqual(calls[0].messages, [
     {
       role: 'assistant',
-      content: 'Inspecting the file.',
+      content: '',
       tool_calls: [{
         id: 'call-1',
         type: 'function',
@@ -209,6 +216,11 @@ test('compactContextNow carries chat.send-shaped tool identity without leaking c
       error_code: 'CMP-TOOL-0001',
     },
     {
+      role: 'assistant',
+      content: '',
+      tool_calls: [{ id: 'call-2', type: 'function', function: { name: 'write_file', arguments: '{}' } }],
+    },
+    {
       role: 'tool',
       content: 'write complete',
       tool_call_id: 'call-2',
@@ -220,6 +232,7 @@ test('compactContextNow carries chat.send-shaped tool identity without leaking c
     [
       ['content', 'role', 'tool_calls'],
       ['content', 'error_code', 'is_error', 'name', 'role', 'tool_call_id'],
+      ['content', 'role', 'tool_calls'],
       ['content', 'name', 'role', 'tool_call_id'],
     ],
     'tool messages must carry only the compact semantic whitelist'
@@ -391,6 +404,106 @@ test('compactContextNow refuses a locked session while a remote engine is active
   const allowed = await service.compactContextNow('sess-locked');
   assert.notEqual(allowed.reason, 'session_offline_lockdown');
   assert.equal(calls.length, 1, 'a local engine compacts the locked session');
+  service.sidecarClient = null;
+  service.dispose();
+});
+
+// CMC-4 / F22: Compact now summarized with whatever model the engine had
+// active, not the chat's own (small-window) model.
+test('compactContextNow brings up the chat model before the sidecar call, and stops if it cannot', async () => {
+  const { service } = createMinimalService();
+  const order = [];
+  service.sidecarManager.getStatus = () => ({ phase: 'ready' });
+  service.sidecarClient = {
+    chatCompact: async () => { order.push(['compact', service.currentModel]); return { status: 'error', reason: 'no_active_turn' }; },
+    dispose: () => {},
+    off: () => {},
+  };
+  service.currentModel = 'ornith15:9b';
+  service.sessionStore.getSession = () => ({ id: 'sess-small', preferred_model: 'qwen3.5:4b' });
+  service.sessionStore.getSessionMessages = () => [{ id: 'm1', role: 'user', content: 'hello' }];
+  service._resolveModel = async (model, engine) => {
+    order.push(['resolve', model, engine]);
+    service.currentModel = model;
+    return model;
+  };
+
+  await service.compactContextNow('sess-small');
+  assert.deepEqual(order, [['resolve', 'qwen3.5:4b', ''], ['compact', 'qwen3.5:4b']]);
+
+  // Already on the chat model: no reload.
+  order.length = 0;
+  await service.compactContextNow('sess-small');
+  assert.deepEqual(order, [['compact', 'qwen3.5:4b']]);
+
+  // The chat model cannot load: no compaction on the wrong model.
+  order.length = 0;
+  service.currentModel = 'ornith15:9b';
+  service._resolveModel = async () => { throw new Error('pull failed'); };
+  const failed = await service.compactContextNow('sess-small');
+  assert.deepEqual(failed, { status: 'error', reason: 'model_unavailable' });
+  assert.deepEqual(order, []);
+  service.sidecarClient = null;
+  service.dispose();
+});
+
+test('compactContextNow never loads a model for a locked session', async () => {
+  const { service } = createMinimalService();
+  const resolved = [];
+  service.sidecarManager.getStatus = () => ({ phase: 'ready' });
+  service.sidecarClient = {
+    chatCompact: async () => ({ status: 'error', reason: 'no_active_turn' }),
+    dispose: () => {},
+    off: () => {},
+  };
+  service.featureFlags = { ...(service.featureFlags || {}), session_offline_lockdown: true };
+  service.currentEngineType = 'ollama';
+  service.currentModel = 'ornith15:9b';
+  service.sessionStore.getSession = () => ({ id: 'sess-locked', lockdown: true, preferred_model: 'gpt-5' });
+  service.sessionStore.getSessionMessages = () => [{ id: 'm1', role: 'user', content: 'hello' }];
+  service._resolveModel = async (model) => { resolved.push(model); return model; };
+
+  await service.compactContextNow('sess-locked');
+  assert.deepEqual(resolved, []);
+  service.sidecarClient = null;
+  service.dispose();
+});
+
+// Astra review of F22: Compact now must follow Force local inference like the
+// next send does, and never switch models under another chat's live reply.
+test('compactContextNow loads the forced local model, and refuses a switch while another reply runs', async () => {
+  const { service } = createMinimalService();
+  const order = [];
+  service.sidecarManager.getStatus = () => ({ phase: 'ready' });
+  service.sidecarClient = {
+    chatCompact: async () => { order.push(['compact', service.currentModel]); return { status: 'error', reason: 'no_active_turn' }; },
+    dispose: () => {},
+    off: () => {},
+  };
+  service.offlineIntelligenceService = {
+    getMode: () => 'local_only',
+    getState: async () => ({
+      mode: 'local_only', preferredLocalModel: 'qwen3.5:9b', selectedLocalEngineType: 'ollama',
+      localCatalog: { available: true }, localChatReady: true,
+    }),
+  };
+  service.currentModel = 'ornith15:9b';
+  service.sessionStore.getSession = () => ({ id: 'sess-cloud', preferred_model: 'gpt-5' });
+  service.sessionStore.getSessionMessages = () => [{ id: 'm1', role: 'user', content: 'hello' }];
+  service._resolveModel = async (model, engine) => {
+    order.push(['resolve', model, engine]);
+    service.currentModel = model;
+    return model;
+  };
+
+  service.activeStreams.set('stream-other-chat', { abort() {} });
+  const busy = await service.compactContextNow('sess-cloud');
+  assert.deepEqual(busy, { status: 'error', reason: 'session_busy' });
+  assert.deepEqual(order, [], 'no model switch under a live reply');
+  service.activeStreams.clear();
+
+  await service.compactContextNow('sess-cloud');
+  assert.deepEqual(order, [['resolve', 'qwen3.5:9b', 'ollama'], ['compact', 'qwen3.5:9b']]);
   service.sidecarClient = null;
   service.dispose();
 });

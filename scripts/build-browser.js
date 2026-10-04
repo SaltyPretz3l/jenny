@@ -12,6 +12,20 @@ function assertRegularFile(filePath, label) {
   if (!stat.isFile()) throw new Error(`Browser input is not a file: ${label}`);
 }
 
+function browserBundleOptions({ entry, outfile }) {
+  return {
+    entryPoints: [entry],
+    bundle: true,
+    platform: 'browser',
+    format: 'iife',
+    target: ['es2022'],
+    outfile,
+    sourcemap: false,
+    minify: true,
+    logLevel: 'warning',
+  };
+}
+
 function buildBrowser({ root = path.resolve(__dirname, '..'), esbuildImpl = null } = {}) {
   const projectRoot = path.resolve(root);
   const inputRoot = path.join(projectRoot, 'renderer', 'browser');
@@ -39,17 +53,7 @@ function buildBrowser({ root = path.resolve(__dirname, '..'), esbuildImpl = null
   try {
     fs.copyFileSync(inputs['index.html'], path.join(temporary, 'index.html'));
     fs.copyFileSync(inputs['styles.css'], path.join(temporary, 'styles.css'));
-    esbuild.buildSync({
-      entryPoints: [inputs['app.js']],
-      bundle: true,
-      platform: 'browser',
-      format: 'iife',
-      target: ['es2022'],
-      outfile: path.join(temporary, 'app.js'),
-      sourcemap: false,
-      minify: true,
-      logLevel: 'warning',
-    });
+    esbuild.buildSync(browserBundleOptions({ entry: inputs['app.js'], outfile: path.join(temporary, 'app.js') }));
     const catalogRoot = path.join(temporary, 'locales');
     fs.mkdirSync(catalogRoot);
     for (const tag of [...SUPPORTED_TAGS, 'qps-ploc']) {
@@ -84,4 +88,4 @@ if (require.main === module) {
   }
 }
 
-module.exports = { BROWSER_INPUTS, buildBrowser };
+module.exports = { BROWSER_INPUTS, browserBundleOptions, buildBrowser };

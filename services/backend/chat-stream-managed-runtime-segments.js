@@ -96,11 +96,8 @@ function persistCurrentTextSegment(ctx, options) {
       : [];
     const lastVisibleSegment = visibleSegmentsForEvent[visibleSegmentsForEvent.length - 1] || {};
     // The first persisted tool-boundary slice is pre-first-tool commentary;
-    // any later boundary slice is intermediate. Gated by the shared display
-    // flag so flag-off behaviour is byte-identical to today (the stamp would
-    // otherwise survive a cancelled turn that never hits a discarding reset).
-    const responseLoopDisplayV2 = service?.featureFlags?.response_loop_display_v2 === true;
-    const assistantPhase = responseLoopDisplayV2 && atToolBoundary
+    // any later boundary slice is intermediate.
+    const assistantPhase = atToolBoundary
       ? (ctx.textSegmentIndex === 0 ? 'commentary' : 'intermediate')
       : '';
     ctx.noteTurnEvent('assistant_text_segment', {

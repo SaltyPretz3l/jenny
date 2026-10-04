@@ -690,7 +690,7 @@ def test_hardware_profile_promotes_apple_silicon_cpu_fallback_to_metal(monkeypat
 # ---------------------------------------------------------------------------
 
 
-def _make_torch_stub(
+def _make_torch_stub(  # noqa: PLR0913  # fixture
     *,
     cuda_available: bool = False,
     has_hip: bool = False,
@@ -1119,46 +1119,82 @@ def test_get_immutable_profile_cache_hit_does_not_re_probe() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Catalog parity — config/model-recommendation-catalog.json (the authoritative
-# bundled catalog) and _FALLBACK_CATALOG (the embedded Python mirror used when
-# the JSON can't be loaded) are hand-edited in lockstep. Both carry a
-# "keep in sync" comment but nothing enforced it. This test locks the mirror:
-# every tier's modelId/pullTag/displayName/vramRequiredMb/etc. must match
-# exactly, ignoring volatile top-level fields (updatedAt, catalogVersion).
-# ---------------------------------------------------------------------------
-
+# Catalog parity with the authoritative resource shared by both application hosts.
 # tests/sidecar/runtime/<this file> -> parents[3] == repo root.
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 _CATALOG_JSON_PATH = _REPO_ROOT / "config" / "model-recommendation-catalog.json"
 
-# Catalog-level metadata that is expected to drift between the two copies.
-_VOLATILE_CATALOG_KEYS = ("updatedAt", "catalogVersion")
-
-
-def _strip_volatile(model: dict) -> dict:
-    """Drop volatile keys so a stray updatedAt/catalogVersion on a model entry
-    (they normally live at the top level) can't make the mirror look diverged."""
-    return {k: v for k, v in model.items() if k not in _VOLATILE_CATALOG_KEYS}
-
 
 def test_fallback_catalog_mirrors_bundled_json() -> None:
-    """_FALLBACK_CATALOG['models'] must deep-equal the bundled JSON catalog's
-    'models' array, field-for-field and in the same tier order."""
+    """Loaded models match the canonical JSON in the same tier order."""
     assert _CATALOG_JSON_PATH.is_file(), f"catalog JSON missing at {_CATALOG_JSON_PATH}"
     bundled = json.loads(_CATALOG_JSON_PATH.read_text(encoding="utf-8"))
 
-    json_models = [_strip_volatile(m) for m in bundled["models"]]
-    fallback_models = [_strip_volatile(m) for m in _FALLBACK_CATALOG["models"]]
+    json_models = bundled["models"]
+    fallback_models = _FALLBACK_CATALOG["models"]
 
     # Same tiers, same count, same order — surfaces add/drop/reorder cleanly
     # before the big deep-equal turns it into one large dict diff.
     assert [m["tier"] for m in json_models] == [m["tier"] for m in fallback_models], (
         "tier list diverged between config/model-recommendation-catalog.json and "
-        "_FALLBACK_CATALOG in sidecar/runtime/hardware_profile.py — keep them in sync"
+        "_FALLBACK_CATALOG in sidecar/runtime/hardware_profile.py — check resource loading"
     )
 
     # Full field-for-field parity of every tier.
     assert json_models == fallback_models, (
         "config/model-recommendation-catalog.json and _FALLBACK_CATALOG have "
-        "diverged; edit both in lockstep"
+        "diverged; check resource loading"
     )
+
+
+@pytest.mark.parametrize("memory", [SystemMemoryInfo(0, 0), SystemMemoryInfo(16000, 12000)])
+def test_missing_ram_requirement_never_implies_cpu_fit(memory) -> None:
+    recs = _build_model_recommendations(0, "", memory, {"models": [{"pullTag": "unknown:latest"}]})
+    assert len(recs) == 1
+    assert recs[0].fits_on_cpu is False
+    assert recs[0].fits is False
+
+
+def test_loaded_fallback_catalog_equals_canonical_json() -> None:
+    assert _FALLBACK_CATALOG == json.loads(_CATALOG_JSON_PATH.read_text(encoding="utf-8"))
+
+
+def test_fallback_catalog_loads_bundled_config(tmp_path, monkeypatch) -> None:
+    from sidecar.runtime import hardware_profile
+
+    bundled = {"catalogVersion": 123, "models": [{"pullTag": "bundled:test"}]}
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    (config_dir / "model-recommendation-catalog.json").write_text(json.dumps(bundled), encoding="utf-8")
+    monkeypatch.setattr(sys, "_MEIPASS", str(tmp_path), raising=False)
+    assert hardware_profile._load_fallback_catalog() == bundled
+
+
+@pytest.mark.parametrize("failure", ["missing", "unreadable", "malformed", "invalid_shape", "invalid_model"])
+def test_fallback_catalog_load_failure_warns_and_has_no_models(tmp_path, monkeypatch, caplog, failure) -> None:
+    from sidecar.runtime import hardware_profile
+
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    catalog_path = config_dir / "model-recommendation-catalog.json"
+    monkeypatch.setattr(sys, "_MEIPASS", str(tmp_path), raising=False)
+    if failure == "unreadable":
+
+        def denied_read(*_args, **_kwargs):
+            raise PermissionError("denied")
+
+        monkeypatch.setattr(Path, "read_text", denied_read)
+    elif failure != "missing":
+        contents = {"malformed": "{", "invalid_shape": '{"models": {}}', "invalid_model": '{"models": [1]}'}
+        catalog_path.write_text(contents[failure], encoding="utf-8")
+    with caplog.at_level("WARNING", logger=hardware_profile.__name__):
+        catalog = hardware_profile._load_fallback_catalog()
+    assert catalog == {"models": []}
+    assert "Model recommendation catalog unavailable" in caplog.text
+    if failure == "missing":
+        assert "FileNotFoundError" in caplog.text
+    elif failure == "unreadable":
+        assert "PermissionError" in caplog.text
+    monkeypatch.setattr(hardware_profile, "_FALLBACK_CATALOG", catalog)
+    assert _catalog_models(None) == []
+    assert _build_model_recommendations(0, "", SystemMemoryInfo(16000, 12000), None) == []

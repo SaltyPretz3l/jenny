@@ -97,45 +97,37 @@
     }).catch(() => {});
   }
 
-  function buildKindToolbar(kind, editMode, editable, deps) {
-    const { state, escapeHtml, renderArtifactViewModeButton } = deps;
-    if (state.features?.featureFlags?.artifact_panel_v3 === true || typeof renderArtifactViewModeButton !== 'function') return '';
-    return '<div class="artifact-preview-mermaid-toolbar">'
-      + renderArtifactViewModeButton(kind, 'preview', !editMode, 'Preview', state.artifacts.loading, escapeHtml)
-      + renderArtifactViewModeButton(kind, 'edit', editMode, editable ? jt('artifacts.web.editSource', 'Edit Source') : jt('artifacts.web.viewSource', 'View Source'), state.artifacts.loading, escapeHtml)
-      + '</div>';
-  }
-
+  // The Canvas chrome owns the preview/code view control, so the body carries
+  // no in-content mode toolbar.
   function renderWebKind(ctx, kind, kindLabel, sanitizeMarkup, fallbackLanguage) {
     const { surface, file, editable, deps } = ctx;
     const { escapeHtml, getPreferredEditorValue, getArtifactViewMode } = deps;
     const source = getPreferredEditorValue();
     const editMode = (typeof getArtifactViewMode === 'function' ? getArtifactViewMode(kind) : 'preview') === 'edit';
-    const toolbar = buildKindToolbar(kind, editMode, editable, deps);
     applyKindNotes(surface, deps, editable, editMode, kindLabel);
 
     surface.previewContent.classList.remove('hidden');
     if (editMode) {
-      surface.previewContent.innerHTML = toolbar + `<div class="artifacts-empty">${escapeHtml(jt('artifacts.web.editingSource', 'Editing {kind} source below. Switch back to Preview to re-render.', { kind: kindLabel }))}</div>`;
+      surface.previewContent.innerHTML = `<div class="artifacts-empty">${escapeHtml(jt('artifacts.web.editingSource', 'Editing {kind} source below. Switch back to Preview to re-render.', { kind: kindLabel }))}</div>`;
       enterEditMode(surface, file, editable, deps, fallbackLanguage);
       return;
     }
 
     surface.editorShell.classList.add('hidden');
     if (!source.trim()) {
-      surface.previewContent.innerHTML = toolbar + `<div class="artifacts-empty">${escapeHtml(jt('artifacts.web.emptySource', 'Preview unavailable. {kind} source is empty.', { kind: kindLabel }))}</div>`;
+      surface.previewContent.innerHTML = `<div class="artifacts-empty">${escapeHtml(jt('artifacts.web.emptySource', 'Preview unavailable. {kind} source is empty.', { kind: kindLabel }))}</div>`;
       return;
     }
     const sanitized = sanitizeMarkup(source);
     if (!String(sanitized || '').trim()) {
       surface.previewContent.innerHTML = (
-        toolbar + `<div class="artifacts-empty">${escapeHtml(jt('artifacts.web.sourceShown', 'Preview unavailable. {kind} source is shown below.', { kind: kindLabel }))}</div>`
+        `<div class="artifacts-empty">${escapeHtml(jt('artifacts.web.sourceShown', 'Preview unavailable. {kind} source is shown below.', { kind: kindLabel }))}</div>`
         + `<pre class="artifact-preview-pre">${escapeHtml(source)}</pre>`
       );
       return;
     }
     surface.previewContent.innerHTML = (
-      toolbar + `<div class="artifact-preview-web-shell" data-artifact-web-kind="${escapeHtml(kind)}">`
+      `<div class="artifact-preview-web-shell" data-artifact-web-kind="${escapeHtml(kind)}">`
       + sanitized
       + '</div>'
     );

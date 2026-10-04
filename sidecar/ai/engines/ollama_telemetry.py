@@ -11,6 +11,7 @@ ALREADY imports is what keeps that check green).
 from __future__ import annotations
 
 import json
+import logging
 import math
 from typing import TYPE_CHECKING, Any
 
@@ -27,10 +28,15 @@ from sidecar.ai.routing.provider_stream_normalizer import (
     FINISH_REASON_PROVIDER_ERROR,
 )
 from sidecar.ai.tools.models import GenerationUsage
-from sidecar.runtime.diagnostics import emit_startup_audit_mark
+from sidecar.runtime.diagnostics import emit_startup_audit_mark, log_event
 from sidecar.runtime.local_engine.request_context import (
     consume_provider_call_purpose,
     current_diagnostics_store,
+    current_time_to_first_visible_token_ms,
+)
+from sidecar.runtime.provider_capability_profile import (
+    record_capability_probe_failure,
+    record_capability_probe_success,
 )
 
 # Ollama in-band error frames are top-level ``{"error": "..."}`` NDJSON lines,
@@ -123,6 +129,21 @@ def resolve_ollama_stream_finish_reason(
     return "stop"
 
 
+def resolve_ollama_completion_finish_reason(
+    chunk: dict[str, Any], *, has_tool_calls: bool = False
+) -> str:
+    """A full JSON response is terminal; retain provider errors and length stops."""
+    return resolve_ollama_stream_finish_reason(
+        saw_terminal=True,
+        done_reason=(
+            FINISH_REASON_PROVIDER_ERROR
+            if ollama_stream_inband_error(chunk)
+            else chunk.get("done_reason")
+        ),
+        has_tool_calls=has_tool_calls,
+    )
+
+
 def log_ollama_stream_terminal_gap(
     engine: Any,
     *,
@@ -136,18 +157,21 @@ def log_ollama_stream_terminal_gap(
     if finish_reason not in (FINISH_REASON_INCOMPLETE, FINISH_REASON_PROVIDER_ERROR):
         return
     try:
-        request_id = engine._request_id()  # noqa: SLF001 -- engine-owned accessor.
+        request_id = engine._request_id()  # engine-owned accessor.
     except Exception:  # noqa: BLE001 -- diagnostic-only.
         request_id = ""
-    logger.warning(
-        "Ollama stream ended without clean terminal evidence.",
-        extra={
-            "event": "ai.engines.ollama.stream_incomplete",
+    log_event(
+        logger, logging.WARNING,
+        component="ai.engines.ollama",
+        event="ai.engines.ollama.stream_incomplete",
+        message="Ollama stream ended without clean terminal evidence.",
+        request_id=request_id,
+        data={
             "code": CMP_STREAM_INCOMPLETE,
-            "request_id": request_id,
             "model": getattr(engine, "model_name", None),
             "finish_reason": finish_reason,
-            "inband_error": inband_error,
+            "inband_error_present": bool(inband_error),
+            "inband_error_chars": len(inband_error),
         },
     )
 
@@ -186,24 +210,7 @@ def current_time_to_first_token_ms(engine: Any) -> float:
         return 0
     try:
         return _coerce_positive_ms(reader())
-    except Exception:  # Diagnostics are best-effort and must not break generation.
-        return 0
-
-
-def current_time_to_first_token_ms_from_store(engine: Any) -> float:
-    store = current_diagnostics_store(engine)
-    request_id = engine._request_id()
-    if store is None or not request_id or not hasattr(store, "snapshot"):
-        return 0
-    try:
-        snapshot = store.snapshot()
-        if not isinstance(snapshot, dict):
-            return 0
-        observed_request_id = str(snapshot.get("request_id") or "")
-        if observed_request_id and observed_request_id != request_id:
-            return 0
-        return _coerce_positive_ms(snapshot.get("time_to_first_visible_token_ms"))
-    except Exception:  # Diagnostics are best-effort and must not break generation.
+    except Exception:  # noqa: BLE001  # Diagnostics are best-effort and must not break generation.
         return 0
 
 
@@ -301,11 +308,14 @@ class _OllamaTelemetryMixin:
         # Per-call tagging and first-chunk latch: see the vLLM sibling.
         if isinstance(context, dict):
             context["first_chunk_logged"] = False
-        logger.info(
-            "Ollama request started.",
-            extra={
-                "request_id": request_id,
-                "trace_id": trace_id or request_id,
+        log_event(
+            logger, logging.INFO,
+            component="ai.engines.ollama",
+            event="ai.engines.ollama.request_started",
+            message="Ollama request started.",
+            request_id=request_id,
+            trace_id=trace_id or request_id,
+            data={
                 "model": self.model_name,
                 "think_enabled": think_enabled,
                 "provider_reasoning_effort": provider_reasoning_effort,
@@ -361,11 +371,14 @@ class _OllamaTelemetryMixin:
         trace_id = str(context.get("trace_id") or "") if isinstance(context, dict) else ""
         if isinstance(context, dict) and context.get("first_chunk_logged") is not True:
             context["first_chunk_logged"] = True
-            logger.info(
-                "Ollama first chunk received.",
-                extra={
-                    "request_id": request_id,
-                    "trace_id": trace_id or request_id,
+            log_event(
+                logger, logging.INFO,
+                component="ai.engines.ollama",
+                event="ai.engines.ollama.first_chunk",
+                message="Ollama first chunk received.",
+                request_id=request_id,
+                trace_id=trace_id or request_id,
+                data={
                     "model": self.model_name,
                 },
             )
@@ -391,11 +404,14 @@ class _OllamaTelemetryMixin:
         trace_id = str(context.get("trace_id") or "") if isinstance(context, dict) else ""
         if isinstance(context, dict) and context.get("first_visible_logged") is not True:
             context["first_visible_logged"] = True
-            logger.info(
-                "Ollama first visible content received.",
-                extra={
-                    "request_id": request_id,
-                    "trace_id": trace_id or request_id,
+            log_event(
+                logger, logging.INFO,
+                component="ai.engines.ollama",
+                event="ai.engines.ollama.first_visible",
+                message="Ollama first visible content received.",
+                request_id=request_id,
+                trace_id=trace_id or request_id,
+                data={
                     "model": self.model_name,
                 },
             )
@@ -405,7 +421,7 @@ class _OllamaTelemetryMixin:
         store.record_visible_output(request_id=request_id, text=text)
 
     def _current_time_to_first_token_ms(self) -> float:
-        return current_time_to_first_token_ms_from_store(self)
+        return current_time_to_first_visible_token_ms(self)
 
     def _record_provider_usage(self, chunk: dict[str, Any] | None) -> None:
         """Extract provider-reported usage metrics from the Ollama done-chunk.
@@ -439,14 +455,21 @@ class _OllamaTelemetryMixin:
             # the log line bounded.
             context = self._current_request_context()
             trace_id = str(context.get("trace_id") or "") if isinstance(context, dict) else ""
-            logger.debug(
-                "Ollama done-chunk missing usage fields.",
-                extra={
-                    "request_id": request_id,
-                    "trace_id": trace_id or request_id,
+            log_event(
+                logger, logging.DEBUG,
+                component="ai.engines.ollama",
+                event="ai.engines.ollama.usage_missing",
+                message="Ollama done-chunk missing usage fields.",
+                request_id=request_id,
+                trace_id=trace_id or request_id,
+                data={
                     "model": self.model_name,
-                    "chunk_keys": sorted(str(key) for key in chunk.keys()),
-                    "done_reason": str(chunk.get("done_reason") or ""),
+                    "chunk_keys": sorted(key for key in chunk if key in {
+                        "model", "created_at", "message", "done", "done_reason",
+                        "prompt_eval_count", "eval_count", "total_duration", "load_duration",
+                        "prompt_eval_duration", "eval_duration",
+                    }),
+                    "done_reason": resolve_ollama_completion_finish_reason(chunk),
                 },
             )
             return
@@ -454,6 +477,8 @@ class _OllamaTelemetryMixin:
             request_id=request_id,
             prompt_eval_count=prompt_eval_count,
             eval_count=eval_count,
+            # Ollama counts only newly evaluated prompt tokens: the miss counter.
+            prompt_tokens_evaluated=prompt_eval_count,
             prompt_eval_duration_ns=chunk.get("prompt_eval_duration"),
             eval_duration_ns=chunk.get("eval_duration"),
             total_duration_ns=chunk.get("total_duration"),
@@ -461,115 +486,61 @@ class _OllamaTelemetryMixin:
             provider_label="ollama",
         )
 
-    def _complete_provider_request(self, *, outcome: str = "completed") -> None:
+    def _complete_provider_request(
+        self, *, outcome: str = "completed", finish_reason: str | None = None
+    ) -> None:
         store = current_diagnostics_store(self)
         request_id = self._request_id()
         if store is None or not request_id or not hasattr(store, "complete_provider_request"):
             return
-        store.complete_provider_request(request_id=request_id, outcome=outcome)
-        latest_snapshot = store.snapshot() if hasattr(store, "snapshot") else None
-        current_request_context = self._current_request_context()
-        logger.info(
-            "Ollama request completed.",
-            extra={
-                "request_id": request_id,
-                "trace_id": str(
-                    (
-                        current_request_context.get("trace_id")
-                        if isinstance(current_request_context, dict)
-                        else request_id
-                    )
-                    or request_id
-                ),
+        store.complete_provider_request(
+            request_id=request_id, outcome=outcome, finish_reason=finish_reason
+        )
+        snapshot = store.get_snapshot_for_request(request_id) or {}
+        context = self._current_request_context()
+        trace_id = str(context.get("trace_id") or "") if isinstance(context, dict) else ""
+        log_event(
+            logger, logging.INFO if outcome == "completed" else logging.WARNING,
+            component="ai.engines.ollama",
+            event="ai.engines.ollama.request_completed",
+            message=f"Ollama request finished: {outcome}.",
+            request_id=request_id,
+            trace_id=trace_id or request_id,
+            status=outcome,
+            data={
                 "model": self.model_name,
-                "visible_output_chars": (
-                    latest_snapshot.get("visible_output_chars")
-                    if isinstance(latest_snapshot, dict)
-                    else None
+                "outcome": outcome,
+                "finish_reason": finish_reason,
+                "visible_output_chars": snapshot.get("visible_output_chars"),
+                "visible_output_tokens_estimate": snapshot.get("visible_output_tokens_estimate"),
+                "visible_tokens_per_second_estimate": snapshot.get(
+                    "visible_tokens_per_second_estimate"
                 ),
-                "visible_output_tokens_estimate": (
-                    latest_snapshot.get("visible_output_tokens_estimate")
-                    if isinstance(latest_snapshot, dict)
-                    else None
-                ),
-                "visible_tokens_per_second_estimate": (
-                    latest_snapshot.get("visible_tokens_per_second_estimate")
-                    if isinstance(latest_snapshot, dict)
-                    else None
-                ),
-                "time_to_first_chunk_ms": (
-                    latest_snapshot.get("time_to_first_chunk_ms")
-                    if isinstance(latest_snapshot, dict)
-                    else None
-                ),
-                "time_to_first_visible_token_ms": (
-                    latest_snapshot.get("time_to_first_visible_token_ms")
-                    if isinstance(latest_snapshot, dict)
-                    else None
-                ),
-                "provider_prompt_eval_count": (
-                    latest_snapshot.get("provider_prompt_eval_count")
-                    if isinstance(latest_snapshot, dict)
-                    else None
-                ),
-                "provider_eval_count": (
-                    latest_snapshot.get("provider_eval_count")
-                    if isinstance(latest_snapshot, dict)
-                    else None
-                ),
-                "provider_tokens_per_second": (
-                    latest_snapshot.get("provider_tokens_per_second")
-                    if isinstance(latest_snapshot, dict)
-                    else None
-                ),
-                "provider_total_duration_ms": (
-                    latest_snapshot.get("provider_total_duration_ms")
-                    if isinstance(latest_snapshot, dict)
-                    else None
-                ),
+                "time_to_first_chunk_ms": snapshot.get("time_to_first_chunk_ms"),
+                "time_to_first_visible_token_ms": snapshot.get("time_to_first_visible_token_ms"),
+                "provider_prompt_eval_count": snapshot.get("provider_prompt_eval_count"),
+                "provider_eval_count": snapshot.get("provider_eval_count"),
+                "provider_tokens_per_second": snapshot.get("provider_tokens_per_second"),
+                "provider_total_duration_ms": snapshot.get("provider_total_duration_ms"),
             },
         )
 
     def _record_capability_probe_success(self, model_name: str) -> None:
-        store = getattr(self, "_provider_capability_profile_store", None)
-        if store is None:
-            return
-        try:
-            from sidecar.runtime.provider_capability_profile import (
-                PROBE_STATUS_READY,
-                ProviderCapabilityFeatures,
-                ProviderCapabilityObserved,
-                derive_endpoint_id,
-            )
-
-            store.record_probe_result(
-                endpoint_id=derive_endpoint_id("ollama", self.host),
-                model_id=model_name,
-                features=ProviderCapabilityFeatures(
-                    chat_supported=True,
-                    streaming_supported=True,
-                    native_tools_supported=bool(self._tool_calls_enabled),
-                    thinking_or_reasoning_supported=bool(self._thinking),
-                ),
-                observed=ProviderCapabilityObserved(
-                    max_context_advertised=self._context_length,
-                ),
-                probe_status=PROBE_STATUS_READY,
-            )
-        except Exception:  # noqa: BLE001
-            pass
+        record_capability_probe_success(
+            getattr(self, "_provider_capability_profile_store", None),
+            engine_type="ollama",
+            base_url=self.host,
+            model_id=model_name,
+            native_tools_supported=bool(self._tool_calls_enabled),
+            thinking_supported=bool(self._thinking),
+            context_length=self._context_length,
+        )
 
     def _record_capability_probe_failure(self, model_name: str, error: BaseException) -> None:
-        store = getattr(self, "_provider_capability_profile_store", None)
-        if store is None:
-            return
-        try:
-            from sidecar.runtime.provider_capability_profile import derive_endpoint_id
-
-            store.mark_failed(
-                endpoint_id=derive_endpoint_id("ollama", self.host),
-                model_id=model_name or "unknown",
-                reason=f"{type(error).__name__}: {str(error)[:120]}",
-            )
-        except Exception:  # noqa: BLE001
-            pass
+        record_capability_probe_failure(
+            getattr(self, "_provider_capability_profile_store", None),
+            engine_type="ollama",
+            base_url=self.host,
+            model_id=model_name,
+            error=error,
+        )

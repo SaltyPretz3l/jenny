@@ -23,6 +23,7 @@ const {
   normalizeAgentProgressNotification,
 } = require('./work-lifecycle-coordinator');
 const { normalizePendingQuestionBatch } = require('./message-normalization');
+const { mergeLocalGeneratedArtifactPaths } = require('./chat-stream-tool-payload-utils');
 const {
   buildStreamToolResultMessageId,
   buildStreamToolUseMessageId,
@@ -53,6 +54,7 @@ const {
 const { buildContextUsageStreamEvent, rebuildChatDoneUsage } = require('./chat-stream-usage');
 const { persistTerminalContextUsage } = require('./session-context-usage');
 const { normalizeResumableStop } = require('./chat-stream-stop-detail');
+const { createCompactionDiagnostics } = require('./turn-diagnostic-compactions');
 
 // Every notification.method this router (or the tool-handling claim at the
 // bottom of handleNotification) knows how to consume. Anything else used to
@@ -191,6 +193,11 @@ function applyVisibleTextDelta(ctx, tokenDelta, params = {}, options = {}) {
 // (a 32 KiB write would otherwise be thousands of IPC sends). Nothing trails:
 // the row is replaced by the tool_use event that follows the last fragment.
 const TOOL_INPUT_PREVIEW_CHARS = 4096;
+// Checklist writes (FG-006) show the item being written and the running item
+// count, so the row reads their whole argument text. Todo lists and task-board
+// entries stay small; the per-interval fold still caps the IPC rate.
+const CHECKLIST_TOOL_INPUT_PREVIEW_CHARS = 32768;
+const CHECKLIST_TOOL_NAMES = new Set(['todo_write', 'task_board']);
 const TOOL_INPUT_FORWARD_INTERVAL_MS = 100;
 
 function forwardToolInputDelta(ctx, event, payload) {
@@ -198,11 +205,14 @@ function forwardToolInputDelta(ctx, event, payload) {
   const delta = String(payload.arguments_delta || '');
   let forward = ctx.toolInputForward;
   if (!forward || forward.toolCallId !== toolCallId) {
-    forward = { toolCallId, bytes: 0, shippedChars: 0, pending: '', lastEmitAt: 0 };
+    const previewChars = CHECKLIST_TOOL_NAMES.has(String(payload.tool_name || ''))
+      ? CHECKLIST_TOOL_INPUT_PREVIEW_CHARS
+      : TOOL_INPUT_PREVIEW_CHARS;
+    forward = { toolCallId, bytes: 0, shippedChars: 0, pending: '', lastEmitAt: 0, previewChars };
     ctx.toolInputForward = forward;
   }
   forward.bytes += Buffer.byteLength(delta, 'utf8');
-  const previewRoom = TOOL_INPUT_PREVIEW_CHARS - forward.shippedChars - forward.pending.length;
+  const previewRoom = forward.previewChars - forward.shippedChars - forward.pending.length;
   if (previewRoom > 0) forward.pending += delta.slice(0, previewRoom);
   const nowMs = typeof ctx.now === 'function' ? Number(ctx.now()) : Date.now();
   if (forward.lastEmitAt && nowMs - forward.lastEmitAt < TOOL_INPUT_FORWARD_INTERVAL_MS) return;
@@ -318,7 +328,7 @@ function applyCanonicalBridgeEvent(ctx, event, {
     // W2-2: a backgrounded run_command's result carries its job id — hand it
     // to the tracker (idempotent, so the legacy notification arriving for the
     // same call is harmless).
-    noteBackgroundJobFromToolResult(service, ctx, toolNotification.params);
+    noteBackgroundJobFromToolResult(service, ctx, toolNotification.params, toolContext?.workspaceRoot);
     noteDiagnosticToolEvent({
       callId,
       toolName: String(toolNotification.params.tool_name || ''),
@@ -348,9 +358,6 @@ function applyCanonicalBridgeEvent(ctx, event, {
 // store owns normalization. Never lets a store failure break turn settlement.
 function ingestPlanUsage(ctx, snapshot, source) {
   const { service, streamId } = ctx;
-  if (service?.featureFlags?.chatgpt_plan_meter === false) {
-    return;
-  }
   if (!snapshot || typeof snapshot !== 'object') {
     return;
   }
@@ -359,6 +366,39 @@ function ingestPlanUsage(ctx, snapshot, source) {
   } catch (_error) {
     service?._emitServiceLog?.('WARN', 'chat.plan_usage_not_ingested', { streamId, source });
   }
+}
+
+// FG-008: the turn's compactions for the diagnostics dump (read back through the
+// runtime's getDiagnosticCompactions). Summary text only under agent_test_hooks.
+function recordCompactionDiagnostic(ctx, params, summaryPersisted) {
+  ctx.compactionDiagnostics ||= createCompactionDiagnostics({
+    includeText: ctx.service?.featureFlags?.agent_test_hooks === true,
+  });
+  ctx.compactionDiagnostics.record(params, { summaryPersisted });
+}
+
+// The sidecar strips local paths from an Electron-run tool's artifacts
+// (electron_tool_bridge.py), and the persisted turn-event normalizer drops an
+// artifact without one, so the canonical tool_result journaled
+// `generated_artifacts: []` and the image never rendered (GIP-1). Electron
+// stashed the paths when it ran the tool; restore them (redacted, trusted)
+// before capture, as the legacy tool.result path already does.
+function withLocalGeneratedArtifactPaths(ctx, event) {
+  const type = normalizeRuntimeToken(event?.type);
+  const payload = event?.payload;
+  if ((type !== 'tool_execution_completed' && type !== 'tool_execution_failed')
+    || !Array.isArray(payload?.generated_artifacts) || !payload.generated_artifacts.length) {
+    return event;
+  }
+  const merged = mergeLocalGeneratedArtifactPaths(ctx.service, {
+    streamId: ctx.streamId,
+    callId: normalizeRuntimeToken(event.tool_call_id || payload.tool_call_id || payload.toolCallId),
+    sessionId: ctx.resolvedSessionId,
+    artifacts: payload.generated_artifacts,
+  });
+  return merged === payload.generated_artifacts
+    ? event
+    : { ...event, payload: { ...payload, generated_artifacts: merged } };
 }
 
 function handleNotification(ctx, notification, {
@@ -408,11 +448,11 @@ function handleNotification(ctx, notification, {
       turnMetrics?.recordDroppedCanonicalEvent?.();
       return;
     }
-    const identityStampedParams = attachWorkspaceIdentityToCanonicalEvent(
+    const identityStampedParams = withLocalGeneratedArtifactPaths(ctx, attachWorkspaceIdentityToCanonicalEvent(
       ctx.turnId && params.turn_id === streamId ? { ...params, turn_id: ctx.turnId } : params,
       service,
       toolContext?.workspaceRoot
-    );
+    ));
     const validation = validateTurnEvent(identityStampedParams);
     if (
       validation.status !== 'accepted'
@@ -589,10 +629,7 @@ function handleNotification(ctx, notification, {
     // on canonicalBridgeEnabled: multi-tool turns need the same persistence
     // behavior with the canonical bridge canary disabled.
     const resetReason = String(params.reason || '');
-    const preserveToolContinuation = (
-      resetReason === 'tool_continuation'
-      && service?.featureFlags?.response_loop_display_v2 === true
-    );
+    const preserveToolContinuation = resetReason === 'tool_continuation';
     // deterministic_replacement is NOT a preserve reason. StreamResetEvent's
     // contract (sidecar/ai/routing/loop_events.py) names it alongside
     // provider_retry / nudge_retry / reflexive_retry / post_tool_restart as a
@@ -680,16 +717,16 @@ function handleNotification(ctx, notification, {
     // renderer's local counter can diverge; compute it after reset bookkeeping.
     const nextAssistantMessageId = `assistant_${streamId}_seg${ctx.textSegmentIndex}`;
     // What this reset ERASED, named for the renderer so it never has to
-    // re-derive the branch above from `reason` alone (it cannot: the
-    // tool_continuation preserve is flag-gated, and model_winddown erases the
-    // live slice while keeping its persisted segments). Exactly three shapes:
+    // re-derive the branch above from `reason` alone (it cannot:
+    // model_winddown erases the live slice while keeping its persisted
+    // segments, and transcripts recorded before the post-1.2.0 flag collapse
+    // carry 'all' for tool_continuation). Exactly three shapes:
     //   'all'        -> discardPersistedTextSegmentsForReset() + every captured
     //                   assistant_text_segment / reasoning_phase for the turn.
     //   'live_slice' -> persisted segments survive; only the captured events
     //                   scoped to assistantBaseMessageId (the unsaved live
     //                   slice) are dropped. model_winddown.
-    //   'none'       -> nothing erased. tool_continuation with
-    //                   response_loop_display_v2 on.
+    //   'none'       -> nothing erased. tool_continuation.
     const discardScope = !preservePriorSegments
       ? 'all'
       : (preserveToolContinuation ? 'none' : 'live_slice');
@@ -748,7 +785,7 @@ function handleNotification(ctx, notification, {
     touchProgress();
     // W2-2 background-job registration (idempotent with the canonical-bridge
     // call site above — the tracker dedupes by job id).
-    noteBackgroundJobFromToolResult(service, ctx, params);
+    noteBackgroundJobFromToolResult(service, ctx, params, toolContext?.workspaceRoot);
     if (params.success === true) {
       // Turn-scoped completed-tool tally: finalizeVisibleCompletion consults it
       // so a no-visible-text ending cannot fail a turn whose tool work landed
@@ -822,6 +859,7 @@ function handleNotification(ctx, notification, {
       inputComplete: params.input_complete !== false,
       droppedMessages: Math.max(0, Number(params.dropped_messages || 0) || 0),
       droppedBytes: Math.max(0, Number(params.dropped_bytes || 0) || 0),
+      summarySourceDroppedMessages: Math.max(0, Number(params.summary_source_dropped_messages || 0) || 0),
       summaryPersisted,
       summaryExcerpt: String(params.summary_message?.content || '')
         .replace(/\s+/g, ' ').trim().slice(0, 1200),
@@ -837,6 +875,7 @@ function handleNotification(ctx, notification, {
       ...contextCompaction,
       occurredAt: new Date().toISOString(),
     });
+    recordCompactionDiagnostic(ctx, params, summaryPersisted);
     return;
   }
   if (notification.method === 'chat.plan_usage') {
@@ -844,12 +883,7 @@ function handleNotification(ctx, notification, {
     return;
   }
   if (notification.method === 'context.usage') {
-    // Ephemeral mid-turn meter snapshot. Second gate of the two-layer
-    // context_usage_live kill switch (the sidecar owns the first): flag-off
-    // drops the snapshot here so a stale sidecar cannot move the ring.
-    if (service?.featureFlags?.context_usage_live === false) {
-      return;
-    }
+    // Ephemeral mid-turn meter snapshot.
     emitChatStream({
       ...buildContextUsageStreamEvent(params, ctx.model),
       ...ctx.eventBase,

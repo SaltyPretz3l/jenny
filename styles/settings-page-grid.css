@@ -1,0 +1,73 @@
+/* Settings page layout: rows of groups (docs/plans/SETTINGS_LIVE_REVIEW_FIXES_2026-10-03.md,
+ * decision 1). Loaded just before settings-rows.css, which owns the row and
+ * group standard; this sheet owns how a section card lays its groups out. */
+
+/* ── Page: rows of groups ───────────────────────────────────────────────── */
+/* The card is a grid of 500px-or-wider tracks: groups and folds sit side by
+   side in rows, tops aligned, and read left to right (two per row at the
+   default window, three maximized; owner, 2026-10-03). Everything else (the
+   header, the lede, status lines, wide groups) spans the row. A list of rows
+   is always inside a group, so it never stretches across the page; whatever
+   does span the page stops at --settings-wide-max. */
+.settings-view {
+  --settings-wide-max: 1120px;
+}
+
+.settings-content-scroll .settings-card.settings-section-active,
+.settings-flow {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(500px, 100%), 1fr));
+  column-gap: 64px;
+  align-items: start;
+}
+
+.settings-card > * {
+  grid-column: 1 / -1;
+  min-width: 0;
+  margin-block: 0 var(--space-8);
+}
+
+.settings-card > .settings-group,
+.settings-card > .settings-fold,
+.settings-flow > .settings-group,
+.settings-flow > .settings-fold {
+  grid-column: auto;
+  min-width: 0;
+  margin-block: 0 calc(var(--space-16) + var(--space-6));
+}
+
+.settings-card > .settings-group--wide,
+.settings-card > .settings-subsection {
+  grid-column: 1 / -1;
+}
+
+/* What spans the page stops at a reading width; the header and a host that
+   lays out its own groups (.settings-flow) keep the full width. */
+.settings-card.settings-section-active > :not(.settings-group, .settings-fold, .settings-card-header, .settings-flow, .settings-copy),
+.settings-card.settings-section-active > .settings-group--wide {
+  max-width: var(--settings-wide-max);
+}
+
+.settings-card > :last-child {
+  margin-block-end: 0;
+}
+
+/* Projects renders its whole page into one mount; its children keep the
+   card's rhythm (header, lede, group). */
+#sessionRuntimeSettingsMount > * {
+  margin-block: 0 var(--space-8);
+}
+
+#sessionRuntimeSettingsMount > :last-child {
+  margin-block-end: 0;
+}
+
+/* Header buttons overhang the title line instead of growing the header, so
+   the lede starts at the same height on every page. */
+.settings-card-header:not(.settings-card-header--subsection) {
+  align-items: center;
+}
+
+.settings-card-header:not(.settings-card-header--subsection) > :not(h3) {
+  margin-block: calc(var(--space-3) * -1);
+}

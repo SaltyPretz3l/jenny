@@ -159,8 +159,10 @@ test('an event beyond the real home-service query is not advertised as a free da
   const { shapeCalendarMetadata } = require('../services/tools/builtin/home-calendar-result-shape');
   const start = '2026-09-07T00:00';
   const end = '2026-09-08T00:00';
-  const listing = HomeAssistantService.prototype.listCalendar.call({ calendarService: { getState: () => ({
-    windowStart: start, windowEnd: '2026-09-10T00:00', instances: [
+  // The calendar service returns the normalized requested range as its window; the
+  // stub still hands back an instance outside it, which the listing must drop.
+  const listing = HomeAssistantService.prototype.listCalendar.call({ calendarService: { getState: (range) => ({
+    windowStart: range.start, windowEnd: range.end, instances: [
       { instanceId: 'mon', eventId: 'mon', title: 'Monday', start: '2026-09-07T10:00', end: '2026-09-07T11:00' },
       { instanceId: 'tue', eventId: 'tue', title: 'Tuesday appointment', start: '2026-09-08T09:00', end: '2026-09-08T10:00' },
     ],
@@ -248,7 +250,7 @@ test('calendar markup renders day grammar, statuses, overlap detail, and safe si
   assert.match(html, /title="Approximate time \(unrecognized feed time zone\)">~tz/);
   assert.match(html, /title="Recurrence only partially supported">↻/);
   assert.match(html, /cal-chat__row--reminder/);
-  assert.match(html, /title="Reminder — nudges are manual">reminder/);
+  assert.match(html, /title="Reminder fires automatically while Jenny is running.">reminder/);
   assert.match(html, /title="Added by jenny">jenny/);
   assert.match(html, /<span class="cal-chat__new">new<\/span>/);
   assert.match(html, /<span class="cal-chat__new">updated<\/span>/);
@@ -326,7 +328,7 @@ test('reminder receipts format once and daily schedules without event duration g
     kind: 'reminder', id: 'reminder-once', title: 'Send notes', schedule_type: 'once_at', when: '2026-09-08T09:00', category: '',
   }));
   assert.match(once, /Tue, Sep 8 · 9 AM/);
-  assert.match(once, /title="Reminder — nudges are manual">reminder/);
+  assert.match(once, /title="Reminder fires automatically while Jenny is running.">reminder/);
   assert.match(once, /aria-label="Added reminder: Send notes, Tue, Sep 8 · 9 AM"/);
 
   const daily = renderReceipt(receipt({

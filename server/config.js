@@ -55,6 +55,8 @@ const LEGACY_TOP_LEVEL_FIELDS = new Set([...TOP_LEVEL_FIELDS].filter((field) => 
 const MODEL_FIELDS = new Set(['engine', 'model', 'api_url']);
 const RESOURCE_FIELDS = new Set(Object.keys(RESOURCE_LIMITS));
 const EXECUTION_FIELDS = new Set(['mode']);
+// Per-job input copies are staged here (app-writable volume, sandbox mounts it read-only as /inputs).
+const EXECUTION_STAGING_ROOT = '/run/jenny-staging';
 
 function invalid(reason, message = 'Invalid hosted configuration.') {
   return Object.assign(new TypeError(message), {
@@ -205,7 +207,7 @@ function normalizeExecution(value, workspaceRoot, schemaVersion, declaredPolicyV
   if (declaredPolicyVersion !== 2) {
     throw invalid(declaredPolicyVersion > 2 ? 'host_execution_policy_future' : 'host_execution_policy_unsupported');
   }
-  return Object.freeze({ mode: 'offline-copy' });
+  return Object.freeze({ mode: 'offline-copy', stagingRoot: EXECUTION_STAGING_ROOT });
 }
 
 function normalizeModelEndpoint(value) {
@@ -353,4 +355,6 @@ module.exports = {
   normalizeHostConfig,
   SETUP_PENDING_FILE,
   sameOrWithin,
+  resolveExistingRealPath,
+  assertWorkspaceSafe,
 };

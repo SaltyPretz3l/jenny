@@ -7,6 +7,7 @@ const path = require('path');
 const { DATA_ERROR_CODES } = require('../backend/error-codes');
 const { exportSession } = require('../backend/session-export-import');
 const { collectRuntimeArchiveEntries } = require('./runtime-archive');
+const { MAX_SQLITE_SNAPSHOT_BYTES, snapshotSqliteDatabase } = require('./sqlite-snapshot');
 
 const MAX_INVENTORY_FILES = 10_000;
 const MAX_INVENTORY_FILE_BYTES = 8 * 1024 * 1024 * 1024;
@@ -17,11 +18,6 @@ const WORKSPACE_PORTABLE_NAMES = Object.freeze([
   'omissions.db',
   'artifact-manifest.json',
 ]);
-const DATA_INVENTORY_DESCRIPTIONS = Object.freeze({
-  'secure-state.json': Object.freeze([
-    'Remote control pairing record (encrypted): desktop identity, paired phones, shared chat ids, relay URL',
-  ]),
-});
 
 function inventoryError(reason, message) {
   return Object.assign(new Error(message), { code: DATA_ERROR_CODES.SOURCE_UNREADABLE, reason });
@@ -86,6 +82,46 @@ function addFileIfPresent(output, sourcePath, logicalPath, category, limits) {
   output.push({ logicalPath, category, sourcePath, size: stat.size });
 }
 
+function spoolEntry(stagingDir, data, limits) {
+  assertInventoryCapacity([], data.length, limits);
+  const sourcePath = path.join(stagingDir, `inventory-${crypto.randomUUID()}`);
+  try {
+    fs.writeFileSync(sourcePath, data, { flag: 'wx' });
+    return { sourcePath, size: data.length };
+  } catch (error) {
+    fs.rmSync(sourcePath, { force: true });
+    throw error;
+  }
+}
+
+function addDatabaseIfPresent(output, sourcePath, logicalPath, category, limits) {
+  if (!fs.existsSync(sourcePath)) return;
+  const stat = fs.lstatSync(sourcePath);
+  if (!stat.isFile() || stat.isSymbolicLink()) {
+    throw inventoryError('source_unreadable', 'An archive source file is unsafe.');
+  }
+  if (stat.size > limits.maxFileBytes) {
+    throw inventoryError('source_too_large', 'An archive source exceeds the supported per-file size.');
+  }
+  assertInventoryCapacity(output, stat.size, limits);
+  output.push({
+    logicalPath,
+    category,
+    size: stat.size,
+    produce(stagingDir) {
+      const current = fs.lstatSync(sourcePath);
+      if (!current.isFile() || current.isSymbolicLink()) {
+        throw inventoryError('source_unreadable', 'An archive source file is unsafe.');
+      }
+      const data = snapshotSqliteDatabase(sourcePath, {
+        stagingDir,
+        maxBytes: Math.min(limits.maxFileBytes, MAX_SQLITE_SNAPSHOT_BYTES),
+      });
+      return spoolEntry(stagingDir, data, limits);
+    },
+  });
+}
+
 function assertInventoryCapacity(output, size, limits) {
   if (output.length >= limits.maxFiles) {
     throw new Error('Jenny data inventory exceeds the supported file count.');
@@ -101,20 +137,24 @@ function collectSessionEntries(sessionStore, attachmentStore, output, limits) {
   for (const summary of Array.isArray(summaries) ? summaries : []) {
     const sessionId = String(summary?.id || '').trim();
     if (!sessionId) continue;
-    let payload;
-    try {
-      payload = exportSession(sessionStore, sessionId, attachmentStore, { requireManagedMedia: true });
-    } catch (error) {
-      throw inventoryError('source_unreadable', 'Managed session media could not be archived.', error);
-    }
-    if (!payload) continue;
-    const data = Buffer.from(payload, 'utf8');
-    assertInventoryCapacity(output, data.length, limits);
+    assertInventoryCapacity(output, 0, limits);
     const token = crypto.createHash('sha256').update(sessionId).digest('hex');
     output.push({
       logicalPath: `sessions/${token}.json`,
       category: 'chats',
-      data,
+      produce(stagingDir) {
+        let payload;
+        try {
+          payload = exportSession(sessionStore, sessionId, attachmentStore, {
+            requireManagedMedia: true,
+            includeTurnEvents: true,
+          });
+        } catch (_error) {
+          throw inventoryError('source_unreadable', 'Managed session media could not be archived.');
+        }
+        if (!payload) return null;
+        return spoolEntry(stagingDir, Buffer.from(payload, 'utf8'), limits);
+      },
       restoreMetadata: { session_id: sessionId.slice(0, 160) },
     });
   }
@@ -130,6 +170,40 @@ function countSessionAttachments(sessionStore) {
   return count;
 }
 
+function collectWorkspaceEntries(workspaceRoot, entries, limits) {
+  if (!workspaceRoot) return;
+  const metadataRoot = path.join(path.resolve(workspaceRoot), '.jenny');
+  if (!fs.existsSync(metadataRoot)) return;
+  const metadataStat = fs.lstatSync(metadataRoot);
+  if (!metadataStat.isDirectory() || metadataStat.isSymbolicLink()) {
+    throw inventoryError('source_unreadable', 'Workspace archive metadata is unsafe.');
+  }
+  for (const name of WORKSPACE_PORTABLE_NAMES) {
+    const candidate = path.join(metadataRoot, name);
+    if (!fs.existsSync(candidate)) continue;
+    const stat = fs.lstatSync(candidate);
+    if (stat.isSymbolicLink()) continue;
+    if (stat.isDirectory()) {
+      collectDirectoryFiles(candidate, `workspace/${name}`, 'workspace', entries, limits);
+    } else {
+      addFileIfPresent(entries, candidate, `workspace/${name}`, 'workspace', limits);
+    }
+  }
+  if (entries.length > limits.maxFiles) {
+    throw new Error('Jenny data inventory exceeds the supported file count.');
+  }
+}
+
+function collectWorkspaceInventory({
+  workspaceRoot,
+  maxFiles = MAX_INVENTORY_FILES,
+  maxFileBytes = MAX_INVENTORY_FILE_BYTES,
+} = {}) {
+  const entries = [];
+  collectWorkspaceEntries(workspaceRoot, entries, { maxFiles, maxFileBytes });
+  return { entries, counts: { workspace: entries.length, totalBytes: entries.reduce((sum, entry) => sum + entry.size, 0) } };
+}
+
 function collectDataInventory({
   userDataPath,
   runtimePath = '',
@@ -140,6 +214,7 @@ function collectDataInventory({
   portablePreferences = null,
   portableShellConfig = null,
   runtimeArchivePort = null,
+  includeMemoryDatabases = true,
   maxFiles = MAX_INVENTORY_FILES,
   maxFileBytes = MAX_INVENTORY_FILE_BYTES,
 } = {}) {
@@ -180,30 +255,15 @@ function collectDataInventory({
     limits
   );
   addFileIfPresent(entries, path.join(userRoot, 'home-calendar.json'), 'calendar/home-calendar.json', 'memory', limits);
-  addFileIfPresent(entries, path.join(userRoot, 'sidecar-memory.db'), 'memory/sidecar-memory.db', 'memory', limits);
-  if (runtimePath) {
-    addFileIfPresent(entries, path.join(runtimePath, 'jenny_memory.db'), 'memory/jenny_memory.db', 'memory', limits);
-    addFileIfPresent(entries, path.join(runtimePath, 'memory.db'), 'memory/legacy-memory.db', 'memory', limits);
+  if (includeMemoryDatabases) {
+    addDatabaseIfPresent(entries, path.join(userRoot, 'sidecar-memory.db'), 'memory/sidecar-memory.db', 'memory', limits);
+  }
+  if (includeMemoryDatabases && runtimePath) {
+    addDatabaseIfPresent(entries, path.join(runtimePath, 'jenny_memory.db'), 'memory/jenny_memory.db', 'memory', limits);
+    addDatabaseIfPresent(entries, path.join(runtimePath, 'memory.db'), 'memory/legacy-memory.db', 'memory', limits);
   }
   if (includeWorkspace && workspaceRoot) {
-    const metadataRoot = path.join(path.resolve(workspaceRoot), '.jenny');
-    if (fs.existsSync(metadataRoot)) {
-      const metadataStat = fs.lstatSync(metadataRoot);
-      if (!metadataStat.isDirectory() || metadataStat.isSymbolicLink()) {
-        throw inventoryError('source_unreadable', 'Workspace archive metadata is unsafe.');
-      }
-      for (const name of WORKSPACE_PORTABLE_NAMES) {
-        const candidate = path.join(metadataRoot, name);
-        if (!fs.existsSync(candidate)) continue;
-        const stat = fs.lstatSync(candidate);
-        if (stat.isSymbolicLink()) continue;
-        if (stat.isDirectory()) {
-          collectDirectoryFiles(candidate, `workspace/${name}`, 'workspace', entries, limits);
-        } else {
-          addFileIfPresent(entries, candidate, `workspace/${name}`, 'workspace', limits);
-        }
-      }
-    }
+    collectWorkspaceEntries(workspaceRoot, entries, limits);
   }
   if (entries.length > maxFiles) {
     throw new Error('Jenny data inventory exceeds the supported file count.');
@@ -228,11 +288,12 @@ function collectDataInventory({
     if (entry.category === 'tool_permissions') counts.permissions += 1;
   }
   counts.attachments = countSessionAttachments(sessionStore);
-  return { entries, counts, descriptions: DATA_INVENTORY_DESCRIPTIONS };
+  return { entries, counts };
 }
 
 module.exports = {
-  DATA_INVENTORY_DESCRIPTIONS,
+  WORKSPACE_PORTABLE_NAMES,
   collectDataInventory,
+  collectWorkspaceInventory,
   countSessionAttachments,
 };

@@ -130,7 +130,7 @@ def test_payload_caps_and_truncation_diagnostics_are_applied() -> None:
     assert any(item["code"] == "payload_truncated" for item in result.diagnostics)
 
 
-def test_approval_policy_presentation_fields_are_independently_capped_and_redacted() -> None:
+def test_approval_policy_presentation_fields_are_independently_capped_and_secret_redacted() -> None:
     result = validate_turn_event(
         {
             "v": 1,
@@ -151,7 +151,8 @@ def test_approval_policy_presentation_fields_are_independently_capped_and_redact
     assert result.status == "accepted"
     assert result.event is not None
     assert len(result.event.payload["policy_scope"].encode("utf-8")) <= 120
-    assert "C:/Users/example/private.txt" not in result.event.payload["policy_consequence"]
+    # HB-012: paths are presented in the app; only the export boundary anonymises them.
+    assert "C:/Users/example/private.txt" in result.event.payload["policy_consequence"]
     assert "sk-abcdefghijklmnop" not in result.event.payload["policy_consequence"]
 
 
@@ -190,7 +191,7 @@ def test_utf8_caps_and_structural_bombs_are_contained() -> None:
     assert any(item["code"] == "structure_budget_exceeded" for item in bomb.diagnostics)
 
 
-def test_durable_payload_redaction_removes_prompt_paths_data_uris_and_provider_maps() -> None:
+def test_durable_payload_redaction_removes_prompts_data_uris_and_provider_maps_keeps_paths() -> None:
     result = validate_turn_event(
         {
             "v": 1,
@@ -213,10 +214,9 @@ def test_durable_payload_redaction_removes_prompt_paths_data_uris_and_provider_m
     serialized = json.dumps(result.event.to_payload(), sort_keys=True)
     assert "private prompt text" not in serialized
     assert "private diagnostics" not in serialized
-    assert "C:/Users/example/private.txt" not in serialized
+    assert "C:/Users/example/private.txt" in serialized
     assert "data:image/png" not in serialized
-    assert "[redacted:path]" in serialized
-    assert "[redacted:path]/private.txt" in serialized
+    assert "[redacted:path]" not in serialized
     assert "[redacted:data-uri]" in serialized
 
 

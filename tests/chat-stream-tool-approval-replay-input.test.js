@@ -8,10 +8,11 @@ const {
   convertToolUseToProviderMessage,
 } = require('../services/backend/chat-stream-reasoning');
 
-// Approval-gated tool_use rows carry model_input_json so a declined call is
-// replayed to the model with workspace-relative paths, not [redacted:path].
+// Approval-gated tool_use rows persist the call's real arguments (HB-012), so
+// a declined call is replayed to the model with the path it actually used,
+// never a [redacted:path] placeholder it would copy back as a literal.
 
-function createService(toExecutionContext) {
+function createService() {
   const messages = [];
   return {
     messages,
@@ -27,14 +28,13 @@ function createService(toExecutionContext) {
         if (index !== -1) messages[index] = { ...messages[index], ...patch };
       },
     },
-    sessionExecutionAuthority: { toExecutionContext },
     emit() {},
     pendingToolApprovals: new Map(),
     currentModel: 'test-model',
   };
 }
 
-function requestApproval(service, callId, executionAuthority) {
+function requestApproval(service, callId) {
   return waitForToolApproval(
     service,
     `stream-${callId}`,
@@ -43,11 +43,11 @@ function requestApproval(service, callId, executionAuthority) {
     {
       tool_name: 'write_file',
       tool_call_id: callId,
-      tool_input: { path: 'C:\\ws\\src\\a.js' },
+      tool_input: { path: 'C:\\ws\\src\\a.js', api_key: 'sk-approvalsecret123456' },
     },
     new AbortController(),
     null,
-    executionAuthority
+    { binding_id: `binding-${callId}` }
   );
 }
 
@@ -58,45 +58,23 @@ function denyPending(service, callId) {
   pending.resolve(false, 'denied');
 }
 
-test('waitForToolApproval persists model replay input for pending and denied workspace paths', async () => {
-  const executionAuthority = { binding_id: 'binding-model-input' };
-  const authorityCalls = [];
-  const service = createService((authority) => {
-    authorityCalls.push(authority);
-    return { root_path: 'C:\\ws' };
-  });
-  const resultPromise = requestApproval(service, 'call-model-input', executionAuthority);
+test('waitForToolApproval persists the real path for pending and denied rows and replays it', async () => {
+  const service = createService();
+  const resultPromise = requestApproval(service, 'call-model-input');
 
   const pendingRow = service.messages.find((message) => message.kind === 'tool_use');
   assert.ok(pendingRow);
-  assert.deepEqual(JSON.parse(pendingRow.tool_call.model_input_json), { path: '.\\src\\a.js' });
-  assert.equal(pendingRow.tool_call.model_input_json.includes('[redacted:path]'), false);
-  assert.deepEqual(JSON.parse(pendingRow.tool_call.input_json), { path: '[redacted:path]\\a.js' });
+  assert.deepEqual(JSON.parse(pendingRow.tool_call.input_json), { path: 'C:\\ws\\src\\a.js', api_key: '[redacted]' });
+  assert.equal(pendingRow.tool_call.model_input_json, undefined);
   assert.equal(
     convertToolUseToProviderMessage(pendingRow).tool_calls[0].function.arguments,
-    pendingRow.tool_call.model_input_json
+    pendingRow.tool_call.input_json
   );
 
   denyPending(service, 'call-model-input');
   assert.equal(await resultPromise, false);
   const deniedRow = service.messages.find((message) => message.kind === 'tool_use');
-  assert.deepEqual(JSON.parse(deniedRow.tool_call.model_input_json), { path: '.\\src\\a.js' });
-  assert.deepEqual(JSON.parse(deniedRow.tool_call.input_json), { path: '[redacted:path]\\a.js' });
-  assert.deepEqual(authorityCalls, [executionAuthority]);
-});
-
-test('waitForToolApproval keeps approval behavior when execution context lookup throws', async () => {
-  let authorityCallCount = 0;
-  const service = createService(() => {
-    authorityCallCount += 1;
-    throw new Error('binding closed');
-  });
-  const resultPromise = requestApproval(service, 'call-closed-binding', { binding_id: 'binding-closed' });
-
-  denyPending(service, 'call-closed-binding');
-  assert.equal(await resultPromise, false);
-  const deniedRow = service.messages.find((message) => message.kind === 'tool_use');
+  assert.deepEqual(JSON.parse(deniedRow.tool_call.input_json), { path: 'C:\\ws\\src\\a.js', api_key: '[redacted]' });
   assert.equal(deniedRow.tool_call.model_input_json, undefined);
-  assert.deepEqual(JSON.parse(deniedRow.tool_call.input_json), { path: '[redacted:path]\\a.js' });
-  assert.equal(authorityCallCount, 1);
+  assert.equal(JSON.stringify(deniedRow).includes('[redacted:path]'), false);
 });

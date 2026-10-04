@@ -151,7 +151,7 @@
         if (!current()) return { resolved: false, result: null };
         const failure = error.payload?.ok === false ? error.payload : null;
         if (error.status === 401 || error.code === 'auth_required') app._invalidateAuthentication();
-        else if (failure?.error?.reason === 'operation_indeterminate') {
+        else if (this._isAmbiguous(error, failure)) {
           this._showUnresolved(jt("browserMutationRecovery.theHostCannotSafelyDetermineThisChangeReviewThe", "The host cannot safely determine this change. Review the conversation before retrying."));
         } else if (failure && error.code !== 'request_timeout' && error.code !== 'host_unavailable') {
           this._finish(pending);
@@ -175,6 +175,10 @@
     }
 
     async _settled(pending, result, refresh) {
+      if (this._isAmbiguous(null, result?.ok === false ? result : null)) {
+        this._showUnresolved(jt("browserMutationRecovery.theHostCannotSafelyDetermineThisChangeReviewThe", "The host cannot safely determine this change. Review the conversation before retrying."));
+        return { resolved: false, result: null };
+      }
       this._finish(pending);
       if (result?.ok === false) this.app._commandFailure(result, pending.quiet);
       if (refresh) await this.app._refreshAfterReconciledMutation(pending, result);
@@ -196,7 +200,7 @@
     }
 
     _isAmbiguous(error, failure) {
-      if (failure) return false;
+      if (failure) return ['operation_indeterminate', 'receipt_store_unavailable'].includes(failure.error?.reason);
       return ['request_timeout', 'host_unavailable', 'invalid_server_response'].includes(error?.code)
         || (error?.retryable === true && Number.isFinite(error?.status) && error.status >= 500);
     }

@@ -40,8 +40,9 @@ for (const kind of ['approval', 'user_questions']) for (const mixed of [false, t
     await backend.start();
     const sessionId = (await backend.createSession({ title: 'Quota continuation' })).data.id;
     const projects = backend.projectApplicationService;
-    const project = projects.createProject({ name: 'Quota workspace' }).project;
-    assert.equal(projects.bindProjectRoot({ project_id: project.id, root_path: workspace, expected_root_revision: project.root_revision }).ok, true);
+    // The Workspace folder is already a project (provisioned by createSession);
+    // bindRoot refuses a second owner, so the fixture uses that project.
+    const project = backend.ensureWorkspaceProject(workspace, 'test_fixture').project;
     assert.equal(projects.assignSessionProject({ session_id: sessionId, project_id: project.id }).ok, true);
     const request = { session_id: sessionId,
       prompt: kind === 'approval' ? 'QUOTA_APPROVAL' : 'QUOTA_QUESTION', idempotency_key: 'quota_fixture' };

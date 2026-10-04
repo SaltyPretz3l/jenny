@@ -7,11 +7,7 @@ const {
   cleanupTrackedResources,
   createTrackedTempDir,
 } = require('./helpers/resource-cleanup');
-const {
-  SecureStore,
-  pluginRemoteMcpCredentialKeyName,
-  pluginFullHostSecretKeyName,
-} = require('../services/backend/secure-store');
+const { SecureStore } = require('../services/backend/secure-store');
 
 test.afterEach(async () => {
   await cleanupTrackedResources();
@@ -25,18 +21,6 @@ function createSafeStorageStub(overrides = {}) {
     ...overrides,
   };
 }
-
-test('full-host secrets use a separate safeStorage namespace and never plaintext', async () => {
-  const { store, filePath } = createSecureStoreFixture();
-  const source = 'a'.repeat(64);
-  assert.equal(pluginFullHostSecretKeyName(source), `plugin_full_host:${source}`);
-  await store.setPluginFullHostSecret(source, 'synthetic-stage8-secret');
-  assert.equal(await store.getPluginFullHostSecret(source), 'synthetic-stage8-secret');
-  const persisted = fs.readFileSync(filePath, 'utf8');
-  assert.equal(persisted.includes('synthetic-stage8-secret'), false);
-  await store.deletePluginFullHostSecret(source);
-  assert.equal(await store.getPluginFullHostSecret(source), '');
-});
 
 function createSecureStoreFixture({
   prefix = 'jenny-secure-store-',
@@ -58,14 +42,6 @@ function createSecureStoreFixture({
       isSafeStorageReady,
       nowProvider,
     }),
-  };
-}
-
-function pluginCredentialBinding(overrides = {}) {
-  return {
-    publisher_id: 'acme-labs', plugin_id: 'remote',
-    descriptor_digest: '1'.repeat(64), resource_digest: '2'.repeat(64),
-    issuer_digest: '3'.repeat(64), ...overrides,
   };
 }
 
@@ -522,36 +498,72 @@ test('secure store audit ignores tampered display metadata', () => {
   assert.doesNotMatch(JSON.stringify(audit), /ingest\.sentry\.io/);
 });
 
-test('plugin remote MCP credentials use an isolated digest-only async namespace', async () => {
-  const { filePath, store } = createSecureStoreFixture({
-    prefix: 'jenny-secure-store-plugin-mcp-',
+test('the pairing record Remote Control left behind is purged without touching other secrets', () => {
+  const retiredRecord = {
+    encrypted: true,
+    value: Buffer.from('{"record_version":1}').toString('base64'),
+    secretType: 'remote_control_record',
+  };
+  const { store, filePath } = createSecureStoreFixture({
+    prefix: 'jenny-secure-store-retired-',
+    seed: { 'remote_control:record': retiredRecord },
   });
-  const binding = pluginCredentialBinding();
-  const key = pluginRemoteMcpCredentialKeyName(binding);
-  assert.match(key, /^plugin_remote_mcp:[0-9a-f]{64}$/);
-  assert.doesNotMatch(key, /acme-labs|mcp_auth_token/);
+  store.setWebSearchProviderKey('brave', 'synthetic-key');
 
-  await store.setPluginRemoteMcpCredential(binding, 'access-and-refresh-token');
-  assert.equal(await store.hasPluginRemoteMcpCredential(binding), true);
-  assert.equal(await store.getPluginRemoteMcpCredential(binding), 'access-and-refresh-token');
-  const disk = fs.readFileSync(filePath, 'utf8');
-  assert.doesNotMatch(disk, /access-and-refresh-token|acme-labs|mcp_auth_token/);
+  assert.deepEqual(store.purgeRetiredSecrets(), ['remote_control:record']);
+  assert.equal(Object.hasOwn(JSON.parse(fs.readFileSync(filePath, 'utf8')), 'remote_control:record'), false);
+  assert.equal(store.getWebSearchProviderKey('brave'), 'synthetic-key');
 
-  await store.deletePluginRemoteMcpCredential(binding);
-  assert.equal(await store.hasPluginRemoteMcpCredential(binding), false);
+  const settled = fs.readFileSync(filePath, 'utf8');
+  const settledAt = fs.statSync(filePath).mtimeMs;
+  assert.deepEqual(store.purgeRetiredSecrets(), []);
+  assert.equal(fs.readFileSync(filePath, 'utf8'), settled);
+  assert.equal(fs.statSync(filePath).mtimeMs, settledAt);
 });
 
-test('plugin remote MCP credentials fail closed on weak storage and malformed bindings', async () => {
-  const { store } = createSecureStoreFixture({
-    prefix: 'jenny-secure-store-plugin-mcp-weak-',
-    safeStorage: createSafeStorageStub({ getSelectedStorageBackend: () => 'basic_text' }),
+test('plugin remote MCP credentials left by the retired tier are purged without touching other secrets', () => {
+  const credential = {
+    encrypted: true,
+    value: Buffer.from('access-and-refresh-token').toString('base64'),
+    secretType: 'plugin_remote_mcp',
+  };
+  const keyA = `plugin_remote_mcp:${'a'.repeat(64)}`;
+  const keyB = `plugin_remote_mcp:${'b'.repeat(64)}`;
+  const { store, filePath } = createSecureStoreFixture({
+    prefix: 'jenny-secure-store-retired-plugin-mcp-',
+    seed: { [keyA]: credential, [keyB]: credential },
   });
-  const binding = pluginCredentialBinding();
-  await assert.rejects(store.setPluginRemoteMcpCredential(binding, 'secret'), /encryption unavailable/i);
-  assert.equal(await store.hasPluginRemoteMcpCredential(binding), false);
-  await assert.rejects(store.getPluginRemoteMcpCredential(binding), /encryption unavailable/i);
-  assert.throws(
-    () => pluginRemoteMcpCredentialKeyName(pluginCredentialBinding({ issuer_digest: 'raw-token' })),
-    /invalid plugin remote MCP credential binding/
-  );
+  store.setWebSearchProviderKey('brave', 'synthetic-key');
+  store.setMcpAuthToken('plugin_remote_mcp:server', 'standalone-token');
+
+  assert.deepEqual(store.purgeRetiredSecrets().sort(), [keyA, keyB]);
+  const disk = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+  assert.equal(Object.keys(disk).some((key) => key.startsWith('plugin_remote_mcp:')), false);
+  assert.equal(store.getWebSearchProviderKey('brave'), 'synthetic-key');
+  assert.equal(store.getMcpAuthToken('plugin_remote_mcp:server'), 'standalone-token');
+  assert.deepEqual(store.purgeRetiredSecrets(), []);
+});
+
+test('plugin full-host secrets left by the retired privileged tier are purged without touching other secrets', () => {
+  const credential = {
+    encrypted: true,
+    value: Buffer.from('synthetic-host-secret').toString('base64'),
+    secretType: 'plugin_full_host',
+  };
+  const keyA = `plugin_full_host:${'a'.repeat(64)}`;
+  const keyB = `plugin_full_host:${'b'.repeat(64)}`;
+  const { store, filePath } = createSecureStoreFixture({
+    prefix: 'jenny-secure-store-retired-plugin-host-',
+    seed: { [keyA]: credential, [keyB]: credential },
+  });
+  store.setWebSearchProviderKey('brave', 'synthetic-key');
+  store.setMcpAuthToken('plugin_full_host:server', 'standalone-token');
+
+  assert.deepEqual(store.purgeRetiredSecrets().sort(), [keyA, keyB]);
+  const disk = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+  assert.equal(Object.keys(disk).some((key) => key.startsWith('plugin_full_host:')), false);
+  assert.equal(store.getWebSearchProviderKey('brave'), 'synthetic-key');
+  assert.equal(store.getMcpAuthToken('plugin_full_host:server'), 'standalone-token');
+  assert.deepEqual(store.purgeRetiredSecrets(), []);
+  assert.equal(typeof store.setPluginFullHostSecret, 'undefined', 'the full-host helpers are gone');
 });

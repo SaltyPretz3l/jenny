@@ -37,9 +37,9 @@ for (const crashPoint of ['bind', 'confirm']) test(`process death at ${crashPoin
     await backend.start();
     const session = (await backend.createSession({ title: 'Preparation crash' })).data.id;
     const projects = backend.projectApplicationService;
-    const project = projects.createProject({ name: 'Recovery root' }).project;
-    assert.equal(projects.bindProjectRoot({ project_id: project.id, root_path: workspace,
-      expected_root_revision: project.root_revision }).ok, true);
+    // The Workspace folder is already a project (provisioned by createSession);
+    // bindRoot refuses a second owner, so the fixture uses that project.
+    const project = backend.ensureWorkspaceProject(workspace, 'test_fixture').project;
     assert.equal(projects.assignSessionProject({ session_id: session, project_id: project.id }).ok, true);
     const start = await backend.runtimeApplicationService.start({ session_id: session, prompt: 'Write then ask.',
       idempotency_key: 'preparation_crash', purpose: 'Crash recovery',

@@ -28,6 +28,7 @@
   if (toggleSwitchFn && toggleSwitchModule && typeof toggleSwitchModule !== 'function') {
     toggleSwitchFn.toggle = toggleSwitchModule.toggle;
     toggleSwitchFn.setChecked = toggleSwitchModule.setChecked;
+    toggleSwitchFn.setDisabled = toggleSwitchModule.setDisabled;
     toggleSwitchFn.initToggleHandlers = toggleSwitchModule.initToggleHandlers;
   }
   var checkboxModule = root.inventoryCheckbox;

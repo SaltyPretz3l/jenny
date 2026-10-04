@@ -45,15 +45,7 @@
       runtime_unavailable: jt('chat.subagentMonitor.runtimeUnavailable', 'Could not start the subagent runtime'),
       rejected: jt('chat.subagentMonitor.couldNotStart', 'Could not start'),
     };
-    if (copy[reason]) return copy[reason];
-    if (status === 'completed') return 'Completed';
-    if (status === 'partial') return jt('chat.subagentMonitor.partiallyCompleted', 'Partially completed');
-    if (status === 'cancelled') return 'Cancelled';
-    if (status === 'rejected') return jt('chat.subagentMonitor.couldNotStart', 'Could not start');
-    if (status === 'skipped_budget') return jt('chat.subagentMonitor.reachedWorkLimit', 'Reached its work limit');
-    if (status === 'failed') return 'Failed';
-    if (status === 'queued') return 'Queued';
-    return 'Running';
+    return copy[reason] || statusLabel(status);
   }
 
   function toneForStatus(status) {
@@ -62,6 +54,37 @@
     if (status === 'partial' || status === 'skipped_budget') return 'warning';
     if (status === 'cancelled' || status === 'rejected' || status === 'queued') return 'muted';
     return 'pending';
+  }
+
+  function normalizeSteps(value) {
+    if (!Array.isArray(value)) return [];
+    return value.slice(0, 40).map((entry) => {
+      if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return null;
+      const tool = normalizeText(entry.tool, 64);
+      const display = normalizeText(entry.display, 64) || tool;
+      if (!display) return null;
+      const step = { tool, display, ok: entry.ok !== false };
+      const target = normalizeText(entry.target, 160);
+      const detail = normalizeText(entry.detail, 160);
+      if (target) step.target = target;
+      if (!step.ok && detail) step.detail = detail;
+      return step;
+    }).filter(Boolean);
+  }
+
+  // The plain state word for a status ("Completed", "Running", ...); the
+  // reason copy (terminalCopy) refines it when the report names a reason.
+  function statusLabel(status) {
+    const label = {
+      completed: 'Completed',
+      partial: jt('chat.subagentMonitor.partiallyCompleted', 'Partially completed'),
+      failed: 'Failed',
+      cancelled: 'Cancelled',
+      rejected: jt('chat.subagentMonitor.couldNotStart', 'Could not start'),
+      skipped_budget: jt('chat.subagentMonitor.reachedWorkLimit', 'Reached its work limit'),
+      queued: 'Queued',
+    };
+    return label[status] || 'Running';
   }
 
   function normalizeEvidence(value) {
@@ -90,6 +113,10 @@
     const source = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
     const status = normalizeText(source.status, 40).toLowerCase() || 'failed';
     const reason = normalizeText(source.terminal_reason, 64).toLowerCase();
+    const steps = normalizeSteps(source.steps);
+    const budget = source.budget && typeof source.budget === 'object' ? { ...source.budget } : {};
+    const usage = normalizeUsage(source.usage);
+    const used = Number.isSafeInteger(budget.tool_results_used) && budget.tool_results_used > 0 ? budget.tool_results_used : 0;
     return {
       key: normalizeText(source.task_id || source.agent_id, 200) || `child-${index + 1}`,
       taskId: normalizeText(source.task_id, 200),
@@ -101,14 +128,21 @@
       terminal: TERMINAL.has(status),
       success: status === 'completed',
       summary: normalizeText(source.summary, 1000) || jt('chat.subagentMonitor.detailsUnavailable', 'Details unavailable.'),
+      answer: normalizeText(source.answer, 4000),
+      steps,
+      stepCount: Math.max(steps.length, used),
       evidence: normalizeEvidence(source.evidence),
       tools: Array.isArray(source.tools_used) ? source.tools_used.map((item) => normalizeText(item, 64)).filter(Boolean).slice(0, 20) : [],
       uncertainties: Array.isArray(source.uncertainties) ? source.uncertainties.map((item) => normalizeText(item, 300)).filter(Boolean).slice(0, 8) : [],
-      usage: normalizeUsage(source.usage),
-      budget: source.budget && typeof source.budget === 'object' ? { ...source.budget } : {},
+      usage,
+      budget,
+      elapsedMs: Math.max(0, Number(budget.elapsed_ms) || 0),
+      model: usage?.model || '',
+      provider: usage?.provider || '',
       error: source.error && typeof source.error === 'object' ? { ...source.error } : null,
       terminalReason: reason,
       terminalCopy: terminalCopy(reason, status),
+      statusLabel: statusLabel(status),
       tone: toneForStatus(status),
       authoritative: true,
     };
@@ -136,13 +170,15 @@
       terminal: source.childTerminal === true || source.terminal === true || TERMINAL.has(status),
       success: source.childSuccess === true || source.success === true,
       summary: normalizeText(source.summary, 240) || jt('chat.subagentMonitor.working', 'Working on it.'),
+      answer: '', steps: [], stepCount: 0,
       evidence: [], tools: [], uncertainties: [],
       usage: normalizeUsage(source.usage),
-      budget: {}, error: null,
+      budget: {}, error: null, elapsedMs: 0,
       model: normalizeText(source.model, 96),
       provider: normalizeText(source.provider, 96),
       terminalReason: reason,
       terminalCopy: terminalCopy(reason, status),
+      statusLabel: statusLabel(status),
       tone: toneForStatus(status),
       startedAt,
       updatedAt,
@@ -223,14 +259,33 @@
       else status = children.some((child) => child.terminal) ? 'partial' : 'queued';
     }
     children.sort((a, b) => a.ordinal - b.ordinal);
+    const nowMs = Number(input.now || Date.now());
+    for (const child of children) {
+      if (!child.authoritative) {
+        const endMs = child.terminal ? child.updatedAt : nowMs;
+        child.elapsedMs = child.startedAt ? Math.max(0, endMs - child.startedAt) : 0;
+      }
+    }
     const active = children.find((child) => !child.terminal && child.status === 'running');
     const failed = children.find((child) => child.status === 'failed');
     const selectedKey = normalizeText(input.selectedKey, 200);
     const selected = children.find((child) => child.key === selectedKey) || active || failed || children[0] || null;
     const elapsedMs = authoritative
-      ? Math.max(0, Number(terminal?.report?.budget?.elapsed_ms || selected?.budget?.elapsed_ms || 0))
-      : Math.max(0, Number(input.now || Date.now()) - Number(selected?.startedAt || Date.now()));
+      ? Math.max(0, Number(terminal?.report?.budget?.elapsed_ms) || selected?.elapsedMs || 0)
+      : (selected?.elapsedMs || 0);
     const completed = children.filter((child) => child.status === 'completed').length;
+    const runningCount = children.filter((child) => !child.terminal).length;
+    // responding: the parent's answer still streams; done: it settled;
+    // waiting / synthesizing: children run / all finished, no answer yet.
+    const parentStateKey = input.parentResponding === true
+      ? 'responding'
+      : (input.parentDone === true ? 'done' : (runningCount ? 'waiting' : 'synthesizing'));
+    const childUsageTotal = children.reduce((sum, child) => (
+      Number.isSafeInteger(child.usage?.total_tokens) ? sum + child.usage.total_tokens : sum
+    ), 0);
+    const totalTokens = Number.isSafeInteger(usage?.total_tokens)
+      ? usage.total_tokens
+      : (childUsageTotal > 0 ? childUsageTotal : null);
     return {
       key: normalizeText(input.key, 200) || normalizeText(input.toolCallId, 200) || selected?.toolCallId || selected?.key || '',
       toolCallId: normalizeText(input.toolCallId, 200) || selected?.toolCallId || '',
@@ -241,13 +296,19 @@
       children,
       childCount: children.length,
       completedCount: completed,
+      runningCount,
+      parentStateKey,
+      totalSteps: children.reduce((sum, child) => sum + (child.stepCount || 0), 0),
+      totalTokens,
       selected,
       selectedKey: selected?.key || '',
       elapsedMs,
       usage,
-      parentState: input.parentResponding === true
-        ? 'Responding'
-        : (children.some((child) => !child.terminal) ? jt('chat.subagentMonitor.waitingOnChild', 'Waiting on child') : jt('chat.subagentMonitor.synthesizingResults', 'Synthesizing results')),
+      parentState: {
+        responding: jt('chat.subagentMonitor.responding', 'Responding'),
+        done: terminalCopy(selected?.terminalReason, status),
+        waiting: jt('chat.subagentMonitor.waitingOnChild', 'Waiting on child'),
+      }[parentStateKey] || jt('chat.subagentMonitor.synthesizingResults', 'Synthesizing results'),
       summaryLabel: terminal?.kind === 'batch' || children.length > 1 ? jt('chat.subagentMonitor.delegatedResearch', 'Delegated research') : (selected?.label || jt('chat.subagentMonitor.delegatedResearch', 'Delegated research')),
       statusCopy: terminalCopy(selected?.terminalReason, status),
     };
@@ -278,11 +339,15 @@
         terminalMessageIndex = messageIndex;
       }
     }
-    const parentResponding = terminalMessageIndex >= 0 && list.slice(terminalMessageIndex + 1).some((message) => (
+    // The parent's answer after the report: "Responding" only while it still
+    // streams; once it settled the delegation is simply done (HB-019).
+    const parentAnswer = terminalMessageIndex >= 0 ? list.slice(terminalMessageIndex + 1).find((message) => (
       String(message?.role || '').toLowerCase() === 'assistant' && Boolean(normalizeText(message?.content, 1))
-    ));
+    )) : null;
+    const parentResponding = Boolean(parentAnswer) && String(parentAnswer.status || '') === 'streaming';
     return buildMonitorViewModel({
       steps, terminal, key: key || toolCallId, toolCallId, selectedKey, now, parentResponding,
+      parentDone: Boolean(parentAnswer) && !parentResponding,
     });
   }
 
@@ -295,9 +360,9 @@
   }
 
   function formatTokens(value) {
-    if (value === undefined || value === null || value === '') return 'Unavailable';
+    if (value === undefined || value === null || value === '') return jt('chat.subagentMonitor.tokensNotReported', 'Tokens not reported');
     const count = Number(value);
-    if (!Number.isFinite(count) || count < 0) return 'Unavailable';
+    if (!Number.isFinite(count) || count < 0) return jt('chat.subagentMonitor.tokensNotReported', 'Tokens not reported');
     if (count >= 1000000) return `${(count / 1000000).toFixed(count >= 10000000 ? 0 : 1)}m`;
     if (count >= 1000) return `${(count / 1000).toFixed(count >= 10000 ? 0 : 1)}k`;
     return String(Math.round(count));

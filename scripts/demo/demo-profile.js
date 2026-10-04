@@ -2,7 +2,7 @@
 
 // Throwaway profile + sample workspace for one demo clip recording.
 //
-// Builds on capture-ui.js seedProfile() (replay engine, setup complete, the
+// Builds on the dev capture-ui seedProfile() (replay engine, setup complete, the
 // workspace root already pointed at the sibling workspace dir), then opens the
 // window maximized at the recording zoom (window-state.json + windowUi),
 // materializes the ledger-cli fixture, commits it, applies WORKING_TREE_EDIT so
@@ -19,6 +19,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
+const { normalizeState } = require('../../services/shell-config-state');
 const { ElectronSessionStore } = require('../../services/backend/electron-session-store');
 const { ToolPermissionStore } = require('../../services/tools/tool-permission-store');
 const { ProjectStore } = require('../../services/projects/project-store');
@@ -160,7 +161,7 @@ function materializeReplayScript(scene, base, now) {
 }
 
 function seedDemoProfile(scene, { recording = RECORDING, now = Date.now() } = {}) {
-  const { base, profile } = require('../../capture-ui').seedProfile();
+  const { base, profile } = require('../dev/capture-ui').seedProfile();
   ownDirectory(base);
   let workspace;
   try {
@@ -182,8 +183,11 @@ function populateDemoProfile(scene, { base, profile, workspace, recording, now }
     updatedAt: new Date(now).toISOString(),
   });
   const shellConfigPath = path.join(profile, 'shell-config.json');
-  const shellConfig = readJson(shellConfigPath);
-  shellConfig.windowUi = { appZoomPercent: recording.appZoomPercent };
+  // Migrate the v22 seed to the current version FIRST (tips off, pane layout
+  // seeded), then pin the intentional recording zoom so no later default-flip
+  // migration (v57 moved a stored 100 to 110) runs over it at app load.
+  const shellConfig = normalizeState(readJson(shellConfigPath));
+  shellConfig.windowUi = { ...shellConfig.windowUi, appZoomPercent: recording.appZoomPercent };
   shellConfig.toolsWorkspaceRoot = workspace;
   writeJson(shellConfigPath, shellConfig);
 

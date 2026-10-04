@@ -19,8 +19,11 @@ async function main() {
   backend.sidecarManager.process.prependOnceListener('exit', () => process.exit(86));
   const session = (await backend.createSession({ title: 'Published crash' })).data.id;
   const projects = backend.projectApplicationService;
-  const project = projects.createProject({ name: 'Published recovery' }).project;
-  if (!projects.bindProjectRoot({ project_id: project.id, root_path: path.join(root, 'project'), expected_root_revision: project.root_revision }).ok) throw new Error('bind_failed');
+  // The Workspace folder is already a project (provisioned by createSession);
+  // bindRoot refuses a second owner, so the fixture uses that project.
+  const provisioned = backend.ensureWorkspaceProject(path.join(root, 'project'), 'test_fixture');
+  if (!provisioned.ok) throw new Error('bind_failed');
+  const project = provisioned.project;
   if (!projects.assignSessionProject({ session_id: session, project_id: project.id }).ok) throw new Error('assign_failed');
   const start = await backend.runtimeApplicationService.start({ session_id: session, prompt: 'Write then ask.',
     idempotency_key: 'published_crash', purpose: 'Published crash recovery',

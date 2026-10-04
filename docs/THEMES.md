@@ -11,6 +11,11 @@ of bounded chat-view tokens; contribute a built-in palette to restyle the
 whole Electron shell and ship a new Jenny build. A plugin theme cannot load
 arbitrary CSS, and a built-in palette is not installed as a plugin.
 
+The current plugin retirement keeps declarative themes while removing
+executable tiers, catalogs and plugin workflows. Theme-package intake and
+loading still require trusted signing or the explicit developer profile;
+built-in palettes continue through the source path below.
+
 ## Which path do I want?
 
 | Path | Scope | Distribution | Validation | Repository access |
@@ -107,7 +112,7 @@ Its complete `content/astra-dogfood.json` is:
 
 The digest is over the exact final content bytes. Use the Windows and POSIX
 commands in the
-[empty-folder walkthrough](plugins/AUTHORING_OVERVIEW.md#empty-folder-to-enabled-a-permissionless-prompt-plugin)
+[empty-folder walkthrough](plugins/AUTHORING_OVERVIEW.md#empty-folder-to-installed-a-permissionless-prompt-fixture)
 and replace the manifest value after any byte changes.
 
 `content_path` and `content_sha256` are required. The digest covers exact file
@@ -259,11 +264,15 @@ themes are outside its scope; use the built-in palette checks later in this
 guide for those stylesheets.
 
 For a cold-start developer install, follow
-[Install and enable from a cold start](plugins/AUTHORING_OVERVIEW.md#install-and-enable-from-a-cold-start):
-build the root-layout archive and structural signature bundle, open **Settings
--> Plugins & Extensions -> Install plugin**, select the `.jenny-plugin`, check
-for **developer (unsigned)**, and enable it. Unsigned developer intake is
-default-on; `JENNY_ENABLE_PLUGIN_DEVELOPER_PROFILE=0` disables it.
+[Install from a cold start and check eligibility](plugins/AUTHORING_OVERVIEW.md#install-from-a-cold-start-and-check-eligibility).
+Unsigned intake requires `JENNY_ENABLE_PLUGIN_DEVELOPER_PROFILE=1`; keep that
+profile enabled when loading unsigned packages. This guide uses a manifest-V6
+package carrying theme-content schema V2, which can activate after package
+verification. The first-party/current-key restriction applies to manifest-V1/V2
+packages, not to every theme whose content schema is V2. Install the archive,
+inspect the Installed row's Details, and enable it; validation and intake alone
+do not prove activation. For a source contribution, use the built-in palette path
+below.
 
 ## Path 2 — contributing a built-in palette
 
@@ -310,12 +319,16 @@ palette-signal.css  palette-slate.css  palette-woolly.css
    Empty output means the token-name sets match. Review selectors and
    reduced-motion/fallback blocks separately; this checks only declarations.
 
-   Chat code, tool-output, and artifact code sizing uses `--tl-font-code`.
-   Its built-in default is
-   `calc(12px * var(--chat-zoom-factor, 1))`. A built-in palette that changes
-   the base size must preserve that zoom-only form, for example
-   `--tl-font-code: calc(14px * var(--chat-zoom-factor, 1));`, so chat zoom
-   remains the only runtime multiplier. This custom property is not an
+   Palettes never set font sizes. Every text size resolves through the role
+   tokens in `styles/foundation.css` (`--font-size-caption` 12px,
+   `--font-size-footnote` 13px, `--font-size-code` 13px, `--font-size-body`
+   14px, `--font-size-prose` 16px, `--font-size-heading` 16px,
+   `--font-size-title` 20px at `--font-scale` 1; the Default preset is 1.2,
+   Small 1.1, Large 1.3), each `calc(Npx * var(--font-scale, 1))` so the
+   single Text size preference is the only runtime multiplier. Chat
+   code, tool-output, and artifact code sizing uses `--tl-font-code`, an alias
+   of `--font-size-code`. A palette must not redefine any `--font-size-*` or
+   `--tl-font-*` token. `--tl-font-code` is not an
    installable V2 theme role; adding it to `payload.tokens` is rejected.
 
 2. **Register the palette ID.**

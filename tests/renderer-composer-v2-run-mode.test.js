@@ -1,9 +1,8 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const ToggleSwitch = require('../renderer/inventory/toggle-switch');
-const Chip = require('../renderer/inventory/chip');
-const Popover = require('../renderer/inventory/popover');
+const fs = require('node:fs');
+const path = require('node:path');
 const settingsSupport = require('../renderer/shell/renderer-settings-support');
 const composerV2State = require('../renderer/chat/renderer-composer-v2-state');
 const {
@@ -98,20 +97,14 @@ test('toggle controller no longer exports the one-shot auto-run surface', () => 
   assert.equal(controller.clearAutoRunNextSend, undefined);
 });
 
-test('renderToolToggles renders no auto-run chip slot', (t) => {
-  const previousInventory = global.inventory;
-  global.inventory = {
-    toggleSwitch: ToggleSwitch.toggleSwitch,
-    chip: Chip,
-    popover: Popover,
-  };
-  t.after(() => {
-    global.inventory = previousInventory;
-  });
+test('the composer tool surfaces carry no auto-run chip slot', () => {
+  // The toggle controller no longer renders (composer Chat panel, 2026-09-30);
+  // the tools slot module owns the markup, so the pin reads both sources.
   const controller = createComposerV2ToggleController({ state: {} });
-  controller.setAvailableTools(['web_search']);
-  const html = controller.renderToolToggles();
-  assert.ok(html.length > 0, 'toggles still render');
-  assert.doesNotMatch(html, /composer-auto-approve/);
-  assert.doesNotMatch(html, /Auto-run next send/);
+  assert.equal(controller.renderToolToggles, undefined);
+  for (const file of ['renderer-composer-v2-toggle.js', 'renderer-composer-tools-slot.js']) {
+    const source = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'chat', file), 'utf8');
+    assert.doesNotMatch(source, /composer-auto-approve/, file);
+    assert.doesNotMatch(source, /Auto-run next send/, file);
+  }
 });

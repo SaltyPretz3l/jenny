@@ -6,6 +6,9 @@ const assert = require('node:assert/strict');
 const {
   createIdeCloseOrchestrator,
 } = require('../renderer/features/renderer-ide-close-orchestrator');
+const { createIdeConfirmDialog } = require('../renderer/features/renderer-ide-confirm-dialog');
+const actionButton = require('../renderer/inventory/action-button');
+const { JSDOM } = require('jsdom');
 const { createHarness, settle } = require('./helpers/renderer-ide-harness');
 const { createDeferred } = require('./helpers/deferred');
 
@@ -115,6 +118,30 @@ test('orchestrator rejects save and discard plans when a document revision chang
   }
 });
 
+test('orchestrator commit reports every changed path and still closes nothing', async () => {
+  const revisions = new Map([['a.js', 1], ['b.js', 1], ['c.js', 1]]);
+  const closed = [];
+  const orch = createIdeCloseOrchestrator({
+    getIde: () => ({ openTabs: [{ path: 'a.js' }, { path: 'b.js' }, { path: 'c.js' }] }),
+    isDirty: () => true,
+    getDocumentRevision: (path) => revisions.get(path),
+    forceClose: (path) => closed.push(path),
+    confirmClose: () => Promise.resolve('discard'),
+  });
+
+  const plan = await orch.preflight(['a.js', 'b.js', 'c.js']);
+  revisions.set('a.js', 2);
+  revisions.set('c.js', 2);
+  const result = orch.commit(plan);
+
+  assert.equal(result.committed, false);
+  assert.equal(result.code, 'document_changed');
+  assert.equal(result.changedPath, 'a.js');
+  assert.deepEqual(result.changedPaths, ['a.js', 'c.js']);
+  assert.deepEqual(result.closedPaths, []);
+  assert.deepEqual(closed, [], 'all-or-nothing: the unchanged tab is not closed either');
+});
+
 test('orchestrator cancel never creates a committable discard plan', async () => {
   const closed = [];
   const orch = createIdeCloseOrchestrator({
@@ -194,6 +221,50 @@ test('orchestrator Close All / Close Others spare pinned tabs', async () => {
   closed.length = 0;
   await orch.requestCloseOthers('a.js');
   assert.deepEqual(closed, ['b.js'], 'Close Others keeps its target AND spares pinned tabs');
+});
+
+test('orchestrator tab close sends only the dirty paths to the prompt (no intent)', async () => {
+  const prompts = [];
+  const orch = createIdeCloseOrchestrator({
+    getIde: () => ({ openTabs: [{ path: 'a.js' }] }),
+    isDirty: () => true,
+    confirmClose: (payload) => { prompts.push(payload); return Promise.resolve('discard'); },
+  });
+  await orch.requestClose('a.js');
+  assert.deepEqual(prompts, [{ dirtyPaths: ['a.js'] }]);
+});
+
+test('orchestrator window preflight prompts for registered surfaces even with clean buffers', async () => {
+  const prompts = [];
+  const saved = [];
+  const orch = createIdeCloseOrchestrator({
+    getIde: () => ({ openTabs: [{ path: 'a.js' }] }),
+    isDirty: () => false,
+    saveFile: (p) => { saved.push(p); return Promise.resolve(true); },
+    confirmClose: (payload) => { prompts.push(payload); return Promise.resolve('save'); },
+  });
+  const surfaces = [{ id: 'memory-notes', label: 'Long-term notes' }];
+  const plan = await orch.preflight(['a.js'], { intent: 'reload', surfaces });
+
+  assert.deepEqual(prompts, [{ dirtyPaths: [], intent: 'reload', surfaces }]);
+  assert.equal(plan.ready, true);
+  assert.equal(plan.decision, 'save');
+  assert.deepEqual(saved, [], 'clean buffers are not rewritten');
+  orch.cancel(plan);
+});
+
+test('orchestrator window preflight passes the intent with dirty buffers and cancels on Cancel', async () => {
+  const prompts = [];
+  const orch = createIdeCloseOrchestrator({
+    getIde: () => ({ openTabs: [{ path: 'a.js' }] }),
+    isDirty: () => true,
+    confirmClose: (payload) => { prompts.push(payload); return Promise.resolve('cancel'); },
+  });
+  const plan = await orch.preflight(['a.js'], { intent: 'update-restart' });
+
+  assert.deepEqual(prompts, [{ dirtyPaths: ['a.js'], intent: 'update-restart' }]);
+  assert.equal(plan.ready, false);
+  assert.equal(plan.canceled, true);
 });
 
 // ── Integration through the controller + real inventory dialog ───────────────
@@ -292,4 +363,75 @@ test('Close All with multiple dirty tabs shows ONE batched prompt', async (t) =>
   await settle();
   assert.equal(harness.bridge.calls.writeFile.length, 2, 'both dirty files saved');
   assert.equal(harness.state.ui.ide.openTabs.length, 0);
+});
+
+// ── Action-aware confirm copy (fake overlay rendering into a real jsdom doc) ──
+
+function makeDialog() {
+  const dom = new JSDOM('<!doctype html><body></body>');
+  const doc = dom.window.document;
+  const host = doc.createElement('div');
+  doc.body.appendChild(host);
+  const opened = [];
+  const helpOverlayFactory = () => ({
+    open: (cfg) => { opened.push(cfg); host.innerHTML = cfg.bodyHtml; },
+    close: () => { host.innerHTML = ''; },
+    destroy: () => { host.remove(); },
+  });
+  const dialog = createIdeConfirmDialog({ document: doc, actionButton, helpOverlayFactory });
+  const text = (action) => doc.body.querySelector(`[data-ide-confirm-action="${action}"]`).textContent.trim();
+  const message = () => doc.body.querySelector('.ide-confirm-message').textContent;
+  const listItems = () => [...doc.body.querySelectorAll('.ide-confirm-list li')].map((li) => li.textContent);
+  return { dialog, doc, text, message, listItems };
+}
+
+test('editor-tab close keeps today’s copy', async () => {
+  const ui = makeDialog();
+  const pending = ui.dialog.confirmClose({ dirtyPaths: ['docs/NOTES.md'] });
+  assert.equal(ui.message(), '“NOTES.md” has unsaved changes. Save before closing?');
+  assert.equal(ui.text('save'), 'Save');
+  assert.equal(ui.text('discard'), 'Don’t Save');
+  assert.equal(ui.text('cancel'), 'Cancel');
+  ui.doc.body.querySelector('[data-ide-confirm-action="cancel"]').click();
+  assert.equal(await pending, 'cancel');
+});
+
+const INTENT_COPY = [
+  ['close', 'Save before closing Jenny?', 'Save and close', 'Close without saving'],
+  ['reload', 'Save before reloading Jenny?', 'Save and reload', 'Reload without saving'],
+  ['update-restart', 'Save before restarting to update?', 'Save and restart', 'Restart without saving'],
+];
+
+for (const [intent, question, saveLabel, discardLabel] of INTENT_COPY) {
+  test(`the ${intent} intent says what is about to happen`, async () => {
+    const ui = makeDialog();
+    const pending = ui.dialog.confirmClose({ dirtyPaths: ['docs/NOTES.md'], intent });
+    assert.equal(ui.message(), `“NOTES.md” has unsaved changes. ${question}`);
+    assert.equal(ui.text('save'), saveLabel);
+    assert.equal(ui.text('discard'), discardLabel);
+    assert.equal(ui.text('cancel'), 'Cancel');
+    ui.doc.body.querySelector('[data-ide-confirm-action="save"]').click();
+    assert.equal(await pending, 'save');
+  });
+}
+
+test('a window prompt lists files and non-file surfaces together', async () => {
+  const ui = makeDialog();
+  const pending = ui.dialog.confirmClose({
+    dirtyPaths: ['docs/NOTES.md'],
+    surfaces: [{ id: 'memory-notes', label: 'Long-term notes' }, { id: 'personality', label: 'Personality' }],
+    intent: 'reload',
+  });
+  assert.equal(ui.message(), '3 items have unsaved changes. Save before reloading Jenny?');
+  assert.deepEqual(ui.listItems(), ['NOTES.md', 'Long-term notes', 'Personality']);
+  ui.doc.body.querySelector('[data-ide-confirm-action="discard"]').click();
+  assert.equal(await pending, 'discard');
+});
+
+test('a single dirty surface is named by its label', async () => {
+  const ui = makeDialog();
+  const pending = ui.dialog.confirmClose({ dirtyPaths: [], surfaces: [{ id: 'memory-notes', label: 'Long-term notes' }], intent: 'close' });
+  assert.equal(ui.message(), '“Long-term notes” has unsaved changes. Save before closing Jenny?');
+  ui.doc.body.querySelector('[data-ide-confirm-action="cancel"]').click();
+  assert.equal(await pending, 'cancel');
 });

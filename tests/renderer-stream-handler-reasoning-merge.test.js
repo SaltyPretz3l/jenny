@@ -78,6 +78,7 @@ function createHarness(options = {}) {
     sessions: [{ id: 'session-1' }],
     pendingStreams: new Map(),
     streamThinkingStatusByStream: new Map(),
+    streamDeltaKindByStream: new Map(),
     toolCallsByStream: new Map(),
     pendingToolApprovals: new Map(),
     bufferedStreamEventsByStream: new Map(),
@@ -448,4 +449,109 @@ test('error terminal drains staged reasoning before marking the stream failed', 
     message.reasoning.entries.map((entry) => entry.id),
     ['reason-before-error']
   );
+});
+
+function reasoningDelta(streamId, id, text, extra = {}) {
+  return {
+    type: 'delta',
+    sessionId: 'session-1',
+    streamId,
+    content: '',
+    aggregate: '',
+    reasoning: { source: 'provider', entriesDelta: [{ id, text }] },
+    ...extra,
+  };
+}
+
+test('stream delta kind records the latest accepted delta as reasoning or prose', async (t) => {
+  const harness = createHarness();
+  t.after(() => harness.restore());
+  const kinds = () => harness.state.streamDeltaKindByStream;
+  const id = 'stream-delta-kind';
+
+  await harness.emit({ type: 'started', sessionId: 'session-1', streamId: id });
+  assert.equal(kinds().has(id), false);
+
+  await harness.emit(reasoningDelta(id, 'r1', 'Thinking'));
+  assert.equal(kinds().get(id), 'reasoning');
+
+  await harness.emit({ type: 'delta', sessionId: 'session-1', streamId: id, content: 'Hello', aggregate: 'Hello' });
+  assert.equal(kinds().get(id), 'prose');
+
+  await harness.emit(reasoningDelta(id, 'r2', 'More', { content: ' world', aggregate: 'Hello world' }));
+  assert.equal(kinds().get(id), 'prose', 'a mixed delta records prose');
+
+  await harness.emit(reasoningDelta(id, 'r2', 'More, replaced', { aggregate: 'Hello world' }));
+  assert.equal(kinds().get(id), 'reasoning', 'a reasoning-only delta after prose flips the kind');
+
+  await harness.emit({ type: 'delta', sessionId: 'session-1', streamId: id, content: '', aggregate: 'Hello world' });
+  assert.equal(kinds().get(id), 'reasoning', 'an empty delta records nothing');
+});
+
+test('stream delta kind records reasoning on the regressed provider-reasoning path', async (t) => {
+  const harness = createHarness();
+  t.after(() => harness.restore());
+  const id = 'stream-delta-kind-regressed';
+
+  await harness.emit({ type: 'started', sessionId: 'session-1', streamId: id });
+  await harness.emit({ type: 'delta', sessionId: 'session-1', streamId: id, content: 'Hello', aggregate: 'Hello' });
+  assert.equal(harness.state.streamDeltaKindByStream.get(id), 'prose');
+
+  await harness.emit(reasoningDelta(id, 'r1', 'Late reasoning', { aggregate: 'He' }));
+  assert.equal(harness.state.streamDeltaKindByStream.get(id), 'reasoning');
+});
+
+test('stream delta kind clears at a tool boundary and at terminal cleanup', async (t) => {
+  const harness = createHarness();
+  t.after(() => harness.restore());
+  const id = 'stream-delta-kind-clear';
+
+  await harness.emit({ type: 'started', sessionId: 'session-1', streamId: id });
+  await harness.emit({ type: 'delta', sessionId: 'session-1', streamId: id, content: 'Hello', aggregate: 'Hello' });
+  assert.equal(harness.state.streamDeltaKindByStream.get(id), 'prose');
+
+  await harness.emit({
+    type: 'tool_use',
+    sessionId: 'session-1',
+    streamId: id,
+    callId: 'call-kind-1',
+    toolName: 'read_file',
+    summary: 'read_file a.md',
+    input: { path: 'a.md' },
+    status: 'running',
+  });
+  assert.equal(harness.state.streamDeltaKindByStream.has(id), false, 'tool boundary starts the next segment neutral');
+
+  await harness.emit(reasoningDelta(id, 'r9', 'After tool'));
+  assert.equal(harness.state.streamDeltaKindByStream.get(id), 'reasoning');
+
+  await harness.emit({ type: 'complete', sessionId: 'session-1', streamId: id, content: 'Hello' });
+  await harness.frameController.drainAllFrames();
+  assert.equal(harness.state.streamDeltaKindByStream.has(id), false, 'terminal cleanup drops the entry');
+});
+
+test('stream delta kind records reasoning for a non-empty thinking_status only', async (t) => {
+  const harness = createHarness();
+  t.after(() => harness.restore());
+  const id = 'stream-delta-kind-status';
+
+  await harness.emit({ type: 'started', sessionId: 'session-1', streamId: id });
+  await harness.emit({ type: 'thinking_status', sessionId: 'session-1', streamId: id, text: '', thinkingId: 't1' });
+  assert.equal(harness.state.streamDeltaKindByStream.has(id), false);
+
+  await harness.emit({ type: 'thinking_status', sessionId: 'session-1', streamId: id, text: 'Planning', thinkingId: 't1' });
+  assert.equal(harness.state.streamDeltaKindByStream.get(id), 'reasoning');
+});
+
+test('stream delta kind clears at a stream reset (a post-tool restart discards the segment)', async (t) => {
+  const harness = createHarness();
+  t.after(() => harness.restore());
+  const id = 'stream-delta-kind-reset';
+
+  await harness.emit({ type: 'started', sessionId: 'session-1', streamId: id });
+  await harness.emit({ type: 'delta', sessionId: 'session-1', streamId: id, content: 'Draft', aggregate: 'Draft' });
+  assert.equal(harness.state.streamDeltaKindByStream.get(id), 'prose');
+
+  await harness.emit({ type: 'stream_reset', sessionId: 'session-1', streamId: id, reason: 'post_tool_restart' });
+  assert.equal(harness.state.streamDeltaKindByStream.has(id), false, 'the retry starts neutral, not writing');
 });

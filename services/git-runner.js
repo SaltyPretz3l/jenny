@@ -229,28 +229,6 @@ function buildScrubbedGitEnv() {
   return env;
 }
 
-function buildPluginFetchProfile({ proxyUrl, nullDevice = process.platform === 'win32' ? 'NUL' : '/dev/null' } = {}) {
-  if (typeof proxyUrl !== 'string' || !/^http:\/\/127\.0\.0\.1:\d+$/.test(proxyUrl)) {
-    throw new TypeError('plugin fetch requires an exact loopback proxy URL');
-  }
-  const env = buildScrubbedGitEnv();
-  for (const key of Object.keys(env)) {
-    if (/^(?:GIT_|HTTP_PROXY$|HTTPS_PROXY$|ALL_PROXY$|NO_PROXY$)/i.test(key)) delete env[key];
-  }
-  Object.assign(env, {
-    GIT_TERMINAL_PROMPT: '0', GCM_INTERACTIVE: 'never', GIT_CONFIG_NOSYSTEM: '1',
-    GIT_CONFIG_GLOBAL: nullDevice, GIT_ASKPASS: '', SSH_ASKPASS: '', GIT_LFS_SKIP_SMUDGE: '1',
-  });
-  const argsPrefix = [
-    '-c', 'protocol.allow=never', '-c', 'protocol.https.allow=always',
-    '-c', 'http.followRedirects=false', '-c', 'credential.helper=', '-c', 'core.askPass=',
-    '-c', `core.hooksPath=${nullDevice}`, '-c', 'filter.lfs.clean=', '-c', 'filter.lfs.smudge=',
-    '-c', 'filter.lfs.process=', '-c', 'filter.lfs.required=false', '-c', 'submodule.recurse=false',
-    '-c', 'core.alternateRefsCommand=', '-c', `http.proxy=${proxyUrl}`,
-  ];
-  return Object.freeze({ env: Object.freeze(env), argsPrefix: Object.freeze(argsPrefix) });
-}
-
 function createBoundedCollector(maxBytes, sharedBudget = null) {
   const cap = Math.max(1, Math.trunc(Number(maxBytes)) || DEFAULT_MAXBUFFER_BYTES);
   const budget = sharedBudget || { retainedBytes: 0 };
@@ -286,7 +264,6 @@ function runGitStreamed(cwd, args, {
   platform = process.platform,
   setTimeoutImpl = setTimeout,
   clearTimeoutImpl = clearTimeout,
-  pluginFetchProfile = null,
 } = {}) {
   if (signal?.aborted) {
     return Promise.resolve({
@@ -374,13 +351,12 @@ function runGitStreamed(cwd, args, {
       });
     };
     try {
-      child = spawnImpl('git', pluginFetchProfile ? [...pluginFetchProfile.argsPrefix, ...args] : args, {
+      child = spawnImpl('git', args, {
         cwd,
         windowsHide: true,
         stdio: ['ignore', 'pipe', 'pipe'],
         detached: platform !== 'win32',
-        ...(pluginFetchProfile ? { env: pluginFetchProfile.env }
-          : (scrubEnv ? { env: buildScrubbedGitEnv() } : {})),
+        ...(scrubEnv ? { env: buildScrubbedGitEnv() } : {}),
       });
     } catch (error) {
       finish({ success: false, reason: 'git_failed', fallback: error?.message || String(error) });
@@ -406,5 +382,4 @@ function runGitStreamed(cwd, args, {
 module.exports = {
   runGit,
   runGitStreamed,
-  buildPluginFetchProfile,
 };

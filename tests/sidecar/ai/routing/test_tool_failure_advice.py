@@ -13,9 +13,9 @@ from __future__ import annotations
 from types import SimpleNamespace
 from typing import Any
 
+from sidecar.ai.routing.loop_runtime import LoopRuntime
 from sidecar.ai.routing.router import ToolExecutionOutcome
 from sidecar.ai.routing.tool_call_execution import execute_tool_calls_sequentially
-from sidecar.ai.routing.loop_runtime import LoopRuntime
 from sidecar.ai.tools.contracts import ToolExecutionFailure
 from sidecar.ai.tools.models import ToolCallRequest
 

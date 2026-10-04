@@ -5,10 +5,10 @@ const { JSDOM } = require('jsdom');
 const { createCompanionActionUtils } = require('../renderer/features/renderer-companion-action-utils.js');
 
 test('a rejected loop resolve restores the surviving card interaction state', async () => {
-  const dom = new JSDOM('<div id="loops"><article class="memory-commitment-item" data-follow-up-id="followup-1"><button data-companion-action-id="resolve_follow_up:followup-1">Done</button></article></div>');
+  const dom = new JSDOM('<div id="loops"><article class="home-summary-item" data-follow-up-id="followup-1"><button data-companion-action-id="resolve_follow_up:followup-1">Done</button></article></div>');
   const documentRef = dom.window.document;
   const loopList = documentRef.getElementById('loops');
-  const card = loopList.querySelector('.memory-commitment-item');
+  const card = loopList.querySelector('.home-summary-item');
   const action = {
     id: 'resolve_follow_up:followup-1',
     type: 'resolve_follow_up',

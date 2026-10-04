@@ -9,8 +9,20 @@ const FIELDS = Object.freeze({
   attachments: 'attachments', plan_mode: 'planMode', context_preferences: 'contextPreferences',
   active_file_context: 'activeFileContext', mention_contents: 'mentionContents',
   tool_preferences: 'toolPreferences', approval_mode: 'approvalMode', debug_options: 'debugOptions',
-  plugin_command_invocation: 'pluginCommandInvocation', skill_invocation: 'skillInvocation',
+  skill_invocation: 'skillInvocation',
+  client_timing: 'clientTiming',
 });
+const CLIENT_TIMING_KEYS = Object.freeze(['send_started_at_ms', 'optimistic_rendered_at_ms', 'local_render_latency_ms']);
+
+// Send-phase telemetry rides the submission but never decides it: malformed
+// timing is dropped, not refused.
+function captureClientTiming(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const timing = Object.fromEntries(CLIENT_TIMING_KEYS
+    .filter(key => typeof value[key] === 'number' && Number.isFinite(value[key]) && value[key] >= 0)
+    .map(key => [key, value[key]]));
+  return Object.keys(timing).length ? timing : undefined;
+}
 
 function normalizeSubmission(payload) {
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)
@@ -27,6 +39,9 @@ function normalizeSubmission(payload) {
   const captured = JSON.parse(encoded);
   const request = Object.fromEntries(Object.entries(FIELDS)
     .filter(([key]) => Object.hasOwn(captured, key)).map(([key, value]) => [value, captured[key]]));
+  const clientTiming = captureClientTiming(request.clientTiming);
+  if (clientTiming) request.clientTiming = clientTiming;
+  else delete request.clientTiming;
   return { request, idempotencyKey: captured.idempotency_key };
 }
 

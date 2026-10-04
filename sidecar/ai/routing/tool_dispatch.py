@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping
 from typing import Any, Callable
 
@@ -19,12 +20,14 @@ _PROCESS_BACKED_BUILTINS = frozenset({
 _ELECTRON_RESOURCE_START_TOOLS = frozenset({
     "jenny_status", "worktree_list", "worktree_create", "worktree_select", "worktree_delete",
     "automation_list", "automation_read", "workspace_present", "preview_test",
-    "home", "task_board", "verify", "run_command",
+    "home", "task_board", "verify", "image_generate", "run_command",
 })
 _CLEANUP_FIELDS = frozenset({
     "cleanup", "output_readers_terminated", "process_tree_terminated", "reason",
 })
 _MAX_CLEANUP_REASON_CHARS = 200
+_NO_PROCESS_STARTED = "no_native_process_started"
+_BACKGROUND_JOB_ID = re.compile(r"^[0-9a-f]{12}$")
 
 
 def _acquire_builtin_resource(
@@ -47,22 +50,64 @@ def _acquire_builtin_resource(
     )
 
 
+def _background_job_handed_off(arguments: dict[str, Any], result: Any) -> bool:
+    """A started background job is owned by the background-job registry.
+
+    Owner decision 2026-09-28 (dogfood HB-008): once the start receipt carries
+    the job id and the spawned pid (Electron's background-job tracker binds its
+    kill authority to that pid, the sidecar waiter enforces the job timeout and
+    the background slot cap, and app exit ends the job), the call's workspace
+    lease is released instead of staying quarantined for the rest of the turn.
+    """
+    if arguments.get("run_in_background") is not True or not getattr(result, "success", False):
+        return False
+    metadata = getattr(result, "metadata", None)
+    if not isinstance(metadata, Mapping):
+        return False
+    job_id = metadata.get("background_job_id")
+    pid = metadata.get("background_job_pid")
+    return (
+        isinstance(job_id, str) and _BACKGROUND_JOB_ID.fullmatch(job_id) is not None
+        and isinstance(pid, int) and not isinstance(pid, bool) and pid > 0
+    )
+
+
 def _cleanup_for_result(
     tool_name: str, arguments: dict[str, Any], result: Any,
 ) -> str:
     if tool_name not in _PROCESS_BACKED_BUILTINS:
+        return "confirmed"
+    if tool_name == "run_command" and _background_job_handed_off(arguments, result):
         return "confirmed"
     metadata = getattr(result, "metadata", None)
     evidence = metadata.get("resource_cleanup") if isinstance(metadata, Mapping) else None
     return _cleanup_from_evidence(tool_name, arguments, evidence)
 
 
+def _proves_no_process_started(evidence: object) -> bool:
+    return (
+        isinstance(evidence, Mapping) and set(evidence) == _CLEANUP_FIELDS
+        and evidence.get("cleanup") == "confirmed"
+        and evidence.get("process_tree_terminated") is True
+        and evidence.get("output_readers_terminated") is True
+        and evidence.get("reason") == _NO_PROCESS_STARTED
+    )
+
+
 def _cleanup_from_evidence(
     tool_name: str, arguments: dict[str, Any], evidence: object,
+    *, failed_before_launch_counts: bool = False,
 ) -> str:
     if tool_name == "monitor" or (
         tool_name == "run_command" and arguments.get("run_in_background") is True
     ):
+        # A started background job outlives the call. A background start that
+        # failed with the server's zero-child proof never launched one (HB-014).
+        if (
+            failed_before_launch_counts and tool_name == "run_command"
+            and _proves_no_process_started(evidence)
+        ):
+            return "confirmed"
         return "uncertain"
     if not isinstance(evidence, Mapping) or set(evidence) != _CLEANUP_FIELDS:
         return "uncertain"
@@ -198,13 +243,22 @@ def dispatch_tool_call(  # noqa: PLR0913
         )
     except BaseException as error:
         cancelled = bool(getattr(cancel_handle, "cancelled", False))
+        # A cancel that raced the server's error reply keeps that reply as its
+        # cause (transport_base.raise_cancelled_keeping_reply): the kill verdict
+        # of a stopped command is evidence like any other reply (HB-034).
+        reply = error if isinstance(error, MCPError) else (
+            error.__cause__ if cancelled and isinstance(error.__cause__, MCPError) else None
+        )
         _settle_resource(
             lease, status="cancelled" if cancelled else "failed",
             # A reply proves synchronous builtin dispatch returned, not whether
             # it changed files. Process-backed calls still need cleanup proof.
             # A failed process-backed call (git on an empty repo) carries the
             # server's owned-process verdict; without it the resource stays
-            # quarantined and every later call on it waits. A builtin that owns
+            # quarantined and every later call on it waits. One that failed
+            # before launching anything (a run_command cwd that failed
+            # validation, dogfood HB-014) carries the zero-child proof, even
+            # for a background start. A builtin that owns
             # no process (read_file, list_dir, ...) has nothing to clean up when
             # its reply was lost WITH THE TRANSPORT: started_response_lost is
             # only classified once the server is gone (a crash, or a response
@@ -213,15 +267,16 @@ def dispatch_tool_call(  # noqa: PLR0913
             # the turn (2026-09-20), then into a paused turn that could never
             # settle (2026-09-22). A timeout that left the server running for
             # other callers classifies "unknown" and stays uncertain.
-            cleanup=("confirmed" if isinstance(error, MCPError) and (
-                error.completion_status == "not_started"
-                or (error.response_received and call.tool_id not in _PROCESS_BACKED_BUILTINS)
+            cleanup=("confirmed" if reply is not None and (
+                reply.completion_status == "not_started"
+                or (reply.response_received and call.tool_id not in _PROCESS_BACKED_BUILTINS)
                 or (
-                    error.completion_status == "started_response_lost"
+                    reply.completion_status == "started_response_lost"
                     and call.tool_id not in _PROCESS_BACKED_BUILTINS
                 )
-                or (error.response_received and _cleanup_from_evidence(
-                    call.tool_id, admission_arguments, error.resource_cleanup,
+                or (reply.response_received and _cleanup_from_evidence(
+                    call.tool_id, admission_arguments, reply.resource_cleanup,
+                    failed_before_launch_counts=True,
                 ) == "confirmed")
             ) else "uncertain"),
             logger=logger,

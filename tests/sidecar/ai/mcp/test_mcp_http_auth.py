@@ -31,13 +31,13 @@ class _TokenHandler(BaseHTTPRequestHandler):
     def log_message(self, *args: Any) -> None:
         return
 
-    def do_POST(self) -> None:  # noqa: N802
+    def do_POST(self) -> None:
         length = int(self.headers.get("Content-Length", "0") or "0")
         raw = self.rfile.read(length) if length else b""
         form = {k: v[0] for k, v in urllib.parse.parse_qs(raw.decode("utf-8")).items()}
         self.server.responder(self, form)  # type: ignore[attr-defined]
 
-    def do_GET(self) -> None:  # noqa: N802
+    def do_GET(self) -> None:
         # A redirect-following client converts the 302 POST into a GET; the
         # redirect-target hit counter must see those too (exploit detection).
         self.server.responder(self, {})  # type: ignore[attr-defined]
@@ -83,7 +83,7 @@ def allow_loopback(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         mcp_http_auth,
         "validate_public_url",
-        lambda url, *, allow_private=False: ValidatedUrl(url=url, pinned_ip="127.0.0.1"),
+        lambda url, *, allow_private=False, deadline=None: ValidatedUrl(url=url, pinned_ip="127.0.0.1"),
     )
 
 
@@ -186,7 +186,7 @@ def test_token_response_rejects_nonfinite_json_constants(token: str) -> None:
     raw = f'{{"access_token":"minted","expires_in":{token}}}'.encode()
 
     with pytest.raises(MCPError) as excinfo:
-        source._parse_token_response(raw)  # noqa: SLF001
+        source._parse_token_response(raw)
 
     assert excinfo.value.code == "CMP-MCP-0004"
 
@@ -197,7 +197,7 @@ def test_invalid_oauth_lifetime_uses_bounded_default(value: object) -> None:
         _auth("https://issuer.example/token"), server_name="remote"
     )
 
-    assert source._resolve_lifetime(value) == 270.0  # noqa: SLF001
+    assert source._resolve_lifetime(value) == 270.0
 
 
 def test_oauth_lifetime_is_capped_before_expiry_skew() -> None:
@@ -205,7 +205,7 @@ def test_oauth_lifetime_is_capped_before_expiry_skew() -> None:
         _auth("https://issuer.example/token"), server_name="remote"
     )
 
-    assert source._resolve_lifetime(10**12) == 86_370.0  # noqa: SLF001
+    assert source._resolve_lifetime(10**12) == 86_370.0
 
 
 def test_mint_failure_raises_structured_error_without_secret(make_token_server: Any) -> None:
@@ -221,7 +221,7 @@ def test_mint_failure_raises_structured_error_without_secret(make_token_server: 
 
 
 def test_token_url_ssrf_validated(monkeypatch: pytest.MonkeyPatch) -> None:
-    def reject(url: str, *, allow_private: bool = False) -> None:
+    def reject(url: str, *, allow_private: bool = False, deadline: float | None = None) -> None:
         raise PermissionError("Private or local IP addresses are blocked.")
 
     monkeypatch.setattr(mcp_http_auth, "validate_public_url", reject)
@@ -344,3 +344,93 @@ def test_mint_3xx_maps_to_structured_error(make_token_server: Any) -> None:
     assert excinfo.value.code == "CMP-MCP-0004"  # CMP_MCP_SERVER_FAILED
     assert target_hits["n"] == 0
     assert _SECRET not in str(excinfo.value)
+
+
+
+@pytest.mark.parametrize("cancel", [False, True])
+def test_mint_obeys_deadline_and_cancellation(make_token_server: Any, cancel: bool) -> None:
+    import time
+
+    from sidecar.runtime.chat_models import TerminalChatStateError
+    from sidecar.runtime.multiplexer import TurnCancellationHandle
+    release = threading.Event()
+    entered = threading.Event()
+    def responder(handler: _TokenHandler, form: dict[str, str]) -> None:
+        entered.set()
+        release.wait(2)
+        try:
+            _write_token(handler, {"access_token": "late"})
+        except OSError:
+            pass
+    server = make_token_server(responder)
+    source = ClientCredentialsTokenSource(_auth(server.url), server_name="remote")
+    handle = TurnCancellationHandle(request_id="mint")
+    if cancel:
+        timer = threading.Timer(0.1, handle.cancel)
+        timer.start()
+    started = time.monotonic()
+    try:
+        with pytest.raises(TerminalChatStateError if cancel else MCPError):
+            source.token(deadline=time.monotonic() + (1 if cancel else 0.15), cancel_handle=handle)
+        assert time.monotonic() - started < 0.7
+        source.invalidate()
+        assert source._cached_token is None
+    finally:
+        release.set()
+        if cancel:
+            timer.join()
+
+
+def test_mint_lock_wait_obeys_deadline() -> None:
+    import time
+    source = ClientCredentialsTokenSource(_auth("http://127.0.0.1/token"), server_name="remote")
+    source._lock.acquire()
+    try:
+        with pytest.raises(MCPError, match="timed out"):
+            source.token(deadline=time.monotonic() + 0.05)
+    finally:
+        source._lock.release()
+
+
+
+def test_cancelled_dns_keeps_mint_ownership_until_cleanup(monkeypatch: pytest.MonkeyPatch) -> None:
+    import time
+
+    from sidecar.runtime.chat_models import TerminalChatStateError
+    from sidecar.runtime.multiplexer import TurnCancellationHandle
+    entered = threading.Event()
+    release = threading.Event()
+    deadlines = []
+    def validate(url: str, *, allow_private: bool, deadline: float) -> Any:
+        deadlines.append(deadline)
+        entered.set()
+        release.wait(1)
+        return ValidatedUrl(url=url, pinned_ip="127.0.0.1")
+    monkeypatch.setattr(mcp_http_auth, "validate_public_url", validate)
+    source = ClientCredentialsTokenSource(_auth("http://127.0.0.1:9/token"), server_name="remote")
+    handle = TurnCancellationHandle(request_id="dns")
+    errors = []
+    deadline = time.monotonic() + 0.5
+    def request() -> None:
+        try:
+            source.token(deadline=deadline, cancel_handle=handle)
+        except Exception as error:  # noqa: BLE001 - record caller outcome
+            errors.append(error)
+    caller = threading.Thread(target=request)
+    caller.start()
+    try:
+        assert entered.wait(0.5)
+        handle.cancel()
+        caller.join(timeout=0.3)
+        assert not caller.is_alive()
+        assert isinstance(errors[0], TerminalChatStateError)
+        assert deadlines == [deadline]
+        assert source._lock.locked()
+        source.invalidate()
+        assert source._cached_token is None
+    finally:
+        release.set()
+        caller.join(timeout=1)
+    assert source._lock.acquire(timeout=0.5)
+    source._lock.release()
+    assert source._cached_token is None

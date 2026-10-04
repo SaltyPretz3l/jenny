@@ -29,14 +29,8 @@
 
   var VALID_VARIANTS = { inline: true, stacked: true, toggle: true, row: true };
 
-  function escapeHtml(value) {
-    return String(value || '')
-      .replaceAll('&', '&amp;')
-      .replaceAll('<', '&lt;')
-      .replaceAll('>', '&gt;')
-      .replaceAll('"', '&quot;')
-      .replaceAll("'", '&#39;');
-  }
+  const escapeHtml = ((typeof globalThis !== 'undefined' && globalThis.stringUtils)
+    || (typeof require === 'function' ? require('../shared/string-utils') : null)).escapeHtml;
 
   function sanitizeToken(value, fallback) {
     var normalized = String(value || '').trim();
@@ -111,15 +105,32 @@
     var label = o.label != null ? String(o.label) : '';
     var help = o.help != null ? String(o.help) : '';
     var metaHtml = o.metaHtml != null ? String(o.metaHtml) : '';
-    var titleHtml = label ? '<span class="settings-field-title">' + escapeHtml(label) + '</span>' : '';
-    if (metaHtml) {
-      titleHtml = '<span class="settings-field-title-row">' + titleHtml + metaHtml + '</span>';
+    var titleTag = o.labelFor ? 'label' : 'span';
+    var titleHtml = label ? '<' + titleTag + ' class="settings-field-title"'
+      + (o.labelFor ? ' for="' + escapeHtml(o.labelFor) + '"' : '')
+      + (o.titleId ? ' id="' + escapeHtml(o.titleId) + '"' : '')
+      + '>' + escapeHtml(label) + '</' + titleTag + '>' : '';
+    var detail = o.detail != null ? String(o.detail) : '';
+    // The Revert sits on the title line after "Modified", never beside the
+    // control, so it cannot read as one more option of the control.
+    var revertHtml = o.revertSlot === true
+      ? '<span class="settings-field-revert-slot" data-setting-revert-slot="'
+        + escapeHtml(o.revertSlotId || id) + '">' + String(o.revertHtml || '') + '</span>'
+      : '';
+    if (detail || metaHtml || revertHtml) {
+      // The tooltip (it opens below the row) describes the button only while it shows;
+      // aria-description says the same text from the start, and gives way to the tooltip.
+      var detailHtml = detail ? '<button type="button" class="settings-field-detail inv-tooltip-pin"'
+        + ' data-tooltip="' + escapeHtml(detail) + '" data-tooltip-placement="below" aria-label="' + escapeHtml(o.detailLabel || '') + '"'
+        + ' aria-description="' + escapeHtml(detail) + '">?</button>' : '';
+      var tailHtml = metaHtml || revertHtml ? '<span class="settings-field-title-tail">' + metaHtml + revertHtml + '</span>' : '';
+      titleHtml = '<span class="settings-field-title-row">' + titleHtml + detailHtml + tailHtml + '</span>';
     }
     var textHtml = '';
-    if (label || help || metaHtml) {
+    if (label || help || detail || metaHtml || revertHtml) {
       textHtml = '<div class="settings-field-text">'
         + titleHtml
-        + (help ? '<p class="settings-field-help">' + escapeHtml(help) + '</p>' : '')
+        + (help ? '<p class="settings-field-help"' + (o.helpId ? ' id="' + escapeHtml(o.helpId) + '"' : '') + '>' + escapeHtml(help) + '</p>' : '')
         + '</div>';
     }
 
@@ -133,7 +144,7 @@
       + '>'
       + textHtml
       + '<div class="settings-field-control">' + controlHtml + '</div>'
-      + '<p class="settings-field-error"' + (errorText ? '' : ' hidden') + '>' + escapeHtml(errorText) + '</p>'
+      + '<p class="settings-field-error" role="alert"' + (errorText ? '' : ' hidden') + '>' + escapeHtml(errorText) + '</p>'
       + '</div>';
   }
 
@@ -157,7 +168,8 @@
       rootEl.setAttribute('data-state', 'error');
       if (errorEl) {
         errorEl.hidden = false;
-        errorEl.textContent = text;
+        // An alert that is written again is announced again: a poll that repeats the same reason leaves it alone.
+        if (errorEl.textContent !== text) errorEl.textContent = text;
       }
       return;
     }
@@ -195,6 +207,25 @@
   }
 
   /**
+   * Stamp a field's modified state (data-modified="true") and show/hide the
+   * meta-line affordances that only a modified field carries (the "Modified"
+   * tag and the revert button), so a sync can flip the row without rebuilding
+   * its markup. Rows without a meta line are a no-op.
+   * @param {HTMLElement} rootEl - The .settings-field root element
+   * @param {boolean} modified
+   */
+  function setFieldModified(rootEl, modified) {
+    if (!rootEl || typeof rootEl.querySelector !== 'function') return;
+    var on = Boolean(modified);
+    if (on) rootEl.setAttribute('data-modified', 'true');
+    else rootEl.removeAttribute('data-modified');
+    var tag = rootEl.querySelector('.settings-field-meta-modified');
+    if (tag) tag.hidden = !on;
+    var revert = rootEl.querySelector('.settings-field-reset');
+    if (revert) revert.hidden = !on;
+  }
+
+  /**
    * Convenience lookup for a rendered field by id.
    * @param {HTMLElement|Document} root
    * @param {string} fieldId
@@ -209,6 +240,7 @@
 
   settingsField.setFieldError = setFieldError;
   settingsField.setFieldBusy = setFieldBusy;
+  settingsField.setFieldModified = setFieldModified;
   settingsField.findField = findField;
   settingsField.escapeHtml = escapeHtml;
   settingsField.sanitizeToken = sanitizeToken;

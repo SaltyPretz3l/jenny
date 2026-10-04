@@ -1,5 +1,6 @@
 const path = require('path');
 const { sameLocalOrigin } = require('../local-origin');
+const { chatgptModelsEnabled } = require('./chatgpt-models-enabled');
 
 const {
   DEFAULT_MANAGED_OLLAMA_FALLBACK_MODEL,
@@ -497,6 +498,15 @@ function getConfiguredAssistantIdentity(service) {
   return normalizeAssistantIdentityForSidecar(DEFAULT_ASSISTANT_IDENTITY);
 }
 
+function resolveLastChatgptCatalogModel(service) {
+  const lastModel = String(service.configService?.getState?.()?.lastChatgptModel || '').trim();
+  if (!lastModel) {
+    return '';
+  }
+  const models = service.chatgptModelCatalogService?.snapshot?.()?.models;
+  return Array.isArray(models) && models.some((entry) => entry?.id === lastModel) ? lastModel : '';
+}
+
 function resolveManagedStartupModel(service, engineType, fallbackDefaultModel) {
   const pendingModel = String(service._managedPendingModel || '').trim();
   if (pendingModel) {
@@ -512,9 +522,14 @@ function resolveManagedStartupModel(service, engineType, fallbackDefaultModel) {
   // default via resolveModel. Requesting it here used to latch
   // model_unavailable whenever the engine was not up yet, locking the chat
   // behind a manual model load every session.
-  // ChatGPT auth is a per-session OAuth token, not a model to preload — boot
-  // unloaded exactly like ollama and let the composer drive the first turn.
-  if (engineType === 'ollama' || engineType === 'chatgpt' || engineType === 'plugin_host') {
+  // ChatGPT auth is a per-session OAuth token, not a model to preload. Boot
+  // with the model of the last successful ChatGPT load only while the current
+  // catalog still lists it (B13); otherwise boot unloaded exactly like ollama
+  // and let the composer drive the first turn. A stale id is never sent.
+  if (engineType === 'chatgpt') {
+    return resolveLastChatgptCatalogModel(service);
+  }
+  if (engineType === 'ollama') {
     return '';
   }
   // If the configured default model belongs to a different engine than the
@@ -560,6 +575,7 @@ const HOSTED_TOOL_CAPABILITY_POLICY = Object.freeze({
   tools_workspace_present_enabled: false,
   tools_preview_test_enabled: false,
   tools_verify_enabled: false,
+  tools_image_generate_enabled: false,
   tools_home_enabled: false,
   tools_task_board_enabled: false,
   tools_rich_files_enabled: false,
@@ -683,6 +699,7 @@ function buildManagedSidecarConfig(service, { telemetrySettings = null } = {}) {
     tools_workspace_present_enabled: service.featureFlags?.tools_workspace_present_enabled === true,
     tools_preview_test_enabled: service.featureFlags?.tools_preview_test_enabled === true,
     tools_verify_enabled: service.featureFlags?.tools_verify_enabled === true,
+    tools_image_generate_enabled: service.featureFlags?.tools_image_generate_enabled === true,
     tools_home_enabled: service.featureFlags?.tools_home_enabled === true,
     tools_task_board_enabled: service.featureFlags?.tools_task_board_enabled === true,
     tools_subagents_enabled: getConfiguredToolsSubagentsEnabled(service),
@@ -872,6 +889,7 @@ function buildManagedSidecarConfig(service, { telemetrySettings = null } = {}) {
     // No api_url: the ChatGPT engine talks to its own fixed endpoint. Only
     // the account id (not a secret) travels on the non-secrets config.
     config.chatgpt_account_id = service.chatgptAuthService?.getAccountId?.() || '';
+    config.chatgpt_model_catalog = service.chatgptModelCatalogService?.snapshot?.().models || [];
   }
   if (service.hostMode === 'server') {
     const requestedHostPolicyVersion = Number(
@@ -962,7 +980,8 @@ function buildManagedSidecarSecrets(service, { telemetrySettings = null } = {}) 
       }
     }
   }
-  if (service.currentEngineType === 'chatgpt') {
+  if (service.currentEngineType === 'chatgpt' && chatgptModelsEnabled(service.configService)
+    && service._chatgptLegacyChoicePending !== true) {
     secrets.chatgpt_access_token = service.chatgptAuthService?.getCachedAccessToken?.() || '';
   }
   if (service.currentEngineType === 'openai-compatible') {

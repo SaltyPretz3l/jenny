@@ -1,7 +1,7 @@
 /**
  * renderer/inventory/text-field.js
  *
- * Inventory text-field primitive — labeled <input type="text"> or <textarea> (UMD).
+ * Inventory text-field primitive — labeled <input type="text|password|number"> or <textarea> (UMD).
  */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) {
@@ -12,8 +12,9 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
   var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
+  // Kept local: uninstall.html loads this primitive without renderer/shared/string-utils.js.
   function escapeHtml(value) {
-    return String(value || '')
+    return String(value == null ? '' : value)
       .replaceAll('&', '&amp;')
       .replaceAll('<', '&lt;')
       .replaceAll('>', '&gt;')
@@ -49,13 +50,19 @@
    *   flashes a three-row box before their autosize runs. Ignored for <input>.
    * @param {boolean} [opts.spellcheck] - Emit an explicit spellcheck attribute.
    *   Omitted entirely when not a boolean, which leaves the platform default.
-   * @param {string} [opts.type] - Input type: 'text' (default) or 'password'. Any
-   *   other value (or multiline:true) falls back to 'text'. Ignored for textarea.
+   * @param {string} [opts.type] - Input type: 'text' (default), 'password' or
+   *   'number'. Any other value (or multiline:true) falls back to 'text'. Ignored
+   *   for textarea.
+   * @param {number} [opts.min] - number only: min attribute
+   * @param {number} [opts.max] - number only: max attribute
+   * @param {number} [opts.step] - number only: step attribute (a whole step
+   *   also sets inputmode="numeric")
    * @param {number} [opts.maxLength] - maxlength attribute
    * @param {boolean} [opts.disabled] - Disabled state
    * @param {boolean} [opts.readonly] - Read-only state
    * @param {string} [opts.hint] - Help text rendered below the field
    * @param {string} [opts.ariaLabel] - Optional aria-label override
+   * @param {string} [opts.describedBy] - Id of the help text, written as aria-describedby on the control
    * @param {string} [opts.className] - Extra class names
    * @param {Object<string,string>} [opts.dataset] - Extra data-* attrs
    * @returns {string} HTML string
@@ -67,7 +74,14 @@
     var value = String(o.value == null ? '' : o.value);
     var placeholder = String(o.placeholder || '');
     var hint = String(o.hint || '').trim();
-    var inputType = o.type === 'password' ? 'password' : 'text';
+    var inputType = o.type === 'password' || o.type === 'number' ? o.type : 'text';
+    var numberAttr = function (name) {
+      var raw = o[name];
+      return inputType === 'number' && raw !== null && raw !== undefined && raw !== '' && Number.isFinite(Number(raw))
+        ? ' ' + name + '="' + Number(raw) + '"' : '';
+    };
+    var numberAttrs = numberAttr('min') + numberAttr('max') + numberAttr('step')
+      + (inputType === 'number' && Number.isInteger(Number(o.step)) ? ' inputmode="numeric"' : '');
     var maxLength = Number.isFinite(Number(o.maxLength)) && Number(o.maxLength) > 0
       ? Math.floor(Number(o.maxLength))
       : null;
@@ -99,6 +113,7 @@
         + ' dir="auto"'
         + ' class="inv-text-field-control"'
         + ' aria-label="' + escapeHtml(ariaLabel) + '"'
+        + (o.describedBy ? ' aria-describedby="' + escapeHtml(String(o.describedBy)) + '"' : '')
         + (placeholder ? ' placeholder="' + escapeHtml(placeholder) + '"' : '')
         + (maxLength ? ' maxlength="' + maxLength + '"' : '')
         + (o.disabled === true ? ' disabled' : '')
@@ -117,8 +132,10 @@
         + ' class="inv-text-field-control"'
         + ' value="' + escapeHtml(value) + '"'
         + ' aria-label="' + escapeHtml(ariaLabel) + '"'
+        + (o.describedBy ? ' aria-describedby="' + escapeHtml(String(o.describedBy)) + '"' : '')
         + (placeholder ? ' placeholder="' + escapeHtml(placeholder) + '"' : '')
-        + (maxLength ? ' maxlength="' + maxLength + '"' : '')
+        + (maxLength && inputType !== 'number' ? ' maxlength="' + maxLength + '"' : '')
+        + numberAttrs
         + (o.disabled === true ? ' disabled' : '')
         + (o.readonly === true ? ' readonly' : '')
         + spellcheck

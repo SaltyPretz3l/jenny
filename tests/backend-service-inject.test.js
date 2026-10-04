@@ -191,6 +191,8 @@ test('backend service records managed phase percentiles from summary and provide
 
   const snapshot = await service.getPhasePercentilesSnapshot();
   assert.equal(snapshot.phases.click_to_optimistic_render.count, 1);
+  assert.equal(snapshot.phases.click_to_optimistic_render.p50, optimisticAt - startedAt);
+  assert.equal(snapshot.phases.optimistic_render_to_context_assembly_started.count, 1);
   assert.equal(snapshot.phases.context_assembly_elapsed_no_memory_git.count, 1);
   assert.equal(snapshot.phases.sidecar_request_sent_to_provider_request_start.p50, 14);
   assert.equal(snapshot.phases.provider_request_start_to_first_chunk.p50, 80);

@@ -136,7 +136,7 @@ def next_cursor_from_payload(payload: dict[str, Any]) -> str | None:
     return normalized or None
 
 
-def collect_paginated_resource_items(  # noqa: PLR0913 - pagination knobs are per-tool.
+def collect_paginated_resource_items(  # pagination knobs are per-tool.
     arguments: dict[str, Any],
     *,
     load_page: Callable[[str | None], dict[str, Any]],

@@ -1,0 +1,106 @@
+[
+  {
+    "text": "open C:\\Users\\Casey\\private.txt failed",
+    "hidden": [
+      "Casey",
+      "private.txt"
+    ]
+  },
+  {
+    "text": "open /home/casey/private.txt failed",
+    "hidden": [
+      "casey",
+      "private.txt"
+    ]
+  },
+  {
+    "text": "open \\\\server\\private\\key.pem failed",
+    "hidden": [
+      "server",
+      "key.pem"
+    ]
+  },
+  {
+    "text": "open G:\\My Files\\private key.pem failed",
+    "hidden": [
+      "My Files",
+      "private key.pem"
+    ]
+  },
+  {
+    "text": "postgresql://user:pass@host/db",
+    "hidden": [
+      "user",
+      "pass",
+      "host/db"
+    ]
+  },
+  {
+    "text": "https://casey:private@host.test/path",
+    "hidden": [
+      "casey",
+      "private",
+      "host.test"
+    ]
+  },
+  {
+    "text": "sk-proj-aaaaaaaaaaaaaaaaaaaaaaaa",
+    "hidden": [
+      "aaaaaaaaaaaaaaaaaaaaaaaa"
+    ]
+  },
+  {
+    "text": "ghp_aaaaaaaaaaaaaaaaaaaaaaaa",
+    "hidden": [
+      "aaaaaaaaaaaaaaaaaaaaaaaa"
+    ]
+  },
+  {
+    "text": "github_pat_aaaaaaaaaaaaaaaaaaaaaaaa",
+    "hidden": [
+      "aaaaaaaaaaaaaaaaaaaaaaaa"
+    ]
+  },
+  {
+    "text": "hf_aaaaaaaaaaaaaaaaaaaa",
+    "hidden": [
+      "aaaaaaaaaaaaaaaaaaaa"
+    ]
+  },
+  {
+    "text": "AKIAIOSFODNN7EXAMPLE",
+    "hidden": [
+      "IOSFODNN7EXAMPLE"
+    ]
+  },
+  {
+    "text": "xoxb-aaaaaaaaaaaaaaaaaaaa",
+    "hidden": [
+      "aaaaaaaaaaaaaaaaaaaa"
+    ]
+  },
+  {
+    "text": "Authorization: Bearer abcdefghijklmnop",
+    "hidden": [
+      "abcdefghijklmnop"
+    ]
+  },
+  {
+    "value": {
+      "authToken": "private-value",
+      "clientSecret": "private-value",
+      "userPassword": "private-value"
+    },
+    "hidden": [
+      "private-value"
+    ]
+  },
+  {
+    "text": "GET /api/users status=200",
+    "hidden": [],
+    "visible": [
+      "/api/users",
+      "status=200"
+    ]
+  }
+]

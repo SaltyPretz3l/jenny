@@ -19,14 +19,8 @@
   var STRIP_WIDTH = 56;
   var STRIP_MAX_CHIPS = 12;
 
-  function escapeHtmlText(value) {
-    return String(value == null ? '' : value)
-      .replaceAll('&', '&amp;')
-      .replaceAll('<', '&lt;')
-      .replaceAll('>', '&gt;')
-      .replaceAll('"', '&quot;')
-      .replaceAll("'", '&#39;');
-  }
+  const { escapeHtml: escapeHtmlText, resolveDefaultTitle } = (typeof globalThis !== 'undefined' && globalThis.stringUtils)
+    || (typeof require === 'function' ? require('../shared/string-utils') : null);
 
   function createChatsStripController(deps) {
     const { state } = deps;
@@ -248,7 +242,7 @@
         .find((entry) => entry?.id === sessionId);
       if (!session) return;
       closePeek({ clearSession: false });
-      peekEl.querySelector('#chatsStripPeekTitle').textContent = session.title === 'New Plugin Session' ? jt('session.defaultTitle.plugin', 'New Plugin Session') : (!session.title || session.title === 'New Chat' ? jt('session.defaultTitle.chat', 'New Chat') : session.title);
+      peekEl.querySelector('#chatsStripPeekTitle').textContent = resolveDefaultTitle(session.title);
       peekEl.querySelector('#chatsStripPeekMeta').textContent = [
         formatRelativeTime(session.updated_at || session.created_at),
         formatModelLabel(session),
@@ -414,7 +408,7 @@
         : '';
       closePeek({ clearSession: false });
       chipsEl.innerHTML = items.map((session) => {
-        const title = session.title === 'New Plugin Session' ? jt('session.defaultTitle.plugin', 'New Plugin Session') : (!session.title || session.title === 'New Chat' ? jt('session.defaultTitle.chat', 'New Chat') : session.title);
+        const title = resolveDefaultTitle(session.title);
         const isActive = session.id === state.currentSessionId;
         const isPluginSession = session.session_type === 'plugin';
         const usesPhotoIcon = isPluginSession && session.plugin_session?.icon_token === 'image';
@@ -506,8 +500,10 @@
         chip.dataset.sessionDominantState = stateById.get(chip.dataset.stripSessionId) || 'idle';
         const label = rootRef.rendererWorkspaceChromeUtils?.sessionStatusLabel?.(chip.dataset.sessionDominantState) || '';
         if (!chip.dataset.sessionBaseLabel) chip.dataset.sessionBaseLabel = chip.getAttribute('aria-label') || '';
-        chip.setAttribute('aria-label', chip.dataset.sessionBaseLabel + (label
-          ? jt('shell.workspaceChrome.statusSuffix', '. Status: {statuses}', { statuses: label }) : ''));
+        const chromeUtils = rootRef.rendererWorkspaceChromeUtils;
+        chip.setAttribute('aria-label', typeof chromeUtils?.withStatusSuffix === 'function'
+          ? chromeUtils.withStatusSuffix(chip.dataset.sessionBaseLabel, label)
+          : chip.dataset.sessionBaseLabel + (label ? jt('shell.workspaceChrome.statusSuffix', '. Status: {statuses}', { statuses: label }) : ''));
       });
       const openChip = _peekSessionId && [...chipsEl.querySelectorAll('[data-strip-session-id]')]
         .find((chip) => chip.dataset.stripSessionId === _peekSessionId);

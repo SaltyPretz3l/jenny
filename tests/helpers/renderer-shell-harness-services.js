@@ -1,6 +1,6 @@
 const { createSchedulerStub, createUpdatesStub, normalizeLocalModelId } = require('./renderer-shell-harness-support');
 const { createCompanionStub } = require('./renderer-shell-harness-companion');
-const { createSkillsStub, createTipsStub } = require('./renderer-shell-harness-guidance');
+const { createSkillsStub } = require('./renderer-shell-harness-guidance');
 const { createWorkspaceIdeStub } = require('./renderer-shell-harness-workspace-ide');
 const { createCompactionStub } = require('./renderer-shell-harness-compaction');
 const { applyWorkspaceRootPayload, createWorkspaceRootStub, getProactiveStatePayload } = require('./renderer-shell-harness-workspace-root');
@@ -630,7 +630,6 @@ function createShellStubServices(context) {
         return { ok: true, state: state.mcpDiscoveryState };
       }])),
     },
-    tips: createTipsStub(options, state, addListener),
     updates: createUpdatesStub(options, state, addListener, emitUpdatesChanged),
     features: {
       async getState() {
@@ -859,25 +858,6 @@ function createShellStubServices(context) {
           height: 200,
           assetPath: `C:/attachments/image-${state.attachmentSaveCalls.length}.png`,
           sourceKind: payload?.sourceKind || 'clipboard',
-        };
-      },
-      async saveAudioAsset(payload) {
-        state.attachmentSaveCalls.push(payload);
-        if (typeof options.attachments?.saveAudioAsset === 'function') {
-          return options.attachments.saveAudioAsset(payload, { state });
-        }
-        return {
-          id: `audio-${state.attachmentSaveCalls.length}`,
-          kind: 'audio',
-          displayName: payload?.displayName || 'Voice Clip.webm',
-          mimeType: payload?.mimeType || 'audio/webm',
-          sizeBytes: payload?.bytes?.length || 0,
-          durationMs: Number(payload?.durationMs || 0),
-          assetPath: `C:/attachments/audio-${state.attachmentSaveCalls.length}.webm`,
-          sourceKind: payload?.sourceKind || 'microphone',
-          transcriptStatus: payload?.transcriptStatus || 'pending',
-          transcriptText: payload?.transcriptText || '',
-          transcriptLanguage: payload?.transcriptLanguage || '',
         };
       },
       async releaseAssets(assetPaths) {

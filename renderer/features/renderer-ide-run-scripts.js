@@ -140,6 +140,9 @@
     // statusbar indicator (wired to statusBar.render()).
     const onRunStateChange = typeof options.onRunStateChange === 'function' ? options.onRunStateChange : noop;
     const isDiffTabId = typeof options.isDiffTabId === 'function' ? options.isDiffTabId : () => false;
+    // Saves one open file (controller wires fileLifecycle.saveFile); resolves true
+    // only on a successful save. A dirty buffer is saved before it is run.
+    const saveFile = typeof options.saveFile === 'function' ? options.saveFile : () => Promise.resolve(false);
     // Which shell main will spawn (workspace-run-task-runner.js shellFor):
     // win32 -> powershell.exe, else bash -c. quoteArg() needs this to escape
     // an embedded quote correctly for the ACTUAL target shell.
@@ -611,7 +614,23 @@
         toast(ext ? jt('ide.runScripts.unsupportedExtension', "Running .{extension} files isn't supported yet.", { extension: ext }) : jt('ide.runScripts.unsupportedFileType', "Running this kind of files isn't supported yet."));
         return undefined;
       }
-      return dispatch(`${runner} ${quoteArg(path, isPosixShell)}`, `${runner} ${baseNameOf(path)}`);
+      const command = `${runner} ${quoteArg(path, isPosixShell)}`;
+      const label = `${runner} ${baseNameOf(path)}`;
+      // The task runs the SAVED file, so persist the visible buffer first. A clean
+      // buffer dispatches synchronously, exactly as before.
+      return editorHost?.isDirty?.(path) === true ? saveThenRun(path, command, label) : dispatch(command, label);
+    }
+
+    async function saveThenRun(path, command, label) {
+      const saved = await Promise.resolve(saveFile(path)).then((ok) => ok === true, () => false);
+      if (disposed) {
+        return undefined;
+      }
+      if (!saved) {
+        toast(jt('ide.runScripts.saveBeforeRunFailed', 'Could not save {path}, so it was not run.', { path }));
+        return undefined;
+      }
+      return dispatch(command, label);
     }
 
     function runScript(name) {
@@ -685,6 +704,38 @@
     let pickerRows = [];
     let pickerSelected = 0;
 
+    // Combobox pattern (same as the shared picker overlay): DOM focus stays in
+    // the text control, so the selected row reaches assistive technology
+    // through aria-activedescendant rather than focus.
+    function syncActiveOption(control, list) {
+      if (!control || !list) {
+        return;
+      }
+      let activeId = '';
+      list.querySelectorAll('[role="option"]').forEach((row, index) => {
+        row.id = `${list.id}-option-${index}`;
+        if (row.getAttribute('aria-selected') === 'true') {
+          activeId = row.id;
+        }
+      });
+      if (activeId) {
+        control.setAttribute('aria-activedescendant', activeId);
+      } else {
+        control.removeAttribute('aria-activedescendant');
+      }
+    }
+
+    function markCombobox(control, list) {
+      if (!control || !list) {
+        return;
+      }
+      control.setAttribute('role', 'combobox');
+      control.setAttribute('aria-autocomplete', 'list');
+      control.setAttribute('aria-haspopup', 'listbox');
+      control.setAttribute('aria-controls', list.id);
+      control.setAttribute('aria-expanded', 'false');
+    }
+
     function buildPickerRow(script, index) {
       const selected = index === pickerSelected;
       return `<div class="ide-picker-row ide-quick-open-row${selected ? ' ide-picker-row--selected ide-quick-open-row--selected' : ''}"`
@@ -709,6 +760,7 @@
       pickerResults.innerHTML = pickerRows.length
         ? pickerRows.map((script, index) => buildPickerRow(script, index)).join('')
         : '<div class="ide-picker-status ide-quick-open-status">' + escapeHtml(jt('ide.runScripts.noMatchingScripts', 'No matching scripts.')) + '</div>';
+      syncActiveOption(pickerInput, pickerResults);
       const selected = pickerResults.querySelector('.ide-quick-open-row--selected');
       selected?.scrollIntoView?.({ block: 'nearest' });
     }
@@ -789,13 +841,14 @@
           ariaLabel: jt('ide.runScripts.runNpmScript', 'Run npm script'),
           dataset: { 'ide-run-picker-input': '1' },
         })
-        + '<div class="ide-picker-results ide-quick-open-results" role="listbox" aria-label="' + escapeHtml(jt('ide.runScripts.npmScriptsLabel', 'npm scripts')) + '"></div>'
+        + '<div class="ide-picker-results ide-quick-open-results" id="ideRunScriptPickerListbox" role="listbox" aria-label="' + escapeHtml(jt('ide.runScripts.npmScriptsLabel', 'npm scripts')) + '"></div>'
         + '</div>';
       stage.appendChild(pickerEl);
       pickerInput = pickerEl.querySelector('[data-ide-run-picker-input]')
         || pickerEl.querySelector('.inv-text-field-control')
         || null;
       pickerResults = pickerEl.querySelector('.ide-quick-open-results');
+      markCombobox(pickerInput, pickerResults);
       pickerEl.addEventListener('click', handlePickerClick);
       pickerInput?.addEventListener('keydown', handlePickerKeydown);
       pickerInput?.addEventListener('input', handlePickerInput);
@@ -809,6 +862,7 @@
         return;
       }
       pickerEl.classList.remove('hidden');
+      pickerInput?.setAttribute('aria-expanded', 'true');
       if (pickerInput) {
         pickerInput.value = '';
       }
@@ -819,6 +873,8 @@
 
     function closePicker() {
       pickerEl?.classList.add('hidden');
+      pickerInput?.setAttribute('aria-expanded', 'false');
+      pickerInput?.removeAttribute('aria-activedescendant');
       editorHost?.focus?.();
     }
 

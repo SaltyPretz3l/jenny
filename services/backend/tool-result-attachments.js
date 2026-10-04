@@ -169,7 +169,8 @@ function ingestToolResultAttachments(service, wireAttachments, context = {}) {
       id: stored.id,
       sourceId: normalized.id,
       kind: normalized.kind,
-      mimeType: normalized.mimeType,
+      // The store sniffs the bytes (ART-07); the wire's claim is only a hint.
+      mimeType: stored.mimeType || normalized.mimeType,
       byteLength: normalized.byteLength,
       width: normalized.width || stored.width || 0,
       height: normalized.height || stored.height || 0,

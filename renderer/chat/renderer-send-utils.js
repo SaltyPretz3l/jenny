@@ -30,7 +30,6 @@
     || typeof _sendFlowHelpers.stashQueuedSendInState !== 'function'
     || typeof _sendFlowHelpers.annotateUserSendFailureInStore !== 'function'
     || typeof _sendFlowHelpers.reconcileAcceptedRegenerate !== 'function'
-    || typeof _sendFlowHelpers.rejectBusyPluginCommand !== 'function'
     || typeof _sendFlowHelpers.resolveMessageCopyText !== 'function') {
     throw new Error('renderer-send-flow-helpers must load before renderer/chat/renderer-send-utils.js');
   }
@@ -110,10 +109,6 @@
   if (!_asyncFenceUtils || typeof _asyncFenceUtils.createDisposalFence !== 'function') {
     throw new Error('rendererAsyncFence must load before renderer/chat/renderer-send-utils.js');
   }
-  const PILL_SOURCES = (typeof globalThis !== 'undefined'
-    && globalThis.rendererTurnStatusPill
-    && globalThis.rendererTurnStatusPill.SOURCES)
-    || { TURN_SENDING: 'turn.sending' };
 
   const FOLLOW_UP_ACTION_BUSY_REASON = jt('shell.fallback.waitForCurrentResponse', 'Wait for the current response to finish before trying that.');
   const FOLLOW_UP_AUTH_BLOCKED_REASON = jt('chat.send.signInBeforeTrying', 'Sign in before trying that.');
@@ -125,6 +120,7 @@
 
   function createSendController(deps) {
     const { state } = deps;
+    const sessionContext = deps.sessionContext || (globalThis.rendererPaneSessionContext || require('./renderer-pane-session-context')).createPaneSessionContext({ state, paneId: deps.paneId });
     const sendOutbox = getOrCreateSendOutbox(state, {
       releaseAssets: (assetPaths) => window.jennyShell?.attachments?.releaseAssets?.(assetPaths),
     });
@@ -152,7 +148,7 @@
       getInteractiveSequenceState,
       clearInteractiveDraft,
       patchSessionSummary,
-      getCurrentRuntimePreferences,
+      getCurrentRuntimePreferences, getRuntimePreferencesFromSession,
       getCurrentVisibleMessages,
       getCurrentSessionMessages,
       getSessionTurnEventState = function noopGetSessionTurnEventState() { return { turnEvents: [] }; },
@@ -165,8 +161,6 @@
       showToastMessage,
       setComposerStatusNotice,
       clearComposerStatusNotice,
-      setTurnStatusPill = () => {},
-      clearTurnStatusPill = () => {},
       showComposerActionError,
       renderComposerState,
       renderAll = () => {},
@@ -179,7 +173,7 @@
       setFollowLatest,
       appendClientLog,
       refreshSessionSummaries,
-      activateWorkspaceSession = async (sessionId) => { state.currentSessionId = sessionId; },
+      activateWorkspaceSession = async (sessionId) => { sessionContext.setSessionId(sessionId); },
       thinkingController,
       optimisticAppend,
       flushBufferedStreamEvents,
@@ -217,9 +211,7 @@
       }
     }
 
-    function getCurrentSessionId() {
-      return String(state.currentSessionId || '').trim();
-    }
+    function getCurrentSessionId() { return sessionContext.getSessionId(); }
 
     function startOptimisticSendIndicator() {
       if (thinkingIndicator && typeof thinkingIndicator.startIndicator === 'function') {
@@ -230,16 +222,9 @@
           thinkingIndicator.startIndicator('thinking');
         }
       }
-      setTurnStatusPill(PILL_SOURCES.TURN_SENDING, {
-        message: jt('chat.send.sendingStatus', 'Sending\u2026'),
-        tone: 'pending',
-        spinner: true,
-        badgeText: 'Sending',
-      });
     }
 
     function clearOptimisticSendIndicator({ resetThinking = false } = {}) {
-      clearTurnStatusPill(PILL_SOURCES.TURN_SENDING);
       if (resetThinking && thinkingIndicator && typeof thinkingIndicator.resetIndicator === 'function') {
         thinkingIndicator.resetIndicator();
       }
@@ -329,7 +314,7 @@
       log: appendClientLog,
     });
     const sendCompletion = createSendCompletion({
-      state,
+      state, sessionContext,
       navigationIntent,
       sendReceipts,
       constants: {
@@ -383,19 +368,20 @@
       },
     });
     const durableModule = globalThis.rendererDurableSend || (typeof require === 'function' ? require('./renderer-durable-send') : null);
-    const durableSend = durableModule.createController({ state,
+    const durableSend = durableModule.createController({ state, sessionContext,
       shell: { ...window.jennyShell, activeFileContext: window.rendererIdeActiveFileContext }, receipts: sendReceipts,
       callbacks: { ...deps.callbacks, renderMessages, renderSessions, renderHeader, renderComposerState,
-        attachPendingOriginToSession, rekeySessionOrigin },
+        attachPendingOriginToSession, rekeySessionOrigin, activateWorkspaceSession },
       helpers: { clipSessionTitle, buildOptimisticAttachmentMetadata, adoptPersistedUserMessageIdInStore },
       multiStreamController, isDisposed: () => disposalFence.isDisposed() });
     const skillsBridge = window.jennyShell?.skills || null;
     const sendSlashDispatch = _skillSlashCommands.createSendSlashDispatch({
-      state, registry: slashCommandRegistry, chatInput, renderComposerState,
+      state, sessionContext, registry: slashCommandRegistry, chatInput, renderComposerState,
       syncComposerInputHeight, syncComposerVisualState,
       selectSlashCommand: handleSlashCommandSelection,
       submitPrompt: (nextPrompt) => startPromptSend(nextPrompt),
-      getSkillsState: skillsBridge?.getState ? () => skillsBridge.getState() : null,
+      // Scoped to this pane's chat: its bound project's skills, not the Workspace's.
+      getSkillsState: skillsBridge?.getState ? (scope) => skillsBridge.getState(scope) : null,
       onSkillsChanged: skillsBridge?.onChanged ? (listener) => skillsBridge.onChanged(listener) : null,
       log: appendClientLog,
     });
@@ -408,9 +394,10 @@
       settings = slashDispatch.settings;
       const pendingBatch = getPendingQuestionBatch();
       const usesReplayImageAttachments = Array.isArray(settings.replayImageAttachments);
-      const attachmentBudget = buildAttachmentBudget(
-        usesReplayImageAttachments ? settings.replayImageAttachments : state.attachments.queued
-      );
+      const requestedSessionId = String(settings.sessionIdOverride || getCurrentSessionId() || '').trim(); // W2-2b: its queue is sent
+      const sessionQueue = globalThis.rendererComposerSessionState || require('./renderer-composer-session-state');
+      const queuedForSend = sessionQueue.getQueuedAttachments(state, requestedSessionId); // pane 0's live array or a pane's record
+      const attachmentBudget = buildAttachmentBudget(usesReplayImageAttachments ? settings.replayImageAttachments : queuedForSend);
       const promptBearingAttachments = attachmentBudget.accepted.filter(
         (entry) => String(entry?.kind || '').trim() !== 'audio'
       );
@@ -458,13 +445,13 @@
       ) {
         return null;
       }
-      const requestedSessionId = String(settings.sessionIdOverride || state.currentSessionId || '').trim();
       if (compactionCoordinator?.isPending?.(requestedSessionId)) {
-      setComposerStatusNotice(jt('settings.compaction.compacting', 'Compacting context…'), { owner: `compaction:${requestedSessionId}`, tone: 'pending', spinner: true });
+      setComposerStatusNotice(jt('settings.compaction.compacting', 'Compacting context…'), { owner: `compaction:${requestedSessionId}`, tone: 'pending', spinner: true, sessionId: requestedSessionId });
         renderComposerState();
         appendClientLog('INFO', 'chat.send_blocked', { sessionId: requestedSessionId, reason: 'session_compacting' });
         return { rejected: true, reason: 'session_compacting', sessionId: requestedSessionId };
       }
+      const autoGate = settings.startupAudit || (globalThis.rendererRunModeControl?.confirmAutoSend?.(requestedSessionId) ?? true); if (autoGate !== true && await autoGate !== true) return null; // FG-003 Auto warning
       compactionCoordinator?.clearSettled?.(requestedSessionId);
       clearComposerStatusNotice();
       const requestedSession = requestedSessionId
@@ -472,15 +459,14 @@
         : null;
       const runModeState = globalThis.rendererComposerV2State || (typeof require === 'function' ? require('./renderer-composer-v2-state') : null);
       const runtimePreferences = runModeState.resolveSendRuntimePreferences({
-        snapshot: settings.runtimePreferencesSnapshot, session: requestedSession, current: getCurrentRuntimePreferences, clone: cloneJsonLike,
+        snapshot: settings.runtimePreferencesSnapshot, session: requestedSession, current: getCurrentRuntimePreferences, clone: cloneJsonLike, fromSession: getRuntimePreferencesFromSession,
       });
       if (['ask', 'auto'].includes(settings.runModeOverride)) Object.assign(runtimePreferences, { runMode: settings.runModeOverride, planMode: false });
-      const visionGate = globalThis.rendererComposerVisionGate?.evaluateComposerVisionGate?.({ state, runtimePreferences });
+      const visionGate = globalThis.rendererComposerVisionGate?.evaluateComposerVisionGate?.({ state, runtimePreferences, queued: queuedForSend });
       if (visionGate?.blocked && !usesReplayImageAttachments && !isEditRegenerate && !normalizedInteractiveResponse) {
         setComposerStatusNotice(visionGate.notice, { owner: 'attachments.vision', tone: visionGate.tone, at: 0 }); renderComposerState(); return null;
       }
       const requestedSessionBusy = isSessionBusy(requestedSessionId);
-      const pluginCommandInvocation = settings.pluginCommandInvocation && typeof settings.pluginCommandInvocation === 'object' ? settings.pluginCommandInvocation : null;
       const rawSkillInvocation = settings.skillInvocation && typeof settings.skillInvocation === 'object' ? settings.skillInvocation : null;
       const skillInvocation = rawSkillInvocation && typeof rawSkillInvocation.id === 'string' ? Object.fromEntries(['id', 'name', 'scope', 'command'].filter((key) => typeof rawSkillInvocation[key] === 'string').map((key) => [key, rawSkillInvocation[key]])) : null;
       // Dock-scoped approval-steer (see isDockApprovalSteerActive above): once a
@@ -493,8 +479,6 @@
       const durableEligible = !isEditRegenerate && durableModule.eligible(state, window.jennyShell, settings, prompt, normalizedInteractiveResponse);
       if (durableEligible && !durableSend.hasCapacity()) return null;
       if (!durableEligible && (requestedSessionBusy || (hasPendingToolApprovalForSession(requestedSessionId) && !isDockApprovalSteerActive()))) {
-        const commandRefusal = _sendFlowHelpers.rejectBusyPluginCommand({ invocation: pluginCommandInvocation, sessionId: requestedSessionId, setNotice: setComposerStatusNotice, render: renderComposerState, log: appendClientLog });
-        if (commandRefusal) return commandRefusal;
         if (
           canQueueForSession(requestedSessionId)
           && (String(prompt || '').trim() || attachmentBudget.accepted.length)
@@ -505,9 +489,9 @@
           const queuedAccepted = Array.isArray(attachmentBudget.accepted) ? attachmentBudget.accepted : [];
           const queuedAttachedPaths = queuedAccepted.map((e) => String(e?.path || e?.assetPath || e?.absolute_path || e?.absolutePath || '').trim()).filter(Boolean);
           const queuedAttachedNames = queuedAccepted.map((e) => String(e?.displayName || e?.promptName || '').trim()).filter(Boolean);
-          const queuedMentionPaths = window.rendererIdeMentionAutocomplete?.collectMentionPaths?.() || [];
+          const queuedMentionPaths = window.rendererIdeMentionAutocomplete?.collectMentionPaths?.(chatInput) || [];
           const queuedMentionContentsPromise = Promise.resolve(
-            window.rendererIdeMentionAutocomplete?.collectMentionContents?.() || []
+            window.rendererIdeMentionAutocomplete?.collectMentionContents?.({ input: chatInput }) || []
           );
           // Initially dedupe only attachments; failed mention reads must not
           // discard the active-file snapshot from both context sources.
@@ -546,7 +530,7 @@
           // newer queued send (which all replace/remove the Map entry), where a
           // createdAt timestamp could collide at ms resolution.
           chatInput.value = '';
-          state.attachments.queued = [];
+          sessionQueue.clearQueuedAttachments(state, requestedSessionId);
           syncComposerInputHeight();
           syncComposerVisualState();
           renderComposerState();
@@ -605,7 +589,7 @@
       const acceptedAttachments = cloneQueuedAttachments(attachmentBudget.accepted);
       const attachedPaths = acceptedAttachments.map((e) => String(e?.path || e?.assetPath || e?.absolute_path || e?.absolutePath || '').trim()).filter(Boolean);
       const attachedNames = acceptedAttachments.map((e) => String(e?.displayName || e?.promptName || '').trim()).filter(Boolean);
-      const previousSessionId = String(state.currentSessionId || '').trim();
+      const previousSessionId = getCurrentSessionId();
       const optimisticSessionId = requestedSessionId || createOptimisticSessionId();
       const createdOptimisticSession = !requestedSessionId || requestedSession?.local_draft === true;
       const retryPayloadId = String(settings.failedPayloadId || '').trim();
@@ -615,6 +599,11 @@
         ? runModeState.projectRunMode(runtimePreferences.runMode, { planModeFallback: runtimePreferences.planMode === true })
         : { approvalMode: 'prompt', planMode: runtimePreferences.planMode === true };
       const { approvalMode } = runModeProjection;
+      // Capture approved paths synchronously from THIS textarea before the receipt
+      // consumes its text. Reads may settle later; queued sends already own a snapshot.
+      const mentionContentsPromise = Object.prototype.hasOwnProperty.call(settings, 'mentionContentsSnapshot')
+        ? Promise.resolve(Array.isArray(settings.mentionContentsSnapshot) ? settings.mentionContentsSnapshot : [])
+        : Promise.resolve(window.rendererIdeMentionAutocomplete?.collectMentionContents?.({ input: chatInput }) || []).catch(() => []);
       let sendReceipt = sendReceipts.begin({
         sessionId: optimisticSessionId,
         prompt: effectivePrompt,
@@ -624,7 +613,7 @@
         toolPreferences,
         approvalMode,
         interactiveResponse: normalizedInteractiveResponse,
-        pluginCommandInvocation, skillInvocation,
+        skillInvocation,
         editedMessageId: String(settings.editedMessageId || '').trim(),
       }, {
         consumeDraft: !preserveComposerDraft,
@@ -633,16 +622,10 @@
         failedPayloadId: retryPayloadId,
       });
       if (!sendReceipt) return null;
-      // A queued send carries a mention-contents snapshot captured at queue time;
-      // absent it, resolution starts only after the immutable origin receipt owns
-      // the draft and attachments.
-      const mentionContentsPromise = Object.prototype.hasOwnProperty.call(settings, 'mentionContentsSnapshot')
-        ? Promise.resolve(Array.isArray(settings.mentionContentsSnapshot) ? settings.mentionContentsSnapshot : [])
-        : Promise.resolve(window.rendererIdeMentionAutocomplete?.collectMentionContents?.() || []).catch(() => []);
       if (durableEligible) {
         const result = await durableSend.send({ settings, optimisticSessionId, createdOptimisticSession, requestedSession,
           effectivePrompt, visiblePrompt, acceptedAttachments, attachedPaths, attachedNames, runtimePreferences,
-          runModeProjection, toolPreferences, approvalMode, pluginCommandInvocation, skillInvocation,
+          runModeProjection, toolPreferences, approvalMode, skillInvocation,
           sendReceipt, mentionContentsPromise, preserveComposerDraft });
         sendSlashDispatch.clearAccepted(result, skillInvocation, settings);
         return result;
@@ -669,7 +652,7 @@
       });
       setChatSendLifecycle(optimisticSessionId, 'preflight');
       if (pendingBatchSnapshot) {
-        patchSessionSummary(createdOptimisticSession ? optimisticSessionId : state.currentSessionId, {
+        patchSessionSummary(createdOptimisticSession ? optimisticSessionId : getCurrentSessionId(), {
           pending_question_batch: null,
           interactive_sequence_state: interactiveGuardrailFallback
             ? INTERACTIVE_SEQUENCE_FALLBACK_REQUESTED
@@ -706,7 +689,7 @@
           optimistic_local: true,
           local_draft: false,
         }, { prepend: true });
-        state.currentSessionId = optimisticSessionId;
+        sessionContext.setSessionId(optimisticSessionId);
         attachPendingOriginToSession(optimisticSessionId);
         setSessionMessages(optimisticSessionId, getSessionMessages(optimisticSessionId), `session_${optimisticSessionId}`);
         state.ui.animateNextChatActivation = shouldAnimateActivation;
@@ -800,7 +783,7 @@
             optimistic_rendered_at_ms: optimisticRenderedAtMs,
             local_render_latency_ms: localRenderLatencyMs,
           },
-          ...(pluginCommandInvocation ? { pluginCommandInvocation } : {}), ...(skillInvocation?.id ? { skillInvocation: { id: skillInvocation.id } } : {}),
+          ...(skillInvocation?.id ? { skillInvocation: { id: skillInvocation.id } } : {}),
         };
         const chatBridge = window.jennyShell?.chat;
         const startOperation = isEditRegenerate
@@ -900,7 +883,7 @@
         mentionContentsSnapshot: payload.mentionContents || [],
         activeFileContextSnapshot: payload.activeFileContext || null,
         interactiveResponse: payload.interactiveResponse || null,
-        pluginCommandInvocation: payload.pluginCommandInvocation || null, skillInvocation: payload.skillInvocation || null,
+        skillInvocation: payload.skillInvocation || null,
         failedPayloadId: payload.id,
       });
       const retryDidNotStart = !result || result.rejected === true

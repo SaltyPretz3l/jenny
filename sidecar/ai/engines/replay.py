@@ -1,4 +1,4 @@
-# ruff: noqa: PLC0415, PLR0913
+# ruff: noqa: PLR0913
 """Deterministic replay engine for agentic GUI testing.
 
 Streams a scripted sequence of reasoning deltas, text deltas, and tool calls

@@ -1,31 +1,16 @@
+const { observeManagedLlamaServerState } = require('../backend/local-engine-status');
 const { shutdownAnyLocalOllamaSync } = require('../backend/ollama-shutdown');
 const { drainSessionStoresSync } = require('../backend/session-store-drain');
 const { shutdownManagedSidecarSync } = require('../backend/sidecar-shutdown');
 const llamaServerLifecycle = require('../llama-server-lifecycle');
+const { chatModelRefusal } = require('../llama-server-gguf-files');
 const { stopRuntimeWithDependencies } = require('../runtime-stop');
 const { resolveLaunchAcceleration } = require('./llama-server-acceleration-launch');
 const { createLlamaServerManager } = require('./llama-server-manager');
 
-const STARTUP_STEP_COUNT = 7;
 const SHUTDOWN_STEP_COUNT = 7;
-// ollama_ready is sequenced *after* sidecar_spawned: the Ollama cold-start is now
-// kicked off concurrently with the sidecar spawn and joined just before the
-// engine handshake, so its progress step lands after the sidecar is up. Ordering
-// the index this way keeps the startup progress bar monotonic (no backward dip).
-const STARTUP_STEP_INDEX = {
-  ollama_start: 0,
-  sidecar_spawn: 1,
-  sidecar_ready: 2,
-  sidecar_spawned: 2,
-  ollama_ready: 3,
-  sidecar_initialize: 4,
-  model_acquiring: 4,
-  model_load: 5,
-  model_loading: 5,
-  model_ready: 6,
-  model_unavailable: 6,
-  ready: 6,
-};
+// Startup reports phase keys and facts (see emitStartupProgress); only
+// shutdown still narrates numbered steps.
 const SHUTDOWN_STEP_INDEX = { streams_abort: 0, model_unload: 1, sidecar_shutdown: 2, sidecar_stopped: 3, ollama_stop: 4, ollama_stopped: 5, done: 6 };
 
 function createRuntimeShutdownController({
@@ -39,10 +24,9 @@ function createRuntimeShutdownController({
   getSchedulerService = () => null,
   getBackendService = () => null,
   getProcessLogWriter = () => null,
-  // Workspace child-process services (piped terminal, ConPTY, and test runner).
+  // Workspace child-process services (ConPTY terminal, run task, test runner).
   // teardown runs inside this awaited shutdown path rather than an
   // app.once('will-quit', …) hook — see disposeWorkspaceProcesses below.
-  getWorkspaceTerminalService = () => null,
   getWorkspacePtyService = () => null,
   getWorkspaceRunTaskService = () => null,
   getWorkspaceTestRunnerService = () => null,
@@ -73,6 +57,16 @@ function createRuntimeShutdownController({
   shutdownLlamaServerSyncImpl = llamaServerLifecycle.shutdownLlamaServerSync,
   llamaServerLifecycleImpl = llamaServerLifecycle,
   resolveLaunchAccelerationImpl = resolveLaunchAcceleration,
+  // Image engine (stable-diffusion.cpp) hooks. Startup: reap an orphan render
+  // with proof BEFORE llama-server autostart takes the GPU. Shutdown: the chat
+  // GPU handoff's closing latch (cancel the render, never restore) runs before
+  // the llama_server stage; the emergency path gets one synchronous best-effort
+  // kill. main.js is at its line ceiling, so the defaults read the hooks off the
+  // backend service (backend-service-wiring attaches chatGpuHandoff and
+  // imageEngineRuntime); the options exist for tests.
+  reconcileImageEngine = () => getBackendService()?.chatGpuHandoff?.reconcile?.(),
+  killImageEngineSync = () => getBackendService()?.imageEngineRuntime?.killRenderSync?.(),
+  imageEngineReconcileTimeoutMs = 15_000,
   // The managed llama-server process is owned by its manager (state machine,
   // crash surface, restart-on-next-chat). This controller only sequences it
   // into startup and the two shutdown paths.
@@ -87,6 +81,19 @@ function createRuntimeShutdownController({
     log,
     lifecycle: llamaServerLifecycleImpl,
     resolveLaunchAccelerationImpl,
+    // A diffusion GGUF (image model) picked or persisted as a chat model is
+    // refused at plan resolution, so boot autostart and the chat reconnect
+    // never serve it through llama-server.
+    chatModelGate: ({ modelPath }) => (modelPath ? chatModelRefusal(modelPath) : ''),
+    // While the chat GPU handoff holds the lease (or the app is closing) no
+    // launch may take the GPU back except the handoff's own identity restore.
+    launchGate: () => {
+      try {
+        return getBackendService()?.chatGpuHandoff?.launchRefusal?.() || '';
+      } catch (_error) {
+        return '';
+      }
+    },
     // Managed-engine liveness heartbeat for the sidecar's stream-inactivity
     // watchdog: llama-server streams no chat chunks while the model composes a
     // buffered tool call, but keeps printing decode telemetry (mirrors the
@@ -101,10 +108,22 @@ function createRuntimeShutdownController({
     // Every launch mints a new api key; a sidecar already talking to the
     // openai-compatible engine must receive it or every request 401s.
     onStateChange: (status) => {
+      const backendService = getBackendService();
+      // A cold start reads as a model load with a clock (and feeds the
+      // last-load record) instead of a bare "Starting engine".
+      // Isolated so a status fault can never skip the key re-broker below.
+      try {
+        if (backendService) observeManagedLlamaServerState(backendService, status);
+      } catch (_error) { /* the status is advisory; the launch proceeds */ }
       if (status.state !== 'ready') {
         return;
       }
-      const backendService = getBackendService();
+      // An identity restore (chat GPU handoff) relaunched with the key the
+      // parked turn already holds: nothing to re-broker, and a stack rebuild
+      // here would race the turn that is about to resume.
+      if (status.identityReused === true) {
+        return;
+      }
       if (backendService?.currentEngineType !== 'openai-compatible'
         || typeof backendService.refreshManagedConfig !== 'function') {
         return;
@@ -124,7 +143,10 @@ function createRuntimeShutdownController({
     try {
       const request = runtime.beginShutdown({ reason, timeoutMs: 1500 });
       Promise.resolve(request?.completion).then((result) => {
-        if (observeResult && result?.ok !== true) {
+        if (observeResult && result?.reason === 'runtime_cleanup_awaits_backend_restart') {
+          // Work parked for the next start's recovery; nothing failed.
+          log('INFO', 'session_runtime.shutdown_awaits_restart', {});
+        } else if (observeResult && result?.ok !== true) {
           log('WARN', 'session_runtime.shutdown_unconfirmed', {
             reason: String(result?.reason || 'runtime_shutdown_unconfirmed').slice(0, 240),
             timedOut: result?.timedOut === true,
@@ -167,6 +189,18 @@ function createRuntimeShutdownController({
     });
   }
 
+  // The renderer owns the startup copy and shows no percent: main sends the
+  // phase key and the facts it knows (modelId, elapsedMs, bytes when known).
+  function emitStartupProgress(phase, facts, error) {
+    sendBridgeEvent('lifecycle.onProgress', {
+      scenario: 'startup',
+      phase,
+      facts: facts && typeof facts === 'object' ? facts : {},
+      error: error || '',
+      timestamp: Date.now(),
+    });
+  }
+
   async function runShutdownStage(stage, operation, signal) {
     if (signal?.aborted) return;
     const startedAt = Date.now();
@@ -196,8 +230,62 @@ function createRuntimeShutdownController({
     }
   }
 
+  // Resolves to true when the chat engine may take the GPU.
+  async function reconcileImageEngineOnStartup() {
+    if (typeof reconcileImageEngine !== 'function') {
+      return true;
+    }
+    const startedAt = Date.now();
+    try {
+      // A hung process query must not hold llama-server autostart forever;
+      // an unanswered reconcile is reported unconfirmed, never assumed clean.
+      let timer;
+      const result = await Promise.race([
+        Promise.resolve(reconcileImageEngine()),
+        new Promise((resolve) => { timer = setTimeout(() => resolve({ confirmed: false, timedOut: true }), imageEngineReconcileTimeoutMs); }),
+      ]).finally(() => clearTimeout(timer));
+      log(result?.confirmed === false ? 'WARN' : 'INFO', 'runtime.startup_step', {
+        step: 'image_engine_reconcile',
+        status: result?.confirmed === false ? 'unconfirmed' : 'ok',
+        timedOut: result?.timedOut === true,
+        durationMs: Math.max(Date.now() - startedAt, 0),
+      });
+      return result?.confirmed !== false;
+    } catch (error) {
+      log('WARN', 'runtime.startup_step', {
+        step: 'image_engine_reconcile',
+        status: 'failed',
+        durationMs: Math.max(Date.now() - startedAt, 0),
+        message: String(error?.message || error),
+      });
+      return false;
+    }
+  }
+
   async function startLlamaServerBeforeBackend() {
-    await managedLlamaServer.startFromSettings();
+    // An orphan sd-cli from a killed session must be gone before the chat
+    // engine takes the GPU, or the model load fails on the VRAM it still holds.
+    // Without proof the chat engine stays down: the handoff holds an orphan
+    // lease and the Model Library offers Clean up; the next turn relaunches.
+    if (!(await reconcileImageEngineOnStartup())) {
+      log('WARN', 'runtime.startup_step', { step: 'llama_server_autostart', status: 'skipped', reason: 'image_engine_unconfirmed' });
+      return;
+    }
+    // The engine the backend boots with (preferred, else inferred from the
+    // default model); without a backend the manager reads the preferred one.
+    const engineType = getBackendService()?.currentEngineType;
+    await managedLlamaServer.startFromSettings(engineType ? { engineType } : {});
+  }
+
+  // Closing latch first: an active render is cancelled with proof and no
+  // chat-engine restore follows, so the llama_server stage below never races
+  // a relaunch (chat-gpu-handoff.js close()).
+  async function closeImageEngineOnShutdown() {
+    const handoff = getBackendService()?.chatGpuHandoff;
+    if (!handoff || typeof handoff.close !== 'function') {
+      return null;
+    }
+    return handoff.close();
   }
 
   async function stopLlamaServerOnShutdown() {
@@ -206,11 +294,10 @@ function createRuntimeShutdownController({
 
   // Dispose workspace child-process services inside the AWAITED quit sequence:
   // a will-quit listener cannot delay quit for async work, so an un-awaited
-  // tree kill races process exit and can orphan the piped shell children.
+  // tree kill races process exit and can orphan shell children.
   // Isolate each disposer so one failure cannot block shutdown.
   function workspaceProcessDisposers() {
     return [
-      ['workspaceTerminal', getWorkspaceTerminalService()],
       ['workspacePty', getWorkspacePtyService()],
       ['workspaceRunTask', getWorkspaceRunTaskService()],
       ['workspaceTestRunner', getWorkspaceTestRunnerService()],
@@ -319,6 +406,11 @@ function createRuntimeShutdownController({
       setWindowStateDisplayUnsubscribe(null);
     }
     try {
+      await runShutdownStage('image_engine', () => closeImageEngineOnShutdown(), signal);
+    } catch (_error) {
+      // runShutdownStage already logged the failure; llama-server still stops
+    }
+    try {
       await runShutdownStage('llama_server', () => stopLlamaServerOnShutdown(), signal);
     } catch (_error) {
       // stopLlamaServerOnShutdown already logs on failure
@@ -356,31 +448,42 @@ function createRuntimeShutdownController({
     const flushStartedAt = Date.now();
     let flushStatus = 'ok';
     try {
-      await getProcessLogWriter()?.flush?.({ timeoutMs: 2000 });
+      const outcome = await getProcessLogWriter()?.flush?.({ timeoutMs: 2000 });
+      // timedOutCount is the writer's lifetime total; only this drain's result counts.
+      if (outcome?.persisted === false) {
+        flushStatus = 'failed';
+      } else if (outcome?.flushed === false) {
+        flushStatus = 'bounded';
+      }
     } catch (error) {
       if (signal?.aborted) return;
       flushStatus = 'failed';
       log('WARN', 'logs.process_log_flush_failed', {
         message: String(error && error.message || error).slice(0, 240),
+        recordFlushed: false,
       });
     }
     if (signal?.aborted) return;
-    log(flushStatus === 'ok' ? 'INFO' : 'WARN', 'runtime.shutdown_stage', {
-      stage: 'process_log_flush',
-      status: flushStatus,
-      durationMs: Math.max(Date.now() - flushStartedAt, 0),
-      remainingBudgetMs: null,
-      forced: false,
-      confirmed: flushStatus === 'ok',
-    });
-    log('INFO', 'runtime.shutdown_stage', {
-      stage: 'total',
-      status: flushStatus === 'ok' ? 'ok' : 'bounded',
-      durationMs: Math.max(Date.now() - shutdownStartedAt, 0),
-      remainingBudgetMs: null,
-      forced: false,
-      confirmed: flushStatus === 'ok',
-    });
+    // These outcome records require the drain result, so they cannot be part
+    // of that last bounded drain. Never claim the records themselves flushed.
+    for (const [stage, status, startedAt, level] of [
+      ['process_log_flush', flushStatus, flushStartedAt, flushStatus === 'ok' ? 'INFO' : 'WARN'],
+      ['total', flushStatus === 'ok' ? 'ok' : 'bounded', shutdownStartedAt, 'INFO'],
+    ]) {
+      log(level, 'runtime.shutdown_stage', {
+        stage,
+        status,
+        durationMs: Math.max(Date.now() - startedAt, 0),
+        remainingBudgetMs: null,
+        forced: false,
+        confirmed: flushStatus === 'ok',
+        recordFlushed: false,
+      });
+    }
+    // Best effort for the two records above; they still claim nothing.
+    try {
+      await getProcessLogWriter()?.flush?.({ timeoutMs: 250 });
+    } catch (_error) { /* the confirmed drain already ran */ }
   }
 
   function runEmergencyRuntimeShutdownSync() {
@@ -405,6 +508,14 @@ function createRuntimeShutdownController({
     }
     const setupSignals = signalSetupChildrenSync();
     const workspaceSignals = signalWorkspaceChildrenSync();
+    try {
+      // Latch first so an in-flight suspend can no longer spawn a render or
+      // re-park the chat engine's identity behind the synchronous stop below.
+      getBackendService()?.chatGpuHandoff?.markClosing?.();
+      if (typeof killImageEngineSync === 'function') killImageEngineSync();
+    } catch (_error) {
+      // best effort only
+    }
     try {
       managedLlamaServer.stopSync();
     } catch (_error) {
@@ -480,22 +591,19 @@ function createRuntimeShutdownController({
 
   return {
     emitLifecycleProgress,
+    emitStartupProgress,
     getLlamaServerApiKey,
     getLlamaServerManager,
     runEmergencyRuntimeShutdownSync,
     shutdownStepCount: SHUTDOWN_STEP_COUNT,
     shutdownStepIndex: SHUTDOWN_STEP_INDEX,
     startLlamaServerBeforeBackend,
-    startupStepCount: STARTUP_STEP_COUNT,
-    startupStepIndex: STARTUP_STEP_INDEX,
     stopRuntimeBeforeQuit,
   };
 }
 
 module.exports = {
-  STARTUP_STEP_COUNT,
   SHUTDOWN_STEP_COUNT,
-  STARTUP_STEP_INDEX,
   SHUTDOWN_STEP_INDEX,
   createRuntimeShutdownController,
 };

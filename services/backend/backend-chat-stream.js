@@ -11,9 +11,11 @@ const { resolveModel } = require('./backend-chat-model-resolution');
 const {
   buildCompactionSnapshotFromResult,
   fingerprintCompactionPrefix,
+  isCompactionSnapshotEnabled,
 } = require('./session-compaction-snapshot');
-const { buildCompactPayloadMessages } = require('./backend-compact-payload');
+const { buildCompactPayload } = require('./backend-compact-payload');
 const { requestRuntimeInference } = require('./backend-runtime-inference');
+const { resolveForcedLocalRoute } = require('./local-engine-requests');
 const { NEVER_PERSIST_ALWAYS_ALLOW } = require('../tools/tool-permission-store');
 const { PLAN_DECISIONS } = require('../tools/builtin/exit-plan-mode-tool');
 const {
@@ -41,8 +43,9 @@ function handleChatStreamEnd(service, event) {
 function cancelChatStream(service, streamId, reason = CANCEL_REASON_USER) {
   // Record/fence the durable attempt before aborting the transport. The runtime
   // note never aborts recursively and cannot certify producer cleanup.
+  let runtimeNote = null;
   try {
-    service.sessionRuntime?.noteStreamCancellation?.(streamId, reason);
+    runtimeNote = service.sessionRuntime?.noteStreamCancellation?.(streamId, reason);
   } catch (error) {
     // A failed intent write must not prevent the user's stop request. Runtime
     // admission remains fenced and its settlement owner retains the evidence.
@@ -54,7 +57,10 @@ function cancelChatStream(service, streamId, reason = CANCEL_REASON_USER) {
   }
   const controller = service.activeStreams.get(streamId);
   if (!controller) {
-    return false;
+    // A paused turn has no controller: the runtime's accepted cancel is the
+    // stop, and its settlement ends the live presentation (HB-034).
+    return runtimeNote?.paused === true && runtimeNote.status !== 'rejected'
+      && runtimeNote.persisted !== false;
   }
   const cancelError = createCancellationError(reason);
   controller.abort(cancelError);
@@ -66,9 +72,6 @@ function cancelChatStream(service, streamId, reason = CANCEL_REASON_USER) {
     }
   }
   settlePendingUserQuestionsForStream(service, streamId);
-  if (service.toolExecutor) {
-    service.toolExecutor.cancelPendingForStream(streamId);
-  }
   if (typeof service._emitServiceLog === 'function') {
     service._emitServiceLog('INFO', 'chat.stream_abort_requested', {
       streamId,
@@ -85,8 +88,10 @@ function cancelChatStream(service, streamId, reason = CANCEL_REASON_USER) {
   return true;
 }
 
-// Manual/on-demand compaction (Settings "Compact now"): forwards the
-// session's canonical history to the sidecar's chat.compact RPC and, on a
+// Manual/on-demand compaction (Settings "Compact now"): forwards the history
+// the next chat.send would carry (backend-compact-payload.js) to the sidecar's
+// chat.compact RPC, so it measures and summarizes what the meter and the next
+// request count, and, on a
 // successful compaction, persists the returned replacement messages as the
 // session's Electron-owned compaction snapshot (JCA-003) so the next
 // chat.send substitutes them for the summarized prefix. Never throws, always
@@ -112,9 +117,34 @@ async function compactContextNow(service, sessionId) {
     // addresses messages the next send will actually see.
     // A locked session's transcript must not be summarised by a remote engine;
     // the lockdown gate covers compaction as well as chat.send.
+    const session = service.sessionStore.getSession?.(normalizedSessionId) || null;
+    const lockdownActive = isSessionOfflineLockdownActive(service.featureFlags, session);
+    // The summary is sized and written by the engine's active model, so bring
+    // up the model the chat's next send would use first (CMC-4 / F22): Force
+    // local inference overrides the chat's pick, a locked chat never loads a
+    // model here, and no switch happens under another chat's live reply.
+    const failCompact = (reason, detail = '') => {
+      service._emitServiceLog('WARN', 'chat.compact_now_result', { sessionId: normalizedSessionId, reason, detail });
+      return { status: 'error', reason };
+    };
+    let target = { model: String(session?.preferred_model || '').trim(), engineType: '' };
+    try {
+      target = (await resolveForcedLocalRoute(service)) || target;
+    } catch (error) {
+      return failCompact('model_unavailable', String(error?.message || error || '').slice(0, 300));
+    }
+    if (target.model && target.model !== service.currentModel && !lockdownActive
+      && typeof service._resolveModel === 'function') {
+      if (Number(service.activeStreams?.size) > 0) return failCompact('session_busy');
+      try {
+        await service._resolveModel(target.model, target.engineType);
+      } catch (error) {
+        return failCompact('model_unavailable', String(error?.message || error || '').slice(0, 300));
+      }
+    }
     try {
       assertSessionLockdownAllowsEngine({
-        active: isSessionOfflineLockdownActive(service.featureFlags, service.sessionStore.getSession?.(normalizedSessionId)),
+        active: lockdownActive,
         engineType: service.currentEngineType,
         openAiCompatibleApiUrl: openAiCompatibleUrlFromService(service),
       });
@@ -128,7 +158,12 @@ async function compactContextNow(service, sessionId) {
     const rawMessages = service.sessionStore.getSessionMessages(normalizedSessionId);
     const canonicalMessages = Array.isArray(rawMessages) ? rawMessages : [];
     const boundaryMessage = canonicalMessages[canonicalMessages.length - 1] || null;
-    const messages = buildCompactPayloadMessages(canonicalMessages);
+    const persistedSnapshot = session?.compaction_snapshot || null;
+    const payload = buildCompactPayload(canonicalMessages, {
+      snapshot: isCompactionSnapshotEnabled(service.featureFlags, persistedSnapshot) ? persistedSnapshot : null,
+      contextPreferences: session?.context_preferences,
+    });
+    const { messages } = payload;
     // The boundary (count, last-id) compatibility check cannot see an in-place
     // edit that preserves ids and count, so fingerprint the exact history sent
     // to the sidecar and refuse to persist if it changed mid-summarization.
@@ -147,6 +182,7 @@ async function compactContextNow(service, sessionId) {
             boundaryMessageId: String(boundaryMessage?.id || ''),
             boundaryMessageCount: canonicalMessages.length,
             canonicalMessages,
+            payload,
           })
           : null;
         snapshotPersisted = Boolean(
@@ -173,6 +209,8 @@ async function compactContextNow(service, sessionId) {
           status: resultStatus,
           reason: String(result?.reason || '').trim(),
           snapshot_persisted: snapshotPersisted,
+          summary_source_dropped_messages: Math.max(0, Number(result?.summary_source_dropped_messages || 0) || 0),
+          payload_message_count: messages.length,
         }
       );
       if (!result || typeof result !== 'object') {
@@ -188,7 +226,9 @@ async function compactContextNow(service, sessionId) {
     };
     return await requestRuntimeInference(service, 'chat.compact', {
       accept_version: '2026-08-17', session_id: normalizedSessionId, messages,
-    }, { sessionId: normalizedSessionId, timeoutMs: 120_000, consumeResult });
+      // A history larger than one summariser request is folded in up to four
+      // model passes (sidecar compaction_passes.py), so this outlasts two slow ones.
+    }, { sessionId: normalizedSessionId, timeoutMs: 300_000, consumeResult });
   } catch (error) {
     service._emitServiceLog('WARN', 'chat.compact_now_result', {
       sessionId: normalizedSessionId,
@@ -267,9 +307,71 @@ function maybeApplyAlwaysAllowPolicy(service, pending, options = {}) {
       }
     }
   }
-  if (policyUpdated && typeof service?.refreshManagedConfig === 'function') {
-    Promise.resolve(service.refreshManagedConfig('tool_permission_updated')).catch(() => null);
+  if (policyUpdated) requestPermissionConfigRefresh(service);
+}
+
+// A managed-sidecar refresh reinitializes the router mid-turn, so an admitted
+// turn's approval resume would rebuild a different prompt and preempt with
+// approval_plan_drift (real-app X1). The grant above is already persisted; the
+// refresh waits until every admitted stream's run settles, then flushes once.
+const PERMISSION_REFRESH_REASON = 'tool_permission_updated';
+const PERMISSION_REFRESH_POLL_MS = 250;
+
+function hasActiveChatStreams(service) {
+  return Number(service?.activeStreams?.size) > 0;
+}
+
+function flushPermissionConfigRefresh(service) {
+  service._deferredPermissionRefresh = null;
+  // Shutdown drains the streams this refresh waited on; reinitializing the
+  // sidecar then would race the runtime stop. The grant is already persisted
+  // and the next launch reads it.
+  if (service._stopping || service._disposed) return;
+  try {
+    Promise.resolve(service.refreshManagedConfig(PERMISSION_REFRESH_REASON)).catch(() => null);
+  } catch (_error) { /* refreshManagedConfig logs its own failure. */ }
+}
+
+function requestPermissionConfigRefresh(service) {
+  if (typeof service?.refreshManagedConfig !== 'function') return;
+  if (!hasActiveChatStreams(service)) {
+    flushPermissionConfigRefresh(service);
+    return;
   }
+  service._emitServiceLog?.('INFO', 'tool_permission.config_refresh_deferred', {
+    reason: PERMISSION_REFRESH_REASON,
+    activeStreams: service.activeStreams.size,
+  });
+  if (!service._deferredPermissionRefresh) {
+    service._deferredPermissionRefresh = { watching: false, settledRuns: new WeakSet() };
+  }
+  watchDeferredPermissionRefresh(service);
+}
+
+function watchDeferredPermissionRefresh(service) {
+  const state = service._deferredPermissionRefresh;
+  if (!state || state.watching) return;
+  if (!hasActiveChatStreams(service)) {
+    flushPermissionConfigRefresh(service);
+    return;
+  }
+  // Wait on each admitted run's settlement (its finally path releases the
+  // controller). A run that already settled but stays registered (a paused
+  // continuation) or has no run promise falls back to a bounded poll.
+  const runs = [...service.activeStreams.values()]
+    .map((controller) => controller?._pendingPromise)
+    .filter((run) => run && typeof run.then === 'function' && !state.settledRuns.has(run));
+  state.watching = true;
+  const next = runs.length > 0
+    ? Promise.allSettled(runs).then(() => runs.forEach((run) => state.settledRuns.add(run)))
+    : new Promise((resolve) => {
+      const timer = setTimeout(resolve, PERMISSION_REFRESH_POLL_MS);
+      timer.unref?.();
+    });
+  next.then(() => {
+    state.watching = false;
+    if (service._deferredPermissionRefresh === state) watchDeferredPermissionRefresh(service);
+  });
 }
 
 function approveToolCall(service, approvalRef, options = {}) {

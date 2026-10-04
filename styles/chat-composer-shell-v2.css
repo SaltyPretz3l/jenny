@@ -11,100 +11,221 @@
   justify-content: flex-end;
 }
 
-.composer-rail .inv-chip {
+:is(.composer-rail, .composer-toolbar-left) .inv-chip {
   background: var(--widget-composer-rail-pill-bg);
   border-color: var(--widget-composer-rail-pill-border);
   color: var(--widget-composer-rail-pill-color);
 }
 
-.composer-rail .inv-chip:hover:not(.inv-chip--disabled) {
+/* One secondary height for every chip in the row (popover contents excepted). */
+:is(.composer-rail, .composer-toolbar-left) .inv-chip:not(.inv-popover *) {
+  height: var(--composer-secondary-control-size);
+  min-height: var(--composer-secondary-control-size);
+}
+
+:is(.composer-rail, .composer-toolbar-left) .inv-chip:hover:not(.inv-chip--disabled) {
   background: var(--widget-composer-rail-pill-hover-bg);
   border-color: var(--widget-composer-rail-pill-hover-border);
   color: var(--widget-composer-rail-pill-hover-color);
 }
 
-.composer-rail .inv-chip-count {
+:is(.composer-rail, .composer-toolbar-left) .inv-chip-count {
   color: var(--widget-tools-chip-count-color);
 }
 
-/* Tools chip + popover (B3): the chip renders into the tool-toggle slot,
- * which anchors its popover. */
+/* An empty slot takes no gap in the row. The plan slot keeps its own rule
+   (it stays while its exit animation runs). */
+:is(#composerRunModeSlot, #composerToolToggleSlot, .composer-run-mode-slot, .composer-model-pill-slot, .composer-context-usage-slot, .composer-toggle-slot):empty {
+  display: none;
+}
+
+/* Chat tools panel, anchored by the existing rail slot. */
 #composerToolToggleSlot {
   position: relative;
   display: inline-flex;
 }
 
-.composer-tools-popover {
+.composer-chat-panel {
   bottom: calc(100% + var(--space-3));
-  inset-inline-end: 0;
-  min-width: 260px;
+  inset-inline-start: 0;
+  width: min(340px, calc(100vw - 32px));
+  padding: var(--space-4) 0 var(--space-2);
 }
 
-/* Section label framing the toggle list. */
-.composer-tools-popover-header {
-  margin: 0 0 var(--space-2);
-  font-size: var(--font-size-xs);
-  font-weight: 600;
-  letter-spacing: 0.02em;
+.composer-chat-panel-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: var(--space-3);
+  padding: 0 var(--space-5) var(--space-3);
+  font-size: var(--font-size-caption);
   color: var(--text-secondary);
 }
 
-.composer-tools-popover .inv-composer-toggles {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-1);
-}
-
-/* Rows bleed to the popover's inner edges (negative inline margin == the
- * .inv-popover var(--space-4) padding) so the hover surface reads as a
- * full-width menu item while the icon still lines up with the header text. */
-.composer-tools-popover .inv-composer-toggle-item {
-  transition: background-color var(--transition-fast), color var(--transition-fast);
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  margin: 0 calc(-1 * var(--space-4));
-  padding: var(--space-3) var(--space-4);
-  border-radius: var(--radius-sm);
+.composer-chat-link {
+  background: none;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  color: var(--accent);
   cursor: pointer;
 }
 
-.composer-tools-popover .inv-composer-toggle-item:hover {
-  background: var(--surface-popover-row);
+.composer-chat-link:focus-visible,
+.composer-chat-filter:focus-visible {
+  outline: var(--focus-ring-width) solid var(--focus-ring-color);
+  outline-offset: var(--focus-ring-offset);
 }
 
-.composer-tools-popover .inv-composer-toggle-item:has(.inv-toggle--disabled) {
-  cursor: default;
+.composer-chat-panel-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  padding: 0 var(--space-5) var(--space-5);
 }
 
-.composer-tools-popover .inv-composer-toggle-item:has(.inv-toggle--disabled):hover {
+.composer-chat-panel .composer-family-chip,
+.composer-chat-panel .composer-family-chip:hover:not(.inv-chip--disabled) {
+  color: var(--text-secondary);
+  border-color: var(--border-default);
+  background: transparent;
+  border-radius: var(--radius-pill);
+}
+
+.composer-chat-panel .composer-family-chip.inv-chip--on,
+.composer-chat-panel .composer-family-chip.inv-chip--on:hover {
+  color: var(--text-primary);
+  border-color: var(--border-strong);
   background: transparent;
 }
 
-/* Fixed icon box keeps every label on a shared left edge regardless of glyph
- * width; tints to the accent when the row's tool is enabled. */
-.composer-tools-popover .composer-tools-row-icon {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 16px;
-  height: 16px;
-  color: var(--text-secondary);
-  flex: none;
-}
-
-.composer-tools-popover .inv-composer-toggle-item:has(.inv-toggle--on) .composer-tools-row-icon {
+.composer-family-chip.inv-chip--on .inv-chip-icon {
   color: var(--accent);
 }
 
-.composer-tools-popover .inv-toggle {
-  flex: 1;
-  flex-direction: row-reverse;
-  justify-content: space-between;
+.composer-chat-panel .composer-family-chip--blocked,
+.composer-chat-panel .composer-family-chip--blocked:hover:not(.inv-chip--disabled) {
+  border-style: dashed;
+  color: var(--accent-amber);
 }
 
-.composer-tools-popover .inv-popover-footer {
+.composer-chat-panel-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: var(--space-3) var(--space-5);
+  font-size: var(--font-size-body);
+}
+
+.composer-chat-panel-foot {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-3);
   margin-top: var(--space-2);
+  padding: var(--space-3) var(--space-5) var(--space-1);
+  border-top: 1px solid var(--border-subtle);
+  font-size: var(--font-size-caption);
+}
+
+.composer-chat-always-on {
+  color: var(--text-secondary);
+}
+
+.composer-chat-list {
+  max-height: min(60vh, 420px);
+  overflow-y: auto;
+}
+
+.composer-chat-section-label {
+  padding: var(--space-4) var(--space-5) var(--space-1);
+  font-size: var(--font-size-caption);
+  color: var(--text-secondary);
+}
+
+.composer-tool-row {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr);
+  column-gap: var(--space-3);
+  align-items: start;
+  padding: var(--space-2) var(--space-5);
+  border-radius: var(--radius-sm);
+}
+
+.composer-tool-row:hover {
+  background: var(--surface-popover-row);
+}
+
+.composer-tool-row .inv-toggle {
+  flex-direction: row-reverse;
+  justify-content: space-between;
+  min-width: 0;
+}
+
+.composer-tool-row .inv-toggle-label-group {
+  min-width: 0;
+}
+
+.composer-tool-row .inv-toggle-track {
+  flex-shrink: 0;
+}
+
+.composer-tools-row-icon {
+  display: inline-flex;
+  color: var(--text-secondary);
+}
+
+.composer-tool-row:has(.inv-toggle--on) .composer-tools-row-icon {
+  color: var(--accent);
+}
+
+.composer-tools-row-icon svg {
+  width: 16px;
+  height: 16px;
+}
+
+.composer-tool-reason,
+.composer-tool-partial,
+.composer-tool-members,
+.composer-tool-row > .composer-chat-link {
+  grid-column: 2;
+  font-size: var(--font-size-caption);
+  margin-top: var(--space-1);
+}
+
+.composer-tool-row > .composer-chat-link {
+  justify-self: start;
+}
+
+.composer-tool-reason {
+  color: var(--accent-amber);
+}
+
+.composer-tool-partial,
+.composer-tool-members {
+  color: var(--text-secondary);
+}
+
+.composer-tool-members {
+  padding: 0;
+  list-style: none;
+  margin-bottom: 0;
+  overflow-wrap: anywhere;
+}
+
+.composer-chat-filter {
+  box-sizing: border-box;
+  width: calc(100% - 2 * var(--space-5));
+  margin: 0 var(--space-5) var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-primary);
+  font-size: var(--font-size-body);
+}
+
+.composer-chat-panel [hidden] {
+  display: none;
 }
 
 /* Ambient context ring (D1): replaces the token chip + context meter text.
@@ -120,8 +241,8 @@
 
 .inv-context-ring {
   padding: var(--space-1);
-  min-width: 32px;
-  min-height: 32px;
+  min-width: var(--composer-secondary-control-size);
+  min-height: var(--composer-secondary-control-size);
   justify-content: center;
   border-color: transparent;
   background: transparent;
@@ -130,6 +251,17 @@
 }
 
 .inv-context-ring:hover:not(.inv-chip--disabled) {
+  background: var(--widget-composer-rail-pill-hover-bg);
+  border-color: transparent;
+}
+
+/* In the rail the pill look above would fill the rings: (0,3,0) beats it. */
+.composer-rail .inv-chip.inv-context-ring {
+  background: transparent;
+  border-color: transparent;
+}
+
+.composer-rail .inv-chip.inv-context-ring:hover:not(.inv-chip--disabled) {
   background: var(--widget-composer-rail-pill-hover-bg);
   border-color: transparent;
 }
@@ -220,7 +352,7 @@
 }
 
 .inv-plan-ring .inv-chip-label {
-  font-size: 11px;
+  font-size: var(--font-size-caption);
   font-variant-numeric: tabular-nums;
   color: var(--composer-secondary-control-color);
 }
@@ -242,14 +374,14 @@
 .inv-plan-updated,
 .inv-plan-window-reset {
   margin: 0;
-  font-size: 11px;
+  font-size: var(--font-size-caption);
   color: var(--composer-secondary-control-color);
 }
 
 .inv-plan-limit {
   margin: var(--space-2) 0 0;
-  font-size: 12px;
-  font-weight: 600;
+  font-size: var(--font-size-footnote);
+  font-weight: 500;
   color: var(--widget-context-ring-danger);
 }
 
@@ -265,7 +397,7 @@
   display: flex;
   justify-content: space-between;
   gap: var(--space-2);
-  font-size: 12px;
+  font-size: var(--font-size-footnote);
 }
 
 .inv-plan-window-percent {
@@ -362,7 +494,7 @@
 
 .composer-model-picker-search input {
   width: 100%;
-  font-size: var(--font-size-xs);
+  font-size: var(--font-size-body);
 }
 
 .composer-model-picker-list {
@@ -373,10 +505,9 @@
 
 .composer-model-picker-group {
   padding: var(--space-3) var(--space-4) var(--space-1);
-  font-size: 11px;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
+  font-size: var(--font-size-caption);
   color: var(--text-muted);
+  font-weight: 500;
 }
 
 .composer-model-picker-option {
@@ -389,7 +520,7 @@
   background: transparent;
   color: var(--text-primary);
   font: inherit;
-  font-size: var(--font-size-xs);
+  font-size: var(--font-size-body);
   text-align: start;
   cursor: pointer;
   border-radius: 0;
@@ -442,7 +573,7 @@
   gap: var(--space-2);
   flex: none;
   color: var(--text-muted);
-  font-size: 11px;
+  font-size: var(--font-size-caption);
 }
 
 .composer-model-picker-glyph {
@@ -467,7 +598,7 @@
 .composer-model-picker-empty {
   padding: var(--space-3) var(--space-4);
   color: var(--text-muted);
-  font-size: var(--font-size-xs);
+  font-size: var(--font-size-footnote);
 }
 
 .composer-model-picker-thinking {
@@ -479,7 +610,7 @@
 }
 
 .composer-model-picker-thinking-label {
-  font-size: var(--font-size-xs);
+  font-size: var(--font-size-body);
   color: var(--text-secondary);
 }
 
@@ -496,14 +627,14 @@
   background: transparent;
   color: var(--text-secondary);
   font: inherit;
-  font-size: var(--font-size-xs);
+  font-size: var(--font-size-body);
   cursor: pointer;
 }
 
 .composer-model-picker-segment.is-active {
   background: var(--surface-popover-row);
   color: var(--text-primary);
-  font-weight: 600;
+  font-weight: 500;
 }
 
 .composer-model-picker-segment:hover:not(.is-active) {
@@ -547,35 +678,20 @@
   gap: var(--space-2);
 }
 
-/* Gear posture dot (D3): "Local only" collapses to a dot on the gear;
- * offline readiness reuses it (status-dot--active / --error from
- * foundation.css carry the state colors). */
-.composer-gear {
-  position: relative;
-}
-
-.composer-gear .composer-gear-dot {
-  position: absolute;
-  top: 2px;
-  inset-inline-end: 2px;
-  width: 6px;
-  height: 6px;
-}
-
 /* Rail config controls lock only during the brief preflight window; the
  * ring and the send/stop slot stay live. Streaming deliberately does NOT
  * lock the rail (COMPOSER_RUN_MODE_SPEC §6 matrix: run-mode switcher,
- * model pill, tools toggles, and settings gear stay usable mid-turn —
+ * model pill and tools toggles stay usable mid-turn —
  * they are next-send preferences). */
-.composer[data-send-lifecycle='preflight'] .composer-rail [data-rail-config] {
+.composer[data-send-lifecycle='preflight'] :is(.composer-rail, .composer-toolbar-left) [data-rail-config] {
   opacity: 0.6;
   pointer-events: none;
   transition: opacity var(--motion-duration-regular) var(--motion-ease-standard);
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .composer-rail .inv-chip,
-  .composer[data-send-lifecycle='preflight'] .composer-rail [data-rail-config] {
+  :is(.composer-rail, .composer-toolbar-left) .inv-chip,
+  .composer[data-send-lifecycle='preflight'] :is(.composer-rail, .composer-toolbar-left) [data-rail-config] {
     transition: none;
   }
 }

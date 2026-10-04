@@ -94,30 +94,16 @@
 
   function createComposerModeChipsRenderer(deps) {
     const container = deps && deps.container;
-    if (!container) {
-      throw new Error('createComposerModeChipsRenderer: container is required');
-    }
-
+    if (!container) throw new Error('createComposerModeChipsRenderer: container is required');
     const doc = container.ownerDocument || (typeof document !== 'undefined' ? document : null);
-    if (!doc) {
-      throw new Error('createComposerModeChipsRenderer: container has no ownerDocument');
-    }
-
+    if (!doc) throw new Error('createComposerModeChipsRenderer: container has no ownerDocument');
     const announcer = (deps && deps.announcer) || container.querySelector('#composerModeChipsAnnouncer') || null;
     const getRunMode = deps && typeof deps.getRunMode === 'function'
       ? deps.getRunMode
       : () => (deps?.getPlanMode?.() === true ? 'plan' : 'ask');
     const slot = doc.getElementById('composerRunModeSlot');
-    const switcher = slot ? createRunModeSwitcherRenderer({
-      slot,
-      hint: doc.getElementById('composerRunModeHint'),
-      getRunMode,
-    }) : null;
-
-    function updateChips() {
-      switcher?.sync();
-    }
-
+    const switcher = slot ? createRunModeSwitcherRenderer({ slot, getRunMode }) : null;
+    function updateChips() { switcher?.sync(); }
     updateChips();
 
     return {
@@ -133,7 +119,75 @@
 
   const normalizeRunMode = composerState.normalizeRunMode;
 
-  function applyRunModeChip(chip, hint, runMode) {
+  // Gate C13 (2026-09-26): an unchanged apply (every focus move) writes nothing.
+  const appliedRunModeChips = new WeakMap();
+
+  /* Collapsed settings popover (2026-09-26 spec §4 step 4): an inline
+     Ask | Auto | Plan segmented control rendered beside the cycling chip in
+     the same slot. The stylesheet shows the segments only inside the open
+     popover and hides the chip there; the toolbar keeps the chip. Clicks
+     route through the settings bindings (`data-run-mode-option`). */
+  const RUN_MODE_SEGMENT_ORDER = Object.freeze(['ask', 'auto', 'plan']);
+
+  // Plain inventory action buttons (the raw-primitive policy); '' without the
+  // primitive, and every segment sync below then no-ops.
+  function runModeSegmentsMarkup(mode, disabled) {
+    if (typeof inventoryActionButton !== 'function') return '';
+    const escapeHtml = inventoryActionButton.escapeHtml;
+    const groupLabel = jt('composer.settingsSummary.rowRunMode', 'Run mode');
+    return '<div class="composer-run-mode-segments" role="group" aria-label="' + escapeHtml(groupLabel) + '">'
+      + RUN_MODE_SEGMENT_ORDER.map((option) => {
+        const copy = MODE_CHIP_COPY[option];
+        const active = option === mode;
+        return inventoryActionButton({
+          plain: true,
+          className: `composer-run-mode-segment composer-run-mode-segment--${option}${active ? ' is-active' : ''}`,
+          dataset: { 'run-mode-option': option },
+          ariaPressed: active,
+          title: copy.hint,
+          disabled: disabled === true,
+          trustedHtml: '<span class="composer-run-mode-segment-icon" aria-hidden="true">' + copy.icon + '</span>'
+            + '<span class="composer-run-mode-segment-label">' + escapeHtml(copy.label) + '</span>',
+        });
+      }).join('')
+      + '</div>';
+  }
+
+  // The segments group beside a run-mode chip: accepts the slot, the chip, or
+  // the group itself.
+  function findRunModeSegments(slotOrChip) {
+    if (!slotOrChip || typeof slotOrChip.querySelector !== 'function') return null;
+    if (slotOrChip.classList?.contains('composer-run-mode-segments')) return slotOrChip;
+    const slot = slotOrChip.matches?.('[data-inv-chip="composer-run-mode"]') ? slotOrChip.parentElement : slotOrChip;
+    if (!slot || typeof slot.querySelector !== 'function') return null;
+    return slot.querySelector('.composer-run-mode-segments');
+  }
+
+  function syncRunModeSegmentsPressed(segments, mode) {
+    if (!segments) return;
+    for (const button of segments.querySelectorAll('[data-run-mode-option]')) {
+      const active = button.getAttribute('data-run-mode-option') === mode;
+      const pressed = active ? 'true' : 'false';
+      if (button.getAttribute('aria-pressed') !== pressed) button.setAttribute('aria-pressed', pressed);
+      if (button.classList.contains('is-active') !== active) button.classList.toggle('is-active', active);
+    }
+  }
+
+  /* Mirror a disabled run-mode chip onto its segments (plugin read-only
+     sessions). Exported: pane 0's render pipeline and pane 1's rail toggle
+     `chip.disabled` directly, outside applyRunModeChip. Writes only on a
+     change; returns whether a segments group was found. */
+  function syncRunModeSegmentsDisabled(slotOrChip, disabled) {
+    const segments = findRunModeSegments(slotOrChip);
+    if (!segments) return false;
+    const off = disabled === true;
+    for (const button of segments.querySelectorAll('[data-run-mode-option]')) {
+      if (button.disabled !== off) button.disabled = off;
+    }
+    return true;
+  }
+
+  function applyRunModeChip(chip, runMode) {
     if (!chip) return false;
     const mode = normalizeRunMode(runMode);
     const nextMode = typeof composerState?.nextRunMode === 'function'
@@ -141,6 +195,19 @@
       : ({ ask: 'auto', auto: 'plan', plan: 'ask' })[mode];
     const copy = MODE_CHIP_COPY[mode];
     const nextCopy = MODE_CHIP_COPY[nextMode];
+    // The mode's hint sentence rides the chip: its tooltip and the end of its label.
+    const ariaLabel = jt('composer.runMode.switchAriaLabel', 'Run mode: {mode}. Click to switch to {nextMode}.', { mode: copy.label, nextMode: nextCopy.label }).replace('{mode}', () => String(copy.label)).replace('{nextMode}', () => String(nextCopy.label)) + ' ' + copy.hint;
+    const title = copy.label + ' · ' + copy.hint;
+    const segments = findRunModeSegments(chip);
+    const disabled = chip.disabled === true;
+    // The segments (their node and the chip's disabled state) ride the key, so
+    // a segments mount or a disabled flip still writes; an unchanged apply not.
+    const key = [mode, ariaLabel, title, disabled ? 'disabled' : ''].join('\u0000');
+    const applied = appliedRunModeChips.get(chip);
+    if (applied && applied.key === key && applied.segments === segments
+        && chip.classList.contains(`composer-run-mode-${mode}`)) return true;
+    syncRunModeSegmentsPressed(segments, mode);
+    if (segments) syncRunModeSegmentsDisabled(segments, disabled);
     chip.classList.remove('composer-run-mode-ask', 'composer-run-mode-auto', 'composer-run-mode-plan', 'inv-chip--on');
     chip.classList.add(`composer-run-mode-${mode}`);
     chip.classList.toggle('inv-chip--on', mode === 'auto');
@@ -148,21 +215,17 @@
     const label = chip.querySelector('.inv-chip-label');
     if (icon) icon.innerHTML = copy.icon;
     if (label) label.textContent = copy.label;
-    chip.setAttribute('aria-label', jt('composer.runMode.switchAriaLabel', 'Run mode: {mode}. Click to switch to {nextMode}.', { mode: copy.label, nextMode: nextCopy.label }).replace('{mode}', () => String(copy.label)).replace('{nextMode}', () => String(nextCopy.label)));
-    chip.setAttribute('title', jt('composer.runMode.switchTitle', 'Run mode: {mode}. Click to switch to {nextMode}. (Shift+Tab to cycle)', { mode: copy.label, nextMode: nextCopy.label }).replace('{mode}', () => String(copy.label)).replace('{nextMode}', () => String(nextCopy.label)));
+    chip.setAttribute('aria-label', ariaLabel);
+    chip.setAttribute('title', title);
     chip.setAttribute('aria-keyshortcuts', 'Shift+Tab');
     chip.removeAttribute('aria-pressed');
-    if (hint) hint.textContent = copy.hint;
+    appliedRunModeChips.set(chip, { key, segments });
     return true;
   }
 
   function syncRunModeChip(runMode, documentRef) {
     const doc = documentRef || (typeof document !== 'undefined' ? document : null);
-    return applyRunModeChip(
-      doc?.getElementById?.('composerRunModeChip'),
-      doc?.getElementById?.('composerRunModeHint'),
-      runMode
-    );
+    return applyRunModeChip(doc?.getElementById?.('composerRunModeChip'), runMode);
   }
 
   function createRunModeSwitcherRenderer(deps) {
@@ -175,22 +238,40 @@
     const initialCopy = MODE_CHIP_COPY[initialMode];
     slot.insertAdjacentHTML('beforeend', inventoryChip({
       id: 'composer-run-mode',
-      domId: 'composerRunModeChip',
+      domId: deps.domId === undefined ? 'composerRunModeChip' : deps.domId, // W2-2a: a second pane's chip has no id
       iconHtml: initialCopy.icon,
       label: initialCopy.label,
       ariaLabel: jt('composer.runMode.ariaLabel', 'Run mode: {mode}.', { mode: initialCopy.label }).replace('{mode}', () => String(initialCopy.label)),
       className: `composer-run-mode-chip composer-run-mode-${initialMode}${initialMode === 'auto' ? ' inv-chip--on' : ''}`,
     }));
-    const chip = slot.querySelector('#composerRunModeChip');
+    const chip = slot.querySelector('[data-inv-chip="composer-run-mode"]');
+    chip.insertAdjacentHTML('afterend', runModeSegmentsMarkup(initialMode, chip.disabled === true));
+    const segments = findRunModeSegments(slot);
     const onCycle = typeof deps.onCycle === 'function' ? deps.onCycle : null;
     if (onCycle) chip.addEventListener('click', onCycle);
-    const sync = () => applyRunModeChip(chip, deps.hint || doc?.getElementById?.('composerRunModeHint'), getRunMode()); sync();
+    /* Both panes flip `chip.disabled` outside applyRunModeChip (pane 0's render
+       pipeline sets it right after the sync), so the segments follow the
+       attribute itself; attribute-filtered, it fires only on a real flip. */
+    const win = (doc && doc.defaultView) || (typeof window !== 'undefined' ? window : null);
+    const MutationObserverCtor = (win && win.MutationObserver)
+      || (typeof MutationObserver !== 'undefined' ? MutationObserver : null);
+    let disabledObserver = null;
+    if (MutationObserverCtor && segments) {
+      disabledObserver = new MutationObserverCtor(() => syncRunModeSegmentsDisabled(segments, chip.disabled === true));
+      disabledObserver.observe(chip, { attributes: true, attributeFilter: ['disabled'] });
+    }
+    const sync = () => applyRunModeChip(chip, getRunMode()); sync();
     return {
       sync,
-      syncRunModeChip: (runMode) => applyRunModeChip(chip, deps.hint, runMode),
+      syncRunModeChip: (runMode) => applyRunModeChip(chip, runMode),
       destroy() {
+        if (disabledObserver) {
+          try { disabledObserver.disconnect(); } catch (_err) { /* noop */ }
+          disabledObserver = null;
+        }
         if (onCycle) chip.removeEventListener('click', onCycle);
         chip.remove();
+        if (segments) segments.remove();
       },
     };
   }
@@ -250,6 +331,52 @@
     };
   }
 
+  /* Status loader F6: one sentence for a model load, shown as the composer
+     line and as Send's disabled tooltip (one key). '' when nothing loads. */
+  const MODEL_LOADING_PHASES = Object.freeze(['model_acquiring', 'model_loading']);
+  function describeModelLoading(backend) {
+    if (!backend || !MODEL_LOADING_PHASES.includes(String(backend.phase || ''))) return '';
+    const model = String(backend.model_acquisition?.requested_model || backend.model_lifecycle?.requested_model || '').trim();
+    return model
+      ? jt('composer.sendBlocked.modelLoading', 'Jenny is loading {model}. You can type; Send turns on when it is ready.', { model })
+      : jt('composer.sendBlocked.modelLoadingUnnamed', 'Jenny is loading the model. You can type; Send turns on when it is ready.');
+  }
+
+  // The line sits in the row under the input, before the turn timer.
+  // `scope` is the document (pane 0's id-addressed composer) or a split-view
+  // pane root, whose composer nodes are addressed by data-chat-node.
+  function syncComposerLoadingLine(scope, text) {
+    const paneScoped = Boolean(scope) && typeof scope.getElementById !== 'function';
+    const byName = (name) => (paneScoped
+      ? scope.querySelector?.(`[data-chat-node="${name}"]`) || null
+      : scope?.getElementById?.(name) || null);
+    const row = byName('composerModeChips');
+    if (!row) return null;
+    let line = byName('composerLoadingLine');
+    const message = String(text || '').trim();
+    if (!message) {
+      if (line) line.remove();
+      return null;
+    }
+    if (!line) {
+      line = row.ownerDocument.createElement('span');
+      if (paneScoped) line.setAttribute('data-chat-node', 'composerLoadingLine');
+      else line.id = 'composerLoadingLine';
+      line.className = 'composer-loading-line';
+      row.insertBefore(line, byName('composerTurnTimer') || null);
+    }
+    if (line.textContent !== message) line.textContent = message;
+    return line;
+  }
+
+  // A model load is app-wide, so every pane's composer tells it: pane 0 by id,
+  // each further split-view pane in its own run-mode row.
+  function syncComposerLoadingLines(doc, text) {
+    syncComposerLoadingLine(doc, text);
+    const panes = doc?.querySelectorAll?.('.chat-pane[data-pane-id]:not([data-pane-id="0"])') || [];
+    for (const pane of panes) syncComposerLoadingLine(pane, text);
+  }
+
   function createComposerBlockedSendTooltipRenderer(deps) {
     const sendButton = deps && deps.sendButton;
     const getReason = deps && deps.getReason;
@@ -294,7 +421,8 @@
     let observer = null;
     if (MutationObserverCtor) {
       observer = new MutationObserverCtor(update);
-      observer.observe(sendButton, { attributes: true, attributeFilter: ['disabled', 'aria-disabled'] });
+      // data-model-loading: a load can start while Send is already disabled.
+      observer.observe(sendButton, { attributes: true, attributeFilter: ['disabled', 'aria-disabled', 'data-model-loading'] });
     }
 
     update();
@@ -592,8 +720,12 @@
     createComposerAttachmentTrayPreviewRenderer,
     createComposerBlockedSendTooltipRenderer,
     createComposerFailedSendNoticeRenderer,
+    describeModelLoading,
+    syncComposerLoadingLine,
+    syncComposerLoadingLines,
     mountInventoryButton,
     syncRunModeChip,
+    syncRunModeSegmentsDisabled,
     BLOCKED_SEND_REASONS,
   };
 });

@@ -663,3 +663,121 @@ test('getDiagnostics returns an empty modelFitEstimates when the flag is off', a
     else process.env.JENNY_ENABLE_MODEL_FIT_ESTIMATES = previous;
   }
 });
+
+test('getMode reads the configured mode without probing the model catalog', () => {
+  let catalogProbes = 0;
+  const service = new OfflineIntelligenceService({
+    configService: createConfigService({ mode: 'local_only', preferredLocalModel: 'qwen3.5:9b' }),
+    backendService: createBackendService({
+      listModelsForEngine: () => { catalogProbes += 1; return { data: [] }; },
+    }),
+  });
+  assert.equal(service.getMode(), 'local_only');
+  assert.equal(new OfflineIntelligenceService({ configService: createConfigService() }).getMode(), 'disabled');
+  assert.equal(new OfflineIntelligenceService({}).getMode(), 'disabled');
+  assert.equal(catalogProbes, 0);
+});
+
+// A GGUF added to the Model Library and served by the managed llama-server:
+// the Ollama catalog never lists it, yet it is installed and local.
+const LIBRARY_GGUF = 'ternary-bonsai-2-27b-pq2_0';
+
+function createLibraryConfigService(offlineIntelligence, managedOverrides = {}) {
+  const base = createConfigService(offlineIntelligence);
+  return {
+    ...base,
+    getLocalEngines() {
+      return {
+        openaiCompatible: {
+          managed: {
+            enabled: true,
+            perModel: {
+              'ternary-bonsai-2-27b-pq2-0': {
+                engine: 'llama-server',
+                modelPath: 'D:\\models\\Ternary-Bonsai-2-27B-PQ2_0.gguf',
+                tag: LIBRARY_GGUF,
+              },
+            },
+            ...managedOverrides,
+          },
+        },
+      };
+    },
+  };
+}
+
+test('a Model Library GGUF served by llama-server counts as installed and local', async () => {
+  const service = new OfflineIntelligenceService({
+    configService: createLibraryConfigService({ mode: 'disabled', preferredLocalModel: LIBRARY_GGUF }),
+    backendService: createBackendService({ currentEngineType: 'openai-compatible' }),
+  });
+
+  const state = await service.getState();
+  assert.equal(state.selectedLocalModelInstalled, true);
+  assert.equal(state.selectedLocalEngineType, 'openai-compatible');
+  assert.equal(state.localChatReady, true);
+  assert.equal(state.summary, `Local chat is ready with ${LIBRARY_GGUF}.`);
+  assert.doesNotMatch(state.unavailableReason, /not installed/);
+});
+
+test('a Model Library GGUF stays installed while Ollama cannot be listed', async () => {
+  const service = new OfflineIntelligenceService({
+    configService: createLibraryConfigService({ mode: 'disabled', preferredLocalModel: LIBRARY_GGUF }),
+    backendService: createBackendService({
+      listModelsForEngine: async () => ({ available: false, reason: 'Ollama is not running.', data: [] }),
+    }),
+  });
+
+  const state = await service.getState();
+  assert.equal(state.selectedLocalModelInstalled, true);
+  assert.equal(state.localChatReady, true);
+  assert.doesNotMatch(state.summary, /not installed|Ollama is not running/);
+});
+
+test('force local inference stays blocked for a llama-server GGUF and says why', async () => {
+  // local-engine-requests.js routes forced inference to ollama/vllm only, so a
+  // ready status here would promise a turn the route then refuses.
+  const service = new OfflineIntelligenceService({
+    configService: createLibraryConfigService({ mode: 'local_only', preferredLocalModel: LIBRARY_GGUF }),
+    backendService: createBackendService(),
+  });
+
+  const state = await service.getState();
+  assert.equal(state.selectedLocalModelInstalled, true);
+  assert.equal(state.localChatReady, false);
+  assert.equal(state.localVisionReady, false);
+  assert.match(state.unavailableReason, /runs on llama-server/);
+  assert.equal(state.summary, state.unavailableReason);
+  assert.doesNotMatch(state.summary, /not installed/);
+});
+
+test('only an enabled llama-server library entry with a model file counts as installed', async () => {
+  const variants = [
+    { enabled: false },
+    { perModel: { 'ternary-bonsai-2-27b-pq2-0': { engine: 'ollama', modelPath: 'D:\\m.gguf', tag: LIBRARY_GGUF } } },
+    { perModel: { 'ternary-bonsai-2-27b-pq2-0': { engine: 'llama-server', modelPath: '', tag: LIBRARY_GGUF } } },
+    { perModel: {} },
+  ];
+  for (const overrides of variants) {
+    const service = new OfflineIntelligenceService({
+      configService: createLibraryConfigService({ mode: 'disabled', preferredLocalModel: LIBRARY_GGUF }, overrides),
+      backendService: createBackendService(),
+    });
+    const state = await service.getState();
+    assert.equal(state.selectedLocalModelInstalled, false, JSON.stringify(overrides));
+    assert.equal(state.unavailableReason, `Preferred local model ${LIBRARY_GGUF} is not installed locally.`);
+  }
+});
+
+test('the Ollama catalog wins over a library entry for the same model', async () => {
+  const service = new OfflineIntelligenceService({
+    configService: createLibraryConfigService({ mode: 'local_only', preferredLocalModel: 'qwen3.5:9b' }, {
+      perModel: { 'qwen3-5-9b': { engine: 'llama-server', modelPath: 'D:\\q.gguf', tag: 'qwen3.5:9b' } },
+    }),
+    backendService: createBackendService(),
+  });
+
+  const state = await service.getState();
+  assert.equal(state.selectedLocalEngineType, 'ollama');
+  assert.equal(state.localChatReady, true);
+});

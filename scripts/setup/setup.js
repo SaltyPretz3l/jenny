@@ -7,7 +7,8 @@
 //
 // Phases (each idempotent, each prints why it skipped):
 //   A. verify prerequisites (Node/npm/Python/git)
-//   B. npm install (skip only when the platform wrapper already completed it)
+//   B. npm install (skip only when the platform wrapper already completed it),
+//      then fetch the Electron binary and build the preload bundle
 //   C. create <repoRoot>/.venv + pip install -e ".[dev]"
 //   D. ensure Ollama is installed and serving
 //   E. pull the default local model (skip when already present)
@@ -34,6 +35,9 @@ function defaultRestartOllamaAfterUpgrade({ platform }) {
   const { shutdownAnyLocalOllamaSync } = require('../../services/backend/ollama-shutdown');
   return shutdownAnyLocalOllamaSync({ platform });
 }
+
+// An attached `npm run dev` that exits non-zero within this window never launched (EVO-04).
+const ATTACHED_LAUNCH_FAILURE_WINDOW_MS = 15_000;
 
 const EXIT = Object.freeze({
   OK: 0,
@@ -229,6 +233,7 @@ async function runSetup(options = {}) {
   const spawnImpl = deps.spawnImpl || spawn;
   const fileExists = deps.fileExists || fs.existsSync;
   const sleepImpl = deps.sleepImpl;
+  const nowMs = deps.nowMs || Date.now;
   const promptYesNo = deps.promptYesNo || defaultPromptYesNo;
   const launchDetached = deps.launchDetached || defaultLaunchDetached;
   const isDistribution = deps.isDistribution || defaultIsDistribution;
@@ -252,7 +257,7 @@ async function runSetup(options = {}) {
   // ---- Phase A: prerequisites -------------------------------------------
   ui.heading('1/7 · Prerequisites');
   const node = prereqs.checkNode(run, { nodeVersion });
-  const npm = prereqs.checkNpm(run);
+  const npm = prereqs.checkNpm(run, { platform });
   const python = prereqs.checkPython(run, { platform });
   const git = prereqs.checkGit(run);
 
@@ -301,6 +306,22 @@ async function runSetup(options = {}) {
     }
     ui.ok('Node dependencies installed.');
   }
+  // Electron downloads its binary lazily on first require('electron'), and the
+  // window's sandboxed preload is an esbuild bundle start.js normally builds.
+  // launch-jenny.cmd (the desktop shortcut target) does neither, so prepare
+  // both here. Each script is a no-op when its output is already current.
+  const appArtifacts = [
+    ['Electron runtime', path.join(repoRoot, 'node_modules', 'electron', 'install.js')],
+    ['Preload bundle', path.join(repoRoot, 'scripts', 'build', 'build-preload.js')],
+  ];
+  for (const [label, script] of appArtifacts) {
+    const result = await runStreaming(process.execPath, [script], { cwd: repoRoot });
+    if (result.status !== 0) {
+      ui.fail(`${label} could not be prepared. Fix the error above and re-run setup.`);
+      return EXIT.UNKNOWN;
+    }
+    ui.ok(`${label} ready.`);
+  }
 
   // ---- Phase C: Python venv + sidecar deps ------------------------------
   ui.heading('3/7 · Python sidecar environment');
@@ -309,6 +330,8 @@ async function runSetup(options = {}) {
     platform,
     fileExists,
     ...(deps.rename ? { rename: deps.rename } : {}),
+    ...(deps.readdir ? { readdir: deps.readdir } : {}),
+    ...(deps.rm ? { rm: deps.rm } : {}),
     ...(deps.nowProvider ? { nowProvider: deps.nowProvider } : {}),
   });
   if (venvResult.error) {
@@ -506,17 +529,16 @@ async function runSetup(options = {}) {
     return deferredCode;
   }
   ui.step(`npm ${launchArgs.join(' ')}`);
+  const launchedAt = nowMs();
   const dev = await runStreaming(npmCommand(platform), launchArgs, {
     cwd: repoRoot,
     shell: platform === 'win32',
   });
-  // The app launched and (eventually) exited. Setup itself succeeded — the app's
-  // own exit code (often non-zero on Ctrl-C / window close) is not a setup
-  // failure, and any deferred model-pull warning was already surfaced and is now
-  // stale (the user chose to launch). Only a spawn failure (couldn't start npm
-  // at all) is a real launch error worth a non-zero setup exit.
-  if (dev.status === 127) {
-    ui.fail(`Could not launch Jenny (npm run dev failed to start). ${startLater}`);
+  // A non-zero exit soon after the start is a failed launch. Later, it is the
+  // app closing (Ctrl-C or the window), not a setup failure; a spawn failure
+  // (127) always is one.
+  if (dev.status === 127 || (dev.status !== 0 && nowMs() - launchedAt < ATTACHED_LAUNCH_FAILURE_WINDOW_MS)) {
+    ui.fail(`Could not launch Jenny (npm run dev exited unsuccessfully). ${startLater}`);
     return EXIT.UNKNOWN;
   }
   if (deferredCode === EXIT.MODEL) ui.warn('Jenny launched, but setup is incomplete because the default model is unavailable.');

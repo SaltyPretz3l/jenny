@@ -224,3 +224,52 @@ test('a spawn error is logged by its code, never by its message', async () => {
   const bare = await launch({ spawnError: new Error('spawn G:/Jane Doe/llama-b10683/llama-server.exe failed') });
   assert.deepEqual(bare.logs.find((entry) => entry.event === 'llama.server.spawn_error')?.details, { code: 'spawn_failed' });
 });
+
+// A failed readiness whose force kill cannot be verified leaves a live child and
+// a retained PID record: the thrown error says so, so the manager never reports
+// a clean stop.
+async function failReadiness({ alive, mode }) {
+  const userDataPath = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-llama-cleanup-'));
+  trackDirectory(userDataPath);
+  const child = new FakeChildProcess(45001);
+  const controller = new AbortController();
+  return startLlamaServer({
+    modelTag: 'gemma4:12b',
+    binaryPath: path.join(userDataPath, 'llama-server.exe'),
+    modelPath: path.join(userDataPath, 'model.gguf'),
+    projectorPath: '',
+    userDataPath,
+    port: await getClosedPort(),
+    readinessTimeoutMs: mode === 'timeout' ? 60 : 5000,
+    readinessPollIntervalMs: 1,
+    abortSignal: controller.signal,
+    platform: 'win32',
+    spawnImpl: () => {
+      if (mode === 'abort') setImmediate(() => controller.abort());
+      return child;
+    },
+    spawnSyncImpl: () => ({ status: 0 }),
+    isProcessAliveImpl: () => alive,
+    logger: () => {},
+  }).then(() => null, (rejection) => rejection);
+}
+
+test('a readiness failure with an unverified kill marks the error cleanupUnconfirmed', async () => {
+  const error = await failReadiness({ alive: true, mode: 'abort' });
+  assert.equal(error?.message, 'readiness_aborted');
+  assert.equal(error.cleanupUnconfirmed, true);
+});
+
+test('a readiness timeout with an unverified kill marks the error cleanupUnconfirmed', async () => {
+  const error = await failReadiness({ alive: true, mode: 'timeout' });
+  assert.equal(error?.message, 'llama_server_readiness_timeout');
+  assert.equal(error.cleanupUnconfirmed, true);
+});
+
+test('a confirmed kill leaves the readiness errors unmarked', async () => {
+  for (const mode of ['abort', 'timeout']) {
+    const error = await failReadiness({ alive: false, mode });
+    assert.ok(error instanceof Error);
+    assert.equal('cleanupUnconfirmed' in error, false, mode);
+  }
+});

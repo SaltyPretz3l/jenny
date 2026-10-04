@@ -37,6 +37,10 @@ test('counts deltas and render kinds per stream and derives first-paint latency'
     mailbox_dropped: 0,
     // A full render charged with no reason still counts; the tally stays empty.
     full_render_reasons: {},
+    row_list_morphs: 0,
+    row_list_rows_reused: 0,
+    row_list_rows_rebuilt: 0,
+    row_list_morph_reasons: Object.create(null),
   });
   // take() removes the entry — a second take yields nothing.
   assert.strictEqual(metrics.take('stream-1'), null);
@@ -87,6 +91,31 @@ test('reasoning body render counters accumulate and ship with snake_case names',
   assert.strictEqual(snapshot.reasoning_body_render_ms_max, 4.57);
   assert.strictEqual(snapshot.reasoning_peak_entry_chars, 160);
   assert.equal('reasoningBodyRenders' in snapshot, false);
+});
+
+test('reasoning body renders use explicit stream identity before last-delta attribution', () => {
+  const metrics = createStreamClientMetrics({ now: () => 100, ship: () => {} });
+  metrics.noteDelta('A', 's');
+  metrics.noteDelta('B', 's');
+  metrics.noteReasoningBodyRender({ streamId: 'A', mode: 'full' });
+  const a = metrics.take('A');
+  assert.strictEqual(a.reasoning_body_renders, 1);
+  assert.strictEqual(a.reasoning_body_full_renders, 1);
+  metrics.noteReasoningBodyRender({ mode: 'full' });
+  const b = metrics.take('B');
+  assert.strictEqual(b.reasoning_body_renders, 1);
+  assert.strictEqual(b.reasoning_body_full_renders, 1);
+});
+
+test('reasoning body stream identity is normalized and missing entries are ignored', () => {
+  const metrics = createStreamClientMetrics({ now: () => 100, ship: () => {} });
+  metrics.noteDelta(' A ', 's');
+  metrics.noteDelta('B', 's');
+  assert.doesNotThrow(() => metrics.noteReasoningBodyRender({ streamId: 'missing', mode: 'full' }));
+  metrics.noteReasoningBodyRender({ streamId: ' A ', mode: 'full' });
+  assert.strictEqual(metrics.take('A').reasoning_body_renders, 1);
+  metrics.noteReasoningBodyRender({ streamId: '', mode: 'full' });
+  assert.strictEqual(metrics.take('B').reasoning_body_renders, 1);
 });
 
 test('reasoning body fallback histogram is bounded and null-prototype', () => {
@@ -323,4 +352,28 @@ test('full renders are tallied by the gate that forced them', () => {
     'patch_fallback:row_model_not_surgical': 2,
     projection_revision: 1,
   });
+});
+
+test('row-list morph counters name the bail-out and the rows it rebuilt, bounded, never a paint', () => {
+  const metrics = createStreamClientMetrics({ now: () => 100, ship: () => {} });
+  metrics.noteRowListMorph('session-rl', { reason: 'ignored_without_stream', rowsRebuilt: 5 });
+  metrics.noteDelta('stream-rl', 'session-rl');
+  metrics.noteRowListMorph('session-rl', { reason: 'live:segment_row_state_mismatch>block_key_mismatch', rowsReused: 0, rowsRebuilt: 119 });
+  metrics.noteRowListMorph('session-rl', { reason: 'live:segment_row_state_mismatch>block_key_mismatch', rowsReused: 117, rowsRebuilt: 2 });
+  metrics.noteRowListMorph('session-rl', { reason: 'answer_row_open', rowsReused: -1, rowsRebuilt: 'x' });
+  for (let index = 0; index < 40; index += 1) {
+    metrics.noteRowListMorph('session-rl', { reason: `overflow_${index}`.padEnd(70, 'z'), rowsRebuilt: 1 });
+  }
+  const snapshot = metrics.take('stream-rl');
+  assert.strictEqual(snapshot.row_list_morphs, 43);
+  assert.strictEqual(snapshot.row_list_rows_reused, 117);
+  assert.strictEqual(snapshot.row_list_rows_rebuilt, 161);
+  assert.strictEqual(snapshot.row_list_morph_reasons['live:segment_row_state_mismatch>block_key_mismatch'], 2);
+  assert.strictEqual(snapshot.row_list_morph_reasons.answer_row_open, 1);
+  assert.strictEqual(Object.keys(snapshot.row_list_morph_reasons).length, 32, 'histogram bounded to 32 reasons');
+  assert.ok(Object.keys(snapshot.row_list_morph_reasons).every((key) => key.length <= 64), 'keys bounded to 64 chars');
+  assert.strictEqual(Object.getPrototypeOf(snapshot.row_list_morph_reasons), null);
+  // Intra-patch cost marker: not a paint.
+  assert.strictEqual(snapshot.first_paint_at_ms, null);
+  assert.strictEqual(snapshot.stream_reveal_patches_applied, 0);
 });

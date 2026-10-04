@@ -190,6 +190,8 @@ class AgentKernel:
                 "source_kind": status.source_kind,
                 "tool_family": status.tool_family,
                 "server_name": status.server_name,
+                "side_effecting": status.side_effecting,
+                **({"connection_id": status.connection_id} if status.connection_id else {}),
             }
             for status in self._tool_status_entries()
             if status.name

@@ -3,32 +3,15 @@
 const { PluginViewRuntimeAuthority } = require('./view/view-runtime-authority');
 const { PluginViewBridgeRouter } = require('./view/bridge-router');
 const { VIEW_LIMITS, STAGE7_LIMITS } = require('./view/stage7-budgets');
-const { PluginProviderRuntimeIntegration } = require('./provider/provider-runtime-integration');
-const { createPluginProviderAuthService } = require('./provider/provider-auth-service');
 const { createStage7RuntimeCoordinator } = require('./runtime/stage7-runtime-coordinator');
 
-const OFFICIAL_PROVIDER_PUBLISHER = 'jenny-official';
-
 function createStage7ControlPlane({ runtimeCoordinator, viewHost, pluginService,
-  chatgptAuthService, artifactHandlers = {}, onProviderChanged = async () => ({ ok: true }),
-  activateProvider = async () => ({ ok: false, reason: 'provider_activation_unavailable' }),
-  sessionProviderCall = null,
-  authorizeSessionView = null,
-  onSessionViewDestroyed = null,
-  log = () => {}, providerAuthLog = log } = {}) {
+  artifactHandlers = {},
+  log = () => {} } = {}) {
   if (!runtimeCoordinator || !viewHost || !pluginService) {
     throw new TypeError('stage7 control plane dependencies invalid');
   }
-  const providerRuntime = new PluginProviderRuntimeIntegration({
-    onChanged: onProviderChanged, log,
-  });
   const viewAuthority = new PluginViewRuntimeAuthority({ host: viewHost, log });
-  const providerAuth = createPluginProviderAuthService({
-    chatgptAuthService,
-    isProviderActive: (providerId) => providerRuntime.snapshot().providers.includes(providerId),
-    onAuthChanged: onProviderChanged,
-    log: providerAuthLog,
-  });
   let artifactPayload = null;
   const clearArtifactPayload = (viewInstanceId = null) => {
     if (viewInstanceId && artifactPayload?.viewInstanceId !== viewInstanceId) return;
@@ -51,25 +34,6 @@ function createStage7ControlPlane({ runtimeCoordinator, viewHost, pluginService,
       contribution_id: context.contributionId,
       settings: contribution.settings || null,
     } };
-  }
-  function resolveProviderRequest(payload, context) {
-    const providerId = typeof payload?.provider_id === 'string' ? payload.provider_id : '';
-    const descriptor = context?.descriptor;
-    if (descriptor?.publisher_id !== OFFICIAL_PROVIDER_PUBLISHER
-      || descriptor.kind !== 'setup_scene'
-      || !descriptor.content?.provider_ref
-      || providerId !== descriptor.content.provider_ref) {
-      return { ok: false, reason: 'provider_view_authority_rejected' };
-    }
-    const provider = providerRuntime.resolve(providerId, {
-      generation_id: context.generationId,
-      commit_epoch: context.commitEpoch,
-    });
-    return provider ? { ok: true, providerId } : { ok: false, reason: 'provider_not_active' };
-  }
-  async function withProviderRequest(payload, context, operation) {
-    const resolved = resolveProviderRequest(payload, context);
-    return resolved.ok ? operation(resolved.providerId) : resolved;
   }
   const builtInArtifactHandlers = {
     readChunk: async (payload = {}, context = {}) => {
@@ -104,39 +68,12 @@ function createStage7ControlPlane({ runtimeCoordinator, viewHost, pluginService,
       publisher_id: context.publisherId, plugin_id: context.pluginId,
       contribution_id: context.contributionId, generation_id: context.generationId,
       commit_epoch: context.commitEpoch,
-      ...(context.sessionProviderAuthorized === true ? {
-        session_provider_authorized: true,
-      } : {}),
     } }),
     read_settings: async (_payload, context) => readScopedSettings(context),
     update_settings: async (payload, context) => pluginService.updateSettings({
       ...payload, publisher_id: context.publisherId, plugin_id: context.pluginId,
       contribution_id: context.contributionId,
     }),
-    provider_auth_status: async (payload, context) => withProviderRequest(
-      payload, context, (providerId) => providerAuth.status(providerId),
-    ),
-    provider_auth_start: async (payload, context) => withProviderRequest(
-      payload, context, (providerId) => providerAuth.start(providerId, {}),
-    ),
-    provider_auth_cancel: async (payload, context) => withProviderRequest(
-      payload, context, (providerId) => providerAuth.cancel(providerId),
-    ),
-    provider_auth_sign_out: async (payload, context) => withProviderRequest(
-      payload, context, (providerId) => providerAuth.signOut(providerId),
-    ),
-    provider_activate: async (payload, context) => withProviderRequest(
-      payload, context, async (providerId) => {
-        const result = await activateProvider(providerId);
-        if (result?.ok === true) {
-          const viewInstanceId = context.viewInstanceId;
-          setImmediate(() => viewHost.sendHostCommand?.('provider_activated', {
-            provider_id: providerId,
-          }, viewInstanceId));
-        }
-        return result;
-      },
-    ),
     artifact_read_chunk: artifactHandlers.readChunk || builtInArtifactHandlers.readChunk,
     artifact_ready: artifactHandlers.ready || builtInArtifactHandlers.ready,
     artifact_error: artifactHandlers.error || builtInArtifactHandlers.error,
@@ -154,29 +91,17 @@ function createStage7ControlPlane({ runtimeCoordinator, viewHost, pluginService,
       } : null;
     },
     handlers,
-    sessionProviderHandler: sessionProviderCall,
     log,
   });
-  viewHost.setOnViewDestroyed?.(async (viewInstanceId, reason, destroyedContext = {}) => {
+  viewHost.setOnViewDestroyed?.(async (viewInstanceId, reason) => {
     if (reason === 'view_crash_restart') {
       if (artifactPayload?.viewInstanceId === viewInstanceId) artifactPayload.viewInstanceId = null;
     } else clearArtifactPayload(viewInstanceId);
     bridgeRouter.detach(viewInstanceId);
-    if (typeof onSessionViewDestroyed === 'function') {
-      try {
-        return await onSessionViewDestroyed({ ...destroyedContext, viewInstanceId }, reason);
-      } catch (_error) { return { ok: false, reason: 'session_view_teardown_failed' }; }
-    }
     return { ok: true };
   });
-  const unsubscribeProviderAuth = providerAuth.onStatusChange((auth) => {
-    const active = viewHost.active;
-    if (!active) return;
-    bridgeRouter.publish(active.viewInstanceId, 'provider_auth_changed', { auth },
-      (event) => viewHost.sendEvent(event));
-  });
   const coordinator = createStage7RuntimeCoordinator({
-    runtimeCoordinator, viewAuthority, providerRuntime,
+    runtimeCoordinator, viewAuthority,
   });
 
   function bridgeEnvelope(event, raw = {}) {
@@ -184,12 +109,8 @@ function createStage7ControlPlane({ runtimeCoordinator, viewHost, pluginService,
     if (!context) return null;
     let payload;
     if (raw.method === 'request') {
-      payload = raw.operation === 'session_provider_call'
-        ? { call_schema_version: 1, request_id: raw.request_id,
-          action: raw.payload?.action,
-          payload_json: JSON.stringify(raw.payload?.payload ?? {}) }
-        : { call_schema_version: 5, request_id: raw.request_id,
-          operation: raw.operation, payload_json: JSON.stringify(raw.payload ?? {}) };
+      payload = { call_schema_version: 5, request_id: raw.request_id,
+        operation: raw.operation, payload_json: JSON.stringify(raw.payload ?? {}) };
     } else payload = { request_id: raw.request_id, topic: raw.topic };
     return {
       bridge_schema_version: 1,
@@ -236,19 +157,11 @@ function createStage7ControlPlane({ runtimeCoordinator, viewHost, pluginService,
           commitEpoch: descriptor.commit_epoch,
         };
       }
-      let sessionBinding = null;
+      // Session providers are retired: a view is never bound to a chat session.
       if (identity?.sessionId !== undefined) {
-        if (typeof authorizeSessionView !== 'function') {
-          return { ok: false, reason: 'plugin_session_view_unavailable' };
-        }
-        const authorized = await authorizeSessionView(identity.sessionId, descriptor);
-        if (!authorized?.ok) return authorized;
-        sessionBinding = {
-          sessionId: String(identity.sessionId || '').trim(),
-          sessionIncarnation: authorized.sessionIncarnation,
-        };
+        return { ok: false, reason: 'plugin_session_view_unavailable' };
       }
-      const opened = await viewHost.open(descriptor, { ...options, ...sessionBinding });
+      const opened = await viewHost.open(descriptor, options);
       if (opened?.ok) {
         artifactPayload = candidateArtifactPayload && {
           ...candidateArtifactPayload,
@@ -261,12 +174,9 @@ function createStage7ControlPlane({ runtimeCoordinator, viewHost, pluginService,
     setZoom: (factor) => viewHost.setZoom(factor),
     closeView: () => { clearArtifactPayload(); return viewHost.destroyAll('user_closed'); },
     focusView: () => viewHost.focus(),
-    getState: () => ({ ok: true, stage: 7, views: viewAuthority.snapshot(),
-      providers: providerRuntime.snapshot() }),
+    getState: () => ({ ok: true, stage: 7, views: viewAuthority.snapshot() }),
     dispose: async () => {
       clearArtifactPayload();
-      try { unsubscribeProviderAuth?.(); } catch (_error) { /* ignore */ }
-      providerRuntime.dispose();
       await viewAuthority.dispose();
     },
   });

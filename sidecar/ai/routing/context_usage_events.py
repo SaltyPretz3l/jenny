@@ -16,9 +16,9 @@ Contract:
   and terminal readings never disagree about how they were computed.
 * NO cross-iteration high-water mark: compaction legitimately lowers the used
   figure and the ring must follow it back down.
-* Emission requires a live ``budget_tracker`` AND the ``context_usage_live``
-  flag. With ``token_budget`` off there is no tracker, so a turn emits nothing
-  and behaves exactly as it did before this event existed.
+* Emission requires a live ``budget_tracker``. With ``token_budget`` off there
+  is no tracker, so a turn emits nothing and behaves exactly as it did before
+  this event existed.
 * Repeated identical readings are suppressed through a request-scoped memo on
   the ``LoopRuntime`` (never cross-turn).
 """
@@ -30,7 +30,6 @@ from typing import Any
 from sidecar.ai.context.token_budget import resolve_context_window_hint
 from sidecar.ai.feature_flags import (
     FEATURE_CONTEXT_COMPACTION,
-    is_context_usage_live_enabled,
     is_feature_flag_enabled,
 )
 from sidecar.ai.routing.loop_events import ContextUsageEvent
@@ -95,8 +94,6 @@ def emit_context_usage(  # noqa: PLR0913 — one flat snapshot, no wrapper DTO
 ) -> ContextUsageEvent | None:
     """Emit one mid-turn meter snapshot; return the event, or ``None`` if skipped."""
     if runtime is None or budget_tracker is None:
-        return None
-    if not is_context_usage_live_enabled(feature_flags):
         return None
 
     estimate = _positive_int(context_tokens_estimate)

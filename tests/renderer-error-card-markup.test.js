@@ -229,6 +229,92 @@ test('calm card suppresses message identical to its title', () => {
   assert.ok(!html.includes('chat-error-card-message'), 'duplicate message suppressed');
 });
 
+/* Owner gate F3 polish: a user Stop showed title, transport message and hint
+ * as three stacked notes saying the same thing. */
+const USER_STOP_MESSAGE = Object.freeze({
+  id: 'assistant_stream_stop',
+  stream_error: 'Stream cancelled.',
+  error_code: 'CMP-SIDECAR-0002',
+  status: 'cancelled',
+  terminal_status: 'cancelled',
+  terminal_subcode: 'user_cancel',
+  category: 'cancelled',
+  retryable: true,
+  recovery_class: 'cancelled',
+  recovery_title: 'Turn cancelled',
+  recovery_hint: 'This turn was cancelled before it completed.',
+});
+
+function visibleCardNotes(html) {
+  const notes = [];
+  const pattern = /<(?:span|div) class="chat-error-card-(title|message|hint)">([^<]*)<\/(?:span|div)>/g;
+  let match = pattern.exec(html);
+  while (match) {
+    notes.push(match[2]);
+    match = pattern.exec(html);
+  }
+  return notes;
+}
+
+test('user Stop card shows one cancel note instead of three', () => {
+  const html = errorRecoveryUtils.renderTimelineErrorCard(USER_STOP_MESSAGE);
+  assert.ok(html.includes('chat-error-card--calm'), 'calm variant');
+  assert.deepEqual(visibleCardNotes(html), ['Turn cancelled']);
+  assert.ok(html.includes('aria-label="Turn cancelled"'), 'label matches the visible note');
+  assert.ok(html.includes('data-error-code="CMP-SIDECAR-0002"'), 'code stays on the card');
+});
+
+test('live user Stop (no recovery fields yet) shows the same single note', () => {
+  /* The live error handler stores no recovery_* fields; the persisted row
+   * that replaces it does. Both must read the same, or the note flips text. */
+  const html = errorRecoveryUtils.renderTimelineErrorCard({
+    id: USER_STOP_MESSAGE.id,
+    stream_error: USER_STOP_MESSAGE.stream_error,
+    error_code: USER_STOP_MESSAGE.error_code,
+    status: 'error',
+    terminal_status: 'cancelled',
+    terminal_subcode: 'user_cancel',
+    category: 'cancelled',
+    retryable: true,
+  });
+  assert.ok(html.includes('chat-error-card--calm'), 'calm variant');
+  assert.deepEqual(visibleCardNotes(html), ['Turn cancelled']);
+});
+
+test('non-user cancellations keep title, message and hint', () => {
+  const transportAbort = errorRecoveryUtils.renderTimelineErrorCard({
+    ...USER_STOP_MESSAGE,
+    terminal_subcode: 'transport_abort',
+  });
+  assert.deepEqual(visibleCardNotes(transportAbort), [
+    'Turn cancelled',
+    'Stream cancelled.',
+    'This turn was cancelled before it completed.',
+  ]);
+  const appShutdown = errorRecoveryUtils.renderTimelineErrorCard({
+    ...USER_STOP_MESSAGE,
+    terminal_subcode: 'app_shutdown',
+    recovery_title: 'Stopped when Jenny closed',
+    recovery_hint: 'Jenny closed while this reply was running, so it stopped. Retry to run it again.',
+  });
+  assert.deepEqual(visibleCardNotes(appShutdown), [
+    'Stopped when Jenny closed',
+    'Stream cancelled.',
+    'Jenny closed while this reply was running, so it stopped. Retry to run it again.',
+  ]);
+});
+
+test('a real error carrying a user_cancel subcode keeps its danger presentation', () => {
+  const html = errorRecoveryUtils.renderTimelineErrorCard({
+    id: 'assistant_stream_err',
+    stream_error: 'Connection failed',
+    error_code: 'CMP-AI-0002',
+    terminal_subcode: 'user_cancel',
+  });
+  assert.ok(html.includes('chat-error-card--danger'), 'danger variant');
+  assert.ok(visibleCardNotes(html).includes('Connection failed'), 'message still shown');
+});
+
 test('run-mode change card renders calm with the backend retry action and copy', () => {
   const html = errorRecoveryUtils.renderTimelineErrorCard({
     id: 'msg_mode',

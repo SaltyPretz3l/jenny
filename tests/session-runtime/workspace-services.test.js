@@ -58,7 +58,13 @@ test('hosted and sandbox restrictions remain live on an already captured Git ser
 test('two projects sharing a physical root keep distinct authority while Git mutations serialize', async t => {
  const { service, authority, roots, resolve } = fixture(t);
  const second = service.projectService.create({ name: 'Other' }).project;
- service.projectService.bindRoot(second.id, roots[0]);
+ // bindRoot now refuses a second owner (folder_already_project), but a store
+ // written before that rule can still hold two projects on one folder.
+ assert.equal(service.projectService.bindRoot(second.id, roots[0]).reason, 'folder_already_project');
+ const owner = service.projectService.get(authority.project_id);
+ const document = service.projectStore.getSnapshot();
+ assert.equal(service.projectStore.replace({ ...document, projects: { ...document.projects,
+  [second.id]: { ...document.projects[second.id], root_path: owner.root_path, root_id: owner.root_id, root_revision: 1 } } }).ok, true);
  const other = service.projectAuthority.captureProject(second.id);
  assert.notEqual(authority.project_id, other.project_id);
  assert.equal(authority.root_id, other.root_id);

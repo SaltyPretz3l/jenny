@@ -88,67 +88,6 @@ function policyDescriptor({ name, sideEffecting, sourceKind, identity }) {
   });
 }
 
-function remoteDescriptors(snapshot) {
-  const descriptors = [];
-  for (const binding of Array.isArray(snapshot.remote_mcp_bindings)
-    ? snapshot.remote_mcp_bindings : []) {
-    if (!isRecord(binding)) throw new Error('Remote MCP binding is invalid.');
-    for (const contribution of Array.isArray(binding.contributions) ? binding.contributions : []) {
-      if (contribution?.kind !== 'tool') continue;
-      const name = requiredText(contribution.namespaced_name, 'name');
-      descriptors.push(policyDescriptor({ name, sideEffecting: true, sourceKind: 'mcp',
-        identity: {
-          runtime_kind: 'remote_mcp', name,
-          binding_digest: requiredDigest(binding.binding_digest, 'binding digest'),
-          descriptor_digest: requiredDigest(binding.descriptor_digest, 'descriptor digest'),
-          artifact_digest: requiredDigest(binding.artifact_digest, 'artifact digest'),
-          schema_digest: requiredDigest(contribution.schema_digest, 'schema digest'),
-          endpoint_origin_digest: requiredDigest(
-            binding.endpoint_origin_digest,
-            'endpoint identity'
-          ),
-        } }));
-    }
-  }
-  return descriptors;
-}
-
-function restrictedDescriptors(snapshot) {
-  return (Array.isArray(snapshot.restricted_contributions)
-    ? snapshot.restricted_contributions : []).map((descriptor) => {
-    if (!isRecord(descriptor)) throw new Error('Restricted plugin descriptor is invalid.');
-    const name = requiredText(descriptor.namespaced_name, 'name');
-    const capabilities = Array.isArray(descriptor.capabilities)
-      ? descriptor.capabilities.map((item) => requiredText(item, 'capability', 64)).sort() : [];
-    const networkOrigins = Array.isArray(descriptor.network_origins)
-      ? descriptor.network_origins.map((item) => requiredText(item, 'network origin', 2048)).sort()
-      : [];
-    if (new Set(capabilities).size !== capabilities.length
-      || new Set(networkOrigins).size !== networkOrigins.length
-      || descriptor.generation_id !== snapshot.active_generation_id
-      || descriptor.commit_epoch !== snapshot.commit_epoch) {
-      throw new Error('Restricted plugin capability identity is stale.');
-    }
-    return policyDescriptor({ name, sideEffecting: true, sourceKind: 'restricted', identity: {
-      runtime_kind: 'restricted', name, capabilities, network_origins: networkOrigins,
-      artifact_digest: requiredDigest(descriptor.artifact_digest, 'artifact digest'),
-      component_digest: requiredDigest(descriptor.component_digest, 'component digest'),
-      content_digest: requiredDigest(descriptor.content_digest, 'content digest'),
-      generation_id: requiredText(descriptor.generation_id, 'generation', 64),
-      commit_epoch: requiredInteger(descriptor.commit_epoch, 'commit epoch'),
-      lifecycle_epoch: requiredInteger(descriptor.lifecycle_epoch, 'lifecycle epoch'),
-      policy_revision: requiredInteger(descriptor.policy_revision, 'policy revision'),
-      workspace_incarnation_id: requiredText(
-        descriptor.workspace_incarnation_id,
-        'workspace incarnation',
-        128
-      ),
-      abi_digest: requiredDigest(descriptor.abi_digest, 'ABI digest'),
-      protocol_digest: requiredDigest(descriptor.protocol_digest, 'protocol digest'),
-    } });
-  });
-}
-
 function nativeDescriptors(snapshot) {
   const descriptors = [];
   for (const binding of Array.isArray(snapshot.native_mcp_bindings)
@@ -193,8 +132,6 @@ function capturePluginToolExecutionAuthority(envelope, expectedAuthority) {
     throw new Error('Plugin runtime authority does not match the committed snapshot.');
   }
   const descriptors = [
-    ...remoteDescriptors(snapshot),
-    ...restrictedDescriptors(snapshot),
     ...nativeDescriptors(snapshot),
   ];
   if (descriptors.length > MAX_DYNAMIC_TOOLS) {

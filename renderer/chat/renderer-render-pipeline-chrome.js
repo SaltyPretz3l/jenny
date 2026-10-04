@@ -15,6 +15,7 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (composerState, composerV2Render, turnElapsedClock) {
   const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   const globalRef = typeof globalThis !== 'undefined' ? globalThis : {};
+  const { resolveDefaultTitle } = globalRef.stringUtils || (typeof require === 'function' ? require('../shared/string-utils') : {});
   const windowRef = globalRef.window || globalRef;
   const documentRef = windowRef.document || null;
   const { formatElapsedLabel } = turnElapsedClock;
@@ -25,6 +26,16 @@
     reasonNode.textContent = message;
     if (message) control.setAttribute('aria-describedby', reasonNode.id);
     else control.removeAttribute('aria-describedby');
+  }
+  // Split view W2-2a: the runtime preferences of the session a pane shows. One
+  // pane (or no reader, or a session not in the list): the current preferences,
+  // the same shape and values the composer read before panes.
+  function resolvePaneRuntimePreferences({ state, sessionId, fromSession, current }) {
+    const id = String(sessionId || '').trim();
+    const session = id && typeof fromSession === 'function'
+      ? (Array.isArray(state?.sessions) ? state.sessions : []).find((entry) => entry?.id === id)
+      : null;
+    return session ? fromSession(session) : current();
   }
   function createChromePipeline(deps) {
     const {
@@ -54,7 +65,6 @@
       composer = null,
       composerModelSelect = null,
       composerEffortSelect = null,
-      composerSettingsButton = null,
       jumpToTopButton = null,
       jumpToBottomButton = null,
       jumpToLastPromptButton = null,
@@ -62,6 +72,7 @@
       sendButton = null,
       composerModelSelectShell = null,
       composerEffortSelectShell = null,
+      chatTimeline = null,
     } = dom;
     const {
       logRenderer = null,
@@ -71,8 +82,6 @@
       renderMessages = () => {},
       applySurfaceEffect = () => {},
       syncBackendNotice = () => {},
-      publishLifecycleStatus = () => {},
-      renderTurnStatusPill = () => {},
       renderSettings = () => {},
       renderIde = () => {},
       layoutIdeEditor = () => {},
@@ -93,8 +102,17 @@
       renderSessions = () => {},
       renderArtifactReviewPanel = () => {},
       getVisibleSessionMessages = () => [],
-      getCurrentVisibleMessages = () => [],
+      // Split view W1-4a: the session this pane shows (one pane: currentSessionId).
+      getPaneSessionId = () => String(state.currentSessionId || '').trim(),
+      // This pane's follow intent (one pane: state.ui.followLatest).
+      isFollowingLatest = () => state.ui.followLatest !== false,
       getCurrentRuntimePreferences = () => ({ contextPreferences: {} }),
+      getRuntimePreferencesFromSession = null,
+      // The composer's own controls (model, effort, run mode) read the session
+      // THIS pane shows, so a focus change never repaints another pane's rail.
+      getPaneRuntimePreferences = () => resolvePaneRuntimePreferences({
+        state, sessionId: getPaneSessionId(), fromSession: getRuntimePreferencesFromSession, current: getCurrentRuntimePreferences,
+      }),
       isSendBusy = () => false,
       isSessionStreaming = () => false,
       hasPendingToolApprovalForSession = () => false,
@@ -104,7 +122,6 @@
       getMostRecentActivity = () => null,
       isActivityBusy = () => false,
       applyActivityAttributes = () => {},
-      syncComposerModelSelectWidth = () => {},
       renderComposerInteractivePanel = () => {},
       closeComposerPopover = () => {},
       syncComposerInputHeight = () => {},
@@ -207,7 +224,7 @@
     }
 
     function syncSurfaceStates() {
-      const currentSessionId = String(state.currentSessionId || '').trim();
+      const currentSessionId = getPaneSessionId();
       const currentSendLifecycle = resolveChatSendLifecycle(currentSessionId);
       const threadTokens = [];
       if (isSessionStreaming(currentSessionId) || hasPendingToolApprovalForSession(currentSessionId)) {
@@ -235,7 +252,7 @@
         ((globalThis.rendererChatSurfaceLiveUtils || {}).isChatSurfaceLive?.(state)
           ?? (state.ui.activeView === 'chat'))
         && hasMessages
-        && state.ui.followLatest === false
+        && !isFollowingLatest()
       ) {
         threadTokens.push('active');
       }
@@ -326,7 +343,7 @@
     function renderOriginChip() {
       sweepSessionOrigins();
       if (!chatOriginChip || !chatOriginLabel) return;
-      const currentSessionId = String(state.currentSessionId || '').trim();
+      const currentSessionId = getPaneSessionId();
       const sessionMessages = currentSessionId ? getVisibleSessionMessages(currentSessionId) : [];
       const hasAssistantReply = sessionMessages.some((message) => {
         const role = String(message?.role || '').trim();
@@ -360,12 +377,65 @@
       }
     }
 
+    let resumeSetupButton = null;
+    let setupFootnote = null;
+    function handleResumeSetup() {
+      if (typeof globalRef.jennySetupResume === 'function') globalRef.jennySetupResume();
+    }
+
+    function syncHeroSetupAction(show, canChat) {
+      const canResume = show && typeof globalRef.jennySetupResume === 'function';
+      const actionButton = globalRef.inventoryActionButton;
+      const ownerDocument = heroSubtitle?.ownerDocument;
+      if (canResume && !resumeSetupButton && ownerDocument && typeof actionButton === 'function') {
+        const template = ownerDocument.createElement('template');
+        template.innerHTML = actionButton({
+          id: 'chat-resume-setup', variant: 'primary', className: 'hero-resume-setup',
+          label: jt('chat.pipelineChrome.resumeSetup', 'Resume setup'),
+        });
+        resumeSetupButton = template.content.firstElementChild;
+        resumeSetupButton.addEventListener('click', handleResumeSetup);
+        heroSubtitle.after(resumeSetupButton);
+      }
+      if (show && !setupFootnote && ownerDocument) {
+        setupFootnote = ownerDocument.createElement('p');
+        setupFootnote.className = 'hero-setup-footnote';
+        setupFootnote.textContent = jt('chat.pipelineChrome.chatDuringSetup', 'You can also start chatting now.');
+        (resumeSetupButton || heroSubtitle).after(setupFootnote);
+      }
+      resumeSetupButton?.classList.toggle('hidden', !canResume);
+      setupFootnote?.classList.toggle('hidden', !show || !canChat);
+    }
+
+    function setupHeroSubtitle(snapshot) {
+      const steps = snapshot.steps;
+      if (!steps || typeof steps.workspaceRoot !== 'string'
+        || (typeof steps.localModel !== 'string' && typeof steps.endpoint !== 'string')) {
+        return jt('chat.pipelineChrome.setupModelAndFolder', 'Choose a model route and a workspace folder to finish.');
+      }
+      const modelMissing = steps.localModel !== 'done' && steps.endpoint !== 'done';
+      const folderMissing = steps.workspaceRoot !== 'done';
+      if (modelMissing && folderMissing) {
+        return jt('chat.pipelineChrome.setupModelAndFolder', 'Choose a model route and a workspace folder to finish.');
+      }
+      if (modelMissing) return jt('chat.pipelineChrome.setupModel', 'Choose a model route to finish.');
+      if (folderMissing) return jt('chat.pipelineChrome.setupFolder', 'Choose a workspace folder so file tools can work.');
+      return jt('chat.pipelineChrome.setupOptionalSteps', 'A few optional steps are left.');
+    }
+
     function renderHero() {
-      const activeSession = state.sessions.find((session) => session.id === state.currentSessionId);
+      const paneSessionId = getPaneSessionId();
+      const activeSession = state.sessions.find((session) => session.id === paneSessionId);
       const sessionMessages = activeSession ? getVisibleSessionMessages(activeSession.id) : [];
       const hasMessages = sessionMessages.length > 0;
       const heroStage = heroTitle ? heroTitle.closest('.hero-stage') : null;
       const pluginSession = activeSession?.session_type === 'plugin';
+      const setupSnapshot = state.setup || {};
+      const setupIncomplete = setupSnapshot.loaded === true && setupSnapshot.setupComplete === false;
+      const showSetup = !pluginSession && !hasMessages && setupIncomplete;
+      heroStage?.classList.toggle('hero-setup-incomplete', showSetup);
+      const setupSteps = setupSnapshot.steps || {};
+      syncHeroSetupAction(showSetup, setupSteps.localModel === 'done' || setupSteps.endpoint === 'done');
       if (heroStage) heroStage.classList.toggle('hero-plugin-session', pluginSession);
       if (pluginSession) {
         if (heroStage) heroStage.classList.remove('hidden');
@@ -384,21 +454,18 @@
       if (heroStage) heroStage.classList.remove('hidden');
       heroAvatar.textContent = 'J';
       heroAvatar.classList.toggle('hidden', !hasMessages);
-      const setupSnapshot = state.setup || {};
-      const setupIncomplete = setupSnapshot.loaded === true && setupSnapshot.setupComplete === false;
       let showRuntimeHint = false;
       if (hasMessages) {
-        heroTitle.textContent = activeSession?.title === 'New Plugin Session' ? jt('session.defaultTitle.plugin', 'New Plugin Session') : (!activeSession?.title || activeSession.title === 'New Chat' ? jt('session.defaultTitle.chat', 'New Chat') : activeSession.title);
+        heroTitle.textContent = resolveDefaultTitle(activeSession?.title);
         heroSubtitle.textContent = jt('chat.pipelineChrome.continueOrBranch', 'Continue the active conversation or begin a fresh branch.');
       } else if (setupIncomplete) {
-        heroTitle.textContent = jt('chat.pipelineChrome.setupWelcome', 'Welcome — let’s set Jenny up');
-        heroSubtitle.textContent = jt('chat.pipelineChrome.setupHint', 'A few quick steps on Companion Home make Jenny yours. Pick up where you left off below.');
+        heroTitle.textContent = jt('chat.pipelineChrome.finishSetup', "Let's finish setting up Jenny");
+        heroSubtitle.textContent = setupHeroSubtitle(setupSnapshot);
       } else {
         heroTitle.textContent = jt('chat.pipelineChrome.newSession', 'New session');
         heroSubtitle.textContent = jt('chat.pipelineChrome.askToBegin', 'Ask Jenny anything to begin');
-        /* Empty chat, backend ready, model not yet warmed: surface the
-         * "loads on first message" hint here in the hero instead of the
-         * floating backend banner. */
+        /* The lazy state only: backend ready, no model warmed and none
+         * loading. A load in flight is the composer line's to tell. */
         showRuntimeHint = state.backend?.phase === 'ready' && state.status?.model_loaded === false;
       }
       if (heroRuntimeHint) {
@@ -419,13 +486,13 @@
     }
 
     function renderComposerJumpControls() {
-      const messages = getCurrentVisibleMessages();
+      const messages = getVisibleSessionMessages(getPaneSessionId());
       const hasMessages = messages.length > 0;
       const latestUserMessageId = getLatestUserMessageId(messages);
       const anyJumpButton = jumpToTopButton || jumpToLastPromptButton || jumpToBottomButton;
       const jumpTools = anyJumpButton?.closest('.composer-jump-tools') || null;
       const wayfinderActive = state.ui?.chatWayfinderVisible === true;
-      const showJumpTools = hasMessages && state.ui.followLatest === false && !wayfinderActive;
+      const showJumpTools = hasMessages && !isFollowingLatest() && !wayfinderActive;
       const wayfinderHost = documentRef?.getElementById('composerWayfinderHost') || null;
 
       if (jumpTools) {
@@ -446,7 +513,7 @@
 
     function syncComposerVisualState() {
       const typing = !chatInput.disabled && Boolean(chatInput.value.trim());
-      const lifecycle = resolveChatSendLifecycle(state.currentSessionId);
+      const lifecycle = resolveChatSendLifecycle(getPaneSessionId());
       const composerWaiting = lifecycle === 'preflight';
       const composerInferenceActive = lifecycle === 'streaming' || lifecycle === 'settling';
       composer.classList.toggle('composer-active', typing);
@@ -465,7 +532,7 @@
     function syncComposerTurnTimer() {
       const timer = documentRef?.getElementById?.('composerTurnTimer');
       if (!timer) return;
-      const currentSessionId = String(state.currentSessionId || '').trim();
+      const currentSessionId = getPaneSessionId();
       const entry = state.turnClockBySession?.get(currentSessionId) || null;
       if (state.features?.featureFlags?.composer_turn_timer === false) {
         timer.removeAttribute('data-turn-elapsed');
@@ -502,6 +569,8 @@
       runtimeQueueActions = runtimeQueueActions || {
         withdraw: (row) => state.runtimeSendController?.withdraw?.(row.key),
         resume: (row) => state.runtimeSendController?.resume?.(row.key),
+        restartEngine: (row) => state.runtimeSendController?.restartEngine?.(row.key),
+        openChat: (row) => state.runtimeSendController?.openChat?.(row.wait?.blockingSessionId),
       };
       return runtimeQueueActions;
     }
@@ -534,8 +603,11 @@
       if (!button) return;
       // Only a reply the runtime admitted can be paused: an edit, a retry or a
       // legacy stream has no running work behind it, so Pause stays hidden.
+      // Nor can a reply that is waiting by itself behind another chat: it is
+      // not running, and Stop (which stays) is its way out.
       const show = showStop && runtimeOwnsSends && typeof controller.ownsStream === 'function'
-        && controller.ownsStream(state.activeStreamId) === true;
+        && controller.ownsStream(state.activeStreamId) === true
+        && state.streamWaits?.isWaitingStream?.(state.activeStreamId) !== true;
       button.classList.toggle('hidden', !show);
       if (!show) return;
       // A requested pause is not a pause: the control says only that it was asked for.
@@ -550,13 +622,22 @@
       else delete button.dataset.pauseState;
     }
 
+    // Split view W3-1: a preference save is keyed by the session it saves
+    // (activity-utils sessionScope); read this pane's, reported under the bare
+    // scope so the shell's data-activity-scope keeps the scope name.
+    function getSessionActivitySnapshot(scope, sessionId) {
+      const utils = globalRef.activityUtils || (typeof require === 'function' ? require('../shared/activity-utils') : null);
+      const snapshot = getActivitySnapshot(typeof utils?.sessionScope === 'function' ? utils.sessionScope(scope, sessionId) : scope);
+      return snapshot && snapshot.scope !== scope ? { ...snapshot, scope } : snapshot;
+    }
+
     function renderComposerState() {
-      const currentSessionId = String(state.currentSessionId || '').trim();
+      const currentSessionId = getPaneSessionId();
       const activeSession = (Array.isArray(state.sessions) ? state.sessions : [])
         .find((session) => session?.id === currentSessionId) || null;
       const pluginSessionReadOnly = activeSession?.session_type === 'plugin';
       const sendBusy = isSendBusy();
-      const runtimePreferences = getCurrentRuntimePreferences();
+      const runtimePreferences = getPaneRuntimePreferences();
       const runModeProjection = composerState.projectRunMode(runtimePreferences.runMode, {
         planModeFallback: runtimePreferences.planMode === true,
       });
@@ -583,8 +664,8 @@
         && !interactiveBatchActive;
       const hasComposerDraft = Boolean(String(chatInput.value || '').trim())
         || Boolean(Array.isArray(state.attachments?.queued) && state.attachments.queued.length);
-      const composerPreferredModelActivity = getActivitySnapshot(ACTIVITY_SCOPE.composerPreferredModel);
-      const composerReasoningEffortActivity = getActivitySnapshot(ACTIVITY_SCOPE.composerReasoningEffort);
+      const composerPreferredModelActivity = getSessionActivitySnapshot(ACTIVITY_SCOPE.composerPreferredModel, currentSessionId);
+      const composerReasoningEffortActivity = getSessionActivitySnapshot(ACTIVITY_SCOPE.composerReasoningEffort, currentSessionId);
       const composerRunModeActivity = getActivitySnapshot(ACTIVITY_SCOPE.composerRunMode);
       const composerPrimaryActivity = getMostRecentActivity([ACTIVITY_SCOPE.composerRunMode]);
       // model_unavailable keeps the composer usable: sending IS the retry —
@@ -613,6 +694,12 @@
         || !backendComposerUsable
         || (sendBusy && !queueEligible)
         || !hasComposerDraft;
+      // Status loader F6: the load is told under the input; Send's tooltip
+      // re-reads its reason when the flag flips.
+      const composerRender = globalThis.rendererComposerV2Render;
+      const modelLoadingLine = composerRender?.describeModelLoading?.(state.backend) || '';
+      composerRender?.syncComposerLoadingLines?.(documentRef, modelLoadingLine); // every pane (the load is app-wide)
+      setDatasetIfChanged(sendButton, 'modelLoading', modelLoadingLine ? 'true' : 'false');
       const visionGate = (globalThis.rendererComposerVisionGate || {}).syncComposerVisionGate?.({
         state, runtimePreferences, sendButton,
         reasonNode: documentRef?.getElementById?.('composerSendDisabledReason'),
@@ -662,12 +749,9 @@
         || backendComposerOffline
         || reasoningEffortUnsupported
         || isActivityBusy(composerReasoningEffortActivity);
-      const composerSettingsLocked = pluginSessionReadOnly
-        || !state.auth.authenticated || backendComposerOffline;
       for (const [control, locked] of [
         [composerModelSelect, composerModelLocked],
         [composerEffortSelect, composerEffortLocked],
-        [composerSettingsButton, composerSettingsLocked],
       ]) {
         control.disabled = false;
         control.classList.toggle('composer-control-inert', locked);
@@ -701,13 +785,7 @@
         ? jt('chat.chrome.reasoningUnsupported', 'Reasoning effort is not supported by the selected model.')
         : isActivityBusy(composerReasoningEffortActivity) ? jt('chat.chrome.reasoningEffortSaving', 'The reasoning effort is being saved.') : sharedConfigReason
       );
-      syncDisabledReason(
-        composerSettingsButton,
-        documentRef?.getElementById?.('composerSettingsDisabledReason'),
-        sharedConfigReason
-      );
       composerModelSelect.value = runtimePreferences.preferredModel;
-      syncComposerModelSelectWidth();
       composerEffortSelect.dataset.requestedEffort = String(runtimePreferences.reasoningEffort || '');
       composerEffortSelect.value = runtimePreferences.reasoningEffort;
       // No matching option (a conversation switch onto a model without that
@@ -748,6 +826,13 @@
         actions: getRuntimeQueueActions(),
         closing: runtimeSessionState?.closing === true,
       });
+      // F20: a send held behind another chat says so where its reply will appear.
+      globalRef.rendererAdmissionWaitLine?.syncAdmissionWaitLine?.({
+        timeline: chatTimeline,
+        state,
+        rows: durablePending,
+        onOpenChat: (sessionId) => state.runtimeSendController?.openChat?.(sessionId),
+      });
       syncComposerAccessoryVisibility();
       renderComposerEnhancements?.();
       if ((pluginSessionReadOnly || !state.auth.authenticated) && state.ui.composerPopoverOpen) {
@@ -765,7 +850,7 @@
       // of each polling state on its own cadence.
       const CustomEventCtor = chatInput?.ownerDocument?.defaultView?.CustomEvent || globalThis.CustomEvent;
       if (typeof CustomEventCtor === 'function' && typeof chatInput?.dispatchEvent === 'function') {
-        chatInput.dispatchEvent(new CustomEventCtor('composer-state-rendered', { bubbles: true }));
+        chatInput.dispatchEvent(new CustomEventCtor('composer-state-rendered', { bubbles: true, detail: { sessionId: state.currentSessionId || '' } }));
       }
     }
 
@@ -796,12 +881,6 @@
         renderPinnedNotes();
       }
       syncBackendNotice();
-      if (typeof publishLifecycleStatus === 'function') {
-        publishLifecycleStatus();
-      }
-      if (typeof renderTurnStatusPill === 'function') {
-        renderTurnStatusPill();
-      }
       if (state.ui.activeView === 'logs') {
         renderLogs();
       }
@@ -812,6 +891,12 @@
       renderComposerState();
       renderComposerPopover();
       renderCommandPopover();
+    }
+
+    function dispose() {
+      resumeSetupButton?.removeEventListener('click', handleResumeSetup);
+      resumeSetupButton?.remove();
+      setupFootnote?.remove();
     }
 
     return {
@@ -830,11 +915,13 @@
       renderComposerJumpControls,
       renderComposerState,
       renderAll,
+      dispose,
     };
   }
 
   return {
     createChromePipeline,
+    resolvePaneRuntimePreferences,
     syncDisabledReason,
   };
 });

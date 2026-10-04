@@ -52,6 +52,9 @@
     none: jt('ide.testRunner.neverRun', 'Never run'),
   };
 
+  // List/header controls whose data attribute names the equivalent control across a re-render.
+  const FOCUS_ATTRS = ['run', 'abort', 'remove', 'gate-config', 'gate-mode'].map((name) => `data-test-runner-${name}`);
+
   function defaultEscapeHtml(value) {
     return String(value == null ? '' : value)
       .replaceAll('&', '&amp;')
@@ -101,6 +104,8 @@
     // records its result here; render() drops the overlay once getState() reflects
     // the change (canonical truth wins).
     let pendingConfigs = null;
+    // The panel root this instance last painted in full (see swapBody).
+    let paintedRoot = null;
 
     function currentConfigs() {
       if (Array.isArray(pendingConfigs)) {
@@ -139,24 +144,11 @@
       });
     }
 
-    function buildAbortButton(config) {
-      const id = config.id;
-      const label = config.label || config.id;
-      return buildActionButton({
-        variant: 'danger',
-        className: 'ide-test-runner-panel__abort',
-        label: jt('ide.testRunner.stop', 'Stop'),
-        ariaLabel: jt('ide.testRunner.stopConfig', 'Stop {label}', { label }),
-        dataset: { 'test-runner-abort': id },
-      });
-    }
-
     // UIUX-033: a live run on this config disables Remove — the backend
     // already refuses this write (CONFIG_ACTIVE_RUN), but a client-side guard
-    // avoids even the optimistic-removal round trip: the row (and its Stop
-    // control) must never flash out of the list while the process is still
-    // running. See also buildActiveRunCard, which keeps Stop reachable
-    // independent of this row's presence.
+    // avoids even the optimistic-removal round trip: the row must never flash
+    // out of the list while the process is still running. Stop lives only on
+    // buildActiveRunCard, which stays reachable independent of this row.
     function buildRemoveButton(config, removeDisabled) {
       return buildActionButton({
         variant: 'ghost',
@@ -194,7 +186,6 @@
         + `<span class="ide-test-runner-panel__cmd">${escapeHtml(config.command || '')}</span>`
         + '<span class="ide-test-runner-panel__row-actions">'
         + buildRunButton(config, runDisabled, isRunning)
-        + (isRunning ? buildAbortButton(config) : '')
         + buildRemoveButton(config, isRunning)
         + '</span>'
         + '</div>';
@@ -279,8 +270,8 @@
     // UIUX-033: a Stop control bound to the RUN itself (activeRun/
     // activeConfigId), not to a config row's presence in `configs`. Always
     // renders while a run is active, even for a configId that no longer
-    // resolves to any entry in the list — the per-row Stop can vanish with the
-    // row; this card is the one kill path that can't.
+    // resolves to any entry in the list. It is the ONLY Stop (a per-row copy
+    // duplicated it and could vanish with the row).
     function buildActiveRunCard(state, configs) {
       const activeRun = state.activeRun || null;
       if (!activeRun) {
@@ -300,6 +291,32 @@
         + `<span class="ide-test-runner-panel__active-run-label">${escapeHtml(jt('ide.testRunner.runningLabel', 'Running: {label}', { label }))}</span>`
         + stopBtn
         + '</div>';
+    }
+
+    // A state push (a run starting/finishing, Jenny's gate runs) swaps only the
+    // header/card/list region in front of the add-config form, which stays the
+    // same node (typed values, focus, form note survive). A focused list control
+    // hands focus to its equivalent; a clicked Run that is now disabled hands it
+    // to the Stop that appeared, and a Stop gone with its run back to that Run.
+    // False when a sibling view replaced the shared host (full repaint needed).
+    function swapBody(host, body) {
+      const formEl = paintedRoot && paintedRoot.parentNode === host && host.childElementCount === 1
+        ? paintedRoot.querySelector(':scope > .ide-test-runner-panel__form') : null;
+      if (!formEl) return false;
+      const active = host.ownerDocument.activeElement;
+      const attr = active && !formEl.contains(active) && paintedRoot.contains(active)
+        ? FOCUS_ATTRS.find((name) => active.hasAttribute(name)) : null;
+      const value = attr ? active.getAttribute(attr) : null;
+      while (formEl.previousSibling) formEl.previousSibling.remove();
+      formEl.insertAdjacentHTML('beforebegin', body);
+      if (!attr) return true;
+      const find = (name, v) => Array.from(paintedRoot.querySelectorAll(`[${name}]`)).find((el) => el.getAttribute(name) === v) || null;
+      let target = find(attr, value);
+      if (!target || target.disabled) {
+        target = attr === 'data-test-runner-abort' ? find('data-test-runner-run', value) : paintedRoot.querySelector('[data-test-runner-abort]');
+      }
+      if (target && !target.disabled) target.focus();
+      return true;
     }
 
     function render() {
@@ -330,14 +347,15 @@
         pendingConfigs = null;
       }
       const rows = configs.filter((c) => c && c.id).map((c) => buildRow(c, state)).join('');
-      host.innerHTML = '<div class="ide-test-runner-panel">'
-        + buildGateHeader(state, configs)
+      const body = buildGateHeader(state, configs)
         + buildActiveRunCard(state, configs)
         + '<div class="ide-test-runner-panel__list">'
         + (rows || '<div class="ide-test-runner-panel__empty">' + escapeHtml(jt('ide.testRunner.noConfigurations', 'No test configurations yet.')) + '</div>')
-        + '</div>'
-        + buildForm()
         + '</div>';
+      if (!swapBody(host, body)) {
+        host.innerHTML = '<div class="ide-test-runner-panel">' + body + buildForm() + '</div>';
+        paintedRoot = host.firstElementChild;
+      }
       mountHistory(host, state, configs);
     }
 
@@ -546,6 +564,15 @@
       ensureBound(getMountEl());
     }
 
+    // A workspace-root switch must not carry the old root's add-form draft into
+    // the new one: drop the kept form so the next render repaints it empty.
+    function resetForRoot() {
+      paintedRoot = null;
+      pendingConfigs = null;
+      const host = getMountEl();
+      if (host) host.__trPanelKey = null;
+    }
+
     function dispose() {
       if (boundHost) {
         boundHost.removeEventListener('click', onClick);
@@ -555,7 +582,7 @@
       }
     }
 
-    return { render, bindEvents, dispose };
+    return { render, bindEvents, dispose, resetForRoot };
   }
 
   // STATUS_LABELS is exported for focused panel tests.

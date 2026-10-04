@@ -47,7 +47,7 @@ class ResourceProgressContinuation(BeforeToolDispatchContinuation):
 
 
 def _capture(loop: Any, iteration: int, deferred: Any, calls: tuple) -> Any:
-    from sidecar.runtime.decision_checkpoint import _assert_supported, _previous  # noqa: PLC0415
+    from sidecar.runtime.decision_checkpoint import _assert_supported, _previous
 
     runtime = loop.runtime
     if (

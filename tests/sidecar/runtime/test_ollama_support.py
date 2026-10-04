@@ -1,17 +1,16 @@
 """Behavioral unit tests for sidecar.runtime.ollama_support re-export surface."""
 
-from sidecar.runtime import ollama_support
-
+from sidecar.ai.engines.catalog import resolve_ollama_base_url
+from sidecar.ai.engines.response_format import ResponseFormat
+from sidecar.ai.exceptions import ModelNotLoadedError
 from sidecar.ai.reasoning_parser import (
     DelimitedReasoningParser,
     extract_delimited_reasoning,
 )
-from sidecar.ai.engines.response_format import ResponseFormat
 from sidecar.ai.thinking_guard import ThinkingRepetitionGuard
 from sidecar.ai.tools.inband_parser import extract_inband_tool_calls
 from sidecar.ai.tools.models import GenerationResult, ToolCallRequest
-from sidecar.ai.engines.catalog import resolve_ollama_base_url
-from sidecar.ai.exceptions import ModelNotLoadedError
+from sidecar.runtime import ollama_support
 
 
 def test_all_is_nonempty_list():

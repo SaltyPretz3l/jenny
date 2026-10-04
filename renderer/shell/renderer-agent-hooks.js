@@ -161,6 +161,10 @@
         lastError: projected.lastError,
         // setup readiness: { workspaceRootConfigured, complete }
         setup: projected.setup,
+        // would-be desktop toasts (newest last), whatever main's gates decided
+        desktopNotifications: Array.isArray(state.desktopNotificationLog)
+          ? state.desktopNotificationLog.slice(-32).map((entry) => ({ ...entry }))
+          : [],
       };
     }
 
@@ -213,6 +217,13 @@
       return fresh;
     }
 
+    // Desktop-notification candidates sent since the previous drain (the
+    // controller keeps the identity cursor, like drainClientLogs above).
+    function drainDesktopNotifications() {
+      const drained = state.desktopNotificationsController?.drain?.();
+      return Array.isArray(drained) ? drained.map((entry) => ({ ...entry })) : [];
+    }
+
     function isIdleNow() {
       const pendingStreams = getInFlightStreamIds().length;
       const bufferedStreams = state.bufferedStreamEventsByStream?.size || 0;
@@ -255,6 +266,7 @@
         sendPrompt,
         openSession,
         drainClientLogs,
+        drainDesktopNotifications,
         waitForIdle,
       });
     }

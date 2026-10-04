@@ -28,7 +28,11 @@ from sidecar.ai.routing.tool_execution_results import tool_result_message
 from sidecar.ai.tools.models import GenerationResult, ToolCallRequest
 from sidecar.ai.tools.preview_image import native_preview_image
 from sidecar.runtime.chat_models import ChatRequestContext
-from sidecar.runtime.electron_tool_bridge import _normalize_result_payload
+from sidecar.runtime.electron_tool_bridge import (
+    ElectronToolBridgeRequest,
+    _normalize_result_payload,
+    execute_electron_tool,
+)
 from sidecar.runtime.vllm_engine_support import _build_messages as openai_messages
 
 PNG_BASE64 = "iVBORw0KGgoAAAANSUhEUgAAAAIAAAABCAYAAAD0In+KAAAADklEQVR4nGP4z8AAQv8BD/kD/YURmXYAAAAASUVORK5CYII="
@@ -355,3 +359,133 @@ def test_loop_terminal_releases_pixels(monkeypatch, failure):
     else:
         assert tool_loop.run_tool_loop(**kwargs) == "finished"
     assert not runtime.preview_images
+
+
+# F27: image_generate hands the chat model the picture it drew.
+IMAGE_DESCRIPTOR = replace(DESCRIPTOR, name="image_generate")
+
+
+def image_call(key="image_1"):
+    return ToolCallRequest(tool_id="image_generate", arguments={"prompt": "a fox"}, call_id=key)
+
+
+def admit_image(runtime, key="image_1", engine=None, success=True, descriptor=IMAGE_DESCRIPTOR):
+    return admit_preview(
+        runtime,
+        engine or Engine(),
+        image_call(key),
+        MCPToolResult("image_generate", "Generated", success, preview_image=wire(key)),
+        descriptor,
+    )
+
+
+def test_generated_image_reaches_a_vision_model_with_describe_what_you_see_copy():
+    runtime = LoopRuntime()
+    delivery, notice = admit_image(runtime)
+    assert delivery == "queued"
+    assert "Screenshot" not in notice
+    messages = [
+        {"role": "user", "content": "Draw a fox."},
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [{"id": "image_1", "name": "image_generate", "arguments": {}}],
+        },
+        {"role": "tool", "name": "image_generate", "tool_call_id": "image_1", "content": "Done"},
+    ]
+    output, _ = prepare_preview_messages(
+        kernel(), runtime, messages, system="", tools=[], max_tokens=128
+    )
+    assert output[-1]["images"][0].data == PNG
+    assert "Here is the image you generated" in output[-1]["content"]
+    assert "describe what is actually in it" in output[-1]["content"]
+    assert "preview_test" not in output[-1]["content"]
+
+
+def test_text_only_model_is_told_plainly_it_cannot_see_the_generated_image():
+    runtime = LoopRuntime()
+    no_vision = SimpleNamespace(capabilities={"vision": False})
+    delivery, notice = admit_image(runtime, engine=no_vision)
+    assert delivery == "unsupported"
+    assert notice.startswith("You cannot see this image.")
+    assert "only what you asked for (the prompt)" in notice
+    assert not runtime.preview_images
+    assert admit_image(runtime, success=False) == ("", "")
+    assert not runtime.preview_images
+
+
+def test_preview_test_copy_is_unchanged_and_forged_images_on_other_tools_are_dropped():
+    runtime = LoopRuntime()
+    assert admit(runtime) == (
+        "queued",
+        "Screenshot queued for the next model request; visual review is not yet complete.",
+    )
+    no_vision = SimpleNamespace(capabilities={"vision": False})
+    assert admit(LoopRuntime(), engine=no_vision)[1] == (
+        "Visual inspection requires a vision-capable active model."
+    )
+    forged = admit_preview(
+        runtime,
+        Engine(),
+        ToolCallRequest(tool_id="read_file", arguments={"screenshot": True}, call_id="x"),
+        MCPToolResult("read_file", "text", True, preview_image=wire("x")),
+        replace(DESCRIPTOR, name="read_file"),
+    )
+    assert forged == ("", "")
+    assert set(runtime.preview_images) == {"capture_1"}
+    payload = {
+        "tool_name": "image_generate",
+        "output": "Generated",
+        "success": True,
+        "preview_image": wire("image_1"),
+    }
+    assert _normalize_result_payload(
+        payload, fallback_tool_name="image_generate", preview_call_id="image_1"
+    ).preview_image == wire("image_1")
+    assert (
+        _normalize_result_payload(
+            payload, fallback_tool_name="image_generate", preview_call_id="wrong"
+        ).preview_image
+        is None
+    )
+    assert (
+        _normalize_result_payload(
+            {**payload, "tool_name": "jenny_status"},
+            fallback_tool_name="jenny_status",
+            preview_call_id="image_1",
+        ).preview_image
+        is None
+    )
+
+
+def test_bridge_keeps_the_generated_image_for_the_matching_call_without_a_screenshot_flag():
+    payload = {
+        "tool_name": "image_generate",
+        "output": "Generated",
+        "success": True,
+        "preview_image": wire("image_1"),
+    }
+
+    def request(tool_name, call_id="image_1"):
+        return ElectronToolBridgeRequest(
+            tool_name=tool_name,
+            arguments={"prompt": "a fox"},
+            request_id="req",
+            trace_id=None,
+            session_id="session",
+            tool_call_id=call_id,
+            write_message=lambda _message: None,
+            read_message=None,
+            response_reader_factory=lambda expected_id, **_: (
+                lambda _timeout: {
+                    "jsonrpc": "2.0",
+                    "id": expected_id,
+                    "result": {**payload, "tool_name": tool_name},
+                }
+            ),
+            timeout_seconds=1.0,
+        )
+
+    assert execute_electron_tool(request("image_generate")).preview_image == wire("image_1")
+    assert execute_electron_tool(request("image_generate", "other")).preview_image is None
+    assert execute_electron_tool(request("jenny_status")).preview_image is None

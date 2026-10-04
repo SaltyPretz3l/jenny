@@ -271,6 +271,7 @@ def _scan_one_directory(  # noqa: PLR0913 - explicit traversal seam.
                     # One bad dirent (permission error, raced delete, ...) must
                     # not fail the whole scan — same isolation as list_dir.
                     state.entries_skipped += 1
+                    state.note_truncation("filesystem_error", halt=False)
                     continue
                 is_link, is_directory, is_file = classified
                 if is_link:
@@ -294,6 +295,7 @@ def _scan_one_directory(  # noqa: PLR0913 - explicit traversal seam.
                 try:
                     resolved = workspace.ensure_within_root(Path(entry.path))
                 except ToolExecutionFailure:
+                    state.note_truncation("filesystem_error", halt=False)
                     state.entries_skipped += 1
                     continue
                 if is_directory:
@@ -309,6 +311,7 @@ def _scan_one_directory(  # noqa: PLR0913 - explicit traversal seam.
     except OSError:
         # One unreadable directory must not fail the manifest; isolate it.
         state.entries_skipped += 1
+        state.note_truncation("filesystem_error", halt=False)
 
 
 def _classify_entry(entry: os.DirEntry[str]) -> tuple[bool, bool, bool] | None:
@@ -444,11 +447,12 @@ def _read_bounded_readme_prefix(candidate: Path) -> str | None:
     before the single bounded ``os.read``.
     """
     try:
-        if is_link_object(candidate):
+        if is_link_object(candidate) or not stat_module.S_ISREG(os.lstat(candidate).st_mode):
             return None
-    except ToolExecutionFailure:
+    except (OSError, ToolExecutionFailure):
         return None
-    flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0)
+    flags = (os.O_RDONLY | getattr(os, "O_BINARY", 0)
+             | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0))
     try:
         fd = os.open(str(candidate), flags)
     except OSError:

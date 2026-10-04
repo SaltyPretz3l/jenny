@@ -84,6 +84,47 @@ test('positionPopover applies viewport-clamped coordinates and internal scrollin
   assert.equal(popover.style.top, '80px', 'dispose removes viewport repositioning');
 });
 
+test('opened from the collapsed composer\'s open settings list, the details cover the list; closed, today\'s placement returns', (t) => {
+  const dom = new JSDOM('<div class="composer" data-toolbar-compact data-settings-open><div class="composer-settings-group" id="group">'
+    + '<div class="composer-context-usage-slot"><button id="ring"></button><div id="popover"></div></div></div></div>', {
+    pretendToBeVisual: true,
+  });
+  const document = dom.window.document;
+  const composer = document.querySelector('.composer');
+  const group = document.getElementById('group');
+  const ring = document.getElementById('ring');
+  const popover = document.getElementById('popover');
+  Object.defineProperty(dom.window, 'innerWidth', { configurable: true, value: 800 });
+  Object.defineProperty(dom.window, 'innerHeight', { configurable: true, value: 600 });
+  // The open group is the positioned box (its slots are static), so it is the offsetParent.
+  Object.defineProperty(popover, 'offsetParent', { configurable: true, value: group });
+  group.getBoundingClientRect = () => ({ left: 480, right: 760, top: 340, bottom: 560, width: 280, height: 220 });
+  ring.getBoundingClientRect = () => ({ top: 500, bottom: 520, right: 740 });
+  popover.getBoundingClientRect = () => ({ width: 320, height: 180 });
+  t.after(() => details.dispose());
+
+  assert.equal(details.positionPopover(popover, ring), true);
+  assert.equal(popover.dataset.settingsCover, '1');
+  assert.equal(popover.style.minWidth, '280px', 'at least as wide as the list');
+  assert.equal(popover.style.minHeight, '220px', 'at least as tall as the list');
+  // Bottom-end corner on the list's: viewport left 760 - 320 = 440, top 560 - 220 = 340; group-relative.
+  assert.equal(popover.style.left, '-40px');
+  assert.equal(popover.style.top, '0px');
+  assert.equal(popover.style.right, 'auto');
+  assert.equal(popover.style.bottom, 'auto');
+  assert.equal(popover.style.maxHeight, '576px', 'the viewport less both margins');
+  assert.equal(popover.style.overflowY, 'auto');
+
+  composer.removeAttribute('data-settings-open');
+  assert.equal(details.positionPopover(popover, ring), true);
+  assert.equal(popover.dataset.settingsCover, undefined, 'the next ordinary placement clears the cover');
+  assert.equal(popover.style.minWidth, '');
+  assert.equal(popover.style.minHeight, '');
+  // Today's layout: above the ring, right-aligned to it (740 - 320 = 420), group-relative.
+  assert.equal(popover.style.left, '-60px');
+  assert.equal(popover.style.top, String(500 - 8 - 180 - 340) + 'px');
+});
+
 test('next-turn detail copy distinguishes estimate and discloses narrowing', () => {
   const copy = details.formatSummary({
     status: 'estimated', history_scope: 'recent', history_message_count: 12,

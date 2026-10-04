@@ -117,6 +117,8 @@ class ToolAssemblyContext:
     enforce_mode_policy: bool = True
     enforce_request_preferences: bool = True
     include_deferred_tools: bool = True
+    # The request's effective safety mode (owner D3); None reads the config.
+    safety_mode: str | None = None
 
 
 @dataclass(frozen=True)
@@ -139,9 +141,12 @@ class AssembledToolEntry:
             source_kind=self.descriptor.source_kind,
             tool_family=self.descriptor.tool_family,
             server_name=self.descriptor.server_name,
+            connection_id=self.descriptor.connection_id,
+            side_effecting=self.descriptor.side_effecting,
             input_schema=self.descriptor.input_schema,
             applicable=self.applicable,
             unmet_preconditions=self.unmet_preconditions,
+            deferred=self.deferred,
         )
 
 
@@ -190,6 +195,16 @@ class AssembledToolContract:
     @property
     def filtered_descriptors(self) -> tuple[CanonicalToolDescriptor, ...]:
         return tuple(entry.descriptor for entry in self.entries)
+
+
+def engine_receives_native_tool_schemas(engine: Any) -> bool:
+    """Whether the system prompt may list tool names only.
+
+    Strict on purpose: only a positive ``supports_tool_calling`` report means
+    the provider ``tools`` payload carries the descriptions. Anything else
+    (in-band engines, a missing or non-bool probe) keeps the full digest.
+    """
+    return getattr(engine, "supports_tool_calling", None) is True
 
 
 def schema_from_descriptor(descriptor: CanonicalToolDescriptor) -> dict[str, Any]:
@@ -343,7 +358,7 @@ def _evaluate_applicability(
 
 
 def _safety_mode(config: Any | None) -> str:
-    value = _config_utils.config_value(config, "safety_mode", "normal")
+    value = config if isinstance(config, str) else _config_utils.config_value(config, "safety_mode", "normal")
     if isinstance(value, str) and value.strip().lower() in {"normal", "strict", "paranoid"}:
         return value.strip().lower()
     return "normal"
@@ -353,7 +368,8 @@ def _strict_safety_mode_blocks(
     descriptor: CanonicalToolDescriptor,
     context: ToolAssemblyContext,
 ) -> bool:
-    return _safety_mode(context.config) == "strict" and descriptor.tool_family == "web"
+    mode = _safety_mode(context.safety_mode) if context.safety_mode else _safety_mode(context.config)
+    return mode == "strict" and descriptor.tool_family == "web"
 
 
 def _base_unavailable_reason(
@@ -426,11 +442,7 @@ def _base_unavailable_reason(
             return REQUEST_DISABLED_REASON
         if descriptor.tool_family in disabled_tool_families:
             return REQUEST_DISABLED_REASON
-        if (
-            enabled_tools
-            and descriptor.name not in enabled_tools
-            and descriptor.source_kind != "plugin_native_mcp"
-        ):
+        if enabled_tools and descriptor.name not in enabled_tools:
             return REQUEST_NOT_ENABLED_REASON
     return None
 

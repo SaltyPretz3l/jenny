@@ -102,7 +102,7 @@ test('Delete toolbar button requires confirm; Cancel leaves the artifact intact 
   const { app, deleteCalls, sessionId } = await makeApp({
     artifactReviewPreferences: { enabled: true, collapsed: false, width: 460 },
     shellOverrides: {
-      features: { state: { featureFlags: { artifact_panel_v2: true } } },
+      features: { state: { featureFlags: {} } },
     },
   });
   const { window, shell } = app;
@@ -147,7 +147,7 @@ test('Confirming Delete removes the artifact, updates the catalog, and moves sel
   const { app, deleteCalls, sessionId } = await makeApp({
     artifactReviewPreferences: { enabled: true, collapsed: false, width: 460 },
     shellOverrides: {
-      features: { state: { featureFlags: { artifact_panel_v2: true } } },
+      features: { state: { featureFlags: {} } },
     },
   });
   const { window, shell } = app;
@@ -198,7 +198,7 @@ test('Split review panel (Artifact Panel V2): confirming Delete on the only arti
   const { app, sessionId } = await makeApp({
     artifactReviewPreferences: { enabled: true, collapsed: false, width: 460 },
     shellOverrides: {
-      features: { state: { featureFlags: { artifact_panel_v2: true, workspace_artifact_panel: true } } },
+      features: { state: { featureFlags: { workspace_artifact_panel: true } } },
     },
   });
   const { window, shell } = app;
@@ -254,7 +254,7 @@ test('Confirm delete names A; if selection moves to B before Confirm is clicked,
   const { app, deleteCalls, sessionId } = await makeApp({
     artifactReviewPreferences: { enabled: true, collapsed: false, width: 460 },
     shellOverrides: {
-      features: { state: { featureFlags: { artifact_panel_v2: true } } },
+      features: { state: { featureFlags: {} } },
     },
   });
   const { window, shell } = app;

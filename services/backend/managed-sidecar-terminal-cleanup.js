@@ -36,7 +36,8 @@ function reportManagedContinuationAttention(service, runtime, error, diagnostic 
   // resources stay owned until recovery proves settlement.
   service.emit('chat-stream', { ...identity, type: 'error', terminal_status: 'unknown',
     error_code: RUNTIME_ERROR_CODES.ADMISSION_REJECTED, category: 'runtime', retryable: false,
-    message: 'Session runtime needs attention. Settlement could not be confirmed. Open Runtime & orchestration in Settings.',
+    // Main-process copy stays English; the renderer localizes by error_code.
+    message: 'Session runtime needs attention. Settlement could not be confirmed. Open Diagnostics › Runs.',
   });
 }
 
@@ -100,9 +101,14 @@ async function finishManagedRuntimeCompletion({ service, runtimeOperationGateway
       }
     },
   });
-  const inference = runtimeOperationGateway?.snapshot?.();
+  // The turn's producer is settled when nothing still runs and no inference
+  // attempt is unproven. A tool whose cleanup is unconfirmed stays fenced in
+  // the resource broker; it must not hold the chat turn and its lane (a
+  // quarantined tool silently wedged every later send, dogfood HB-009).
+  const operations = runtimeOperationGateway?.snapshot?.();
+  const inference = operations?.inference || operations;
   return { status: terminalStatus,
-    producerSettled: !runtimeOperationGateway || (inference.active === 0 && inference.quarantined === 0),
+    producerSettled: !runtimeOperationGateway || (operations.active === 0 && inference.quarantined === 0),
     canonicalSettled: cleanup.canonicalSettled === true };
 }
 

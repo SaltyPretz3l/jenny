@@ -65,14 +65,16 @@ bytes; creation requires approving that exact one-time review. Root identity
 and content hashes are revalidated, and later source drift aborts and removes
 partial output before a completed archive is published.
 
-The standalone local-image-generation plugin keeps its approximately 40 GB
-runtime at `~/.companion/image-gen` outside archive and uninstall cleanup by
-default. Plugin uninstall removes the package and its settings but preserves
-that runtime and all generated attachments. To delete the runtime, use the
-plugin workspace's explicit **Remove downloaded runtime** action; it shows the
-measured bytes, requires confirmation, refuses while another operation is
-active, terminates the supervised host first, and retains retryable
-pending-removal state when Windows locks a file.
+The standalone local-image-generation plugin was archived on 2026-10-02, and
+its **Remove downloaded runtime** action went with it. A profile that used the
+plugin may still hold its approximately 40 GB runtime (Python environment and
+model weights) in the `image-gen` folder beneath `.companion`. Archive and
+uninstall cleanup never touch that folder, and generated image attachments live
+elsewhere, so remove it by hand with Jenny closed:
+`%USERPROFILE%\.companion\image-gen` on Windows and `~/.companion/image-gen` on
+macOS and Linux.
+
+Native image generation now uses an application-owned engine under `<userData>/engines` and disposable `image-engine-scratch` data, which are known profile cleanup targets. Model weights under `<userData>/models` or configured external model paths remain outside cleanup and archive scope. Generated image attachments stay with canonical managed media. This ownership is separate from the retained legacy `.companion/image-gen` directory above.
 
 ## Restore behavior
 
@@ -115,8 +117,8 @@ refuses links/reparse traversal, is safe to retry, and reports per-target
 receipts. Profile and runtime cleanup use exact child-name allowlists. Unknown
 profile children and unknown `.companion` children are retained and reported;
 `models` and `python-runtime` are intentionally outside those allowlists.
-`image-gen` is also retained unless the plugin's explicit runtime-removal action
-owns the deletion.
+`image-gen`, left by the archived image plugin, is also retained; remove it by
+hand as described above.
 
 Archives are never cleanup targets. Shared Ollama models, package-manager data,
 global Node/Python installations, external knowledge folders, project files

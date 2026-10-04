@@ -1,0 +1,13 @@
+{
+  "note": "Shared fixture: tests/context-budget-trimmer.test.js (computeEffectiveContextBudget) and tests/sidecar/ai/context/test_token_budget_js_parity.py (TokenBudget.effective_context) both assert every case. The Python side is constructed with max_output_tokens = context_window so the quarter-window output cap binds (the JS side cannot know the model's max output tokens), and with zero tools.",
+  "cases": [
+    { "context_window": 2048, "effective_context": 1024 },
+    { "context_window": 4096, "effective_context": 3072 },
+    { "context_window": 8192, "effective_context": 6144 },
+    { "context_window": 16384, "effective_context": 12288 },
+    { "context_window": 32768, "effective_context": 24576 },
+    { "context_window": 65536, "effective_context": 49152 },
+    { "context_window": 131072, "effective_context": 98304 },
+    { "context_window": 200000, "effective_context": 150000 }
+  ]
+}

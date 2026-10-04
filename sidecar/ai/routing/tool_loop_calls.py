@@ -22,6 +22,7 @@ from sidecar.ai.routing import (
     tool_explicit_pause,
     tool_loop_cycle_recovery,
     tool_resource_deferral,
+    write_progress,
 )
 from sidecar.runtime.turn_state import current_live_run_mode_state
 
@@ -413,10 +414,10 @@ class _ToolCallPhasesMixin:
         """Publish this iteration's context reading to the composer ring.
 
         Ephemeral meter hint only (see ``context_usage_events``): guarded on a
-        live budget tracker plus the ``context_usage_live`` flag, deduplicated
-        per request, and never journaled. The provider-truth half is the most
-        recent request's prompt size — ``last_request_input_tokens`` when the
-        engine reports it, otherwise the merged ``input_tokens`` total.
+        live budget tracker, deduplicated per request, and never journaled. The
+        provider-truth half is the most recent request's prompt size —
+        ``last_request_input_tokens`` when the engine reports it, otherwise the
+        merged ``input_tokens`` total.
         """
         usage = getattr(result, "usage", None)
         provider_tokens = 0
@@ -890,18 +891,17 @@ class _ToolCallPhasesMixin:
             except (tool_resource_deferral.ToolLoopSuspended,
                     tool_resource_deferral.DecisionSuspensionError):
                 raise
-            except Exception:  # noqa: BLE001 - pair any pre-dispatch event before re-raising
+            except Exception:  # pair any pre-dispatch event before re-raising
                 self._settle_unfinished_tool_results("sequential_execution_interrupted")
                 raise
         self._refund_failed_web_outcomes(
-            outcomes_len_before_tool_phase,
-            tool_contract=self.tool_contract,
-        )
+            outcomes_len_before_tool_phase, tool_contract=self.tool_contract)
 
-        plan_mode_exited = self._apply_plan_mode_transition(
-            self.outcomes[outcomes_len_before_tool_phase:])
+        new_outcomes = self.outcomes[outcomes_len_before_tool_phase:]
+        plan_mode_exited = self._apply_plan_mode_transition(new_outcomes)
 
         self._append_failed_tool_context_if_needed()
+        write_progress.append_write_progress_nudge(self, new_outcomes)  # TR-015 read streak
 
         if (
             runtime.streaming
@@ -962,14 +962,11 @@ class _ToolCallPhasesMixin:
             )
         # A cycle gets one discovery iteration and, only when discovery succeeds,
         # one execution iteration for the newly promoted tools. Ordinary schemas
-        # never silently reappear after the hint.
-        next_tool_payload = (
-            self._next_cycle_recovery_payload(
-                next_tool_contract,
-                self.outcomes[outcomes_len_before_tool_phase:],
-            )
-            if runtime.remaining_tool_calls > 0
-            else []
+        # never silently reappear after the hint. A spent tool cap keeps the list
+        # offered so the prompt prefix holds (F15); admission rejects the calls.
+        next_tool_payload = self._next_cycle_recovery_payload(
+            next_tool_contract,
+            self.outcomes[outcomes_len_before_tool_phase:],
         )
 
         if self.budget_tracker is not None:

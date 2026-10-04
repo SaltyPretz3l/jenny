@@ -19,6 +19,7 @@ const restorePreferences = require('./restore-preferences');
 const runtimeArchive = require('./runtime-archive');
 const runtimeBackup = require('./restore-runtime-backup');
 const { isUntouchedPersonalityBootstrap, isUntouchedMemoryBootstrap } = require('./fresh-profile-bootstrap');
+const { withDatabaseJournalActions } = require('./sqlite-snapshot');
 const restoreDurability = require('./workspace-restore-durability');
 const { WORKSPACE_RESTORE_JOURNAL, WORKSPACE_RESTORE_ROOT, createWorkspaceRestoreStage } = restoreDurability;
 const { fsyncFile, listWorkspaceRestoreStages } = restoreDurability;
@@ -773,11 +774,10 @@ function buildPromotionActions(manifest, context) {
     if (!targetPath) continue;
     const workspaceEntry = entry.logical_path.startsWith('workspace/');
     const runtimeEntry = entry.logical_path.startsWith('memory/') && !isPathWithin(context.userDataPath, targetPath);
-    actions.push({
-      targetPath,
+    actions.push(...withDatabaseJournalActions(entry.logical_path, targetPath, {
       ownerRoot: workspaceEntry ? context.workspaceRoot : runtimeEntry ? context.runtimePath : context.userDataPath,
       ownerKey: workspaceEntry ? 'workspace' : runtimeEntry ? 'runtime' : 'user',
-    });
+    }));
   }
   for (const targetPath of runtimeArchive.additionalRuntimeDestinations(manifest, context.userDataPath)) {
     actions.push({ targetPath, ownerRoot: context.userDataPath, ownerKey: 'user' });

@@ -10,8 +10,6 @@
 
   function createStreamHandlerRuntime(options = {}) {
     const globalRef = typeof globalThis !== 'undefined' ? globalThis : {};
-    const TURN_PILL_SOURCES = (globalRef.rendererTurnStatusPill && globalRef.rendererTurnStatusPill.TURN_SOURCES)
-      || ['turn.needs_approval', 'turn.running_tool', 'turn.thinking', 'turn.responding', 'turn.sending'];
     const requestFrame = typeof globalRef.requestAnimationFrame === 'function'
       ? globalRef.requestAnimationFrame.bind(globalRef)
       : (callback) => globalRef.setTimeout(callback, 16);
@@ -32,6 +30,10 @@
       renderAll = () => {},
       renderHeader = () => {},
       renderMessages = () => {},
+      // Split view W1-4c: the pane composition's router. `renderSessionPane(id,
+      // kind)` renders the pane showing `id` and answers true, false (the
+      // session is in no pane) or undefined (one pane: take the global render).
+      renderSessionPane = null,
       renderSessions = () => {},
       renderSettings = () => {},
       renderComposerState = () => {},
@@ -41,13 +43,6 @@
       getQueuedSend = () => null,
       restoreQueuedSendDraft = () => {},
       clearSessionComposerNotice = () => {},
-      clearSessionTurnStatusPill = () => {},
-      clearSessionTurnStatusPillSources = (sessionId, sources) => {
-        const list = Array.isArray(sources) ? sources : [];
-        for (let i = 0; i < list.length; i += 1) {
-          clearSessionTurnStatusPill(sessionId, list[i]);
-        }
-      },
       getChatSendLifecycle = () => 'idle',
       setChatSendLifecycle = () => 'idle',
       clearChatSendLifecycle = () => false,
@@ -72,6 +67,42 @@
       settings: false,
       chrome: false,
     };
+    // `messages` and `composer` keyed per session (W1-4c): drained by the SAME
+    // frame as the flat queue, so the latch count stays one.
+    const keyedRenders = { messages: new Set(), composer: new Set() };
+    const NO_KEYED_RENDERS = { messages: [], composer: [] };
+
+    function keySessionFlags(sessionId, flags) {
+      const id = String(sessionId || '').trim();
+      if (typeof renderSessionPane !== 'function' || !id || !flags || flags.full === true) return flags;
+      const next = { ...flags };
+      ['messages', 'composer'].forEach((kind) => {
+        if (next[kind] !== true) return;
+        keyedRenders[kind].add(id);
+        next[kind] = false;
+      });
+      return next;
+    }
+
+    // One pane render per keyed session; `undefined` from the router falls back
+    // to the global render at most once, and never when the flat flag ran it.
+    function routeKeyedRenders(sessionIds, kind, globalRendered) {
+      let fallback = false;
+      sessionIds.forEach((sessionId) => {
+        const routed = renderSessionPane(sessionId, kind);
+        if (routed === true) return;
+        if (routed === false) {
+          if (kind === 'messages') {
+            markHiddenRenderableEvent({ sessionId, eventType: 'message_render', visible: false, current: isCurrentSession(sessionId) });
+          }
+          return;
+        }
+        fallback = true;
+      });
+      if (!fallback || globalRendered) return;
+      if (kind === 'messages') renderMessages();
+      else renderComposerState();
+    }
 
     function syncThinkingIndicatorMode(sessionId, nextMode) {
       if (!thinkingIndicator || !isVisibleChatSession(sessionId)) return;
@@ -95,7 +126,7 @@
       }
     }
 
-    function runQueuedRender(flags) {
+    function runQueuedRender(flags, keyed = NO_KEYED_RENDERS) {
       try {
         if (flags.full) {
           renderAll();
@@ -107,8 +138,10 @@
         if (flags.sessions) renderSessions();
         if (flags.header) renderHeader();
         if (flags.messages) renderMessages();
+        if (keyed.messages.length) routeKeyedRenders(keyed.messages, 'messages', flags.messages);
         if (flags.composerStatus) renderComposerStatusNotice();
         if (flags.composer) renderComposerState();
+        if (keyed.composer.length) routeKeyedRenders(keyed.composer, 'composer', flags.composer);
         if (flags.settings && state.ui?.activeView === 'settings') renderSettings();
         afterRender();
       } catch (error) {
@@ -124,7 +157,10 @@
       Object.keys(renderQueue).forEach((key) => {
         renderQueue[key] = false;
       });
-      runQueuedRender(flags);
+      const keyed = { messages: [...keyedRenders.messages], composer: [...keyedRenders.composer] };
+      keyedRenders.messages.clear();
+      keyedRenders.composer.clear();
+      runQueuedRender(flags, keyed);
     }
 
     function clearRenderSchedule() {
@@ -146,9 +182,12 @@
       drainRenderQueue();
     }
 
+    // `options.sessionId` (W1-4c) keys `messages`/`composer` to that session's
+    // pane, exactly as queueSessionRender's visible path does.
     function queueRender(nextFlags = {}, options = {}) {
+      const flags = options?.sessionId ? keySessionFlags(options.sessionId, nextFlags) : nextFlags;
       Object.keys(renderQueue).forEach((key) => {
-        renderQueue[key] = renderQueue[key] || nextFlags[key] === true;
+        renderQueue[key] = renderQueue[key] || flags[key] === true;
       });
       if (options?.immediate === true) {
         clearRenderSchedule();
@@ -192,7 +231,7 @@
         flagKeys: Object.keys(visibleFlags || {}).filter((key) => visibleFlags[key]),
       });
       if (visible) {
-        queueRender({ ...visibleFlags, chrome: true }, options);
+        queueRender({ ...keySessionFlags(sessionId, visibleFlags), chrome: true }, options);
         return;
       }
       if (renderCurrentMessagesWhenHidden) {
@@ -234,6 +273,7 @@
           text: nextText,
           thinkingId: String(thinkingId || ''),
         });
+        state.streamDeltaKindByStream?.set(normalizedStreamId, 'reasoning');
       } else {
         state.streamThinkingStatusByStream.delete(normalizedStreamId);
       }
@@ -291,6 +331,7 @@
       const streamIds = [...new Set([rawStreamId, normalizedStreamId].filter(Boolean))];
       for (const candidateStreamId of streamIds) {
         clearStreamThinkingStatus(candidateStreamId);
+        state.streamDeltaKindByStream?.delete(candidateStreamId);
         clearPendingApprovalsForStream(approvalToastSessionIds, candidateStreamId);
         state.pendingStreams.delete(candidateStreamId);
         state.toolCallsByStream.delete(candidateStreamId);
@@ -327,7 +368,6 @@
       publishCompleteImpulse({ sessionId, streamId, timeStamp: payload && payload.timeStamp });
       if (options.clearComposerNotice !== false) {
         clearSessionComposerNotice(sessionId);
-        clearSessionTurnStatusPillSources(sessionId, TURN_PILL_SOURCES);
       }
       if (options.restoreQueuedDraft === true && getQueuedSend(sessionId) && isCurrentSession(sessionId)) {
         restoreQueuedSendDraft(sessionId);

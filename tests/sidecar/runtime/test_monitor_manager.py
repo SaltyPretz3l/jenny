@@ -186,7 +186,7 @@ class _InProcessSalienceWorker:
 def test_monitor_match_patterns_emit_only_matches(tmp_path: Path) -> None:
     events: list[dict[str, object]] = []
     manager = MonitorManager(runtime_root=tmp_path / "runtime")
-    manager._salience_worker_factory = _InProcessSalienceWorker  # noqa: SLF001
+    manager._salience_worker_factory = _InProcessSalienceWorker
 
     result = manager.start_monitor(
         command=_mixed_command(),
@@ -354,7 +354,7 @@ def test_monitor_start_fails_closed_before_spawn_when_active_limit_reached(
 ) -> None:
     manager = MonitorManager(runtime_root=tmp_path / "runtime")
     for index in range(8):
-        manager._active[f"mon_{index:012x}"] = SimpleNamespace()  # noqa: SLF001
+        manager._active[f"mon_{index:012x}"] = SimpleNamespace()
 
     def fail_spawn(*_args: object, **_kwargs: object) -> object:
         raise AssertionError("spawn should not be called when active limit is reached")
@@ -459,7 +459,7 @@ def test_monitor_prunes_old_terminal_status_directories_but_keeps_running(
         encoding="utf-8",
     )
 
-    manager._prune_terminal_status_dirs()  # noqa: SLF001
+    manager._prune_terminal_status_dirs()
 
     assert running_dir.exists()
     remaining_terminal_dirs = [path for path in terminal_dirs if path.exists()]
@@ -521,7 +521,7 @@ def test_clean_monitor_exit_releases_owned_process_lease(
     monkeypatch.setattr(
         monitor_manager_module,
         "terminate_managed_background_process",
-        lambda job, *, timeout_seconds: terminated.append(job),
+        lambda job, *, timeout_seconds: terminated.append(job),  # noqa: PLW0108  # signature
     )
 
     manager = MonitorManager(runtime_root=tmp_path / "runtime")

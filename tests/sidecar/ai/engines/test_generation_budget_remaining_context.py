@@ -15,20 +15,20 @@ from sidecar.ai.engines.ollama_telemetry import record_ollama_chat_request
 def _build_engine(context_length: int | None) -> OllamaEngine:
     engine = object.__new__(OllamaEngine)
     engine.host = "http://localhost:11434"
-    engine._request_timeout_seconds = 300  # noqa: SLF001
+    engine._request_timeout_seconds = 300
     engine.model_name = "qwen3.8:27b-ud-iq3-s"
-    engine._ready = True  # noqa: SLF001
-    engine._vision = False  # noqa: SLF001
-    engine._thinking = True  # noqa: SLF001
-    engine._tool_calls_enabled = True  # noqa: SLF001
-    engine._tool_call_http_400_streak = 0  # noqa: SLF001
-    engine._context_length = context_length  # noqa: SLF001
-    engine._configured_context_length = context_length  # noqa: SLF001
-    engine._max_output_tokens = None  # noqa: SLF001
-    engine._profile_max_output_tokens = None  # noqa: SLF001
-    engine._profile_thinking_headroom = None  # noqa: SLF001
-    engine._thinking_capability_source = "metadata"  # noqa: SLF001
-    engine._request_context_lock = threading.Lock()  # noqa: SLF001
+    engine._ready = True
+    engine._vision = False
+    engine._thinking = True
+    engine._tool_calls_enabled = True
+    engine._tool_call_http_400_streak = 0
+    engine._context_length = context_length
+    engine._configured_context_length = context_length
+    engine._max_output_tokens = None
+    engine._profile_max_output_tokens = None
+    engine._profile_thinking_headroom = None
+    engine._thinking_capability_source = "metadata"
+    engine._request_context_lock = threading.Lock()
     return engine
 
 
@@ -48,7 +48,7 @@ def test_build_options_caps_num_predict_by_remaining_context(
 ) -> None:
     engine = _build_engine(context_length)
 
-    options = engine._build_options(  # noqa: SLF001
+    options = engine._build_options(
         16_384,
         0.7,
         thinking=True,
@@ -68,7 +68,7 @@ def test_thinking_headroom_preserves_final_reserve(
 ) -> None:
     engine = _build_engine(32_768)
 
-    assert (  # noqa: SLF001
+    assert (
         engine._thinking_token_headroom(remaining_tokens=remaining_tokens) == expected
     )
 
@@ -76,7 +76,7 @@ def test_thinking_headroom_preserves_final_reserve(
 def test_plain_generation_is_also_capped_by_remaining_context() -> None:
     engine = _build_engine(32_768)
 
-    options = engine._build_options(  # noqa: SLF001
+    options = engine._build_options(
         16_384,
         0.7,
         thinking=False,
@@ -87,7 +87,7 @@ def test_plain_generation_is_also_capped_by_remaining_context() -> None:
 
 
 def test_estimate_request_prompt_tokens_counts_json_overhead() -> None:
-    estimate = OllamaEngine._estimate_request_prompt_tokens(  # noqa: SLF001
+    estimate = OllamaEngine._estimate_request_prompt_tokens(
         {"messages": [{"role": "user", "content": "x" * 400}], "tools": []}
     )
 

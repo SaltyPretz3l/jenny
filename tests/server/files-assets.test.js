@@ -58,6 +58,43 @@ function getContext({ request, response, pathname, authorized = true }) {
   return { request, response, pathname, deviceId: 'device_1', clientId: 'client_1', authorized };
 }
 
+test('asset routes translate semantic service failures without a route-specific kind', async () => {
+  const { hostFailure, ERROR_CODES } = require('../../server/api-contract');
+  const statuses = { invalid: 400, unauthorized: 401, forbidden: 403, conflict: 409,
+    limit: 429, persistence: 503, unavailable: 503 };
+  for (const [kind, code] of Object.entries(ERROR_CODES)) {
+    const result = hostFailure(kind, 'asset_test_failure', 'service_request', true);
+    Object.assign(result.error, { limit_bytes: 0, actual_bytes: 1 });
+    for (const mode of ['upload', 'readAttachment', 'readMessage']) {
+      const commands = { upload: async () => result, readAttachment: async () => result,
+        readMessage: async () => result };
+      const response = responseStub();
+      const request = mode === 'upload'
+        ? { method: 'POST', headers: { 'content-type': 'text/plain' }, body: Buffer.from('x') }
+        : { method: 'GET', headers: {} };
+      const pathname = mode === 'upload' ? '/api/v1/attachments'
+        : `/api/v1/sessions/session_1/${mode === 'readMessage' ? 'messages' : 'attachments'}/value_1`;
+      await createAssetRoutes({ commands })({ ...getContext({ request, response, pathname }), requestId: 'route_request' });
+      assert.equal(response.statusCode, statuses[kind], `${mode} ${kind} uses the semantic status`);
+      assert.deepEqual(JSON.parse(response.body), {
+        ...hostFailure(kind, 'asset_test_failure', 'route_request', true),
+        error: { ...hostFailure(kind, 'asset_test_failure', 'route_request', true).error,
+          limit_bytes: 0, actual_bytes: 1 },
+      });
+      assert.equal(JSON.parse(response.body).error.code, code);
+    }
+  }
+});
+
+test('asset service failures carry semantic host error codes before routing', (t) => {
+  const commands = createAssetCommands({ backend: makeBackend(makeTemp(t)), userDataPath: makeTemp(t) });
+  const invalid = commands.upload({ deviceId: 'device_1', bytes: Buffer.from('x'), mimeType: 'bad' });
+  assert.equal(invalid.error.code, 'CMP-HOST-0001');
+  const forbidden = commands.upload({ deviceId: '', bytes: pngBytes(), mimeType: 'image/png' });
+  assert.equal(forbidden.error.kind, 'forbidden');
+  assert.equal(forbidden.error.code, 'CMP-HOST-0003', 'service envelope must agree with its forbidden kind');
+});
+
 test('staged image uses the real asset store and survives command-surface restart', async (t) => {
   const userDataPath = makeTemp(t);
   const backend = makeBackend(userDataPath);

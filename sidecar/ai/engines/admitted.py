@@ -179,7 +179,7 @@ def _close_iterator(source: Iterator[Any]) -> bool:
         return False
     try:
         close()
-    except BaseException:
+    except BaseException:  # noqa: BLE001  # teardown
         return False
     return True
 
@@ -190,7 +190,7 @@ async def _close_async_iterator(source: AsyncIterator[Any]) -> bool:
         return False
     try:
         await close()
-    except BaseException:
+    except BaseException:  # noqa: BLE001  # teardown
         return False
     return True
 

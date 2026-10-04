@@ -75,7 +75,8 @@ test('S9 (Experience, P1): darkroom declares all 8 Monaco --syntax-* tokens as b
 test('S10 (Experience, P1): quiet curtain inherits the synchronous darkroom semantic palette', () => {
   const overlayCss = fs.readFileSync(path.join(__dirname, '..', 'styles', 'startup-overlay.css'), 'utf8');
   assert.match(overlayCss, /--startup-bg:\s*var\(--bg-base\)/);
-  assert.match(overlayCss, /--startup-mark-dot:\s*var\(--accent-cyan\)/);
-  assert.match(overlayCss, /--startup-rule-fill:\s*var\(--accent-cyan\)/);
+  // The mark-and-dot glyph and the progress rule are retired; the starfield
+  // reads --accent-cyan / --accent / --text-primary from the live palette.
+  assert.doesNotMatch(overlayCss, /--startup-mark-dot|--startup-rule-fill/);
   assert.doesNotMatch(overlayCss, /startup-comet/);
 });

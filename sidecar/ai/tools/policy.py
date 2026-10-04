@@ -76,6 +76,10 @@ _DEFAULT_TOOL_DEFAULTS = {
     # run and can never author the command, so it defaults to auto rather than
     # prompting on every verification. User policy rules still override.
     "verify": POLICY_DECISION_AUTO,
+    # Side-effecting: writes one PNG into the session artifact store and parks the
+    # chat engine for the render, but bounded to the user's own installed engine
+    # and saved model set; nothing leaves the machine.
+    "image_generate": POLICY_DECISION_AUTO,
     # Durable task-board writes have the same bounded, user-owned Open Loops
     # safety posture as the Electron-side Home actions.
     "task_board": POLICY_DECISION_AUTO,

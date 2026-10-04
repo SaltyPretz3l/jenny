@@ -61,7 +61,7 @@ def _tool_fragment_line(
     if first:
         call.update(id=call_id, type="function")
         call["function"]["name"] = name
-    return vllm_test._sse_chunk({"tool_calls": [call]})  # noqa: SLF001
+    return vllm_test._sse_chunk({"tool_calls": [call]})
 
 
 def _terminal_line(finish_reason: str, *, with_delta: bool = True) -> str:
@@ -83,10 +83,10 @@ def _preamble_length_cut_lines(argument_bytes: int) -> list[str]:
         fragments.append(piece)
         total_bytes += len(piece.encode("utf-8"))
     return [
-        vllm_test._sse_chunk(  # noqa: SLF001
+        vllm_test._sse_chunk(
             {"reasoning_content": "I will write the whole tutorial in one call."}
         ),
-        vllm_test._sse_chunk({"content": _B1_PREAMBLE}),  # noqa: SLF001
+        vllm_test._sse_chunk({"content": _B1_PREAMBLE}),
         _tool_fragment_line(0, fragments[0], first=True, name="write_file"),
         *(_tool_fragment_line(0, fragment) for fragment in fragments[1:]),
         _terminal_line("length"),
@@ -127,12 +127,12 @@ def test_tool_stream_length_cut_tool_call_is_a_checkpoint_not_a_fatal_error(
     tail: list[str],
     expected_finish_reason: str,
 ) -> None:
-    engine = vllm_test._make_streaming_engine(monkeypatch)  # noqa: SLF001
-    vllm_test._patch_stream_response(  # noqa: SLF001
+    engine = vllm_test._make_streaming_engine(monkeypatch)
+    vllm_test._patch_stream_response(
         monkeypatch,
-        vllm_test._FakeSSEStream(  # noqa: SLF001
+        vllm_test._FakeSSEStream(
             [
-                vllm_test._sse_chunk({"reasoning_content": "planning the file"}),  # noqa: SLF001
+                vllm_test._sse_chunk({"reasoning_content": "planning the file"}),
                 _tool_fragment_line(0, '{"title": "Badge', first=True),
                 _tool_fragment_line(0, ' spec", "content": "# Ba'),
                 *tail,
@@ -140,7 +140,7 @@ def test_tool_stream_length_cut_tool_call_is_a_checkpoint_not_a_fatal_error(
         ),
     )
 
-    chunks, result = vllm_test._drain_stream(  # noqa: SLF001
+    chunks, result = vllm_test._drain_stream(
         engine.stream_with_tools(prompt="write it", tools=[], max_tokens=16_384)
     )
 
@@ -167,20 +167,22 @@ def test_tool_stream_preamble_then_length_cut_call_is_flagged_and_a_checkpoint(
     argument_bytes: int,
     over_cap: bool,
 ) -> None:
-    engine = vllm_test._make_streaming_engine(monkeypatch)  # noqa: SLF001
+    engine = vllm_test._make_streaming_engine(monkeypatch)
     store = _RecordingStore()
     engine.begin_request_context(request_id="req-b1-preamble", diagnostics_store=store)
-    vllm_test._patch_stream_response(  # noqa: SLF001
+    vllm_test._patch_stream_response(
         monkeypatch,
-        vllm_test._FakeSSEStream(_preamble_length_cut_lines(argument_bytes)),  # noqa: SLF001
+        vllm_test._FakeSSEStream(_preamble_length_cut_lines(argument_bytes)),
     )
 
     with caplog.at_level(logging.INFO):
-        _chunks, result = vllm_test._drain_stream(  # noqa: SLF001
+        _chunks, result = vllm_test._drain_stream(
             engine.stream_with_tools(prompt="write it", tools=[], max_tokens=16_384)
         )
 
-    assert result.finish_reason == "length"
+    # Dogfood MQ-033: an over-cap call stops the read at the rejection, before the
+    # provider's ``length`` terminal, and takes the clean-stop rejection path.
+    assert result.finish_reason == ("stop" if over_cap else "length")
     assert result.tool_calls == ()
     assert result.content == _B1_PREAMBLE
     assert result.tool_call_truncated is True
@@ -203,19 +205,19 @@ def test_tool_stream_preamble_then_length_cut_call_is_flagged_and_a_checkpoint(
 def test_tool_stream_text_only_length_is_not_flagged(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    engine = vllm_test._make_streaming_engine(monkeypatch)  # noqa: SLF001
-    vllm_test._patch_stream_response(  # noqa: SLF001
+    engine = vllm_test._make_streaming_engine(monkeypatch)
+    vllm_test._patch_stream_response(
         monkeypatch,
-        vllm_test._FakeSSEStream(  # noqa: SLF001
+        vllm_test._FakeSSEStream(
             [
-                vllm_test._sse_chunk({"content": "Partial prose answer"}),  # noqa: SLF001
+                vllm_test._sse_chunk({"content": "Partial prose answer"}),
                 _terminal_line("length"),
                 "data: [DONE]",
             ]
         ),
     )
 
-    _chunks, result = vllm_test._drain_stream(  # noqa: SLF001
+    _chunks, result = vllm_test._drain_stream(
         engine.stream_with_tools(prompt="explain", tools=[], max_tokens=16_384)
     )
 
@@ -226,12 +228,12 @@ def test_tool_stream_text_only_length_is_not_flagged(
 def test_tool_stream_clean_stop_over_bad_json_still_raises_and_publishes_counters(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    engine = vllm_test._make_streaming_engine(monkeypatch)  # noqa: SLF001
+    engine = vllm_test._make_streaming_engine(monkeypatch)
     store = _RecordingStore()
     engine.begin_request_context(request_id="req-malformed-stop", diagnostics_store=store)
-    vllm_test._patch_stream_response(  # noqa: SLF001
+    vllm_test._patch_stream_response(
         monkeypatch,
-        vllm_test._FakeSSEStream(  # noqa: SLF001
+        vllm_test._FakeSSEStream(
             [
                 _tool_fragment_line(0, '{"path":', first=True, name="read_file"),
                 _terminal_line("stop"),
@@ -241,7 +243,7 @@ def test_tool_stream_clean_stop_over_bad_json_still_raises_and_publishes_counter
     )
 
     with pytest.raises(GenerationError, match="malformed"):
-        vllm_test._drain_stream(  # noqa: SLF001
+        vllm_test._drain_stream(
             engine.stream_with_tools(prompt="read", tools=[])
         )
 
@@ -256,10 +258,10 @@ def test_tool_stream_clean_stop_over_bad_json_still_raises_and_publishes_counter
 def test_tool_stream_mixed_complete_and_truncated_calls_executes_only_the_complete_one(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    engine = vllm_test._make_streaming_engine(monkeypatch)  # noqa: SLF001
-    vllm_test._patch_stream_response(  # noqa: SLF001
+    engine = vllm_test._make_streaming_engine(monkeypatch)
+    vllm_test._patch_stream_response(
         monkeypatch,
-        vllm_test._FakeSSEStream(  # noqa: SLF001
+        vllm_test._FakeSSEStream(
             [
                 _tool_fragment_line(
                     0, '{"path": "a.txt"}', first=True, name="read_file", call_id="c-ok"
@@ -273,7 +275,7 @@ def test_tool_stream_mixed_complete_and_truncated_calls_executes_only_the_comple
         ),
     )
 
-    _chunks, result = vllm_test._drain_stream(  # noqa: SLF001
+    _chunks, result = vllm_test._drain_stream(
         engine.stream_with_tools(prompt="read both", tools=[])
     )
 
@@ -287,10 +289,10 @@ def test_tool_stream_logs_the_truncated_tool_call(
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    engine = vllm_test._make_streaming_engine(monkeypatch)  # noqa: SLF001
-    vllm_test._patch_stream_response(  # noqa: SLF001
+    engine = vllm_test._make_streaming_engine(monkeypatch)
+    vllm_test._patch_stream_response(
         monkeypatch,
-        vllm_test._FakeSSEStream(  # noqa: SLF001
+        vllm_test._FakeSSEStream(
             [
                 _tool_fragment_line(0, '{"title": "Badge', first=True),
                 _terminal_line("length"),
@@ -300,7 +302,7 @@ def test_tool_stream_logs_the_truncated_tool_call(
     )
 
     with caplog.at_level(logging.INFO):
-        vllm_test._drain_stream(  # noqa: SLF001
+        vllm_test._drain_stream(
             engine.stream_with_tools(prompt="write it", tools=[])
         )
 
@@ -329,20 +331,20 @@ def test_tool_stream_logs_the_guard_verdict_with_counted_chars_at_stream_end(
     monkeypatch.setattr(
         vllm_engine_generation, "resolve_thinking_budget_chars", lambda _e, _m: 4
     )
-    engine = vllm_test._make_streaming_engine(monkeypatch)  # noqa: SLF001
-    vllm_test._patch_stream_response(  # noqa: SLF001
+    engine = vllm_test._make_streaming_engine(monkeypatch)
+    vllm_test._patch_stream_response(
         monkeypatch,
-        vllm_test._FakeSSEStream(  # noqa: SLF001
+        vllm_test._FakeSSEStream(
             [
-                vllm_test._sse_chunk({"reasoning_content": "abcdef"}),  # noqa: SLF001
-                vllm_test._sse_chunk({"content": "never"}),  # noqa: SLF001
+                vllm_test._sse_chunk({"reasoning_content": "abcdef"}),
+                vllm_test._sse_chunk({"content": "never"}),
                 "data: [DONE]",
             ]
         ),
     )
 
     with caplog.at_level(logging.INFO):
-        _chunks, result = vllm_test._drain_stream(  # noqa: SLF001
+        _chunks, result = vllm_test._drain_stream(
             engine.stream_with_tools(prompt="think", tools=[], max_tokens=64)
         )
 
@@ -356,39 +358,88 @@ def test_tool_stream_logs_the_guard_verdict_with_counted_chars_at_stream_end(
     assert records[0].reason == "char_limit"
     assert records[0].counted_chars == 6
     assert records[0].max_chars == 4
+    # The JSON log sink keeps only ``data``: HB-004's abort line read ``data: {}``.
+    assert records[0].data["stop_reason"] == "char_limit"
+    assert records[0].data["counted_chars"] == 6
+    assert records[0].data["dropped_deltas"] == 1
 
 
-def test_tool_stream_logs_a_repetition_suppression_that_never_hit_the_budget(
-    monkeypatch: pytest.MonkeyPatch,
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    engine = vllm_test._make_streaming_engine(monkeypatch)  # noqa: SLF001
+def _repetition_stream(monkeypatch: pytest.MonkeyPatch) -> tuple[Any, str]:
+    engine = vllm_test._make_streaming_engine(monkeypatch)
     repeated = "Checking the request intent carefully. " * 50
-    vllm_test._patch_stream_response(  # noqa: SLF001
+    vllm_test._patch_stream_response(
         monkeypatch,
-        vllm_test._FakeSSEStream(  # noqa: SLF001
+        vllm_test._FakeSSEStream(
             [
-                *(vllm_test._sse_chunk({"reasoning_content": repeated}) for _ in range(3)),  # noqa: SLF001
-                vllm_test._sse_chunk({"content": "answer"}),  # noqa: SLF001
+                *(vllm_test._sse_chunk({"reasoning_content": repeated}) for _ in range(3)),
+                vllm_test._sse_chunk({"reasoning_content": repeated}),
+                vllm_test._sse_chunk({"content": "answer"}),
                 "data: [DONE]",
             ]
         ),
     )
+    return engine, repeated
+
+
+def _guard_records(caplog: pytest.LogCaptureFixture, event: str) -> list[logging.LogRecord]:
+    return [record for record in caplog.records if getattr(record, "event", "") == event]
+
+
+def test_tool_stream_repetition_trip_aborts_and_logs_the_verdict_in_data(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """HB-004: a repetition trip ends the call at once (the checkpoint takes
+    over) instead of streaming minutes of hidden reasoning to the char budget."""
+    monkeypatch.delenv("JENNY_ENABLE_THINKING_BUDGET_ABORT", raising=False)
+    engine, repeated = _repetition_stream(monkeypatch)
 
     with caplog.at_level(logging.INFO):
-        _chunks, result = vllm_test._drain_stream(  # noqa: SLF001
+        chunks, result = vllm_test._drain_stream(
+            engine.stream_with_tools(prompt="think", tools=[], max_tokens=16_384)
+        )
+
+    assert result.finish_reason == "thinking_budget"
+    assert result.content == ""
+    assert not [c for c in chunks if getattr(c, "kind", "") == "thinking_status"]
+    trips = _guard_records(caplog, "ai.engines.vllm.thinking_guard_tripped")
+    assert len(trips) == 1
+    assert trips[0].data["stop_reason"] == "repetition"
+    assert trips[0].data["abort_enabled"] is True
+    aborts = _guard_records(caplog, "ai.engines.vllm.thinking_budget_abort")
+    assert len(aborts) == 1
+    data = aborts[0].data
+    assert data["stop_reason"] == "repetition"
+    assert data["first_trip_reason"] == "repetition"
+    assert data["trip_offset_chars"] == 3 * len(repeated)
+    assert data["counted_chars"] == 3 * len(repeated)
+    assert data["dropped_deltas"] == 1
+    assert data["dropped_chars"] == len(repeated)
+    assert isinstance(data["trip_elapsed_ms"], int)
+    assert data["max_chars"] == 34_076
+
+
+def test_tool_stream_repetition_trip_with_abort_off_shows_a_status_and_logs_drops(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    monkeypatch.setenv("JENNY_ENABLE_THINKING_BUDGET_ABORT", "0")
+    engine, repeated = _repetition_stream(monkeypatch)
+
+    with caplog.at_level(logging.INFO):
+        chunks, result = vllm_test._drain_stream(
             engine.stream_with_tools(prompt="think", tools=[], max_tokens=16_384)
         )
 
     assert result.content == "answer"
-    records = [
-        record
-        for record in caplog.records
-        if getattr(record, "event", "") == "ai.engines.vllm.thinking_guard_suppressed"
-    ]
+    statuses = [c for c in chunks if getattr(c, "kind", "") == "thinking_status"]
+    assert [c.text for c in statuses] == ["Reasoning hidden - repetition detected"]
+    records = _guard_records(caplog, "ai.engines.vllm.thinking_guard_suppressed")
     assert len(records) == 1
     assert records[0].reason == "repetition"
-    assert records[0].counted_chars == 3 * len(repeated)
+    assert records[0].counted_chars == 4 * len(repeated)
+    assert records[0].data["dropped_deltas"] == 2
+    assert records[0].data["trip_offset_chars"] == 3 * len(repeated)
     assert records[0].max_chars == 34_076
 
 
@@ -404,15 +455,15 @@ def test_tool_stream_logs_a_repetition_suppression_that_never_hit_the_budget(
 def test_plain_stream_abandoned_mid_stream_still_completes_the_ledger_entry(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    engine = vllm_test._make_streaming_engine(monkeypatch)  # noqa: SLF001
+    engine = vllm_test._make_streaming_engine(monkeypatch)
     store = _RecordingStore()
     engine.begin_request_context(request_id="req-abandoned", diagnostics_store=store)
-    vllm_test._patch_stream_response(  # noqa: SLF001
+    vllm_test._patch_stream_response(
         monkeypatch,
-        vllm_test._FakeSSEStream(  # noqa: SLF001
+        vllm_test._FakeSSEStream(
             [
-                vllm_test._sse_chunk({"content": "first"}),  # noqa: SLF001
-                vllm_test._sse_chunk({"content": " second"}),  # noqa: SLF001
+                vllm_test._sse_chunk({"content": "first"}),
+                vllm_test._sse_chunk({"content": " second"}),
                 _terminal_line("stop"),
                 "data: [DONE]",
             ]
@@ -424,19 +475,19 @@ def test_plain_stream_abandoned_mid_stream_still_completes_the_ledger_entry(
     generator.close()
 
     completions = store.recorded("complete_provider_request")
-    assert completions and completions[-1].get("outcome") == "failed"
+    assert completions and completions[-1].get("outcome") == "cancelled"
     assert store.recorded("record_stream_counters"), "counters publish even when abandoned"
 
 
 def test_plain_stream_success_completes_once(monkeypatch: pytest.MonkeyPatch) -> None:
-    engine = vllm_test._make_streaming_engine(monkeypatch)  # noqa: SLF001
+    engine = vllm_test._make_streaming_engine(monkeypatch)
     store = _RecordingStore()
     engine.begin_request_context(request_id="req-plain-ok", diagnostics_store=store)
-    vllm_test._patch_stream_response(  # noqa: SLF001
+    vllm_test._patch_stream_response(
         monkeypatch,
-        vllm_test._FakeSSEStream(  # noqa: SLF001
+        vllm_test._FakeSSEStream(
             [
-                vllm_test._sse_chunk({"content": "hi"}),  # noqa: SLF001
+                vllm_test._sse_chunk({"content": "hi"}),
                 _terminal_line("stop"),
                 "data: [DONE]",
             ]
@@ -452,14 +503,14 @@ def test_plain_stream_success_completes_once(monkeypatch: pytest.MonkeyPatch) ->
 def test_non_streaming_tool_call_failure_records_a_failed_outcome(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    engine = vllm_test._make_streaming_engine(monkeypatch)  # noqa: SLF001
+    engine = vllm_test._make_streaming_engine(monkeypatch)
     store = _RecordingStore()
     engine.begin_request_context(request_id="req-post-fail", diagnostics_store=store)
 
     def _boom(*_args: Any, **_kwargs: Any) -> None:
         raise GenerationError("server exploded")
 
-    monkeypatch.setattr(engine._service, "post_json", _boom)  # noqa: SLF001
+    monkeypatch.setattr(engine._service, "post_json", _boom)
 
     with pytest.raises(GenerationError, match="exploded"):
         engine.generate_with_tools(prompt="go", tools=[])

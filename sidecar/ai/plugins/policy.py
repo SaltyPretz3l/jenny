@@ -116,7 +116,7 @@ def _first_match(rules: Any, request: dict[str, Any]) -> Optional[dict[str, Any]
     return None
 
 
-def _validate_request_shape(request: Any) -> Optional[str]:
+def _validate_request_shape(request: Any) -> Optional[str]:  # noqa: PLR0911  # validator
     if not isinstance(request, dict):
         return "capability request missing or malformed"
     if not isinstance(request.get("publisher_id"), str) or not request["publisher_id"]:
@@ -153,7 +153,7 @@ def _validate_snapshot_shape(snapshot: Any) -> Optional[tuple[str, str]]:
     return None
 
 
-def evaluate_capability_policy(request: Any, snapshot: Any) -> CapabilityDecision:
+def evaluate_capability_policy(request: Any, snapshot: Any) -> CapabilityDecision:  # noqa: C901, PLR0911, PLR0912  # lattice
     """Evaluate a single plugin-capability request against a compiled
     PluginPolicySnapshotV1. Mirrors the evaluation the Electron control plane
     applies before committing a generation.
@@ -173,19 +173,25 @@ def evaluate_capability_policy(request: Any, snapshot: Any) -> CapabilityDecisio
             "deny",
             "stale_revision",
             None,
-            f"caller expected policy revision {expected_revision} but the snapshot is at revision {snapshot['revision']}",
+            f"caller expected policy revision {expected_revision} "
+            f"but the snapshot is at revision {snapshot['revision']}",
         )
 
     # --- Layer 1: hard Jenny safety invariants (terminal) -------------------
     hard_hit = _first_match(snapshot["hard_invariants"], request)
     if hard_hit is not None:
-        return _build_decision("deny", "hard_invariant_deny", hard_hit.get("rule_id"), hard_hit.get("reason", ""))
+        return _build_decision(
+            "deny", "hard_invariant_deny", hard_hit.get("rule_id"), hard_hit.get("reason", "")
+        )
 
     best: Optional[dict[str, Any]] = None  # {decision, stage, rule_id, reason}
 
     def update_best(candidate: dict[str, Any]) -> None:
         nonlocal best
-        if best is None or DECISION_RANK[candidate["decision"]] < DECISION_RANK[best["decision"]]:
+        if (
+            best is None
+            or DECISION_RANK[candidate["decision"]] < DECISION_RANK[best["decision"]]
+        ):
             best = candidate
 
     # --- Layer 2: machine/admin ceiling (excluding `required`) --------------
@@ -198,8 +204,15 @@ def evaluate_capability_policy(request: Any, snapshot: Any) -> CapabilityDecisio
         if mode == "allow":
             continue
         if mode == "deny":
-            return _build_decision("deny", "machine_ceiling_deny", rule.get("rule_id"), rule.get("reason", ""))
-        update_best({"decision": "ask", "stage": "machine_ceiling_ask", "rule_id": rule.get("rule_id"), "reason": rule.get("reason", "")})
+            return _build_decision(
+                "deny", "machine_ceiling_deny", rule.get("rule_id"), rule.get("reason", "")
+            )
+        update_best({
+            "decision": "ask",
+            "stage": "machine_ceiling_ask",
+            "rule_id": rule.get("rule_id"),
+            "reason": rule.get("reason", ""),
+        })
 
     # --- Layer 3: explicit user policy + Electron-owned grants --------------
     layer3_auto_hit: Optional[dict[str, Any]] = None
@@ -208,17 +221,31 @@ def evaluate_capability_policy(request: Any, snapshot: Any) -> CapabilityDecisio
             continue
         decision = rule.get("decision")
         if decision == "deny":
-            return _build_decision("deny", "user_policy", rule.get("rule_id"), rule.get("reason", ""))
+            return _build_decision(
+                "deny", "user_policy", rule.get("rule_id"), rule.get("reason", "")
+            )
         if decision == "auto" and layer3_auto_hit is None:
             layer3_auto_hit = rule
         if decision in ("ask", "auto"):
-            update_best({"decision": decision, "stage": "user_policy", "rule_id": rule.get("rule_id"), "reason": rule.get("reason", "")})
+            update_best({
+                "decision": decision,
+                "stage": "user_policy",
+                "rule_id": rule.get("rule_id"),
+                "reason": rule.get("reason", ""),
+            })
 
-    required_rules = [rule for rule in snapshot["machine_ceiling"] if isinstance(rule, dict) and rule.get("mode") == "required"]
+    required_rules = [
+        rule
+        for rule in snapshot["machine_ceiling"]
+        if isinstance(rule, dict) and rule.get("mode") == "required"
+    ]
     required_hit = _first_match(required_rules, request)
     if required_hit is not None and layer3_auto_hit is None:
         return _build_decision(
-            "deny", "machine_ceiling_required_unmet", required_hit.get("rule_id"), required_hit.get("reason", "")
+            "deny",
+            "machine_ceiling_required_unmet",
+            required_hit.get("rule_id"),
+            required_hit.get("reason", ""),
         )
 
     # --- Layer 4: workspace overrides (reduce-only: deny|ask only) ----------
@@ -230,8 +257,15 @@ def evaluate_capability_policy(request: Any, snapshot: Any) -> CapabilityDecisio
             if not _matches_request(rule.get("match"), request):
                 continue
             if rule.get("decision") == "deny":
-                return _build_decision("deny", "workspace_override", rule.get("rule_id"), rule.get("reason", ""))
-            update_best({"decision": "ask", "stage": "workspace_override", "rule_id": rule.get("rule_id"), "reason": rule.get("reason", "")})
+                return _build_decision(
+                    "deny", "workspace_override", rule.get("rule_id"), rule.get("reason", "")
+                )
+            update_best({
+                "decision": "ask",
+                "stage": "workspace_override",
+                "rule_id": rule.get("rule_id"),
+                "reason": rule.get("reason", ""),
+            })
 
     # --- Layer 5: manifest request is the ceiling of what is even possible --
     manifest_matches = [
@@ -243,25 +277,45 @@ def evaluate_capability_policy(request: Any, snapshot: Any) -> CapabilityDecisio
     ]
     if len(manifest_matches) > 1:
         return _build_decision(
-            "deny", "ambiguous_authority", None, "multiple manifest_requests entries match the same publisher_id/plugin_id"
+            "deny",
+            "ambiguous_authority",
+            None,
+            "multiple manifest_requests entries match the same publisher_id/plugin_id",
         )
     manifest_entry = manifest_matches[0] if manifest_matches else None
-    requested_capabilities = manifest_entry.get("requested_capabilities") if manifest_entry else None
-    if not manifest_entry or not isinstance(requested_capabilities, list) or request["capability"] not in requested_capabilities:
+    requested_capabilities = (
+        manifest_entry.get("requested_capabilities") if manifest_entry else None
+    )
+    if (
+        not manifest_entry
+        or not isinstance(requested_capabilities, list)
+        or request["capability"] not in requested_capabilities
+    ):
         return _build_decision(
-            "deny", "manifest_not_requested", None, "plugin manifest does not request this capability; a request never grants itself"
+            "deny",
+            "manifest_not_requested",
+            None,
+            "plugin manifest does not request this capability; a request never grants itself",
         )
 
     if best is None:
         return _build_decision(
-            "ask", "default_ask", None, "no rule authorized this capability at any layer; defaulting to ask rather than auto"
+            "ask",
+            "default_ask",
+            None,
+            "no rule authorized this capability at any layer; defaulting to ask rather than auto",
         )
-    return _build_decision(best["decision"], best["stage"], best.get("rule_id"), best.get("reason", ""))
+    return _build_decision(
+        best["decision"], best["stage"], best.get("rule_id"), best.get("reason", "")
+    )
 
 
 def _normalize_input_decision(value: Any) -> dict[str, str]:
     if not isinstance(value, dict) or value.get("decision") not in VALID_DECISIONS:
-        return {"decision": "deny", "reason": "missing or malformed decision input; failing closed"}
+        return {
+            "decision": "deny",
+            "reason": "missing or malformed decision input; failing closed",
+        }
     reason = value.get("reason")
     return {
         "decision": value["decision"],
@@ -286,8 +340,13 @@ def combine_plugin_and_tool_decision(plugin_decision: Any, tool_decision: Any) -
 
     final_decision = tool["decision"] if winner == "tool" else plugin["decision"]
     source = tool if winner == "tool" else plugin
-    label = "plugin and tool policy agree" if winner == "tie" else f"{winner} policy is more restrictive"
-    reason = " ".join(f"{label} ({final_decision}): {source['reason']}".split())[:MAX_COMBINED_REASON_CHARS]
+    label = (
+        "plugin and tool policy agree"
+        if winner == "tie"
+        else f"{winner} policy is more restrictive"
+    )
+    reason = " ".join(f"{label} ({final_decision}): {source['reason']}".split())
+    reason = reason[:MAX_COMBINED_REASON_CHARS]
 
     return {
         "decision": final_decision,

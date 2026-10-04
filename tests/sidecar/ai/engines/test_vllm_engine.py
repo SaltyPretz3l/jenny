@@ -11,7 +11,7 @@ from typing import Any
 import httpx
 import pytest
 
-from sidecar.ai.engines.base import ModelModality
+from sidecar.ai.engines.base import EMPTY_ASSISTANT_CONTENT_PLACEHOLDER, ModelModality
 from sidecar.ai.engines.provider_http import ProviderHttpService
 from sidecar.ai.engines.vision_input import VisionImage
 from sidecar.ai.engines.vllm_engine import VLLMEngine, _model_matches
@@ -27,7 +27,6 @@ from sidecar.ai.tools.models import StreamingEvent
 from sidecar.runtime.chat_models import TerminalChatStateError
 from sidecar.runtime.multiplexer import TurnCancellationHandle
 from sidecar.runtime.turn_diagnostics import TurnDiagnosticsStore
-from sidecar.ai.engines.base import EMPTY_ASSISTANT_CONTENT_PLACEHOLDER
 from sidecar.runtime.vllm_engine_support import _build_messages, _build_tools_payload
 
 _PNG_BASE64 = (
@@ -69,7 +68,7 @@ def _patch_models_probe(monkeypatch: pytest.MonkeyPatch, responder: Any) -> None
         response = responder(
             f"{self.base_url.rstrip('/')}/{path.lstrip('/')}",
             timeout=timeout,
-            headers=dict(self._client.headers),  # noqa: SLF001
+            headers=dict(self._client.headers),
         )
         response.raise_for_status()
         parsed = response.json()
@@ -371,7 +370,7 @@ class TestLoadModel:
 
         assert engine.capabilities["vision"] is True
         assert engine.supported_modalities == {ModelModality.TEXT, ModelModality.VISION}
-        assert engine._local_runtime_capability_sources["vision"] == "model_name"  # noqa: SLF001
+        assert engine._local_runtime_capability_sources["vision"] == "model_name"
 
     def test_props_true_overrides_non_vision_model_name_and_carries_auth(
         self, monkeypatch: pytest.MonkeyPatch
@@ -396,7 +395,7 @@ class TestLoadModel:
         engine.load_model("meta-llama/Llama-3.1-8B")
 
         assert engine.capabilities["vision"] is True
-        assert engine._local_runtime_capability_sources["vision"] == "server_props"  # noqa: SLF001
+        assert engine._local_runtime_capability_sources["vision"] == "server_props"
         assert httpx.URL(seen["url"]).path == "/props"
         assert seen["headers"]["authorization"] == "Bearer secret"
 
@@ -416,7 +415,7 @@ class TestLoadModel:
 
         assert engine.capabilities["vision"] is False
         assert engine.supported_modalities == {ModelModality.TEXT}
-        assert engine._local_runtime_capability_sources["vision"] == "server_props"  # noqa: SLF001
+        assert engine._local_runtime_capability_sources["vision"] == "server_props"
 
     def test_props_404_falls_back_to_negative_name_heuristic(
         self, monkeypatch: pytest.MonkeyPatch
@@ -431,7 +430,7 @@ class TestLoadModel:
         engine.load_model("meta-llama/Llama-3.1-8B")
 
         assert engine.capabilities["vision"] is False
-        assert engine._local_runtime_capability_sources["vision"] == "model_name"  # noqa: SLF001
+        assert engine._local_runtime_capability_sources["vision"] == "model_name"
 
     def test_props_timeout_does_not_fail_model_load(self, monkeypatch: pytest.MonkeyPatch) -> None:
         def _respond(url: str, **_kwargs: Any) -> httpx.Response:
@@ -444,7 +443,7 @@ class TestLoadModel:
         engine.load_model("Qwen/Qwen2.5-VL-7B-Instruct")
 
         assert engine.capabilities["vision"] is True
-        assert engine._local_runtime_capability_sources["vision"] == "model_name"  # noqa: SLF001
+        assert engine._local_runtime_capability_sources["vision"] == "model_name"
 
 
 class TestGenerateWithTools:
@@ -481,7 +480,7 @@ class TestGenerateWithTools:
                 "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
             }
 
-        monkeypatch.setattr(engine._service, "post_json", _fake_post_json)  # noqa: SLF001
+        monkeypatch.setattr(engine._service, "post_json", _fake_post_json)
 
         result = engine.generate_with_tools(prompt="hi", tools=[], system="sys")
         engine.unload_model()
@@ -522,7 +521,7 @@ class TestGenerateWithTools:
             captured["payload"] = payload
             return {"choices": [{"message": {"content": "hello"}}]}
 
-        monkeypatch.setattr(engine._service, "post_json", _fake_post_json)  # noqa: SLF001
+        monkeypatch.setattr(engine._service, "post_json", _fake_post_json)
 
         result = engine.generate_with_tools(prompt="hi", tools=[], temperature=0.2)
 
@@ -561,7 +560,7 @@ class TestGenerateWithTools:
             captured["payload"] = payload
             return {"choices": [{"message": {"content": "ok"}}]}
 
-        monkeypatch.setattr(engine._service, "post_json", _fake_post_json)  # noqa: SLF001
+        monkeypatch.setattr(engine._service, "post_json", _fake_post_json)
 
         result = engine.generate_with_tools(prompt="hi", tools=[], temperature=0.2)
         engine.clear_request_context(request_id="req_qwen36_profile")
@@ -603,7 +602,7 @@ class TestGenerateWithTools:
                 ],
             }
 
-        monkeypatch.setattr(engine._service, "post_json", _fake_post_json)  # noqa: SLF001
+        monkeypatch.setattr(engine._service, "post_json", _fake_post_json)
 
         result = engine.generate_with_tools(
             prompt="read test.py",
@@ -634,7 +633,7 @@ class TestGenerateWithTools:
             captured["payload"] = payload
             return {"choices": [{"message": {"content": "ready"}}]}
 
-        monkeypatch.setattr(engine._service, "post_json", _fake_post_json)  # noqa: SLF001
+        monkeypatch.setattr(engine._service, "post_json", _fake_post_json)
 
         result = engine.generate_with_tools(
             prompt="fallback",
@@ -709,7 +708,7 @@ class TestGenerateWithTools:
                 },
             }
 
-        monkeypatch.setattr(engine._service, "post_json", _fake_post_json)  # noqa: SLF001
+        monkeypatch.setattr(engine._service, "post_json", _fake_post_json)
 
         result = engine.generate_with_tools(prompt="test", tools=[])
         engine.unload_model()
@@ -752,7 +751,7 @@ class TestGenerateWithTools:
                 "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
             }
 
-        monkeypatch.setattr(engine._service, "post_json", _fake_post_json)  # noqa: SLF001
+        monkeypatch.setattr(engine._service, "post_json", _fake_post_json)
 
         result = engine.generate_with_tools(
             prompt="hi",
@@ -793,7 +792,7 @@ class TestGenerateWithVision:
             captured["payload"] = payload
             return {"choices": [{"message": {"content": "vision ok"}}]}
 
-        monkeypatch.setattr(engine._service, "post_json", _fake_post_json)  # noqa: SLF001
+        monkeypatch.setattr(engine._service, "post_json", _fake_post_json)
 
         result = engine.generate_with_vision("Describe", [_PNG_BASE64])
 
@@ -824,7 +823,7 @@ class TestGenerateWithVision:
         engine.load_model("Qwen/Qwen2.5-VL-7B-Instruct")
 
         monkeypatch.setattr(
-            engine._service,  # noqa: SLF001
+            engine._service,
             "post_json",
             lambda *_a, **_kw: {
                 "choices": [{"message": {"content": "clipped"}, "finish_reason": "length"}]
@@ -867,7 +866,7 @@ class TestGenerateWithVision:
             captured["payload"] = payload
             return {"choices": [{"message": {"content": "file ok"}}]}
 
-        monkeypatch.setattr(engine._service, "post_json", _fake_post_json)  # noqa: SLF001
+        monkeypatch.setattr(engine._service, "post_json", _fake_post_json)
 
         result = engine.generate_with_vision("Describe", [str(image_path)])
 
@@ -1151,7 +1150,7 @@ class TestStream:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         engine = _make_streaming_engine(monkeypatch, model="Qwen/Qwen3.5-9B")
-        assert engine._thinking is True  # noqa: SLF001
+        assert engine._thinking is True
 
         lines = [
             _sse_chunk({"reasoning_content": "Let me think..."}),
@@ -1168,7 +1167,7 @@ class TestStream:
 
     def test_emits_thinking_events_for_qwen36(self, monkeypatch: pytest.MonkeyPatch) -> None:
         engine = _make_streaming_engine(monkeypatch, model="Qwen/Qwen3.6-35B-A3B")
-        assert engine._thinking is True  # noqa: SLF001
+        assert engine._thinking is True
 
         lines = [
             _sse_chunk({"reasoning_content": "Check tools first."}),
@@ -1237,7 +1236,7 @@ class TestStream:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         engine = _make_streaming_engine(monkeypatch, model="meta-llama/Llama-3.1-8B")
-        assert engine._thinking is False  # noqa: SLF001
+        assert engine._thinking is False
 
         lines = [
             _sse_chunk({"reasoning_content": "ignored", "content": "hello"}),
@@ -1274,25 +1273,25 @@ class TestStream:
 
 class TestDetectThinking:
     def test_qwen35_detected(self) -> None:
-        assert VLLMEngine._detect_thinking("Qwen/Qwen3.5-9B") is True  # noqa: SLF001
+        assert VLLMEngine._detect_thinking("Qwen/Qwen3.5-9B") is True
 
     def test_qwen36_detected_namespaced(self) -> None:
-        assert VLLMEngine._detect_thinking("Qwen/Qwen3.6-35B-A3B") is True  # noqa: SLF001
+        assert VLLMEngine._detect_thinking("Qwen/Qwen3.6-35B-A3B") is True
 
     def test_qwen36_detected_bare(self) -> None:
-        assert VLLMEngine._detect_thinking("qwen3.6-35b-a3b") is True  # noqa: SLF001
+        assert VLLMEngine._detect_thinking("qwen3.6-35b-a3b") is True
 
     def test_qwen36_gguf_filename_detected(self) -> None:
         assert (
-            VLLMEngine._detect_thinking("Qwen3.6-35B-A3B-UD-Q4_K_M.gguf")  # noqa: SLF001
+            VLLMEngine._detect_thinking("Qwen3.6-35B-A3B-UD-Q4_K_M.gguf")
             is True
         )
 
     def test_thinking_in_name_detected(self) -> None:
-        assert VLLMEngine._detect_thinking("some-model-thinking") is True  # noqa: SLF001
+        assert VLLMEngine._detect_thinking("some-model-thinking") is True
 
     def test_non_thinking_model(self) -> None:
-        assert VLLMEngine._detect_thinking("meta-llama/Llama-3.1-8B") is False  # noqa: SLF001
+        assert VLLMEngine._detect_thinking("meta-llama/Llama-3.1-8B") is False
 
     def test_capabilities_includes_thinking(self, monkeypatch: pytest.MonkeyPatch) -> None:
         engine = _make_streaming_engine(monkeypatch, model="Qwen/Qwen3.5-9B")
@@ -1309,12 +1308,12 @@ class TestDetectThinking:
 
 class TestDetectVision:
     def test_detect_vision_positive(self) -> None:
-        assert VLLMEngine._detect_vision("Qwen/Qwen2.5-VL-7B-Instruct") is True  # noqa: SLF001
-        assert VLLMEngine._detect_vision("llava-hf/llava-1.5-7b-hf") is True  # noqa: SLF001
+        assert VLLMEngine._detect_vision("Qwen/Qwen2.5-VL-7B-Instruct") is True
+        assert VLLMEngine._detect_vision("llava-hf/llava-1.5-7b-hf") is True
 
     def test_detect_vision_negative(self) -> None:
-        assert VLLMEngine._detect_vision("Qwen/Qwen3.5-9B") is False  # noqa: SLF001
-        assert VLLMEngine._detect_vision("meta-llama/Llama-3.1-8B") is False  # noqa: SLF001
+        assert VLLMEngine._detect_vision("Qwen/Qwen3.5-9B") is False
+        assert VLLMEngine._detect_vision("meta-llama/Llama-3.1-8B") is False
 
 
 # -- generate_with_tools thinking tests ------------------------------------
@@ -1336,7 +1335,7 @@ class TestGenerateWithToolsThinking:
                 ],
             }
 
-        monkeypatch.setattr(engine._service, "post_json", _fake_post_json)  # noqa: SLF001
+        monkeypatch.setattr(engine._service, "post_json", _fake_post_json)
 
         result = engine.generate_with_tools(prompt="answer", tools=[])
 
@@ -1358,7 +1357,7 @@ class TestGenerateWithToolsThinking:
                 ],
             }
 
-        monkeypatch.setattr(engine._service, "post_json", _fake_post_json)  # noqa: SLF001
+        monkeypatch.setattr(engine._service, "post_json", _fake_post_json)
 
         result = engine.generate_with_tools(prompt="hi", tools=[])
 
@@ -1394,7 +1393,7 @@ class TestGenerateWithToolsThinking:
                 ],
             }
 
-        monkeypatch.setattr(engine._service, "post_json", _fake_post_json)  # noqa: SLF001
+        monkeypatch.setattr(engine._service, "post_json", _fake_post_json)
 
         result = engine.generate_with_tools(prompt="hi", tools=[])
 
@@ -1469,7 +1468,7 @@ class TestGenerateWithToolsThinking:
                 ],
             }
 
-        monkeypatch.setattr(engine._service, "post_json", _fake_post_json)  # noqa: SLF001
+        monkeypatch.setattr(engine._service, "post_json", _fake_post_json)
 
         result = engine.generate_with_tools(prompt="hi", tools=[])
 
@@ -1943,7 +1942,7 @@ class TestPooledStreamingTransport:
 
         assert cancelled_response.closed is True
         # The pooled client survived: not closed, and still serving.
-        assert engine._service._client.is_closed is False  # noqa: SLF001
+        assert engine._service._client.is_closed is False
 
         _patch_stream_response(monkeypatch, _FakeSSEStream(["data: [DONE]"]))
         chunks = list(engine.stream(prompt="after cancel"))

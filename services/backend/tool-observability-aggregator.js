@@ -7,6 +7,15 @@ const DEFAULT_RECENT_LIMIT = 20;
 const DEFAULT_SLOW_TOOL_THRESHOLD_MS = 2000;
 const DEFAULT_MAX_OPEN_CALLS = 512;
 const DEFAULT_MAX_TOOL_BUCKETS = 256;
+const MAX_ERROR_CODES_PER_TOOL = 32;
+
+function normalizeErrorCode(value, errorCodes) {
+  if (typeof value !== 'string' || value.length > 64 || !/^[A-Za-z0-9_.:-]+$/.test(value)) {
+    return 'other';
+  }
+  const namedCodeCount = errorCodes.size - (errorCodes.has('other') ? 1 : 0);
+  return !errorCodes.has(value) && namedCodeCount >= MAX_ERROR_CODES_PER_TOOL ? 'other' : value;
+}
 
 function normalizePositiveInteger(value, fallback) {
   const numeric = Number(value);
@@ -105,7 +114,9 @@ function mapToObject(map) {
   for (const [key, value] of Array.from(map.entries()).sort(([left], [right]) => (
     left.localeCompare(right)
   ))) {
-    result[key] = value;
+    Object.defineProperty(result, key, {
+      value, enumerable: true, writable: true, configurable: true,
+    });
   }
   return result;
 }
@@ -213,7 +224,8 @@ class ToolObservabilityAggregator {
       : 0;
     const duration = explicitDuration != null ? explicitDuration : measuredDuration;
     const isSuccess = success !== false;
-    const normalizedErrorCode = isSuccess ? '' : (normalizeString(errorCode) || 'unknown');
+    const stats = this._getToolStats(normalizedToolName);
+    const normalizedErrorCode = isSuccess ? '' : normalizeErrorCode(errorCode == null || errorCode === '' ? 'unknown' : errorCode, stats.errorCodes);
     const row = {
       ts: isoFromMs(completedAt),
       stream_id: identity.streamId || normalizeString(openCall?.streamId),
@@ -224,7 +236,6 @@ class ToolObservabilityAggregator {
       error_code: normalizedErrorCode,
       terminal_state: normalizeString(terminalState),
     };
-    const stats = this._getToolStats(normalizedToolName);
     stats.count += 1;
     if (isSuccess) {
       stats.successCount += 1;

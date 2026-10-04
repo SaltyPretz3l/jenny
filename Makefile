@@ -1,9 +1,10 @@
 .PHONY: lint lint-fix test-sidecar test-sidecar-cov typecheck-py dev test-electron lint-ts check-boundary check-size check-no-bom check-hotspot-size check-protocol-contract check-stdout check-raw-html check-os-getenv check-import-fanout check-complexity-contract check-policy check-backend check-all ci clean
 
 # --- Python sidecar ---
+# Same command as run_ci.py's lint_py stage. `ruff format --check` is not gated:
+# 689 sidecar/test files predate the formatter (2026-09-25 sweep S5).
 lint:
-	python -m ruff check sidecar/ tests/sidecar/
-	python -m ruff format --check sidecar/ tests/sidecar/
+	python -m ruff check sidecar tests/sidecar
 
 lint-fix:
 	python -m ruff check --fix sidecar/ tests/sidecar/

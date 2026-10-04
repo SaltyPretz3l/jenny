@@ -48,7 +48,7 @@ def test_describe_url_error_5xx_reports_runner_failure_not_connectivity() -> Non
         hdrs=None,
         fp=None,
     )
-    message = engine._describe_url_error(http_500, "streaming generation")  # noqa: SLF001
+    message = engine._describe_url_error(http_500, "streaming generation")
     # A 500 means the connection succeeded but the runner failed -- the message
     # must NOT blame connectivity, and should point at the real cause.
     assert "could not connect" not in message.lower()
@@ -66,7 +66,7 @@ def test_describe_url_error_4xx_reports_rejection_with_status() -> None:
         hdrs=None,
         fp=None,
     )
-    message = engine._describe_url_error(http_400, "generation")  # noqa: SLF001
+    message = engine._describe_url_error(http_400, "generation")
     assert "could not connect" not in message.lower()
     assert "HTTP 400" in message
     assert "out of memory" not in message.lower()
@@ -75,7 +75,7 @@ def test_describe_url_error_4xx_reports_rejection_with_status() -> None:
 def test_describe_url_error_non_http_is_a_real_connection_failure() -> None:
     engine = _build_engine()
     url_error = urllib.error.URLError("Connection refused")
-    message = engine._describe_url_error(url_error, "generation")  # noqa: SLF001
+    message = engine._describe_url_error(url_error, "generation")
     # A genuine transport failure should still read as a connectivity problem.
     assert "Could not connect to Ollama" in message
 
@@ -83,19 +83,19 @@ def test_describe_url_error_non_http_is_a_real_connection_failure() -> None:
 def _build_engine(*, tools_enabled: bool = True, ready: bool = True) -> OllamaEngine:
     engine = object.__new__(OllamaEngine)
     engine.host = "http://localhost:11434"
-    engine._request_timeout_seconds = 300  # noqa: SLF001
+    engine._request_timeout_seconds = 300
     engine.model_name = "test-model"
-    engine._ready = ready  # noqa: SLF001
-    engine._vision = False  # noqa: SLF001
-    engine._thinking = False  # noqa: SLF001
-    engine._tool_calls_enabled = tools_enabled  # noqa: SLF001
-    engine._tool_call_http_400_streak = 0  # noqa: SLF001
-    engine._context_length = None  # noqa: SLF001
-    engine._configured_context_length = None  # noqa: SLF001
-    engine._thinking_capability_source = "unsupported"  # noqa: SLF001
-    engine._cached_tools_key = None  # noqa: SLF001
-    engine._cached_tools_payload = None  # noqa: SLF001
-    engine._request_context_lock = threading.Lock()  # noqa: SLF001
+    engine._ready = ready
+    engine._vision = False
+    engine._thinking = False
+    engine._tool_calls_enabled = tools_enabled
+    engine._tool_call_http_400_streak = 0
+    engine._context_length = None
+    engine._configured_context_length = None
+    engine._thinking_capability_source = "unsupported"
+    engine._cached_tools_key = None
+    engine._cached_tools_payload = None
+    engine._request_context_lock = threading.Lock()
     return engine
 
 
@@ -112,7 +112,7 @@ def test_installed_model_bypasses_acquisition_and_reports_loading_then_ready(mon
 
     assert pulled == []
     assert [item["state"] for item in progress] == ["model_loading", "model_ready"]
-    assert engine._ready is True  # noqa: SLF001
+    assert engine._ready is True
 
 
 def test_transient_catalog_failure_raises_and_never_starts_a_pull(monkeypatch) -> None:
@@ -132,7 +132,7 @@ def test_transient_catalog_failure_raises_and_never_starts_a_pull(monkeypatch) -
         engine.load_model("ornith:9b")
 
     assert pulled == [], "a probe we could not complete must never trigger a pull"
-    assert engine._ready is False  # noqa: SLF001
+    assert engine._ready is False
 
 
 def test_transient_catalog_failure_reports_the_real_transport_cause(monkeypatch) -> None:
@@ -170,7 +170,7 @@ def test_absent_model_still_pulls(monkeypatch) -> None:
     engine.load_model("ornith:9b")
 
     assert pulled == ["ornith:9b"]
-    assert engine._ready is True  # noqa: SLF001
+    assert engine._ready is True
 
 
 def test_probe_catalog_reports_unavailable_rather_than_absent_on_transport_error(
@@ -184,7 +184,7 @@ def test_probe_catalog_reports_unavailable_rather_than_absent_on_transport_error
 
     monkeypatch.setattr(urllib.request, "urlopen", _boom)
 
-    state, error = engine._probe_catalog("ornith:9b")  # noqa: SLF001
+    state, error = engine._probe_catalog("ornith:9b")
 
     assert state == "unavailable"
     assert isinstance(error, urllib.error.URLError)
@@ -198,7 +198,7 @@ class _FakeStreamingResponse:
     def __enter__(self) -> "_FakeStreamingResponse":
         return self
 
-    def __exit__(self, exc_type, exc, tb) -> None:  # noqa: ANN001
+    def __exit__(self, exc_type, exc, tb) -> None:
         self.close()
 
     def __iter__(self):
@@ -215,7 +215,7 @@ class _ResettingStreamingResponse:
     def __enter__(self) -> "_ResettingStreamingResponse":
         return self
 
-    def __exit__(self, exc_type, exc, tb) -> None:  # noqa: ANN001
+    def __exit__(self, exc_type, exc, tb) -> None:
         self.close()
 
     def __iter__(self):
@@ -235,12 +235,12 @@ def test_generate_with_tools_falls_back_per_request_after_http_400(monkeypatch) 
     tool_call_count = 0
     generate_count = 0
 
-    def fake_generate_with_tools_impl(*, prompt, tools, **kwargs):  # noqa: ANN003, ARG001
+    def fake_generate_with_tools_impl(*, prompt, tools, **kwargs):
         nonlocal tool_call_count
         tool_call_count += 1
         raise _connection_error_with_status(400)
 
-    def fake_generate(prompt="", **kwargs):  # noqa: ANN003, ARG001
+    def fake_generate(prompt="", **kwargs):
         nonlocal generate_count
         generate_count += 1
         return "plain fallback response"
@@ -260,14 +260,14 @@ def test_generate_with_tools_falls_back_per_request_after_http_400(monkeypatch) 
     assert tool_call_count == 2
     assert generate_count == 2
     assert engine.supports_tool_calling is True
-    assert engine._tool_call_http_400_streak == 2  # noqa: SLF001
+    assert engine._tool_call_http_400_streak == 2
 
 
 def test_http_400_streak_resets_after_native_tool_success(monkeypatch) -> None:
     engine = _build_engine()
     responses = iter(["http_400", "ok"])
 
-    def fake_generate_with_tools_impl(*, prompt, tools, **kwargs):  # noqa: ANN003, ARG001
+    def fake_generate_with_tools_impl(*, prompt, tools, **kwargs):
         if next(responses) == "http_400":
             raise _connection_error_with_status(400)
         return GenerationResult(content="native ok", finish_reason="stop")
@@ -281,7 +281,7 @@ def test_http_400_streak_resets_after_native_tool_success(monkeypatch) -> None:
     assert degraded.degraded_tool_transport is True
     assert recovered.content == "native ok"
     assert recovered.degraded_tool_transport is False
-    assert engine._tool_call_http_400_streak == 0  # noqa: SLF001
+    assert engine._tool_call_http_400_streak == 0
 
 
 def test_generate_with_tools_extracts_inband_calls_when_native_tools_disabled(
@@ -289,7 +289,7 @@ def test_generate_with_tools_extracts_inband_calls_when_native_tools_disabled(
 ) -> None:
     engine = _build_engine(tools_enabled=False)
 
-    def fake_generate(prompt="", **kwargs):  # noqa: ANN003, ARG001
+    def fake_generate(prompt="", **kwargs):
         return '<tool_call>\n{"name": "read_file", "arguments": {"path": "notes.md"}}\n</tool_call>'
 
     monkeypatch.setattr(engine, "generate", fake_generate)
@@ -385,9 +385,9 @@ def test_stream_with_tools_disabled_native_branch_propagates_cancellation_and_cl
 
     class _CancellingFallbackResponse(_FakeStreamingResponse):
         def __iter__(self):
-            yield self._lines[0]  # noqa: SLF001 - deterministic transport double.
+            yield self._lines[0]  # deterministic transport double.
             handle.cancel(reason="test_cancel")
-            yield self._lines[1]  # noqa: SLF001 - must never be consumed.
+            yield self._lines[1]  # must never be consumed.
 
     response = _CancellingFallbackResponse(
         [
@@ -443,7 +443,7 @@ class _RawLinesStreamingResponse:
     def __enter__(self) -> "_RawLinesStreamingResponse":
         return self
 
-    def __exit__(self, exc_type, exc, tb) -> None:  # noqa: ANN001
+    def __exit__(self, exc_type, exc, tb) -> None:
         self.close()
 
     def __iter__(self):
@@ -489,10 +489,10 @@ def test_stream_counts_and_logs_malformed_ndjson_lines(monkeypatch, caplog) -> N
 def test_generate_with_tools_reports_http_error_when_fallback_fails(monkeypatch) -> None:
     engine = _build_engine()
 
-    def fake_generate_with_tools_impl(**kwargs):  # noqa: ANN003, ARG001
+    def fake_generate_with_tools_impl(**kwargs):
         raise _connection_error_with_status(400)
 
-    def fake_generate(**kwargs):  # noqa: ANN003, ARG001
+    def fake_generate(**kwargs):
         raise _connection_error_with_status(404)
 
     monkeypatch.setattr(engine, "_generate_with_tools_impl", fake_generate_with_tools_impl)
@@ -565,7 +565,7 @@ def test_unload_model_requests_zero_keep_alive_and_clears_state(monkeypatch) -> 
     engine = _build_engine()
     captured: dict[str, object] = {}
 
-    def fake_post(endpoint, data, timeout=0):  # noqa: ANN001
+    def fake_post(endpoint, data, timeout=0):
         captured["endpoint"] = endpoint
         captured["data"] = data
         captured["timeout"] = timeout
@@ -583,7 +583,7 @@ def test_unload_model_requests_zero_keep_alive_and_clears_state(monkeypatch) -> 
         "keep_alive": 0,
     }
     assert engine.model_name is None
-    assert engine._ready is False  # noqa: SLF001
+    assert engine._ready is False
 
 
 def test_warmup_num_ctx_matches_chat_request_num_ctx(monkeypatch) -> None:
@@ -596,7 +596,7 @@ def test_warmup_num_ctx_matches_chat_request_num_ctx(monkeypatch) -> None:
     engine.set_configured_context_length(32768)
     posts: list[dict[str, object]] = []
 
-    def fake_post(endpoint, data, timeout=0):  # noqa: ANN001, ARG001
+    def fake_post(endpoint, data, timeout=0):
         posts.append({"endpoint": endpoint, "data": data})
         if endpoint == "/api/chat":
             return {"message": {"content": "hi"}}
@@ -604,7 +604,7 @@ def test_warmup_num_ctx_matches_chat_request_num_ctx(monkeypatch) -> None:
 
     monkeypatch.setattr(engine, "_post", fake_post)
 
-    warmup_thread = engine._warmup_model_async("test-model")  # noqa: SLF001
+    warmup_thread = engine._warmup_model_async("test-model")
     warmup_thread.join(timeout=5)
     assert not warmup_thread.is_alive()
     engine.generate(prompt="hello")
@@ -622,7 +622,7 @@ def test_warmup_omits_num_ctx_when_none_configured_like_chat(monkeypatch) -> Non
     engine = _build_engine()
     posts: list[dict[str, object]] = []
 
-    def fake_post(endpoint, data, timeout=0):  # noqa: ANN001, ARG001
+    def fake_post(endpoint, data, timeout=0):
         posts.append({"endpoint": endpoint, "data": data})
         if endpoint == "/api/chat":
             return {"message": {"content": "hi"}}
@@ -630,7 +630,7 @@ def test_warmup_omits_num_ctx_when_none_configured_like_chat(monkeypatch) -> Non
 
     monkeypatch.setattr(engine, "_post", fake_post)
 
-    warmup_thread = engine._warmup_model_async("test-model")  # noqa: SLF001
+    warmup_thread = engine._warmup_model_async("test-model")
     warmup_thread.join(timeout=5)
     assert not warmup_thread.is_alive()
     engine.generate(prompt="hello")
@@ -644,10 +644,10 @@ def test_warmup_omits_num_ctx_when_none_configured_like_chat(monkeypatch) -> Non
 def test_generate_includes_think_payload_for_thinking_models(monkeypatch) -> None:
     engine = _build_engine()
     engine.model_name = "qwen3.5:9b"
-    engine._thinking = True  # noqa: SLF001
+    engine._thinking = True
     captured: dict[str, object] = {}
 
-    def fake_post(endpoint, data, timeout=0):  # noqa: ANN001
+    def fake_post(endpoint, data, timeout=0):
         captured["endpoint"] = endpoint
         captured["data"] = data
         captured["timeout"] = timeout
@@ -670,11 +670,11 @@ def test_generate_includes_think_payload_for_thinking_models(monkeypatch) -> Non
 def test_generate_with_vision_disables_thinking_for_thinking_models(monkeypatch) -> None:
     engine = _build_engine()
     engine.model_name = "gemma4-vision:12b"
-    engine._vision = True  # noqa: SLF001
-    engine._thinking = True  # noqa: SLF001
+    engine._vision = True
+    engine._thinking = True
     captured: dict[str, object] = {}
 
-    def fake_post(endpoint, data, timeout=0):  # noqa: ANN001
+    def fake_post(endpoint, data, timeout=0):
         captured["endpoint"] = endpoint
         captured["data"] = data
         return {"response": "[BUG 42: NullRef at line 137]"}
@@ -694,11 +694,11 @@ def test_generate_with_vision_disables_thinking_for_thinking_models(monkeypatch)
 def test_generate_with_vision_omits_think_for_non_thinking_models(monkeypatch) -> None:
     engine = _build_engine()
     engine.model_name = "llava:7b"
-    engine._vision = True  # noqa: SLF001
-    engine._thinking = False  # noqa: SLF001
+    engine._vision = True
+    engine._thinking = False
     captured: dict[str, object] = {}
 
-    def fake_post(endpoint, data, timeout=0):  # noqa: ANN001, ARG001
+    def fake_post(endpoint, data, timeout=0):
         captured["data"] = data
         return {"response": "a cat"}
 
@@ -714,10 +714,10 @@ def test_generate_with_vision_omits_think_for_non_thinking_models(monkeypatch) -
 def test_generate_with_vision_reports_length_finish_reason(monkeypatch) -> None:
     engine = _build_engine()
     engine.model_name = "llava:7b"
-    engine._vision = True  # noqa: SLF001
-    engine._thinking = False  # noqa: SLF001
+    engine._vision = True
+    engine._thinking = False
 
-    def fake_post(endpoint, data, timeout=0):  # noqa: ANN001, ARG001
+    def fake_post(endpoint, data, timeout=0):
         return {"response": "a truncated answer that ran ou", "done_reason": "length"}
 
     monkeypatch.setattr(engine, "_post", fake_post)
@@ -733,10 +733,10 @@ def test_generate_with_vision_reports_length_finish_reason(monkeypatch) -> None:
 def test_generate_with_vision_falls_back_to_thinking_field(monkeypatch) -> None:
     engine = _build_engine()
     engine.model_name = "gemma4-vision:12b"
-    engine._vision = True  # noqa: SLF001
-    engine._thinking = True  # noqa: SLF001
+    engine._vision = True
+    engine._thinking = True
 
-    def fake_post(endpoint, data, timeout=0):  # noqa: ANN001, ARG001
+    def fake_post(endpoint, data, timeout=0):
         return {"response": "", "thinking": "fallback answer"}
 
     monkeypatch.setattr(engine, "_post", fake_post)
@@ -753,7 +753,7 @@ def test_generate_sends_configured_num_ctx_to_ollama(monkeypatch) -> None:
     engine.set_configured_context_length(32768)
     captured: dict[str, object] = {}
 
-    def fake_post(endpoint, data, timeout=0):  # noqa: ANN001, ARG001
+    def fake_post(endpoint, data, timeout=0):
         captured["endpoint"] = endpoint
         captured["data"] = data
         return {"message": {"content": "Visible answer"}}
@@ -769,11 +769,11 @@ def test_generate_sends_configured_num_ctx_to_ollama(monkeypatch) -> None:
 
 def test_generate_caps_configured_num_ctx_to_native_model_context(monkeypatch) -> None:
     engine = _build_engine()
-    engine._context_length = 65_536  # noqa: SLF001 - probed native metadata.
+    engine._context_length = 65_536  # probed native metadata.
     engine.set_configured_context_length(131_072)
     captured: dict[str, object] = {}
 
-    def fake_post(endpoint, data, timeout=0):  # noqa: ANN001, ARG001
+    def fake_post(endpoint, data, timeout=0):
         captured["data"] = data
         return {"message": {"content": "Visible answer"}}
 
@@ -786,7 +786,7 @@ def test_generate_caps_configured_num_ctx_to_native_model_context(monkeypatch) -
 def test_generate_can_disable_thinking_via_request_scoped_debug_override(monkeypatch) -> None:
     engine = _build_engine()
     engine.model_name = "qwen3.5:9b"
-    engine._thinking = True  # noqa: SLF001
+    engine._thinking = True
     store = TurnDiagnosticsStore()
     store.begin_turn(
         request_id="req_disable_thinking",
@@ -803,7 +803,7 @@ def test_generate_can_disable_thinking_via_request_scoped_debug_override(monkeyp
     )
     captured: dict[str, object] = {}
 
-    def fake_post(endpoint, data, timeout=0):  # noqa: ANN001
+    def fake_post(endpoint, data, timeout=0):
         captured["endpoint"] = endpoint
         captured["data"] = data
         captured["timeout"] = timeout
@@ -824,8 +824,8 @@ def test_build_options_adds_repetition_controls_only_for_thinking() -> None:
     engine = _build_engine()
     engine.model_name = "qwen3.5:9b"
 
-    thinking_options = engine._build_options(16384, 0.7, thinking=True)  # noqa: SLF001
-    plain_options = engine._build_options(16384, 0.7, thinking=False)  # noqa: SLF001
+    thinking_options = engine._build_options(16384, 0.7, thinking=True)
+    plain_options = engine._build_options(16384, 0.7, thinking=False)
 
     assert thinking_options["repeat_penalty"] == 1.15
     assert thinking_options["repeat_last_n"] == 256
@@ -837,11 +837,11 @@ def test_build_options_profile_repeat_penalty_wins_over_thinking_fallback() -> N
     engine = _build_engine()
     engine.model_name = "qwen3.5:9b"
 
-    profiled = engine._build_options(  # noqa: SLF001
+    profiled = engine._build_options(
         16384, 0.7, thinking=True, repeat_penalty=1.0
     )
-    unprofiled = engine._build_options(16384, 0.7, thinking=True)  # noqa: SLF001
-    plain_profiled = engine._build_options(  # noqa: SLF001
+    unprofiled = engine._build_options(16384, 0.7, thinking=True)
+    plain_profiled = engine._build_options(
         16384, 0.7, thinking=False, repeat_penalty=1.05
     )
 
@@ -856,11 +856,11 @@ def test_build_options_passes_profile_top_p_min_p() -> None:
     engine = _build_engine()
     engine.model_name = "qwen3.5:9b"
 
-    options = engine._build_options(  # noqa: SLF001
+    options = engine._build_options(
         16384, 0.7, thinking=False, top_p=0.95, min_p=0.0
     )
-    omitted = engine._build_options(16384, 0.7, thinking=False)  # noqa: SLF001
-    out_of_range = engine._build_options(  # noqa: SLF001
+    omitted = engine._build_options(16384, 0.7, thinking=False)
+    out_of_range = engine._build_options(
         16384, 0.7, thinking=False, top_p=1.5, min_p=-0.1
     )
 
@@ -889,7 +889,7 @@ def test_request_context_applies_qwen_repetition_and_top_p_overrides(monkeypatch
         },
     )
 
-    def fake_post(endpoint, data, timeout=0):  # noqa: ANN001
+    def fake_post(endpoint, data, timeout=0):
         captured["data"] = data
         return {"message": {"content": "Visible answer"}}
 
@@ -930,11 +930,11 @@ def test_qwen38_uses_mode_sampler_and_combined_output_budget(
     ) = case
     engine = _build_engine()
     engine.model_name = "qwen3.8:27b-q3-k-s"
-    engine._thinking = True  # noqa: SLF001
-    engine._context_length = 262_144  # noqa: SLF001
-    engine._configured_context_length = 131_072  # noqa: SLF001
-    engine._profile_max_output_tokens = 32_768  # noqa: SLF001
-    engine._profile_thinking_headroom = 32_768  # noqa: SLF001
+    engine._thinking = True
+    engine._context_length = 262_144
+    engine._configured_context_length = 131_072
+    engine._profile_max_output_tokens = 32_768
+    engine._profile_thinking_headroom = 32_768
     captured: dict[str, object] = {}
     engine.begin_request_context(
         request_id=f"req_qwen38_{reasoning_effort or 'automatic'}",
@@ -960,7 +960,7 @@ def test_qwen38_uses_mode_sampler_and_combined_output_budget(
         },
     )
 
-    def fake_post(_endpoint, data, timeout=0):  # noqa: ANN001, ARG001
+    def fake_post(_endpoint, data, timeout=0):
         captured["data"] = data
         return {"message": {"content": "Visible answer"}}
 
@@ -989,9 +989,9 @@ def test_qwen38_uses_mode_sampler_and_combined_output_budget(
 def test_qwen38_string_effort_http_400_requires_current_ollama(monkeypatch) -> None:
     engine = _build_engine()
     engine.model_name = "qwen3.8:27b-q3-k-s"
-    engine._thinking = True  # noqa: SLF001
+    engine._thinking = True
 
-    def reject_effort(_endpoint, _data, timeout=0):  # noqa: ANN001, ARG001
+    def reject_effort(_endpoint, _data, timeout=0):
         raise urllib.error.HTTPError(
             url="http://localhost:11434/api/chat",
             code=400,
@@ -1009,10 +1009,10 @@ def test_qwen38_string_effort_http_400_requires_current_ollama(monkeypatch) -> N
 def test_qwen38_tool_schema_http_400_preserves_plain_fallback(monkeypatch) -> None:
     engine = _build_engine()
     engine.model_name = "qwen3.8:27b-q3-k-s"
-    engine._thinking = True  # noqa: SLF001
+    engine._thinking = True
     requests: list[dict[str, object]] = []
 
-    def reject_tools(_endpoint, data, timeout=0):  # noqa: ANN001, ARG001
+    def reject_tools(_endpoint, data, timeout=0):
         requests.append(data)
         if data.get("tools") is not None:
             raise urllib.error.HTTPError(
@@ -1056,7 +1056,7 @@ def test_request_context_applies_gemma_sampler_defaults(monkeypatch) -> None:
         },
     )
 
-    def fake_post(endpoint, data, timeout=0):  # noqa: ANN001
+    def fake_post(endpoint, data, timeout=0):
         captured["data"] = data
         return {"message": {"content": "Visible answer"}}
 
@@ -1077,14 +1077,14 @@ def test_thinking_token_headroom_uses_model_size_cutoff() -> None:
     large_engine = _build_engine()
     large_engine.model_name = "qwen3.5:32b"
 
-    assert small_engine._thinking_token_headroom() == 4096  # noqa: SLF001
-    assert large_engine._thinking_token_headroom() == 16384  # noqa: SLF001
+    assert small_engine._thinking_token_headroom() == 4096
+    assert large_engine._thinking_token_headroom() == 16384
 
 
 def test_stream_emits_separate_thinking_and_content_events(monkeypatch) -> None:
     engine = _build_engine()
     engine.model_name = "qwen3.5:9b"
-    engine._thinking = True  # noqa: SLF001
+    engine._thinking = True
     store = TurnDiagnosticsStore()
     store.begin_turn(
         request_id="req_stream_metrics",
@@ -1108,7 +1108,7 @@ def test_stream_emits_separate_thinking_and_content_events(monkeypatch) -> None:
     monkeypatch.setattr(
         urllib.request,
         "urlopen",
-        lambda req, timeout=0: _FakeStreamingResponse(chunks),  # noqa: ARG005
+        lambda req, timeout=0: _FakeStreamingResponse(chunks),
     )
 
     events = list(engine.stream(prompt="hello"))
@@ -1130,12 +1130,12 @@ def test_stream_emits_separate_thinking_and_content_events(monkeypatch) -> None:
 def test_generate_with_tools_captures_thinking_text(monkeypatch) -> None:
     engine = _build_engine()
     engine.model_name = "qwen3.5:9b"
-    engine._thinking = True  # noqa: SLF001
+    engine._thinking = True
 
     monkeypatch.setattr(
         engine,
         "_post",
-        lambda endpoint, data, timeout=0: {  # noqa: ANN001, ARG005
+        lambda endpoint, data, timeout=0: {
             "message": {
                 "content": "Final answer",
                 "thinking": "Checking the request intent.",
@@ -1171,7 +1171,7 @@ def test_generate_with_tools_uses_gemma_reasoning_parser_fallback(monkeypatch) -
     monkeypatch.setattr(
         engine,
         "_post",
-        lambda endpoint, data, timeout=0: {  # noqa: ANN001, ARG005
+        lambda endpoint, data, timeout=0: {
             "message": {
                 "content": "<|channel>thoughtCheck tools first.<channel|>Final answer",
                 "tool_calls": [],
@@ -1206,7 +1206,7 @@ def test_generate_does_not_promote_gemma_reasoning_only_reply_to_visible_content
     monkeypatch.setattr(
         engine,
         "_post",
-        lambda endpoint, data, timeout=0: {  # noqa: ANN001, ARG005
+        lambda endpoint, data, timeout=0: {
             "message": {
                 "content": "<|channel>thoughtCheck tools first.<channel|>",
             }
@@ -1237,7 +1237,7 @@ def test_generate_with_tools_keeps_gemma_reasoning_only_reply_private(monkeypatc
     monkeypatch.setattr(
         engine,
         "_post",
-        lambda endpoint, data, timeout=0: {  # noqa: ANN001, ARG005
+        lambda endpoint, data, timeout=0: {
             "message": {
                 "content": "<|channel>thoughtCheck tools first.<channel|>",
                 "tool_calls": [],
@@ -1256,12 +1256,12 @@ def test_generate_with_tools_keeps_gemma_reasoning_only_reply_private(monkeypatc
 
 def test_generate_reports_configured_timeout_duration(monkeypatch) -> None:
     engine = _build_engine()
-    engine._request_timeout_seconds = 420  # noqa: SLF001
+    engine._request_timeout_seconds = 420
 
     monkeypatch.setattr(
         engine,
         "_post",
-        lambda endpoint, data, timeout=None: (_ for _ in ()).throw(TimeoutError("timed out")),  # noqa: ARG005
+        lambda endpoint, data, timeout=None: (_ for _ in ()).throw(TimeoutError("timed out")),
     )
 
     with pytest.raises(GenerationError, match="timed out after 420s waiting for Ollama"):
@@ -1270,12 +1270,12 @@ def test_generate_reports_configured_timeout_duration(monkeypatch) -> None:
 
 def test_generate_normalizes_urlerror_wrapped_timeout(monkeypatch) -> None:
     engine = _build_engine()
-    engine._request_timeout_seconds = 420  # noqa: SLF001
+    engine._request_timeout_seconds = 420
 
     monkeypatch.setattr(
         engine,
         "_post",
-        lambda endpoint, data, timeout=None: (_ for _ in ()).throw(  # noqa: ARG005
+        lambda endpoint, data, timeout=None: (_ for _ in ()).throw(
             urllib.error.URLError(socket.timeout("timed out"))
         ),
     )
@@ -1289,22 +1289,22 @@ def test_sanitize_thinking_preserves_markdown_and_word_boundaries() -> None:
     engine = _build_engine()
     # Markdown with headings, newlines, and bullet points must be preserved
     md = "## Analysis\n\n1. **First point**\n2. **Second point**\n\n- bullet"
-    assert engine._sanitize_thinking(md) == md  # noqa: SLF001
+    assert engine._sanitize_thinking(md) == md
 
     # Leading space on streaming chunk encodes word boundary - must survive
-    assert engine._sanitize_thinking(" Process") == " Process"  # noqa: SLF001
+    assert engine._sanitize_thinking(" Process") == " Process"
 
     # Marker tokens are stripped without removing the reasoning text itself
-    assert engine._sanitize_thinking("<think>inner</think>") == "inner"  # noqa: SLF001
-    assert engine._sanitize_thinking("before<think>mid</think>after") == "beforemidafter"  # noqa: SLF001
-    assert engine._sanitize_thinking("<|channel>thoughtplan<channel|>") == "plan"  # noqa: SLF001
+    assert engine._sanitize_thinking("<think>inner</think>") == "inner"
+    assert engine._sanitize_thinking("before<think>mid</think>after") == "beforemidafter"
+    assert engine._sanitize_thinking("<|channel>thoughtplan<channel|>") == "plan"
 
 
 def test_stream_thinking_preserves_word_boundary_spaces(monkeypatch) -> None:
     """Multi-chunk thinking stream must preserve leading spaces between words."""
     engine = _build_engine()
     engine.model_name = "qwen3.5:9b"
-    engine._thinking = True  # noqa: SLF001
+    engine._thinking = True
     chunks = [
         {"message": {"thinking": "Thinking"}, "done": False},
         {"message": {"thinking": " Process:"}, "done": False},
@@ -1316,7 +1316,7 @@ def test_stream_thinking_preserves_word_boundary_spaces(monkeypatch) -> None:
     monkeypatch.setattr(
         urllib.request,
         "urlopen",
-        lambda req, timeout=0: _FakeStreamingResponse(chunks),  # noqa: ARG005
+        lambda req, timeout=0: _FakeStreamingResponse(chunks),
     )
 
     events = list(engine.stream(prompt="hello"))
@@ -1333,7 +1333,7 @@ def test_stream_thinking_forwards_per_token_deltas_verbatim(monkeypatch) -> None
     real deltas and must never be deduplicated or merged."""
     engine = _build_engine()
     engine.model_name = "qwen3.6:35b-a3b"
-    engine._thinking = True  # noqa: SLF001
+    engine._thinking = True
     chunks = [
         {"message": {"thinking": "The"}, "done": False},
         {"message": {"thinking": " user"}, "done": False},
@@ -1345,7 +1345,7 @@ def test_stream_thinking_forwards_per_token_deltas_verbatim(monkeypatch) -> None
     monkeypatch.setattr(
         urllib.request,
         "urlopen",
-        lambda req, timeout=0: _FakeStreamingResponse(chunks),  # noqa: ARG005
+        lambda req, timeout=0: _FakeStreamingResponse(chunks),
     )
 
     events = list(engine.stream(prompt="hello"))
@@ -1362,7 +1362,7 @@ def test_stream_with_tools_classifies_midstream_connection_reset_as_retryable(
     monkeypatch.setattr(
         urllib.request,
         "urlopen",
-        lambda req, timeout=0: response,  # noqa: ARG005
+        lambda req, timeout=0: response,
     )
 
     with pytest.raises(EngineConnectionError) as exc_info:
@@ -1395,7 +1395,7 @@ def test_stream_uses_gemma_reasoning_parser_fallback(monkeypatch) -> None:
     monkeypatch.setattr(
         urllib.request,
         "urlopen",
-        lambda req, timeout=0: _FakeStreamingResponse(chunks),  # noqa: ARG005
+        lambda req, timeout=0: _FakeStreamingResponse(chunks),
     )
 
     events = list(engine.stream(prompt="hello"))
@@ -1431,7 +1431,7 @@ def test_stream_does_not_emit_content_fallback_for_gemma_reasoning_only_reply(mo
     monkeypatch.setattr(
         urllib.request,
         "urlopen",
-        lambda req, timeout=0: _FakeStreamingResponse(chunks),  # noqa: ARG005
+        lambda req, timeout=0: _FakeStreamingResponse(chunks),
     )
 
     events = list(engine.stream(prompt="hello"))
@@ -1454,7 +1454,7 @@ def test_stream_done_event_carries_finish_reason_without_engine_attribute(monkey
     monkeypatch.setattr(
         urllib.request,
         "urlopen",
-        lambda req, timeout=0: _FakeStreamingResponse(chunks),  # noqa: ARG005
+        lambda req, timeout=0: _FakeStreamingResponse(chunks),
     )
 
     events = list(engine.stream(prompt="hello"))
@@ -1477,7 +1477,7 @@ def test_stream_with_tools_no_longer_writes_shared_finish_reason_attribute(monke
     monkeypatch.setattr(
         urllib.request,
         "urlopen",
-        lambda req, timeout=0: _FakeStreamingResponse(chunks),  # noqa: ARG005
+        lambda req, timeout=0: _FakeStreamingResponse(chunks),
     )
 
     stream = engine.stream_with_tools(prompt="hello", tools=[{"name": "demo"}])
@@ -1496,10 +1496,13 @@ def test_stream_with_tools_no_longer_writes_shared_finish_reason_attribute(monke
 def test_stream_forwards_repeated_thinking_chunks(monkeypatch) -> None:
     # Identical chunks are real per-token repeats (a looping model), forwarded
     # verbatim; the repetition guard, not a dedupe, is what stops a runaway loop.
+    # Abort off keeps the stream running past the trip (with the default abort
+    # on, the trip ends the call: test_thinking_budget_abort, HB-004).
+    monkeypatch.setenv("JENNY_ENABLE_THINKING_BUDGET_ABORT", "0")
     engine = _build_engine()
     engine.model_name = "qwen3.5:9b"
-    engine._thinking = True  # noqa: SLF001
-    repeated = "Checking the request intent carefully. "
+    engine._thinking = True
+    repeated = "Checking the request intent carefully. " * 14  # two guard windows
     chunks = [
         {"message": {"thinking": repeated}, "done": False},
         {"message": {"thinking": repeated}, "done": False},
@@ -1512,7 +1515,7 @@ def test_stream_forwards_repeated_thinking_chunks(monkeypatch) -> None:
     monkeypatch.setattr(
         urllib.request,
         "urlopen",
-        lambda req, timeout=0: _FakeStreamingResponse(chunks),  # noqa: ARG005
+        lambda req, timeout=0: _FakeStreamingResponse(chunks),
     )
 
     events = list(engine.stream(prompt="hello"))
@@ -1526,6 +1529,9 @@ def test_stream_forwards_repeated_thinking_chunks(monkeypatch) -> None:
 
 
 def test_stream_suppresses_repetitive_gemma_reasoning_fallback(monkeypatch) -> None:
+    # Abort off: this pins suppression through the parser fallback; the default
+    # abort ends the call at the trip instead (test_thinking_budget_abort).
+    monkeypatch.setenv("JENNY_ENABLE_THINKING_BUDGET_ABORT", "0")
     engine = _build_engine()
     engine.model_name = "gemma4-e4b-it"
     repeated = "Checking the request intent carefully. " * 50
@@ -1554,7 +1560,7 @@ def test_stream_suppresses_repetitive_gemma_reasoning_fallback(monkeypatch) -> N
     monkeypatch.setattr(
         urllib.request,
         "urlopen",
-        lambda req, timeout=0: _FakeStreamingResponse(chunks),  # noqa: ARG005
+        lambda req, timeout=0: _FakeStreamingResponse(chunks),
     )
 
     events = list(engine.stream(prompt="hello"))
@@ -1672,7 +1678,7 @@ def test_generate_with_tools_sends_wrapped_tool_schemas(monkeypatch) -> None:
     engine = _build_engine()
     captured: dict[str, object] = {}
 
-    def fake_post(endpoint, data, timeout=0):  # noqa: ANN001
+    def fake_post(endpoint, data, timeout=0):
         captured["data"] = data
         return {
             "message": {
@@ -1933,7 +1939,7 @@ class TestMergeConsecutiveSystemMessages:
 def test_generate_with_tools_extracts_inband_calls_from_text(monkeypatch) -> None:
     engine = _build_engine()
 
-    def fake_post(endpoint, data, timeout=0):  # noqa: ANN001
+    def fake_post(endpoint, data, timeout=0):
         return {
             "message": {
                 "content": (
@@ -1966,46 +1972,46 @@ def test_generate_with_tools_extracts_inband_calls_from_text(monkeypatch) -> Non
 
 def test_build_think_value_returns_true_for_default_effort() -> None:
     engine = _build_engine()
-    engine._thinking = True  # noqa: SLF001
-    assert engine._build_think_value(None) is True  # noqa: SLF001
+    engine._thinking = True
+    assert engine._build_think_value(None) is True
 
 
 def test_build_think_value_returns_true_for_medium_effort() -> None:
     engine = _build_engine()
     engine.model_name = "qwen3.8:27b-q3-k-s"
-    engine._thinking = True  # noqa: SLF001
-    assert engine._build_think_value("medium") == "medium"  # noqa: SLF001
+    engine._thinking = True
+    assert engine._build_think_value("medium") == "medium"
 
 
 def test_build_think_value_preserves_qwen38_low_effort() -> None:
     engine = _build_engine()
     engine.model_name = "qwen3.8:27b-q3-k-s"
-    engine._thinking = True  # noqa: SLF001
-    assert engine._build_think_value("low") == "low"  # noqa: SLF001
+    engine._thinking = True
+    assert engine._build_think_value("low") == "low"
 
 
 def test_build_think_value_returns_true_for_high_effort() -> None:
     engine = _build_engine()
     engine.model_name = "qwen3.8:27b-q3-k-s"
-    engine._thinking = True  # noqa: SLF001
-    assert engine._build_think_value("high") == "high"  # noqa: SLF001
+    engine._thinking = True
+    assert engine._build_think_value("high") == "high"
 
 
 def test_build_think_value_returns_true_for_xhigh_effort() -> None:
     engine = _build_engine()
     engine.model_name = "qwen3.8:27b-q3-k-s"
-    engine._thinking = True  # noqa: SLF001
-    assert engine._build_think_value("xhigh") == "max"  # noqa: SLF001
+    engine._thinking = True
+    assert engine._build_think_value("xhigh") == "max"
 
 
 def test_build_think_value_maps_qwen38_automatic_minimal_and_none() -> None:
     engine = _build_engine()
     engine.model_name = "hf.co/unsloth/Qwen3.8-27B-GGUF:Q3_K_S"
-    engine._thinking = True  # noqa: SLF001
+    engine._thinking = True
 
-    assert engine._build_think_value(None) == "medium"  # noqa: SLF001
-    assert engine._build_think_value("minimal") == "low"  # noqa: SLF001
-    assert engine._build_think_value("none") is False  # noqa: SLF001
+    assert engine._build_think_value(None) == "medium"
+    assert engine._build_think_value("minimal") == "low"
+    assert engine._build_think_value("none") is False
 
 
 def test_build_think_value_coerces_levels_for_boolean_only_model(caplog) -> None:
@@ -2015,23 +2021,23 @@ def test_build_think_value_coerces_levels_for_boolean_only_model(caplog) -> None
     # means a clamp regressed.
     engine = _build_engine()
     engine.model_name = "thinking-model:latest"
-    engine._thinking = True  # noqa: SLF001
+    engine._thinking = True
 
     with caplog.at_level("WARNING"):
-        assert engine._build_think_value("high") is True  # noqa: SLF001
+        assert engine._build_think_value("high") is True
     assert any("Automatic or None" in record.message for record in caplog.records)
 
 
 def test_build_think_value_returns_none_when_thinking_disabled() -> None:
     engine = _build_engine()
-    engine._thinking = False  # noqa: SLF001
-    assert engine._build_think_value("high") is None  # noqa: SLF001
+    engine._thinking = False
+    assert engine._build_think_value("high") is None
 
 
 def test_generate_sends_think_true_for_default_effort(monkeypatch) -> None:
     engine = _build_engine()
     engine.model_name = "qwen3.5:9b"
-    engine._thinking = True  # noqa: SLF001
+    engine._thinking = True
     store = TurnDiagnosticsStore()
     store.begin_turn(
         request_id="req_think_true_default",
@@ -2048,7 +2054,7 @@ def test_generate_sends_think_true_for_default_effort(monkeypatch) -> None:
     )
     captured: dict[str, object] = {}
 
-    def fake_post(endpoint, data, timeout=0):  # noqa: ANN001
+    def fake_post(endpoint, data, timeout=0):
         captured["data"] = data
         return {"message": {"content": "Quick answer"}}
 
@@ -2068,10 +2074,10 @@ def test_generate_sends_think_true_for_default_effort(monkeypatch) -> None:
 def test_generate_coerces_medium_effort_for_boolean_only_qwen(monkeypatch, caplog) -> None:
     engine = _build_engine()
     engine.model_name = "qwen3.5:9b"
-    engine._thinking = True  # noqa: SLF001
+    engine._thinking = True
     captured: dict[str, object] = {}
 
-    def fake_post(endpoint, data, timeout=0):  # noqa: ANN001, ARG001
+    def fake_post(endpoint, data, timeout=0):
         captured["data"] = data
         return {"message": {"content": "Quick answer"}}
 
@@ -2088,10 +2094,10 @@ def test_generate_coerces_medium_effort_for_boolean_only_qwen(monkeypatch, caplo
 def test_generate_coerces_low_effort_for_boolean_only_qwen(monkeypatch, caplog) -> None:
     engine = _build_engine()
     engine.model_name = "qwen3.5:9b"
-    engine._thinking = True  # noqa: SLF001
+    engine._thinking = True
     captured: dict[str, object] = {}
 
-    def fake_post(endpoint, data, timeout=0):  # noqa: ANN001, ARG001
+    def fake_post(endpoint, data, timeout=0):
         captured["data"] = data
         return {"message": {"content": "Quick answer"}}
 
@@ -2198,8 +2204,8 @@ class TestToolsPayloadCache:
             {"name": "read_file", "description": "Read", "parameters": {}},
             {"name": "edit_file", "description": "Edit", "parameters": {}},
         ]
-        first = engine._build_tools_payload_cached(tools)  # noqa: SLF001
-        second = engine._build_tools_payload_cached(tools)  # noqa: SLF001
+        first = engine._build_tools_payload_cached(tools)
+        second = engine._build_tools_payload_cached(tools)
         assert first is second
 
     def test_cache_rebuilds_on_tool_set_change(self) -> None:
@@ -2209,8 +2215,8 @@ class TestToolsPayloadCache:
             {"name": "read_file", "description": "Read", "parameters": {}},
             {"name": "edit_file", "description": "Edit", "parameters": {}},
         ]
-        first = engine._build_tools_payload_cached(tools_v1)  # noqa: SLF001
-        second = engine._build_tools_payload_cached(tools_v2)  # noqa: SLF001
+        first = engine._build_tools_payload_cached(tools_v1)
+        second = engine._build_tools_payload_cached(tools_v2)
         assert first is not second
         assert len(first) == 1
         assert len(second) == 2
@@ -2218,9 +2224,9 @@ class TestToolsPayloadCache:
     def test_cache_cleared_on_model_reset(self) -> None:
         engine = _build_engine()
         tools = [{"name": "read_file", "description": "Read", "parameters": {}}]
-        first = engine._build_tools_payload_cached(tools)  # noqa: SLF001
-        engine._reset_loaded_state()  # noqa: SLF001
-        second = engine._build_tools_payload_cached(tools)  # noqa: SLF001
+        first = engine._build_tools_payload_cached(tools)
+        engine._reset_loaded_state()
+        second = engine._build_tools_payload_cached(tools)
         assert first is not second
 
 
@@ -2241,7 +2247,7 @@ def test_generate_with_tools_records_tool_payload_bytes(monkeypatch) -> None:
         mode="assist",
     )
 
-    def fake_post(endpoint, data, timeout=0):  # noqa: ANN001
+    def fake_post(endpoint, data, timeout=0):
         return {"message": {"content": "Done", "tool_calls": []}}
 
     monkeypatch.setattr(engine, "_post", fake_post)

@@ -125,7 +125,7 @@ def test_size_walk_cap_returns_over_quota_sentinel_and_logs_diagnostic(
 
     monkeypatch.setattr(trash_module, "log_event", _log_event)
 
-    measured = trash_module._entry_total_bytes(  # noqa: SLF001
+    measured = trash_module._entry_total_bytes(
         store,
         None,
         is_directory=True,

@@ -27,6 +27,7 @@ MAX_DELEGATE_ANSWER_CHARS = 1_000
 MAX_DELEGATE_EVIDENCE_ITEMS = 3
 MAX_DELEGATE_EVIDENCE_FIELD_CHARS = 300
 MAX_DELEGATE_OUTPUT_CHARS = 8_000
+MAX_DELEGATE_LABEL_CHARS = 60
 CANONICAL_DELEGATE_EXAMPLE = {"tasks": ["Inspect the repository and identify its test command"]}
 CANONICAL_DELEGATE_EXAMPLE_JSON = json.dumps(
     CANONICAL_DELEGATE_EXAMPLE,
@@ -37,6 +38,12 @@ CANONICAL_DELEGATE_EXAMPLE_JSON = json.dumps(
 _TOP_LEVEL_ALIASES = frozenset({"tasks", "task", "prompt"})
 _SUPPORTED_EVIDENCE_TOOLS = frozenset({"read_file", "grep_search", "git_status"})
 _GREP_LINE_RE = re.compile(r"^(?P<path>.+?):(?P<line>[1-9][0-9]*):(?P<quote>.*)$")
+_WHITESPACE_RE = re.compile(r"\s+")
+# Bidi overrides, zero-width and C1 controls survive the tool-output
+# sanitizer; in a UI label or step line they only spoof what the row says.
+_FORMAT_CONTROL_RE = re.compile(
+    "[\u0080-\u009f\u200b-\u200f\u2028-\u202e\u2060-\u2064\u2066-\u2069\ufeff]"
+)
 
 
 @dataclass(frozen=True)
@@ -139,6 +146,25 @@ def extract_tool_observed_evidence(decision: Any | None) -> list[dict[str, Any]]
             if record:
                 evidence.append(record)
     return evidence
+
+
+def strip_format_controls(value: str) -> str:
+    return _FORMAT_CONTROL_RE.sub("", value)
+
+
+def delegate_task_label(task: DelegateTask) -> str:
+    """Short human label from the first non-empty prompt line, else ``Task N``."""
+
+    fallback = f"Task {task.ordinal}"
+    first_line = next(
+        (line for line in str(task.prompt or "").splitlines() if line.strip()),
+        "",
+    )
+    plain = strip_format_controls(_safe_text(first_line, max_chars=200))
+    text = _WHITESPACE_RE.sub(" ", plain).strip()
+    if not text:
+        return fallback
+    return _truncate_with_ellipsis(text, MAX_DELEGATE_LABEL_CHARS)
 
 
 def build_compact_delegate_settlement(
@@ -394,7 +420,15 @@ def _bound_compact_report(report: dict[str, Any]) -> tuple[dict[str, Any], str]:
 
 
 def _safe_relative_path(value: object) -> str:
-    text = _safe_text(value, max_chars=MAX_DELEGATE_EVIDENCE_FIELD_CHARS).replace("\\", "/")
+    if not isinstance(value, str) or len(value) > MAX_DELEGATE_EVIDENCE_FIELD_CHARS:
+        return ""
+    # Paths are identifiers: omit unsafe metadata rather than sanitize it into
+    # a different clickable file name.
+    if strip_format_controls(value) != value or sanitize_tool_output(
+        value, max_chars=MAX_DELEGATE_EVIDENCE_FIELD_CHARS, tool_name=DELEGATE_TOOL_NAME
+    ) != value:
+        return ""
+    text = value.replace("\\", "/")
     windows_path = PureWindowsPath(text)
     if (
         not text
@@ -459,6 +493,8 @@ __all__ = [
     "DelegateRequest",
     "DelegateTask",
     "build_compact_delegate_settlement",
+    "delegate_task_label",
     "extract_tool_observed_evidence",
+    "strip_format_controls",
     "validate_delegate_arguments",
 ]

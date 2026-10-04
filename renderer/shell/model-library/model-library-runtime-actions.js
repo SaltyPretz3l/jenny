@@ -21,11 +21,19 @@
   var canonicalOllamaTag = formatUtils.canonicalOllamaTag;
   var boundedErrorMessage = formatUtils.boundedErrorMessage;
   var llamaServerFailureText = formatUtils.llamaServerFailureText;
+  // MODEL_*_TIMEOUT_MS are SOFT thresholds: they only show "Still switching
+  // models."; the controls stay locked and the wrapper keeps waiting, because the
+  // models.load / models.unload IPC call cannot be cancelled and a conflicting
+  // action would race it. (The name is kept: sidecar-timeout-hierarchy.test.js
+  // reads MODEL_UNLOAD_TIMEOUT_MS.)
   var MODEL_LOAD_TIMEOUT_MS = 120000;
   // Must stay ABOVE sidecar-request-timeouts.js 'models.unload' (35s), which is
-  // itself above the sidecar's own 30s eviction timeout. Rejecting first would
-  // report a bogus timeout for work that is still running and may still succeed.
+  // itself above the sidecar's own 30s eviction timeout. Noticing first would
+  // report a stall for work that is still running and may still succeed.
   var MODEL_UNLOAD_TIMEOUT_MS = 40000;
+  // Hard backstops: the UI never stays locked forever if the IPC call never settles.
+  var MODEL_LOAD_HARD_TIMEOUT_MS = 1200000;
+  var MODEL_UNLOAD_HARD_TIMEOUT_MS = 120000;
 
   function createModelLibraryRuntimeActions(deps) {
     var d = deps || {};
@@ -43,22 +51,44 @@
     var disposed = false;
     var activation = { status: 'idle', key: '', message: '' };
     var runtimeOperationId = 0;
-    var runtimeTimeoutId = null;
+    var runtimeSoftTimeoutId = null;
+    var runtimeHardTimeoutId = null;
 
-    function invokeRuntimeAction(workFactory, timeoutMs, timeoutMessage) {
+    function clearRuntimeTimers() {
+      if (runtimeSoftTimeoutId != null) {
+        windowRef.clearTimeout(runtimeSoftTimeoutId);
+        runtimeSoftTimeoutId = null;
+      }
+      if (runtimeHardTimeoutId != null) {
+        windowRef.clearTimeout(runtimeHardTimeoutId);
+        runtimeHardTimeoutId = null;
+      }
+    }
+
+    function invokeRuntimeAction(operationId, workFactory, softMs, hardMs, timeoutMessage) {
       return new Promise(function (resolve, reject) {
-        var timeoutId = windowRef.setTimeout(function () {
-          if (runtimeTimeoutId === timeoutId) runtimeTimeoutId = null;
+        var softId = windowRef.setTimeout(function () {
+          if (runtimeSoftTimeoutId === softId) runtimeSoftTimeoutId = null;
+          if (disposed || operationId !== runtimeOperationId) return;
+          setStatusMessage(jt('models.library.runtime.stillSwitching', 'Still switching models.'));
+        }, softMs);
+        var hardId = windowRef.setTimeout(function () {
+          if (runtimeHardTimeoutId === hardId) runtimeHardTimeoutId = null;
           reject(new Error(timeoutMessage));
-        }, timeoutMs);
-        runtimeTimeoutId = timeoutId;
+        }, hardMs);
+        runtimeSoftTimeoutId = softId;
+        runtimeHardTimeoutId = hardId;
+        function settle() {
+          windowRef.clearTimeout(softId);
+          windowRef.clearTimeout(hardId);
+          if (runtimeSoftTimeoutId === softId) runtimeSoftTimeoutId = null;
+          if (runtimeHardTimeoutId === hardId) runtimeHardTimeoutId = null;
+        }
         Promise.resolve().then(workFactory).then(function (result) {
-          windowRef.clearTimeout(timeoutId);
-          if (runtimeTimeoutId === timeoutId) runtimeTimeoutId = null;
+          settle();
           resolve(result);
         }, function (error) {
-          windowRef.clearTimeout(timeoutId);
-          if (runtimeTimeoutId === timeoutId) runtimeTimeoutId = null;
+          settle();
           reject(error);
         });
       });
@@ -138,8 +168,10 @@
       render();
       var payload = engineHint ? { model: model.tag, engine_type: engineHint } : modelId;
       invokeRuntimeAction(
+        operationId,
         function () { return load(payload); },
         MODEL_LOAD_TIMEOUT_MS,
+        MODEL_LOAD_HARD_TIMEOUT_MS,
         jt('models.library.runtime.loadTimedOut', 'The load request timed out. Model state will be re-checked.')
       ).then(function () {
         if (disposed || operationId !== runtimeOperationId) return;
@@ -191,8 +223,10 @@
       setStatusMessage('Unloading "' + modelId + '"…');
       render();
       invokeRuntimeAction(
+        operationId,
         function () { return unload(); },
         MODEL_UNLOAD_TIMEOUT_MS,
+        MODEL_UNLOAD_HARD_TIMEOUT_MS,
         jt('models.library.runtime.unloadTimedOut', 'The unload request timed out. Model state will be re-checked.')
       ).then(function () {
         if (disposed || operationId !== runtimeOperationId) return;
@@ -226,10 +260,7 @@
       if (disposed) return;
       disposed = true;
       runtimeOperationId += 1;
-      if (runtimeTimeoutId != null) {
-        windowRef.clearTimeout(runtimeTimeoutId);
-        runtimeTimeoutId = null;
-      }
+      clearRuntimeTimers();
     }
 
     return {

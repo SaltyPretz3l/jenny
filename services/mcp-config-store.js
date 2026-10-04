@@ -118,6 +118,19 @@ function normalizedServerConfig(value) {
   return { ok: true, value: row };
 }
 
+// Project validated store rows without exposing trust state or literal credentials.
+function projectServerConfig(server) {
+  const config = Object.fromEntries(Object.entries(server).filter(([key]) => (
+    SERVER_KEYS.has(key) && key !== 'enabled' && key !== 'trust'
+  )));
+  if (Array.isArray(config.args)) config.args = [...config.args];
+  if (plainObject(config.auth)) {
+    config.auth = Object.fromEntries(Object.entries(config.auth).filter(([key]) => AUTH_KEYS.has(key)));
+    if (!Object.keys(config.auth).length) delete config.auth;
+  }
+  return config;
+}
+
 function configurationDigest(server) {
   const normalized = normalizedServerConfig(server);
   return normalized.ok ? sha256(normalized.value) : '';
@@ -364,6 +377,7 @@ module.exports = {
   configurationDigest,
   defaultDocument,
   normalizedServerConfig,
+  projectServerConfig,
   pendingTrust,
   validateDocument,
 };

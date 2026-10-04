@@ -9,13 +9,20 @@ const {
   buildPolicyDecisionMetadata,
   evaluatePolicy,
 } = require('./tool-policy-evaluator');
-const { NEVER_PERSIST_ALWAYS_ALLOW } = require('./tool-permission-store');
 const { TOOL_ERROR_CODES } = require('../backend/error-codes');
 const { getTrustedExecutionBinding } = require('../backend/session-execution-authority');
 const { executeResolvedTool } = require('./tool-execution-dispatch');
-const { PLAN_DECISIONS } = require('./builtin/exit-plan-mode-tool');
+const { effectiveSideEffecting, isNonEmptyPlainObject } = require('./tool-policy-actions');
 
-const APPROVAL_EXPIRY_MS = 5 * 60 * 1000; // 5 minutes
+// True only when the tool declares per-action side effects and this call names
+// a declared read action; the same rule the sidecar and the policy evaluator
+// apply (tool-policy-actions.js), so the three gates agree.
+function isReadOnlyActionCall(tool, input) {
+  if (!tool || !isNonEmptyPlainObject(tool.actions)) return false;
+  const args = input && typeof input === 'object' && !Array.isArray(input) ? input : {};
+  return effectiveSideEffecting({ actions: tool.actions }, args) === false;
+}
+
 class ToolExecutor {
   constructor({
     registry,
@@ -30,7 +37,6 @@ class ToolExecutor {
     homeAssistantService,
     configService,
     refreshManagedConfig,
-    approvalExpiryMs,
   }) {
     this.registry = registry;
     this._permissionStore = permissionStore;
@@ -54,135 +60,6 @@ class ToolExecutor {
     this._refreshManagedConfig = typeof refreshManagedConfig === 'function'
       ? refreshManagedConfig
       : null;
-    const normalizedExpiryMs = Number(approvalExpiryMs);
-    this._approvalExpiryMs = Number.isFinite(normalizedExpiryMs) && normalizedExpiryMs > 0
-      ? normalizedExpiryMs
-      : APPROVAL_EXPIRY_MS;
-
-    // callId -> { callId, toolName, streamId, resolve, reject, timer }
-    this._pendingApprovals = new Map();
-    // streamId -> Set<callId>
-    this._streamApprovals = new Map();
-  }
-
-  async execute(call, context) {
-    context = this._bindExecutionContext(context);
-    const { callId, toolName, input } = call;
-    const preflight = this._preflightTool(call, context, { preApproved: false });
-    if (!preflight.tool) {
-      return preflight;
-    }
-    const { startTime, tool } = preflight;
-
-    const policyDecision = this._evaluateToolPolicy(tool, input, context);
-
-    if (policyDecision.decision === 'deny') {
-      this._logger('INFO', 'tool.denied', {
-        callId,
-        toolName,
-        reason: 'policy_deny',
-        policyDecisionId: policyDecision.id,
-        matchedRuleId: policyDecision.matched_rule_id,
-      });
-      return this._errorResult(
-        callId,
-        toolName,
-        `Tool "${toolName}" is denied by permission policy.`,
-        startTime,
-        {
-          approvalState: 'denied',
-          summary: `${toolName} denied`,
-          errorCode: TOOL_ERROR_CODES.POLICY_DENIED,
-          metadata: this._policyDecisionMetadata(policyDecision),
-        }
-      );
-    }
-
-    let approvalState;
-    let resolvedContext = context;
-    if (policyDecision.decision === 'auto') {
-      approvalState = 'auto';
-    } else {
-      this._logger('INFO', 'tool.approval_requested', { callId, toolName, streamId: context.streamId });
-      const approvalResolution = await this._waitForApproval(
-        callId, toolName, context.streamId, input, context
-      );
-      if (approvalResolution && typeof approvalResolution === 'object') {
-        approvalState = String(approvalResolution.state || 'approved');
-        resolvedContext = {
-          ...context,
-          planDecision: String(approvalResolution.decision || '').slice(0, 40),
-          planFeedback: String(approvalResolution.feedback || '').slice(0, 800),
-        };
-      } else {
-        approvalState = approvalResolution;
-      }
-    }
-
-    if (Object.hasOwn(resolvedContext, 'executionAuthority')) {
-      try {
-        const trustedExecution = getTrustedExecutionBinding(resolvedContext.executionAuthority);
-        if (!trustedExecution) throw new Error('Execution authority is unavailable.');
-        trustedExecution.assertCurrent();
-      } catch (_error) {
-        approvalState = 'cancelled';
-      }
-    }
-
-    if (approvalState === 'denied') {
-      this._logger('INFO', 'tool.denied', { callId, toolName, reason: 'user_denied' });
-      return this._errorResult(
-        callId,
-        toolName,
-        `Tool "${toolName}" was denied by the user.`,
-        startTime,
-        {
-          approvalState: 'denied',
-          summary: `${toolName} denied`,
-          errorCode: TOOL_ERROR_CODES.APPROVAL_DENIED,
-          metadata: this._policyDecisionMetadata(policyDecision),
-        }
-      );
-    }
-
-    if (approvalState === 'cancelled') {
-      this._logger('INFO', 'tool.cancelled', { callId, toolName });
-      return this._errorResult(
-        callId,
-        toolName,
-        `Tool "${toolName}" was cancelled.`,
-        startTime,
-        {
-          approvalState: 'cancelled',
-          summary: `${toolName} cancelled`,
-          errorCode: TOOL_ERROR_CODES.APPROVAL_DENIED,
-          metadata: this._policyDecisionMetadata(policyDecision),
-        }
-      );
-    }
-
-    if (approvalState === 'expired') {
-      this._logger('WARN', 'tool.expired', { callId, toolName });
-      return this._errorResult(
-        callId,
-        toolName,
-        `Approval for "${toolName}" expired.`,
-        startTime,
-        {
-          approvalState: 'expired',
-          summary: `${toolName} expired`,
-          errorCode: TOOL_ERROR_CODES.APPROVAL_DENIED,
-          metadata: this._policyDecisionMetadata(policyDecision),
-        }
-      );
-    }
-
-    return this._executeResolvedTool(call, resolvedContext, {
-      approvalState,
-      policyDecision,
-      startTime,
-      tool,
-    });
   }
 
   async executePreApproved(call, context) {
@@ -232,106 +109,6 @@ class ToolExecutor {
     this._workspaceTestRunnerService = service || null;
   }
 
-  approve(callId, options = {}) {
-    const pending = this._pendingApprovals.get(callId);
-    if (!pending) {
-      return false;
-    }
-    try {
-      pending.trustedExecution?.assertCurrent();
-    } catch (_error) {
-      clearTimeout(pending.timer);
-      this._removePending(callId, pending.streamId);
-      pending.resolve('cancelled');
-      return false;
-    }
-
-    clearTimeout(pending.timer);
-    this._removePending(callId, pending.streamId);
-
-    const requestedDecision = String(options.decision || 'approved').trim();
-    if (!PLAN_DECISIONS.includes(requestedDecision)) {
-      // Fail closed: an unrecognized decision denies instead of executing.
-      this._logger('WARN', 'tool.unknown_decision_denied', {
-        callId,
-        toolName: pending.toolName,
-        decision: requestedDecision.slice(0, 40),
-      });
-      pending.resolve('denied');
-      return true;
-    }
-    const decision = requestedDecision;
-
-    this._logger('INFO', 'tool.approved', {
-      callId,
-      toolName: pending.toolName,
-      alwaysAllow: !!options.alwaysAllow,
-    });
-
-    pending.resolve({
-      state: 'approved',
-      decision,
-      feedback: String(options.feedback || '').trim().slice(0, 800),
-    });
-
-    if (options.alwaysAllow && !NEVER_PERSIST_ALWAYS_ALLOW.has(pending.toolName)) {
-      try {
-        pending.trustedExecution?.assertCurrent();
-        const store = this._permissionStore;
-        (store.grantAlwaysAllow || ((name, _input, authority) => (
-          store.setPolicy(name, 'auto', authority)
-        ))).call(
-          store, pending.toolName, pending.toolInput, pending.trustedExecution?.authority
-        );
-      } catch (error) {
-        this._logger('WARN', 'tool.always_allow_persist_failed', {
-          callId,
-          toolName: pending.toolName,
-          error: String(error?.message || error || '').slice(0, 500),
-        });
-      }
-    }
-    return true;
-  }
-
-  deny(callId) {
-    const pending = this._pendingApprovals.get(callId);
-    if (!pending) {
-      return false;
-    }
-
-    clearTimeout(pending.timer);
-    this._removePending(callId, pending.streamId);
-
-    this._logger('INFO', 'tool.denied', {
-      callId,
-      toolName: pending.toolName,
-      reason: 'user_denied',
-    });
-
-    pending.resolve('denied');
-    return true;
-  }
-
-  cancelPendingForStream(streamId) {
-    const callIds = this._streamApprovals.get(streamId);
-    if (!callIds) {
-      return;
-    }
-
-    for (const callId of callIds) {
-      const pending = this._pendingApprovals.get(callId);
-      if (pending) {
-        clearTimeout(pending.timer);
-        pending.resolve('cancelled');
-        this._pendingApprovals.delete(callId);
-      }
-
-    }
-
-    this._streamApprovals.delete(streamId);
-  }
-
   getToolPolicy(toolName, input = {}, context = {}) {
     context = this._bindExecutionContext(context);
     const tool = this.registry.getTool(toolName);
@@ -339,14 +116,6 @@ class ToolExecutor {
       return this._evaluateToolPolicy(tool, input, context).decision;
     }
     return this._legacyPolicyForUnknownTool(toolName);
-  }
-
-  getPendingApprovals() {
-    const result = [];
-    for (const [callId, entry] of this._pendingApprovals) {
-      result.push({ callId, toolName: entry.toolName, streamId: entry.streamId });
-    }
-    return result;
   }
 
   _preflightTool(call, context, { preApproved }) {
@@ -404,7 +173,10 @@ class ToolExecutor {
       );
     }
 
-    if (context.readOnly && !tool.readOnly) {
+    // A mixed read/write tool (manifest `actions`) keeps its read actions in a
+    // read-only request (Plan Mode): task_board list, home calendar_list. Its
+    // writes, and a missing or undeclared action, still refuse (fail closed).
+    if (context.readOnly && !tool.readOnly && !isReadOnlyActionCall(tool, call.input)) {
       this._logger('INFO', 'tool.read_only_rejected', { callId, toolName });
       return this._errorResult(
         callId,
@@ -416,41 +188,6 @@ class ToolExecutor {
     }
 
     return { startTime, tool };
-  }
-
-  _waitForApproval(callId, toolName, streamId, toolInput, context = {}) {
-    return new Promise((resolve) => {
-      const timer = setTimeout(() => {
-        this._removePending(callId, streamId);
-        resolve('expired');
-      }, this._approvalExpiryMs);
-
-      this._pendingApprovals.set(callId, {
-        callId,
-        toolName,
-        streamId,
-        toolInput,
-        resolve,
-        timer,
-        trustedExecution: getTrustedExecutionBinding(context.executionAuthority),
-      });
-
-      if (!this._streamApprovals.has(streamId)) {
-        this._streamApprovals.set(streamId, new Set());
-      }
-      this._streamApprovals.get(streamId).add(callId);
-    });
-  }
-
-  _removePending(callId, streamId) {
-    this._pendingApprovals.delete(callId);
-    const streamSet = this._streamApprovals.get(streamId);
-    if (streamSet) {
-      streamSet.delete(callId);
-      if (streamSet.size === 0) {
-        this._streamApprovals.delete(streamId);
-      }
-    }
   }
 
   _executeResolvedTool(call, context, options) {

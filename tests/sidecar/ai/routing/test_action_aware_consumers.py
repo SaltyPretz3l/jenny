@@ -19,11 +19,10 @@ import pytest
 
 from sidecar.ai.error_codes import CMP_MODE_TOOL_BLOCKED
 from sidecar.ai.routing.tool_execution import approval_if_needed
-from sidecar.ai.tools.models import ToolCallRequest
 from sidecar.ai.tools.assembly import (
     READ_ONLY_UNAVAILABLE_REASON,
-    assemble_tool_contract,
     ToolAssemblyContext,
+    assemble_tool_contract,
 )
 from sidecar.ai.tools.catalog import (
     MANAGED_SIDECAR_SURFACE,
@@ -32,6 +31,7 @@ from sidecar.ai.tools.catalog import (
     ToolActionSpec,
 )
 from sidecar.ai.tools.contracts import ToolExecutionFailure
+from sidecar.ai.tools.models import ToolCallRequest
 
 MIXED_ACTIONS = {
     "status": ToolActionSpec(side_effecting=False),

@@ -95,3 +95,68 @@ test('a rejected loader reports the failure and refreshes the visible picker sta
   assert.equal(loadError?.message, 'worker failed');
   assert.equal(stage.querySelector('.empty').textContent, 'Load failed');
 });
+
+function rowMarkup(item, index, selected) {
+  return `<div class="ide-picker-row${selected ? ' ide-picker-row--selected' : ''}"`
+    + ` data-test-row="${index}">${item}</div>`;
+}
+
+function setupRows(computeMatches, buildRowMarkup = rowMarkup) {
+  const dom = new JSDOM('<!doctype html><body><div id="stage"></div></body>');
+  const stage = dom.window.document.getElementById('stage');
+  const overlay = createIdePickerOverlay({
+    getDom: () => ({ ideEditorStage: stage }),
+    textField,
+    ariaLabel: 'Search',
+    resultsAriaLabel: 'Results',
+    rowSelector: '[data-test-row]',
+    callbacks: {
+      computeMatches,
+      isLoading: () => false,
+      renderEmptyStatus: () => '<div class="empty"></div>',
+      buildRowMarkup,
+    },
+  });
+  return { dom, stage, overlay, input: () => stage.querySelector('.inv-text-field-control') };
+}
+
+test('picker-overlay exposes combobox semantics and the selected row through aria-activedescendant', (t) => {
+  const { dom, stage, overlay, input } = setupRows(() => ['alpha', 'beta', 'gamma']);
+  t.after(() => overlay.dispose());
+
+  overlay.open();
+  const listbox = stage.querySelector('[role="listbox"]');
+  assert.ok(listbox.id, 'listbox has an id');
+  assert.equal(input().getAttribute('role'), 'combobox');
+  assert.equal(input().getAttribute('aria-autocomplete'), 'list');
+  assert.equal(input().getAttribute('aria-haspopup'), 'listbox');
+  assert.equal(input().getAttribute('aria-controls'), listbox.id);
+  assert.equal(input().getAttribute('aria-expanded'), 'true');
+
+  const selectedId = () => stage.querySelector('[aria-selected="true"]').id;
+  assert.equal(stage.querySelectorAll('[role="option"]').length, 3, 'every row is an option');
+  assert.equal(input().getAttribute('aria-activedescendant'), selectedId());
+
+  input().dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
+  assert.equal(stage.querySelectorAll('[aria-selected="true"]').length, 1);
+  assert.equal(stage.querySelector('[aria-selected="true"]').textContent, 'beta');
+  assert.equal(input().getAttribute('aria-activedescendant'), selectedId(), 'follows ArrowDown');
+
+  overlay.close();
+  assert.equal(input().getAttribute('aria-expanded'), 'false');
+  assert.equal(input().hasAttribute('aria-activedescendant'), false, 'cleared on close');
+});
+
+test('picker-overlay keeps caller row ids and drops aria-activedescendant when there are no rows', (t) => {
+  let items = ['one'];
+  const { overlay, input } = setupRows(() => items, (item, index, selected) => (
+    `<div id="mine-${index}" class="ide-picker-row" data-test-row="${index}"`
+    + ` role="option" aria-selected="${selected}">${item}</div>`));
+  t.after(() => overlay.dispose());
+
+  overlay.open();
+  assert.equal(input().getAttribute('aria-activedescendant'), 'mine-0', 'caller id wins');
+  items = [];
+  overlay.refresh();
+  assert.equal(input().hasAttribute('aria-activedescendant'), false);
+});

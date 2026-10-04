@@ -7,6 +7,7 @@ const assert = require('node:assert/strict');
 const { createBackendServiceWithDeps } = require('../services/main/backend-service-wiring');
 const { ShellConfigService } = require('../services/shell-config-service');
 const { WorkspaceActiveUseTracker } = require('../services/workspace-active-use-tracker');
+const { ModelLoadDurationStore } = require('../services/model-load-duration-store');
 const { createFakeSafeStorage } = require('./helpers/fake-safe-storage');
 const {
   cleanupTrackedResources,
@@ -100,6 +101,19 @@ test('backend wiring injects worktreeService into the BackendService at construc
   const { created, worktreeService } = createBackendWiringFixture();
   try {
     assert.equal(created.backendService.worktreeService, worktreeService);
+  } finally {
+    created.backendService.dispose?.();
+  }
+});
+
+test('backend wiring attaches a model load-duration store under userData', () => {
+  const { created, userDataPath } = createBackendWiringFixture();
+  try {
+    const store = created.backendService.modelLoadDurationStore;
+    assert.equal(store instanceof ModelLoadDurationStore, true);
+    store.record({ engine: 'ollama', modelId: 'ornith:9b', durationMs: 4_200 });
+    assert.equal(fs.existsSync(path.join(userDataPath, 'model-load-durations.json')), true);
+    assert.equal(store.get({ engine: 'ollama', modelId: 'ornith:9b' }).lastMs, 4_200);
   } finally {
     created.backendService.dispose?.();
   }
@@ -205,11 +219,10 @@ test('deferred background refreshes are idempotent and isolated per service', as
   const { created, logEntries } = createRecordingFixture();
   const calls = [];
   created.modelCatalogService.refresh = () => { calls.push('model_catalog'); };
-  created.weatherService.refresh = () => {
-    calls.push('weather');
-    throw new Error('weather failed');
+  created.linkStatusService.refresh = () => {
+    calls.push('link_status');
+    throw new Error('link status failed');
   };
-  created.linkStatusService.refresh = () => { calls.push('link_status'); };
   created.calendarService.refreshFeeds = () => { calls.push('calendar'); };
 
   try {
@@ -217,17 +230,16 @@ test('deferred background refreshes are idempotent and isolated per service', as
     created.startDeferredBackgroundRefreshes();
     await new Promise((resolve) => setImmediate(resolve));
 
-    assert.deepEqual(calls, ['model_catalog', 'weather', 'link_status', 'calendar']);
+    assert.deepEqual(calls, ['model_catalog', 'link_status', 'calendar']);
     assert.deepEqual(
       logEntries.find((entry) => entry.event === 'background_refresh.failed'),
       {
         level: 'WARN',
         event: 'background_refresh.failed',
-        details: { service: 'weather', message: 'weather failed' },
+        details: { service: 'link_status', message: 'link status failed' },
       },
     );
   } finally {
-    created.weatherService.stop();
     created.linkStatusService.stop();
     created.calendarService.stop();
     created.backendService.dispose?.();
@@ -277,9 +289,6 @@ function createRecordingFixture({ featureFlags = {} } = {}) {
   const innerRefresh = () => toolRegistryRefreshCalls.push(1);
   const getRefreshElectronToolRegistry = () => innerRefresh;
 
-  const cometOverlayCalls = [];
-  const closeCometOverlayIfDisabled = () => cometOverlayCalls.push(1);
-
   const featureStatePayloads = [];
   const buildFeatureStatePayload = () => {
     const payload = { flags: 'test-payload' };
@@ -295,8 +304,7 @@ function createRecordingFixture({ featureFlags = {} } = {}) {
 
   const shellConfigService = new ShellConfigService({ userDataPath, env: {} });
 
-  // Enable tips_surface so tipsService.initializeSession() is called (line 204-205)
-  const mergedFlags = { tips_surface: true, ...featureFlags };
+  const mergedFlags = { ...featureFlags };
 
   const skillsListeners = [];
   const skillsService = {
@@ -333,7 +341,6 @@ function createRecordingFixture({ featureFlags = {} } = {}) {
     refreshGpuMemorySample,
     getRefreshElectronToolRegistry,
     shouldRefreshManagedConfigForShellConfigReason,
-    closeCometOverlayIfDisabled,
     sendBridgeEvent,
     log,
     showSidecarCrashDialog,
@@ -355,7 +362,6 @@ function createRecordingFixture({ featureFlags = {} } = {}) {
     smokeController,
     gpuRefreshCalls,
     toolRegistryRefreshCalls,
-    cometOverlayCalls,
     featureStatePayloads,
     managedConfigRefreshReasons,
   };
@@ -364,9 +370,8 @@ function createRecordingFixture({ featureFlags = {} } = {}) {
 // --- skills.on('changed') → sendBridgeEvent (line 159) ---
 
 test('skills.on(changed) closure fires sendBridgeEvent with skills.onChanged + state', () => {
-  // The wiring registers skillsService.on('changed', fn) at line 158.
-  // TipsService also calls skillsService.on('changed', ...) first (in its constructor),
-  // so the wiring listener is the LAST entry in skillsListeners.
+  // The wiring registers skillsService.on('changed', fn); it is the LAST
+  // entry in skillsListeners.
   const { skillsListeners, bridgeEvents, created } = createRecordingFixture();
   try {
     const wiringChangedListener = skillsListeners[skillsListeners.length - 1];
@@ -384,26 +389,6 @@ test('skills.on(changed) closure fires sendBridgeEvent with skills.onChanged + s
   }
 });
 
-// --- tipsService.on('changed') → sendBridgeEvent (line 162) ---
-
-test('tipsService.on(changed) closure fires sendBridgeEvent with tips.onChanged + state', () => {
-  // Note: initializeSession() at line 204-205 already fires tips.onChanged during construction.
-  // We emit AFTER construction and check only the event emitted by our own .emit() call.
-  const { created, bridgeEvents } = createRecordingFixture();
-  try {
-    const before = bridgeEvents.length;
-    const tipsState = { featureEnabled: true, myFlag: 'test-marker-abc' };
-    created.tipsService.emit('changed', tipsState);
-    const added = bridgeEvents.slice(before);
-    const match = added.find((e) => e.name === 'tips.onChanged');
-    assert.ok(match, 'sendBridgeEvent must be called with tips.onChanged after emit');
-    assert.equal(match.payload.myFlag, 'test-marker-abc',
-      'bridge payload must be the exact state object passed to tipsService.emit');
-  } finally {
-    created.backendService.dispose?.();
-  }
-});
-
 // --- schedulerService.on('changed') → sendBridgeEvent (line 165) ---
 
 test('schedulerService.on(changed) closure fires sendBridgeEvent with scheduler.onChanged + snapshot', () => {
@@ -414,29 +399,6 @@ test('schedulerService.on(changed) closure fires sendBridgeEvent with scheduler.
     const match = bridgeEvents.find((e) => e.name === 'scheduler.onChanged');
     assert.ok(match, 'sendBridgeEvent must be called with scheduler.onChanged');
     assert.deepEqual(match.payload, snapshot);
-  } finally {
-    created.backendService.dispose?.();
-  }
-});
-
-// --- tipsService.initializeSession() called when featureEnabled (line 204-205) ---
-
-test('tipsService.initializeSession is called at construction when tips_surface is enabled', () => {
-  // tips_surface:true → tipsService.featureEnabled → initializeSession() → emits 'changed'
-  const { created, bridgeEvents } = createRecordingFixture({ featureFlags: { tips_surface: true } });
-  try {
-    // initializeSession fires 'tips.onChanged' via sendBridgeEvent (wired at line 162)
-    const match = bridgeEvents.find((e) => e.name === 'tips.onChanged');
-    assert.ok(match, 'tipsService.initializeSession must emit tips.onChanged via bridge');
-    // The wiring constructs TipsService with featureEnabled = (tips_surface === true)
-    // (source line 152) and only calls initializeSession() behind that gate (line 203).
-    // initializeSession emits a snapshot carrying featureEnabled, so a concrete check on
-    // that field proves the feature gate -> session-init -> bridge-emit path actually ran,
-    // not merely that *some* object was forwarded.
-    assert.ok(match.payload && typeof match.payload === 'object',
-      'tips.onChanged payload must be a non-null object');
-    assert.equal(match.payload.featureEnabled, true,
-      'initializeSession snapshot must report featureEnabled:true (tips_surface gate)');
   } finally {
     created.backendService.dispose?.();
   }
@@ -670,17 +632,6 @@ test('shellConfigService changed: fires sendBridgeEvent features.onChanged with 
   }
 });
 
-test('shellConfigService changed: calls closeCometOverlayIfDisabled on every change', async () => {
-  const { created, shellConfigService, cometOverlayCalls } = createRecordingFixture();
-  try {
-    shellConfigService.emit('changed', {}, { reason: 'any_reason' });
-    await Promise.resolve();
-    assert.ok(cometOverlayCalls.length >= 1, 'closeCometOverlayIfDisabled must be called');
-  } finally {
-    created.backendService.dispose?.();
-  }
-});
-
 test('shellConfigService changed: calls getRefreshElectronToolRegistry()() when reason is tools_worktree_enabled_updated', async () => {
   const { created, shellConfigService, toolRegistryRefreshCalls } = createRecordingFixture();
   try {
@@ -735,7 +686,7 @@ test('companionService.listSessionSummaries closure reads from sessionStore', ()
     // Fake sessionStore with listSessions
     const fakeSessions = [{ id: 'sess-1' }];
     created.backendService.sessionStore = { listSessions: () => fakeSessions };
-    const result = created.companionService._listSessions();
+    const result = created.companionService._readSessionList().sessions;
     assert.deepEqual(result, fakeSessions);
   } finally {
     created.backendService.dispose?.();

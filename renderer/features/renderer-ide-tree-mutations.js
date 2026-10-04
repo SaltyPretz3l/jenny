@@ -87,6 +87,20 @@
       }
     }
 
+    // Commits the close plan once the owning mutation succeeded. A document edited
+    // after the user confirmed makes the commit refuse with `document_changed`;
+    // those paths are returned so the lifecycle keeps their editors open instead
+    // of force-closing the newer unsaved edits.
+    function commitPreflightPreserving(preflight) {
+      const result = commitMutationPreflight(preflight);
+      if (result?.committed !== false) return [];
+      if (result.code === 'document_changed') {
+        return (result.changedPaths || [result.changedPath]).filter(Boolean);
+      }
+      appendClientLog('WARN', 'ide.tree_preflight_commit_failed', { code: String(result.code || '') });
+      return [];
+    }
+
     async function commitEdit(rawValue, options = {}) {
       const edit = options.edit || getPendingEdit();
       const activeCommit = getCommittingEdit();
@@ -149,7 +163,7 @@
         if (editEpoch !== getRootEpoch()) { if (preflight) cancelMutationPreflight(preflight); return; }
         const editIsCurrent = getPendingEdit() === edit;
         if (editIsCurrent) setPendingEdit(null);
-        if (preflight) commitMutationPreflight(preflight);
+        const preservedPaths = preflight ? commitPreflightPreserving(preflight) : [];
         if (edit.mode === 'rename' && edit.kind === 'directory') {
           pruneStaleDirState(edit.targetPath);
         }
@@ -157,7 +171,7 @@
         if (edit.mode === 'create-file') {
           await onOpenFile(targetPath);
         } else if (edit.mode === 'rename') {
-          await onEntryRenamed(edit.targetPath, targetPath, edit.kind, { wasOpen: preflight?.paths?.length > 0 });
+          await onEntryRenamed(edit.targetPath, targetPath, edit.kind, { wasOpen: preflight?.paths?.length > 0, preservedPaths });
         }
         if (editEpoch !== getRootEpoch()) return;
         if (edit.mode === 'rename' && isQolEnabled()) {
@@ -216,12 +230,12 @@
         appendClientLog('WARN', 'ide.tree_delete_failed', { message: String(error?.message || error || '') });
         return false;
       }
-      commitMutationPreflight(preflight);
+      const preservedPaths = commitPreflightPreserving(preflight);
       if (kind === 'directory') {
         pruneStaleDirState(path);
       }
       await refreshDirectory(parentDirOf(path)); if (deleteEpoch !== getRootEpoch()) return false;
-      onEntryDeleted(path, kind);
+      onEntryDeleted(path, kind, { preservedPaths });
       render();
       return true;
     }
@@ -256,7 +270,7 @@
           cancelMutationPreflight(preflight);
           return false;
         }
-        commitMutationPreflight(preflight);
+        const preservedPaths = commitPreflightPreserving(preflight);
         if (kind === 'directory') pruneStaleDirState(fromPath);
         await refreshDirectory(parentDirOf(fromPath));
         if (moveEpoch !== getRootEpoch()) return false;
@@ -264,6 +278,7 @@
         if (moveEpoch !== getRootEpoch()) return false;
         await onEntryRenamed(fromPath, toPath, kind, {
           wasOpen: preflight?.paths?.length > 0,
+          preservedPaths,
         });
         if (moveEpoch !== getRootEpoch()) return false;
         render();

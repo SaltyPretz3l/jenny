@@ -58,10 +58,6 @@
     function isMapEnabled() {
       return flags().workspace_file_map === true;
     }
-    function isExplodedEnabled() {
-      return flags().workspace_exploded_view === true;
-    }
-
     function coerce(value) {
       return typeof ideStateUtils.coerceStageSurface === 'function'
         ? ideStateUtils.coerceStageSurface(value)
@@ -90,7 +86,7 @@
       if (stored === 'file_map' && isMapEnabled()) {
         return 'file_map';
       }
-      return isExplodedEnabled() && explodedEligible(ide) ? 'exploded' : 'editor';
+      return explodedEligible(ide) ? 'exploded' : 'editor';
     }
 
     // User/model-initiated switch. Flag-off targets are rejected (returns the
@@ -103,7 +99,7 @@
       const allowed = surface === 'editor'
         || (surface === 'preview' && isPreviewEnabled())
         || (surface === 'file_map' && isMapEnabled())
-        || (surface === 'exploded' && isExplodedEnabled());
+        || surface === 'exploded';
       if (!allowed) {
         appendClientLog('WARN', 'ide_stage.activate_rejected', { surface: String(surface || '') });
         return getEffectiveSurface();

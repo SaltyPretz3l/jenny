@@ -6,6 +6,10 @@
   root.rendererWorkspaceStateUtils = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   const MAX_OPEN_SESSIONS = 8;
+  // Pane-layout writes (resize, focus, open/close beside) coalesce into one
+  // workspace.updateState per window; never one per pointer move.
+  const PANE_LAYOUT_PERSIST_DELAY_MS = 250;
+  const DEFAULT_SPLIT_RATIO = 0.5;
 
   function normalizeId(value) {
     return String(value || '').trim();
@@ -20,13 +24,17 @@
     return Number.isFinite(cap) ? list.slice(0, cap) : list;
   }
 
+  function singlePaneLayout(sessionId) {
+    return { panes: [{ paneId: 0, sessionId: normalizeId(sessionId) }], focusedPaneId: 0, splitRatio: DEFAULT_SPLIT_RATIO };
+  }
+
   function createWorkspaceBridge(jennyShell) {
     const workspace = jennyShell && typeof jennyShell === 'object' ? jennyShell.workspace : null;
     return {
       async getState() {
         return typeof workspace?.getState === 'function'
           ? workspace.getState()
-          : { activeSessionId: '', openSessionIds: [] };
+          : { activeSessionId: '', openSessionIds: [], ...singlePaneLayout('') };
       },
       async updateState(patch) {
         return typeof workspace?.updateState === 'function' ? workspace.updateState(patch) : patch;
@@ -41,7 +49,14 @@
       ? deps.onPersistenceError
       : () => {};
     const isSessionBusy = typeof deps?.isSessionBusy === 'function' ? deps.isSessionBusy : () => false;
-    const state = { activeSessionId: '', openSessionIds: [], mruStack: [] };
+    // The pane model (renderer/shell/renderer-pane-model.js, loaded before this
+    // file) owns every layout rule; without it the layout stays one pane.
+    const paneModel = [deps?.paneModel, globalThis.rendererPaneModel]
+      .find((model) => typeof model?.normalizePaneLayout === 'function') || null;
+    const setTimer = typeof deps?.setTimeoutImpl === 'function' ? deps.setTimeoutImpl : (fn, ms) => setTimeout(fn, ms);
+    const clearTimer = typeof deps?.clearTimeoutImpl === 'function' ? deps.clearTimeoutImpl : (id) => clearTimeout(id);
+    const state = { activeSessionId: '', openSessionIds: [], mruStack: [], ...singlePaneLayout('') };
+    let paneLayoutTimer = null;
     let disposed = false;
     let lastValidSessionIds = [];
     let mutationChain = Promise.resolve();
@@ -68,6 +83,97 @@
 
     function snapshot() {
       return { activeSessionId: state.activeSessionId, openSessionIds: state.openSessionIds.slice() };
+    }
+
+    function readLayout() {
+      return {
+        panes: state.panes.map(({ paneId, sessionId }) => ({ paneId, sessionId })),
+        focusedPaneId: state.focusedPaneId,
+        splitRatio: state.splitRatio,
+      };
+    }
+
+    function assignLayout(layout) {
+      state.panes = layout.panes.map(({ paneId, sessionId }) => ({ paneId, sessionId }));
+      state.focusedPaneId = layout.focusedPaneId;
+      state.splitRatio = layout.splitRatio;
+    }
+
+    // Normalize through the pane model, then apply the rail rule the service
+    // applies too: a pane only shows an OPEN tab.
+    function writeLayout(raw, validIds) {
+      if (!paneModel) {
+        assignLayout(singlePaneLayout(state.activeSessionId));
+        return;
+      }
+      const options = validIds ? { validSessionIds: validIds } : undefined;
+      const layout = paneModel.normalizePaneLayout(raw, options);
+      const open = new Set(state.openSessionIds);
+      assignLayout(paneModel.normalizePaneLayout({
+        panes: layout.panes.map(({ sessionId }) => (open.has(sessionId) ? sessionId : '')),
+        focusedPaneId: layout.focusedPaneId,
+        splitRatio: layout.splitRatio,
+      }));
+    }
+
+    // Mirror of the service rule for a rail-only patch (shell-config-normalizers.js
+    // mergeWorkspacePatch): focus the pane already showing the active tab,
+    // otherwise show the active tab in the focused pane.
+    function followRail() {
+      const holder = state.activeSessionId
+        ? state.panes.findIndex((pane) => pane.sessionId === state.activeSessionId)
+        : -1;
+      const layout = readLayout();
+      if (holder >= 0) layout.focusedPaneId = holder;
+      else layout.panes[state.focusedPaneId].sessionId = state.activeSessionId;
+      writeLayout(layout);
+    }
+
+    // The focused pane owns the rail's active tab; a blank focused pane leaves
+    // it alone (the service derives the stored activeSessionId the same way).
+    function followFocusedPane() {
+      const focusedId = state.panes[state.focusedPaneId]?.sessionId || '';
+      if (!focusedId || focusedId === state.activeSessionId) return;
+      state.activeSessionId = focusedId;
+      mruPush(focusedId);
+      publish();
+    }
+
+    function hydrateLayout(source, validIds) {
+      const raw = source && typeof source === 'object' ? source : {};
+      const stored = raw.panes == null ? [raw.activeSessionId] : raw.panes;
+      writeLayout({
+        panes: (Array.isArray(stored) ? stored : [])
+          .map((entry) => resolveId(entry && typeof entry === 'object' ? entry.sessionId : entry)),
+        focusedPaneId: raw.focusedPaneId,
+        splitRatio: raw.splitRatio,
+      }, validIds);
+    }
+
+    // Always writes the CURRENT layout, so a rail change that moved a pane
+    // while the window was open is carried too. Ordered behind rail writes.
+    function flushPaneLayout() {
+      mutationChain = mutationChain.catch(() => {}).then(async () => {
+        await bridge.updateState(readLayout())
+          .catch(() => reportPersistenceError('workspace_pane_layout_persist_failed'));
+        return snapshot();
+      });
+      return mutationChain;
+    }
+
+    // The sessions of every pane but the focused one (which a rail write moves).
+    function otherPaneSessions() {
+      return JSON.stringify(state.panes.map((pane) => (pane.paneId === state.focusedPaneId ? '' : pane.sessionId)));
+    }
+
+    // Trailing edge of a fixed window: the first call opens it, later calls in
+    // the window only update the layout, the end of the window writes once.
+    function schedulePaneLayoutWrite() {
+      if (paneLayoutTimer !== null) return;
+      paneLayoutTimer = setTimer(() => {
+        paneLayoutTimer = null;
+        flushPaneLayout();
+      }, PANE_LAYOUT_PERSIST_DELAY_MS);
     }
 
     function captureInternalState() {
@@ -118,10 +224,12 @@
       mutationChain = mutationChain.catch(() => {}).then(async () => {
         if (disposed) return snapshot();
         const previous = captureInternalState();
+        const previousLayout = readLayout();
         try {
           return await task();
         } catch (error) {
           restoreInternalState(previous);
+          assignLayout(previousLayout);
           publish();
           reportPersistenceError('workspace_state_persist_failed');
           throw error;
@@ -147,6 +255,7 @@
     }
 
     async function commitState() {
+      followRail();
       await persist();
       return publish();
     }
@@ -172,14 +281,16 @@
       });
     }
 
-    // Open `id` as a NEW tab after the active one, evicting the least-recently-used
-    // idle tab at the cap. Returns snapshot() (no-op) when the rail is full of busy
-    // tabs — the coordinator's "Session Rail Full" guard depends on that. Assumes
-    // `id` is normalized and not already open; must run inside queueMutation().
-    function openAsNewTab(id) {
+    // Open `id` as a NEW tab after the active one; at the cap, evict the LRU idle
+    // tab no pane shows (writeLayout would blank that pane), else no-op snapshot()
+    // (the coordinator's full-rail guard). The evicted id rides on the returned
+    // snapshot only. `id` is normalized and not open; runs in queueMutation().
+    async function openAsNewTab(id) {
+      let evictId = '';
       if (state.openSessionIds.length >= MAX_OPEN_SESSIONS) {
-        const evictId = state.mruStack.slice().reverse()
-          .find((e) => e !== state.activeSessionId && !isSessionBusy(e));
+        const inPane = new Set(state.panes.map((pane) => pane.sessionId));
+        evictId = state.mruStack.slice().reverse()
+          .find((e) => e !== state.activeSessionId && !inPane.has(e) && !isSessionBusy(e)) || '';
         if (!evictId) return snapshot();
         state.openSessionIds = state.openSessionIds.filter((e) => e !== evictId);
         mruRemove(evictId);
@@ -189,11 +300,27 @@
       state.openSessionIds.splice(insertIdx, 0, id);
       state.activeSessionId = id;
       mruPush(id);
-      return commitState();
+      return evictId ? { ...(await commitState()), evictedSessionId: evictId } : commitState();
     }
 
     return {
       getState: snapshot,
+
+      getPaneLayout: readLayout,
+
+      // W1-4's single writer for the pane layout: applies it now (a partial
+      // layout keeps the fields it omits), moves the rail's active tab with
+      // the focused pane, and persists once per window.
+      persistPaneLayout(layout) {
+        if (disposed) return readLayout();
+        const source = layout && typeof layout === 'object' ? layout : {};
+        const current = readLayout();
+        const pick = (key) => (source[key] === undefined ? current[key] : source[key]);
+        writeLayout({ panes: pick('panes'), focusedPaneId: pick('focusedPaneId'), splitRatio: pick('splitRatio') });
+        followFocusedPane();
+        schedulePaneLayoutWrite();
+        return readLayout();
+      },
 
       getRollbackSnapshot: captureInternalState,
 
@@ -209,9 +336,11 @@
             ? normalizeIdList(ids.filter((id) => id !== target).map((id) => id === source ? target : resolveId(id)))
             : resolveIds(ids);
           const cycleActive = cycleSnapshot?.[cycleCursor];
+          const othersBefore = otherPaneSessions();
           state.openSessionIds = migrate(state.openSessionIds);
           state.mruStack = migrate(state.mruStack);
           state.activeSessionId = resolveId(state.activeSessionId);
+          writeLayout({ ...readLayout(), panes: state.panes.map((pane) => resolveId(pane.sessionId)) });
           if (cycleSnapshot) {
             cycleSnapshot = migrate(cycleSnapshot);
             cycleCursor = cycleSnapshot.indexOf(resolveId(cycleActive));
@@ -220,6 +349,10 @@
           // nothing. Publishing anyway would push the workspace's stale active
           // id over the renderer's current session mid-handoff.
           if (JSON.stringify(captureInternalState()) === before) return snapshot();
+          followRail();
+          // The rail write only moves the focused pane; a promoted id in another
+          // pane reaches the service through the layout write.
+          if (otherPaneSessions() !== othersBefore) schedulePaneLayoutWrite();
           // Unlike ordinary tab mutations, never roll back to a dead local ID.
           // restore() also resolves saved aliases, so a failed write is recoverable.
           try { await persist(); } catch (_error) {
@@ -428,7 +561,7 @@
           resetCycle(); // a full restore rebuilds mruStack; drop any stale snapshot
           // Background metadata refresh is not a navigation or boot restore.
           const saved = options.preserveCurrentSession === true
-            ? snapshot()
+            ? { ...snapshot(), ...readLayout() }
             : await bridge.getState().catch(() => ({}));
           const validSet = new Set(resolvedValidSessionIds);
           const savedOpen = normalizeIdList(resolveIds(saved?.openSessionIds), validSet, MAX_OPEN_SESSIONS);
@@ -443,15 +576,25 @@
           state.mruStack = state.activeSessionId
             ? [state.activeSessionId, ...state.openSessionIds.filter((e) => e !== state.activeSessionId)]
             : state.openSessionIds.slice();
+          hydrateLayout(saved, validSet);
           return commitState();
         });
       },
 
+      // Flushes a pending pane-layout write (returns its promise) before the
+      // controller goes quiet.
       dispose() {
+        let flushed;
+        if (paneLayoutTimer !== null) {
+          clearTimer(paneLayoutTimer);
+          paneLayoutTimer = null;
+          flushed = flushPaneLayout();
+        }
         disposed = true;
+        return flushed;
       },
     };
   }
 
-  return { createWorkspaceStateController };
+  return { PANE_LAYOUT_PERSIST_DELAY_MS, createWorkspaceStateController };
 });

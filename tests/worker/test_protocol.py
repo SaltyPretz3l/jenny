@@ -33,6 +33,7 @@ class ProtocolTests(unittest.TestCase):
             "job_id": str(uuid.uuid4()),
             "command": "printf ok",
             "cwd": ".",
+            "input_root": ".",
             "timeout_seconds": 1,
         }
         self.assertEqual(validate_request(request("submit", **common))["cwd"], ".")
@@ -40,6 +41,19 @@ class ProtocolTests(unittest.TestCase):
             validate_request(request("submit", **{**common, "cwd": "../escape"}))
         with self.assertRaises(ProtocolError):
             validate_request(request("submit", **{**common, "timeout_seconds": 0.01}))
+
+    def test_submit_requires_valid_input_root(self):
+        common = dict(incarnation=str(uuid.uuid4()), job_id=str(uuid.uuid4()),
+                      command="true", cwd=".", timeout_seconds=1)
+        with self.assertRaisesRegex(ProtocolError, "request_keys_not_exact"):
+            validate_request(request("submit", **common))
+        for root in ("..", "a/../b", "/abs", "a\\b", "", "c:x", "a//b", "a/./b",
+                     "x" * 1025, "/".join(["a"] * 33), "a\x00b"):
+            with self.subTest(root=root), self.assertRaises(ProtocolError):
+                validate_request(request("submit", **common, input_root=root))
+        for root in (".", "projects/a"):
+            self.assertEqual(validate_request(request("submit", **common, input_root=root))
+                             ["input_root"], root)
 
 
 if __name__ == "__main__":

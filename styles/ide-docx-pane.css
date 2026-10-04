@@ -35,7 +35,7 @@
   border-radius: 4px;
   background: transparent;
   color: var(--text-muted);
-  font: 600 11px/1 var(--font-family-body);
+  font: 500 var(--font-size-body)/1 var(--font-family-body);
   cursor: pointer;
 }
 
@@ -69,7 +69,7 @@
   border-bottom: 1px solid var(--line);
   background: color-mix(in srgb, var(--accent) 8%, var(--bg-panel));
   color: var(--text-muted);
-  font-size: 11px;
+  font-size: var(--font-size-footnote);
   line-height: 1.45;
 }
 
@@ -93,7 +93,7 @@
   box-shadow: 0 8px 28px color-mix(in srgb, var(--text-primary) 18%, transparent);
   color: var(--text-primary);
   font-family: var(--font-family-body);
-  font-size: 14px;
+  font-size: var(--font-size-prose);
   line-height: 1.5;
   caret-color: var(--accent);
 }
@@ -138,9 +138,7 @@
   border-radius: 3px;
   background: var(--bg-panel);
   color: var(--text-faint);
-  font: 600 9px/1.35 var(--font-family-body);
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
+  font: 500 var(--font-size-caption)/1.35 var(--font-family-body);
   user-select: none;
 }
 
@@ -202,7 +200,7 @@
   border: 1px dashed var(--line);
   border-radius: 3px;
   color: var(--text-muted);
-  font: 11px/1.4 var(--font-family-body);
+  font: var(--font-size-footnote)/1.4 var(--font-family-body);
   user-select: all;
 }
 

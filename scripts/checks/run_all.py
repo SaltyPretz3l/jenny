@@ -1,8 +1,10 @@
-"""Run all policy checks in a deterministic order."""
+"""Run all policy checks and report them in a deterministic order."""
 from __future__ import annotations
 
+import subprocess
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -18,6 +20,11 @@ from scripts.checks.bounded_process import run_bounded  # noqa: E402
 # the class for all 50. The whole gate is ~35-85s and the slowest single check
 # is ~9s, so this ceiling only fires on a genuine wedge.
 CHECK_TIMEOUT_SECONDS = 600
+# The checks are independent read-only scans, one subprocess each, so several run
+# at once (run serially the stage took 46-55 s of every gate and commit,
+# 2026-10-04). Results are still printed in list order and the first failing
+# check in that order decides the exit code, as when they ran one at a time.
+MAX_PARALLEL_CHECKS = 6
 
 CHECKS = [
     "check_boundary.py",
@@ -45,12 +52,8 @@ CHECKS = [
     "check_plugin_contract_freeze.py",
     "measure_plugin_budgets.py",
     "check_plugin_boundary.py",
-    "check_plugin_stage_boundary.py",
-    # check_plugin_stage8_boundary.py is a library consumed by the stage-boundary check.
     "check_plugin_stage5_budgets.py",
-    "check_plugin_stage6_budgets.py",
     "check_plugin_stage7_budgets.py",
-    "check_plugin_stage8_budgets.py",
     "check_provider_descriptor_fixtures.py",
     "check_test_coverage_map.py",
     "check_vacuous_oracle.py",
@@ -81,8 +84,9 @@ CHECKS = [
 # A passing check's own "PASS:" line is dropped when forwarding (this driver prints
 # its own), and the remainder is capped. Successful checks used to have their output
 # discarded entirely, which hid live WARN/INFO diagnostics; forwarding it verbatim
-# swings too far, because check_dead_code_candidates alone prints a ~74-line advisory
-# inventory on every commit. The tail stays addressable by running that one check.
+# swings too far, because check_dead_code_candidates alone prints a multi-line advisory
+# inventory on every commit (74 candidates on 2026-09-25 after the entrypoint
+# repair, down from 208). The tail stays addressable by running that one check.
 FORWARDED_LINE_BUDGET = 12
 
 
@@ -99,44 +103,63 @@ def _forward_passing_output(check: str, stdout: str, stderr: str) -> None:
         print(f"  ... {hidden} more line(s); run scripts/checks/{check} to see them")
 
 
+def _run_check(check: str) -> tuple[subprocess.CompletedProcess[str] | None, str, float]:
+    check_started = time.perf_counter()
+    is_budget_check = check == "measure_plugin_budgets.py"
+    script = ROOT / "scripts" / (check if is_budget_check else f"checks/{check}")
+    command = [sys.executable, str(script)]
+    if is_budget_check:
+        command.append("--check")
+    try:
+        result = run_bounded(
+            command,
+            label=check,
+            timeout_seconds=CHECK_TIMEOUT_SECONDS,
+            cwd=ROOT,
+            # Locale-native, as this driver has always decoded these checks:
+            # reading a cp1252 byte as UTF-8 would corrupt the very FAIL text
+            # an operator reads to find out what broke.
+            encoding=None,
+        )
+    except RuntimeError as error:
+        return None, str(error), time.perf_counter() - check_started
+    return result, "", time.perf_counter() - check_started
+
+
+def _report_check(check: str, result: subprocess.CompletedProcess[str] | None, error: str,
+                  elapsed: float) -> int:
+    if result is None:
+        print(error)
+        print(f"FAIL: {check} ({elapsed:.2f}s)")
+        return 1
+    if result.returncode != 0:
+        if result.stdout:
+            print(result.stdout.strip())
+        if result.stderr:
+            print(result.stderr.strip())
+        print(f"FAIL: {check} ({elapsed:.2f}s)")
+        return result.returncode
+    _forward_passing_output(check, result.stdout or "", result.stderr or "")
+    print(f"PASS: {check} ({elapsed:.2f}s)")
+    return 0
+
+
 def main() -> int:
     total_started = time.perf_counter()
     total_checks = len(CHECKS)
-    for index, check in enumerate(CHECKS, start=1):
-        check_started = time.perf_counter()
-        print(f"RUN [{index}/{total_checks}] {check}", flush=True)
-        is_budget_check = check == "measure_plugin_budgets.py"
-        script = ROOT / "scripts" / (check if is_budget_check else f"checks/{check}")
-        command = [sys.executable, str(script)]
-        if is_budget_check:
-            command.append("--check")
+    with ThreadPoolExecutor(max_workers=MAX_PARALLEL_CHECKS) as pool:
+        futures = [pool.submit(_run_check, check) for check in CHECKS]
         try:
-            result = run_bounded(
-                command,
-                label=check,
-                timeout_seconds=CHECK_TIMEOUT_SECONDS,
-                cwd=ROOT,
-                # Locale-native, as this driver has always decoded these checks:
-                # reading a cp1252 byte as UTF-8 would corrupt the very FAIL text
-                # an operator reads to find out what broke.
-                encoding=None,
-            )
-        except RuntimeError as error:
-            elapsed = time.perf_counter() - check_started
-            print(str(error))
-            print(f"FAIL: {check} ({elapsed:.2f}s)")
-            return 1
-        if result.returncode != 0:
-            elapsed = time.perf_counter() - check_started
-            if result.stdout:
-                print(result.stdout.strip())
-            if result.stderr:
-                print(result.stderr.strip())
-            print(f"FAIL: {check} ({elapsed:.2f}s)")
-            return result.returncode
-        _forward_passing_output(check, result.stdout or "", result.stderr or "")
-        elapsed = time.perf_counter() - check_started
-        print(f"PASS: {check} ({elapsed:.2f}s)")
+            for index, (check, future) in enumerate(zip(CHECKS, futures, strict=True), start=1):
+                print(f"RUN [{index}/{total_checks}] {check}", flush=True)
+                exit_code = _report_check(check, *future.result())
+                if exit_code != 0:
+                    return exit_code
+        finally:
+            # On a failure or an interrupt, queued checks never start; the few
+            # already running are bounded. A no-op when every check finished.
+            for pending in futures:
+                pending.cancel()
 
     total_elapsed = time.perf_counter() - total_started
     print(f"PASS: all policy checks ({total_elapsed:.2f}s)")

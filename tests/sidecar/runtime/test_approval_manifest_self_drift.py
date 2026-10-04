@@ -39,8 +39,8 @@ from sidecar.runtime.chat import _validate_approval_plan_live_context
 from sidecar.runtime.turn_retry import InnerRetryableTurnError
 from tests.sidecar.runtime.test_chat import (
     _MANIFEST_PROMPT_TEMPLATE,
-    _ApprovalResumeRouter,
     _approval_validation_brain_container,
+    _ApprovalResumeRouter,
     _build_approval_plan_for_chat_tests,
 )
 

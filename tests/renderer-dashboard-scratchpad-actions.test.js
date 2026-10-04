@@ -7,62 +7,11 @@ const { createScratchpadWidget } = require('../renderer/features/renderer-dashbo
 const inventoryTextField = require('../renderer/inventory/text-field.js');
 const inventoryActionButton = require('../renderer/inventory/action-button.js');
 const scratchpadMarkdown = require('../renderer/features/renderer-dashboard-scratchpad-markdown.js');
-const { scratch, twoNotesActive, flagOnCtx } = require('./helpers/scratchpad-fixtures.js');
+const {
+  scratch, twoNotesActive, flagOnCtx, createTimerStub, createShellStub,
+} = require('./helpers/scratchpad-fixtures.js');
 
 const FIXED_NOW = new Date(2026, 5, 11, 10, 0);
-
-function createTimerStub() {
-  const timers = [];
-  return {
-    timers,
-    setTimeoutImpl: (fn, ms) => {
-      const timer = { fn, ms, cleared: false };
-      timers.push(timer);
-      return timer;
-    },
-    clearTimeoutImpl: (timer) => {
-      if (timer) {
-        timer.cleared = true;
-      }
-    },
-    async fire() {
-      for (const timer of timers.splice(0)) {
-        if (!timer.cleared) {
-          timer.fn();
-        }
-      }
-      await new Promise((resolve) => setImmediate(resolve));
-    },
-  };
-}
-
-// Pass `getScratchpad` to echo the MERGED config: scratchpadEchoMatches() rejects
-// an acknowledgement missing notes/activeNoteId/settings/pins, so a bare pointer
-// echo reads as a FAILED write. See hyg-W7 / W7e-18-F01.
-function createShellStub(getScratchpad) {
-  const calls = { updates: [], followUps: [] };
-  return {
-    calls,
-    shell: {
-      home: {
-        updateConfig: async (patch) => {
-          calls.updates.push(patch);
-          const base = (getScratchpad && getScratchpad()) || {};
-          return {
-            links: [], weather: {}, widgets: {}, calendar: {}, focusMode: false, showContextualTips: true,
-            scratchpad: { ...base, ...patch.scratchpad, pins: patch.scratchpad?.pins || base.pins || [] },
-          };
-        },
-      },
-      companion: {
-        addFollowUp: async (payload) => {
-          calls.followUps.push(payload);
-          return { openLoopsBoard: { counts: { active: 1 } } };
-        },
-      },
-    },
-  };
-}
 
 test('queueSave debounces: bursts collapse into one updateConfig write', async () => {
   const { shell, calls } = createShellStub();
@@ -116,7 +65,6 @@ test('queueSave rejects a partial Home acknowledgement and retains the prior scr
 test('pointer-only Scratchpad acknowledgement rejects sibling note content loss', async () => {
   const currentHome = {
     links: [{ id: 'docs', name: 'Docs', tiles: [] }],
-    weather: { city: 'Chicago' },
     widgets: { order: [], hidden: [] },
     scratchpad: twoNotesActive('note-1'),
     calendar: { feeds: [] },
@@ -277,7 +225,7 @@ test('scratchpad widget renders the active note, not just the first, and falls b
   assert.equal(dangling.querySelector('#homeScratchpadInput').value, 'A');
 });
 
-test('scratchpad widget wires input to queueSave and the loop button to promote', async () => {
+test('scratchpad widget (no notes yet: single pad) wires input to queueSave and the loop button to promote', async () => {
   const dom = new JSDOM('<section id="body"></section>');
   const body = dom.window.document.getElementById('body');
   const seen = { saved: [], promoted: [] };
@@ -293,7 +241,7 @@ test('scratchpad widget wires input to queueSave and the loop button to promote'
     },
   });
 
-  widget.render(body, { state: { homeConfig: { scratchpad: scratch('') } } });
+  widget.render(body, { state: { homeConfig: { scratchpad: { ...scratch(''), notes: [], activeNoteId: '' } } } });
   const textarea = body.querySelector('#homeScratchpadInput');
   textarea.value = 'note';
   textarea.dispatchEvent(new dom.window.Event('input', { bubbles: true }));
@@ -541,7 +489,7 @@ test('flag-on input routes typing to queueSave with the active note id', () => {
   assert.deepEqual(saved, [['typed', 'note-2']]);
 });
 
-test('clicking a tab optimistically shows that note and calls setActiveNote', async () => {
+test('clicking a tab shows that note after setActiveNote succeeds', async () => {
   const dom = new JSDOM('<section id="body"></section>');
   const body = dom.window.document.getElementById('body');
   const switched = [];
@@ -555,8 +503,9 @@ test('clicking a tab optimistically shows that note and calls setActiveNote', as
   assert.equal(body.querySelector('#homeScratchpadInput').value, 'A');
   body.querySelector('[data-scratchpad-tab="note-2"]')
     .dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
-  assert.equal(body.querySelector('#homeScratchpadInput').value, 'B'); // optimistic
+  assert.equal(body.querySelector('#homeScratchpadInput').value, 'A');
   await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(body.querySelector('#homeScratchpadInput').value, 'B');
   assert.deepEqual(switched, ['note-2']);
 });
 
@@ -624,7 +573,7 @@ test('the ⋯ button opens the actions menu through the injected context menu', 
   assert.equal(shown[0].items[0].label, 'save:true');
 });
 
-test('addNote re-renders so the new note is selected even after a prior optimistic tab switch', async () => {
+test('addNote re-renders so the new note is selected after a prior acknowledged tab switch', async () => {
   const dom = new JSDOM('<section id="body"></section>');
   const body = dom.window.document.getElementById('body');
   const widget = createScratchpadWidget({
@@ -638,13 +587,14 @@ test('addNote re-renders so the new note is selected even after a prior optimist
   });
 
   widget.render(body, flagOnCtx(twoNotesActive('note-1')));
-  // Optimistically switch to note-2 (sets localActiveId = note-2).
+  // Switch to note-2 after its pointer write succeeds.
   body.querySelector('[data-scratchpad-tab="note-2"]')
     .dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
+  await new Promise((resolve) => setImmediate(resolve));
   assert.equal(body.querySelector('[data-scratchpad-tab="note-2"]').getAttribute('aria-selected'), 'true');
 
   // Add a note that becomes active note-1; the strip must reflect note-1, not the
-  // stale optimistic note-2 (regression: the .then re-renders immediately).
+  // stale note-2 (regression: the .then re-renders immediately).
   body.querySelector('[data-scratchpad-add]')
     .dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
   await new Promise((resolve) => setImmediate(resolve));
@@ -935,7 +885,7 @@ test('markdown preview: clicking a checklist row flips the marker, persists, and
   assert.equal(body.querySelector('[data-scratchpad-check="0"]').getAttribute('aria-pressed'), 'true');
 });
 
-test('markdown preview: switching notes returns to the editable textarea', () => {
+test('markdown preview: switching notes returns to the editable textarea', async () => {
   const dom = new JSDOM('<section id="body"></section>');
   const body = dom.window.document.getElementById('body');
   const scratchpad = {
@@ -958,6 +908,7 @@ test('markdown preview: switching notes returns to the editable textarea', () =>
   assert.equal(body.querySelector('#homeScratchpadInput'), null); // in preview
   // Switching to note-2 must drop preview and show the editable textarea.
   body.querySelector('[data-scratchpad-tab="note-2"]').dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
+  await new Promise((resolve) => setImmediate(resolve));
   assert.ok(body.querySelector('#homeScratchpadInput'), 'switch returns to edit mode');
 });
 

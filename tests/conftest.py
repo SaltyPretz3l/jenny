@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import errno
 import os
+import socket
 from pathlib import Path
 
 import pytest
@@ -47,6 +49,65 @@ def _hermetic_operation_ledger_root(tmp_path_factory, monkeypatch):
     # receipts from leaking between tests and into the real machine state.
     root = tmp_path_factory.mktemp("operation-ledger")
     monkeypatch.setenv("JENNY_OPERATION_LEDGER_ROOT", str(root))
+
+
+_OLLAMA_PORT = 11434
+_LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
+
+
+class LiveOllamaAccessError(AssertionError):
+    """A test tried to reach a real Ollama daemon (JENNY_LIVE_OLLAMA=strict)."""
+
+
+def _targets_local_ollama(address: object) -> bool:
+    # (host, port) for IPv4, (host, port, flowinfo, scope_id) for IPv6.
+    if not isinstance(address, tuple):
+        return False
+    host, port = (*address, None, None)[:2]
+    return port == _OLLAMA_PORT and str(host).lower() in _LOOPBACK_HOSTS
+
+
+def install_live_ollama_guard(monkeypatch: pytest.MonkeyPatch, mode: str) -> None:
+    # Dogfood HB-033: `pytest tests/sidecar` on a machine where a Jenny app owned
+    # 127.0.0.1:11434 sent real /api/generate calls to that daemon and loaded a
+    # 4.7 GB model beside the app's chat model. Tests never reach a live Ollama:
+    # the default refuses the connection (what a machine without Ollama sees),
+    # JENNY_LIVE_OLLAMA=strict fails the test that tried instead, and
+    # JENNY_LIVE_OLLAMA=1 lifts the guard for a deliberate live run.
+    if mode in {"1", "true"}:
+        return
+    real_connect = socket.socket.connect
+    real_connect_ex = socket.socket.connect_ex
+
+    def _refuse(address: object) -> None:
+        if mode == "strict":
+            raise LiveOllamaAccessError(f"test tried to reach a live Ollama at {address!r}")
+
+    def connect(self, address, *args):
+        if _targets_local_ollama(address):
+            _refuse(address)
+            raise ConnectionRefusedError(errno.ECONNREFUSED, "live Ollama is blocked in tests")
+        return real_connect(self, address, *args)
+
+    def connect_ex(self, address, *args):
+        if _targets_local_ollama(address):
+            _refuse(address)
+            return errno.ECONNREFUSED
+        return real_connect_ex(self, address, *args)
+
+    monkeypatch.setattr(socket.socket, "connect", connect)
+    monkeypatch.setattr(socket.socket, "connect_ex", connect_ex)
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _no_live_ollama():
+    # Session-wide, not per test: an engine warm-up thread outlives the test
+    # that started it, and a per-test patch is already undone when it connects.
+    with pytest.MonkeyPatch.context() as session_patch:
+        install_live_ollama_guard(
+            session_patch, os.environ.get("JENNY_LIVE_OLLAMA", "").strip().lower()
+        )
+        yield
 
 
 @pytest.fixture

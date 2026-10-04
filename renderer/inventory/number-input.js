@@ -12,14 +12,8 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
   var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
-  function escapeHtml(value) {
-    return String(value || '')
-      .replaceAll('&', '&amp;')
-      .replaceAll('<', '&lt;')
-      .replaceAll('>', '&gt;')
-      .replaceAll('"', '&quot;')
-      .replaceAll("'", '&#39;');
-  }
+  const escapeHtml = ((typeof globalThis !== 'undefined' && globalThis.stringUtils)
+    || (typeof require === 'function' ? require('../shared/string-utils') : null)).escapeHtml;
 
   function sanitizeClassName(value) {
     return String(value || '')
@@ -54,6 +48,7 @@
    * Render a labeled number input.
    * @param {Object} opts
    * @param {string} [opts.tooltip] - Optional tooltip on the labeled control
+   * @param {string} [opts.describedBy] - Id of the help text, written as aria-describedby on the input
    * @returns {string} HTML string
    */
   function numberInput(opts) {
@@ -99,6 +94,7 @@
       + ' value="' + escapeHtml(String(value)) + '"'
       + (placeholder ? ' placeholder="' + placeholder + '"' : '')
       + ' aria-label="' + ariaLabel + '"'
+      + (o.describedBy ? ' aria-describedby="' + escapeHtml(String(o.describedBy)) + '"' : '')
       + dataset
       + '>'
       + (suffix ? '<span class="inv-number-input-suffix">' + suffix + '</span>' : '')

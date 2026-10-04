@@ -7,9 +7,7 @@
  * worker), lays it out with renderer-ide-explode-layout, and paints with
  * renderer-ide-explode-view — reusing the File Map's transform module + the
  * LOD tierForScale as-is (node dragging is RETIRED repo-wide, mirroring the
- * File Map). Feature-flagged (workspace_exploded_view), default-on with
- * JENNY_ENABLE_WORKSPACE_EXPLODED_VIEW=0 rollback: flag-off is byte-identical (no host DOM, no toggle, syncVisibility
- * a no-op). Wired from renderer-ide-qol-wiring.js; syncVisibility is called from
+ * File Map). Wired from renderer-ide-qol-wiring.js; syncVisibility is called from
  * renderIde() right after the map's. UMD, mirroring the repo's module style. */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) {
@@ -51,7 +49,6 @@
   function createIdeExplodeController(deps) {
     const d = deps || {};
     const getDom = typeof d.getDom === 'function' ? d.getDom : () => ({});
-    const getFeatureFlags = typeof d.getFeatureFlags === 'function' ? d.getFeatureFlags : () => ({});
     const getIde = typeof d.getIde === 'function' ? d.getIde : () => ({});
     const ideStateUtils = d.ideStateUtils || {};
     const editorHost = d.editorHost || {};
@@ -93,11 +90,6 @@
       return 'pills';
     }
 
-    function isFlagOn() {
-      const flags = getFeatureFlags() || {};
-      return flags.workspace_exploded_view === true;
-    }
-
     function isTsJs(path) {
       // Exclude synthetic review tabs whose id ends in a JS/TS ext (diff://…/x.ts,
       // preview://…) — they are not real file tabs and must not show the toggle.
@@ -134,7 +126,7 @@
     function renderToggleBar(ide, path) {
       const t = ensureToggle();
       if (!t) return;
-      const visible = isFlagOn() && isTsJs(path);
+      const visible = isTsJs(path);
       t.render({ visible, mode: visible ? viewModeOf(ide, path) : 'code' });
     }
 
@@ -342,7 +334,7 @@
 
     // ── visibility (called from renderIde) ────────────────────────────────────
     function syncVisibility(activeTabPath) {
-      if (disposed || !isFlagOn()) return;
+      if (disposed) return;
       const dom = getDom() || {};
       const hostEl = dom.ideExplodedHost;
       const ide = getIde();
@@ -351,7 +343,7 @@
       renderToggleBar(ide, path);
 
       if (!hostEl || typeof hostEl.classList === 'undefined') return;
-      const show = isFlagOn() && isTsJs(path) && viewModeOf(ide, path) === 'exploded';
+      const show = isTsJs(path) && viewModeOf(ide, path) === 'exploded';
       if (!show) {
         hostEl.classList.add('hidden');
         if (view) view.setSpotlight(null);
@@ -368,7 +360,7 @@
 
     // Palette command entry (ide:toggle-exploded-view).
     function toggleActiveTab() {
-      if (disposed || !isFlagOn()) return;
+      if (disposed) return;
       const ide = getIde();
       const path = ide && ide.activeTabPath;
       if (!isTsJs(path) || typeof ideStateUtils.toggleTabViewMode !== 'function') return;

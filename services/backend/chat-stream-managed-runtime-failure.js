@@ -102,17 +102,19 @@ function settleUnfinishedToolRows(ctx, reason) {
   }
   const messages = ctx.service?.sessionStore?.getSessionMessages?.(ctx.resolvedSessionId) || [];
   const coordinated = Boolean(ctx.service?.terminalCoordinator?.settle);
+  // A user Stop settles its running tools as cancelled, not interrupted (F3).
+  const terminalState = ctx.isUserStop?.() === true ? 'cancelled' : 'interrupted';
   const plan = coordinated
     ? planTerminalToolRepairs(messages, ctx.streamId, {
         model: ctx.model,
-        terminalState: 'interrupted',
+        terminalState,
       })
     : {
         ok: true,
         repairs: settleUnfinishedToolsForStream(
           ctx.service,
           ctx.latestToolContext,
-          'interrupted'
+          terminalState
         ),
       };
   if (!plan.ok) {

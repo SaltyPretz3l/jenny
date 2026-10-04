@@ -1,15 +1,23 @@
 /* renderer/features/renderer-project-menu.js
  *
- * The one project menu (Projects v2, 2026-09-20). A plain listbox popover
- * shared by the Workspace Explorer header, the Workspace welcome page, the
- * line above the composer and the Chats panel filter, so there is one project
- * list to learn. Consumers hand it rows; it owns markup, positioning,
- * keyboard (arrows, Home/End, Enter/Space, Escape), outside-click dismissal
- * and focus return. No custom motion beyond the app's popover chrome.
+ * The one project menu (Projects v2, 2026-09-20; intents 2026-09-27). A
+ * role=menu popover shared by the Workspace Explorer header, the Workspace
+ * welcome page, the composer pill, the chat row menu and the Chats panel
+ * filter, so there is one project list to learn. Each use names what picking
+ * does in a small uppercase heading ("Open project", "Move this chat to",
+ * "Show chats from") and may add a muted footnote. Consumers hand it rows;
+ * it owns markup, positioning, keyboard (arrows, Home/End, Enter/Space,
+ * Escape), outside-click dismissal and focus return. No custom motion beyond
+ * the app's popover chrome.
+ *
+ * Project rows are menuitemradio (aria-checked) inside a scrolling list whose
+ * height is bounded to the viewport; commands are menuitem rows kept fixed
+ * below it with the footnote. A disabled row is aria-disabled, not natively
+ * disabled, so the keyboard still reaches it and hears its reason.
  *
  * Lazily loaded on first open through scriptLoaderUtils.ensureScript (no
  * startup <script> slot). Rows render through the inventory action-button
- * primitive; option roles are applied after paint because the primitive does
+ * primitive; menu roles are applied after paint because the primitive does
  * not emit role attributes.
  */
 (function (root, factory) {
@@ -27,11 +35,8 @@
   const GENERAL_PROJECT_ID = 'project_general';
   const ROW_SELECTOR = '[data-project-menu-item]';
 
-  function escapeHtml(value) {
-    return String(value == null ? '' : value)
-      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
-  }
+  const escapeHtml = ((typeof globalThis !== 'undefined' && globalThis.stringUtils)
+    || (typeof require === 'function' ? require('../shared/string-utils') : null)).escapeHtml;
 
   function resolveActionButton() {
     return (root && root.inventoryActionButton)
@@ -55,17 +60,33 @@
     return counts;
   }
 
+  function generalName() {
+    return jt('projects.switcher.generalName', 'General');
+  }
+
+  function optionalBool(value) {
+    return value === true ? true : (value === false ? false : null);
+  }
+
   function normalizeProject(raw) {
     if (!raw || typeof raw !== 'object') return null;
     const id = String(raw.id || '').trim();
     if (!id) return null;
     const rootPath = typeof raw.root_path === 'string' ? raw.root_path.trim() : '';
+    // folder_exists / is_current come from main (null or absent on an older
+    // backend); the empty authority key is the older "cannot probe" signal.
+    const folderExists = optionalBool(raw.folder_exists);
+    const revision = Number(raw.root_revision);
     return {
       id,
-      name: String(raw.name || '').trim() || id,
+      // General is always named in the current language, never the stored
+      // English record name (D16).
+      name: id === GENERAL_PROJECT_ID ? generalName() : (String(raw.name || '').trim() || id),
       rootPath,
-      // The authority key is empty when the folder cannot be probed.
-      folderMissing: Boolean(rootPath) && raw.authority_key === '',
+      folderExists,
+      folderMissing: Boolean(rootPath) && (folderExists === false || (folderExists === null && raw.authority_key === '')),
+      isCurrent: optionalBool(raw.is_current),
+      rootRevision: Number.isFinite(revision) ? revision : null,
     };
   }
 
@@ -74,16 +95,73 @@
     return list.map(normalizeProject).filter(Boolean);
   }
 
-  // Current project first, then alphabetical; General is never a switch row.
-  function sortProjectsForMenu(projects, currentId) {
+  function sessionProjectId(session) {
+    return String(session && session.project_id || '').trim() || GENERAL_PROJECT_ID;
+  }
+
+  // project id -> the newest chat's updated_at (ISO strings compare in order).
+  function lastUsedByProject(sessions) {
+    const latest = {};
+    (Array.isArray(sessions) ? sessions : []).forEach((session) => {
+      if (!session || !session.id) return;
+      const stamp = String(session.updated_at || session.created_at || '');
+      const id = sessionProjectId(session);
+      if (stamp && (!latest[id] || stamp > latest[id])) latest[id] = stamp;
+    });
+    return latest;
+  }
+
+  // The one order every surface uses (D18): the current project first, then
+  // most recently used (newest chat), then by name; General is never part of
+  // it (callers append it last or leave it out).
+  function sortProjectsForMenu(projects, currentId, sessions) {
+    const used = lastUsedByProject(sessions);
     return (projects || [])
       .filter((project) => project && project.id !== GENERAL_PROJECT_ID)
       .slice()
       .sort((a, b) => {
         if (a.id === currentId) return -1;
         if (b.id === currentId) return 1;
+        const ua = used[a.id] || '';
+        const ub = used[b.id] || '';
+        if (ua !== ub) return ua > ub ? -1 : 1;
         return a.name.localeCompare(b.name, undefined, { sensitivity: 'base' });
       });
+  }
+
+  // sortProjectsForMenu plus General last (when listed).
+  function orderProjects(projects, options) {
+    const o = options || {};
+    const list = Array.isArray(projects) ? projects : [];
+    const general = list.find((project) => project && project.id === GENERAL_PROJECT_ID);
+    const ordered = sortProjectsForMenu(list, o.currentId, o.sessions);
+    if (general) ordered.push(general);
+    return ordered;
+  }
+
+  function parentFolderName(rootPath) {
+    const parts = String(rootPath || '').split(/[\\/]+/).filter(Boolean);
+    return parts.length >= 2 ? parts[parts.length - 2].replace(/:$/, '') : '';
+  }
+
+  // id -> the label a menu shows. Two projects may share a name (D17); those
+  // read "name · parent folder" ("src · jenny") so the pick is unambiguous.
+  function displayNames(projects) {
+    const byName = {};
+    (projects || []).forEach((project) => {
+      if (!project) return;
+      const nameKey = String(project.name || '').toLocaleLowerCase();
+      byName[nameKey] = (byName[nameKey] || 0) + 1;
+    });
+    const labels = {};
+    (projects || []).forEach((project) => {
+      if (!project) return;
+      const parent = parentFolderName(project.rootPath);
+      labels[project.id] = byName[String(project.name || '').toLocaleLowerCase()] > 1 && parent
+        ? project.name + ' · ' + parent
+        : project.name;
+    });
+    return labels;
   }
 
   function chatCountLabel(count) {
@@ -91,12 +169,12 @@
     return jtn('settings.projects.chatCount', n, { count: n }, '{count} chat', '{count} chats');
   }
 
-  // A project row for the switcher / filter menus.
+  // A project row for the switcher / filter / move menus.
   function projectRow(project, options) {
     const o = options || {};
     return {
       id: project.id,
-      label: project.name,
+      label: o.label || project.name,
       detail: project.rootPath
         ? (project.folderMissing
           ? project.rootPath + ' · ' + jt('projects.switcher.folderMissing', 'folder missing')
@@ -106,6 +184,7 @@
       count: typeof o.count === 'number' ? o.count : null,
       selected: o.selected === true,
       disabled: o.disabled === true,
+      reason: o.reason || '',
       title: o.title || '',
       kind: 'project',
     };
@@ -120,15 +199,24 @@
     const count = row.count == null
       ? ''
       : '<span class="project-menu-count" aria-label="' + escapeHtml(chatCountLabel(row.count)) + '">' + escapeHtml(String(row.count)) + '</span>';
+    // The reason a disabled row cannot be picked is its description, so the
+    // keyboard hears it on focus (hidden nodes still feed aria-describedby).
+    const reasonText = row.disabled === true ? String(row.reason || row.title || '').trim() : '';
+    const reason = reasonText && reasonText !== String(row.detail || '').trim()
+      ? '<span class="project-menu-reason" id="' + MENU_ID + 'Reason' + index + '" hidden>' + escapeHtml(reasonText) + '</span>'
+      : '';
     return (row.separatorBefore ? '<div class="project-menu-separator" role="separator"></div>' : '')
       + actionButton({
         plain: true,
         className: 'project-menu-row' + (row.kind === 'action' ? ' project-menu-row--action' : ''),
-        disabled: row.disabled === true,
         title: row.title || undefined,
         dataset: { 'project-menu-item': String(index) },
-        trustedHtml: check + '<span class="project-menu-main">' + name + detail + '</span>' + count,
+        trustedHtml: check + '<span class="project-menu-main">' + name + detail + '</span>' + count + reason,
       });
+  }
+
+  function isRowDisabled(rowEl) {
+    return Boolean(rowEl) && (rowEl.disabled === true || rowEl.getAttribute('aria-disabled') === 'true');
   }
 
   function createProjectMenu(deps) {
@@ -148,11 +236,19 @@
     }
 
     function enabledRows() {
-      return rows().filter((row) => !row.disabled);
+      return rows().filter((row) => !isRowDisabled(row));
     }
 
     function position(element, anchor) {
       if (!anchor || typeof anchor.getBoundingClientRect !== 'function') return;
+      // Opened from the collapsed composer's settings list: it covers the list.
+      let rail = root && root.rendererPaneComposerRail;
+      if (!rail && typeof require === 'function') {
+        try { rail = require('../chat/renderer-pane-composer-rail'); } catch (_error) { rail = null; }
+      }
+      const anchorGroup = rail && rail.resolveSettingsPopoverAnchor ? rail.resolveSettingsPopoverAnchor(anchor) : null;
+      if (anchorGroup && rail.placePopoverOverAnchor(element, anchorGroup, { margin: 12 })) return;
+      if (rail && rail.clearPopoverCover) rail.clearPopoverCover(element);
       const rect = anchor.getBoundingClientRect();
       const viewportWidth = Number(windowRef.innerWidth) || 0;
       const viewportHeight = Number(windowRef.innerHeight) || 0;
@@ -202,15 +298,17 @@
       }
     }
 
+    // Arrow keys walk every row, disabled ones included (D19): a disabled row
+    // is announced with its reason instead of being skipped silently.
     function focusRow(index) {
-      const list = enabledRows();
+      const list = rows();
       if (!list.length) return;
       const clamped = ((index % list.length) + list.length) % list.length;
       list[clamped].focus();
     }
 
     function handleMenuKeydown(event) {
-      const list = enabledRows();
+      const list = rows();
       const active = documentRef ? documentRef.activeElement : null;
       const current = list.indexOf(active);
       if (event.key === 'ArrowDown') { event.preventDefault(); focusRow(current + 1); }
@@ -225,7 +323,8 @@
       const target = event && event.target;
       if (!current || !target || typeof target.closest !== 'function') return;
       const rowEl = target.closest(ROW_SELECTOR);
-      if (!rowEl || rowEl.disabled) return;
+      if (!rowEl) return;
+      if (isRowDisabled(rowEl)) { event.preventDefault(); return; }
       event.preventDefault();
       const row = current.rows[Number(rowEl.getAttribute('data-project-menu-item'))];
       if (!row) return;
@@ -233,8 +332,39 @@
       if (typeof current.onPick === 'function') current.onPick(row);
     }
 
-    // rows: [{ id, label, detail?, count?, selected?, disabled?, danger?,
-    // title?, kind: 'project'|'action', separatorBefore? }]
+    // Project rows (kind 'project', or radio: true) go in the scrolling list;
+    // commands stay fixed below it, then the footnote. Row indexes keep the
+    // caller's order so a click maps back to the row it was given.
+    function menuMarkup(o, list) {
+      const listHtml = [];
+      const commandHtml = [];
+      list.forEach((row, index) => {
+        (row.kind === 'action' ? commandHtml : listHtml).push(rowHtml(actionButton, row, index));
+      });
+      return (o.heading ? '<div class="project-menu-heading" id="' + MENU_ID + 'Heading">' + escapeHtml(o.heading) + '</div>' : '')
+        + (listHtml.length ? '<div class="project-menu-list" role="group">' + listHtml.join('') + '</div>' : '')
+        + commandHtml.join('')
+        + (o.footnote ? '<div class="project-menu-footnote">' + escapeHtml(o.footnote) + '</div>' : '');
+    }
+
+    function applyRowRoles(element, list) {
+      Array.from(element.querySelectorAll(ROW_SELECTOR)).forEach((rowEl) => {
+        const index = Number(rowEl.getAttribute('data-project-menu-item'));
+        const row = list[index] || {};
+        const radio = row.kind !== 'action' || row.radio === true;
+        rowEl.setAttribute('role', radio ? 'menuitemradio' : 'menuitem');
+        if (radio) rowEl.setAttribute('aria-checked', row.selected ? 'true' : 'false');
+        if (row.disabled === true) {
+          rowEl.setAttribute('aria-disabled', 'true');
+          const reason = rowEl.querySelector('.project-menu-reason');
+          if (reason) rowEl.setAttribute('aria-describedby', reason.id);
+        }
+      });
+    }
+
+    // rows: [{ id, label, detail?, count?, selected?, disabled?, reason?,
+    // danger?, title?, kind: 'project'|'action', radio?, separatorBefore? }]
+    // heading / footnote: optional strings (what picking does, and its effect).
     function show(options) {
       const o = options || {};
       if (!documentRef || !documentRef.body || typeof actionButton !== 'function') return null;
@@ -245,16 +375,12 @@
       const element = documentRef.createElement('div');
       element.id = MENU_ID;
       element.className = 'composer-popover project-menu';
-      element.setAttribute('role', 'listbox');
-      element.setAttribute('aria-label', o.ariaLabel || jt('projects.switcher.ariaLabel', 'Projects'));
+      element.setAttribute('role', 'menu');
+      if (o.heading && !o.ariaLabel) element.setAttribute('aria-labelledby', MENU_ID + 'Heading');
+      else element.setAttribute('aria-label', o.ariaLabel || jt('projects.switcher.ariaLabel', 'Projects'));
       element.tabIndex = -1;
-      element.innerHTML = (o.heading ? '<div class="project-menu-heading">' + escapeHtml(o.heading) + '</div>' : '')
-        + list.map((row, index) => rowHtml(actionButton, row, index)).join('');
-      Array.from(element.querySelectorAll(ROW_SELECTOR)).forEach((rowEl) => {
-        const row = list[Number(rowEl.getAttribute('data-project-menu-item'))];
-        rowEl.setAttribute('role', 'option');
-        rowEl.setAttribute('aria-selected', row && row.selected ? 'true' : 'false');
-      });
+      element.innerHTML = menuMarkup(o, list);
+      applyRowRoles(element, list);
       element.addEventListener('keydown', handleMenuKeydown);
       element.addEventListener('click', handleMenuClick);
       documentRef.body.appendChild(element);
@@ -263,8 +389,11 @@
       position(element, anchor);
       documentRef.addEventListener('pointerdown', handleOutsidePointer, true);
       documentRef.addEventListener('keydown', handleDocumentKeydown, true);
-      const selectedIndex = enabledRows().findIndex((rowEl) => rowEl.getAttribute('aria-selected') === 'true');
-      focusRow(selectedIndex >= 0 ? selectedIndex : 0);
+      // Focus the checked row ("you are here"), else the first pickable one.
+      const all = rows();
+      const checked = all.findIndex((rowEl) => rowEl.getAttribute('aria-checked') === 'true');
+      const firstEnabled = all.indexOf(enabledRows()[0]);
+      focusRow(checked >= 0 ? checked : Math.max(0, firstEnabled));
       return element;
     }
 
@@ -285,7 +414,12 @@
     countChatsByProject,
     normalizeProject,
     normalizeProjectList,
+    sessionProjectId,
     sortProjectsForMenu,
+    orderProjects,
+    displayNames,
+    parentFolderName,
+    generalName,
     projectRow,
     chatCountLabel,
   };

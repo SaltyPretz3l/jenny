@@ -1,14 +1,11 @@
 :root {
   --startup-bg: var(--bg-base);
-  --startup-mark-ring: color-mix(in srgb, var(--accent) 30%, transparent);
-  --startup-mark-dot: var(--accent-cyan);
-  --startup-rule-track: color-mix(in srgb, var(--text-bright) 8%, transparent);
-  --startup-rule-fill: var(--accent-cyan);
-  --startup-circuit-opacity: 0.18;
-  --startup-circuit-line: color-mix(in srgb, var(--accent-cyan) 70%, transparent);
-  --startup-circuit-grid: color-mix(in srgb, var(--accent) 12%, transparent);
+  --startup-fade-ms: 240ms;
 }
 
+/* The boot curtain: opaque from first paint, a night sky behind one line.
+ * The starfield (renderer/shell/renderer-startup-starfield.js) paints the
+ * canvas and, when animated, drives the curtain's own fade inline. */
 .startup-overlay {
   position: fixed;
   inset: 0;
@@ -19,27 +16,19 @@
   overflow: hidden;
   background: var(--startup-bg);
   opacity: 1;
-  transition: opacity 360ms var(--motion-ease-emphasis);
-}
-
-.startup-overlay[data-state="slow"] {
-  --startup-mark-dot: var(--state-warning);
-  --startup-rule-fill: var(--state-warning);
-}
-
-.startup-overlay[data-state="error"] {
-  --startup-mark-ring: color-mix(in srgb, var(--state-danger) 40%, transparent);
-  --startup-mark-dot: var(--state-danger);
-  --startup-rule-fill: var(--state-danger);
-}
-
-.startup-overlay[data-state="blocked"] {
-  --startup-mark-dot: var(--state-warning);
+  transition: opacity var(--startup-fade-ms) var(--motion-ease-standard);
 }
 
 .startup-overlay.hidden {
   display: flex !important;
   opacity: 0;
+}
+
+.startup-overlay-sky {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
   pointer-events: none;
 }
 
@@ -47,136 +36,61 @@
   position: relative;
   z-index: 1;
   display: flex;
-  width: 220px;
+  width: min(420px, calc(100% - 32px));
   flex-direction: column;
   align-items: center;
   text-align: center;
-  transform: scale(1.5);
-  transform-origin: center;
-  transition: transform 360ms var(--motion-ease-emphasis);
 }
 
-.startup-overlay.hidden .startup-overlay-content {
-  transform: translateY(-6px) scale(1.5);
-}
-
-.startup-mark {
-  display: grid;
-  width: 40px;
-  height: 40px;
-  place-items: center;
-  border: 1.5px solid var(--startup-mark-ring);
-  border-radius: 50%;
-}
-
-.startup-mark-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--startup-mark-dot);
-  animation: startup-mark-pulse var(--motion-duration-pulse) ease-in-out infinite;
-}
-
-@keyframes startup-mark-pulse {
-  0%, 100% { opacity: 0.55; }
-  50% { opacity: 1; }
-}
-
+/* The brand mark, not body text: a fixed multiple of the title role so it
+ * still follows the Text size setting (--font-scale). */
 .startup-overlay-wordmark {
-  margin-top: var(--space-10);
   color: var(--text-primary);
   font-family: var(--font-family-brand);
-  font-size: calc(22px * var(--font-scale, 1));
+  font-size: calc(var(--font-size-title) * 1.9);
   font-weight: 400;
-  letter-spacing: var(--tracking-kicker-lg);
-}
-
-.startup-progress-bar {
-  width: 220px;
-  height: 2px;
-  margin-top: var(--space-9);
-  overflow: hidden;
-  background: var(--startup-rule-track);
-}
-
-.startup-progress-fill {
-  width: 0;
-  height: 100%;
-  background: var(--startup-rule-fill);
-  transition: width 400ms var(--motion-ease-emphasis);
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
 }
 
 .startup-overlay-sublabel {
-  min-height: 1.4em;
-  margin-top: var(--space-6);
+  min-height: 1.5em;
+  margin-top: var(--space-7);
+  max-width: 100%;
   overflow: hidden;
-  color: var(--text-muted);
-  font-size: var(--font-size-base);
-  line-height: 1.4;
-  text-align: center;
+  color: var(--text-secondary);
+  font-size: var(--font-size-footnote);
+  line-height: 1.5;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
+/* Reserved from first paint so the slow line never re-centres the stack. */
 .startup-overlay-secondary {
-  min-height: 1.4em;
+  min-height: 1.5em;
   margin-top: var(--space-2);
-  color: var(--text-decorative);
-  font-size: var(--font-size-sm);
-  line-height: 1.4;
+  color: var(--text-muted);
+  font-size: var(--font-size-caption);
+  line-height: 1.5;
 }
 
 .startup-overlay[data-state="error"] .startup-overlay-secondary {
   color: var(--text-danger-soft);
 }
 
+/* Reserved too: Continue anyway or the failure actions appear in place. */
 .startup-overlay-actions {
   display: flex;
   min-height: 32px;
-  margin-top: var(--space-8);
+  margin-top: var(--space-6);
   align-items: center;
   justify-content: center;
   gap: var(--space-4);
 }
 
-.startup-overlay-actions:empty {
-  min-height: 0;
-  margin-top: 0;
-}
-
-.startup-circuit-canvas {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  pointer-events: none;
-  opacity: 0;
-  transition: opacity var(--motion-duration-emphasis) var(--motion-ease-standard);
-}
-
-.startup-circuit-canvas.startup-circuit-ready {
-  opacity: var(--startup-circuit-opacity);
-}
-
 @media (prefers-reduced-motion: reduce) {
+  /* A still sky (painted once) and a plain fade: opacity only, nothing moves. */
   .startup-overlay {
-    transition: none;
-  }
-
-  .startup-mark-dot {
-    opacity: 1;
-    animation: none;
-  }
-
-  .startup-progress-fill {
-    transition: none;
-  }
-
-  .startup-overlay.hidden .startup-overlay-content {
-    transform: scale(1.5);
-  }
-
-  .startup-overlay-content {
-    transition: none;
+    transition: opacity var(--startup-fade-ms) linear;
   }
 }

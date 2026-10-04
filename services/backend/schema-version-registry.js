@@ -39,7 +39,6 @@ const {
 const PLUGIN_CONTRACT_SET_VERSION = 1;
 const PLUGIN_GENERATION_STORE_VERSION = 1;
 const MCP_SERVERS_SCHEMA_VERSION = 1;
-const PLUGIN_CATALOG_SOURCES_SCHEMA_VERSION = 1;
 
 function normalizeVersionValue(value) {
   if (typeof value === 'number' && Number.isFinite(value)) {
@@ -248,15 +247,6 @@ function getElectronSchemaVersions() {
       version: MCP_SERVERS_SCHEMA_VERSION,
       forward_policy: 'migrate_legacy_preserve_future_block_write',
       source: 'services/mcp-config-store.js',
-    }),
-    makeEntry({
-      id: 'electron.plugin_catalog_sources',
-      surface: 'Pinned plugin catalog source store',
-      owner: 'electron',
-      kind: 'json_schema',
-      version: PLUGIN_CATALOG_SOURCES_SCHEMA_VERSION,
-      forward_policy: 'preserve_future_block_write',
-      source: 'services/plugins/store/catalog-source-store.js',
     }),
   ].filter(Boolean);
 }

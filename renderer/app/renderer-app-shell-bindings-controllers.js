@@ -18,6 +18,7 @@
       getLogEntryById,
       ensureLogRowMounted = () => false,
       handleDeleteSessionWithWorkspace,
+      handleLinkedSessionPopover = () => {},
       handleRenameSession,
       handleStopActiveStream = async () => null,
       handleSidebarResizeKeydown,
@@ -73,6 +74,12 @@
         // Locking a streaming session stops it through the Stop path so the
         // outbox hold keeps a queued send from starting a replacement turn.
         stopSessionStream: (sessionId) => handleStopActiveStream(sessionId),
+        // "Move to project ›" (row menu) and the bulk bar's Move open the
+        // shared project switcher's move menu.
+        getProjectSwitcher: (...a) => callbacks.getProjectSwitcher?.(...a),
+        // "Link sessions…" (row menu) opens the rail's linked-session popover
+        // anchored on the row's ⋯, so linking works with a single open chat.
+        openLinkedSessions: (sessionId, anchor) => handleLinkedSessionPopover(sessionId, anchor),
       },
     }) || null;
 
@@ -266,10 +273,12 @@
     }
 
     // App-level shortcuts (nav overhaul W10): Ctrl+1-6 views, Ctrl+N new chat,
-    // Ctrl+B panel toggle, Ctrl+Shift+Space scratchpad capture.
+    // Ctrl+B panel toggle, Ctrl+Shift+Space scratchpad capture, Ctrl+Shift+\ split toggle.
     const globalShortcutsController = (root.rendererGlobalShortcuts || {}).createGlobalShortcutsController?.({
       windowRef,
-      isOverlayOpen: () => (controllers.overlayManager?.getDepth?.() || 0) > 0,
+      // The startup curtain owns the keyboard until it is removed, like a modal.
+      isOverlayOpen: () => Boolean(ctx.documentRef?.getElementById?.('startupOverlay'))
+        || (controllers.overlayManager?.getDepth?.() || 0) > 0,
       overlayManager: controllers.overlayManager || null,
       // The palette is a launcher, not a modal: the capture chord dismisses it.
       captureYieldingOverlayIds: [(root.rendererCommandPaletteUtils || {}).COMMAND_PALETTE_OVERLAY_ID],
@@ -277,6 +286,7 @@
         setActiveView: (...a) => setActiveView(...a),
         newChat: () => { try { dom.newChatButton?.click?.(); } catch (_err) { /* noop */ } },
         togglePanel: () => root.rendererTopNavShellController?.togglePanelForActiveView?.() === true,
+        togglePaneSplit: () => root.rendererAppPaneComposition?.getPaneComposition?.()?.toggleSplit?.() === true,
         appendClientLog: (...a) => appendClientLog(...a),
         openCapture: () => {
           // Respect the per-user opt-out (Settings ▸ Home ▸ Quick-capture
@@ -314,6 +324,7 @@
       appendClientLog,
       closeCommandPopover,
       closeComposerPopover,
+      openComposerPopover,
       escapeHtml,
       getDroppedFilePaths,
       beginAttachmentToken,
@@ -328,7 +339,6 @@
       setDropActive,
       showToastMessage,
       suppressFileDropNavigation,
-      syncComposerModelSelectWidth,
       toErrorMessage,
       updateComposerSafeOffset,
     } = callbacks;
@@ -338,8 +348,7 @@
       constants: { TOAST_SOURCE: constants.TOAST_SOURCE },
       dom: {
         attachmentTray: dom.attachmentTray,
-        composerSettingsPopover: dom.composerSettingsPopover,
-        composerSettingsButton: dom.composerSettingsButton,
+        composerAttachMenu: dom.composerAttachMenu,
         composerCommandPopover: dom.composerCommandPopover,
         composerTerminalShortcut: dom.composerTerminalShortcut,
         composerAttachShortcut: dom.composerAttachShortcut,
@@ -360,9 +369,9 @@
         cancelAttachmentToken,
         renderComposerPopover: (...args) => refs.getRenderComposerPopover()(...args),
         renderCommandPopover: (...args) => refs.getRenderCommandPopover()(...args),
-        syncComposerModelSelectWidth,
         updateComposerSafeOffset,
         closeComposerPopover: (...args) => closeComposerPopover(...args),
+        openComposerPopover: (...args) => openComposerPopover(...args),
         closeCommandPopover: (...args) => closeCommandPopover(...args),
         appendClientLog: (...a) => appendClientLog(...a),
         queueInlineImageAttachment,

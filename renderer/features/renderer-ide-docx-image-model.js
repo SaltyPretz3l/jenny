@@ -15,6 +15,109 @@
   const A_NS = 'http://schemas.openxmlformats.org/drawingml/2006/main';
   const PIC_NS = 'http://schemas.openxmlformats.org/drawingml/2006/picture';
   const REL_NS = 'http://schemas.openxmlformats.org/package/2006/relationships';
+  const INSERTED_MEDIA_BUDGET = 64 * 1024 * 1024;
+
+  function mediaTarget(relationship) {
+    if (relationship.getAttribute('TargetMode') === 'External') return '';
+    const target = relationship.getAttribute('Target') || '';
+    const segments = (target.startsWith('/') ? target.slice(1) : `word/${target}`).split('/');
+    const parts = [];
+    for (const segment of segments) {
+      if (segment === '..') parts.pop();
+      else if (segment && segment !== '.') parts.push(segment);
+    }
+    return parts.join('/');
+  }
+
+  // Media payloads have one owner. Snapshots retain only the names they can
+  // restore; the document-wide budget counts payloads a new edit would keep.
+  function createMediaRetention(media, resources) {
+    const inserted = new Set();
+    const fingerprints = new WeakMap();
+    const stores = resources.mediaStores;
+
+    function referenced(documentDoc, relsDoc, removeUnused = false) {
+      const ids = new Set();
+      for (const element of documentDoc.getElementsByTagName('*')) {
+        for (const attribute of element.attributes) {
+          if (attribute.namespaceURI === R_NS) ids.add(attribute.value);
+        }
+      }
+      const names = new Set();
+      for (const relationship of Array.from(relsDoc?.getElementsByTagNameNS('*', 'Relationship') || [])) {
+        const name = mediaTarget(relationship);
+        if (ids.has(relationship.getAttribute('Id'))) names.add(name);
+        else if (removeUnused && inserted.has(name)) relationship.remove();
+      }
+      return names;
+    }
+
+    function prune(documentDoc, relsDoc, snapshots) {
+      const reachable = referenced(documentDoc, relsDoc, true);
+      for (const state of snapshots) {
+        for (const name of state.mediaNames) reachable.add(name);
+      }
+      for (const name of inserted) {
+        if (!reachable.has(name)) {
+          media.delete(name);
+          inserted.delete(name);
+        }
+      }
+    }
+
+    // Payloads a new edit keeps: current content plus undo. A new edit clears
+    // redo, so redo-only payloads do not count against the insert budget.
+    function insertedLength(documentDoc, relsDoc, snapshots) {
+      const reachable = referenced(documentDoc, relsDoc);
+      for (const state of snapshots) {
+        for (const name of state.mediaNames) reachable.add(name);
+      }
+      let length = 0;
+      for (const name of inserted) if (reachable.has(name)) length += media.get(name).base64.length;
+      return length;
+    }
+
+    function identity(value) {
+      let cached = fingerprints.get(value);
+      if (!cached || cached.base64 !== value.base64 || cached.mime !== value.mime) {
+        const base64 = String(value.base64 || '');
+        let hash = 2166136261;
+        for (let index = 0; index < base64.length; index += 1) {
+          hash = Math.imul(hash ^ base64.charCodeAt(index), 16777619) >>> 0;
+        }
+        cached = { base64: value.base64, mime: value.mime, key: `${value.mime}:${base64.length}:${hash}` };
+        fingerprints.set(value, cached);
+      }
+      return cached.key;
+    }
+
+    function identities(documentDoc, relsDoc) {
+      const reachable = referenced(documentDoc, relsDoc);
+      return new Map(Array.from(media).filter(([name]) => !inserted.has(name) || reachable.has(name))
+        .map(([name, value]) => [name, identity(value)]));
+    }
+
+    function matches(saved, documentDoc, relsDoc) {
+      const current = identities(documentDoc, relsDoc);
+      return current.size === saved.size && Array.from(current).every(([name, key]) => saved.get(name) === key);
+    }
+
+    function exported(documentDoc, relsDoc) {
+      const reachable = referenced(documentDoc, relsDoc);
+      return new Map(Array.from(media).filter(([name]) => inserted.has(name) && reachable.has(name)));
+    }
+
+    const store = {
+      referenced, prune, identities, matches, exported, insertedLength,
+      add(name, value) { inserted.add(name); media.set(name, value); },
+      canInsert(length) {
+        for (const item of stores) item.reclaim();
+        return stores.reduce((total, item) => total + item.keptLength(), length) <= INSERTED_MEDIA_BUDGET;
+      },
+    };
+    stores.push(store);
+    return store;
+  }
 
   function makeNs(doc, namespace, prefix, name) {
     return doc.createElementNS(namespace, `${prefix}:${name}`);
@@ -70,6 +173,7 @@
       const width = Math.max(24, Math.min(1200, Math.round(Number(image?.widthPx) || 320)));
       const height = Math.max(24, Math.min(1200, Math.round(Number(image?.heightPx) || 180)));
       if (!paragraph || !context.validRange(paragraph, offset) || !extension || !base64) return false;
+      if (!context.mediaRetention.canInsert(base64.length)) return false;
       context.recordMutation();
       context.ensureRelationships();
       const documentDoc = context.getDocumentDoc();
@@ -79,7 +183,7 @@
       relationship.setAttribute('Id', relationshipId); relationship.setAttribute('Type', `${R_NS}/image`);
       relationship.setAttribute('Target', mediaName.slice('word/'.length));
       context.getRelsDoc().documentElement.appendChild(relationship);
-      context.getMedia().set(mediaName, { mime, base64 });
+      context.mediaRetention.add(mediaName, { mime, base64 });
       const drawingId = nextDrawingId();
       const run = documentDoc.createElementNS(W_NS, 'w:r');
       const drawing = documentDoc.createElementNS(W_NS, 'w:drawing');
@@ -136,5 +240,5 @@
     return { insertImage, resizeImage };
   }
 
-  return { createImageOperations };
+  return { createImageOperations, createMediaRetention };
 });

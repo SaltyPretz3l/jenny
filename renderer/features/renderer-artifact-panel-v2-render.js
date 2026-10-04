@@ -1,5 +1,5 @@
-/** Artifact Panel V2/V3 chrome. Replaces panel children while preserving the
- * legacy ids consumed by the surface controller; flag-off remains a no-op. */
+/** Artifact panel (Canvas) chrome. Replaces panel children while preserving
+ * the legacy ids consumed by the surface controller. */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) {
     module.exports = factory(
@@ -30,206 +30,14 @@
   const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   const CHEVRON_LEFT_SVG = '<svg class="icon-mirror-rtl" xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 6l-6 6l6 6"></path></svg>';
   const CHEVRON_RIGHT_SVG = '<svg class="icon-mirror-rtl" xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6l-6 6"></path></svg>';
-  const COLLAPSE_SVG = '<svg class="icon-mirror-rtl" xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 6l-6 6l6 6"></path></svg>';
-  const EDIT_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 7h-1a2 2 0 0 0 -2 2v9a2 2 0 0 0 2 2h9a2 2 0 0 0 2 -2v-1"></path><path d="M20.385 6.585a2.1 2.1 0 0 0 -2.97 -2.97l-8.415 8.385v3h3l8.385 -8.415z"></path><path d="M16 5l3 3"></path></svg>';
-  const COPY_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="2"></rect><path d="M16 8v-2a2 2 0 0 0 -2 -2h-8a2 2 0 0 0 -2 2v8a2 2 0 0 0 2 2h2"></path></svg>';
-  const FOLDER_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 4h4l3 3h7a2 2 0 0 1 2 2v8a2 2 0 0 1 -2 2h-14a2 2 0 0 1 -2 -2v-11a2 2 0 0 1 2 -2"></path></svg>';
-  const MESSAGE_CIRCLE_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20l-3 -3h-2a3 3 0 0 1 -3 -3v-6a3 3 0 0 1 3 -3h10a3 3 0 0 1 3 3v6a3 3 0 0 1 -3 3h-2l-3 3"></path></svg>';
-  const TRASH_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16"></path><path d="M10 11v6"></path><path d="M14 11v6"></path><path d="M5 7l1 12a2 2 0 0 0 2 2h8a2 2 0 0 0 2 -2l1 -12"></path><path d="M9 7v-3a1 1 0 0 1 1 -1h4a1 1 0 0 1 1 1v3"></path></svg>';
-  const HISTORY_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 8l0 4l2 2"></path><path d="M3.05 11a9 9 0 1 1 .5 4"></path><path d="M3 4v4h4"></path></svg>';
 
   function noop() {}
-
-  function isFlagEnabled(state) {
-    return state?.features?.featureFlags?.artifact_panel_v2 === true;
-  }
-
-  function isV3Enabled(state) {
-    return state?.features?.featureFlags?.artifact_panel_v3 === true;
-  }
-
-  function formatArtifactKindLabel(kind) {
-    return String(kind || '').trim().replace(/_/g, ' ');
-  }
-
-  function formatFooterTimestamp(value) {
-    const raw = String(value || '').trim();
-    if (!raw) return '';
-    const parsed = new Date(raw);
-    if (Number.isNaN(parsed.getTime())) return '';
-    try {
-      return parsed.toLocaleString(globalThis.jennyI18n?.tag?.(), {
-        month: 'short', day: 'numeric', hour: 'numeric', ...globalThis.jennyI18n?.timeOptions?.(), minute: '2-digit',
-      });
-    } catch (_error) {
-      return raw;
-    }
-  }
-
-  function buildFooterMetaText(artifact) {
-    if (!artifact) return '';
-    const segments = [];
-    const kind = artifact.artifactType === 'generated_file'
-      ? formatArtifactKindLabel(artifact.generatedFile?.artifactKind || 'document')
-      : artifact.artifactType === 'image'
-        ? jt('artifacts.types.imageLowercase', 'image')
-        : artifact.artifactType === 'tool_output'
-          ? jt('artifacts.types.toolOutputLowercase', 'tool output')
-          : '';
-    if (kind) segments.push(kind);
-    const time = formatFooterTimestamp(artifact.timestamp);
-    if (time) segments.push(time);
-    return segments.join(' · ');
-  }
 
   function isArtifactDirty(state, artifact) {
     const file = artifact?.generatedFile || null;
     if (!artifact || artifact.artifactType !== 'generated_file' || !file || file.editable !== true) return false;
     return state?.artifacts?.loadedArtifactId === file.artifactId
       && state?.artifacts?.dirtyContent !== state?.artifacts?.loadedArtifactContent;
-  }
-
-  function headerHtml() {
-    return (
-      '<div class="artifact-panel-v2-header">'
-      + '<span class="artifact-panel-v2-title" id="artifactReviewDetailTitle"></span>'
-      + '<div class="artifact-panel-v2-header-actions">'
-      + inventoryActionButton({
-        plain: true,
-        domId: 'artifactReviewCollapseButton',
-        className: 'artifact-panel-v2-icon-btn',
-        ariaLabel: jt('artifacts.review.collapseTitle', 'Collapse panel'),
-        title: jt('artifacts.review.collapseTitle', 'Collapse panel'),
-        trustedHtml: COLLAPSE_SVG,
-      })
-      + '</div>'
-      + '</div>'
-    );
-  }
-
-  function toolbarHtml() {
-    return (
-      '<div class="artifact-panel-v2-toolbar">'
-      + '<span class="artifact-panel-v2-save-revert" data-artifact-panel-v2-save-revert>'
-      + inventoryActionButton({
-        plain: true,
-        domId: 'artifactReviewSaveButton',
-        className: 'artifact-panel-v2-text-btn artifact-panel-v2-save-btn hidden',
-        ariaLabel: jt('artifacts.actions.saveLabel', 'Save artifact'),
-        title: jt('common.save', 'Save'),
-        label: jt('common.save', 'Save'),
-      })
-      + inventoryActionButton({
-        plain: true,
-        domId: 'artifactReviewRevertButton',
-        className: 'artifact-panel-v2-text-btn hidden',
-        ariaLabel: jt('artifacts.actions.revertLabel', 'Revert artifact'),
-        title: jt('common.revert', 'Revert'),
-        label: jt('common.revert', 'Revert'),
-      })
-      + '</span>'
-      + inventoryActionButton({
-        plain: true,
-        className: 'artifact-panel-v2-icon-btn',
-        ariaLabel: jt('artifacts.actions.editSource', 'Edit source'),
-        title: jt('artifacts.actions.editSource', 'Edit source'),
-        ariaPressed: false,
-        dataset: { 'artifact-panel-v2-edit': '' },
-        trustedHtml: EDIT_SVG,
-      })
-      + inventoryActionButton({
-        plain: true,
-        className: 'artifact-panel-v2-icon-btn',
-        ariaLabel: jt('common.copy', 'Copy'),
-        title: jt('common.copy', 'Copy'),
-        dataset: { 'artifact-panel-v2-copy': '' },
-        trustedHtml: COPY_SVG,
-      })
-      + inventoryActionButton({
-        plain: true,
-        domId: 'artifactReviewRevealButton',
-        className: 'artifact-panel-v2-icon-btn',
-        ariaLabel: jt('artifacts.actions.revealInFolder', 'Reveal in folder'),
-        title: jt('artifacts.actions.revealInFolder', 'Reveal in folder'),
-        trustedHtml: FOLDER_SVG,
-      })
-      + inventoryActionButton({
-        plain: true,
-        domId: 'artifactReviewJumpButton',
-        className: 'artifact-panel-v2-icon-btn',
-        ariaLabel: jt('artifacts.actions.jumpToChatLabel', 'Jump to chat'),
-        title: jt('artifacts.actions.jumpToChatLabel', 'Jump to chat'),
-        trustedHtml: MESSAGE_CIRCLE_SVG,
-      })
-      + '<span class="artifact-panel-v2-toolbar-spacer" data-artifact-panel-v2-stepper-slot></span>'
-      + inventoryActionButton({
-        plain: true,
-        domId: 'artifactReviewDeleteButton',
-        className: 'artifact-panel-v2-icon-btn artifact-panel-v2-delete-btn',
-        ariaLabel: jt('artifacts.actions.deleteLabel', 'Delete artifact'),
-        title: jt('artifacts.actions.deleteLabel', 'Delete artifact'),
-        trustedHtml: TRASH_SVG,
-      })
-      + inventoryActionButton({
-        plain: true,
-        domId: 'artifactReviewOpenExternalButton',
-        className: 'artifact-panel-v2-icon-btn hidden',
-        ariaLabel: jt('artifacts.actions.openExternalLabel', 'Open artifact externally'),
-        title: jt('artifacts.actions.openExternalLabel', 'Open artifact externally'),
-      })
-      + '</div>'
-    );
-  }
-
-  function contentHtml(escapeHtml) {
-    return (
-      '<div class="artifact-review-scroll artifact-panel-v2-scroll">'
-      + '<div class="artifact-panel-v2-empty" id="artifactReviewDetailEmpty">' + escapeHtml(jt('artifacts.review.emptyHeading', 'Select an artifact')) + '</div>'
-      + '<div class="artifact-review-detail-panel hidden" id="artifactReviewDetailPanel">'
-      // Hidden nodes the controller still writes to (kicker/path/status/meta/note/dirtyBadge).
-      + '<div class="hidden" id="artifactReviewDetailKicker"></div>'
-      + '<div class="hidden" id="artifactReviewDetailPath"></div>'
-      + '<div class="hidden" id="artifactReviewDetailStatus"></div>'
-      + '<div class="hidden" id="artifactReviewDetailMeta"></div>'
-      + '<div class="hidden" id="artifactReviewDetailNote"></div>'
-      + '<span class="hidden" id="artifactReviewDirtyBadge"></span>'
-      + '<div class="artifact-panel-v2-content-host" id="artifactReviewPreviewShell">'
-      + '<div class="artifact-editor-shell hidden" id="artifactReviewEditorShell">'
-      + '<div class="artifact-editor-host" id="artifactReviewEditorHost" aria-label="' + escapeHtml(jt('artifacts.review.editorLabel', 'Artifact editor')) + '"></div>'
-      + '<textarea class="artifact-editor-fallback hidden" id="artifactReviewEditorFallback" spellcheck="false" aria-label="' + escapeHtml(jt('artifacts.review.editorFallbackLabel', 'Artifact editor fallback')) + '"></textarea>'
-      + '</div>'
-      + '<div class="artifact-preview-content hidden" id="artifactReviewPreviewContent"></div>'
-      + '</div>'
-      + '</div>'
-      + '</div>'
-    );
-  }
-
-  function footerHtml() {
-    const popoverHtml = inventoryPopover({
-      id: 'artifact-panel-v2-provenance',
-      domId: 'artifactPanelV2ProvenancePopover',
-      className: 'artifact-panel-v2-provenance-popover',
-      ariaLabel: jt('artifacts.detail.provenanceHeading', 'Provenance'),
-      trustedHtml: '<div class="artifacts-provenance-timeline" id="artifactReviewProvenanceTimeline"></div>',
-    });
-    return (
-      '<div class="artifact-panel-v2-footer">'
-      + '<span class="artifact-panel-v2-footer-meta" id="artifactPanelV2FooterMeta"></span>'
-      + '<span class="hidden" id="artifactReviewStatus"></span>'
-      + inventoryActionButton({
-        plain: true,
-        domId: 'artifactPanelV2ProvenanceTrigger',
-        className: 'artifact-panel-v2-icon-btn artifact-panel-v2-footer-action',
-        ariaLabel: jt('artifacts.detail.provenanceHeading', 'Provenance'),
-        title: jt('artifacts.detail.provenanceHeading', 'Provenance'),
-        ariaHaspopup: 'dialog',
-        ariaControls: 'artifactPanelV2ProvenancePopover',
-        trustedHtml: HISTORY_SVG,
-      })
-      + popoverHtml
-      + '</div>'
-    );
   }
 
   function buildStepperHtml(info) {
@@ -257,7 +65,6 @@
       panelEl = null,
       state = {},
       windowRef = typeof window !== 'undefined' ? window : null,
-      escapeHtml = (value) => String(value ?? ''),
       appendClientLog = noop,
       showToastMessage = noop,
     } = deps || {};
@@ -271,6 +78,8 @@
     let saveStateArtifactKey = '';
     let previousSavePending = false;
     let currentArtifact = null;
+    // The owner's wrap state ({ apply(kind), toggle(kind) }, per body kind).
+    let textWrapController = null;
     const renderedSlotHtml = new WeakMap();
 
     function resolveCapabilities(artifact) {
@@ -286,7 +95,6 @@
     }
 
     function setupV3Controllers() {
-      if (!isV3Enabled(state)) return;
       const overlayManager = windowRef?.rendererOverlayManagerController || null;
       if (!switcherController) {
         switcherController = switcherModule?.createArtifactPanelSwitcher?.({
@@ -300,19 +108,19 @@
           getArtifactSource: () => managerHooks.getSelectedArtifactSource?.(),
           isCurrentArtifact: (artifact) => currentArtifact?.id === artifact?.id && currentArtifact?.sessionId === artifact?.sessionId,
           toggleMaximize: () => managerHooks.toggleMaximize?.(),
+          isMaximized: () => managerHooks.isMaximized?.() === true,
+          isNarrow: () => panelEl?.dataset?.panelNarrow === 'true',
         }) || null;
       }
     }
 
     function installed() {
       if (didInstall) return true;
-      if (!panelEl || !isFlagEnabled(state)) return false;
+      if (!panelEl || typeof chromeRender?.buildPanelHtml !== 'function') return false;
       try {
-        panelEl.innerHTML = isV3Enabled(state) && chromeRender?.buildPanelHtml
-          ? chromeRender.buildPanelHtml()
-          : headerHtml() + toolbarHtml() + contentHtml(escapeHtml) + footerHtml();
+        panelEl.innerHTML = chromeRender.buildPanelHtml();
         panelEl.classList.add('artifact-panel-v2');
-        panelEl.classList.toggle('artifact-panel-v3', isV3Enabled(state));
+        panelEl.classList.add('artifact-panel-v3');
         didInstall = true;
         setupV3Controllers();
       } catch (error) {
@@ -342,55 +150,10 @@
         switcherController?.close?.();
       }
       currentArtifact = artifact || null;
-      if (isV3Enabled(state)) {
-        afterRenderV3(artifact);
-        if (mode !== 'artifact') {
-          const title = panelEl.querySelector('.artifact-panel-title-text');
-          if (title) title.textContent = mode === 'code_review' ? jt("artifactPanelV2Render.codeReview", "Code review") : mode === 'file_preview' ? jt("ide.filePreviewLabel", "File preview") : jt("artifactPanelV2Render.tasks", "Tasks");
-        }
-        return;
-      }
-      if (!artifact) {
-        const title = panelEl.querySelector('#artifactReviewDetailTitle');
-        if (title) title.textContent = mode === 'artifact' ? jt("artifacts.notifications.title", "Artifacts") : mode === 'code_review' ? jt("artifactPanelV2Render.codeReview", "Code review") : mode === 'file_preview' ? jt("ide.filePreviewLabel", "File preview") : jt("artifactPanelV2Render.tasks", "Tasks");
-      }
-      const footerMeta = panelEl.querySelector('#artifactPanelV2FooterMeta');
-      if (footerMeta) footerMeta.textContent = buildFooterMetaText(artifact);
-
-      const dirty = isArtifactDirty(state, artifact);
-      const saveBtn = panelEl.querySelector('#artifactReviewSaveButton');
-      const revertBtn = panelEl.querySelector('#artifactReviewRevertButton');
-      if (saveBtn) saveBtn.classList.toggle('hidden', !dirty);
-      if (revertBtn) revertBtn.classList.toggle('hidden', !dirty && !(artifact && state.artifacts.loadState === 'error'));
-
-      const isImage = Boolean(artifact) && artifact.artifactType === 'image';
-      // Edit only does something for markdown generated artifacts (the
-      // read<->source toggle is a no-op everywhere else -- code kinds render
-      // unconditionally in-editor); an affordance that cannot act must not
-      // render enabled, so hide it rather than show a dead-looking control.
-      const isMarkdownToggleable = Boolean(artifact) && typeof managerHooks.isSelectedArtifactMarkdownGenerated === 'function'
-        && managerHooks.isSelectedArtifactMarkdownGenerated() === true;
-      const editBtn = panelEl.querySelector('[data-artifact-panel-v2-edit]');
-      const copyBtn = panelEl.querySelector('[data-artifact-panel-v2-copy]');
-      if (editBtn) {
-        editBtn.classList.toggle('hidden', !isMarkdownToggleable);
-        editBtn.disabled = !isMarkdownToggleable;
-        const mode = isMarkdownToggleable && typeof managerHooks.getArtifactDocumentViewMode === 'function'
-          ? managerHooks.getArtifactDocumentViewMode('split')
-          : null;
-        editBtn.setAttribute('aria-pressed', mode === 'source' ? 'true' : 'false');
-      }
-      if (copyBtn) {
-        copyBtn.disabled = !artifact || isImage || managerHooks.getSelectedArtifactSource?.() == null;
-        copyBtn.setAttribute('aria-disabled', copyBtn.disabled ? 'true' : 'false');
-      }
-
-      const slot = panelEl.querySelector('[data-artifact-panel-v2-stepper-slot]');
-      if (slot) {
-        const info = artifact && typeof versionHistoryUtils?.resolveArtifactVersionInfo === 'function'
-          ? versionHistoryUtils.resolveArtifactVersionInfo(artifact, state)
-          : null;
-        slot.innerHTML = buildStepperHtml(info);
+      afterRenderV3(artifact, mode);
+      if (mode !== 'artifact') {
+        const title = panelEl.querySelector('.artifact-panel-title-text');
+        if (title) title.textContent = mode === 'code_review' ? jt("artifactPanelV2Render.codeReview", "Code review") : mode === 'file_preview' ? jt("ide.filePreviewLabel", "File preview") : jt("artifactPanelV2Render.tasks", "Tasks");
       }
     }
 
@@ -399,7 +162,7 @@
       const dirty = isArtifactDirty(state, artifact);
       panelEl.querySelector('#artifactReviewSaveButton')?.classList.toggle('hidden', !dirty);
       panelEl.querySelector('#artifactReviewRevertButton')?.classList.toggle('hidden', !dirty);
-      if (isV3Enabled(state)) syncSaveState(artifact, dirty);
+      syncSaveState(artifact, dirty);
     }
 
     function currentV3View(capabilities) {
@@ -448,13 +211,24 @@
       previousSavePending = savePending;
     }
 
-    function afterRenderV3(artifact) {
+    function setHidden(node, hidden) {
+      node?.classList?.toggle('hidden', hidden);
+    }
+
+    function setDisabled(node, disabled) {
+      if (!node) return;
+      node.disabled = disabled;
+      node.setAttribute('aria-disabled', disabled ? 'true' : 'false');
+    }
+
+    function afterRenderV3(artifact, mode = 'artifact') {
       setupV3Controllers();
+      const artifactMode = mode === 'artifact';
       const artifacts = artifact ? managerHooks.getArtifacts?.() || [] : [];
       const dirty = isArtifactDirty(state, artifact);
       const capabilities = resolveCapabilities(artifact);
       const titleSlot = panelEl.querySelector('[data-artifact-panel-title-slot]');
-      syncSlotHtml(titleSlot, chromeRender.buildTitleHtml({ artifact, artifactCount: switcherController ? artifacts.length : 1, dirty, kind: capabilities.kind, switcherOpen: switcherController?.isOpen?.() === true }));
+      syncSlotHtml(titleSlot, chromeRender.buildTitleHtml({ artifact, artifactCount: switcherController ? artifacts.length : 1, dirty, kind: capabilities.kind, switcherOpen: switcherController?.isOpen?.() === true, formatLanguageLabel: projection?.formatLanguageLabel }));
       const viewSlot = panelEl.querySelector('[data-artifact-panel-view-slot]');
       syncSlotHtml(viewSlot, capabilities.hasPreview && capabilities.hasCode ? chromeRender.buildViewControlHtml(currentV3View(capabilities)) : '');
 
@@ -465,14 +239,15 @@
       const hasArtifact = Boolean(artifact);
       const sourceReady = hasArtifact && managerHooks.getSelectedArtifactSource?.() != null;
       const isImage = hasArtifact && capabilities.kind === 'image';
+      // Tasks, code review, file preview and subagents share this header for
+      // its Close only: the artifact actions hide there.
       const copyBtn = panelEl.querySelector('[data-artifact-panel-v2-copy]');
-      const downloadBtn = panelEl.querySelector('[data-artifact-panel-download]');
       const overflowBtn = panelEl.querySelector('[data-artifact-panel-overflow]');
-      const provenanceBtn = panelEl.querySelector('#artifactPanelV2ProvenanceTrigger');
-      if (copyBtn) { copyBtn.disabled = !sourceReady || isImage; copyBtn.setAttribute('aria-disabled', copyBtn.disabled ? 'true' : 'false'); }
-      if (downloadBtn) { downloadBtn.disabled = !sourceReady || isImage || !actionsController; downloadBtn.setAttribute('aria-disabled', downloadBtn.disabled ? 'true' : 'false'); downloadBtn.classList.toggle('hidden', isImage); }
-      if (overflowBtn) { overflowBtn.disabled = !hasArtifact || !actionsController; overflowBtn.setAttribute('aria-disabled', overflowBtn.disabled ? 'true' : 'false'); }
-      if (provenanceBtn) { provenanceBtn.disabled = !hasArtifact; provenanceBtn.setAttribute('aria-disabled', provenanceBtn.disabled ? 'true' : 'false'); }
+      setHidden(copyBtn, !artifactMode);
+      setDisabled(copyBtn, !sourceReady || isImage);
+      setHidden(overflowBtn, !artifactMode);
+      setDisabled(overflowBtn, !hasArtifact || !actionsController);
+      setDisabled(panelEl.querySelector('#artifactPanelV2ProvenanceTrigger'), !hasArtifact);
 
       const info = artifact && versionHistoryUtils?.resolveArtifactVersionInfo?.(artifact, state);
       const slot = panelEl.querySelector('[data-artifact-panel-v2-stepper-slot]');
@@ -481,81 +256,66 @@
 
       const source = artifact ? managerHooks.getSelectedArtifactSource?.() : null;
       const meta = panelEl.querySelector('#artifactPanelV2FooterMeta');
-      if (meta) meta.textContent = chromeRender.buildStatusMetaText(artifact, source, projection?.formatLanguageLabel);
+      if (meta) meta.textContent = chromeRender.buildStatusMetaText(artifact, source);
       syncSaveState(artifact, dirty);
 
+      // Maximize lives in More; the header shows a pressed Restore only while
+      // maximized, in the Maximize slot, in every mode: More is artifact-only,
+      // so Restore is the way back from a maximized file preview or code review.
       const maximized = managerHooks.isMaximized?.() === true;
-      const maximizeBtn = panelEl.querySelector('[data-artifact-panel-maximize]');
-      if (maximizeBtn) {
-        const label = maximized ? jt('artifacts.actions.restorePanelSize', 'Restore panel size') : jt('artifacts.actions.maximizePanel', 'Maximize panel');
-        maximizeBtn.disabled = !actionsController;
-        maximizeBtn.setAttribute('aria-disabled', maximizeBtn.disabled ? 'true' : 'false');
-        maximizeBtn.setAttribute('aria-label', label);
-        maximizeBtn.setAttribute('title', label);
-        maximizeBtn.setAttribute('aria-pressed', maximized ? 'true' : 'false');
-        maximizeBtn.innerHTML = maximized ? chromeRender.ICONS.restore : chromeRender.ICONS.maximize;
-      }
-      syncTextWrapButton();
+      const restoreBtn = panelEl.querySelector('[data-artifact-panel-maximize]');
+      setHidden(restoreBtn, !maximized);
+      setDisabled(restoreBtn, !actionsController);
+      syncTextWrapButton(mode);
     }
 
-    // Wrap toggle: visible whenever the active body is text-like — the code
-    // editor shell, a read-only source <pre>, or the file-preview list. The
-    // tool-output viewer is excluded (it carries its own inline Wrap control).
-    // managerHooks.syncTextWrap applies the state to every body and returns it.
-    function syncTextWrapButton() {
-      const btn = panelEl?.querySelector?.('[data-artifact-panel-wrap]');
-      if (!btn) return;
-      const textBody = panelEl.querySelector(
+    // The text body the Wrap control governs, or null: a tool output ('output'),
+    // or the code editor, a read-only source pre, the file-preview list ('code').
+    function activeWrapKind(mode = state.ui?.artifactReview?.mode || 'artifact') {
+      if (mode !== 'artifact' && mode !== 'file_preview') return null;
+      if (panelEl.querySelector('.artifact-preview-content:not(.hidden) .artifact-output-viewer')) return 'output';
+      const codeBody = panelEl.querySelector(
         '.artifact-editor-shell:not(.hidden), .artifact-preview-content:not(.hidden) .artifact-preview-pre, .artifact-file-preview-code'
       );
-      btn.classList.toggle('hidden', !textBody);
-      if (!textBody) return;
-      const wrapped = managerHooks.syncTextWrap?.() !== false;
+      return codeBody ? 'code' : null;
+    }
+
+    // Wrap: shown only for text bodies. The state lives on the panel (a class
+    // the owner flips, Monaco's own option), never on the re-rendered body.
+    function syncTextWrapButton(mode) {
+      const btn = panelEl?.querySelector?.('[data-artifact-panel-wrap]');
+      if (!btn) return;
+      const kind = activeWrapKind(mode);
+      btn.classList.toggle('hidden', !kind);
+      if (!kind) return;
+      const wrapped = textWrapController?.apply?.(kind) !== false;
       btn.setAttribute('aria-pressed', wrapped ? 'true' : 'false');
     }
 
-    function handlePanelClick(event) {
-      if (isV3Enabled(state)) {
-        handlePanelV3Click(event);
-        return;
-      }
-      const editBtn = event.target.closest?.('[data-artifact-panel-v2-edit]');
-      if (editBtn) {
-        if (typeof managerHooks.toggleEdit === 'function') {
-          managerHooks.toggleEdit();
-        } else if (typeof managerHooks.setArtifactDocumentViewMode === 'function') {
-          const current = typeof managerHooks.getArtifactDocumentViewMode === 'function'
-            ? managerHooks.getArtifactDocumentViewMode('split')
-            : 'read';
-          managerHooks.setArtifactDocumentViewMode('split', current === 'source' ? 'read' : 'source');
-        }
-        return;
-      }
-      const copyBtn = event.target.closest?.('[data-artifact-panel-v2-copy]');
-      if (copyBtn) {
-        if (typeof managerHooks.copySelectedArtifact === 'function') {
-          managerHooks.copySelectedArtifact();
-        }
-        return;
-      }
-      const stepperBtn = event.target.closest?.('.artifact-panel-v2-stepper-btn[data-artifact-select]');
-      if (stepperBtn) {
-        const targetId = stepperBtn.dataset.artifactSelect;
-        if (targetId && typeof managerHooks.selectArtifact === 'function') {
-          managerHooks.selectArtifact(targetId);
-        }
-        return;
-      }
-      const provenanceTrigger = event.target.closest?.('#artifactPanelV2ProvenanceTrigger');
-      if (provenanceTrigger) {
-        const popEl = getProvenancePopoverEl();
-        if (popEl && inventoryPopover?.toggle) {
-          inventoryPopover.toggle(popEl, { trigger: provenanceTrigger });
-        }
-      }
+    function toggleTextWrap() {
+      const kind = activeWrapKind();
+      if (!kind) return;
+      textWrapController?.toggle?.(kind);
+      syncTextWrapButton();
     }
 
-    function handlePanelV3Click(event) {
+    function setTextWrapController(controller) {
+      textWrapController = controller && typeof controller === 'object' ? controller : null;
+    }
+
+    // Restore hides itself once the panel is back to size: hand focus to More,
+    // or to the title where More is hidden or disabled, never to <body>.
+    function keepFocusAfterRestore() {
+      const restoreBtn = panelEl.querySelector('[data-artifact-panel-maximize]');
+      if (!restoreBtn?.classList.contains('hidden')) return;
+      const overflow = panelEl.querySelector('[data-artifact-panel-overflow]');
+      const target = overflow && !overflow.classList.contains('hidden') && !overflow.disabled
+        ? overflow
+        : panelEl.querySelector('#artifactReviewDetailTitle');
+      target?.focus?.({ preventScroll: true });
+    }
+
+    function handlePanelClick(event) {
       const titleButton = event.target.closest?.('[data-artifact-switcher-trigger]');
       if (titleButton) {
         if (switcherController?.isOpen?.()) switcherController.close();
@@ -568,6 +328,7 @@
       }
       if (event.target.closest?.('[data-artifact-panel-maximize]')) {
         actionsController?.toggleMaximize?.();
+        keepFocusAfterRestore();
         return;
       }
       const overflow = event.target.closest?.('[data-artifact-panel-overflow]');
@@ -575,13 +336,8 @@
         actionsController?.showOverflow?.(currentArtifact, overflow);
         return;
       }
-      if (event.target.closest?.('[data-artifact-panel-download]')) {
-        actionsController?.download?.(currentArtifact);
-        return;
-      }
       if (event.target.closest?.('[data-artifact-panel-wrap]')) {
-        managerHooks.toggleTextWrap?.();
-        syncTextWrapButton();
+        toggleTextWrap();
         return;
       }
       if (event.target.closest?.('[data-artifact-panel-v2-copy]')) {
@@ -601,7 +357,7 @@
     }
 
     function handleSegmentedChange(event) {
-      if (!isV3Enabled(state) || event.detail?.id !== 'artifact-view') return;
+      if (event.detail?.id !== 'artifact-view') return;
       const viewSlot = panelEl.querySelector('[data-artifact-panel-view-slot]');
       if (viewSlot) renderedSlotHtml.delete(viewSlot);
       const capabilities = resolveCapabilities(currentArtifact);
@@ -638,7 +394,7 @@
       saveStateTimer = null;
     }
 
-    return { installed, connect, afterRender, patchDirtyState, bind, dispose };
+    return { installed, connect, afterRender, patchDirtyState, bind, dispose, setTextWrapController };
   }
 
   return { createArtifactPanelV2 };

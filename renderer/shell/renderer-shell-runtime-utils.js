@@ -1,10 +1,10 @@
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) {
-    module.exports = factory();
+    module.exports = factory(require('./renderer-new-chat-entry'), require('../chat/renderer-composer-tools-slot'), require('./renderer-diagnostics-view-state'));
     return;
   }
-  root.rendererShellRuntimeUtils = factory();
-})(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  root.rendererShellRuntimeUtils = factory(root.rendererNewChatEntry, root.rendererComposerToolsSlot, root.rendererDiagnosticsViewState);
+})(typeof globalThis !== 'undefined' ? globalThis : this, function (newChatEntryUtils, composerToolsSlotUtils, diagnosticsViewStateUtils) {
   const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   const globalRef = typeof globalThis !== 'undefined' ? globalThis : {};
   function noop() {}
@@ -154,6 +154,7 @@
       openArtifactTarget = noopAsync,
       openIdeFileAtLine = noopAsync,
       openFilePreviewTarget = noopAsync,
+      focusComposer = noop,
     } = callbacks;
 
     // Chat-path listeners are page-lifetime, and the module resolves its menu
@@ -164,6 +165,7 @@
         windowRef,
         chatTimeline: windowRef.document?.getElementById?.('chatTimeline') || null,
         pathRoots: [windowRef.document?.getElementById?.('subagentInspector')].filter(Boolean),
+        paneHost: windowRef.document || null, // split view: another pane's timeline/inspector, found per event
         state,
         setActiveView: (...a) => setActiveView(...a),
         openIdeFileAtLine: (...a) => openIdeFileAtLine(...a),
@@ -211,24 +213,9 @@
       });
     }
 
-    function extractToolNamesForComposerToggles(list) {
-      const tools = Array.isArray(list) ? list : [];
-      return tools
-        .map((entry) => (
-          entry && typeof entry === 'object' && !Array.isArray(entry)
-            ? {
-              name: String(entry.name || '').trim(),
-              available: entry.available !== false,
-              reason: String(entry.reason || '').trim(),
-            }
-            : String(entry || '').trim()
-        ))
-        .filter((entry) => (
-          entry && typeof entry === 'object'
-            ? Boolean(entry.name)
-            : Boolean(entry)
-        ));
-    }
+    const composerToolsSlot = composerToolsSlotUtils.createComposerToolsSlot({
+      state, windowRef, slot: composerToolToggleSlot, controller: composerToggleModule, appendClientLog,
+    });
 
     function getCurrentSessionSummary(sessionId) {
       const normalizedSessionId = String(sessionId || '').trim();
@@ -463,8 +450,7 @@
             fallbackEstimate: buildComposerContextUsageFallback(sessionId, activeModel),
             activeModel,
             autoCompactEnabled: contextMeterOptions.autoCompactEnabled,
-            manualCompactionEnabled: state.features?.featureFlags?.compaction_manual === true
-              && (sessionDisplay.messageCount > 0 || compactionActivity?.pending === true),
+            manualCompactionEnabled: sessionDisplay.messageCount > 0 || compactionActivity?.pending === true,
             compactionActivity,
           };
           usageSummary = typeof contextUsageModule.describeContextUsage === 'function'
@@ -517,100 +503,15 @@
            context ring; empty string when inactive keeps the slot inert. */
         windowRef.rendererPlanUsageMeter?.render?.(composerPlanUsageSlot, state);
       }
-      if (composerToolToggleSlot) {
-        if (
-          composerToggleModule
-          && typeof composerToggleModule.renderToolToggles === 'function'
-        ) {
-          /* innerHTML replacement destroys an open tools popover; remember and
-           * re-open (without stealing focus) so refresh-driven re-renders do
-           * not slam it shut under the pointer. */
-          const popoverWasOpen = Boolean(
-            composerToolToggleSlot.querySelector('.inv-popover:not([hidden])')
-          );
-          composerToolToggleSlot.innerHTML = composerToggleModule.renderToolToggles() || '';
-          if (popoverWasOpen) {
-            const inv = windowRef.inventory || null;
-            const nextPopover = composerToolToggleSlot.querySelector('.inv-popover');
-            const nextChip = composerToolToggleSlot.querySelector('[data-inv-chip="composer-tools"]');
-            if (inv?.popover?.open && nextPopover) {
-              inv.popover.open(nextPopover, { trigger: nextChip, focus: false });
-            }
-          }
-        } else {
-          composerToolToggleSlot.innerHTML = '';
-        }
-      }
+      composerToolsSlot.render();
       if (typeof renderComposerEnhancementsHook === 'function') {
         renderComposerEnhancementsHook();
       }
     }
 
-    async function refreshComposerToolToggles() {
-      if (
-        !composerToggleModule
-        || typeof composerToggleModule.setAvailableTools !== 'function'
-        || !windowRef?.jennyShell?.tools?.list
-      ) {
-        return;
-      }
-      try {
-        const tools = await windowRef.jennyShell.tools.list();
-        composerToggleModule.setAvailableTools(extractToolNamesForComposerToggles(tools));
-        if (typeof composerToggleModule.hydrateFromToolSettings === 'function') {
-          composerToggleModule.hydrateFromToolSettings(state.features?.tools);
-        }
-        if (typeof composerToggleModule.hydrateFromSessionOverrides === 'function') {
-          const active = Array.isArray(state.sessions)
-            ? state.sessions.find((entry) => String(entry?.id || '') === String(state.currentSessionId || ''))
-            : null;
-          composerToggleModule.hydrateFromSessionOverrides(active?.tool_category_overrides);
-        }
-        renderComposerEnhancements();
-      } catch (error) {
-        appendClientLog('WARN', 'composer.tool_toggles_refresh_failed', {
-          message: error.message || String(error),
-        });
-      }
-    }
-
-    function getToolPreferences() {
-      if (!composerToggleModule || typeof composerToggleModule.getToggleStates !== 'function') {
-        return {};
-      }
-      return composerToggleModule.getToggleStates();
-    }
-
-    function handleComposerToggleChange(event) {
-      const toggleId = String(event?.detail?.id || '').trim();
-      if (!toggleId || !composerToggleModule || typeof composerToggleModule.setToggle !== 'function') {
-        return;
-      }
-      const categoryId = toggleId.startsWith('tool-toggle-')
-        ? toggleId.slice('tool-toggle-'.length)
-        : toggleId;
-      if (!categoryId) {
-        return;
-      }
-      const persistence = composerToggleModule.setToggle(categoryId, event?.detail?.checked === true);
-      Promise.resolve(persistence).then((persisted) => {
-        if (persisted === false) renderComposerEnhancements();
-      });
-      /* The switch primitive already repainted itself in place; only the chip
-       * count needs syncing. A full slot re-render here would destroy the
-       * popover the user is interacting with. */
-      const inv = windowRef.inventory || null;
-      const chipEl = composerToolToggleSlot
-        ? composerToolToggleSlot.querySelector('[data-inv-chip="composer-tools"]')
-        : null;
-      if (chipEl && inv?.chip?.setCount && typeof composerToggleModule.getToolsChipCount === 'function') {
-        const count = composerToggleModule.getToolsChipCount();
-        inv.chip.setCount(chipEl, count.text);
-        chipEl.setAttribute('aria-label', jt('shell.runtime.sessionToolsEnabled', 'Session tools: {count} enabled', { count: count.text }));
-      } else {
-        renderComposerEnhancements();
-      }
-    }
+    function refreshComposerToolToggles() { return composerToolsSlot.refresh(); }
+    function getToolPreferences() { return composerToolsSlot.getToolPreferences(); }
+    function handleComposerToggleChange(event) { return composerToolsSlot.handleToggleChange(event); }
 
     function queueDeferredStartupTask(task, options = {}) {
       const {
@@ -708,39 +609,22 @@
       return fallback;
     }
 
-    function ensureLogsViewState() {
-      const ensure = windowRef.rendererDiagnosticsViewState?.ensureDiagnosticsViewState;
-      if (typeof ensure === 'function') {
-        const ensured = ensure(state);
-        if (ensured && typeof ensured === 'object') return ensured;
-      }
-      state.ui = state.ui && typeof state.ui === 'object' ? state.ui : {};
-      state.ui.logs = state.ui.logs && typeof state.ui.logs === 'object' ? state.ui.logs : {};
-      return state.ui.logs;
-    }
-
     /* Open the Logs view on Activity, selecting the diagnostic event for this
      * turn when one is loaded. No match (diagnostics never loaded, older
      * session, retention drop) is not an error: the tab still opens plainly. */
     function openLogsForStream(streamId) {
       const normalizedStreamId = String(streamId || '').trim();
-      const view = ensureLogsViewState();
-      view.activeTab = 'activity';
       const entry = normalizedStreamId ? findLogEntryForStream(normalizedStreamId) : null;
       const entryId = entry ? logEntryId(entry) : '';
       if (entryId) {
-        /* A stale query/level/source/scope would filter the target row out and
-         * renderActivity would silently clear the selection again. */
-        view.query = '';
-        view.levelFilter = 'all';
-        view.sourceFilter = 'all';
-        view.issueScope = null;
-        /* Empty resolves to the active run, which is what a run_id-less
-         * renderer-local entry inherits; keeping the prior selection could
-         * filter the target row out. */
-        view.selectedRunId = String(entry.run_id || '');
-        view.selectedEntryId = entryId;
-        view.autoScroll = false;
+        diagnosticsViewStateUtils.focusDiagnosticsTarget(state, {
+          tab: 'activity', entryId,
+          // Empty resolves to the active run for renderer-local entries.
+          runId: String(entry.run_id || ''),
+        });
+      } else {
+        // Nothing to reveal: keep the user's filters and just open Activity.
+        diagnosticsViewStateUtils.ensureDiagnosticsViewState(state).activeTab = 'activity';
       }
       setActiveView('logs');
       appendClientLog('INFO', 'error_recovery.logs_deeplink', {
@@ -907,6 +791,17 @@
         await windowRef.jennyShell.artifacts.reveal(currentSessionId, artifactId);
         return;
       }
+      if (action === 'save-as' || action === 'copy') {
+        const saving = action === 'save-as';
+        const result = await windowRef.jennyShell.artifacts[saving ? 'saveAs' : 'copyImage'](currentSessionId, artifactId);
+        if (saving && (result?.ok || result?.canceled)) return;
+        showToastMessage(saving ? jt('shell.runtime.artifactSaveFailed', 'Could not save the image.')
+          : result?.ok ? jt('shell.runtime.artifactImageCopied', 'Image copied.') : jt('shell.runtime.artifactCopyFailed', 'Could not copy the image.'), {
+          tone: !saving && result?.ok ? 'info' : 'danger', source: TOAST_SOURCE.chatStream,
+          dedupeKey: `${TOAST_SOURCE.chatStream}:artifact-${action}:${artifactId}`,
+        });
+        return;
+      }
       if (action === 'panel') {
         await openArtifactTarget(artifactId, { source: 'inline-open-panel' });
       }
@@ -914,7 +809,8 @@
 
     function shouldSyncWorkspaceAfterSessionReload() {
       return Boolean(
-        state.workspace?.activeSessionId
+        state.workspaceRestoreDeferred === true
+        || state.workspace?.activeSessionId
         || state.workspace?.openSessionIds?.length
         || !state.currentSessionId
       );
@@ -938,21 +834,16 @@
       return result;
     }
 
-    // F37: the latest New chat wins. An older create's tab activation still in
-    // flight must not reclaim the current session from a newer create.
-    let createSessionGeneration = 0;
+    // "+ New chat" (F37 latest wins, D7 Chats filter follow, X3 reuse of an
+    // untouched empty chat) lives in renderer-new-chat-entry.js.
+    const newChatEntry = newChatEntryUtils?.createNewChatEntry?.({
+      state,
+      windowRef,
+      callbacks: { appendClientLog, handleCreateSession, activateWorkspaceSession, renderWorkspaceChrome, renderSessions, focusComposer },
+    }) || null;
     async function handleCreateSessionWithWorkspace() {
-      const generation = ++createSessionGeneration;
-      const navigationGuard = { isCurrent: () => generation === createSessionGeneration };
-      const createdSessionId = String(await handleCreateSession(...arguments) || '').trim();
-      if (createdSessionId && navigationGuard.isCurrent()) {
-        state.currentSessionId = createdSessionId;
-        // A brand-new chat always opens in its own tab, regardless of the
-        // open-in-new-tab preference (which only governs existing sessions).
-        await activateWorkspaceSession(createdSessionId, { silent: true, mode: 'new-tab', navigationGuard });
-        renderWorkspaceChrome();
-      }
-      return createdSessionId;
+      if (newChatEntry) return newChatEntry.handleCreateSessionWithWorkspace(...arguments);
+      return String(await handleCreateSession(...arguments) || '').trim(); // module missing: plain create
     }
 
     async function handleDeleteSessionWithWorkspace() {
@@ -982,7 +873,6 @@
     return {
       getKnownSessionIds,
       pruneContextUsageCache,
-      extractToolNamesForComposerToggles,
       renderComposerEnhancements,
       refreshComposerToolToggles,
       getToolPreferences,

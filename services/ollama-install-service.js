@@ -254,8 +254,8 @@ class OllamaInstallService extends EventEmitter {
         this.fsImpl.rmSync(entry.stagingDir, { recursive: true, force: true });
         entry.stagingDir = null;
       }
-    } catch (_error) {
-      // best-effort cleanup
+    } catch (error) {
+      this._logCleanupFailure(entry, 'staging', error);
     }
     try {
       if (entry?.tempDir && typeof this.fsImpl.rmSync === 'function') {
@@ -263,9 +263,17 @@ class OllamaInstallService extends EventEmitter {
       } else if (entry?.destPath && typeof this.fsImpl.unlinkSync === 'function') {
         this.fsImpl.unlinkSync(entry.destPath);
       }
-    } catch (_error) {
-      // best-effort cleanup
+    } catch (error) {
+      this._logCleanupFailure(entry, 'download', error);
     }
+  }
+
+  // Cleanup stays best-effort (it never changes the install result), but a
+  // leftover staging dir or installer file is a real failure worth a log line.
+  _logCleanupFailure(entry, target, error) {
+    this._log('WARN', 'ollama_install.cleanup_failed', {
+      requestId: entry?.requestId, target, reason: boundedError(error?.message || error),
+    });
   }
 
   _createTempTarget() {
@@ -466,12 +474,84 @@ class OllamaInstallService extends EventEmitter {
     });
   }
 
+  // Repairs what a process kill leaves behind in the archive publish, which is two
+  // renames (installDir -> <base>.previous-<ts>, then staging -> installDir): restores
+  // the newest previous install when the live directory is gone, then drops the
+  // superseded previous installs and staging directories no active install owns.
+  // Synchronous and never throws, so it is safe at app startup; a no-op off Linux.
+  reconcileArchiveInstall() {
+    try {
+      if (this.platform !== 'linux') return;
+      const plan = this.getInstallPlan();
+      const installDir = normalizeString(plan.installDir);
+      if (plan.format !== 'tar.zst' || !installDir) return;
+      const parent = path.dirname(installDir);
+      const previousPattern = new RegExp(
+        `^${path.basename(installDir).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\.previous-(\\d+)$`
+      );
+      const stagingPattern = /^\.ollama\.staging-[A-Za-z0-9]+$/;
+      const isRealDirectory = (target) => {
+        try {
+          return this.fsImpl.lstatSync(target).isDirectory();
+        } catch (_error) {
+          return false;
+        }
+      };
+      let names;
+      try {
+        names = this.fsImpl.readdirSync(parent);
+      } catch (_error) {
+        return;
+      }
+      const previous = names
+        .filter((name) => previousPattern.test(name) && isRealDirectory(path.join(parent, name)))
+        .sort((a, b) => Number(previousPattern.exec(b)[1]) - Number(previousPattern.exec(a)[1]));
+      let installExists = true;
+      try {
+        this.fsImpl.lstatSync(installDir);
+      } catch (_error) {
+        installExists = false;
+      }
+      if (!installExists && previous.length) {
+        const newest = previous.shift();
+        try {
+          this.fsImpl.renameSync(path.join(parent, newest), installDir);
+          installExists = true;
+          this._log('WARN', 'ollama_install.previous_restored', { previous: newest });
+        } catch (error) {
+          this._logCleanupFailure(null, 'previous_install_restore', error);
+          return;
+        }
+      }
+      const abandoned = installExists ? previous : [];
+      const activeStaging = new Set(
+        [...this._active.values()]
+          .filter((active) => active.stagingDir)
+          .map((active) => path.resolve(active.stagingDir))
+      );
+      for (const name of names.filter((candidate) => stagingPattern.test(candidate))) {
+        const target = path.join(parent, name);
+        if (!activeStaging.has(path.resolve(target)) && isRealDirectory(target)) abandoned.push(name);
+      }
+      for (const name of abandoned) {
+        try {
+          this.fsImpl.rmSync(path.join(parent, name), { recursive: true, force: true });
+        } catch (error) {
+          this._logCleanupFailure(null, 'abandoned_install', error);
+        }
+      }
+    } catch (error) {
+      this._logCleanupFailure(null, 'reconcile', error);
+    }
+  }
+
   async _installArchive(entry, plan) {
     const installDir = normalizeString(plan?.installDir);
     if (!installDir) {
       throw installError('install_dir_unavailable', 'The Linux Ollama install directory is unavailable.');
     }
     const parent = path.dirname(installDir);
+    this.reconcileArchiveInstall();
     try {
       this.fsImpl.mkdirSync(parent, { recursive: true });
       entry.stagingDir = this.fsImpl.mkdtempSync(path.join(parent, '.ollama.staging-'));
@@ -524,14 +604,18 @@ class OllamaInstallService extends EventEmitter {
     } catch (error) {
       try {
         if (this.fsImpl.existsSync(previous)) this.fsImpl.renameSync(previous, installDir);
-      } catch (_rollbackError) { /* best effort */ }
+      } catch (rollbackError) {
+        this._logCleanupFailure(entry, 'previous_install_restore', rollbackError);
+      }
       throw installError('publish_failed', String(error?.message || error));
     }
     entry.stagingDir = null;
     entry.published = true;
     try {
       if (this.fsImpl.existsSync(previous)) this.fsImpl.rmSync(previous, { recursive: true, force: true });
-    } catch (_error) { /* best effort */ }
+    } catch (error) {
+      this._logCleanupFailure(entry, 'previous_install', error);
+    }
   }
 
   async _reprobe(entry) {
@@ -627,8 +711,11 @@ class OllamaInstallService extends EventEmitter {
             summary: 'Ollama is already installed.',
           });
         }
-      } catch (_error) {
-        // proceed with install
+      } catch (error) {
+        // Detection failure is not fatal: proceed with the opted-in install.
+        this._log('WARN', 'ollama_install.detect_failed', {
+          requestId: entry.requestId, reason: boundedError(error?.message || error),
+        });
       }
     }
     if (entry.cancelled) {
@@ -782,8 +869,11 @@ class OllamaInstallService extends EventEmitter {
           this.env.PATH = [...newDirs, existingPath].filter(Boolean).join(path.delimiter);
         }
       }
-    } catch (_error) {
-      // best-effort PATH prepend; never block the install on it
+    } catch (error) {
+      // Best-effort PATH prepend: never block the install on it.
+      this._log('WARN', 'ollama_install.path_prepend_failed', {
+        requestId: entry.requestId, reason: boundedError(error?.message || error),
+      });
     }
 
     if ((upgradeRequired || plan.format === 'tar.zst') && this.restartImpl) {

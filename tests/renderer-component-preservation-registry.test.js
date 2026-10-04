@@ -12,6 +12,21 @@ const {
 } = require('../renderer/chat/renderer-stream-dom-patch-utils');
 const { renderUserQuestionsBlock } = require('../renderer/chat/renderer-user-questions-block');
 
+test('artifact image retains its hydrated source across matching morphs but resets for another key', () => {
+  const markup = (key) => `<article data-message-id="m1"><img data-inv-artifact-image-key="${key}"><p>new</p></article>`;
+  const dom = new JSDOM(`<body><div id="root">${markup('session:image-1')}</div></body>`);
+  const root = dom.window.document.getElementById('root');
+  const img = root.querySelector('img');
+  img.src = 'data:image/png;base64,YQ==';
+  setChildrenHtmlPreservingKeyedNodes(root, markup('session:image-1'));
+  assert.strictEqual(root.querySelector('img'), img);
+  assert.equal(img.getAttribute('src'), 'data:image/png;base64,YQ==');
+  setChildrenHtmlPreservingKeyedNodes(root, markup('session:image-2'));
+  assert.notStrictEqual(root.querySelector('img'), img);
+  assert.equal(root.querySelector('img').hasAttribute('src'), false);
+  dom.window.close();
+});
+
 function renderQuestions(questionRef = 'question-ref') {
   return renderUserQuestionsBlock({
     toolCallId: 'call-1',
@@ -188,6 +203,40 @@ test('a status-expanded row does not force open a lazy collapsed replacement', (
   assert.equal(row.getAttribute('data-expanded'), 'false');
   assert.equal(row.querySelector('button').getAttribute('aria-expanded'), 'false');
   assert.equal(row.querySelector('.tool-call-row-body').hasAttribute('inert'), true);
+});
+
+test('a row re-rendered under another transcript view takes the new expansion default', () => {
+  // Transcript views bake expansion defaults into row markup. Thinking rendered
+  // the row collapsed; Everything renders it open and materialized. The morph
+  // must not restore the Thinking state over it (and vice versa).
+  const dom = new JSDOM(`<!doctype html><body><div id="root">
+    <article data-message-id="m1">
+      <div class="tool-call-row" data-tool-call-id="call-1" data-transcript-view="thinking" data-expanded="false" data-tool-details-materialized="false">
+        <button data-action="toggle" aria-expanded="false">Old</button>
+        <div class="tool-call-row-body" inert></div>
+      </div>
+    </article>
+  </div></body>`);
+  const root = dom.window.document.getElementById('root');
+  const everything = `
+      <article data-message-id="m1">
+        <div class="tool-call-row" data-tool-call-id="call-1" data-transcript-view="everything" data-expanded="true" data-tool-details-materialized="true">
+          <button data-action="toggle" aria-expanded="true">New</button>
+          <div class="tool-call-row-body">result</div>
+        </div>
+      </article>`;
+  setChildrenHtmlPreservingKeyedNodes(root, everything, { documentRef: dom.window.document });
+  let row = root.querySelector('.tool-call-row');
+  assert.equal(row.getAttribute('data-expanded'), 'true', 'the Everything default is not overwritten by the Thinking state');
+  assert.equal(row.querySelector('button').getAttribute('aria-expanded'), 'true');
+  assert.equal(row.querySelector('.tool-call-row-body').hasAttribute('inert'), false);
+
+  // Same view, same row: the user's collapse still survives a structural rebuild.
+  row.setAttribute('data-expanded', 'false');
+  row.querySelector('button').setAttribute('aria-expanded', 'false');
+  setChildrenHtmlPreservingKeyedNodes(root, everything.replace('<article', '<article data-rebuilt="1"'), { documentRef: dom.window.document });
+  row = root.querySelector('.tool-call-row');
+  assert.equal(row.getAttribute('data-expanded'), 'false', 'within one view the preserved state still restores');
 });
 
 test('expanded row state and focused action restore across structural replacement', () => {

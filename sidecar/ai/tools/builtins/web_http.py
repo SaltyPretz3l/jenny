@@ -37,6 +37,9 @@ _SHARED_ADDRESS_SPACE = ipaddress.ip_network("100.64.0.0/10")
 # IPv4; `0000:5efe` is the form used otherwise. Both are matched — see
 # `_is_public_ip`.
 _ISATAP_INTERFACE_MARKERS = frozenset({0x00005EFE, 0x02005EFE})
+_MAX_CONCURRENT_DNS_LOOKUPS = 8
+_DNS_LOOKUP_SLOTS = threading.BoundedSemaphore(_MAX_CONCURRENT_DNS_LOOKUPS)
+_DNS_LOOKUP_THREAD_NAME = "web-dns-lookup"
 
 
 @dataclass(frozen=True)
@@ -235,9 +238,17 @@ def _remaining_seconds(deadline: float) -> float:
 
 def _getaddrinfo(host: str, port: int, *, deadline: float | None) -> list[Any]:
     if deadline is None:
-        return socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+        deadline = time.monotonic() + 10.0
 
     remaining = _remaining_seconds(deadline)
+    # getaddrinfo cannot be cancelled, so a lookup that outlives its deadline is
+    # abandoned to finish on its own. Each lookup holds a slot until it really
+    # returns, which caps how many abandoned resolver threads can pile up behind
+    # a hung DNS server; with every slot held a new lookup times out instead of
+    # spawning another thread.
+    slots = _DNS_LOOKUP_SLOTS
+    if not slots.acquire(timeout=remaining):
+        raise TimeoutError(_TIMEOUT_MESSAGE)
     finished = threading.Event()
     results: list[list[Any]] = []
     errors: list[Exception] = []
@@ -248,10 +259,15 @@ def _getaddrinfo(host: str, port: int, *, deadline: float | None) -> list[Any]:
         except Exception as exc:  # noqa: BLE001
             errors.append(exc)
         finally:
+            slots.release()
             finished.set()
 
-    threading.Thread(target=resolve, daemon=True).start()
-    if not finished.wait(timeout=remaining):
+    try:
+        threading.Thread(target=resolve, name=_DNS_LOOKUP_THREAD_NAME, daemon=True).start()
+    except BaseException:
+        slots.release()
+        raise
+    if not finished.wait(timeout=_remaining_seconds(deadline)):
         raise TimeoutError(_TIMEOUT_MESSAGE)
     _remaining_seconds(deadline)
     if errors:
@@ -345,7 +361,7 @@ class _PinnedHTTPSHandler(urllib.request.HTTPSHandler):
 
 
 class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
-    def redirect_request(  # type: ignore[override]  # noqa: PLR0917
+    def redirect_request(  # type: ignore[override]
         self, req, fp, code, msg, headers, newurl
     ):
         _ = (code, msg, headers, newurl)
@@ -493,9 +509,11 @@ def read_url_response(
     method: str = "GET",
     data: bytes | None = None,
     headers: dict[str, str] | None = None,
+    deadline: float | None = None,
 ) -> UrlReadResult:
     """Fetch URL bytes with DNS pinning, redirect validation, and size limits."""
-    deadline = time.monotonic() + float(timeout_s)
+    if deadline is None:
+        deadline = time.monotonic() + float(timeout_s)
     limit = min(_MAX_FETCH_BYTES_HARD, max(1024, int(max_bytes)))
     requested_url = validated.url
     current = validated

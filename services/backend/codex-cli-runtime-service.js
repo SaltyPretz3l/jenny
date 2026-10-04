@@ -71,8 +71,12 @@ function createCodexCliRuntimeService({
   configService = null,
   authService = null,
   logger = null,
+  // The hosted host never starts the CLI on its own (no subprocess fallback).
+  autoRefresh = true,
 } = {}) {
   let lastState = null;
+  let authCommand = null;
+  let pendingRefresh = null;
 
   function log(level, event, details) {
     if (typeof logger === 'function') {
@@ -109,6 +113,7 @@ function createCodexCliRuntimeService({
   }
 
   function availabilityForSettings(settings = getSettings()) {
+    getState();
     if (settings.enabled !== true) {
       return { available: false, reason: codexCliDisabledReason() };
     }
@@ -118,7 +123,7 @@ function createCodexCliRuntimeService({
         reason: t('main.codexCli.runtimeRootNotConfigured', 'Codex CLI runtime root is not configured.'),
       };
     }
-    if (!lastState) {
+    if (!lastState || lastState.code === 'auth_unchecked') {
       return {
         available: false,
         reason: t('main.codexCli.authNotChecked', 'Codex CLI auth status has not been checked yet.'),
@@ -136,6 +141,7 @@ function createCodexCliRuntimeService({
   function getState() {
     const settings = getSettings();
     if (settings.enabled !== true) {
+      authCommand = null;
       lastState = createUnavailableState(settings, codexCliDisabledReason(), 'disabled');
       return lastState;
     }
@@ -147,7 +153,7 @@ function createCodexCliRuntimeService({
       );
       return lastState;
     }
-    if (lastState) {
+    if (lastState && authCommand === getCommand(settings)) {
       const { models } = getConfiguredModelState(settings);
       return {
         ...lastState,
@@ -162,10 +168,22 @@ function createCodexCliRuntimeService({
       'Codex CLI auth status has not been checked yet.',
       'auth_unchecked'
     );
+    if (autoRefresh) void refresh();
     return lastState;
   }
 
-  async function refresh() {
+  function refresh() {
+    const command = getCommand();
+    if (pendingRefresh?.command === command) return pendingRefresh.promise;
+    authCommand = command;
+    const promise = refreshAuth().finally(() => {
+      if (pendingRefresh?.promise === promise) pendingRefresh = null;
+    });
+    pendingRefresh = { command, promise };
+    return promise;
+  }
+
+  async function refreshAuth() {
     const settings = getSettings();
     if (settings.enabled !== true) {
       lastState = createUnavailableState(settings, codexCliDisabledReason(), 'disabled');
@@ -192,6 +210,7 @@ function createCodexCliRuntimeService({
       const auth = await Promise.resolve(authService.getState({
         codexCommand: getCommand(settings),
       }));
+      if (!getSettings().enabled || getCommand() !== getCommand(settings)) return getState();
       const authType = normalizeRuntimeAuthType(auth?.authType || auth?.auth_type);
       const authenticated = auth?.configured === true || auth?.ok === true || auth?.status === 'ready';
       const ready = authenticated && authType === 'chatgpt';
@@ -224,6 +243,7 @@ function createCodexCliRuntimeService({
         message,
         errorType: String(error?.name || 'Error'),
       });
+      if (!getSettings().enabled || getCommand() !== getCommand(settings)) return getState();
       lastState = createUnavailableState(settings, message, 'auth_refresh_failed');
       return lastState;
     }
@@ -299,6 +319,8 @@ function createCodexCliRuntimeService({
       codex_cli_request_timeout_seconds: settings.requestTimeoutSeconds,
     };
   }
+
+  getState();
 
   return {
     name: CODEX_CLI_PROVIDER,

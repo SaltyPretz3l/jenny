@@ -36,6 +36,7 @@
   }
 
   const RECOVERY_OUTCOMES = Object.freeze(['skip', 'alternate_name', 'protect_then_replace']);
+  const FAMILY_BUSY_REASON = 'too_many_workspace_recovery_requests'; // sidecar family cap: transient, next render re-lists
   const RECOVERY_OUTCOME_LABELS = {
     skip: 'Skip',
     alternate_name: jt('ide.changes.restoreAsCopy', 'Restore as copy'),
@@ -173,6 +174,9 @@
     let lastRecoveryWorkspaceId = null;
     let recoveryEpoch = 0;
     let changeSetsState = { status: 'idle', changeSets: [], error: '' };
+    // The sidecar serves the workspace_recovery family one request at a time (a second is
+    // rejected): one list in flight at most; a switch mid-list queues the next one.
+    let listInFlight = false, listQueued = false;
     const reviewByChangeSetId = new Map();
     const receiptByChangeSetId = new Map();
     const trashReceiptByStepId = new Map();
@@ -345,18 +349,27 @@
         changeSetsState = { status: 'error', changeSets: [], error: jt('ide.changes.recoveryUnavailable', 'Workspace recovery is unavailable.') };
         return;
       }
+      if (listInFlight) { listQueued = true; return; }
+      listInFlight = true;
       const requestEpoch = recoveryEpoch;
-      Promise.resolve(api.listChangeSets({})).then((result) => {
+      new Promise((resolve) => { resolve(api.listChangeSets({})); }).then((result) => { // a sync throw rejects too
         if (disposed || requestEpoch !== recoveryEpoch) return;
         changeSetsState = result?.ok
           ? { status: 'ready', changeSets: Array.isArray(result.change_sets) ? result.change_sets : [], error: '' }
-          : { status: 'error', changeSets: [], error: describeRecoveryError(result || {}) };
+          : result?.reason === FAMILY_BUSY_REASON ? { status: 'idle', changeSets: changeSetsState.changeSets, error: '' }
+            : { status: 'error', changeSets: [], error: describeRecoveryError(result || {}) };
         renderChangesPanel(true);
       }).catch((error) => {
         if (disposed || requestEpoch !== recoveryEpoch) return;
         changeSetsState = { status: 'error', changeSets: [], error: jt('ide.changes.recoveryRequestFailed', 'Workspace recovery request failed.') };
         appendClientLog('WARN', 'ide.changesets_list_failed', { message: String(error?.message || error || '') });
         renderChangesPanel(true);
+      }).finally(() => {
+        listInFlight = false;
+        if (!listQueued || disposed) return;
+        listQueued = false; // re-arm the queued (current-epoch) load
+        changeSetsState = { status: 'idle', changeSets: changeSetsState.changeSets, error: '' };
+        renderChangesPanel();
       });
     }
 

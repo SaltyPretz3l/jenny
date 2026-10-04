@@ -1,6 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { loadRendererApp, waitForUi } = require('./helpers/renderer-shell-harness');
+const { segmentedGroup, segmentedValue, segmentedOptions } = require('./helpers/segmented-control');
 
 async function loadRendererTestApp(t, options) {
   const app = await loadRendererApp(options);
@@ -74,11 +75,10 @@ test('renderer signals ready even when non-critical harness bootstrap work never
   assert.equal(shell.__state.lifecycleReadySignals, 1);
 });
 
-test('renderer hydrates Home-owned tips and reminders without retired Settings sections', async (t) => {
+test('renderer hydrates Home-owned reminders without retired Settings sections', async (t) => {
   let companionGetCalls = 0;
   let proactiveGetCalls = 0;
   let skillsGetCalls = 0;
-  let tipsGetCalls = 0;
   let offlineGetCalls = 0;
   let harnessInspectCalls = 0;
   const { window } = await loadRendererTestApp(t, {
@@ -107,12 +107,6 @@ test('renderer hydrates Home-owned tips and reminders without retired Settings s
         async getState({ state }) {
           skillsGetCalls += 1;
           return state.skillsState;
-        },
-      },
-      tips: {
-        async getState({ state }) {
-          tipsGetCalls += 1;
-          return state.tipsState;
         },
       },
       offline: {
@@ -145,7 +139,6 @@ test('renderer hydrates Home-owned tips and reminders without retired Settings s
       companionGetCalls,
       proactiveGetCalls,
       skillsGetCalls,
-      tipsGetCalls,
       offlineGetCalls,
       harnessInspectCalls,
     },
@@ -155,7 +148,6 @@ test('renderer hydrates Home-owned tips and reminders without retired Settings s
       // Skill slash commands (/verify …) register at boot from skills.getState;
       // Settings hydration itself still makes no extra call.
       skillsGetCalls: 1,
-      tipsGetCalls: 1,
       offlineGetCalls: 1,
       harnessInspectCalls: 0,
     }
@@ -164,7 +156,6 @@ test('renderer hydrates Home-owned tips and reminders without retired Settings s
   await waitForUi(window, 40);
   assert.equal(companionGetCalls, 1);
   assert.equal(proactiveGetCalls, 1);
-  assert.equal(tipsGetCalls, 1);
   // Home re-pulls offline state on activation so the dashboard's Model &
   // Engine card never paints a stale boot-time snapshot.
   assert.equal(offlineGetCalls, 2);
@@ -208,19 +199,19 @@ test('renderer hydrates Home-owned tips and reminders without retired Settings s
   assert.equal(window.__rendererState.ui.activeSettingsSection, 'usage');
 });
 
-test('renderer composer settings popover works before settings opens and account sign-in is absent', async (t) => {
+test('renderer attach menu works before settings opens and account sign-in is absent', async (t) => {
   const { window } = await loadRendererTestApp(t);
   const doc = window.document;
-  const composerSettingsPopover = doc.getElementById('composerSettingsPopover');
+  const composerAttachMenu = doc.getElementById('composerAttachMenu');
 
   assert.equal(window.__rendererState.ui.activeView, 'chat');
-  assert.equal(composerSettingsPopover.classList.contains('hidden'), true);
+  assert.equal(composerAttachMenu.classList.contains('hidden'), true);
   assert.equal(doc.getElementById('authOverlay'), null);
 
-  doc.getElementById('composerSettingsButton').click();
+  doc.getElementById('composerAttachShortcut').click();
   await waitForUi(window, 20);
   assert.equal(window.__rendererState.ui.activeView, 'chat');
-  assert.equal(composerSettingsPopover.classList.contains('hidden'), false);
+  assert.equal(composerAttachMenu.classList.contains('hidden'), false);
   assert.equal(doc.activeElement, doc.getElementById('attachFilesButton'));
 
   const composingEscape = new window.KeyboardEvent('keydown', {
@@ -229,14 +220,14 @@ test('renderer composer settings popover works before settings opens and account
   Object.defineProperty(composingEscape, 'keyCode', { value: 229 });
   doc.activeElement.dispatchEvent(composingEscape);
   await waitForUi(window, 10);
-  assert.equal(composerSettingsPopover.classList.contains('hidden'), false);
+  assert.equal(composerAttachMenu.classList.contains('hidden'), false);
 
   doc.activeElement.dispatchEvent(new window.KeyboardEvent('keydown', {
     key: 'Escape', bubbles: true, cancelable: true,
   }));
   await waitForUi(window, 10);
-  assert.equal(composerSettingsPopover.classList.contains('hidden'), true);
-  assert.equal(doc.activeElement, doc.getElementById('composerSettingsButton'));
+  assert.equal(composerAttachMenu.classList.contains('hidden'), true);
+  assert.equal(doc.activeElement, doc.getElementById('composerAttachShortcut'));
 
   assert.equal(doc.getElementById('openAuthButton'), null);
   assert.equal(doc.getElementById('settingsLogoutButton'), null);
@@ -326,7 +317,7 @@ test('renderer sidebar resizer ignores non-primary drags and supports keyboard r
   assert.equal(workspace.style.getPropertyValue('--sidebar-current-width'), '320px');
 });
 
-test('renderer tools summary counts only mounted typed tool fields', async (t) => {
+test('renderer tools workspace line reports the missing workspace', async (t) => {
   const { window } = await loadRendererTestApp(t, {
     shell: {
       features: {
@@ -367,11 +358,10 @@ test('renderer tools summary counts only mounted typed tool fields', async (t) =
   doc.querySelector('.settings-nav-item[data-settings-section="tools"]').click();
   await waitForUi(window, 20);
 
-  assert.match(
-    doc.getElementById('toolsSummary').textContent,
-    /1 enabled capabilities ready .* workspace root missing/i
-  );
-  assert.ok(doc.getElementById('toolsSummary').querySelector('.inv-status-row'));
+  assert.equal(doc.getElementById('toolsSummary'), null);
+  assert.equal(doc.getElementById('toolsWorkspaceLine').dataset.state, 'blocked');
+  assert.equal(doc.getElementById('toolsWorkspacePath').textContent, 'No workspace root selected.');
+  assert.match(doc.getElementById('toolsWorkspaceStatus').textContent, /Choose a workspace root/);
 });
 
 test('renderer settings renders and saves manifest-backed tool config fields', async (t) => {
@@ -437,6 +427,7 @@ test('renderer settings renders and saves manifest-backed tool config fields', a
   assert.match(toolConfigList.textContent, /Only appears in test metadata\./);
   const toggle = toolConfigList.querySelector('[data-inv-toggle="settings-tool-config-futureTool"]');
   assert.ok(toggle);
+  assert.equal(toggle.closest('#toolsCodeList').lastElementChild, toggle.closest('.settings-field--row'));
   assert.equal(toggle.getAttribute('aria-checked'), 'false');
 
   toggle.click();
@@ -468,23 +459,23 @@ test('Session Tools renders and saves the default run mode for new chats', async
   doc.querySelector('.settings-nav-item[data-settings-section="tools"]').click();
   await waitForUi(window, 20);
 
-  const select = doc.getElementById('defaultRunModeSelect');
-  assert.ok(select);
-  assert.equal(select.value, 'auto');
-  assert.equal(select.getAttribute('aria-label'), 'Default run mode for new sessions');
-  assert.deepEqual([...select.options].map((option) => option.textContent), ['Ask', 'Auto', 'Plan']);
-  const fieldText = doc.querySelector('[data-default-run-mode-field]').textContent;
-  assert.match(fieldText, /Jenny asks before running tools that change things\./);
-  assert.match(fieldText, /Python and explicit denies still ask; blocked commands are refused\./);
-  assert.match(fieldText, /Read-only: Jenny plans first and presents it before acting\./);
-  assert.match(fieldText, /Applies to new chats; the composer switcher changes the current chat\./);
+  const group = segmentedGroup(doc, 'defaultRunModeSelect');
+  assert.ok(group);
+  assert.equal(group.getAttribute('role'), 'radiogroup');
+  assert.equal(segmentedValue(doc, 'defaultRunModeSelect'), 'auto');
+  assert.equal(group.getAttribute('aria-label'), 'Default run mode');
+  assert.deepEqual(segmentedOptions(doc, 'defaultRunModeSelect').map((option) => option.label), ['Ask', 'Auto', 'Plan']);
+  const row = doc.querySelector('[data-settings-field="defaultRunModeSelect"]');
+  assert.match(row.querySelector('.settings-field-help').textContent, /For new chats\. Ask checks before changes/);
+  assert.match(row.querySelector('.settings-field-detail').dataset.tooltip, /In Auto, Python and explicit denies still ask and blocked commands are refused\./);
+  assert.match(row.querySelector('.settings-field-detail').dataset.tooltip, /The composer switcher changes the current chat\./);
+  assert.equal(doc.querySelector('[data-default-run-mode-field]'), null);
 
-  select.value = 'plan';
-  select.dispatchEvent(new window.Event('change', { bubbles: true }));
+  group.querySelector('[data-value="plan"]').click();
   await waitForUi(window, 30);
 
   assert.deepEqual(JSON.parse(JSON.stringify(updatePatches)), [{ defaultRunMode: 'plan' }]);
-  assert.equal(doc.getElementById('defaultRunModeSelect').value, 'plan');
+  assert.equal(segmentedValue(doc, 'defaultRunModeSelect'), 'plan');
 });
 
 test('a fresh chat projects an auto default onto its first send', async (t) => {
@@ -504,7 +495,7 @@ test('a fresh chat projects an auto default onto its first send', async (t) => {
   window.document.getElementById('sendButton').click();
   await waitForUi(window, 30);
 
-  // The first Auto send in a renderer lifetime asks once before anything runs.
+  // The first Auto send in a project asks once before anything runs.
   assert.equal(shell.__state.chatCalls.length, 0, 'no send before the Auto confirmation');
   const confirmButton = window.document.querySelector(
     '#composerAutoRunConfirmOverlay [data-ide-confirm-action="confirm"]'
@@ -768,19 +759,6 @@ test('legacy face flag does not inject face DOM into the standard shell', async 
   assert.equal(window.document.getElementById('settingsDetailsToggle'), null);
 });
 
-test('renderer stays stable when comet personality is disabled', async (t) => {
-  const { window } = await loadRendererTestApp(t, {
-    shell: {
-      features: { state: { featureFlags: { comet_personality: false } } },
-    },
-  });
-
-  await waitForUi(window, 20);
-
-  assert.ok(window.document.getElementById('chatView'));
-  assert.equal(window.document.querySelector('.chat-comet-svg'), null);
-});
-
 /* ── Phase 7B — Run setup again row in Settings ────────────────────────── */
 
 test('phase7B Run setup again row dispatches updateState with dismissed=false and setupComplete=false', async () => {
@@ -873,7 +851,7 @@ test('phase7D Settings account row opens Help and bounded factory reset modal', 
   assert.equal(window.__rendererState.setup.setupComplete, false);
   assert.equal(window.__rendererState.setup.assistantIdentity.agentName, 'Jenny');
   assert.equal(window.__rendererState.ui.activeView, 'home');
-  assert.match(doc.body.textContent, /Onboarding reset complete — setup tiles reopened on Companion Home\./);
+  assert.match(doc.body.textContent, /Onboarding reset complete — setup tiles reopened on Home\./);
 });
 
 test('Settings relocates standalone MCP management into Plugins & Extensions', async (t) => {
@@ -918,4 +896,76 @@ test('Settings relocates standalone MCP management into Plugins & Extensions', a
   assert.ok(group.querySelector('[role="switch"]'));
   assert.equal(doc.getElementById('mcpDiscoveryStatus'), null);
   assert.equal(doc.querySelector('[data-action="mcpDiscoveryOpenConfig"]'), null);
+});
+
+test('primary paperclip toggles the attach menu and supports navigation and dismissal', async (t) => {
+  const { window } = await loadRendererTestApp(t);
+  const doc = window.document;
+  const clip = doc.getElementById('composerAttachShortcut');
+  const menu = doc.getElementById('composerAttachMenu');
+  const files = doc.getElementById('attachFilesButton');
+  const capture = doc.getElementById('captureScreenButton');
+  const key = (name) => {
+    const event = new window.KeyboardEvent('keydown', { key: name, bubbles: true, cancelable: true });
+    doc.activeElement.dispatchEvent(event);
+    return event;
+  };
+  assert.equal(doc.getElementById('composerSettingsButton'), null);
+  assert.equal(clip.disabled, false);
+  assert.equal(clip.getAttribute('aria-haspopup'), 'menu');
+  assert.equal(clip.getAttribute('aria-controls'), menu.id);
+  assert.equal(clip.getAttribute('aria-label'), 'Attach');
+  assert.equal(menu.getAttribute('role'), 'menu');
+  clip.click();
+  assert.equal(window.__rendererState.ui.composerPopoverOpen, true);
+  assert.equal(clip.getAttribute('aria-expanded'), 'true');
+  assert.equal(doc.activeElement, files);
+  assert.equal(files.textContent, 'Attach files');
+  key('ArrowDown');
+  assert.equal(doc.activeElement, capture);
+  assert.equal(capture.textContent, 'Capture screen');
+  key('ArrowDown');
+  assert.equal(doc.activeElement, files, 'Down wraps');
+  key('End');
+  assert.equal(doc.activeElement, capture);
+  key('Home');
+  assert.equal(doc.activeElement, files);
+  key('ArrowUp');
+  assert.equal(doc.activeElement, capture, 'Up wraps');
+  key('Escape');
+  assert.equal(menu.classList.contains('hidden'), true);
+  assert.equal(clip.getAttribute('aria-expanded'), 'false');
+  assert.equal(doc.activeElement, clip);
+  clip.click();
+  menu.dispatchEvent(new window.MouseEvent('mousedown', { bubbles: true }));
+  clip.dispatchEvent(new window.MouseEvent('mousedown', { bubbles: true }));
+  assert.equal(menu.classList.contains('hidden'), false, 'menu and anchor presses stay inside');
+  doc.body.dispatchEvent(new window.MouseEvent('mousedown', { bubbles: true }));
+  assert.equal(menu.classList.contains('hidden'), true);
+  capture.disabled = true;
+  clip.click();
+  key('ArrowDown');
+  assert.equal(doc.activeElement, files, 'disabled actions are skipped');
+  assert.equal(key('Tab').defaultPrevented, false, 'Tab leaves naturally');
+  assert.equal(menu.classList.contains('hidden'), true);
+  capture.disabled = false;
+  files.hidden = true;
+  clip.click();
+  assert.equal(doc.activeElement, capture, 'opening skips hidden actions');
+  clip.click();
+  assert.equal(menu.classList.contains('hidden'), true, 'paperclip toggles closed');
+});
+
+test('Attach files from the menu invokes the attachment picker exactly once and closes', async (t) => {
+  const { window } = await loadRendererTestApp(t);
+  let picks = 0;
+  window.jennyShell.attachments.pick = async () => { picks += 1; return { accepted: [], rejected: [] }; };
+  const doc = window.document;
+  doc.getElementById('composerAttachShortcut').click();
+  assert.equal(picks, 0, 'opening the menu does not attach');
+  doc.getElementById('attachFilesButton').click();
+  await waitForUi(window, 20);
+  assert.equal(picks, 1);
+  assert.equal(doc.getElementById('composerAttachMenu').classList.contains('hidden'), true);
+  assert.equal(doc.getElementById('composerAttachShortcut').getAttribute('aria-expanded'), 'false');
 });

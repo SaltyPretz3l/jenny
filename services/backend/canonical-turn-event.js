@@ -151,27 +151,14 @@ const DROPPED_KEYS = new Set([
 
 const SECRET_KEY_RE = /(api[_-]?key|token|secret|password|credential)/i;
 const DATA_URI_RE = /data:[a-z0-9.+-]+\/[a-z0-9.+-]+;base64,[a-z0-9+/=_-]+/gi;
-// Path redaction, ported from the tool-loop rules fixed in 224aa0c6
-// (services/backend/tool-loop-input-sanitization.js): the drive-letter rule was
-// the only deliberate catch here, so bare POSIX paths rode verbatim into
-// persisted turn events on macOS/Linux, while file:// and http(s) URLs were
-// mangled by accident (the unguarded rule read the "e:/" inside "file:/").
-// Order matters — file URL, drive letter, then POSIX at a delimiter. Quotes
-// sit in the delimiter class so JSON-quoted POSIX values match their Windows
-// twins. Unlike the tool-loop rules, the POSIX rules here are ROOT-ANCHORED
-// (telemetry.py / runtime_gap.py precedent): this sanitizer runs over EVERY
-// payload string including assistant text/reasoning deltas, where an
-// unanchored rule mangles ordinary code and prose (app.get('/api/users'),
-// "GET /api/users") into [redacted:path]. Host filesystem roots are the
-// privacy payload; route-shaped slash strings are content.
-// Lookbehind rather than \b, whose Unicode semantics differ across the two
-// runtimes; these mirrors must stay byte-identical. Behavior table:
-// tests/fixtures/canonical-turn-events/cases.json.
-// Mirrored by sidecar/ai/routing/turn_event_contract.py; keep in sync.
-const WINDOWS_PATH_RE = /(?<![A-Za-z0-9_])[A-Za-z]:[\\/][^\s"'<>|]+/g;
-const FILE_URL_RE = /(?<![A-Za-z0-9_])file:\/\/[^\s"'<>|]+/gi;
-const UNIX_PATH_RE = /(^|[\s(])\/(?:Users|home|var|tmp|etc|opt|srv|root|private|workspace|mnt|Volumes)(?:\/[^\s"'<>|]+|(?=$|[\s)"'<>|,]))/g;
-const UNIX_PATH_AFTER_DELIMITER_RE = /(["':=,])\/(?:Users|home|var|tmp|etc|opt|srv|root|private|workspace|mnt|Volumes)(?:\/[^\s"'<>|]+|(?=$|[\s)"'<>|,]))/g;
+// Paths are NOT redacted here (HB-012, owner rule 2026-09-28): canonical
+// payloads feed the persisted transcript, the timeline and the model's history
+// replay, where a [redacted:path] placeholder was copied back by the model as
+// a literal tool argument. Real paths are presented everywhere in the app;
+// anonymisation happens when a transcript leaves it
+// (services/backend/transcript-export-redaction.js). Secrets and data URIs are
+// still redacted here. Mirrored by sidecar/ai/routing/turn_event_contract.py;
+// behavior table: tests/fixtures/canonical-turn-events/cases.json.
 const SECRET_VALUE_RE = /\b(?:sk|pk|tok|ghp|gho)_[A-Za-z0-9_-]{8,}|\bsk-[A-Za-z0-9_-]{8,}/g;
 
 function isPlainObject(value) {
@@ -236,42 +223,6 @@ function diagnostic(code, fields = {}) {
 function sanitizeString(value) {
   return String(value || '')
     .replace(DATA_URI_RE, '[redacted:data-uri]')
-    .replace(FILE_URL_RE, (match) => {
-      const remainder = match.slice('file://'.length);
-      const segments = remainder.split('/').filter(Boolean);
-      if (segments.length && (/^[A-Za-z]:$/.test(segments[0]) || !remainder.startsWith('/'))) {
-        segments.shift();
-      }
-      if (segments.length <= 1) return 'file:///[redacted:path]';
-      const trailingSeparator = match.endsWith('/') ? '/' : '';
-      const finalSegment = Array.from(segments.at(-1)).slice(0, 80).join('');
-      return `file:///[redacted:path]/${finalSegment}${trailingSeparator}`;
-    })
-    .replace(WINDOWS_PATH_RE, (match) => {
-      const trailingSeparator = /[\\/]$/.test(match) ? match.at(-1) : '';
-      const path = trailingSeparator ? match.slice(0, -1) : match;
-      const segments = path.slice(3).split(/[\\/]/).filter(Boolean);
-      if (segments.length <= 1) return '[redacted:path]';
-      const separator = path[Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'))];
-      const finalSegment = Array.from(segments.at(-1)).slice(0, 80).join('');
-      return `[redacted:path]${separator}${finalSegment}${trailingSeparator}`;
-    })
-    .replace(UNIX_PATH_RE, (match, prefix) => {
-      const path = match.slice(prefix.length);
-      const trailingSeparator = path.endsWith('/') && path.length > 1 ? '/' : '';
-      const segments = path.split('/').filter(Boolean);
-      if (segments.length <= 1) return `${prefix}[redacted:path]`;
-      const finalSegment = Array.from(segments.at(-1)).slice(0, 80).join('');
-      return `${prefix}[redacted:path]/${finalSegment}${trailingSeparator}`;
-    })
-    .replace(UNIX_PATH_AFTER_DELIMITER_RE, (match, prefix) => {
-      const path = match.slice(prefix.length);
-      const trailingSeparator = path.endsWith('/') && path.length > 1 ? '/' : '';
-      const segments = path.split('/').filter(Boolean);
-      if (segments.length <= 1) return `${prefix}[redacted:path]`;
-      const finalSegment = Array.from(segments.at(-1)).slice(0, 80).join('');
-      return `${prefix}[redacted:path]/${finalSegment}${trailingSeparator}`;
-    })
     .replace(SECRET_VALUE_RE, '[redacted:secret]');
 }
 
@@ -284,7 +235,7 @@ function redactPayloadKey(key) {
 
 // A tool call's own arguments are model-authored content (an ask_user
 // question's prompt, an image prompt), not engine prompt payloads; only
-// secrets and paths are redacted inside them (gate A7 F10).
+// secrets are redacted inside them (gate A7 F10; paths since HB-012).
 function redactToolInputKey(key) {
   const normalizedKey = normalizeToken(key, { limit: 80, lower: true }).replaceAll('-', '_');
   return SECRET_KEY_RE.test(normalizedKey) ? '[redacted:secret]' : null;

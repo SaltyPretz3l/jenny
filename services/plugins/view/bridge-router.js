@@ -53,12 +53,11 @@ async function invokeBoundedHandler({ state, requestId, handler, args,
 }
 
 class PluginViewBridgeRouter {
-  constructor({ resolveContext, handlers = {}, sessionProviderHandler = null,
+  constructor({ resolveContext, handlers = {},
     now = () => Date.now(), log = () => {} } = {}) {
     if (typeof resolveContext !== 'function') throw new TypeError('bridge router requires resolveContext');
     this.resolveContext = resolveContext;
     this.handlers = handlers;
-    this.sessionProviderHandler = sessionProviderHandler;
     this.now = now;
     this.log = log;
     this.states = new Map();
@@ -111,16 +110,6 @@ class PluginViewBridgeRouter {
           state.subscriptions.add(topic);
         } else state.subscriptions.delete(topic);
         return boundedResult(requestId, 'succeeded', '', false, { topic });
-      }
-      if (payload?.call_schema_version === 1 && payload?.action) {
-        const call = validate('PluginSessionProviderViewCallV1', payload);
-        if (!call.ok || context.sessionProviderAuthorized !== true
-          || typeof this.sessionProviderHandler !== 'function') {
-          return boundedResult(requestId, 'rejected', 'session_provider_call_not_allowed');
-        }
-        return await invokeBoundedHandler({ state, requestId, handler: this.sessionProviderHandler,
-          args: [call.value], context, unavailableReason: 'session_provider_call_not_allowed',
-          failureReason: 'session_provider_call_failed' });
       }
       const call = validate('PluginViewCallV5', payload);
       if (!call.ok || !REQUEST_OPERATIONS.includes(payload.operation)

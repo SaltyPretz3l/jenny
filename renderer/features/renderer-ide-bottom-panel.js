@@ -78,12 +78,17 @@
     // innerHTML-replace on every activation. Terminal's live xterm instance +
     // ResizeObserver need a host that is never destructively rewritten by a
     // sibling view, so switching views toggles visibility between the two hosts
-    // instead of tearing Terminal's DOM down. Defaults false (legacy line-terminal
-    // stays in the shared host exactly as before — it holds no live external
-    // resource that a rebuild would orphan).
+    // instead of tearing Terminal's DOM down. Defaults false for standalone
+    // callers; the IDE controller always passes true (the PTY terminal is the
+    // only Workspace IDE terminal since sweep S8).
     const hasPersistentTerminalHost = typeof deps?.hasPersistentTerminalHost === 'function'
       ? deps.hasPersistentTerminalHost
       : () => false;
+    // Focus hooks (optional). focusTerminal lands focus in the Terminal view
+    // (xterm, else its Start button); focusEditor focuses the code editor and
+    // returns true on success. Without them, DOM fallbacks below apply.
+    const focusTerminalDep = typeof deps?.focusTerminal === 'function' ? deps.focusTerminal : null;
+    const focusEditor = typeof deps?.focusEditor === 'function' ? deps.focusEditor : null;
     const actionButton = resolveActionButton();
     const windowRef = globalRef.window || globalRef;
 
@@ -121,16 +126,85 @@
     // never neither (no blank panel). Runs unconditionally (even while the
     // bottom panel is collapsed) so state is already correct the instant it
     // reopens; a plain CSS toggle is cheap regardless of open state.
+    // aria-hidden tracks the .hidden class so a shown host is never hidden
+    // from assistive tech (index.html ships the terminal host hidden + aria-hidden).
+    function setHostHidden(host, hidden) {
+      if (!host) {
+        return;
+      }
+      host.classList.toggle('hidden', hidden);
+      if (hidden) {
+        host.setAttribute('aria-hidden', 'true');
+      } else {
+        host.removeAttribute('aria-hidden');
+      }
+    }
+
     function applyTerminalHostVisibility() {
       const dom = getDom();
       const terminalHost = dom.ideBottomTerminalHost || null;
       if (!terminalHost || !hasPersistentTerminalHost()) {
-        terminalHost?.classList.add('hidden');
+        setHostHidden(terminalHost, true);
         return;
       }
       const showTerminalHost = activeViewId() === 'terminal';
-      terminalHost.classList.toggle('hidden', !showTerminalHost);
-      dom.ideBottomPanelContent?.classList.toggle('hidden', showTerminalHost);
+      setHostHidden(terminalHost, !showTerminalHost);
+      setHostHidden(dom.ideBottomPanelContent || null, showTerminalHost);
+    }
+
+    function tryFocus(el) {
+      if (!el || typeof el.focus !== 'function') {
+        return false;
+      }
+      try { el.focus(); } catch (_error) { return false; }
+      return el.ownerDocument?.activeElement === el;
+    }
+
+    // Land focus in the Terminal view when it is the open, active view: the
+    // injected hook when wired, else xterm's input textarea, else Start.
+    function focusTerminalView() {
+      if (getIde().bottomPanelOpen !== true || activeViewId() !== 'terminal') {
+        return false;
+      }
+      if (focusTerminalDep) {
+        return focusTerminalDep() === true;
+      }
+      const dom = getDom();
+      const host = hasPersistentTerminalHost() ? dom.ideBottomTerminalHost : dom.ideBottomPanelContent;
+      return tryFocus(host?.querySelector?.('.xterm-helper-textarea'))
+        || tryFocus(host?.querySelector?.('[data-ide-terminal-action="start"]'));
+    }
+
+    function focusIsInsidePanel() {
+      const panel = getDom().ideBottomPanel || null;
+      const active = panel?.ownerDocument?.activeElement || null;
+      return Boolean(active && typeof panel.contains === 'function' && panel.contains(active));
+    }
+
+    // Collapsing hides the panel; focus must not stay on a hidden element.
+    // Editor first, then the reopen handle, then the activity bar's active tab.
+    function moveFocusOutOfPanel() {
+      if (focusEditor) {
+        try {
+          if (focusEditor() === true) {
+            return;
+          }
+        } catch (_error) { /* fall through to the handle */ }
+      }
+      const dom = getDom();
+      if (tryFocus(dom.ideBottomHandle?.querySelector?.('[data-ide-bottom-handle]'))) {
+        return;
+      }
+      const bar = dom.ideActivityBar || null;
+      tryFocus(bar?.querySelector?.('[aria-selected="true"]') || bar?.querySelector?.('[tabindex="0"]'));
+    }
+
+    // Which host paints a view: Terminal owns the persistent host when wired,
+    // every other view shares #ideBottomPanelContent.
+    function hostIdForView(viewId) {
+      return viewId === 'terminal' && hasPersistentTerminalHost()
+        ? 'ideBottomTerminalHost'
+        : 'ideBottomPanelContent';
     }
 
     function buildTabsMarkup() {
@@ -146,6 +220,8 @@
         role: 'tab',
         ariaSelected: view.id === active,
         tabIndex: view.id === active ? 0 : -1,
+        domId: `ideBottomTab-${view.id}`,
+        ariaControls: hostIdForView(view.id),
         label: view.label || view.id,
         title: view.label || view.id,
         dataset: { 'ide-bottom-view': view.id },
@@ -175,6 +251,26 @@
         tabs.innerHTML = markup;
         tabs.__jennyIdeBottomTabs = markup;
       }
+      syncPanelRelationships();
+    }
+
+    // The content host showing the active view is the tabpanel its tab controls,
+    // labelled by that tab; the other (hidden) host carries no label.
+    function syncPanelRelationships() {
+      const dom = getDom();
+      const activeId = activeViewId();
+      const activeHostId = hostIdForView(activeId);
+      [dom.ideBottomPanelContent, dom.ideBottomTerminalHost].forEach((host) => {
+        if (!host) {
+          return;
+        }
+        host.setAttribute('role', 'tabpanel');
+        if (host.id === activeHostId) {
+          host.setAttribute('aria-labelledby', `ideBottomTab-${activeId}`);
+        } else {
+          host.removeAttribute('aria-labelledby');
+        }
+      });
     }
 
     // Collapsed-state handle: a single click target (visible only while closed,
@@ -282,12 +378,17 @@
       ide.bottomPanelOpen = true;
       schedulePersist();
       requestRender();
+      focusTerminalView(); // Ctrl+` / handle / open('terminal') land in the terminal
     }
 
     function close() {
+      const hadFocus = focusIsInsidePanel();
       getIde().bottomPanelOpen = false;
       schedulePersist();
       requestRender();
+      if (hadFocus) {
+        moveFocusOutOfPanel();
+      }
     }
 
     function toggle() {
@@ -324,6 +425,9 @@
       const tab = target.closest('[data-ide-bottom-view]');
       if (tab) {
         setActiveView(tab.dataset.ideBottomView);
+        // A click (not arrow-key roving, which keeps focus on the tab) on the
+        // Terminal tab lands focus in the terminal.
+        focusTerminalView();
       }
     }
 

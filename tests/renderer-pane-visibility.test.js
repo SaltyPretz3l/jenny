@@ -30,6 +30,7 @@ const assert = require('node:assert/strict');
 const {
   isSessionVisibleInPane,
   isSessionVisibleInAnyPane,
+  resolvePaneSessionId,
 } = require('../renderer/chat/renderer-pane-visibility-utils');
 const { isChatSurfaceLive } = require('../renderer/chat/renderer-chat-surface-live-utils');
 const { normalizePaneLayout } = require('../renderer/shell/renderer-pane-model');
@@ -181,4 +182,66 @@ test('the surface gate still dominates both panes', () => {
     assert.equal(isSessionVisibleInPane(state, 'session-b', 1), live, `${surface.label}: pane 1`);
     assert.equal(isSessionVisibleInAnyPane(state, 'session-b'), live, `${surface.label}: any pane`);
   }
+});
+
+// Split view W1-4: the per-surface session each pane-bound reader asks for.
+test('resolvePaneSessionId: a blank layout means pane 0 is currentSessionId and any other pane holds nothing', () => {
+  for (const panes of [undefined, normalizePaneLayout(null), normalizePaneLayout({ panes: ['', ''] })]) {
+    const state = makeState(SURFACES[0], { currentSessionId: '  session-current  ', panes });
+    assert.equal(resolvePaneSessionId(state, 0), 'session-current', `panes=${JSON.stringify(panes)}`);
+    assert.equal(resolvePaneSessionId(state, 1), '');
+    assert.equal(resolvePaneSessionId(state, 7), '');
+  }
+  const blank = makeState(SURFACES[0], { currentSessionId: '' });
+  assert.equal(resolvePaneSessionId(blank, 0), '');
+});
+
+test('resolvePaneSessionId: a layout in use answers per pane, never from currentSessionId', () => {
+  const panes = normalizePaneLayout({ panes: [{ sessionId: 'session-a' }, { sessionId: 'session-b' }], focusedPaneId: 1 });
+  // currentSessionId deliberately disagrees with pane 0 so a fallback would show.
+  const state = makeState(SURFACES[0], { currentSessionId: 'session-b', panes });
+  assert.equal(resolvePaneSessionId(state, 0), 'session-a');
+  assert.equal(resolvePaneSessionId(state, 1), 'session-b');
+  assert.equal(resolvePaneSessionId(state, 2), '');
+  // A blank pane beside a held one holds nothing, even for pane 0.
+  const half = makeState(SURFACES[0], { currentSessionId: 'session-a', panes: normalizePaneLayout({ panes: ['', 'session-b'] }) });
+  assert.equal(resolvePaneSessionId(half, 0), '');
+  assert.equal(resolvePaneSessionId(half, 1), 'session-b');
+});
+
+test('resolvePaneSessionId: invalid pane ids resolve to nothing', () => {
+  const state = makeState(SURFACES[0], { currentSessionId: 'session-a', panes: normalizePaneLayout({ panes: ['session-a'] }) });
+  for (const paneId of [-1, 1.5, '0', null, undefined, NaN]) {
+    assert.equal(resolvePaneSessionId(state, paneId), '', `paneId=${String(paneId)}`);
+  }
+});
+
+test('resolvePaneSessionId agrees with isSessionVisibleInPane on every surface', () => {
+  const layouts = [
+    undefined,
+    normalizePaneLayout(null),
+    normalizePaneLayout({ panes: [{ sessionId: 'session-a' }, { sessionId: 'session-b' }] }),
+    normalizePaneLayout({ panes: ['', 'session-b'] }),
+  ];
+  let checked = 0;
+  for (const surface of SURFACES) {
+    for (const panes of layouts) {
+      const state = makeState(surface, { currentSessionId: 'session-a', panes });
+      for (const paneId of [0, 1, 2]) {
+        const resolved = resolvePaneSessionId(state, paneId);
+        if (resolved) {
+          assert.equal(isSessionVisibleInPane(state, resolved, paneId), isChatSurfaceLive(state), `${surface.label} pane ${paneId}`);
+        } else {
+          for (const probe of ['session-a', 'session-b']) {
+            // A pane that holds nothing shows nothing: the only way a blank
+            // answer coexists with a visible session is the one-pane fallback,
+            // which resolvePaneSessionId itself already takes for pane 0.
+            assert.equal(isSessionVisibleInPane(state, probe, paneId), false, `${surface.label} pane ${paneId} probe ${probe}`);
+          }
+        }
+        checked += 1;
+      }
+    }
+  }
+  assert.equal(checked, SURFACES.length * layouts.length * 3);
 });

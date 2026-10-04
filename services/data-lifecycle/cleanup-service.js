@@ -3,11 +3,16 @@
 const fs = require('fs');
 const path = require('path');
 
+const { parsePreservedCorruptName } = require('../backend/corrupt-file-preserve');
+const { WORKSPACE_PORTABLE_NAMES } = require('./data-inventory');
+
+const MAX_RETAINED_WORKSPACE_CHILDREN = 50;
 const KNOWN_RUNTIME_CHILDREN = Object.freeze([
   'background-memory',
   'logs',
   'jenny_memory.db',
   'memory.db',
+  'ollama-catalog.json',
   'sidecar.log',
 ]);
 
@@ -30,9 +35,16 @@ const KNOWN_USER_DATA_CHILDREN = Object.freeze([
   'diagnostics',
   'Dictionary',
   'disabled-startup-shortcuts',
+  'engines',
   'GPUCache',
   'GrShaderCache',
+  'home-ai-journal.json',
   'home-calendar.json',
+  'image-engine-scratch',
+  'image-engine.pid',
+  'image-engine.pid.tmp',
+  'image-models.json',
+  'image-models.json.part',
   'IndexedDB',
   'knowledge.json',
   'llama-server.pid',
@@ -44,10 +56,12 @@ const KNOWN_USER_DATA_CHILDREN = Object.freeze([
   'model-recommendation-catalog.json.meta.json',
   'Network',
   'Network Persistent State',
+  'ollama-catalog.json',
   'ollama-process.json',
   'personality',
   'plugins',
   'Preferences',
+  'project-delete-operations.json',
   'projects.json',
   'QuotaManager',
   'QuotaManager-journal',
@@ -69,6 +83,7 @@ const KNOWN_USER_DATA_CHILDREN = Object.freeze([
   'SingletonLock',
   'SingletonSocket',
   'terminal-repairs.json',
+  'todo-lists',
   'tool-permissions.json',
   'TransportSecurity',
   'Trust Tokens',
@@ -82,6 +97,30 @@ const KNOWN_USER_DATA_CHILDREN = Object.freeze([
   'window-state.json',
   'workspace-snapshots',
 ]);
+
+const SESSION_MIGRATION_BACKUP_NAME = /^sessions\.json\.migrated-\d{10,16}$/;
+const ATOMIC_WRITE_TEMP_NAME = /^(.+)\.\d{10,16}\.[0-9a-f]{12}\.tmp$/;
+
+// Leftovers Jenny's own writers create beside a known profile file: the
+// preserved damaged copy of a store (`<known>.corrupt-<ms>`), the pre-split
+// session backup, and an atomic-write temp orphaned by a crash. Exact name
+// contracts only; the caller also requires a regular file.
+function isOwnedDerivedName(name) {
+  const text = String(name || '');
+  const corruptBase = parsePreservedCorruptName(text)?.baseName;
+  if (corruptBase && KNOWN_USER_DATA_CHILDREN.includes(corruptBase)) return true;
+  if (SESSION_MIGRATION_BACKUP_NAME.test(text)) return true;
+  const tempBase = ATOMIC_WRITE_TEMP_NAME.exec(text)?.[1];
+  return Boolean(tempBase) && KNOWN_USER_DATA_CHILDREN.includes(tempBase);
+}
+
+function listOwnedDerivedFiles(userDataPath) {
+  if (!fs.existsSync(userDataPath)) return [];
+  return fs.readdirSync(userDataPath, { withFileTypes: true })
+    .filter((dirent) => dirent.isFile() && isOwnedDerivedName(dirent.name))
+    .map((dirent) => dirent.name)
+    .sort();
+}
 
 function safeLstat(targetPath) {
   try {
@@ -105,7 +144,26 @@ function cleanupResult(target, status, reason = '') {
   };
 }
 
-function buildCleanupTargets({ userDataPath, runtimePath = '', workspaceRoot = '', removeWorkspaceData = false, includeUserData = true } = {}) {
+// Workspace caches that go when the archived workspace data goes but are never
+// part of the archive: the omission store (`.jenny/omissions/`), redacted tool
+// output with its own expiry.
+const WORKSPACE_PURGE_ONLY_NAMES = Object.freeze(['omissions']);
+const WORKSPACE_CHILD_KINDS = Object.freeze({
+  workspace_archived_child: WORKSPACE_PORTABLE_NAMES,
+  workspace_cache_child: WORKSPACE_PURGE_ONLY_NAMES,
+});
+
+// Only the exact string 'all' selects whole-.jenny removal. Anything else,
+// including a missing value, removes just the children the workspace archive
+// carries (WORKSPACE_PORTABLE_NAMES) and the purge-only caches.
+function buildCleanupTargets({
+  userDataPath,
+  runtimePath = '',
+  workspaceRoot = '',
+  removeWorkspaceData = false,
+  workspaceRemovalScope = 'archived',
+  includeUserData = true,
+} = {}) {
   if (includeUserData && !String(userDataPath || '').trim()) {
     throw new TypeError('buildCleanupTargets requires userDataPath.');
   }
@@ -121,6 +179,9 @@ function buildCleanupTargets({ userDataPath, runtimePath = '', workspaceRoot = '
         targets.push({ kind: 'user_data_child', root, name, path: targetPath });
       }
     }
+    for (const name of listOwnedDerivedFiles(root)) {
+      targets.push({ kind: 'user_data_derived_child', root, name, path: path.join(root, name) });
+    }
   }
   if (runtimePath) {
     const root = path.resolve(runtimePath);
@@ -130,7 +191,19 @@ function buildCleanupTargets({ userDataPath, runtimePath = '', workspaceRoot = '
   }
   if (removeWorkspaceData && workspaceRoot) {
     const root = path.resolve(workspaceRoot);
-    targets.push({ kind: 'workspace_metadata', root, path: path.join(root, '.jenny') });
+    if (workspaceRemovalScope === 'all') {
+      targets.push({ kind: 'workspace_metadata', root, path: path.join(root, '.jenny') });
+    } else {
+      const metadataRoot = path.join(root, '.jenny');
+      for (const [kind, names] of Object.entries(WORKSPACE_CHILD_KINDS)) {
+        for (const name of names) {
+          const targetPath = path.join(metadataRoot, name);
+          if (fs.existsSync(targetPath)) {
+            targets.push({ kind, root: metadataRoot, name, path: targetPath });
+          }
+        }
+      }
+    }
   }
   return targets;
 }
@@ -147,6 +220,14 @@ function validateCleanupTarget(target) {
   }
   if (target.kind === 'user_data_child') {
     return KNOWN_USER_DATA_CHILDREN.includes(target.name) && relative === target.name;
+  }
+  if (target.kind === 'user_data_derived_child') {
+    return isOwnedDerivedName(target.name) && relative === target.name;
+  }
+  if (Object.hasOwn(WORKSPACE_CHILD_KINDS, target.kind)) {
+    return WORKSPACE_CHILD_KINDS[target.kind].includes(target.name)
+      && relative === target.name
+      && path.basename(root) === '.jenny';
   }
   return target.kind === 'workspace_metadata' && relative === '.jenny';
 }
@@ -167,6 +248,7 @@ function hasUnsafeDescendant(rootPath, limit = 100_000) {
 
 function validateExistingCleanupTarget(target, stat) {
   if (stat.isSymbolicLink()) return false;
+  if (target.kind === 'user_data_derived_child' && !stat.isFile()) return false;
   if (target.root) {
     const rootStat = safeLstat(target.root);
     if (!rootStat?.isDirectory() || rootStat.isSymbolicLink()) return false;
@@ -193,25 +275,39 @@ function listUnknownUserDataChildren(userDataPath) {
   const rootStat = safeLstat(userDataPath);
   if (!rootStat?.isDirectory() || rootStat.isSymbolicLink()) return [];
   const known = new Set(KNOWN_USER_DATA_CHILDREN.map((name) => name.toLocaleLowerCase('en-US')));
+  const owned = new Set(listOwnedDerivedFiles(userDataPath));
   return fs.readdirSync(userDataPath)
-    .filter((name) => !known.has(name.toLocaleLowerCase('en-US')))
+    .filter((name) => !known.has(name.toLocaleLowerCase('en-US')) && !owned.has(name))
     .sort();
 }
 
+// After an archived-scope removal, drop .jenny only when nothing else is in it.
+// Returns the names that were deliberately kept (never reported as retained
+// results: they were not part of the archive, so keeping them is not a failure).
+async function finishArchivedWorkspaceRemoval(workspaceRoot, results) {
+  const metadataRoot = path.join(path.resolve(workspaceRoot), '.jenny');
+  const stat = safeLstat(metadataRoot);
+  if (!stat?.isDirectory() || stat.isSymbolicLink()) return [];
+  const failed = new Set(results
+    .filter((entry) => Object.hasOwn(WORKSPACE_CHILD_KINDS, entry.kind) && entry.status === 'retained')
+    .map((entry) => entry.name));
+  const remaining = fs.readdirSync(metadataRoot);
+  if (remaining.length === 0) {
+    try {
+      await fs.promises.rmdir(metadataRoot);
+    } catch (error) {
+      if (error?.code !== 'ENOENT') {
+        results.push(cleanupResult({ kind: 'workspace_metadata', name: '.jenny' }, 'retained', boundedFsReason(error)));
+      }
+    }
+    return [];
+  }
+  return remaining.filter((name) => !failed.has(name)).sort();
+}
+
 async function cleanupJennyData(options = {}) {
-  // Validate the filesystem targets first so an invalid request cannot delete
-  // the pairing record and then throw without a receipt.
   const targets = buildCleanupTargets(options);
   const results = [];
-  if (typeof options.secureStore?.deleteRemoteControlRecord === 'function') {
-    const target = { kind: 'remote_control', name: 'remote control pairing record' };
-    try {
-      await Promise.resolve(options.secureStore.deleteRemoteControlRecord());
-      results.push(cleanupResult(target, 'removed'));
-    } catch (error) {
-      results.push(cleanupResult(target, 'retained', boundedFsReason(error, 'remove_failed')));
-    }
-  }
   for (const target of targets) {
     if (!validateCleanupTarget(target)) {
       results.push(cleanupResult(target, 'retained', 'unsafe_target'));
@@ -231,6 +327,14 @@ async function cleanupJennyData(options = {}) {
       results.push(cleanupResult(target, 'removed'));
     } catch (error) {
       results.push(cleanupResult(target, 'retained', boundedFsReason(error, 'remove_failed')));
+    }
+  }
+  let keptWorkspaceChildren = [];
+  if (options.removeWorkspaceData && options.workspaceRoot && options.workspaceRemovalScope !== 'all') {
+    try {
+      keptWorkspaceChildren = await finishArchivedWorkspaceRemoval(options.workspaceRoot, results);
+    } catch (error) {
+      results.push(cleanupResult({ kind: 'workspace_metadata', name: '.jenny' }, 'retained', boundedFsReason(error)));
     }
   }
   let unknownRuntimeChildren = [];
@@ -262,6 +366,9 @@ async function cleanupJennyData(options = {}) {
   const warnings = [];
   if (unknownRuntimeChildren.length) warnings.push(`Retained ${unknownRuntimeChildren.length} unknown runtime item(s).`);
   if (unknownUserDataChildren.length) warnings.push(`Retained ${unknownUserDataChildren.length} unknown profile item(s).`);
+  if (keptWorkspaceChildren.length) {
+    warnings.push(`Kept ${keptWorkspaceChildren.length} workspace .jenny item(s) that are not part of the archive.`);
+  }
   return {
     ok: !incomplete,
     status: incomplete ? 'incomplete' : 'complete',
@@ -269,12 +376,16 @@ async function cleanupJennyData(options = {}) {
     warnings,
     unknownRuntimeChildren,
     unknownUserDataChildren,
+    retainedWorkspaceChildren: keptWorkspaceChildren
+      .slice(0, MAX_RETAINED_WORKSPACE_CHILDREN)
+      .map((name) => name.slice(0, 160)),
   };
 }
 
 module.exports = {
   KNOWN_USER_DATA_CHILDREN,
   KNOWN_RUNTIME_CHILDREN,
+  WORKSPACE_PURGE_ONLY_NAMES,
   buildCleanupTargets,
   cleanupJennyData,
   validateCleanupTarget,

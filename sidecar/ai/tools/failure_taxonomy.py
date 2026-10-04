@@ -212,5 +212,5 @@ def classify(
             normalized_code,
             "transient" if retryable else "internal_error",
         )
-    except Exception:
+    except Exception:  # noqa: BLE001  # fail-soft
         return "transient" if retryable else "internal_error"

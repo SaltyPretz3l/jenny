@@ -39,7 +39,6 @@ function bootOptions(overrides = {}) {
       features: {
         state: {
           featureFlags: {
-            artifact_panel_v2: true,
             workspace_artifact_panel: true,
           },
         },

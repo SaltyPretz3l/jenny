@@ -19,14 +19,33 @@
   animation-delay: calc(var(--motion-stagger) * 2);
 }
 
-/* The canvas is the primary edge treatment only while the sprite is live.
-   Passive terminal anchors keep their semantic CSS ring and shadow. */
-:root[data-sprite-holo="on"] .chat-assistant-sprite.is-streaming::before,
-:root[data-sprite-holo="on"] .chat-assistant-sprite.is-streaming::after {
-  display: none;
+@keyframes hero-exit {
+  from {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+
+  to {
+    opacity: 0;
+    transform: translateY(-8px) scale(0.985);
+  }
 }
 
-:root[data-sprite-holo="on"] .chat-assistant-sprite.is-streaming {
-  border-color: transparent;
-  box-shadow: none;
+@keyframes thread-enter {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+}
+
+@keyframes thread-entry-item {
+  from {
+    opacity: 0;
+    transform: translateY(5px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }

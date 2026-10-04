@@ -11,7 +11,9 @@ const {
   resolveManagedConfiguredModel,
 } = require('../../services/backend/managed-sidecar-config');
 
-function makeFakeService({ engineType, model, chatgptAuthService, secureStore } = {}) {
+function makeFakeService({
+  engineType, model, chatgptAuthService, secureStore, lastChatgptModel, catalogModels,
+} = {}) {
   return {
     currentEngineType: engineType,
     currentModel: model || '',
@@ -23,12 +25,23 @@ function makeFakeService({ engineType, model, chatgptAuthService, secureStore } 
     skillsService: null,
     secureStore: secureStore || null,
     chatgptAuthService: chatgptAuthService || null,
+    ...(catalogModels === undefined ? {} : {
+      chatgptModelCatalogService: { snapshot: () => ({ models: catalogModels }) },
+    }),
     configService: {
-      getState: () => ({ localEngines: {} }),
+      getState: () => ({
+        localEngines: {},
+        ...(lastChatgptModel === undefined ? {} : { lastChatgptModel }),
+      }),
     },
     _emitServiceLog: () => {},
   };
 }
+
+const CATALOG_WITH_LUNA = Object.freeze([
+  { id: 'gpt-5.5', label: 'GPT-5.5' },
+  { id: 'gpt-6-luna', label: 'GPT-6 Luna' },
+]);
 
 test('normalizePreferredEngineType accepts chatgpt', () => {
   assert.equal(normalizePreferredEngineType('chatgpt'), 'chatgpt');
@@ -40,9 +53,42 @@ test('normalizePreferredEngineType still rejects unknown engine tokens', () => {
   assert.equal(normalizePreferredEngineType('bogus'), '');
 });
 
-test('resolveManagedConfiguredModel returns empty startup model for chatgpt, mirroring ollama', () => {
+test('resolveManagedConfiguredModel returns empty startup model for chatgpt with no last model, mirroring ollama', () => {
   const fake = makeFakeService({ engineType: 'chatgpt', model: '' });
   assert.equal(resolveManagedConfiguredModel(fake), '');
+  const noLastModel = makeFakeService({ engineType: 'chatgpt', catalogModels: CATALOG_WITH_LUNA });
+  assert.equal(resolveManagedConfiguredModel(noLastModel), '');
+});
+
+test('startup chatgpt model follows the last used catalog model', () => {
+  const inCatalog = makeFakeService({
+    engineType: 'chatgpt', lastChatgptModel: 'gpt-6-luna', catalogModels: CATALOG_WITH_LUNA,
+  });
+  assert.equal(buildManagedSidecarConfig(inCatalog).model, 'gpt-6-luna');
+
+  // A stale or unknown id is never sent: the first turn would fail at the provider.
+  const absent = makeFakeService({
+    engineType: 'chatgpt', lastChatgptModel: 'gpt-6-luna', catalogModels: [{ id: 'gpt-5.5', label: 'GPT-5.5' }],
+  });
+  assert.equal(buildManagedSidecarConfig(absent).model, '');
+  // No fetched catalog yet (snapshot models null) and no catalog service at all.
+  const unfetched = makeFakeService({ engineType: 'chatgpt', lastChatgptModel: 'gpt-6-luna', catalogModels: null });
+  assert.equal(buildManagedSidecarConfig(unfetched).model, '');
+  const noService = makeFakeService({ engineType: 'chatgpt', lastChatgptModel: 'gpt-6-luna' });
+  assert.equal(buildManagedSidecarConfig(noService).model, '');
+
+  // An explicit selection still wins over the remembered model.
+  const selected = makeFakeService({
+    engineType: 'chatgpt', model: 'gpt-5.5', lastChatgptModel: 'gpt-6-luna', catalogModels: CATALOG_WITH_LUNA,
+  });
+  assert.equal(buildManagedSidecarConfig(selected).model, 'gpt-5.5');
+});
+
+test('the last chatgpt model never seeds ollama startup', () => {
+  for (const engineType of ['ollama']) {
+    const fake = makeFakeService({ engineType, lastChatgptModel: 'gpt-6-luna', catalogModels: CATALOG_WITH_LUNA });
+    assert.equal(resolveManagedConfiguredModel(fake), '', engineType);
+  }
 });
 
 test('resolveManagedConfiguredModel passes an explicitly selected chatgpt model through unchanged', () => {
@@ -50,7 +96,7 @@ test('resolveManagedConfiguredModel passes an explicitly selected chatgpt model 
   assert.equal(resolveManagedConfiguredModel(fake), 'gpt-5.6');
 });
 
-test('buildManagedSidecarConfig threads the chatgpt account id and omits chatgpt_base_url', () => {
+test('buildManagedSidecarConfig threads the chatgpt account id and omits chatgpt_base_url (no last model)', () => {
   const fake = makeFakeService({
     engineType: 'chatgpt',
     chatgptAuthService: {

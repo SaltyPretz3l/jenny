@@ -148,55 +148,7 @@ class _OllamaGenerationMixin:
         @classmethod
         def _is_timeout_url_error(cls, error: urllib.error.URLError) -> bool: ...
 
-    def generate_inline_completion(
-        self,
-        model: str,
-        prefix: str,
-        suffix: str = "",
-        *,
-        use_gpu: bool = False,
-        max_tokens: int = 96,
-        timeout: int | None = None,
-    ) -> str:
-        """Fill-in-the-middle code completion via Ollama's /api/generate.
-
-        Sends the cursor `prefix` plus the `suffix` (the text after the cursor)
-        so an FIM-capable model — e.g. ``qwen2.5-coder:*-base`` — fills between
-        them; a non-FIM model simply ignores the suffix and continues from the
-        prefix (a graceful, lower-quality fallback). ``model`` may differ from
-        this engine's bound chat model: the same Ollama daemon serves both. When
-        ``use_gpu`` is False the FIM model is CPU-pinned (``num_gpu=0``) so it
-        coexists with the hot chat model instead of evicting it on a single GPU.
-
-        Returns the completion text (possibly empty). Raises on a connection/HTTP
-        failure so the caller can degrade to "no suggestion this round".
-        """
-        name = str(model or self.model_name or "").strip()
-        if not name:
-            return ""
-        try:
-            predict = int(max_tokens)
-        except (TypeError, ValueError):
-            predict = 96
-        predict = max(1, min(predict, 512))
-        options: dict[str, Any] = {"num_predict": predict, "temperature": 0.15}
-        if not use_gpu:
-            options["num_gpu"] = 0
-        data = {
-            "model": name,
-            "prompt": str(prefix or ""),
-            "suffix": str(suffix or ""),
-            "stream": False,
-            # Hold the FIM model hot between keystrokes so completions stay fast.
-            "keep_alive": "10m",
-            "options": options,
-        }
-        response = self._post("/api/generate", data, timeout=timeout)
-        if not isinstance(response, dict):
-            return ""
-        return str(response.get("response", "") or "")
-
-    def generate(  # noqa: PLR0917 - preserves the positional engine API.
+    def generate(  # preserves the positional engine API.
         self,
         prompt: str,
         max_tokens: int = 16384,
@@ -219,7 +171,7 @@ class _OllamaGenerationMixin:
             response_format=response_format,
         )
 
-    def stream(  # noqa: PLR0917 - preserves the positional engine API.
+    def stream(  # preserves the positional engine API.
         self,
         prompt: str,
         max_tokens: int = 16384,
@@ -244,7 +196,7 @@ class _OllamaGenerationMixin:
             cancel_handle=cancel_handle,
         )
 
-    def generate_with_tools(  # noqa: PLR0917 - preserves the positional engine API.
+    def generate_with_tools(  # preserves the positional engine API.
         self,
         prompt: str,
         tools: list[dict[str, Any]],
@@ -327,7 +279,7 @@ class _OllamaGenerationMixin:
             response_format=response_format,
         )
 
-    def stream_with_tools(  # noqa: PLR0917 - preserves the positional engine API.
+    def stream_with_tools(  # preserves the positional engine API.
         self,
         prompt: str,
         tools: list[dict[str, Any]],
@@ -889,7 +841,7 @@ class _OllamaGenerationMixin:
             degraded=degraded,
         )
 
-    def _fallback_plain_stream_result(  # noqa: PLR0913 - stream contract.
+    def _fallback_plain_stream_result(  # stream contract.
         self,
         *,
         prompt: str,

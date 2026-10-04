@@ -497,7 +497,7 @@ def _inspect_ignore_candidate(candidate: Path) -> str:
     except OSError:
         return "unreadable"
     try:
-        if is_link_object(candidate):
+        if is_link_object(candidate) or not stat_module.S_ISREG(file_stat.st_mode):
             return "refused"
     except ToolExecutionFailure:
         return "unreadable"
@@ -507,7 +507,8 @@ def _inspect_ignore_candidate(candidate: Path) -> str:
 
 
 def _read_ignore_handle(candidate: Path) -> tuple[bytes | None, str]:
-    flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0)
+    flags = (os.O_RDONLY | getattr(os, "O_BINARY", 0)
+             | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0))
     try:
         descriptor = os.open(str(candidate), flags)
     except OSError:

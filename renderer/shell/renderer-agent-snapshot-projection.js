@@ -6,7 +6,7 @@
  * Each projector turns reducer/service truth into the small, stable fields a
  * CDP/Playwright driver needs so it never has to scrape rendered HTML:
  *   - activeTurn: live reducer turn -> { phase, terminal, streaming }
- *   - lastError:  errored message  -> { code, recovery_class, title } | null
+ *   - lastError:  latest turn's errored message -> { code, recovery_class, title } | null
  *   - setup:      state.setup slice -> { workspaceRootConfigured, complete }
  *
  * Dependencies (phase model + error classification) resolve lazily at call time so
@@ -127,17 +127,26 @@
     return status === 'error' || status === 'errored';
   }
 
-  /* (b) Last rendered error as structured class/code, scanning the session's
-     messages newest-first (the same fields renderTimelineErrorCard reads).
-     recovery_class falls back to the renderer error classifier; title prefers
-     the structured recovery_title, then the human stream_error. */
+  /* (b) The latest turn's error as structured class/code (the same fields
+     renderTimelineErrorCard reads). The newest assistant message after the last
+     user message decides: an older turn's error, or one a retry already
+     replaced, is not reported (dogfood DE-003). recovery_class falls back to the
+     renderer error classifier; title prefers the structured recovery_title,
+     then the human stream_error. */
   function projectLastError(state, sessionId) {
     const messages = readSessionMessages(state, sessionId);
     const errorUtils = resolveErrorUtils();
     for (let index = messages.length - 1; index >= 0; index -= 1) {
       const message = messages[index];
-      if (!isErroredMessage(message)) {
+      const role = trimString(message && message.role).toLowerCase();
+      if (role === 'user') {
+        return null;
+      }
+      if (role !== 'assistant') {
         continue;
+      }
+      if (!isErroredMessage(message)) {
+        return null;
       }
       const code = messageErrorCode(message);
       const recoveryClass = messageErrorClass(message)

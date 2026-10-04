@@ -11,6 +11,7 @@ const { HomeAssistantService } = require('../services/home-assistant-service');
 const { HomeAiJournalStore, MAX_LIVE_ENTRIES } = require('../services/home-ai-journal-store');
 const { ShellConfigService } = require('../services/shell-config-service');
 const { normalizeReminder, sortReminders } = require('../services/shell-config-followups-schema');
+const { HOME_ACTIONS } = require('../services/tools/builtin/home-tool-actions');
 const { cleanupTrackedResources, trackDirectory } = require('./helpers/resource-cleanup');
 
 function memoryStore() {
@@ -72,6 +73,20 @@ function liveEntries(service) {
   return service.listJournal().entries.filter((entry) => !entry.undoneAt && !entry.supersededAt);
 }
 
+test('HOM-13 explicit tool ranges expand saved events beyond the dashboard window', () => {
+  const { service, calendarService } = build();
+  calendarService.createEvent({ title: 'Future trip', start: '2026-11-20T09:00', end: '2026-11-20T10:00', recurrence: 'daily' });
+  const result = HOME_ACTIONS.calendar_list(service, { range_start: '2026-11-20T00:00', range_end: '2026-11-23T00:00' }, {});
+  assert.match(result.content, /Future trip/);
+  assert.equal(service.listCalendar({ start: '2026-11-20T00:00', end: '2026-11-23T00:00' }).instances.length, 3);
+  assert.throws(() => service.listCalendar({ start: '2026-11-23T00:00', end: '2026-11-20T00:00' }), /range/i);
+  const clamped = service.listCalendar({ start: '2026-11-20', end: '2028-01-01T00:00Z' });
+  assert.equal(clamped.rangeClamped, true);
+  assert.match(HOME_ACTIONS.calendar_list(service, { range_start: '2026-11-20', range_end: '2028-01-01' }, {}).content, /shortened to 180 days/);
+  assert.equal(clamped.rangeEnd.slice(0, 10), '2027-05-19');
+  assert.equal(service.listCalendar({ start: '2026-11-21' }).instances[0].start, '2026-11-21T09:00');
+});
+
 // The reminder-merge contract is about what the REAL ShellConfigService does
 // with a partial payload (normalizeReminder is a full replace that fills
 // defaults), so these build the actual service against a temp userDataPath —
@@ -99,6 +114,50 @@ function buildWithRealConfig({ prefix = 'jenny-home-assistant-' } = {}) {
 function reminderById(configService, id) {
   return configService.getState().proactive.reminders.find((entry) => entry.id === id);
 }
+
+test('HOM-10 effective reminder schedule edits rearm delivery but labels preserve it', () => {
+  const { service, configService } = buildWithRealConfig();
+  const created = service.upsertReminder({ label: 'Saved', scheduleType: 'daily_at', dailyAt: '09:00', lastFiredAt: '2026-08-20T09:00:00Z' });
+  HOME_ACTIONS.reminder_upsert(service, { id: created.entityId, label: 'Renamed' }, {});
+  assert.equal(reminderById(configService, created.entityId).lastFiredAt, '2026-08-20T09:00:00.000Z');
+  HOME_ACTIONS.reminder_upsert(service, { id: created.entityId, remind_at: '2026-08-21T10:00' }, {});
+  assert.equal(reminderById(configService, created.entityId).lastFiredAt, '');
+  configService.upsertReminder({ ...reminderById(configService, created.entityId), lastFiredAt: '2026-08-21T10:00:00Z' });
+  HOME_ACTIONS.reminder_upsert(service, { id: created.entityId, remind_at: '2026-08-22T10:00' }, {});
+  assert.equal(reminderById(configService, created.entityId).lastFiredAt, '');
+});
+
+test('HOM-10 moving a daily or interval reminder keeps its last fire', () => {
+  const { service, configService } = buildWithRealConfig();
+  for (const [initial, edit] of [
+    [{ scheduleType: 'daily_at', dailyAt: '09:00' }, { dailyAt: '08:00' }],
+    [{ scheduleType: 'interval_minutes', intervalMinutes: 60 }, { intervalMinutes: 90 }],
+  ]) {
+    const created = service.upsertReminder({ label: 'Saved', ...initial, lastFiredAt: '2026-08-20T09:00:00Z' });
+    service.upsertReminder({ id: created.entityId, ...edit });
+    assert.equal(reminderById(configService, created.entityId).lastFiredAt, '2026-08-20T09:00:00.000Z',
+      JSON.stringify(edit));
+  }
+});
+
+test('HOM-14 interrupted delete undo restores one stable event across restart', () => {
+  const configService = fakeConfigService();
+  const calendarStore = memoryStore();
+  const journalStore = memoryStore();
+  const calendarService = new CalendarService({ store: calendarStore, configService });
+  let service = new HomeAssistantService({ store: journalStore, calendarService, configService });
+  const original = calendarService.createEvent({ title: 'Saved', start: '2026-08-21T10:00' }).events[0];
+  const deleted = service.deleteEvent(original.id);
+  const write = journalStore.writeImmediate;
+  journalStore.writeImmediate = () => { throw new Error('journal disk full'); };
+  assert.throws(() => service.undo(deleted.entryId), /journal disk full/);
+  journalStore.writeImmediate = write;
+  const restartedCalendar = new CalendarService({ store: calendarStore, configService });
+  service = new HomeAssistantService({ store: journalStore, calendarService: restartedCalendar, configService });
+  assert.equal(service.undo(deleted.entryId).ok, true);
+  assert.deepEqual(restartedCalendar.getState().events, [original]);
+  assert.equal(service.undo(deleted.entryId).reason, 'already_undone');
+});
 
 describe('HomeAssistantService attribution', () => {
   test('stamps assistant attribution on events and reminders', () => {

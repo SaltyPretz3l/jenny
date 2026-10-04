@@ -505,3 +505,65 @@ test('a continuation never waits behind its own quarantined operation', t => {
   other.gateway.close({ producerSettled: true });
   current.gateway.close({ producerSettled: true });
 });
+
+test('HB-014: an uncertain settle blocks the rest of the turn and the next turn until restart reclaim', t => {
+  // Live 2026-09-28: a run_command whose cwd failed validation settled
+  // failed/uncertain. Its own turn was then refused CMP-TOOL-0008
+  // (tool_resource_own_cleanup_unconfirmed) and the next turn blocked on
+  // resource_capacity (CMP-RUNTIME-0001) because the quarantined lease keeps
+  // the workspace and a native-process slot charged after gateway close.
+  const harness = createHarness(t);
+  const turn = harness.createGateway('request-turn-1', { continuationEnabled: true });
+  const failedCommand = { operation_id: 'idem-failed', tool_name: 'run_command',
+    arguments: { command: 'git status', cwd: '[redacted:path]\bank_recon' } };
+  assert.equal(turn.gateway.handle(admit(turn.trusted, failedCommand)).status, 'granted');
+  assert.equal(turn.gateway.handle(settle(turn.trusted, { operation_id: 'idem-failed',
+    status: 'failed', cleanup: 'uncertain' })).status, 'settled');
+  for (const [index, next] of [
+    { tool_name: 'run_command', arguments: { command: 'git status' } },
+    { tool_name: 'run_temp_script', arguments: { script: 'echo ok' } },
+    { tool_name: 'write_file', arguments: { path: 'journal.md', content: 'x' } },
+  ].entries()) {
+    const refused = turn.gateway.handle(admit(turn.trusted, { operation_id: `in-turn-${index}`, ...next }));
+    assert.deepEqual([refused.status, refused.reason], ['rejected', 'tool_resource_own_cleanup_unconfirmed']);
+  }
+  turn.gateway.close({ producerSettled: false });
+  assert.equal(harness.broker.snapshot().quarantined_count, 1);
+
+  const nextTurn = harness.createGateway('request-turn-2', { continuationEnabled: true });
+  const blocked = nextTurn.gateway.handle(admit(nextTurn.trusted, { operation_id: 'next-1',
+    tool_name: 'run_command', arguments: { command: 'git status' } }));
+  assert.deepEqual([blocked.status, blocked.reason], ['waiting', 'resource_capacity']);
+  nextTurn.gateway.close({ producerSettled: true });
+
+  // No owner receipt arrived, so only the backend restart releases it: the
+  // sidecar that ran the command is gone (DLG-01 keeps external owners held).
+  assert.equal(harness.broker.confirmQuarantinedCleanup(), 0);
+  assert.equal(harness.broker.confirmQuarantinedCleanup([], { backendRestart: true }), 1);
+  const afterRestart = harness.createGateway('request-turn-3', { continuationEnabled: true });
+  assert.equal(afterRestart.gateway.handle(admit(afterRestart.trusted, { operation_id: 'after-1',
+    tool_name: 'run_command', arguments: { command: 'git status' } })).status, 'granted');
+  afterRestart.gateway.handle(settle(afterRestart.trusted, { operation_id: 'after-1' }));
+  afterRestart.gateway.close({ producerSettled: true });
+});
+
+test('HB-014: a definite no-effect failure settled confirmed never blocks later admissions', t => {
+  const harness = createHarness(t);
+  const turn = harness.createGateway('request-turn-1', { continuationEnabled: true });
+  assert.equal(turn.gateway.handle(admit(turn.trusted, { operation_id: 'idem-failed',
+    tool_name: 'run_command', arguments: { command: 'git status', cwd: '[redacted:path]' } })).status, 'granted');
+  assert.equal(turn.gateway.handle(settle(turn.trusted, { operation_id: 'idem-failed',
+    status: 'failed', cleanup: 'confirmed' })).status, 'settled');
+  assert.equal(turn.gateway.snapshot().quarantined, 0);
+  assert.equal(turn.gateway.handle(admit(turn.trusted, { operation_id: 'in-turn',
+    tool_name: 'run_command', arguments: { command: 'git status' } })).status, 'granted');
+  turn.gateway.handle(settle(turn.trusted, { operation_id: 'in-turn', status: 'succeeded' }));
+  turn.gateway.close({ producerSettled: true });
+  assert.equal(harness.broker.snapshot().lease_count, 0);
+
+  const nextTurn = harness.createGateway('request-turn-2', { continuationEnabled: true });
+  assert.equal(nextTurn.gateway.handle(admit(nextTurn.trusted, { operation_id: 'next-1',
+    tool_name: 'write_file', arguments: { path: 'journal.md', content: 'x' } })).status, 'granted');
+  nextTurn.gateway.handle(settle(nextTurn.trusted, { operation_id: 'next-1' }));
+  nextTurn.gateway.close({ producerSettled: true });
+});

@@ -12,14 +12,8 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
 
-  function escapeHtml(value) {
-    return String(value || '')
-      .replaceAll('&', '&amp;')
-      .replaceAll('<', '&lt;')
-      .replaceAll('>', '&gt;')
-      .replaceAll('"', '&quot;')
-      .replaceAll("'", '&#39;');
-  }
+  const escapeHtml = ((typeof globalThis !== 'undefined' && globalThis.stringUtils)
+    || (typeof require === 'function' ? require('../shared/string-utils') : null)).escapeHtml;
 
   function sanitizeToken(value, fallback) {
     var normalized = String(value || '').trim();
@@ -50,6 +44,10 @@
     var rendered = '';
     for (var j = 0; j < list.length; j += 1) {
       var opt = list[j] || {};
+      if (Array.isArray(opt.options)) {
+        rendered += '<optgroup label="' + escapeHtml(opt.label || '') + '">' + optionsMarkup(opt.options, selected) + '</optgroup>';
+        continue;
+      }
       var optValue = String(opt.value == null ? '' : opt.value);
       var optLabel = String(opt.label == null ? optValue : opt.label);
       rendered += '<option'
@@ -74,6 +72,7 @@
    * @param {boolean} [opts.disabled]
    * @param {string} [opts.hint]
    * @param {string} [opts.ariaLabel]
+   * @param {string} [opts.describedBy] - Id of the help text, written as aria-describedby on the select
    * @param {string} [opts.className]
    * @param {Object<string,string>} [opts.dataset]
    * @returns {string} HTML string
@@ -104,6 +103,7 @@
       + (id ? ' id="' + id + '"' : '')
       + ' class="inv-select-field-control"'
       + ' aria-label="' + escapeHtml(ariaLabel) + '"'
+      + (o.describedBy ? ' aria-describedby="' + escapeHtml(String(o.describedBy)) + '"' : '')
       + (o.disabled === true ? ' disabled' : '')
       + dataset
       + '>'

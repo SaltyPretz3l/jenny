@@ -207,8 +207,8 @@ test('disposing during a renderer-registry refresh prevents post-dispose registr
 
 test('an ephemeral view closes itself when the shell navigates away from the plugin view', async () => {
   const h = harness();
-  await h.controller.open({ publisher_id: 'jenny-official', plugin_id: 'remote-control',
-    contribution_id: 'remote-control-panel', generation_id: 'generation_1', display_name: 'Remote Control' });
+  await h.controller.open({ publisher_id: 'jenny-official', plugin_id: 'sample-panel',
+    contribution_id: 'sample-panel-view', generation_id: 'generation_1', display_name: 'Sample panel' });
   assert.equal(h.state.ui.activeView, 'plugin');
   // Opening stamps the attribute with 'plugin'; that switch must not close the view.
   h.window.document.documentElement.dataset.activeView = 'plugin';

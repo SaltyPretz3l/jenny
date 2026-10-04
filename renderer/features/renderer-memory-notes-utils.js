@@ -138,7 +138,7 @@
       });
       var control = inputEl();
       if (control) {
-        control.setAttribute('aria-describedby', 'memoryNotesHint memoryNotesCounter memoryNotesLint');
+        control.setAttribute('aria-describedby', 'memoryNotesCounter memoryNotesLint');
       }
       shellRendered = true;
       actionsSignature = '';
@@ -157,7 +157,11 @@
         : counters.buildLintMessage(notesState.body);
       setText(dom.memoryNotesLint, lint);
       setHidden(dom.memoryNotesLint, !lint);
-      setText(dom.memoryContextStatus, counters.buildPersonalityStatusLine({
+      // An idle "Ready" beside Clear and Save says nothing; the line speaks
+      // only while loading, dirty, after an action, or with a save time.
+      var idle = notesState.loading !== true && notesState.dirty !== true
+        && !notesState.actionStatus && !notesState.loadStatus && !notesState.savedAt;
+      setText(dom.memoryContextStatus, idle ? '' : counters.buildPersonalityStatusLine({
         loading: notesState.loading === true,
         dirty: notesState.dirty === true,
         actionStatus: notesState.actionStatus,
@@ -325,14 +329,23 @@
       return notesState.dirty === true;
     }
 
-    function onBeforeUnload(event) {
-      if (!hasUnsavedChanges()) return;
-      if (typeof event.preventDefault === 'function') event.preventDefault();
-      event.returnValue = '';
-    }
-    if (windowRef && typeof windowRef.addEventListener === 'function') {
-      windowRef.addEventListener('beforeunload', onBeforeUnload);
-    }
+    // Unsaved notes join the one window-exit prompt (close / reload / update
+    // restart) through the dirty-surface registry. There is deliberately no
+    // beforeunload handler: a cancelled unload silently swallowed the close or
+    // reload and hung the window (real-app B4b).
+    var exitRegistry = windowRef && windowRef.rendererWindowExitPreflight
+      ? windowRef.rendererWindowExitPreflight.dirtySurfaces
+      : null;
+    var unregisterExitSurface = exitRegistry && typeof exitRegistry.register === 'function'
+      ? exitRegistry.register({
+        id: 'memory-notes',
+        label: jt('memory.notes.label', 'Long-term notes'),
+        isDirty: hasUnsavedChanges,
+        save: function () {
+          return save().then(function () { return !hasUnsavedChanges(); });
+        },
+      })
+      : function () {};
 
     return {
       NOTES_CLEAR_CONFIRM: NOTES_CLEAR_CONFIRM,
@@ -347,9 +360,7 @@
         refreshGate.bump();
         mutationGate.bump();
         disposalFence.dispose();
-        if (windowRef && typeof windowRef.removeEventListener === 'function') {
-          windowRef.removeEventListener('beforeunload', onBeforeUnload);
-        }
+        unregisterExitSurface();
         if (inputHandler && dom.memoryNotesFieldHost
           && typeof dom.memoryNotesFieldHost.removeEventListener === 'function') {
           dom.memoryNotesFieldHost.removeEventListener('input', inputHandler);

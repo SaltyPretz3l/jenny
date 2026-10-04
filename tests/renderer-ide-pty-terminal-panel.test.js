@@ -10,114 +10,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 
 const { createHarness, settle } = require('./helpers/renderer-ide-harness');
-const {
-  createIdePtyTerminalPanel,
-} = require('../renderer/features/renderer-ide-pty-terminal-panel');
-
-function fakeTerminal() {
-  const term = {
-    cols: 80,
-    rows: 24,
-    opened: null,
-    written: [],
-    writtenLines: [],
-    cleared: 0,
-    disposed: 0,
-    addons: [],
-    _dataCb: null,
-    open(el) { this.opened = el; },
-    write(data) { this.written.push(data); },
-    writeln(line) { this.writtenLines.push(line); },
-    clear() { this.cleared += 1; },
-    dispose() { this.disposed += 1; },
-    loadAddon(addon) { this.addons.push(addon); },
-    onData(cb) { this._dataCb = cb; return { dispose() {} }; },
-    // test helper: simulate a user keystroke
-    _type(data) { if (this._dataCb) this._dataCb(data); },
-  };
-  return term;
-}
-
-function fakeFit() {
-  return { fits: 0, fit() { this.fits += 1; } };
-}
-
-// A fake workspacePty bridge recording calls, with manual onData/onExit emitters.
-function fakePtyApi(spawnResult) {
-  const dataListeners = [];
-  const exitListeners = [];
-  return {
-    calls: { spawn: [], write: [], resize: [], kill: [] },
-    unsubData: 0,
-    unsubExit: 0,
-    async spawn(dims) {
-      this.calls.spawn.push(dims);
-      return spawnResult !== undefined
-        ? spawnResult
-        : { ok: true, sessionId: 'pty-1', shell: 'pwsh', cwd: 'C:/ws', alreadyRunning: false };
-    },
-    async write(payload) { this.calls.write.push(payload); },
-    async resize(payload) { this.calls.resize.push(payload); },
-    async kill(payload) { this.calls.kill.push(payload); },
-    onData(cb) { dataListeners.push(cb); const self = this; return () => { self.unsubData += 1; }; },
-    onExit(cb) { exitListeners.push(cb); const self = this; return () => { self.unsubExit += 1; }; },
-    emitData(p) { for (const cb of [...dataListeners]) cb(p); },
-    emitExit(p) { for (const cb of [...exitListeners]) cb(p); },
-  };
-}
-
-function buildPanel(harness, opts = {}) {
-  const win = harness.dom.window;
-  const mount = win.document.createElement('div');
-  win.document.body.appendChild(mount);
-  const errors = [];
-  const logs = [];
-  const term = opts.term || fakeTerminal();
-  const fit = opts.fit || fakeFit();
-  const api = opts.api || fakePtyApi(opts.spawnResult);
-  const observers = [];
-  // Shim ResizeObserver so the panel's resize-observe path is exercised.
-  win.ResizeObserver = class {
-    constructor(cb) { this.cb = cb; this.observed = null; this.disconnected = 0; observers.push(this); }
-    observe(el) { this.observed = el; }
-    disconnect() { this.disconnected += 1; }
-  };
-  // UIUX-035: when opts.deferFrames is set, requestAnimationFrame is faked to
-  // hold callbacks until the test manually flushes them (deterministic,
-  // no wall-clock) — the same pattern the legacy line panel's wide-055 test
-  // uses to prove frame-coalescing without relying on a real animation frame.
-  const frames = [];
-  const deps = {
-    getDom: () => ({}),
-    getIde: () => ({}),
-    getMountEl: () => mount,
-    isActivePanel: () => true,
-    showError: (message, meta) => errors.push({ message, meta }),
-    toErrorMessage: (error, fallback) => String(error?.message || error || fallback || ''),
-    appendClientLog: (level, code, data) => logs.push({ level, code, data }),
-    getWorkspacePtyApi: () => api,
-    createTerminal: () => term,
-    createFitAddon: () => fit,
-    windowRef: win,
-  };
-  if (opts.deferFrames) {
-    deps.requestAnimationFrameImpl = (callback) => { frames.push(callback); return callback; };
-    deps.cancelAnimationFrameImpl = (callback) => {
-      const index = frames.indexOf(callback);
-      if (index >= 0) frames.splice(index, 1);
-    };
-  }
-  const panel = createIdePtyTerminalPanel(deps);
-  const flushFrame = () => {
-    const callback = frames.shift();
-    assert.equal(typeof callback, 'function', 'a write-coalescing frame is scheduled');
-    callback(0);
-  };
-  return {
-    panel, mount, term, fit, api, errors, logs, observers, frames, flushFrame,
-    pendingFrames: () => frames.length,
-  };
-}
+const { fakeTerminal, fakePtyApi, buildPanel } = require('./helpers/pty-terminal-panel-fixture');
 
 test('constructing + rendering never auto-spawns (explicit start only)', async (t) => {
   const harness = createHarness();
@@ -157,6 +50,18 @@ test('startSession fits before spawn, spawns measured dims, wires keystrokes and
   api.emitData({ sessionId: 'other', data: 'IGNORED' });
   assert.ok(term.written.includes('hello'), 'matching-session data written to term');
   assert.ok(!term.written.includes('IGNORED'), 'wrong-session data dropped');
+});
+
+// Gate N8: buildTheme maps no ANSI palette, so PowerShell's yellow command echo
+// used xterm's dark-theme #e5e510/#f5f543 (1.0-1.2:1 on Day's #d4e0e3). The
+// terminal asks xterm for an AA contrast floor against the live background.
+test('the terminal is created with a WCAG AA minimum contrast ratio', async (t) => {
+  const harness = createHarness();
+  t.after(() => harness.dispose());
+  const { panel, term } = buildPanel(harness);
+  panel.renderTerminalPanel();
+  await panel.startSession();
+  assert.equal(term.createOptions?.minimumContrastRatio, 4.5);
 });
 
 /* UIUX-035: aggregate output backpressure — a burst of output events arriving
@@ -340,15 +245,18 @@ test('exit banner ordering: data queued in the same frame writes BEFORE the "ses
   assert.equal(pendingFrames(), 0, 'the now-redundant coalescing frame was canceled, not left to fire later');
 });
 
-test('{available:false} spawn result surfaces an error without throwing', async (t) => {
+test('a session-less spawn result (e.g. a stale {available:false}) surfaces one error without throwing', async (t) => {
+  // The workspace_pty_terminal flag is retired (sweep S8): main never answers
+  // {available:false} now, so the panel has no "not enabled" state; a result
+  // without a session id still settles as one surfaced start failure.
   const harness = createHarness();
   t.after(() => harness.dispose());
   const { panel, errors, logs } = buildPanel(harness, { spawnResult: { available: false } });
   panel.renderTerminalPanel();
   await panel.startSession();
   assert.equal(panel.isRunning(), false);
-  assert.equal(errors.length, 1, 'the not-enabled state is surfaced once');
-  assert.ok(logs.some((l) => l.level === 'WARN'), 'a WARN diagnostic is logged');
+  assert.equal(errors.length, 1, 'the failed start is surfaced once');
+  assert.ok(logs.some((l) => l.level === 'WARN' && l.code === 'ide.pty_start_no_session'), 'a WARN diagnostic is logged');
 });
 
 test('{ok:false, code} spawn result surfaces the error', async (t) => {
@@ -456,6 +364,9 @@ test('UIUX-011: a stale marker after a sibling stomps the shared host is detecte
   assert.equal(mount.querySelector('[data-ide-pty-mount]'), null, 'sibling wipe removed the xterm host');
 
   // Returning to Terminal must detect the missing mount and safely rebuild.
+  // The fresh host measures differently, so the re-fit yields new dims (a
+  // same-size re-fit sends no PTY resize; see the #11 tests below).
+  fit.fit = () => { fit.fits += 1; term.cols = 100; };
   panel.renderTerminalPanel();
   assert.equal(mount.querySelector('.ide-prb'), null, 'sibling DOM is gone once Terminal re-renders (RED at HEAD: stays visible)');
   const secondMountEl = mount.querySelector('[data-ide-pty-mount]');
@@ -465,7 +376,7 @@ test('UIUX-011: a stale marker after a sibling stomps the shared host is detecte
   assert.equal(observers[0].disconnected, 1, 'the stale observation was released before re-observing');
   assert.equal(observers[0].observed, secondMountEl, 'the ResizeObserver now follows the live mount (RED at HEAD: still the detached element)');
   assert.ok(fit.fits > fitsBefore, 'a fit re-measure occurs on remount/resize');
-  assert.ok(api.calls.resize.length >= 1, 'a pty resize call is issued after remount (the running session is re-measured)');
+  assert.deepEqual(api.calls.resize, [{ sessionId: 'pty-1', cols: 100, rows: 24 }], 'a pty resize call is issued after remount (the running session is re-measured)');
 });
 
 test('UIUX-011: repeated Terminal/sibling cycles never duplicate mounts or leak ResizeObserver instances', async (t) => {
@@ -574,4 +485,65 @@ test('UIUX-011: dispose during a delayed spawn discards any buffered pre-ready o
   resolveSpawn({ ok: true, sessionId: 'pty-late', shell: 'pwsh', cwd: 'C:/ws' });
   await start;
   assert.ok(!term.written.includes('buffered-before-dispose'), 'a disposed panel never replays buffered pre-ready output');
+});
+
+// IDE-016: sendCommand only reports a command as sent when main accepted the
+// whole write ({ ok: true } and not truncated); a refused or short write is false.
+async function sendWithWriteResult(t, writeResult) {
+  const harness = createHarness();
+  t.after(() => harness.dispose());
+  const api = fakePtyApi();
+  api.write = async function write(payload) { this.calls.write.push(payload); return writeResult; };
+  const { panel, logs } = buildPanel(harness, { api });
+  panel.renderTerminalPanel();
+  const sent = await panel.sendCommand('echo hi');
+  return { sent, logs, api };
+}
+
+test('IDE-016: sendCommand returns true only when the write result is ok and complete', async (t) => {
+  const bytes = Buffer.byteLength('echo hi\r\n', 'utf8');
+  const accepted = await sendWithWriteResult(t, { ok: true, written: bytes });
+  assert.equal(accepted.sent, true);
+  assert.equal(accepted.logs.filter((l) => l.code === 'ide.pty_send_command_refused').length, 0);
+  const noCount = await sendWithWriteResult(t, { ok: true });
+  assert.equal(noCount.sent, true, 'an ok result without a byte count is accepted');
+});
+
+test('IDE-016: a refused write ({ ok: false }) returns false and logs the code', async (t) => {
+  const { sent, logs, api } = await sendWithWriteResult(t, { ok: false, code: 'CMP-PTY-0001' });
+  assert.equal(sent, false);
+  assert.equal(api.calls.write.length, 1, 'the write was attempted once');
+  assert.deepEqual(logs.filter((l) => l.code === 'ide.pty_send_command_refused'),
+    [{ level: 'WARN', code: 'ide.pty_send_command_refused', data: { code: 'CMP-PTY-0001' } }]);
+});
+
+test('IDE-016: a truncated write (written < UTF-8 byte length) and a non-object result are not "sent"', async (t) => {
+  const truncated = await sendWithWriteResult(t, { ok: true, written: 3 });
+  assert.equal(truncated.sent, false, 'a truncated command must never be treated as sent');
+  const undef = await sendWithWriteResult(t, undefined);
+  assert.equal(undef.sent, false, 'a write that resolves nothing is not confirmed');
+  // 'é' is 2 UTF-8 bytes: a char-count "written" would wrongly pass.
+  const harness = createHarness();
+  t.after(() => harness.dispose());
+  const api = fakePtyApi();
+  api.write = async () => ({ ok: true, written: 'é\r\n'.length });
+  const { panel } = buildPanel(harness, { api });
+  panel.renderTerminalPanel();
+  assert.equal(await panel.sendCommand('é'), false, 'the byte length, not the character count, is compared');
+});
+
+test('a command longer than one terminal write is refused before anything reaches the shell', async (t) => {
+  const { SEND_COMMAND_MAX_BYTES } = require('../renderer/features/renderer-ide-pty-terminal-panel');
+  const { MAX_WRITE_BYTES } = require('../services/workspace-pty-service');
+  assert.equal(SEND_COMMAND_MAX_BYTES, MAX_WRITE_BYTES, 'the renderer cap mirrors the main-process write cap');
+
+  const harness = createHarness();
+  t.after(() => harness.dispose());
+  const api = fakePtyApi();
+  const { panel, logs } = buildPanel(harness, { api });
+  panel.renderTerminalPanel();
+  const before = api.calls.write.length;
+  assert.equal(await panel.sendCommand('x'.repeat(MAX_WRITE_BYTES)), false);
+  assert.equal(api.calls.write.length, before, 'no partial command is typed into the shell line');
+  assert.deepEqual(logs.filter((l) => l.code === 'ide.pty_send_command_refused').map((l) => l.data), [{ code: 'too_long' }]);
 });

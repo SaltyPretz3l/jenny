@@ -11,6 +11,16 @@
   const INTERACTIVE_PROTOCOL_DRIFT_NOTICE =
     jt('chat.interactive.protocolDriftNotice', 'Jenny asked a regular follow-up instead of an interactive question for this turn, so the shell requested a direct answer based on the information already collected.');
   const INTERACTIVE_OTHER_OPTION_ID = '__other__';
+  // Interactive-round limits and sequence states. These lived only in the deleted
+  // renderer-fallback-registry.js (renderer/app.js read them from there), so they
+  // are owned here with the rest of the interactive-mode vocabulary.
+  const MAX_INTERACTIVE_QUESTIONS = 5;
+  const MAX_INTERACTIVE_ROUNDS = 3;
+  const INTERACTIVE_SEQUENCE_IDLE = 'idle';
+  const INTERACTIVE_SEQUENCE_STRUCTURED_ACTIVE = 'structured_active';
+  const INTERACTIVE_SEQUENCE_FALLBACK_REQUESTED = 'fallback_requested';
+  // Model-facing prompt (sent as the user turn), deliberately not translated.
+  const INTERACTIVE_GUARDRAIL_PROMPT = 'Using the information already collected, please provide your best answer now instead of asking another follow-up question.';
 
   function normalizeQuestionOptions(question) {
     return Array.isArray(question?.options) ? question.options.filter(Boolean) : [];
@@ -98,6 +108,12 @@
     INTERACTIVE_GUARDRAIL_NOTICE,
     INTERACTIVE_PROTOCOL_DRIFT_NOTICE,
     INTERACTIVE_OTHER_OPTION_ID,
+    MAX_INTERACTIVE_QUESTIONS,
+    MAX_INTERACTIVE_ROUNDS,
+    INTERACTIVE_SEQUENCE_IDLE,
+    INTERACTIVE_SEQUENCE_STRUCTURED_ACTIVE,
+    INTERACTIVE_SEQUENCE_FALLBACK_REQUESTED,
+    INTERACTIVE_GUARDRAIL_PROMPT,
     buildQuestionOptionsWithOther,
     getComposerStatusNotice,
     getNextUnansweredIndex,

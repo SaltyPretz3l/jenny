@@ -161,6 +161,56 @@ test('clearing the root never asks for a project', async () => {
   const result = await runtime.coordinator.commit({ transitionId: prepared.transitionId });
   assert.equal(result.committed, true);
   assert.deepEqual(events, []);
+  assert.equal(Object.hasOwn(result, 'project_provisioning'), false, 'no folder, nothing to provision');
+});
+
+test('the commit result tells the renderer whether the folder became a project (and why not), never rolling back', async () => {
+  const outcomes = [
+    [{ ok: true, created: true, project: { id: 'project_new' } }, { ok: true, project_id: 'project_new' }],
+    [{ ok: false, reason: 'project_store_read_only' }, { ok: false, reason: 'project_store_read_only' }],
+    [new Error('store offline'), { ok: false, reason: 'provisioning_failed' }],
+  ];
+  for (const [outcome, expected] of outcomes) {
+    const config = createConfig();
+    const runtime = createWorkspaceRootRuntime({
+      configService: config,
+      dialog: { showOpenDialog: async () => ({ canceled: false, filePaths: ['G:/new'] }) },
+      backendService: {
+        ensureWorkspaceProject: (rootPath) => {
+          assert.equal(rootPath, 'G:/new');
+          if (outcome instanceof Error) throw outcome;
+          return outcome;
+        },
+      },
+      coordinatorOptions: {
+        normalizeRootPath: (value) => String(value || '').replace(/\\/g, '/'),
+        rootIdFactory: (value) => value ? `root:${value.toLowerCase()}` : null,
+      },
+    });
+    const prepared = await runtime.coordinator.prepareChoose();
+    const result = await runtime.coordinator.commit({ transitionId: prepared.transitionId });
+    assert.equal(result.committed, true);
+    assert.equal(result.rolledBack, false);
+    assert.equal(config.getToolsWorkspaceRoot(), 'G:/new', 'the root stays committed');
+    assert.deepEqual(result.project_provisioning, expected);
+  }
+});
+
+test('hosted profiles skip provisioning silently: no project_provisioning on the commit result', async () => {
+  const config = createConfig();
+  const runtime = createWorkspaceRootRuntime({
+    configService: config,
+    dialog: { showOpenDialog: async () => ({ canceled: false, filePaths: ['G:/new'] }) },
+    backendService: { ensureWorkspaceProject: () => ({ ok: false, reason: 'host_mode_server' }) },
+    coordinatorOptions: {
+      normalizeRootPath: (value) => String(value || '').replace(/\\/g, '/'),
+      rootIdFactory: (value) => value ? `root:${value.toLowerCase()}` : null,
+    },
+  });
+  const prepared = await runtime.coordinator.prepareChoose();
+  const result = await runtime.coordinator.commit({ transitionId: prepared.transitionId });
+  assert.equal(result.committed, true);
+  assert.equal(Object.hasOwn(result, 'project_provisioning'), false);
 });
 
 test('persistence refusal rolls back under the new generation', async () => {
@@ -213,7 +263,7 @@ test('root transition rechecks test ownership after another participant settles'
  let terminalActive = true;
  const runtime = createWorkspaceRootRuntime({ configService: createConfig(),
   dialog: { showOpenDialog: async () => ({ canceled: false, filePaths: ['G:/new'] }) },
-  terminalService: { hasSession: () => terminalActive, kill: async () => { uiRun = false; terminalActive = false; } },
+  ptyService: { hasSession: () => terminalActive, kill: async () => { uiRun = false; terminalActive = false; } },
   testRunnerService: { hasWorkspaceRun: () => uiRun,
    abortAndWait: async () => assert.fail('replacement session run must survive UI transition') },
   coordinatorOptions: { normalizeRootPath: value => value, rootIdFactory: value => value },
@@ -230,7 +280,7 @@ test('runtime participants are blocked by default and terminated only on explici
   const runtime = createWorkspaceRootRuntime({
     configService: config,
     dialog: { showOpenDialog: async () => ({ canceled: true, filePaths: [] }) },
-    terminalService: {
+    ptyService: {
       hasSession: () => terminalActive,
       kill: async () => { killCalls += 1; terminalActive = false; },
     },
@@ -313,6 +363,54 @@ test('uiux-014: an active run task blocks a root switch until terminateProcesses
   });
   assert.equal(committed.committed, true);
   assert.equal(killCalls, 1);
+});
+
+test('IDE-003: an unconfirmed run-task kill keeps the root pinned until the terminator confirms', async () => {
+  const { WorkspaceRunTaskService } = require('../services/workspace-run-task-service');
+  const config = createConfig();
+  const listeners = {};
+  const fakeChild = {
+    pid: 4242,
+    stdout: { on() {}, setEncoding() {} },
+    stderr: { on() {}, setEncoding() {} },
+    on(event, cb) { (listeners[event] = listeners[event] || []).push(cb); },
+  };
+  let confirming = false;
+  let terminatorCalls = 0;
+  const runTaskService = new WorkspaceRunTaskService({
+    configService: config,
+    spawnImpl: () => fakeChild,
+    killTreeImpl: async () => { terminatorCalls += 1; return { terminated: confirming }; },
+  });
+  await runTaskService.start({ command: 'node long.js' });
+  const runtime = createWorkspaceRootRuntime({
+    configService: config,
+    dialog: { showOpenDialog: async () => ({ canceled: true, filePaths: [] }) },
+    runTaskService,
+    coordinatorOptions: {
+      normalizeRootPath: (value) => String(value || '').replace(/\\/g, '/'),
+      rootIdFactory: (value) => value ? `root:${value.toLowerCase()}` : null,
+    },
+  });
+  const prepared = await runtime.coordinator.prepareClear();
+
+  const refused = await runtime.coordinator.commit({
+    transitionId: prepared.transitionId,
+    terminateProcesses: true,
+  });
+  assert.notEqual(refused.committed, true, 'the transition is not committed');
+  assert.equal(refused.code, 'participants_active');
+  assert.equal(config.getToolsWorkspaceRoot(), 'G:/old', 'the old root stays pinned while the tree is unconfirmed');
+  assert.equal(runTaskService.hasActiveTask(), true);
+
+  confirming = true;
+  const committed = await runtime.coordinator.commit({
+    transitionId: prepared.transitionId,
+    terminateProcesses: true,
+  });
+  assert.equal(committed.committed, true);
+  assert.equal(config.getToolsWorkspaceRoot(), '');
+  assert.equal(terminatorCalls, 2, 'the second attempt re-ran the terminator');
 });
 
 test('clearing a root stops an active watcher without restarting it rootless', async () => {

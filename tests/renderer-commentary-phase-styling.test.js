@@ -1,6 +1,6 @@
-// Phase 2 (response_loop_display_v2) commentary/intermediate styling: the
+// Phase 2 (response-loop display) commentary/intermediate styling: the
 // pure row builders surface data-assistant-phase on the wrapper + an SR-only
-// kicker outside the markdown bubble, gated by renderOptions.responseLoopDisplayV2.
+// kicker outside the markdown bubble.
 // Kept in its own file so the broad renderer-turn-row-render-utils suite stays
 // under the file-size ceiling.
 const test = require('node:test');
@@ -45,7 +45,7 @@ test('commentary row gets a phase wrapper + SR kicker under the display flag', (
       assistant_phase: 'commentary',
       payload: { text: 'Let me check.', segment_group_index: 0 },
     },
-    { responseLoopDisplayV2: true },
+    {},
   );
   assert.match(html, /data-assistant-phase="commentary"/);
   assert.match(html, /<span class="chat-commentary-kicker"><span class="sr-only">Commentary<\/span><\/span>/);
@@ -62,7 +62,7 @@ test('intermediate row gets the continued-response kicker under the flag', () =>
       assistant_phase: 'intermediate',
       payload: { text: 'Now the next step.', segment_group_index: 1 },
     },
-    { responseLoopDisplayV2: true },
+    {},
   );
   assert.match(html, /data-assistant-phase="intermediate"/);
   assert.match(html, /chat-commentary-kicker"><span class="sr-only">Continued response/);
@@ -77,24 +77,8 @@ test('final_answer keeps full emphasis: phase attr present, no kicker', () => {
       assistant_phase: 'final_answer',
       payload: { text: 'The answer.', segment_group_index: 2 },
     },
-    { responseLoopDisplayV2: true },
+    {},
   );
   assert.match(html, /data-assistant-phase="final_answer"/);
-  assert.doesNotMatch(html, /chat-commentary-kicker/);
-});
-
-test('flag-off commentary row renders without the phase attr or kicker (no regression)', () => {
-  // No responseLoopDisplayV2 option and no document => resolves to flag-off.
-  const html = renderRow(
-    {
-      turn_id: 'turn_off',
-      kind: 'assistant_text',
-      primary_message_id: 'assistant_off',
-      assistant_phase: 'commentary',
-      payload: { text: 'Let me check.', segment_group_index: 0 },
-    },
-    undefined,
-  );
-  assert.doesNotMatch(html, /data-assistant-phase/);
   assert.doesNotMatch(html, /chat-commentary-kicker/);
 });

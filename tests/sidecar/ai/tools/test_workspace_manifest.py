@@ -205,13 +205,13 @@ class _FakeDirEntry:
     def is_symlink(self) -> bool:
         return False
 
-    def is_dir(self, follow_symlinks: bool = True) -> bool:  # noqa: FBT001, FBT002
+    def is_dir(self, follow_symlinks: bool = True) -> bool:
         return True
 
-    def is_file(self, follow_symlinks: bool = True) -> bool:  # noqa: FBT001, FBT002
+    def is_file(self, follow_symlinks: bool = True) -> bool:
         return False
 
-    def stat(self, follow_symlinks: bool = True) -> _FakeDirStat:  # noqa: FBT001, FBT002
+    def stat(self, follow_symlinks: bool = True) -> _FakeDirStat:
         return _FakeDirStat()
 
 
@@ -422,7 +422,7 @@ def _install_recording_git(monkeypatch) -> list[float]:
     """Serve canned git output, recording the timeout each command was granted."""
     granted_timeouts: list[float] = []
 
-    def run(argv, *, cwd, timeout_seconds):  # noqa: ARG001 - cwd is unused here.
+    def run(argv, *, cwd, timeout_seconds):  # cwd is unused here.
         granted_timeouts.append(timeout_seconds)
         return _FakeCompleted(_GIT_RESPONSES[tuple(argv[3:])])
 
@@ -500,7 +500,7 @@ def test_starved_git_snapshot_reports_unknown_rather_than_zeros(
         latest["value"] = next(times, latest["value"])
         return latest["value"]
 
-    snapshot = workspace_manifest._build_git_snapshot(  # noqa: SLF001
+    snapshot = workspace_manifest._build_git_snapshot(
         root,
         deadline_monotonic=10.0,
         clock=expiring_clock,
@@ -534,7 +534,7 @@ def test_git_snapshot_does_not_claim_not_a_repository_when_the_check_never_ran(
         lambda: fail_service,
     )
 
-    assert workspace_manifest._build_git_snapshot(  # noqa: SLF001
+    assert workspace_manifest._build_git_snapshot(
         root,
         deadline_monotonic=0.0,
     ) == {
@@ -548,7 +548,7 @@ def test_confirmed_non_repository_stays_a_known_answer(tmp_path: Path, monkeypat
     root = tmp_path / "workspace"
     root.mkdir()
 
-    def run(argv, *, cwd, timeout_seconds):  # noqa: ARG001 - signature parity only.
+    def run(argv, *, cwd, timeout_seconds):  # signature parity only.
         return _FakeCompleted("false")
 
     non_repo_service = type("NonRepoService", (), {"run": staticmethod(run)})()
@@ -558,7 +558,7 @@ def test_confirmed_non_repository_stays_a_known_answer(tmp_path: Path, monkeypat
         lambda: non_repo_service,
     )
 
-    assert workspace_manifest._build_git_snapshot(root) == {  # noqa: SLF001
+    assert workspace_manifest._build_git_snapshot(root) == {
         "available": False,
         "known": True,
     }
@@ -756,3 +756,41 @@ def test_workspace_manifest_read_tool_output_is_json(tmp_path: Path) -> None:
     payload = json.loads(result.output)
     assert payload["version"] == 2
     assert payload["readme_excerpt"] == "Tool output workspace."
+
+
+@pytest.mark.parametrize("failure", ["directory", "classification"])
+def test_scan_io_failures_report_unknown_totals(tmp_path, monkeypatch, failure):
+    (tmp_path / "module.py").write_text("x = 1", encoding="utf-8")
+    policy = policy_module.build_manifest_scan_policy(tmp_path, timeout_seconds=1.0)
+    if failure == "directory":
+        def fail(_path):
+            raise PermissionError("denied")
+        monkeypatch.setattr(scan_module.os, "scandir", fail)
+    else:
+        monkeypatch.setattr(scan_module, "_classify_entry", lambda _entry: None)
+    result = scan_module.scan_workspace(tmp_path, WorkspaceManifestLimits(), policy=policy)
+    assert result["totals_known"] is False
+    assert result["truncated"] is True
+    assert result["truncation_reason"] == "filesystem_error"
+
+
+@pytest.mark.parametrize("reader", ["readme", "ignore"])
+def test_manifest_readers_refuse_special_files_before_open(tmp_path, monkeypatch, reader):
+    import stat
+    from types import SimpleNamespace
+
+    target = tmp_path / ("README" if reader == "readme" else ".jennyignore")
+    target.write_text("fixture", encoding="utf-8")
+    real_lstat = os.lstat
+    def lstat(path, *args, **kwargs):
+        if Path(path) == target:
+            return SimpleNamespace(st_mode=stat.S_IFIFO, st_size=0, st_file_attributes=0)
+        return real_lstat(path, *args, **kwargs)
+    monkeypatch.setattr(os, "lstat", lstat)
+    def opened(*_args, **_kwargs):
+        pytest.fail("special file was opened")
+    monkeypatch.setattr(os, "open", opened)
+    if reader == "readme":
+        assert scan_module._read_bounded_readme_prefix(target) is None
+    else:
+        assert policy_module._read_ignore_bytes(target) == (None, "refused")

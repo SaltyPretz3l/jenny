@@ -190,7 +190,7 @@ def resolve_ollama_model_blob(
         ):
             continue
         try:
-            with open(candidate, "rb") as blob_file:  # noqa: PTH123
+            with open(candidate, "rb") as blob_file:
                 if blob_file.read(4) != b"GGUF":
                     continue
         except OSError:

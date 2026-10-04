@@ -1,9 +1,12 @@
 const path = require('path');
+const { APP_ZOOM_DEFAULT } = require('../shell-config-zoom-state');
 
 const { registerMainWindowSessionEndHandlers } = require('../main-lifecycle');
 const { attachMainWindowNavigationGuards } = require('../main-window-navigation-guard');
 const { createMainWindowStartupLifecycle } = require('../main-window-startup-lifecycle');
 const { attachSpellcheckMenuBridge } = require('./spellcheck-menu-bridge');
+const { installApplicationMenu } = require('./app-menu');
+const { buildFeatureFlags } = require('../feature-flags');
 
 function resolveWindowIconPath({ isPackaged, platform, rootDir, resourcesPath }) {
   // Windows/mac executables carry their icon; the Linux ELF does not, so
@@ -29,25 +32,34 @@ function createMainWindowWithDeps({
   emitMainWindowStateChanged = () => {},
   getMainWindow = () => null,
   setMainWindow = () => {},
-  getInitialAppZoomFactor = () => 1,
+  getInitialAppZoomFactor = () => APP_ZOOM_DEFAULT / 100,
   getPortableAppearance = () => null,
   getUiLanguage = () => 'en',
   revealWindowInactive = false,
   getWindowExitGuard = () => null,
+  onWindowVisibilityChange = () => {},
+  Menu = null,
+  isPackaged = true,
+  platform = process.platform,
+  env = process.env,
 } = {}) {
+  // Replace Electron's default menu before the first window exists: its View >
+  // Reload / Force Reload accelerators fire in the main process and would skip
+  // the renderer's guarded reload (dirty-buffer preflight). See app-menu.js.
+  installApplicationMenu({ Menu, platform, isPackaged, log });
   const initialWindowState = windowStateService
     ? windowStateService.getInitialWindowOptions()
     : { width: 1600, height: 930, isMaximized: false };
   // Resolve the persisted overall app zoom and apply it at window-creation time
   // so the frame opens pre-zoomed (no flash from a 100%-then-jump repaint).
-  let initialAppZoomFactor = 1;
+  let initialAppZoomFactor = APP_ZOOM_DEFAULT / 100;
   try {
     const resolved = Number(getInitialAppZoomFactor());
     if (Number.isFinite(resolved) && resolved > 0) {
       initialAppZoomFactor = resolved;
     }
   } catch (_error) {
-    initialAppZoomFactor = 1;
+    initialAppZoomFactor = APP_ZOOM_DEFAULT / 100;
   }
   const browserWindowOptions = {
     width: initialWindowState.width || 1600,
@@ -143,6 +155,15 @@ function createMainWindowWithDeps({
   if (mainErrorHardening) {
     mainErrorHardening.attachWindowCrashGuards(windowRef);
   }
+  // Safety net (real-app B4b): the renderer's exit preflight owns unsaved-work
+  // prompts, so a beforeunload that cancels the unload is a stray handler. Left
+  // alone it silently swallows close/reload and trips the unresponsive
+  // shutdown. In Electron, preventDefault() here means "ignore the
+  // beforeunload and unload anyway".
+  windowRef.webContents.on('will-prevent-unload', (event) => {
+    log('WARN', 'window.unload_prevented', {});
+    event.preventDefault();
+  });
 
   attachMainWindowNavigationGuards({
     windowRef,
@@ -171,6 +192,15 @@ function createMainWindowWithDeps({
   });
   windowRef.on('restore', emitMainWindowStateChanged);
   windowRef.on('minimize', emitMainWindowStateChanged);
+  // On screen or not, for the stats monitor pause (runtime-service-composition).
+  const reportVisibility = () => {
+    try {
+      onWindowVisibilityChange(windowRef.isVisible() && !windowRef.isMinimized());
+    } catch (_error) {
+      // Visibility reporting is an optimization; the monitor keeps running.
+    }
+  };
+  ['hide', 'minimize', 'show', 'restore'].forEach((event) => windowRef.on(event, reportVisibility));
   if (mainLifecycle) {
     registerMainWindowSessionEndHandlers(windowRef, mainLifecycle);
   }
@@ -201,6 +231,12 @@ function createMainWindowWithDeps({
     }
   } catch (_error) {
     // Language projection is optional; the renderer falls back to storage.
+  }
+  // The env-only startup_animation kill switch must be on the page before its
+  // first paint: the boot curtain mounts its sky at construction, long before
+  // the renderer fetches feature flags. theme-bootstrap.js stamps it.
+  if (buildFeatureFlags(env).startup_animation === false) {
+    query.jennyStartupAnimation = 'off';
   }
   const loadOptions = Object.keys(query).length ? { query } : undefined;
   windowRef.loadFile(path.join(rootDir, 'index.html'), loadOptions);

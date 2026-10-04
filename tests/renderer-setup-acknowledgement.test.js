@@ -248,6 +248,33 @@ test('unchanged snapshot after failed persistence keeps the gate open and permit
   assert.equal(harness.getHubMounts(), 1);
 });
 
+test('acknowledgement write failure explains recovery and offers Retry through the setup controller', async (t) => {
+  const harness = createHarness({
+    updateState(patch, attempt) {
+      if (attempt === 1) throw new Error('ENOSPC with private profile path');
+      return normalizeSetupPayload(makeBackendPayload({
+        acknowledged_version: patch.acknowledgedVersion,
+        acknowledged_at: patch.acknowledgedAt,
+        steps: { acknowledgement: 'done' },
+      }));
+    },
+  });
+  t.after(() => harness.close());
+  await harness.controller.init();
+  const root = harness.document.getElementById('homeSetupModalRoot');
+  root.querySelector('[data-step-modal-action="continue"]').click();
+  await settle();
+  assert.match(root.textContent, /Could not save your answer. Try again./);
+  assert.doesNotMatch(root.textContent, /private profile path/);
+  const retry = root.querySelector('[data-step-modal-action="continue"]');
+  assert.equal(retry.textContent, 'Retry');
+  assert.equal(retry.disabled, false);
+  assert.equal(harness.getHubMounts(), 0);
+  retry.click();
+  await settle();
+  assert.equal(harness.getHubMounts(), 1);
+});
+
 test('missing acknowledgement scene logs one error and never mounts the hub', async (t) => {
   const harness = createHarness({ acknowledgementFactory: null });
   t.after(() => harness.close());

@@ -16,6 +16,11 @@ _WHITESPACE_RE = re.compile(r"\s+")
 # an indented forged header is as dangerous as a column-zero one.
 _TOOL_RESULT_HEADER_RE = re.compile(r"(?m)^[ \t]*## Tool Result")
 _EFFECTS_VOCABULARY = frozenset({"none", "committed", "partial", "unknown"})
+# routing's TYPED_MUTATION_TOOLS. On these, "effects: committed" read as a git
+# commit: a 9B model twice told the owner a test was committed when it was
+# only written (dogfood TR-019). The model reads "saved"; the stored effects
+# field and its vocabulary keep "committed".
+_FILE_WRITE_TOOLS = frozenset({"write_file", "edit_file", "delete_file", "move_file"})
 
 _FIX_TEMPLATES: dict[str, str] = {
     "bad_arguments": "Correct the tool arguments to match the schema, then retry.",
@@ -108,7 +113,7 @@ def _sanitize_detail(value: object) -> str | None:
     return sanitized[:_DETAIL_LIMIT]
 
 
-def render_tool_result_envelope(
+def render_tool_result_envelope(  # noqa: C901, PLR0912, PLR0913  # envelope
     *,
     tool_id: str,
     call_id: str,
@@ -133,6 +138,8 @@ def render_tool_result_envelope(
     elapsed = _coerce_elapsed_ms(elapsed_ms)
     if effects is not None and effects not in _EFFECTS_VOCABULARY:
         effects = None  # closed vocabulary: an invalid claim renders as absent, never as fact
+    if effects == "committed" and str(tool_id or "").strip() in _FILE_WRITE_TOOLS:
+        effects = "saved"
 
     if ok:
         if (effects_text := _optional_text(effects)) is not None:

@@ -5,6 +5,9 @@ const os = require('os');
 const path = require('path');
 
 const { collectDataInventory, countSessionAttachments } = require('../services/data-lifecycle/data-inventory');
+const { CheckpointStore } = require('../services/session-runtime/checkpoint-store');
+const { RootRunBudgetStore } = require('../services/session-runtime/budgets');
+const { RuntimeLineageStore } = require('../services/session-runtime/lineage-store');
 
 function withTempDir(run) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-inventory-'));
@@ -58,11 +61,13 @@ describe('collectDataInventory', () => {
       listSessions: () => [{ id: 'sess_large' }],
       getSession: () => ({ id: 'sess_large', title: 'Large', messages: [{ role: 'user', content: 'too long' }] }),
     };
-    assert.throws(() => collectDataInventory({
+    const { entries } = collectDataInventory({
       userDataPath: root,
       sessionStore,
       maxFileBytes: 4,
-    }), /supported archive size/);
+    });
+    assert.throws(() => entries[0].produce(root), /supported archive size/);
+    assert.deepEqual(fs.readdirSync(root), []);
   }));
 
   it('fails instead of deleting an allowlisted file that could not be archived', () => withTempDir((root) => {
@@ -88,14 +93,17 @@ describe('collectDataInventory', () => {
         }],
       }),
     };
-    assert.throws(() => collectDataInventory({
+    const { entries } = collectDataInventory({
       userDataPath: root,
       sessionStore,
       attachmentStore: { resolveSafePath: () => '' },
-    }), {
+    });
+    assert.throws(() => entries[0].produce(root), {
       code: 'CMP-DATA-0004',
       reason: 'source_unreadable',
+      message: 'Managed session media could not be archived.',
     });
+    assert.deepEqual(fs.readdirSync(root), []);
   }));
 
   it('counts attachment records without exposing their names in the envelope', () => {
@@ -105,4 +113,25 @@ describe('collectDataInventory', () => {
     };
     assert.equal(countSessionAttachments(sessionStore), 2);
   });
+
+  it('archives a profile whose runtime coordination roots were never kept', () => withTempDir((root) => {
+    const checkpoints = new CheckpointStore(path.join(root, 'session-runtime-checkpoints'), {
+      validateCanonical: () => null,
+    });
+    const budgets = new RootRunBudgetStore(path.join(root, 'session-runtime-budgets'));
+    const lineage = new RuntimeLineageStore(path.join(root, 'session-runtime-lineage'));
+    for (const name of ['session-runtime-checkpoints', 'session-runtime-budgets', 'session-runtime-lineage']) {
+      fs.rmSync(path.join(root, name), { recursive: true, force: true });
+    }
+    const runtimeArchivePort = {
+      capturePortableState: () => ({
+        checkpoints: checkpoints.exportPortableSnapshot(),
+        root_run_budgets: budgets.exportPortableSnapshot(),
+        lineage: lineage.exportPortableSnapshot(),
+        canonical_sessions: { schema_version: 1, sessions: [] },
+      }),
+    };
+    const result = collectDataInventory({ userDataPath: root, runtimeArchivePort });
+    assert.equal(result.entries.some((entry) => entry.logicalPath.includes('coordination')), false);
+  }));
 });

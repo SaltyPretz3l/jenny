@@ -109,6 +109,8 @@ def test_zero_child_proof_is_limited_to_inventoried_tools() -> None:
         pass
     with observe_owned_process_invocation("unknown_native_tool") as unknown:
         pass
+    with observe_owned_process_invocation("monitor") as monitor:
+        pass
 
     assert trusted.resource_cleanup() == {
         "cleanup": "confirmed",
@@ -117,6 +119,24 @@ def test_zero_child_proof_is_limited_to_inventoried_tools() -> None:
         "reason": "no_native_process_started",
     }
     assert unknown.resource_cleanup() is None
+    assert monitor.resource_cleanup() is None
+
+
+def test_shell_tools_that_never_launched_prove_no_process() -> None:
+    """Dogfood HB-014: run_command and run_temp_script spawn only through the
+    owned-process service, so a call that failed before launch proves cleanup."""
+    for tool_name in ("run_command", "run_temp_script"):
+        with observe_owned_process_invocation(tool_name) as unstarted:
+            pass
+        assert unstarted.resource_cleanup() == {
+            "cleanup": "confirmed",
+            "process_tree_terminated": True,
+            "output_readers_terminated": True,
+            "reason": "no_native_process_started",
+        }
+        with observe_owned_process_invocation(tool_name) as launched:
+            assert create_process_cleanup_observer() is not None
+        assert launched.resource_cleanup()["reason"] == "child_cleanup_pending"
 
 
 def test_observation_overflow_stays_uncertain() -> None:

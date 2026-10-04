@@ -3,7 +3,7 @@
 const crypto = require('crypto');
 const path = require('path');
 
-const { normalizeString } = require('../renderer/shared/string-utils');
+const { normalizeString } = require('./shared/normalize');
 
 const AUTOMATION_RUN_TASK_NAME = 'automation_run';
 const DEFAULT_AUTOMATION_RUNTIME_BUDGET_MS = 5 * 60 * 1000;
@@ -268,7 +268,17 @@ async function dispatchAutomationTask(scheduler, tasksPath, task) {
     budget: { runtime_ms: budgetMs, tool_calls: 0 },
     result_ref: resultRef,
   };
-  await scheduler._recordTaskResult(tasksPath, startedResult, taskId);
+  const admitted = await scheduler._recordTaskResult(tasksPath, startedResult, taskId, (current) => (
+    current.enabled !== false && current.kind === 'automation'
+    && scheduler._isTaskDue(current) && !hasActiveAutomationRun(current)
+    && !(current.policy?.defer_when_chat_active && scheduler._hasActiveChatStreams())
+    && ['task', 'trigger', 'policy', 'input'].every((key) => (
+      JSON.stringify(current[key]) === JSON.stringify(task[key])
+    ))
+  ));
+  if (admitted !== true) {
+    return { status: 'deferred', task: task.task, reason: 'admission_failed' };
+  }
   try {
     const result = await scheduler._runBackgroundTask(AUTOMATION_RUN_TASK_NAME, {
       task_id: taskId,

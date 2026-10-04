@@ -9,6 +9,7 @@ const { createReasoningV2Renderer } = require('../renderer/chat/renderer-transcr
 const {
   ThinkingPanelController,
   groupReasoningByPhase,
+  joinReasoningEntriesMarkdown,
   shouldShowThinkingToggle,
 } = require('../renderer/chat/chat-thinking-utils');
 
@@ -20,6 +21,61 @@ const BODY_CASES = [
   ['~16K', 16 * 1024],
   ['~48K', 48 * 1024],
 ];
+
+test('prettified reasoning tail rewrites avoid source replacement only when opted in', () => {
+  const raw = 'Okay.' + ' So we check the loader. Then we look at init. Actually init runs twice. Let me verify.'.repeat(60);
+  for (const options of [{}, { allowTailRewrite: true }]) {
+    let previousUnits = [];
+    let previousStreamState = null;
+    let sourceReplacedCount = 0;
+    let finalPrettified;
+    let model;
+    for (let end = 29; end < raw.length + 29; end += 29) {
+      finalPrettified = joinReasoningEntriesMarkdown([{ id: 'e1', text: raw.slice(0, end) }]);
+      model = markdownUtils.renderStreamingMarkdownUnits(finalPrettified, {
+        ...options, previousUnits, previousStreamState,
+      });
+      if (model.fallbackReason === 'source_replaced') sourceReplacedCount += 1;
+      assert.equal(model.html, markdownUtils.renderStreamingMarkdownUnits(finalPrettified, {}).html, `frame ${end}`);
+      previousUnits = model.units;
+      previousStreamState = model.streamState;
+    }
+    assert.equal(model.html, markdownUtils.renderStreamingMarkdownUnits(finalPrettified, {}).html);
+    assert.equal(model.streamState.source, finalPrettified);
+    if (options.allowTailRewrite) {
+      assert.equal(sourceReplacedCount, 0, 'tail rewrites must preserve the settled prefix');
+    } else {
+      assert.ok(sourceReplacedCount > 0, 'the default contract still rejects tail rewrites');
+    }
+  }
+});
+
+test('tail rewrite opt-in still rejects changes to settled prefixes and active constructs', () => {
+  for (const [initialSource, rewrittenSource] of [
+    ['First paragraph.\n\nTail.', 'Changed paragraph.\n\nTail.'],
+    ['Tail.', 'Changed tail.'],
+    // The paragraph after the list decided the boundary; a tail that turns it
+    // into a list item would merge with the settled list.
+    ['- a\n\nPar', '- a\n\n- b'],
+    ['- a\n\nPar', '- a\n\n  indented'],
+    ['First paragraph.\n\n```js\n' + 'const x = 1;\n'.repeat(700) + 'tail',
+      'First paragraph.\n\n```js\n' + 'const x = 1;\n'.repeat(700) + 'changed tail'],
+  ]) {
+    const first = markdownUtils.renderStreamingMarkdownUnits(initialSource, {});
+    const initial = markdownUtils.renderStreamingMarkdownUnits(initialSource, {
+      previousUnits: first.units, previousStreamState: first.streamState,
+    });
+    if (initialSource.startsWith('First') || initialSource.startsWith('- a')) assert.ok(initial.streamState.stablePrefixEnd > 0);
+    if (initialSource.includes('```')) assert.ok(initial.streamState.activeConstruct);
+    const rewritten = markdownUtils.renderStreamingMarkdownUnits(rewrittenSource, {
+      allowTailRewrite: true,
+      previousUnits: initial.units,
+      previousStreamState: initial.streamState,
+    });
+    assert.equal(rewritten.fallbackReason, 'source_replaced');
+    assert.equal(rewritten.html, markdownUtils.renderStreamingMarkdownUnits(rewrittenSource, {}).html);
+  }
+});
 
 function buildReasoningMarkdown(minimumChars) {
   let markdown = '';

@@ -46,7 +46,6 @@ test('parallel-only drops hosted-unsafe suites while local runs retain sequentia
     'tests/uninstall-script.test.js',
     'tests/update-service.test.js',
     'tests/vllm-process-manager-dark-paths.test.js',
-    'tests/weather-service.test.js',
     'tests/workspace-ide-gitdir.test.js',
     'tests/workspace-pty-spawn.test.js',
     'tests/workspace-test-runner-runner.test.js',

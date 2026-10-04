@@ -49,16 +49,16 @@ def test_filesystem_artifact_identity_covers_absolute_and_normalized_aliases(
     root = tmp_path / "workspace"
     root.mkdir()
 
-    assert filesystem._artifact_store_parts(  # noqa: SLF001
+    assert filesystem._artifact_store_parts(
         str(root / ".jenny" / "artifacts" / "session" / "result.md"),
         root,
     ) == ("session", "result.md")
-    assert filesystem._artifact_store_parts(  # noqa: SLF001
+    assert filesystem._artifact_store_parts(
         "scratch/../.jenny/artifacts/session/result.md",
         root,
     ) == ("session", "result.md")
     assert (
-        filesystem._artifact_store_parts(  # noqa: SLF001
+        filesystem._artifact_store_parts(
             str(tmp_path / "outside" / ".jenny" / "artifacts" / "result.md"),
             root,
         )
@@ -77,7 +77,7 @@ def test_artifact_writer_quarantines_linked_artifacts_root(tmp_path: Path) -> No
     sentinel.write_text("outside", encoding="utf-8")
     os.symlink(outside, root / ".jenny" / "artifacts", target_is_directory=True)
 
-    tool = builtin_server._default_tools()["create_artifact"]  # noqa: SLF001
+    tool = builtin_server._default_tools()["create_artifact"]
     result = tool.handler(
         {
             "_jenny_session_id": "session-artifact",

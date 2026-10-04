@@ -4,7 +4,6 @@ import threading
 from types import SimpleNamespace
 
 from sidecar.runtime.local_engine.request_context import (
-    build_app_profile_behavior,
     clear_request_context,
     current_app_profile_behavior,
     current_diagnostics_store,

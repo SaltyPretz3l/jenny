@@ -70,3 +70,9 @@ def test_run_command_bounds_the_drain_after_a_timeout(monkeypatch) -> None:
     assert drain_timeouts[0] == 1
     assert drain_timeouts[1] == module.DRAIN_TIMEOUT_SECONDS
     assert module.DRAIN_TIMEOUT_SECONDS > 0
+
+
+def test_model_recommendation_catalog_is_bundled_in_config() -> None:
+    module = _load_module()
+    catalog_entry = (module.ROOT / "config" / "model-recommendation-catalog.json", "config")
+    assert catalog_entry in module.BUNDLED_DATA_FILES

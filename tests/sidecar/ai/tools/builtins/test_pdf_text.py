@@ -204,7 +204,7 @@ def test_render_lines_is_whole_gapless_and_continuable() -> None:
     assert f"{first}\n{remaining}" == full
 
     long_line = [PdfTextLine(1, "x" * 100, 0.0)]
-    assert render_lines(long_line, max_chars=1) == ("1: " + "x" * 100, 0)
+    assert render_lines(long_line, max_chars=10) == ("1: " + "x" * 7, 0)
     assert render_lines(lines, start=len(lines) + 1, max_chars=20) == ("", 0)
     with pytest.raises(ValueError):
         render_lines(lines, start=0, max_chars=20)
@@ -274,7 +274,7 @@ def test_cursor_round_trip_and_document_digest() -> None:
 
 class _TextPage:
     @staticmethod
-    def extractText() -> str:  # noqa: N802 - PyMuPDF API name.
+    def extractText() -> str:  # PyMuPDF API name.
         return "recovered text"
 
 
@@ -365,3 +365,17 @@ def test_select_pages_keeps_long_unread_lists_short_and_valid() -> None:
     assert len(unread) <= 220
     assert unread.endswith("-599")
     assert select_pages(unread, page_count=600)[0] == [7, 9, 11]
+
+
+
+def test_excerpt_fields_does_not_count_clipped_continuation_line():
+    from sidecar.ai.tools.builtins.pdf_text import excerpt_fields
+
+    lines = [PdfTextLine(1, "first", 0.0), PdfTextLine(2, "x" * 100, 1.0),
+             PdfTextLine(3, "following", 2.0)]
+    excerpt, next_line = render_lines(lines, start=2, max_chars=20)
+    fields = excerpt_fields(lines, start=2, excerpt=excerpt, page=1, digest="0123456789abcdef")
+    assert fields["lines_from"] == fields["lines_to"] == 0
+    assert fields["incomplete_line"] == 2
+    assert fields["nonrecoverable_truncation"] is True
+    assert fields["next_line"] == next_line == 3

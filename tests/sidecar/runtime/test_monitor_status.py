@@ -200,3 +200,15 @@ def test_monitor_status_store_delete_renames_before_recursive_cleanup(tmp_path: 
     assert store.delete_record(MONITOR_ID) is True
     assert store.read(MONITOR_ID) is None
     assert store.delete_record(MONITOR_ID) is False
+
+
+def test_unicode_retention_fits_status_budget_and_counts_omissions() -> None:
+    payload = _status_payload(state="completed")
+    payload["events"] = [{"sequence": i + 1, "kind": "output", "stream": "stdout", "text": "\u754c" * 2000, "timestamp": "2026-07-12T12:00:00.000Z", "elapsed_ms": i} for i in range(100)]
+    payload["event_count"] = 100
+    encoded = encode_monitor_status(payload)
+    restored = decode_monitor_status(encoded)
+    assert len(encoded) <= MAX_MONITOR_STATUS_BYTES
+    assert restored["terminal"] is True
+    assert restored["event_count"] == len(restored["events"]) + restored["dropped_event_count"]
+    assert restored["events"][-1]["sequence"] == 100

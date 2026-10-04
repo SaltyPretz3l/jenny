@@ -753,3 +753,35 @@ test('restoreSnapshot preserves MRU order from a rollback snapshot', async () =>
 
   assert.equal((await controller.cycleNext()).activeSessionId, 'c');
 });
+
+// ---- Chat tab rail program (shell-chrome area 2): eviction and split view ----
+
+test('cap eviction never removes a session the side-by-side pane shows, and reports the evicted id', async () => {
+  const bridge = createWorkspaceShell();
+  const paneModel = require('../renderer/shell/renderer-pane-model');
+  // The pane-layout write is timer-driven; keep it out of this rail-only test.
+  const controller = createWorkspaceStateController({
+    jennyShell: bridge.shell, paneModel, setTimeoutImpl: () => 0, clearTimeoutImpl() {},
+  });
+  for (let i = 1; i <= 8; i++) {
+    await controller.openSession(`s${i}`);
+  }
+  // s1 is the LRU tab, but the second pane shows it beside the active s8.
+  controller.persistPaneLayout({ panes: ['s8', 's1'], focusedPaneId: 0 });
+  assert.deepEqual(controller.getPaneLayout().panes.map((pane) => pane.sessionId), ['s8', 's1']);
+
+  const result = await controller.openSession('s9');
+  assert.equal(result.evictedSessionId, 's2', 'the next LRU idle tab outside the layout is evicted');
+  assert.equal(result.openSessionIds.includes('s1'), true, 'the pane session keeps its tab');
+  assert.equal(result.openSessionIds.includes('s2'), false);
+  assert.equal(controller.getPaneLayout().panes[1].sessionId, 's1', 'the side pane is not blanked');
+  assert.equal(Object.prototype.hasOwnProperty.call(bridge.updates.at(-1), 'evictedSessionId'), false,
+    'the evicted id never reaches the persisted workspace shape');
+});
+
+test('an open without eviction reports no evicted id', async () => {
+  const bridge = createWorkspaceShell();
+  const controller = createWorkspaceStateController({ jennyShell: bridge.shell });
+  const result = await controller.openSession('s1');
+  assert.equal(result.evictedSessionId, undefined);
+});

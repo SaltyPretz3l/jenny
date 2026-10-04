@@ -49,6 +49,16 @@ test('resolveCollapseStartPx parses inline px and otherwise measures the element
   }), 160);
 });
 
+test('readCurrentMaxHeightPx prefers the computed interpolated height and otherwise measures', () => {
+  const el = { scrollHeight: 420, offsetHeight: 140, style: { maxHeight: '0px' } };
+  assert.equal(motionHeightUtils.readCurrentMaxHeightPx(el, { getComputedStyle: () => ({ maxHeight: '135.5px' }) }), 135.5);
+  for (const maxHeight of ['none', '', '50%']) {
+    assert.equal(motionHeightUtils.readCurrentMaxHeightPx(el, { getComputedStyle: () => ({ maxHeight }) }), 420);
+  }
+  assert.equal(motionHeightUtils.readCurrentMaxHeightPx(el, null), 420);
+  assert.equal(motionHeightUtils.readCurrentMaxHeightPx(null, null), 0);
+});
+
 test('pinHeightForTransition writes the bounded pin before forcing a layout read', () => {
   const log = [];
   const element = {
@@ -67,8 +77,9 @@ function createMinimalRowHarness(expanded) {
     </div></div></div></body>`);
   const frames = [];
   dom.window.requestAnimationFrame = (callback) => { frames.push(callback); return frames.length; };
-  dom.window.setTimeout = () => 1;
-  dom.window.clearTimeout = () => {};
+  const timers = [];
+  dom.window.setTimeout = (cb) => { timers.push(cb); return timers.length; };
+  dom.window.clearTimeout = (id) => { timers[id - 1] = null; };
   const timeline = dom.window.document.getElementById('timeline');
   const threadScroll = dom.window.document.getElementById('thread-scroll');
   threadScroll.scrollTop = 137;
@@ -84,7 +95,7 @@ function createMinimalRowHarness(expanded) {
     target.addEventListener(eventName, handler, options);
   });
   return {
-    dom, frames, bindings, state, threadScroll,
+    dom, frames, timers, bindings, state, threadScroll,
     body: timeline.querySelector('.tool-call-row-body'),
     toggle: timeline.querySelector('[data-tool-row-toggle]'),
   };
@@ -151,6 +162,93 @@ function captureToggleToolDetails(dom, frames) {
   return toggleToolDetails;
 }
 
+function createLegacyToggleHarness(t, reducedMotion = false) {
+  const dom = new JSDOM(`<div id="timeline"><div class="tool-call-block">
+    <button class="tool-call-header" aria-expanded="true" aria-controls="details"></button>
+    <div id="details" class="tool-call-details expanded">body</div></div></div>`);
+  t.after(() => dom.window.close());
+  dom.window.matchMedia = () => ({ matches: reducedMotion });
+  const frames = [];
+  const timers = [];
+  dom.window.setTimeout = (cb) => { timers.push(cb); return timers.length; };
+  dom.window.clearTimeout = (id) => { timers[id - 1] = null; };
+  const details = dom.window.document.getElementById('details');
+  Object.defineProperty(details, 'scrollHeight', { configurable: true, get: () => 420 });
+  return { dom, frames, timers, details, header: dom.window.document.querySelector('button'),
+    toggle: captureToggleToolDetails(dom, frames) };
+}
+
+test('reduced-motion legacy tool toggles schedule no frames or timers and keep expansion unconstrained', (t) => {
+  const h = createLegacyToggleHarness(t, true);
+  h.toggle(h.header, false);
+  h.toggle(h.header, true);
+  h.frames.splice(0).forEach((cb) => cb());
+  assert.equal(h.details.style.maxHeight, 'none', 'reduced-motion expansion stays unconstrained after frames');
+  assert.equal(h.timers.length, 0, 'reduced motion must schedule no timers');
+  h.toggle(h.header, false);
+  assert.equal(h.details.hidden, true);
+  assert.equal(h.details.classList.contains('expanded'), false);
+  assert.equal(h.details.style.maxHeight, '');
+  assert.equal(h.frames.length, 0);
+});
+
+test('legacy tool collapse then expand within one frame stays expanded and visible', (t) => {
+  const h = createLegacyToggleHarness(t);
+  h.toggle(h.header, false);
+  h.toggle(h.header, true);
+  h.frames.splice(0).forEach((cb) => cb());
+  h.timers.splice(0).forEach((cb) => cb && cb());
+  assert.equal(h.details.classList.contains('expanded'), true, 'latest tool expand must keep .expanded');
+  assert.equal(h.details.hidden, false);
+  assert.equal(h.details.style.maxHeight, 'none');
+});
+
+test('legacy tool reopen reverses from the live computed collapse height', (t) => {
+  const h = createLegacyToggleHarness(t);
+  h.toggle(h.header, false);
+  h.frames.splice(0).forEach((cb) => cb());
+  const original = h.dom.window.getComputedStyle.bind(h.dom.window);
+  h.dom.window.getComputedStyle = (el) => el === h.details ? { maxHeight: '135.5px' } : original(el);
+  h.toggle(h.header, true);
+  assert.equal(h.details.style.maxHeight, '135.5px');
+  h.frames.splice(0).forEach((cb) => cb());
+  assert.equal(h.details.style.maxHeight, '420px');
+});
+
+test('legacy tool expand then collapse ignores the stale expansion frame', (t) => {
+  const h = createLegacyToggleHarness(t);
+  h.toggle(h.header, true);
+  h.toggle(h.header, false);
+  const pin = h.details.style.maxHeight;
+  h.frames.shift()();
+  assert.equal(h.details.style.maxHeight, pin);
+  h.frames.splice(0).forEach((cb) => cb());
+  h.timers.splice(0).forEach((cb) => cb && cb());
+  assert.equal(h.details.hidden, true);
+  assert.equal(h.details.classList.contains('expanded'), false);
+});
+
+test('minimal tool reopen reverses from the live height and fences stale frames', () => {
+  const h = createMinimalRowHarness(true);
+  try {
+    trackHeight(h.body, 'none', 420);
+    h.toggle.click();
+    h.dom.window.getComputedStyle = () => ({ maxHeight: '135.5px' });
+    h.toggle.click();
+    assert.equal(h.body.style.maxHeight, '135.5px');
+    h.frames.splice(0).forEach((cb) => cb());
+    h.timers.splice(0).forEach((cb) => cb && cb());
+    assert.equal(h.body.style.maxHeight, 'none');
+    h.toggle.click();
+    h.toggle.click();
+    h.toggle.click();
+    h.frames.splice(0).forEach((cb) => cb());
+    assert.equal(h.body.style.maxHeight, '0px');
+    h.timers.splice(0).forEach((cb) => cb && cb());
+    assert.equal(h.body.style.maxHeight, '');
+  } finally { h.bindings.dispose(); h.dom.window.close(); }
+});
+
 test('legacy tool-details collapse commits its measured pin before the rAF target', () => {
   const dom = new JSDOM(`<!doctype html><body><div id="timeline"><div class="tool-call-block">
     <button class="tool-call-header" aria-expanded="true" aria-controls="details"></button>
@@ -197,7 +295,10 @@ test('inventoryCollapsible.toggle pins the start height and reads layout before 
   global.window = dom.window;
   global.document = dom.window.document;
   const frames = [];
+  const timers = [];
   global.requestAnimationFrame = (cb) => frames.push(cb);
+  dom.window.setTimeout = (cb) => { timers.push(cb); return timers.length; };
+  dom.window.clearTimeout = (id) => { timers[id - 1] = null; };
   t.after(() => {
     global.window = previous.window;
     global.document = previous.document;
@@ -215,9 +316,93 @@ test('inventoryCollapsible.toggle pins the start height and reads layout before 
   collapsible.toggle(trigger, false);
   frames.splice(0).forEach((cb) => cb());
   assertOrdered(log, ['write:250px', 'read', 'write:0px']);
+  timers.splice(0).forEach((cb) => cb && cb());
 
   log.length = 0;
   collapsible.toggle(trigger, true);
   frames.splice(0).forEach((cb) => cb());
   assertOrdered(log, ['write:0px', 'read', 'write:250px']);
+});
+
+test('inventory collapsible reverses from the live computed height mid-transition', (t) => {
+  const dom = new JSDOM('<div id="root"></div>', { pretendToBeVisual: true });
+  const previous = { window: global.window, document: global.document, raf: global.requestAnimationFrame };
+  global.window = dom.window;
+  global.document = dom.window.document;
+  const frames = [];
+  const timers = [];
+  global.requestAnimationFrame = (cb) => frames.push(cb);
+  dom.window.setTimeout = (cb) => { timers.push(cb); return timers.length; };
+  dom.window.clearTimeout = (id) => { timers[id - 1] = null; };
+  t.after(() => {
+    global.window = previous.window;
+    global.document = previous.document;
+    global.requestAnimationFrame = previous.raf;
+    dom.window.close();
+  });
+  const collapsible = require('../renderer/inventory/collapsible');
+  const root = dom.window.document.getElementById('root');
+  root.innerHTML = collapsible.trigger({ id: 'inv-panel', children: 'Toggle', open: true })
+    + collapsible.content({ id: 'inv-panel', children: 'Body', open: true });
+  const trigger = root.querySelector('[data-inv-collapsible]');
+  const content = root.querySelector('#inv-panel');
+  trackHeight(content, 'none');
+  const original = dom.window.getComputedStyle.bind(dom.window);
+  dom.window.getComputedStyle = (el) => (el === content ? { maxHeight: '135.5px' } : original(el));
+
+  collapsible.toggle(trigger, false);
+  frames.splice(0).forEach((cb) => cb());
+  assert.equal(content.style.maxHeight, '0px');
+  collapsible.toggle(trigger, true);
+  assert.equal(content.style.maxHeight, '135.5px', 're-expand mid-collapse starts from the live height, not 0');
+  frames.splice(0).forEach((cb) => cb());
+  assert.equal(content.style.maxHeight, '250px');
+  collapsible.toggle(trigger, false);
+  assert.equal(content.style.maxHeight, '135.5px', 'collapse mid-expand starts from the live height, not the target');
+  frames.splice(0).forEach((cb) => cb());
+  assert.equal(content.style.maxHeight, '0px');
+  timers.splice(0).forEach((cb) => cb && cb());
+  assert.equal(content.hidden, true);
+});
+
+test('inventory collapsible fences both frame directions and reduced motion schedules no work', (t) => {
+  const dom = new JSDOM('<div id="root"></div>');
+  const previous = { window: global.window, document: global.document, raf: global.requestAnimationFrame };
+  global.window = dom.window; global.document = dom.window.document;
+  const frames = []; const timers = [];
+  global.requestAnimationFrame = (cb) => frames.push(cb);
+  dom.window.setTimeout = (cb) => { timers.push(cb); return timers.length; };
+  dom.window.clearTimeout = (id) => { timers[id - 1] = null; };
+  let reducedMotion = false;
+  dom.window.matchMedia = () => ({ matches: reducedMotion });
+  t.after(() => {
+    global.window = previous.window; global.document = previous.document;
+    global.requestAnimationFrame = previous.raf; dom.window.close();
+  });
+  const collapsible = require('../renderer/inventory/collapsible');
+  const root = dom.window.document.getElementById('root');
+  root.innerHTML = collapsible.trigger({ id: 'panel', open: true, children: 'Toggle' })
+    + collapsible.content({ id: 'panel', open: true, children: 'Body' });
+  const trigger = root.querySelector('[data-inv-collapsible]');
+  const content = root.querySelector('#panel');
+  trackHeight(content, 'none');
+  collapsible.toggle(trigger, false); collapsible.toggle(trigger, true);
+  frames.splice(0).forEach((cb) => cb()); timers.splice(0).forEach((cb) => cb && cb());
+  assert.equal(content.classList.contains('expanded'), true);
+  assert.equal(content.hidden, false);
+  assert.equal(content.style.maxHeight, 'none');
+  collapsible.toggle(trigger, true); collapsible.toggle(trigger, false);
+  const pin = content.style.maxHeight;
+  frames.shift()();
+  assert.equal(content.style.maxHeight, pin, 'stale inventory expansion frame must not write');
+  frames.splice(0).forEach((cb) => cb()); timers.splice(0).forEach((cb) => cb && cb());
+  assert.equal(content.hidden, true);
+  reducedMotion = true;
+  collapsible.toggle(trigger, true);
+  assert.equal(content.style.maxHeight, 'none');
+  collapsible.toggle(trigger, false);
+  assert.equal(content.classList.contains('expanded'), false);
+  assert.equal(content.style.maxHeight, '');
+  assert.equal(frames.length, 0);
+  assert.equal(timers.length, 0);
 });

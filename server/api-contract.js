@@ -38,7 +38,7 @@ const runtimeLimits = full => object({ local: object(laneLimits, full ? Object.k
 // This is an explicit service vocabulary, not a reflection of Electron IPC.
 const PARAM_SCHEMAS = Object.freeze({
   'sessionRuntime.getSnapshot': object({ project_id: projectId, session_id: id, cursor: { anyOf: [text(4096), { type: 'null' }] },
-    limit: { type: 'integer', minimum: 1, maximum: 100 } }),
+    limit: { type: 'integer', minimum: 1, maximum: 100 }, view: { enum: ['runs'] }, finished_since: text(40) }),
   'sessionRuntime.getWork': object({ work_id: id, child_offset: { type: 'integer', minimum: 0, maximum: 512 },
     lineage_revision: positiveRevision }, ['work_id']),
   'sessionRuntime.getResult': object({ work_id: id }, ['work_id']),

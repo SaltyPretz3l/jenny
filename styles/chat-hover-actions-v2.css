@@ -101,7 +101,7 @@
 }
 
 .chat-unsaved-reply-action {
-  min-height: calc(26px * var(--chat-zoom-factor, 1));
+  min-height: 26px;
   padding-inline: var(--space-4);
   white-space: nowrap;
 }
@@ -113,8 +113,8 @@
 .chat-hover-action {
   display: grid;
   place-items: center;
-  width: calc(28px * var(--chat-zoom-factor, 1));
-  height: calc(28px * var(--chat-zoom-factor, 1));
+  width: 28px;
+  height: 28px;
   padding: 0;
   border-radius: var(--tl-radius-control);
   background: color-mix(in srgb, var(--accent) 6%, var(--bg-surface));
@@ -168,7 +168,7 @@
 
 .chat-hover-action-text {
   width: auto;
-  min-width: calc(28px * var(--chat-zoom-factor, 1));
+  min-width: 28px;
   padding: 0 var(--space-5);
   font-size: var(--tl-font-ui);
   font-weight: var(--tl-weight-label);
@@ -196,14 +196,39 @@
 
 @media (prefers-reduced-motion: reduce) {
   .chat-hover-row {
-    transition: opacity var(--motion-duration-fast) var(--motion-ease-standard);
+    transition: none;
     transform: none !important;
-  }
-  .chat-hover-action {
-    transition: none !important;
   }
   .chat-hover-action:hover,
   .chat-hover-action:active {
     transform: none !important;
+  }
+  .chat-hover-action:focus-visible {
+    transform: none;
+  }
+  /* At 0ms the forwards fade ends at opacity 0; keep "Copied!" visible
+     throughout the chip's 1200 ms JS lifetime. */
+  .chat-copy-chip {
+    animation: none;
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes chat-copy-chip-fade {
+  0% {
+    opacity: 0;
+    transform: translateY(4px) scale(0.96);
+  }
+
+  14%,
+  72% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+
+  100% {
+    opacity: 0;
+    transform: translateY(-1px) scale(0.985);
   }
 }

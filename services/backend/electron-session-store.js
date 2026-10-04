@@ -30,6 +30,7 @@ const {
   normalizeReasoningEffort,
   normalizeSessionProjectId,
   normalizeSessionStartDate, normalizeToolCategoryOverrides,
+  normalizeToolConnectionOverrides,
 } = require('./session-normalizers');
 const { GENERAL_PROJECT_ID, normalizeProjectId } = require('../projects/project-schema');
 const { buildSessionPreferencesPatch, normalizeRunMode } = require('./session-preferences-patch');
@@ -47,6 +48,7 @@ const {
   resolveReanchoredHistory,
   truncateTurnEventsAtEditBoundary,
 } = require('./session-turn-events');
+const { settleInterruptedPluginOperationOnRead } = require('./plugin-session-settlement');
 const {
   SessionStorageBackend,
   deriveSessionsDirectory,
@@ -202,6 +204,7 @@ function normalizeSession(sessionId, input = {}, { reuseTaggedMessages = false }
     archived_at: input.archived_at ? String(input.archived_at) : null,
     context_preferences: normalizeContextPreferences(input.context_preferences),
     tool_category_overrides: normalizeToolCategoryOverrides(input.tool_category_overrides),
+    tool_connection_overrides: normalizeToolConnectionOverrides(input.tool_connection_overrides),
     session_incarnation: String(input.session_incarnation || '').trim(),
     turn_generation: Number.isSafeInteger(Number(input.turn_generation))
       && Number(input.turn_generation) >= 0
@@ -357,6 +360,10 @@ class ElectronSessionStore {
     return this._backend.flushAsync();
   }
 
+  purgeSessionRecoveryCopies(sessionId) {
+    return this._backend.purgeSessionRecoveryCopies(sessionId);
+  }
+
   // True when a newer on-disk schema froze writes.
   hasNewerSchema() {
     return this._backend.hasNewerSchema();
@@ -484,7 +491,8 @@ class ElectronSessionStore {
   }
 
   getSession(sessionId) {
-    const session = settleStalePlanDocumentsOnRead({ backend: this._backend, logger: this._logger, sessionId, session: this._backend.getSession(sessionId), normalizeSession });
+    const planSettled = settleStalePlanDocumentsOnRead({ backend: this._backend, logger: this._logger, sessionId, session: this._backend.getSession(sessionId), normalizeSession });
+    const session = settleInterruptedPluginOperationOnRead({ backend: this._backend, logger: this._logger, sessionId, session: planSettled, normalizeSession });
     return session ? normalizeSession(sessionId, session) : null;
   }
 

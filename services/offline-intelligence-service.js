@@ -3,6 +3,7 @@ const {
   normalizeOfflineIntelligence,
 } = require('./shell-config-service');
 const { normalizeString } = require('./backend/path-utils');
+const { managedModelKey } = require('./shell-config-engines');
 const { t } = require('./i18n-main');
 const { buildModelFitEstimates } = require('./model-fit-diagnostics');
 
@@ -140,6 +141,30 @@ function findModelCatalogEntry(models, modelId) {
   ) || null;
 }
 
+// A GGUF in the Model Library that the managed llama-server serves on this
+// machine: its perModel entry runs on llama-server from a model file. The
+// Ollama/vLLM catalog never lists it, yet it is installed and local. It loads
+// through the openai-compatible engine, which force-local routing does not
+// trust (services/backend/local-engine-requests.js), so it never makes forced
+// local inference ready.
+function findManagedLibraryModel(configService, modelId) {
+  const id = normalizeString(modelId);
+  if (!id || !configService || typeof configService.getLocalEngines !== 'function') {
+    return null;
+  }
+  let managed;
+  try {
+    managed = configService.getLocalEngines()?.openaiCompatible?.managed || null;
+  } catch (_error) {
+    return null;
+  }
+  const entry = managed?.enabled === true ? managed.perModel?.[managedModelKey(id)] : null;
+  if (!entry || entry.engine !== 'llama-server' || !normalizeString(entry.modelPath)) {
+    return null;
+  }
+  return { id, engineType: 'openai-compatible', capabilities: {} };
+}
+
 function isVisionCapableLocalModel(entry, fallbackModelId) {
   if (entry?.capabilities?.vision === true) {
     return true;
@@ -167,6 +192,7 @@ function buildUnavailableReason({
   selectedLocalModelInstalled,
   catalogReason,
   ollamaFallback,
+  forcedRouteBlocked = false,
 }) {
   if (backendPhase !== 'ready') {
     return 'Managed sidecar is not ready yet.';
@@ -178,6 +204,13 @@ function buildUnavailableReason({
     return catalogReason
       ? `${catalogReason} Select an installed local model to continue.`
       : `Preferred local model ${preferredLocalModel} is not installed locally.`;
+  }
+  if (forcedRouteBlocked) {
+    return t(
+      'main.offlineIntelligence.llamaServerNotForced',
+      'Force local inference cannot use {model} yet: it runs on llama-server. Choose an Ollama model in Model Library.',
+      { model: preferredLocalModel }
+    );
   }
   if (ollamaFallback) {
     return ollamaFallback.reason;
@@ -298,6 +331,12 @@ class OfflineIntelligenceService {
     return normalizeOfflineIntelligence(this.configService.getState()?.offlineIntelligence);
   }
 
+  // Settings-only read for the per-turn hot path: getState() probes the model
+  // catalog over a sidecar round trip, which only force-local needs.
+  getMode() {
+    return this._getSettings().mode;
+  }
+
   async _probeLocalCatalog() {
     const previousModels = Array.isArray(this.lastState?.localCatalog?.models)
       ? this.lastState.localCatalog.models
@@ -375,17 +414,28 @@ class OfflineIntelligenceService {
     const currentModel = normalizeString(currentStatus?.model);
     const engineFallback = normalizeEngineFallback(currentStatus?.engine_fallback);
     const preferredLocalModel = settings.preferredLocalModel;
-    const selectedModelEntry = findModelCatalogEntry(localCatalog.models, preferredLocalModel);
-    const selectedLocalEngineType = normalizeString(selectedModelEntry?.engineType).toLowerCase();
-    const selectedLocalModelInstalled = localCatalog.available === true
-      && Boolean(selectedModelEntry)
-      && (selectedLocalEngineType === 'ollama' || selectedLocalEngineType === 'vllm');
-    const ollamaFallback = engineFallback && engineFallback.requestedEngine === 'ollama'
+    const catalogEntry = findModelCatalogEntry(localCatalog.models, preferredLocalModel);
+    const catalogEngineType = normalizeString(catalogEntry?.engineType).toLowerCase();
+    const catalogInstalled = localCatalog.available === true
+      && Boolean(catalogEntry)
+      && (catalogEngineType === 'ollama' || catalogEngineType === 'vllm');
+    // The Ollama/vLLM catalog wins; a Model Library GGUF counts only when the
+    // catalog does not install the model.
+    const libraryEntry = catalogInstalled
+      ? null
+      : findManagedLibraryModel(this.configService, preferredLocalModel);
+    const selectedModelEntry = libraryEntry || catalogEntry;
+    const selectedLocalEngineType = libraryEntry ? libraryEntry.engineType : catalogEngineType;
+    const selectedLocalModelInstalled = catalogInstalled || Boolean(libraryEntry);
+    const forcedRouteBlocked = Boolean(libraryEntry) && settings.mode === 'local_only';
+    // An Ollama fallback says nothing about a model llama-server serves.
+    const ollamaFallback = engineFallback && engineFallback.requestedEngine === 'ollama' && !libraryEntry
       ? engineFallback
       : null;
     const localChatReady = managedSidecar.ready
       && selectedLocalModelInstalled
-      && !ollamaFallback;
+      && !ollamaFallback
+      && !forcedRouteBlocked;
     const localVisionReady = localChatReady
       && isVisionCapableLocalModel(selectedModelEntry, preferredLocalModel);
     const unavailableReason = buildUnavailableReason({
@@ -394,6 +444,7 @@ class OfflineIntelligenceService {
       selectedLocalModelInstalled,
       catalogReason: localCatalog.reason,
       ollamaFallback,
+      forcedRouteBlocked,
     });
     const visionUnavailableReason = buildVisionUnavailableReason({
       localChatReady,

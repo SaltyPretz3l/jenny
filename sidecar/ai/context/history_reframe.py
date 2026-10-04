@@ -20,7 +20,6 @@ from typing import Any
 from sidecar.ai.context.message_utils import admit_tool_envelope
 from sidecar.ai.tools.result_envelope import render_tool_result_envelope
 
-
 _W1_WIRE_FIELDS = ("tool_envelope", "name", "is_error", "error_code")
 
 

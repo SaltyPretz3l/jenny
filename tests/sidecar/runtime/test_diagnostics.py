@@ -5,6 +5,7 @@ import logging
 import os
 import sys
 import time
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -309,9 +310,13 @@ def test_log_tool_execution_redacts_sensitive_arguments(tmp_path) -> None:
     assert "hunter2" not in raw
     assert "abcdef123456" not in raw
     assert "project-id" not in raw
-    assert payload["data"]["arguments"]["password"] == "[redacted]"
-    assert payload["data"]["arguments"]["headers"]["authorization"] == "[redacted]"
-    assert payload["data"]["arguments"]["tokenizer_model"] == "keep-tokenizer-value"
+    assert "password" not in payload["data"]["arguments"]
+    assert payload["data"]["arguments"]["headers"] == {"type": "object", "size": 1}
+    assert payload["data"]["arguments"]["tokenizer_model"] == {
+        "type": "string",
+        "size": len("keep-tokenizer-value"),
+        "hash": _diag_module._hash_text("keep-tokenizer-value"),
+    }
 
 
 def test_log_tool_execution_includes_duration_and_result_size(tmp_path) -> None:
@@ -576,6 +581,105 @@ def test_ndjson_handler_rotates_when_segment_size_exceeded(tmp_path) -> None:
     assert log_path.exists(), "new sidecar.log must be written after rotation"
     new_content = log_path.read_text("utf-8")
     assert "rotation test" in new_content
+
+
+def _layer_text(log_dir: Path) -> str:
+    return "".join(entry.read_text("utf-8") for entry in sorted(log_dir.iterdir()) if entry.is_file())
+
+
+def test_ndjson_handler_rotation_with_a_second_writer_loses_nothing(tmp_path, monkeypatch) -> None:
+    """The main sidecar and a background worker hold sidecar.log at once. On
+    Windows the second holder's open handle makes renaming the active segment
+    fail; rotation used to shift (and eventually delete) older segments first
+    and then drop the record on that failure."""
+    log_dir = tmp_path / "logs"
+    log_dir.mkdir(parents=True)
+    log_path = log_dir / "sidecar.log"
+    for index in (1, 2, 3):
+        (log_dir / f"sidecar.log.{index}").write_text(f"segment-marker-{index}\n", "utf-8")
+    monkeypatch.setattr(_diag_module, "SEGMENT_MAX_BYTES", 2048)
+
+    main_holder = NdjsonRollingFileHandler(log_path)
+    worker = NdjsonRollingFileHandler(log_path)
+
+    def emit(handler: NdjsonRollingFileHandler, message: str) -> None:
+        record = logging.LogRecord("test", logging.INFO, "", 0, message, (), None)
+        record.data = {}
+        handler.emit(record)
+
+    emit(main_holder, "main-first")
+    for index in range(10):
+        emit(worker, f"worker-{index}")
+    emit(main_holder, "main-second")
+    main_holder.close()
+    worker.close()
+
+    text = _layer_text(log_dir)
+    for message in ["main-first", "main-second", *[f"worker-{index}" for index in range(10)]]:
+        assert message in text, f"{message} was lost"
+    for index in (1, 2, 3):
+        assert f"segment-marker-{index}" in text
+    if sys.platform == "win32":
+        # A blocked rotation must not shift the older segments either.
+        for index in (1, 2, 3):
+            assert (log_dir / f"sidecar.log.{index}").read_text("utf-8") == f"segment-marker-{index}\n"
+    # The long-lived holder writes to the live segment, never a rotated one.
+    assert "main-second" in log_path.read_text("utf-8")
+
+
+def test_ndjson_handler_blocked_rotation_stops_at_a_ceiling(tmp_path, monkeypatch) -> None:
+    log_path = tmp_path / "logs" / "sidecar.log"
+    log_path.parent.mkdir(parents=True)
+    monkeypatch.setattr(_diag_module, "SEGMENT_MAX_BYTES", 1024)
+    handler = NdjsonRollingFileHandler(log_path)
+
+    def blocked_rename(self: Path, target: Path) -> Path:
+        raise PermissionError("held open by another process")
+
+    monkeypatch.setattr(Path, "rename", blocked_rename)
+    for index in range(200):
+        record = logging.LogRecord("test", logging.INFO, "", 0, f"line-{index}", (), None)
+        record.data = {}
+        handler.emit(record)
+    handler.close()
+
+    ceiling = 1024 * _diag_module.BLOCKED_ROTATION_SEGMENT_MULTIPLE
+    assert log_path.stat().st_size <= ceiling, "retention never trims the active file"
+    assert "line-0" in log_path.read_text("utf-8")
+
+
+def test_ndjson_handler_retention_sees_a_segment_stranded_mid_rotation(tmp_path) -> None:
+    log_dir = tmp_path / "logs"
+    log_dir.mkdir(parents=True)
+    log_path = log_dir / "sidecar.log"
+    log_path.write_text("main\n", encoding="utf-8")
+    stranded = log_dir / "sidecar.log.rotating-4242"
+    stranded.write_text("stranded\n", encoding="utf-8")
+    (log_dir / "sidecar.log.1").write_text("old1\n", encoding="utf-8")
+
+    handler = NdjsonRollingFileHandler(log_path)
+    files = handler._list_layer_files()
+    handler.close()
+    assert files[-1] == stranded, "stranded segment is listed, and trimmed first"
+    assert _diag_module._NUMERIC_LOG_ROTATION_RE.search(stranded.name) is not None
+
+
+def test_ndjson_handler_reopens_when_another_process_rotated_its_segment(tmp_path) -> None:
+    log_path = tmp_path / "logs" / "sidecar.log"
+    handler = NdjsonRollingFileHandler(log_path)
+    record = logging.LogRecord("test", logging.INFO, "", 0, "first", (), None)
+    record.data = {}
+    handler.emit(record)
+    held = handler._stream
+    assert held is not None
+
+    handler._drop_stream_if_replaced(log_path.stat())
+    assert handler._stream is held, "same file: keep the handle"
+
+    replaced = os.stat_result((0, 0, 0, 0, 0, 0, 0, 0, 0, 0))  # different dev/ino
+    handler._drop_stream_if_replaced(replaced)
+    assert handler._stream is None and held.closed, "replaced file: reopen on next write"
+    handler.close()
 
 
 def test_ndjson_handler_prunes_on_startup_rotation_megabyte_and_shutdown_only(
@@ -1013,3 +1117,66 @@ def test_build_redacted_snippet_data_redacts_secrets_in_snippet(tmp_path) -> Non
 
     assert "prompt_snippet" in data
     assert "secret-token-value" not in data["prompt_snippet"]
+
+
+def test_shared_hostile_redaction_and_raw_file(tmp_path) -> None:
+    fixtures = json.loads((Path(__file__).parents[2] / "fixtures" / "diagnostics-hostile-input.json").read_text("utf-8"))
+    handler = NdjsonRollingFileHandler(tmp_path / "sidecar.log")
+    for item in fixtures:
+        record = logging.LogRecord("test", logging.ERROR, "", 0, item.get("text", "structured"), (), None)
+        record.data = item.get("value", {})
+        handler.emit(record)
+    handler.close()
+    rows = (tmp_path / "sidecar.log").read_text("utf-8").splitlines()
+    for item, row in zip(fixtures, rows, strict=True):
+        for hidden in item["hidden"]:
+            assert hidden not in row, f"leaked {hidden}"
+        for visible in item.get("visible", []):
+            assert visible in row
+
+
+def test_saturated_handler_never_calls_blocking_sink() -> None:
+    import threading
+
+    from sidecar.runtime.diagnostics import ContextQueueHandler
+    from sidecar.runtime.diagnostics_queue import BoundedDiagnosticsQueue
+
+    entered = threading.Event()
+    release = threading.Event()
+
+    class BlockingSink(logging.Handler):
+        def emit(self, record):
+            entered.set()
+            release.wait(2)
+
+    queue = BoundedDiagnosticsQueue(capacity=1, severe_reserve=1)
+    queue.enqueue(logging.LogRecord("test", logging.ERROR, "", 0, "queued", (), None))
+    handler = ContextQueueHandler(queue, BlockingSink())
+    producer = threading.Thread(
+        target=handler.handle,
+        args=(logging.LogRecord("test", logging.ERROR, "", 0, "overflow", (), None),),
+    )
+    producer.start()
+    producer.join(0.5)
+    completed = not producer.is_alive()
+    release.set()
+    producer.join(1)
+    assert completed and not entered.is_set(), "producer reached blocking sink"
+    loss = queue.take_loss_snapshot(force=True)
+    assert loss is not None and loss.dropped_count == 1
+
+
+def test_blocked_rotation_recovers_after_ceiling(tmp_path, monkeypatch) -> None:
+    log_path = tmp_path / "sidecar.log"
+    monkeypatch.setattr(_diag_module, "SEGMENT_MAX_BYTES", 1024)
+    handler = NdjsonRollingFileHandler(log_path)
+    monkeypatch.setattr(_diag_module, "ROTATION_RETRY_BYTES", 512)
+    rename = Path.rename
+    monkeypatch.setattr(Path, "rename", lambda *args: (_ for _ in ()).throw(PermissionError("blocked")))
+    for _ in range(40):
+        handler.emit(logging.LogRecord("test", logging.INFO, "", 0, "before", (), None))
+    monkeypatch.setattr(Path, "rename", rename)
+    for _ in range(40):
+        handler.emit(logging.LogRecord("test", logging.INFO, "", 0, "recovered", (), None))
+    handler.close()
+    assert "recovered" in log_path.read_text("utf-8")

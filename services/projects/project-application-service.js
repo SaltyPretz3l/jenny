@@ -1,10 +1,14 @@
 'use strict';
 
 const crypto = require('node:crypto');
+const path = require('node:path');
 
 const { PROJECT_ERROR_CODES, TOOL_ERROR_CODES } = require('../backend/error-codes');
 const { t } = require('../i18n-main');
 const { GENERAL_PROJECT_ID, normalizeProjectId } = require('./project-schema');
+const { ProjectDeleteOperation } = require('./project-delete-operation');
+const { ProjectFolderStatus } = require('./project-folder-status');
+const { canonicalizeProjectRootAsync } = require('./project-service');
 const { workspaceRootId } = require('../workspace-root-identity');
 const { assignSessionProjectDurably } = require('./session-project-assignment');
 
@@ -46,6 +50,8 @@ function projectFailure(reason, details = {}) {
       'The General project cannot own a workspace root.'
     ),
     invalid_root: t('projects.application.invalidRoot', 'Project root is invalid.'),
+    project_folder_missing: t('projects.application.folderMissing', 'The project folder is missing. Locate it first.'),
+    reveal_unavailable: t('projects.application.revealUnavailable', 'The folder could not be opened.'),
     workspace_root_unset: t(
       'projects.application.workspaceRootUnset',
       'Choose a Workspace folder first.'
@@ -66,10 +72,35 @@ function projectFailure(reason, details = {}) {
       'projects.application.sessionInventoryUnavailable',
       'The chat list could not be read, so no chat can be proven idle. Try again.'
     ),
+    folder_already_project: t(
+      'projects.application.folderAlreadyProject',
+      'That folder already belongs to another project.'
+    ),
+    project_is_current: t(
+      'projects.application.projectIsCurrent',
+      'This project is the open Workspace. Open another project before changing its folder.'
+    ),
+    folder_picker_unavailable: t(
+      'projects.application.folderPickerUnavailable',
+      'The folder picker is unavailable.'
+    ),
+    choose_in_progress: t(
+      'projects.application.chooseInProgress',
+      'A folder picker is already open.'
+    ),
+    project_memories_unavailable: t(
+      'projects.application.memoriesUnavailable',
+      'Memories could not be moved to General, so the project was not deleted. Try again.'
+    ),
+    project_knowledge_unavailable: t(
+      'projects.application.knowledgeUnavailable',
+      'Knowledge folders could not be moved to General, so the project was not deleted.'
+    ),
   };
   const invalid = [
     'invalid_name', 'invalid_project_id', 'invalid_project_request',
     'general_root_reserved', 'invalid_root', 'workspace_root_unset', 'general_protected',
+    'folder_already_project', 'project_is_current',
   ];
   const notFound = ['project_not_found', 'session_not_found'];
   const stale = reason === 'stale_root_revision' || reason === 'project_authority_stale';
@@ -101,6 +132,16 @@ function reviewFailure(reason, message = '', details = {}) {
     details
   );
 }
+
+// projects.chooseRoot answers with the reason at the top level (the renderer
+// branches on it) and keeps the coded error alongside for the shared toasts.
+function flatFailure(result) {
+  const error = result?.error || {};
+  const { code: _code, message: _message, ...details } = error;
+  return { ...details, ok: false, reason: error.reason || 'project_update_failed', error };
+}
+
+const FAILURE_DETAIL_KEYS = ['conflict_project_id', 'conflict_project_name'];
 
 function normalizeProjectIdentity(value) {
   const projectId = normalizeProjectId(value);
@@ -139,6 +180,10 @@ class ProjectApplicationService {
     onPermissionChanged = () => {},
     resolveWorkspaceProject = null,
     resolveWorkspaceRoot = null,
+    folderStatus = null,
+    knowledgeService = null,
+    moveProjectMemories = null,
+    projectDeleteJournal = null,
     now = () => new Date().toISOString(),
   } = {}) {
     if (!projectService || typeof projectService.list !== 'function') {
@@ -178,6 +223,25 @@ class ProjectApplicationService {
       ? onPermissionChanged
       : () => {};
     this._now = typeof now === 'function' ? now : () => new Date().toISOString();
+    this._folderStatus = folderStatus || new ProjectFolderStatus();
+    this._choosingRoot = false;
+    this._deleter = new ProjectDeleteOperation({
+      projects: projectService,
+      projectStore,
+      sessions: sessionStore,
+      shadow: shadowStore,
+      permissions: permissionStore,
+      isSessionBusy,
+      sessionIsBusy,
+      knowledge: typeof knowledgeService?.moveProjectFolders === 'function' ? knowledgeService : null,
+      moveMemories: typeof moveProjectMemories === 'function' ? moveProjectMemories : null,
+      journal: projectDeleteJournal,
+      folderStatus: this._folderStatus,
+      isCurrentProject: (project) => this._isCurrentProject(project),
+      now: this._now,
+      fail: projectFailure,
+    });
+    this.reconcilePendingProjectDeletes = () => this._deleter.reconcile(); // after each sidecar initialize
   }
 
   listProjects(payload) {
@@ -188,6 +252,64 @@ class ProjectApplicationService {
       projects: this._projects.list().map((project) => this._projectProjection(project)),
       storage: { read_only: status.read_only === true, reason: status.reason || null },
     };
+  }
+
+  // Desktop projects.list: one store snapshot, every existing field, plus
+  // `folder_exists` (null for folderless General) and `is_current` (the
+  // project's real folder IS the configured Workspace folder's real path).
+  // Filesystem probes are async and cached per (project, root_revision).
+  async listProjectsWithStatus(payload) {
+    if (payload !== undefined) return projectFailure('invalid_project_request');
+    const status = this._projectStore.getStatus();
+    const storeState = status.read_only === true ? `read_only:${status.reason || ''}` : 'writable';
+    const projects = this._projects.list();
+    const workspaceKey = await this._folderStatus.workspaceRootKey(this._configuredWorkspaceRoot());
+    const rows = await Promise.all(projects.map(async (project) => {
+      const [authorityKey, folder, isCurrent] = await Promise.all([
+        this._folderStatus.authorityKey(project, storeState, () => this._authorityKeyAsync(project)),
+        project.root_path ? this._folderStatus.folder(project.root_path) : null,
+        this._folderStatus.isCurrent(project, workspaceKey),
+      ]);
+      return {
+        ...project,
+        authority_key: authorityKey,
+        folder_exists: folder ? folder.exists === true : null,
+        is_current: isCurrent === true,
+      };
+    }));
+    return {
+      ok: true,
+      projects: rows,
+      storage: { read_only: status.read_only === true, reason: status.reason || null },
+    };
+  }
+
+  async _authorityKeyAsync(project) {
+    try {
+      const authority = typeof this._authority.captureProjectRecordAsync === 'function'
+        ? await this._authority.captureProjectRecordAsync(project)
+        : this._authority.captureProject(project.id);
+      return projectAuthorityKey(authority);
+    } catch (_error) {
+      return '';
+    }
+  }
+
+  _configuredWorkspaceRoot() {
+    try {
+      return String(this._resolveWorkspaceRoot() || '');
+    } catch (_error) {
+      return '';
+    }
+  }
+
+  async _isCurrentProject(project) {
+    try {
+      const workspaceKey = await this._folderStatus.workspaceRootKey(this._configuredWorkspaceRoot());
+      return await this._folderStatus.isCurrent(project, workspaceKey);
+    } catch (_error) {
+      return false;
+    }
   }
 
   createProject(payload) {
@@ -210,20 +332,128 @@ class ProjectApplicationService {
     }
     const projectId = normalizeProjectIdentity(payload.project_id);
     if (!projectId) return projectFailure('invalid_project_id');
-    if (!Number.isSafeInteger(payload.expected_root_revision)
-      || payload.expected_root_revision < 0) {
-      return projectFailure('invalid_project_request');
-    }
+    if (!Number.isSafeInteger(payload.expected_root_revision) || payload.expected_root_revision < 0) return projectFailure('invalid_project_request');
     if (payload.root_path !== null
       && (typeof payload.root_path !== 'string' || !payload.root_path.trim())) {
       return projectFailure('invalid_root');
     }
-    if (projectId === GENERAL_PROJECT_ID && payload.root_path !== null) {
-      return projectFailure('general_root_reserved');
-    }
-    return this._projectResult(this._projects.bindRoot(projectId, payload.root_path, {
+    if (projectId === GENERAL_PROJECT_ID && payload.root_path !== null) return projectFailure('general_root_reserved');
+    // An admitted tool operation keeps the folder it captured, so a real change
+    // waits until no chat in the project is running (as delete does).
+    let blocked = null;
+    const bound = this._projects.bindRoot(projectId, payload.root_path, {
       expectedRevision: payload.expected_root_revision,
-    }));
+      beforeChange: () => {
+        blocked = this._projectRootBusyFailure(projectId);
+        return !blocked;
+      },
+    });
+    if (blocked) return blocked;
+    const result = this._projectResult(bound);
+    if (result.ok && !result.unchanged) this._folderStatus.invalidate();
+    return result;
+  }
+
+  _projectRootBusyFailure(projectId) {
+    let records;
+    try {
+      records = typeof this._sessions.listSessionRecords === 'function'
+        ? this._sessions.listSessionRecords()
+        : this._sessions.listSessions?.();
+    } catch (_error) {
+      return projectFailure('session_inventory_unavailable');
+    }
+    if (!Array.isArray(records)) return projectFailure('session_inventory_unavailable');
+    let busyCount = 0;
+    for (const record of records) {
+      if (record?.project_id !== projectId) continue;
+      let busy = true;
+      try {
+        busy = this._isSessionBusy(record.id) !== false;
+      } catch (_error) {
+        // An unavailable lifecycle registry cannot prove that a chat is idle.
+      }
+      if (busy || sessionIsBusy(record)) busyCount += 1;
+    }
+    return busyCount > 0
+      ? projectFailure('project_sessions_busy', { busy_count: busyCount, reason: 'session_busy' })
+      : null;
+  }
+
+  // "Locate folder" / "Change folder" (desktop only): main opens the OS picker
+  // and binds the pick through bindProjectRoot, so the renderer never sends a
+  // path. The project keeps its id and chats. The open Workspace project is
+  // refused (its folder is in use), before the picker opens and again after
+  // it closes (a Workspace switch may have committed while it was open).
+  async chooseProjectRoot(payload, { pickFolder } = {}) {
+    if (!hasExactKeys(payload, ['expected_root_revision', 'project_id'])) {
+      return flatFailure(projectFailure('invalid_project_request'));
+    }
+    const projectId = normalizeProjectIdentity(payload.project_id);
+    if (!projectId) return flatFailure(projectFailure('invalid_project_id'));
+    const revision = payload.expected_root_revision;
+    if (!Number.isSafeInteger(revision) || revision < 0) {
+      return flatFailure(projectFailure('invalid_project_request'));
+    }
+    if (projectId === GENERAL_PROJECT_ID) return flatFailure(projectFailure('general_root_reserved'));
+    const project = this._projects.get(projectId);
+    if (!project) return flatFailure(projectFailure('project_not_found'));
+    if (project.root_revision !== revision) {
+      return flatFailure(projectFailure('stale_root_revision', { current_root_revision: project.root_revision }));
+    }
+    this._folderStatus.invalidate();
+    if (await this._isCurrentProject(project)) return flatFailure(projectFailure('project_is_current'));
+    const blocked = this._projectRootBusyFailure(projectId);
+    if (blocked) return flatFailure(blocked);
+    if (typeof pickFolder !== 'function') return flatFailure(projectFailure('folder_picker_unavailable'));
+    if (this._choosingRoot) return flatFailure(projectFailure('choose_in_progress'));
+    this._choosingRoot = true;
+    let picked;
+    try {
+      picked = await pickFolder({
+        defaultPath: project.root_path ? path.dirname(project.root_path) : undefined,
+      });
+    } catch (_error) {
+      return flatFailure(projectFailure('folder_picker_unavailable'));
+    } finally {
+      this._choosingRoot = false;
+    }
+    const pickedPath = typeof picked?.path === 'string' ? picked.path.trim() : '';
+    if (!picked || picked.canceled === true || !pickedPath) return { ok: false, reason: 'canceled' };
+    this._folderStatus.invalidate();
+    if (await this._isCurrentProject(this._projects.get(projectId) || project)) return flatFailure(projectFailure('project_is_current'));
+    const bound = this.bindProjectRoot({
+      project_id: projectId, root_path: pickedPath, expected_root_revision: revision,
+    });
+    return bound.ok
+      ? { ok: true, project: bound.project, unchanged: bound.unchanged === true }
+      : flatFailure(bound);
+  }
+
+  // "Reveal folder" (desktop only): the renderer names a project, main opens
+  // that project's own folder in the OS file manager. No path crosses IPC.
+  async revealProjectFolder(payload, { openFolder } = {}) {
+    if (!hasExactKeys(payload, ['project_id'])) return projectFailure('invalid_project_request');
+    const projectId = normalizeProjectIdentity(payload.project_id);
+    if (!projectId) return projectFailure('invalid_project_id');
+    if (projectId === GENERAL_PROJECT_ID) return projectFailure('general_root_reserved');
+    const project = this._projects.get(projectId);
+    if (!project) return projectFailure('project_not_found');
+    if (typeof project.root_path !== 'string' || !project.root_path.trim()) return projectFailure('project_folder_missing');
+    if (typeof openFolder !== 'function') return projectFailure('reveal_unavailable');
+    const canonical = await canonicalizeProjectRootAsync(project.root_path).catch(() => null);
+    // The probe yielded: open only a folder still registered to this project,
+    // at the same revision, whose real path is the identity it was bound to.
+    const current = this._projects.get(projectId);
+    if (!current) return projectFailure('project_not_found');
+    if (!canonical || current.root_path !== project.root_path || current.root_revision !== project.root_revision
+      || workspaceRootId(canonical) !== current.root_id) return projectFailure('project_folder_missing');
+    try {
+      const error = await openFolder(canonical);
+      return error ? projectFailure('reveal_unavailable') : { ok: true };
+    } catch (_error) {
+      return projectFailure('reveal_unavailable');
+    }
   }
 
   // "Use this folder": an idle chat adopts the configured Workspace folder's
@@ -247,115 +477,14 @@ class ProjectApplicationService {
       : assigned;
   }
 
-  // Delete a project: its idle chats move to General first (durably, one by
-  // one), then the entry is removed. A busy chat anywhere in the project blocks
-  // the whole operation so nothing is half-moved. The folder on disk is never
-  // touched; `workspace_bound` tells the caller the configured Workspace
-  // folder pointed at this project, so the renderer can clear it.
-  deleteProject(payload) {
+  // Delete a project: its knowledge folders, idle chats and memories move to
+  // General in one all-or-nothing operation (project-delete-operation.js).
+  async deleteProject(payload) {
     if (!hasExactKeys(payload, ['project_id'])) return projectFailure('invalid_project_request');
     const projectId = normalizeProjectIdentity(payload.project_id);
     if (!projectId) return projectFailure('invalid_project_id');
     if (projectId === GENERAL_PROJECT_ID) return projectFailure('general_protected');
-    const project = this._projects.get(projectId);
-    if (!project) return projectFailure('project_not_found');
-    const storage = this._projectStore.getStatus();
-    if (storage.read_only === true) return projectFailure(storage.reason || 'project_store_read_only');
-    const inventory = this._readSessionInventory();
-    if (!inventory) return projectFailure('session_inventory_unavailable');
-    const members = inventory.filter((record) => record?.project_id === projectId);
-    let busyCount = 0;
-    for (const record of members) {
-      let busy = true;
-      try {
-        busy = this._isSessionBusy(record.id) !== false;
-      } catch (_error) {
-        // An unavailable lifecycle registry cannot prove a chat is idle.
-      }
-      if (busy || sessionIsBusy(record)) busyCount += 1;
-    }
-    if (busyCount > 0) return projectFailure('project_sessions_busy', { busy_count: busyCount, reason: 'session_busy' });
-    // Moves are all-or-nothing from the caller's view: a failed move or a
-    // failed store write puts the already-moved chats back, so a refused delete
-    // never leaves chats silently in General under a project that still exists.
-    const movedIds = [];
-    for (const record of members) {
-      const updated = this._assignDurably(record.id, GENERAL_PROJECT_ID);
-      if (!updated.ok) {
-        const restored = this._restoreProjectMembers(movedIds, projectId);
-        return projectFailure(updated.reason, { repair: updated.repair, ...restored });
-      }
-      movedIds.push(record.id);
-    }
-    const removed = this._projects.remove(projectId);
-    if (!removed?.ok) {
-      const restored = this._restoreProjectMembers(movedIds, projectId);
-      return projectFailure(removed?.reason || 'project_update_failed', restored);
-    }
-    return {
-      ok: true,
-      project: { id: project.id, name: project.name, root_path: project.root_path },
-      moved_sessions: movedIds.length,
-      workspace_bound: this._workspaceBoundTo(project),
-    };
-  }
-
-  _assignDurably(sessionId, projectId) {
-    return assignSessionProjectDurably({
-      sessionStore: this._sessions,
-      shadowStore: this._shadow,
-      sessionId,
-      projectId,
-      updatedAt: this._now(),
-    });
-  }
-
-  // Best-effort rollback of a partial delete. `moved_sessions` reports the
-  // chats that could NOT be put back (still in General); zero means clean.
-  _restoreProjectMembers(sessionIds, projectId) {
-    let restored = 0;
-    for (const sessionId of sessionIds) {
-      let ok;
-      try { ok = this._assignDurably(sessionId, projectId).ok === true; } catch (_error) { ok = false; }
-      if (ok) restored += 1;
-    }
-    return { moved_sessions: sessionIds.length - restored, restored_sessions: restored };
-  }
-
-  // null when the inventory cannot be read: a delete must then refuse rather
-  // than treat "unknown" as "no chats, none busy".
-  _readSessionInventory() {
-    const store = this._sessions;
-    try {
-      if (typeof store.listSessionRecords === 'function') return store.listSessionRecords() || [];
-      if (typeof store.listSessions === 'function') return store.listSessions() || [];
-    } catch (_error) {
-      return null;
-    }
-    return [];
-  }
-
-  _listSessionRecords() {
-    const store = this._sessions;
-    try {
-      if (typeof store.listSessionRecords === 'function') return store.listSessionRecords() || [];
-      if (typeof store.listSessions === 'function') return store.listSessions() || [];
-    } catch (_error) {
-      // Fall through: an unreadable list means no chat can be proven idle.
-    }
-    return [];
-  }
-
-  _workspaceBoundTo(project) {
-    if (!project?.root_path) return false;
-    try {
-      // Canonical identity, not string equality: Windows folders differ in
-      // case and separators between the configured root and the store.
-      const rootId = workspaceRootId(String(this._resolveWorkspaceRoot() || ''));
-      return Boolean(rootId) && rootId === workspaceRootId(project.root_path);
-    } catch (_error) {
-      return false;
-    }
+    return this._deleter.run(projectId);
   }
 
   assignSessionProject(payload) {
@@ -461,10 +590,14 @@ class ProjectApplicationService {
 
   _projectResult(result) {
     if (!result?.ok) {
+      const details = Object.fromEntries(FAILURE_DETAIL_KEYS
+        .filter((key) => typeof result?.[key] === 'string')
+        .map((key) => [key, result[key]]));
       return projectFailure(result?.reason || 'project_update_failed', {
         ...(Number.isSafeInteger(result?.current_revision)
           ? { current_root_revision: result.current_revision }
           : {}),
+        ...details,
       });
     }
     return {

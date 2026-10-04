@@ -34,7 +34,7 @@ def _load_builder() -> ModuleType:
 def test_platform_defaults(sys_platform: str, expected: str) -> None:
     builder = _load_builder()
 
-    assert builder._default_platform(sys_platform) == expected  # noqa: SLF001
+    assert builder._default_platform(sys_platform) == expected
 
 
 def test_manifest_assembly_hashes_relative_files_and_excludes_manifest(
@@ -49,7 +49,7 @@ def test_manifest_assembly_hashes_relative_files_and_excludes_manifest(
     (site / "manifest.json").write_text("stale", encoding="utf-8")
     lock.write_text("example==1.0\n", encoding="utf-8")
 
-    manifest = builder._assemble_manifest(  # noqa: SLF001
+    manifest = builder._assemble_manifest(
         site,
         lock_path=lock,
         python_version="3.11",
@@ -72,7 +72,7 @@ def test_generated_timestamp_honors_source_date_epoch(monkeypatch) -> None:
     builder = _load_builder()
     monkeypatch.setenv("SOURCE_DATE_EPOCH", "0")
 
-    assert builder._timestamp() == "1970-01-01T00:00:00Z"  # noqa: SLF001
+    assert builder._timestamp() == "1970-01-01T00:00:00Z"
 
 
 def test_prune_removes_script_and_bytecode_directories(tmp_path: Path) -> None:
@@ -85,7 +85,7 @@ def test_prune_removes_script_and_bytecode_directories(tmp_path: Path) -> None:
     kept = site / "pkg" / "module.py"
     kept.write_text("VALUE = 1\n", encoding="utf-8")
 
-    removed = builder._prune_site(site)  # noqa: SLF001
+    removed = builder._prune_site(site)
 
     assert removed == ("Scripts", "bin", "pkg/__pycache__")
     assert kept.is_file()
@@ -101,7 +101,7 @@ def test_download_command_is_hash_locked_platform_specific_and_allows_sdist_only
     lock = tmp_path / "lock.txt"
     wheels = tmp_path / "wheels"
 
-    download = builder._download_command(  # noqa: SLF001
+    download = builder._download_command(
         python_executable="python.exe",
         lock_path=lock,
         wheels_directory=wheels,
@@ -141,10 +141,10 @@ def test_sdists_are_built_into_wheels_and_installed_from_the_wheelhouse(tmp_path
     (wheels / "numpy-2.4.3-cp311-cp311-win_amd64.whl").write_bytes(b"w")
     (wheels / "antlr4-python3-runtime-4.9.3.tar.gz").write_bytes(b"s")
 
-    sdists = builder._sdists(wheels)  # noqa: SLF001
+    sdists = builder._sdists(wheels)
     assert sdists == [wheels / "antlr4-python3-runtime-4.9.3.tar.gz"]
 
-    wheel = builder._wheel_command(  # noqa: SLF001
+    wheel = builder._wheel_command(
         python_executable="python.exe", sdist=sdists[0], wheels_directory=wheels
     )
     assert wheel == [
@@ -160,7 +160,7 @@ def test_sdists_are_built_into_wheels_and_installed_from_the_wheelhouse(tmp_path
         str(sdists[0]),
     ]
 
-    install = builder._install_command(  # noqa: SLF001
+    install = builder._install_command(
         python_executable="python.exe",
         wheel_paths=sorted(wheels.glob("*.whl")),
         site_directory=tmp_path / "site",

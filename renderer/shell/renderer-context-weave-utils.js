@@ -1,11 +1,14 @@
-/* global cancelAnimationFrame, document, requestAnimationFrame */
+/* global cancelAnimationFrame, document, requestAnimationFrame, window */
 /* Context Weave native contractVersion 3 controller.
  *
- * Pointer response is alpha-only except for click plucks.
+ * Background posture: the cloth never reacts to the model. Pointer response is
+ * a radial alpha sheen; a click plucks one warp and one weft thread.
  *
  * A shared lattice spans the manager-owned scene; hosts are viewport renderers
- * only. The loop runs only while the pointer is live, a pluck is decaying, or
- * the streaming band is lit -- a resting cloth costs zero frames.
+ * only. The loop runs only while the hover fade is moving, a pluck is live or a
+ * size change is settling -- a resting cloth (parked pointer included) costs
+ * zero frames. While it does run it paints at full display rate when the window
+ * is focused and at ~30 fps when it is not.
  *
  * Lattice geometry and the interlace painter live in the -core sibling. */
 (function (root, factory) {
@@ -24,7 +27,14 @@
   'use strict';
 
   var CANVAS_CLASS = 'widget-context-weave-canvas';
-  var IDLE_ENERGY = 0.08, ENERGY_TIME_CONSTANT_MS = 360;
+  var HOVER_FADE_IN_MS = 160, HOVER_FADE_OUT_MS = 420;
+  // Unfocused windows cap animated frames at ~30 fps.
+  var IDLE_FRAME_MS = 1000 / 30;
+  var FRAME_SLACK_MS = 4;
+  // A size-only scene change keeps the old lattice until it has held still this
+  // long, so a window drag does not rebuild (and visibly re-jitter) the cloth
+  // every frame.
+  var RESIZE_SETTLE_MS = 150;
 
   function clamp(value, min, max) { return Math.min(max, Math.max(min, value)); }
   function finite(value, fallback) {
@@ -45,39 +55,42 @@
   function createContextWeaveController(options) {
     var opts = options || {};
     var runtime = opts.runtime || moduleRuntime;
-    if (!runtime || typeof runtime.createFrameClock !== 'function') {
+    if (!runtime || typeof runtime.bindVisibilityAndMotionListeners !== 'function') {
       throw new Error('context-weave v3 requires the shared surface-effect runtime (options.runtime)');
     }
     var documentRef = opts.documentRef || (typeof document !== 'undefined' ? document : null);
+    var windowRef = opts.windowRef || (documentRef && documentRef.defaultView)
+      || (typeof window !== 'undefined' ? window : null);
     var reducedMotionQuery = opts.reducedMotionQuery || null;
     var effectId = opts.effectId || 'context-weave';
     var launchSeed = Number.isFinite(opts.rendererLaunchSeed) ? opts.rendererLaunchSeed : 1;
     var sceneRoleOverride = typeof opts.sceneRole === 'string' ? opts.sceneRole : '';
     var faultReporter = runtime.createFaultReporter({ report: opts.report });
-    var frameClock = runtime.createFrameClock();
     var trackedHosts = new Map();
     var frameHandle = 0, bound = false, disposed = false, staged = false;
-    var reducedMotion = false, documentHidden = false, generation = 0;
+    var reducedMotion = false, documentHidden = false, windowFocused = true, generation = 0;
+    var lastPaintAt = 0, lastDeviceDpr = 0, pendingResize = null;
     var removeVisibilityMotionListeners = function noop() {};
     var sceneRect = { left: 0, top: 0, width: 0, height: 0 };
-    var sceneRole = 'chat', sceneSeed = 1, lattice = null, latticeSignature = '';
+    var sceneRole = 'chat', sceneSeed = 1, lattice = null;
+    var latticeStructure = '', latticeSignature = '';
     var spawnAvoidanceRects = [];
     // Hoisted out of the frame loop (F6): the old firstConfig() walked the
     // whole host Map once per frame to read constants that only change on
     // refresh.
     var sharedConfig = null;
-    var pointer = { active: false, x: 0, y: 0 };
+    // `fade` is the hover light level (0..1): it rises at 160 ms and drains at
+    // 420 ms while `active` says whether the pointer is over the surface.
+    var pointer = { active: false, x: 0, y: 0, fade: 0 };
     var pluck = { active: false, col: 0, row: 0, startedAt: 0, amplitude: 0 };
-    var scopeEpoch = null, phase = 'idle', phaseRevision = 0, lastImpulseSequence = -1;
-    var currentEnergy = IDLE_ENERGY, targetEnergy = IDLE_ENERGY, attentionScale = 1;
-    var bandEnergy = 0, logicalNow = 0, needsRepaint = false, impulseCounter = 0;
+    var needsRepaint = false, paintNow = 0;
     // Reused across frames: reset by length, never reallocated.
     var bucketPaths = core.createBucketPaths();
     // Reused read-only view handed to the core painter each frame -- one
     // object for the process, so the frame loop allocates nothing.
     var paintView = {
       lattice: null, pointer: pointer, pluck: pluck,
-      age: 0, bandEnergy: 0, now: 0, radius: 150, gap: 3,
+      age: 0, motionScale: 1, radius: 150, gap: 3,
     };
 
     function seedForRole(role) {
@@ -87,6 +100,11 @@
       });
     }
     function docFor(entry) { return (entry && entry.host && entry.host.ownerDocument) || documentRef; }
+    function deviceDpr() { return (windowRef && windowRef.devicePixelRatio) || 1; }
+    function isDrawableEntry(entry) {
+      return Boolean(entry.ctx && entry.canvas && entry.w > 0 && entry.h > 0
+        && entry.host && entry.host.isConnected !== false);
+    }
     function styleFor(entry) {
       var doc = docFor(entry), win = doc && doc.defaultView;
       try {
@@ -113,6 +131,7 @@
         interlace: runtime.readStyleToken(style, '--widget-context-weave-interlace'),
         weftAlpha: runtime.readStyleToken(style, '--widget-context-weave-weft-alpha'),
         litGain: runtime.readStyleToken(style, '--widget-context-weave-lit-gain'),
+        motionScale: runtime.readStyleToken(style, '--widget-context-weave-motion-scale'),
       };
     }
     function scheduleMarkReady(entry) {
@@ -137,7 +156,10 @@
       else if (typeof entry.host.appendChild === 'function') { entry.host.appendChild(canvas); }
       else { return false; }
       var ctx = runtime.ensureCanvas2d(canvas);
-      if (!ctx) { return false; }
+      if (!ctx) {
+        if (canvas.parentNode && typeof canvas.parentNode.removeChild === 'function') { canvas.parentNode.removeChild(canvas); }
+        return false;
+      }
       entry.canvas = canvas; entry.ctx = ctx; entry.readyShown = false;
       scheduleMarkReady(entry); return true;
     }
@@ -153,9 +175,8 @@
       var width = Math.round(Math.max(finite(entry.hostRect && entry.hostRect.width), 0));
       var height = Math.round(Math.max(finite(entry.hostRect && entry.hostRect.height), 0));
       if (width <= 0 || height <= 0) { entry.w = 0; entry.h = 0; removeEntryCanvas(entry); return false; }
-      var doc = docFor(entry), win = doc && doc.defaultView;
       var dpr = runtime.computeEffectiveDpr({
-        deviceDpr: (win && win.devicePixelRatio) || 1, cssWidth: width, cssHeight: height,
+        deviceDpr: deviceDpr(), cssWidth: width, cssHeight: height,
       });
       entry.w = width; entry.h = height; entry.dpr = dpr;
       if (!ensureCanvas(entry)) { return false; }
@@ -173,35 +194,69 @@
       trackedHosts.forEach(function (entry) { if (!config && entry.config) { config = entry.config; } });
       sharedConfig = config;
     }
-    function rebuildLatticeIfNeeded() {
-      if (!sharedConfig || sceneRect.width <= 0 || sceneRect.height <= 0) {
-        lattice = null; latticeSignature = ''; return;
-      }
-      var signature = [sceneRole, sceneSeed, sceneRect.width, sceneRect.height,
-        sharedConfig.spacing, sharedConfig.density].join('|');
-      if (signature === latticeSignature && lattice) { return; }
-      latticeSignature = signature;
+    function structureSignature() {
+      return [sceneRole, sceneSeed, sharedConfig.spacing, sharedConfig.density].join('|');
+    }
+    function buildLattice() {
+      latticeStructure = structureSignature();
+      latticeSignature = latticeStructure + '|' + sceneRect.width + '|' + sceneRect.height;
       lattice = core.buildWeaveLattice({
         width: sceneRect.width, height: sceneRect.height, spacing: sharedConfig.spacing,
         density: sharedConfig.density, seed: sceneSeed, makeRng: runtime.makeRng,
       });
-      pluck.active = false;
+      // A live pluck survives a rebuild; its indices are clamped to the new grid.
+      pluck.col = Math.min(pluck.col, lattice.cols - 1);
+      pluck.row = Math.min(pluck.row, lattice.rows - 1);
+    }
+    function rebuildLatticeIfNeeded() {
+      if (!sharedConfig || sceneRect.width <= 0 || sceneRect.height <= 0) {
+        lattice = null; latticeStructure = ''; latticeSignature = ''; pendingResize = null; return;
+      }
+      var structure = structureSignature();
+      var signature = structure + '|' + sceneRect.width + '|' + sceneRect.height;
+      if (lattice && structure === latticeStructure) {
+        if (signature === latticeSignature) { pendingResize = null; return; }
+        // Size-only change: keep the old cloth until the size holds still.
+        // Static (reduced-motion) paints get no later settle frame, so they
+        // rebuild at once.
+        // The settle clock restarts only when the target size changes, so
+        // same-size refreshes (occlusion or avoidance churn) cannot postpone it.
+        if (!reducedMotion) {
+          if (!pendingResize || pendingResize.signature !== signature) {
+            pendingResize = { signature: signature, since: null };
+          }
+          return;
+        }
+      }
+      pendingResize = null;
+      buildLattice();
+    }
+    function applyPendingResize(now) {
+      if (!pendingResize) { return; }
+      if (pendingResize.since === null) { pendingResize.since = now; }
+      if (now - pendingResize.since < RESIZE_SETTLE_MS) { return; }
+      pendingResize = null;
+      buildLattice();
+    }
+    function refreshDeviceDpr() {
+      var dpr = deviceDpr();
+      if (dpr === lastDeviceDpr) { return; }
+      lastDeviceDpr = dpr;
+      trackedHosts.forEach(resizeCanvas);
     }
 
     // Mutated in place, never reallocated; the core reads it and never
     // writes back, so the lattice's typed arrays stay untouched (D5).
     function syncPaintView(now) {
       paintView.lattice = lattice;
-      paintView.now = now;
-      paintView.bandEnergy = bandEnergy;
-      paintView.age = pluck.active ? now - pluck.startedAt : 0;
+      paintView.age = pluck.active && now > pluck.startedAt ? now - pluck.startedAt : 0;
+      paintView.motionScale = clamp(finite(sharedConfig.motionScale, 1), 0.5, 2);
       paintView.radius = Math.max(finite(sharedConfig.pointerRadius, 150), 1);
       paintView.gap = Math.max(finite(sharedConfig.interlace, 3), 0);
     }
 
     function drawEntry(entry, now) {
-      if (!lattice || !sharedConfig || !entry.ctx || !entry.canvas || !entry.config
-        || !entry.host || entry.host.isConnected === false) { return; }
+      if (!lattice || !sharedConfig || !entry.config || !isDrawableEntry(entry)) { return; }
       syncPaintView(now);
       var ctx = entry.ctx;
       var viewportX = finite(entry.hostRect && entry.hostRect.left) - finite(sceneRect.left);
@@ -215,9 +270,7 @@
         ctx.setTransform(entry.dpr, 0, 0, entry.dpr, -viewportX * entry.dpr, -viewportY * entry.dpr);
         ctx.lineWidth = 1;
         ctx.lineCap = 'round';
-        // One colour, no glow. `shadowBlur` on the whole-mesh stroke plus every
-        // pulse edge was the single most expensive op in the old effect; it is
-        // never set here, and a test asserts that.
+        // One colour, no glow: `shadowBlur` is never set, and a test asserts that.
         ctx.strokeStyle = entry.config.lineColor;
         var litGain = entry.config.litGain;
         // Warp at full resting alpha; weft multiplied by weft-alpha so the two
@@ -235,57 +288,88 @@
     }
 
     // ── lifecycle ────────────────────────────────────────────────────────
-    function isDrawableEntry(entry) {
-      return Boolean(entry.ctx && entry.w > 0 && entry.h > 0
-        && entry.host && entry.host.isConnected !== false);
+    // Hoisted counter: canDraw() runs every frame, so no per-call closure.
+    var drawableScratch = 0;
+    function countDrawable(entry) { if (isDrawableEntry(entry)) { drawableScratch += 1; } }
+    function drawableEntryCount() {
+      drawableScratch = 0;
+      trackedHosts.forEach(countDrawable);
+      return drawableScratch;
     }
-    function hasDrawableEntries() {
-      var drawable = false;
-      trackedHosts.forEach(function (entry) { if (isDrawableEntry(entry)) { drawable = true; } });
-      return drawable;
-    }
+    function hasDrawableEntries() { return drawableEntryCount() > 0; }
     function canDraw() {
       return bound && !disposed && !reducedMotion && !documentHidden
         && Boolean(lattice) && Boolean(sharedConfig) && hasDrawableEntries();
     }
-    // Rest detection (F2). A static picture must cost zero frames: the loop
-    // runs only while something is actually changing, and the last painted
-    // frame is deliberately LEFT on the canvas rather than cleared.
+    // Rest detection. A static picture must cost zero frames: the loop runs
+    // only while something is actually changing -- the hover fade is still
+    // moving (a parked pointer at full fade is at rest), a pluck is live, or a
+    // size change is settling -- and the last painted frame is deliberately
+    // LEFT on the canvas rather than cleared.
     function isRestless() {
-      return pointer.active || pluck.active || bandEnergy > 0;
+      return (pointer.active ? pointer.fade < 1 : pointer.fade > 0)
+        || pluck.active || Boolean(pendingResize);
     }
-    function stopLoop() { if (frameHandle) { cancelFrame(frameHandle); frameHandle = 0; } }
+    function stopLoop() {
+      if (frameHandle) { cancelFrame(frameHandle); frameHandle = 0; }
+      lastPaintAt = 0;
+    }
     function scheduleFrame() {
       if (!canDraw() || frameHandle) { return; }
       if (!isRestless() && !needsRepaint) { return; }
       frameHandle = requestFrame(stepFrame);
     }
-    function markDirty() { needsRepaint = true; }
+    function requestRedraw() {
+      needsRepaint = true;
+      if (reducedMotion) { drawAllStatic(); } else { scheduleFrame(); }
+    }
+    function advanceFade(dtMs) {
+      if (pointer.active) {
+        if (pointer.fade < 1) {
+          pointer.fade = 1 - (1 - pointer.fade) * Math.exp(-dtMs / HOVER_FADE_IN_MS);
+          if (pointer.fade > 0.999) { pointer.fade = 1; }
+        }
+      } else if (pointer.fade > 0) {
+        pointer.fade *= Math.exp(-dtMs / HOVER_FADE_OUT_MS);
+        if (pointer.fade < 0.001) { pointer.fade = 0; }
+      }
+    }
+    function drawEach(entry) { drawEntry(entry, paintNow); }
 
     function stepFrame(timestamp) {
       frameHandle = 0;
       if (!canDraw()) { return; }
-      var now = Number.isFinite(timestamp) ? timestamp : getNow(); logicalNow = now;
-      var timing = frameClock.advance(now);
-      if (timing.longGap) { pointer.active = false; pluck.active = false; }
-      var dtMs = timing.dtMs > 0 ? timing.dtMs : 16.67;
-      currentEnergy = runtime.approachExponential(currentEnergy, targetEnergy, dtMs, ENERGY_TIME_CONSTANT_MS);
-      // Phase-envelope law: settling's 0.18 target never returns to idle, so an
-      // energy-driven band would never fully fade. The envelope terminates on
-      // the phase machine, not on a `complete` impulse the arbiter may suppress.
-      bandEnergy = runtime.advancePhaseEnvelope(bandEnergy, phase, dtMs, { reducedMotion: reducedMotion })
-        * clamp(0.35 + currentEnergy * attentionScale, 0, 1);
+      var now = Number.isFinite(timestamp) ? timestamp : getNow();
+      // Unfocused windows paint at ~30 fps; focused ones at display rate.
+      if (!windowFocused && lastPaintAt && now >= lastPaintAt
+        && now - lastPaintAt < IDLE_FRAME_MS - FRAME_SLACK_MS) {
+        frameHandle = requestFrame(stepFrame);
+        return;
+      }
+      // The first frame after a rest advances nothing: dt is 0, so a long
+      // pause can neither jump the fade nor clear the pointer or the pluck.
+      var dtMs = lastPaintAt && now > lastPaintAt ? now - lastPaintAt : 0;
+      lastPaintAt = now;
+      refreshDeviceDpr();
+      applyPendingResize(now);
+      advanceFade(dtMs);
       if (pluck.active && core.pluckExpired(now - pluck.startedAt)) { pluck.active = false; }
-      trackedHosts.forEach(function (entry) { drawEntry(entry, now); });
+      paintNow = now;
+      trackedHosts.forEach(drawEach);
       needsRepaint = false;
-      if (isRestless()) { scheduleFrame(); } else { stopLoop(); }
+      // A fault report can dispose us synchronously (manager kill switch).
+      if (isRestless()) { scheduleFrame(); } else { lastPaintAt = 0; }
     }
 
+    // Reduced motion: a static frame. The hover is binary (fully on while the
+    // pointer is over the surface, off the moment it leaves) and there is no pluck.
     function drawAllStatic() {
       if (disposed || documentHidden || !lattice || !sharedConfig) { return; }
+      refreshDeviceDpr();
       pluck.active = false;
-      bandEnergy = 0;
-      trackedHosts.forEach(function (entry) { drawEntry(entry, getNow()); });
+      pointer.fade = pointer.active ? 1 : 0;
+      paintNow = getNow();
+      trackedHosts.forEach(drawEach);
       needsRepaint = false;
     }
 
@@ -298,8 +382,9 @@
       sceneRect = layout.sceneRect || sceneRect;
       spawnAvoidanceRects = Array.isArray(layout.spawnAvoidanceRects) ? layout.spawnAvoidanceRects : [];
       if (nextRole !== sceneRole) {
-        sceneRole = nextRole; sceneSeed = seedForRole(nextRole); latticeSignature = '';
-        pointer.active = false; pluck.active = false;
+        // A different scene: the old pointer and pluck coordinates mean nothing.
+        sceneRole = nextRole; sceneSeed = seedForRole(nextRole);
+        clearPointer(); pointer.fade = 0; pluck.active = false;
       } else if (!lattice) { sceneSeed = seedForRole(nextRole); }
       var descriptors = Array.isArray(next.hosts) ? next.hosts : [];
       var hostRects = Array.isArray(layout.hostRects) ? layout.hostRects : [];
@@ -313,23 +398,38 @@
         entry.paintOcclusionRects = runtime.projectClientRectsToHost(layout.paintOcclusionRects, entry.hostRect);
         readStyles(entry); resizeCanvas(entry);
       });
+      lastDeviceDpr = deviceDpr();
       refreshSharedConfig();
       rebuildLatticeIfNeeded();
       if (wasStaged && !staged) { trackedHosts.forEach(scheduleMarkReady); }
       if (!hasDrawableEntries()) { stopLoop(); return; }
-      markDirty();
-      if (reducedMotion) { drawAllStatic(); } else { scheduleFrame(); }
+      requestRedraw();
     }
     function handleVisibilityChange(hidden) {
-      documentHidden = Boolean(hidden); frameClock.reset();
-      if (documentHidden) { stopLoop(); pointer.active = false; pluck.active = false; return; }
+      documentHidden = Boolean(hidden);
+      if (documentHidden) {
+        // No leave event is guaranteed while hidden, and there is no frame
+        // clock to notice the gap: drop the hover rather than resume it stale.
+        stopLoop(); clearPointer(); pointer.fade = 0; pluck.active = false; return;
+      }
       trackedHosts.forEach(scheduleMarkReady);
-      markDirty(); scheduleFrame();
+      requestRedraw();
+    }
+    function handleFocusChange(focused) {
+      windowFocused = Boolean(focused);
+      scheduleFrame();
     }
     function handleMotionPreferenceChange(matches) {
-      reducedMotion = Boolean(matches); frameClock.reset();
-      pointer.active = false; pluck.active = false;
-      if (reducedMotion) { stopLoop(); drawAllStatic(); } else { markDirty(); scheduleFrame(); }
+      reducedMotion = Boolean(matches);
+      clearPointer(); pointer.fade = 0; pluck.active = false;
+      if (reducedMotion) {
+        stopLoop();
+        // Static frames never get a later settle frame: apply pending geometry now.
+        if (pendingResize) { pendingResize = null; rebuildLatticeIfNeeded(); }
+        drawAllStatic();
+      } else {
+        requestRedraw();
+      }
     }
     function bind(context) {
       if (disposed) { return; }
@@ -337,9 +437,11 @@
       bound = true;
       reducedMotion = Boolean(reducedMotionQuery && reducedMotionQuery.matches);
       documentHidden = Boolean(documentRef && (documentRef.hidden || documentRef.visibilityState === 'hidden'));
+      windowFocused = !(documentRef && typeof documentRef.hasFocus === 'function') || documentRef.hasFocus();
       removeVisibilityMotionListeners = runtime.bindVisibilityAndMotionListeners({
         documentRef: documentRef, reducedMotionQuery: reducedMotionQuery,
         onVisibilityChange: handleVisibilityChange, onMotionPreferenceChange: handleMotionPreferenceChange,
+        windowRef: windowRef, onFocusChange: handleFocusChange,
       });
       applyContext(context);
     }
@@ -352,77 +454,48 @@
     function spawnAllowed(x, y) {
       return !runtime.scenePointInClientRects(spawnAvoidanceRects, sceneRect, x, y);
     }
-    function startPluck(x, y, startedAt, amplitudeScale) {
+    // Pointer state only: a pluck settles by its own decay, and the light drains
+    // through the hover fade. Reduced motion has no fade, so the hover is cleared
+    // outright.
+    function clearPointer() {
+      pointer.active = false;
+      if (reducedMotion) { pointer.fade = 0; }
+    }
+    function startPluck(x, y, startedAt) {
       if (!lattice || !sharedConfig) { return; }
-      var litGain = clamp(finite(sharedConfig.litGain, 3), 1, 5);
       // One pluck live at a time; a second click replaces it rather than
-      // stacking. Amplitude follows lit-gain so the motion axis moves the
-      // sheen and the pluck together from a single token.
+      // stacking. Amplitude follows the motion-scale token only -- lit-gain
+      // moves the sheen's peak, not the cloth.
       pluck.col = clamp(Math.round(x / Math.max(lattice.width / (lattice.cols - 1), 0.001)), 0, lattice.cols - 1);
       pluck.row = clamp(Math.round(y / Math.max(lattice.height / (lattice.rows - 1), 0.001)), 0, lattice.rows - 1);
-      pluck.startedAt = finite(startedAt, logicalNow || getNow());
-      pluck.amplitude = core.PLUCK_BASE_AMPLITUDE * amplitudeScale * (litGain / 3);
+      pluck.startedAt = finite(startedAt, getNow());
+      pluck.amplitude = core.PLUCK_BASE_AMPLITUDE * clamp(finite(sharedConfig.motionScale, 1), 0.5, 2);
       pluck.active = true;
     }
     function handleInput(payload) {
       if (!bound || disposed || !payload) { return; }
+      // A second finger or pen contact never drives hover or click, so its
+      // cancel must not clear the primary pointer's hover either.
+      if (payload.isPrimary === false) { return; }
       var type = payload.type;
-      if (type === 'cancel') {
-        pointer.active = false; pluck.active = false;
-        markDirty(); scheduleFrame(); return;
-      }
+      if (type === 'cancel') { clearPointer(); requestRedraw(); return; }
       if (!entryForRole(payload.surfaceRole)) { return; }
       var x = finite(payload.sceneX, payload.localX), y = finite(payload.sceneY, payload.localY);
       if (type === 'enter' || type === 'move' || type === 'press' || type === 'release') {
         // press/release only track the cursor: `interaction.press` and
-        // `captureOnPress` are both false in the registry now, because with
+        // `captureOnPress` are both false in the registry, because with
         // nothing moving there is no fabric left to gather inward (D5).
         pointer.x = x; pointer.y = y; pointer.active = true;
+        if (reducedMotion) { pointer.fade = 1; }
       } else if (type === 'leave') {
-        pointer.active = false;
+        clearPointer();
       } else if (type === 'click' && !reducedMotion && spawnAllowed(x, y)) {
-        startPluck(x, y, payload.timeStamp, 1);
+        startPluck(x, y, payload.timeStamp);
       }
-      markDirty();
-      if (reducedMotion) { drawAllStatic(); } else { scheduleFrame(); }
-    }
-    function setActivity(snapshot) {
-      if (disposed || !snapshot) { return; }
-      if (scopeEpoch !== null && snapshot.scopeEpoch !== scopeEpoch) { pluck.active = false; lastImpulseSequence = -1; }
-      scopeEpoch = snapshot.scopeEpoch;
-      if (typeof snapshot.phase === 'string' && snapshot.phase) { phase = snapshot.phase; }
-      if (Number.isFinite(snapshot.phaseRevision)) { phaseRevision = snapshot.phaseRevision; }
-      if (Number.isFinite(snapshot.targetEnergy)) { targetEnergy = clamp(snapshot.targetEnergy, 0, 1); }
-      if (Number.isFinite(snapshot.attentionScale)) { attentionScale = clamp(snapshot.attentionScale, 0, 1); }
-      if (phase === 'failed') { pluck.active = false; }
-      if (phase === 'streaming' && !reducedMotion) { bandEnergy = Math.max(bandEnergy, 0.001); }
-      markDirty();
-      if (reducedMotion) { currentEnergy = targetEnergy; drawAllStatic(); } else { scheduleFrame(); }
-    }
-    function handleActivityImpulse(impulse) {
-      if (disposed || !impulse || scopeEpoch === null || impulse.scopeEpoch !== scopeEpoch) { return; }
-      var sequence = Number(impulse.sequence);
-      if (Number.isFinite(sequence) && sequence <= lastImpulseSequence) { return; }
-      if (Number.isFinite(sequence)) { lastImpulseSequence = sequence; }
-      if (impulse.kind === 'cancel') { pluck.active = false; markDirty(); scheduleFrame(); return; }
-      if (reducedMotion || !lattice) { return; }
-      var amplitude = impulse.kind === 'complete' ? 0.95 : impulse.kind === 'first-token' ? 0.72 : 0.55;
-      // Deterministically-chosen INTERIOR thread: the selvedge is pinned, so a
-      // pluck on an edge column would be visually inert.
-      impulseCounter += 1;
-      var rng = runtime.makeRng(sceneSeed + impulseCounter);
-      var col = 1 + Math.floor(rng() * Math.max(lattice.cols - 2, 1));
-      var row = 1 + Math.floor(rng() * Math.max(lattice.rows - 2, 1));
-      pluck.col = Math.min(col, lattice.cols - 1);
-      pluck.row = Math.min(row, lattice.rows - 1);
-      pluck.startedAt = finite(impulse.timeStamp, logicalNow || getNow());
-      pluck.amplitude = core.PLUCK_BASE_AMPLITUDE * amplitude;
-      pluck.active = true;
-      markDirty(); scheduleFrame();
+      requestRedraw();
     }
     function getStatus() {
-      var drawable = 0;
-      trackedHosts.forEach(function (entry) { if (isDrawableEntry(entry)) { drawable += 1; } });
+      var drawable = drawableEntryCount();
       // Resting is not dormant: a controller that reported `dormant` while
       // simply not requesting frames would read as a failed activation.
       return {
@@ -435,35 +508,34 @@
       trackedHosts.forEach(function (entry) {
         entries.push({
           role: entry.role, hasCanvas: Boolean(entry.canvas), readyShown: entry.readyShown,
+          w: entry.w, h: entry.h, dpr: entry.dpr,
           nodeCount: lattice ? lattice.nodeCount : 0,
           paintOcclusionCount: entry.paintOcclusionRects.length,
         });
       });
       return {
         bound: bound, disposed: disposed, staged: staged, generation: generation,
-        reducedMotion: reducedMotion, documentHidden: documentHidden,
-        scopeEpoch: scopeEpoch, phase: phase, phaseRevision: phaseRevision,
-        currentEnergy: currentEnergy, targetEnergy: targetEnergy, attentionScale: attentionScale,
+        reducedMotion: reducedMotion, documentHidden: documentHidden, windowFocused: windowFocused,
         sceneRole: sceneRole, sceneSeed: sceneSeed,
         cols: lattice ? lattice.cols : 0, rows: lattice ? lattice.rows : 0,
         pitch: lattice ? lattice.pitch : 0, nodeCount: lattice ? lattice.nodeCount : 0,
         pluckActive: pluck.active, pluckCol: pluck.col, pluckRow: pluck.row,
-        pluckAmplitude: pluck.amplitude, bandEnergy: bandEnergy,
-        pointerActive: pointer.active, holdActive: false,
-        pendingFrameCount: frameHandle ? 1 : 0, logicalNow: logicalNow, entries: entries,
+        pluckAmplitude: pluck.amplitude, pluckAge: paintView.age,
+        pointerActive: pointer.active, pointerFade: pointer.fade,
+        resizePending: Boolean(pendingResize),
+        pendingFrameCount: frameHandle ? 1 : 0, entries: entries,
       };
     }
     function dispose() {
       if (disposed) { return; }
       disposed = true; bound = false; stopLoop();
-      pointer.active = false; pluck.active = false; bandEnergy = 0;
+      pointer.active = false; pointer.fade = 0; pluck.active = false; pendingResize = null;
       removeVisibilityMotionListeners(); removeVisibilityMotionListeners = function noop() {};
       trackedHosts.forEach(removeEntryCanvas); trackedHosts.clear();
       lattice = null; sharedConfig = null;
     }
     return {
-      bind: bind, refresh: refresh, dispose: dispose, handleInput: handleInput,
-      setActivity: setActivity, handleActivityImpulse: handleActivityImpulse, getStatus: getStatus,
+      bind: bind, refresh: refresh, dispose: dispose, handleInput: handleInput, getStatus: getStatus,
       _internals: { inspect: inspect, getLattice: function () { return lattice; } },
     };
   }

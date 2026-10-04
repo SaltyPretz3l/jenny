@@ -28,7 +28,6 @@ from sidecar.ai.engines.ollama_runtime import (
     _engine_request_id,
     _is_retryable_transport_error,
     _note_malformed_stream_line,
-    _thinking_delta,
     _thinking_stop_reason,
     _thinking_suppressed,
     generate,
@@ -158,7 +157,9 @@ class FakeEngine:
     def _record_provider_request(self, **kwargs: Any) -> None:
         self.provider_requests.append(kwargs)
 
-    def _complete_provider_request(self, *, outcome: str = "completed") -> None:
+    def _complete_provider_request(
+        self, *, outcome: str = "completed", finish_reason: str | None = None
+    ) -> None:
         self.completed += 1
         self.outcomes.append(outcome)
 
@@ -237,15 +238,16 @@ def test_is_retryable_transport_error_matrix():
     assert _is_retryable_transport_error(ValueError("totally unrelated")) is False
 
 
-def test_thinking_delta_branches():
-    assert _thinking_delta("abc", "") == ("", "abc")
-    assert _thinking_delta("...0", "0") == ("0", "...00")
-    assert _thinking_delta("", " is") == (" is", " is")
-    assert _thinking_delta(" is", " island") == (" island", " is island")
-    # Repeats and prefix-shaped chunks are real deltas, whatever their length.
-    assert _thinking_delta("x" * 40, "x" * 40) == ("x" * 40, "x" * 80)
-    assert _thinking_delta("x" * 40, "x" * 40 + "tail") == ("x" * 40 + "tail", "x" * 80 + "tail")
-    assert _thinking_delta("abc", "abc") == ("abc", "abcabc")
+def test_tool_stream_preserves_repeated_and_prefix_thinking_chunks(monkeypatch):
+    chunks = ["", "0", "0", " is", " island", "x" * 40, "x" * 40, "x" * 40 + "tail", "abc", "abc"]
+    lines = [json.dumps({"message": {"thinking": chunk}}).encode() + b"\n" for chunk in chunks]
+    lines.append(json.dumps({"message": {"content": "answer"}, "done": True}).encode() + b"\n")
+    _patch_urlopen(monkeypatch, lines)
+
+    events = list(stream_with_tools(FakeEngine(), prompt="hi", tools=[]))
+
+    assert [event.text for event in events if event.kind == "thinking"] == chunks[1:]
+    assert "".join(event.text for event in events if event.kind == "content") == "answer"
 
 
 def test_thinking_stop_reason_and_suppressed_with_no_guard():

@@ -77,8 +77,13 @@ Report:
 ```
 
 For a smaller real example, inspect the bundled
-`skills/claude_code_delegation/SKILL.md`. It defines the `/handoff` command and
-keeps the body focused on one reusable workflow.
+`skills/verification-specialist/SKILL.md`. It defines the `/verify` command
+and focuses on a reusable verification workflow.
+
+The retained plugin runtime can also contribute skills, but ordinary skill
+folders need no plugin package or signature. Prefer the folder scopes below
+for new reusable instructions; see [plugin authoring](plugins/README.md) for
+the retained declarative package boundary.
 
 ## Scopes: bundled, user, and project
 
@@ -90,14 +95,19 @@ Jenny resolves configured skill scopes in this order:
 
 | Scope | Application root | Runtime config key | Enable flag | Intended use |
 |---|---|---|---|---|
-| Bundled | The app-shipped `skills/` directory | `skills_bundled_root` | `skills_bundled_enabled` | Skills that ship with Jenny. The repository currently contains six. |
+| Bundled | The app-shipped `skills/` directory | `skills_bundled_root` | `skills_bundled_enabled` | Skills that ship with Jenny. The repository currently contains seven. |
 | User | `~/.companion/skills` | `skills_user_root` | `skills_user_enabled` | Personal skills available independently of the selected tools workspace. |
-| Project | `<tools workspace root>/.jenny/skills` | `skills_project_root` | `skills_project_enabled` | Instructions specific to the selected project. A tools workspace root must be set before this scope has a root. |
+| Project | `<session project root>/.jenny/skills` | `skills_project_root` | `skills_project_enabled` | Instructions specific to the chat's canonical project. A project without a folder has no project skill root. |
 
 The sidecar configuration model defaults all three `*_enabled` flags to `true`.
 The desktop application's saved settings default bundled skills on and user and
 project skills off, so you opt in before personal or project instructions are
 exposed through the normal UI.
+
+The composer picker and request-time attachment validation resolve project skills
+from the chat's canonical project authority. Switching the open Workspace does
+not retarget an existing chat's project skills. Settings may show the open
+Workspace catalog; a General/folderless chat receives no project scope.
 
 A null root is not synthesized by the sidecar. `_resolve_skill_scopes` simply
 omits that scope. An existing scope is also skipped when its enable flag is not
@@ -148,7 +158,7 @@ When a discovery bound is reached, Jenny keeps the files found so far and emits
 `ai.context.skill_discovery_partial`. Its reason identifies the bound, including
 `aggregate_file_budget`, `entry_budget`, `depth_budget`, or `time_budget`.
 
-## Review skills in the 1.1 source
+## Review skills
 
 - `/insight` summarizes observed harness friction in the current conversation.
   It is a retrospective, not an automatic investigation or code change.
@@ -249,13 +259,15 @@ Jenny's current personality workspace is:
 └── legacy\                 # present after a migration archives old material
 ```
 
-The three user-owned Markdown files are the only active compiled inputs:
+The three user-owned Markdown files are the only active compiled inputs. Voice
+and About the user are shared preferences; legacy `MEMORY.md` has no project
+provenance and is omitted from named-project chats:
 
 | File | Compiled section | Purpose | Character budget |
 |---|---|---|---:|
 | `PERSONALITY.md` | `### Voice` | How Jenny should sound and behave | 1,500 |
 | `USER.md` | `### About the user` | Your name, work, and collaboration preferences | 1,000 |
-| `MEMORY.md` | `### Notes` | Durable facts and preferences sent as long-term notes | 1,500 |
+| `MEMORY.md` | `### Notes` | Legacy long-term notes sent only to General-project chats | 1,500 |
 
 `.personality-state.json` records the workspace schema version and migration
 results. It is app-owned state, not prompt content. `legacy/` is an archive made
@@ -296,7 +308,8 @@ Check these causes in order:
 
 1. The configured `skills_<scope>_root` is null, missing, not a directory, or
    cannot be resolved safely. The sidecar omits a null root. Project skills also
-   need an explicit tools workspace root.
+   need a folder in the chat's canonical project authority; the open Workspace
+   alone does not grant another project's skills.
 2. The matching `skills_<scope>_enabled` flag is false. In the desktop defaults,
    user and project scopes are off until you enable them.
 3. The skill ID appears in `skills_disabled_ids`.

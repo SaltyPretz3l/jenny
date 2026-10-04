@@ -10,7 +10,7 @@ const {
 const {
   normalizeGeneratedArtifactMetadataList,
 } = require('../artifact-metadata-utils');
-const { normalizeString, normalizeId } = require('../../renderer/shared/string-utils');
+const { normalizeString, normalizeId } = require('../shared/normalize');
 const { normalizePluginOperationMetadata } = require('./session-type');
 const { normalizeSubagentMetadata } = require('./subagent-report-metadata');
 
@@ -567,6 +567,7 @@ function normalizeContextCompaction(value) {
   const tokensAfter = Number(value.tokensAfter);
   const droppedMessages = Number(value.droppedMessages);
   const droppedBytes = Number(value.droppedBytes);
+  const summarySourceDroppedMessages = Number(value.summarySourceDroppedMessages);
   const occurredAt = normalizeString(value.occurredAt);
   return {
     strategy: clipNormalizedString(value.strategy, 40),
@@ -582,6 +583,8 @@ function normalizeContextCompaction(value) {
       ? Math.min(Number.MAX_SAFE_INTEGER, Math.max(0, Math.floor(droppedMessages))) : 0,
     droppedBytes: Number.isFinite(droppedBytes)
       ? Math.min(Number.MAX_SAFE_INTEGER, Math.max(0, Math.floor(droppedBytes))) : 0,
+    summarySourceDroppedMessages: Number.isFinite(summarySourceDroppedMessages)
+      ? Math.min(Number.MAX_SAFE_INTEGER, Math.max(0, Math.floor(summarySourceDroppedMessages))) : 0,
     summaryPersisted: Boolean(value.summaryPersisted),
     historyScopeFallback: clipNormalizedString(value.historyScopeFallback, 40),
     summaryExcerpt: clipNormalizedString(value.summaryExcerpt, 1200),

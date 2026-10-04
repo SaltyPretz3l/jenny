@@ -619,3 +619,19 @@ def test_context_builder_places_workspace_instructions_after_skills(tmp_path) ->
     skills_index = prompt.index("## Available Skills")
     workspace_index = prompt.index("## Workspace Instructions (agentj.md)")
     assert skills_index < workspace_index
+
+
+def test_skill_file_limit_is_per_scope_like_electron_listing(tmp_path) -> None:
+    bundled = tmp_path / "bundled"
+    user = tmp_path / "user"
+    for root, count in ((bundled, MAX_SKILL_FILES), (user, 1)):
+        for index in range(count):
+            folder = root / f"skill-{index:03d}"
+            folder.mkdir(parents=True)
+            (folder / "SKILL.md").write_text("---\nname: Test\n---\nBody", encoding="utf-8")
+    builder = ContextBuilder(tmp_path, skill_scopes=(
+        SkillScope(scope="bundled", root=bundled), SkillScope(scope="user", root=user),
+    ), skills_system_enabled=True)
+    entries = builder._load_skills()
+    assert len(entries) == MAX_SKILL_FILES + 1
+    assert builder.build_invoked_skill_system_message({"id": "user/skill-000"})

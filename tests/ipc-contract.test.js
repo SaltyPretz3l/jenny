@@ -4,6 +4,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const {
+  JENNY_PRELOAD_INTERNAL_DESCRIPTORS,
   JENNY_SHELL_BRIDGE_DESCRIPTORS,
   createJennyShellBridge,
   getBridgeChannel,
@@ -35,6 +36,17 @@ test('reminder descriptors pin the fired, open, and snooze channels', () => {
     'reminders.onFired': ['subscribe', 'reminders:fired'],
     'reminders.onOpen': ['subscribe', 'reminders:open'],
     'reminders.snooze': ['invoke', 'reminders:snooze'],
+  };
+  for (const [methodPath, [kind, channel]] of Object.entries(expected)) {
+    assert.deepEqual(JENNY_SHELL_BRIDGE_DESCRIPTORS[methodPath], { kind, channel });
+    assert.equal(getBridgeChannel(methodPath, kind), channel);
+  }
+});
+
+test('desktop notification descriptors pin the notify send and open subscribe channels', () => {
+  const expected = {
+    'notifications.notify': ['send', 'notifications:notify'],
+    'notifications.onOpen': ['subscribe', 'notifications:open'],
   };
   for (const [methodPath, [kind, channel]] of Object.entries(expected)) {
     assert.deepEqual(JENNY_SHELL_BRIDGE_DESCRIPTORS[methodPath], { kind, channel });
@@ -100,27 +112,6 @@ test('llamaServer invoke descriptors use the eight canonical unique channels', (
     return channel;
   });
   assert.equal(new Set(channels).size, channels.length);
-});
-
-test('remote control descriptors use the eleven canonical unique channels', () => {
-  const expected = {
-    'remote.getState': ['invoke', 'remote:get-state'],
-    'remote.enable': ['invoke', 'remote:enable'],
-    'remote.disable': ['invoke', 'remote:disable'],
-    'remote.openPairing': ['invoke', 'remote:open-pairing'],
-    'remote.revokeDevice': ['invoke', 'remote:revoke-device'],
-    'remote.forgetAll': ['invoke', 'remote:forget-all'],
-    'remote.setRelay': ['invoke', 'remote:set-relay'],
-    'remote.shareSession': ['invoke', 'remote:share-session'],
-    'remote.unshareSession': ['invoke', 'remote:unshare-session'],
-    'remote.takeControl': ['invoke', 'remote:take-control'],
-    'remote.onStateChanged': ['subscribe', 'remote:state-changed'],
-  };
-  for (const [methodPath, [kind, channel]] of Object.entries(expected)) {
-    assert.deepEqual(JENNY_SHELL_BRIDGE_DESCRIPTORS[methodPath], { kind, channel });
-    assert.equal(getBridgeChannel(methodPath, kind), channel);
-  }
-  assert.equal(new Set(Object.values(expected).map((entry) => entry[1])).size, 11);
 });
 
 test('registerIpcInvokeHandlers registers only descriptor-backed invoke channels', () => {
@@ -210,6 +201,7 @@ test('ipc contract exposes a stable sorted method inventory', () => {
   assert.ok(invokePaths.includes('usage.clearHistory'));
   assert.ok(invokePaths.includes('usage.getSnapshot'));
   assert.ok(invokePaths.includes('system.refreshStats'));
+  assert.ok(invokePaths.includes('system.setStatsWatch'));
   for (const methodPath of [
     'llamaServer.chooseGguf',
     'llamaServer.chooseLibraryFolder',
@@ -234,7 +226,6 @@ test('ipc contract exposes a stable sorted method inventory', () => {
   assert.equal(invokePaths.includes('diagnostics.createReviewPrompt'), false);
   assert.equal(invokePaths.some((path) => path.startsWith('diagnostics.dev.')), false);
   assert.ok(invokePaths.includes('codexCli.getState'));
-  assert.ok(invokePaths.includes('codexCli.openLoginTerminal'));
   assert.ok(invokePaths.includes('codexCli.refresh'));
   assert.equal(invokePaths.includes('diagnostics.frontier.getState'), false);
   assert.ok(invokePaths.includes('window.getState'));
@@ -279,6 +270,8 @@ test('ipc contract exposes a stable sorted method inventory', () => {
   assert.ok(invokePaths.includes('workspaceFileMap.refresh'));
   assert.ok(invokePaths.includes('projects.adoptWorkspace'));
   assert.ok(invokePaths.includes('projects.delete'));
+  assert.ok(invokePaths.includes('projects.chooseRoot'));
+  assert.equal(getBridgeChannel('projects.chooseRoot', 'invoke'), 'projects:choose-root');
   assert.ok(invokePaths.includes('workspaceRoot.prepareProject'));
   assert.deepEqual([...invokePaths].sort(), invokePaths);
   assert.equal(getBridgeChannel('models.delete', 'invoke'), 'models:delete');
@@ -303,7 +296,6 @@ test('ipc contract exposes a stable sorted method inventory', () => {
   assert.equal(getBridgeChannel('modelTuning.getState', 'invoke'), 'model-tuning:get-state');
   assert.equal(getBridgeChannel('modelTuning.update', 'invoke'), 'model-tuning:update');
   assert.equal(getBridgeChannel('codexCli.getState', 'invoke'), 'codex-cli:get-state');
-  assert.equal(getBridgeChannel('codexCli.openLoginTerminal', 'invoke'), 'codex-cli:open-login-terminal');
   assert.equal(getBridgeChannel('codexCli.refresh', 'invoke'), 'codex-cli:refresh');
   assert.equal(getBridgeChannel('window.getState', 'invoke'), 'window:get-state');
   assert.equal(getBridgeChannel('window.onStateChanged', 'subscribe'), 'window:state-changed');
@@ -322,4 +314,69 @@ test('ipc contract exposes a stable sorted method inventory', () => {
   assert.ok(listBridgeMethodPaths({ kind: 'subscribe' }).includes('chat.onStreamRecoveryRequired'));
   assert.ok(listBridgeMethodPaths({ kind: 'subscribe' }).includes('window.onStateChanged'));
   assert.ok(allPaths.length > invokePaths.length);
+});
+
+test('bridge methods with no renderer, preload, hosted or remote caller stay retired', () => {
+  // Post-1.2.0 sweep S2: each had a descriptor and a main-process handler but
+  // no caller. Re-adding one needs a real caller and its handler/tests.
+  const retired = [
+    'sessions.updateMessage',
+    'sessions.importSession',
+    'workspaceTestRunner.listConfigs',
+    'attachments.saveAudioAsset',
+    'attachments.readToolResultAsset',
+    'plugins.setNetworkConsent',
+    'plugins.startDistributionOperation',
+    'plugins.cancelOperation',
+    'plugins.retryRecovery',
+    'plugins.beginRemoteMcpAuthorization',
+    'plugins.revokeRemoteMcpAuthorization',
+    // Plugin retirement stage 4: managed (enterprise) policy retired; no renderer caller.
+    'plugins.getPolicyStatus',
+    // Plugin retirement stage 4: catalogs, offline mirrors and generation rollback.
+    'plugins.getCatalogState',
+    'plugins.refreshCatalogs',
+    'plugins.installFromCatalog',
+    'plugins.updateFromCatalog',
+    'plugins.listRollbackCandidates',
+    'plugins.rollback',
+    'plugins.selectOfflineMirror',
+    'codexCli.openLoginTerminal',
+    'workspaceFs.readFileBase64',
+    // Legacy policy write with no authority check; the store's setPolicy stays
+    // for the executor and stream paths, but no renderer channel reaches it.
+    'tools.setPermission',
+    // Sweep S8: the piped line terminal is retired; workspacePty.* is the only
+    // Workspace IDE terminal bridge.
+    'workspaceTerminal.start',
+    'workspaceTerminal.write',
+    'workspaceTerminal.signal',
+    'workspaceTerminal.kill',
+    'workspaceTerminal.onData',
+    'workspaceTerminal.onExit',
+  ];
+  for (const methodPath of retired) {
+    assert.equal(Object.hasOwn(JENNY_SHELL_BRIDGE_DESCRIPTORS, methodPath), false, methodPath);
+  }
+});
+
+test('preload-internal channels register in main but never reach the page bridge', () => {
+  const internalChannels = Object.values(JENNY_PRELOAD_INTERNAL_DESCRIPTORS).map((descriptor) => descriptor.channel);
+  const publicChannels = Object.values(JENNY_SHELL_BRIDGE_DESCRIPTORS).map((descriptor) => descriptor.channel).filter(Boolean);
+  for (const [methodPath, descriptor] of Object.entries(JENNY_PRELOAD_INTERNAL_DESCRIPTORS)) {
+    assert.equal(descriptor.kind, 'invoke');
+    assert.equal(JENNY_SHELL_BRIDGE_DESCRIPTORS[methodPath], undefined);
+    assert.equal(getBridgeChannel(methodPath, 'invoke'), descriptor.channel);
+    assert.equal(listBridgeMethodPaths().includes(methodPath), false);
+  }
+  for (const channel of internalChannels) assert.equal(publicChannels.includes(channel), false, channel);
+
+  const invoked = [];
+  const bridge = createJennyShellBridge({ ipcRenderer: { invoke: (channel) => { invoked.push(channel); }, send() {}, on() {}, removeListener() {} } });
+  assert.equal(bridge.attachments.prepareDroppedPaths, undefined);
+  assert.equal(typeof bridge.attachments.prepareDroppedFiles, 'function');
+  assert.equal(JENNY_SHELL_BRIDGE_DESCRIPTORS['attachments.prepareDroppedFiles'].kind, 'local');
+
+  const registered = registerIpcInvokeHandlers({ handle() {} }, { 'attachments.prepareDroppedPaths': () => null });
+  assert.deepEqual(registered, ['attachments:prepare-dropped-paths']);
 });

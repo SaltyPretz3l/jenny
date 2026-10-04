@@ -108,6 +108,34 @@ test('Remove updates settings with the indexed root filtered out', async () => {
   harness.controller.dispose();
 });
 
+test('rapid folder removals serialize against acknowledged roots without resurrecting a folder', async (t) => {
+  const harness = createHarness({ roots: ['C:/one', 'D:/two'] });
+  t.after(() => { harness.controller.dispose(); harness.dom.window.close(); });
+  const pending = [];
+  const writes = [];
+  harness.dom.window.jennyShell.engines.updateSettings = (payload) => {
+    writes.push(payload.managed.libraryRoots);
+    const response = deferred();
+    pending.push(() => {
+      harness.setRoots(payload.managed.libraryRoots);
+      response.resolve({ localEngines: { openaiCompatible: { managed: payload.managed } } });
+    });
+    return response.promise;
+  };
+  harness.controller.render();
+  click(harness, '[data-model-library-folder-remove="0"]');
+  click(harness, '[data-model-library-folder-remove="1"]');
+  await flush();
+  assert.equal(writes.length, 1, 'only one folder write is in flight');
+  pending.shift()();
+  await flush();
+  assert.deepEqual(writes, [['D:/two'], []]);
+  pending.shift()();
+  await flush();
+  harness.controller.render();
+  assert.equal(harness.dom.window.document.querySelectorAll('.model-library-folders-path').length, 0);
+});
+
 test('a cancelled picker does not update settings', async () => {
   const harness = createHarness({
     chooseLibraryFolder: async () => ({ ok: true, picked: false, path: '' }),

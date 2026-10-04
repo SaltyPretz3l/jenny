@@ -1,24 +1,27 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { JSDOM } = require('jsdom');
 const { createSettingsSectionBinders } = require('../renderer/shell/renderer-settings-section-binders');
 
 test('offline local-only switch still routes through its section binder', () => {
-  const list = {};
-  let captured = null;
+  const dom = new JSDOM('<!doctype html><body><div id="offlineLocalOnlyList"></div></body>');
+  const list = dom.window.document.getElementById('offlineLocalOnlyList');
   const calls = [];
   const binders = createSettingsSectionBinders({
-    state: {}, constants: {},
+    state: { offline: { mode: 'disabled' } }, constants: {},
     callbacks: {
-      handleOfflineModeChange: (checked) => { calls.push(checked); return Promise.resolve(); },
+      handleOfflineModeChange: (checked) => { calls.push(checked); return Promise.resolve({ mode: checked ? 'local_only' : 'disabled' }); },
       showSessionActionError() {},
     },
-    getLazySectionDom: () => ({ offlineLocalOnlyList: list, offlineModelActions: {} }),
+    getLazySectionDom: () => ({ offlineLocalOnlyList: list, offlineModelActions: null }),
   });
   binders.bindSection('offline', {
-    registerSectionListener(el, event, handler) { if (el === list && event === 'inv-toggle-change') captured = handler; },
+    registerSectionListener: (target, type, handler) => target?.addEventListener(type, handler),
     finalizeSectionBindings: () => ({}),
   });
-  captured({ detail: { id: 'offlineLocalOnlyToggle', checked: true } });
+  list.dispatchEvent(new dom.window.CustomEvent('inv-toggle-change', {
+    bubbles: true, detail: { id: 'offlineLocalOnlyToggle', checked: true },
+  }));
   assert.deepEqual(calls, [true]);
 });
 

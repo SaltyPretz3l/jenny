@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 import urllib.error
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -862,3 +863,97 @@ class TestGooglePSEProvider:
         payload = GooglePSEProvider(api_key="gkey", cx="gcx").search("q", **_search_kwargs())
         assert payload["error"] == "google_pse search failed: HTTP 403"
         assert "gkey" not in json.dumps(payload)
+
+
+@pytest.mark.parametrize("provider_name", ["searxng", "brave", "tavily", "serper", "google_pse"])
+def test_initial_dns_receives_search_deadline_and_remaining_budget(
+    provider_name: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    now = [100.0]
+    monkeypatch.setattr(time, "monotonic", lambda: now[0])
+    provider = _dispatch(
+        searxng_url="https://searx.example.com",
+        provider_keys={
+            "brave": "key",
+            "tavily": "key",
+            "serper": "key",
+            "google_pse": "key",
+            "google_pse_cx": "cx",
+        },
+    )[provider_name]
+    deadlines = []
+
+    def validate(url, **kwargs):
+        deadlines.append(kwargs.get("deadline"))
+        now[0] += 0.5
+        return ValidatedUrl(url=url)
+
+    with patch(_VALIDATE_PATCH, side_effect=validate), patch(_READ_URL_PATCH) as read, patch(
+        _URLOPEN_PATCH, return_value=_mock_response(b"{}")
+    ) as vendor_open:
+        read.return_value = _url_read_result(b"{}")
+        payload = provider.search("q", **_search_kwargs(timeout_s=1))
+
+    assert payload["error"] == ""
+    assert deadlines == [101.0]
+    transport = read if provider_name == "searxng" else vendor_open
+    assert transport.call_args.kwargs["timeout_s"] == 0.5
+    if provider_name == "searxng":
+        assert transport.call_args.kwargs["deadline"] == 101.0
+
+
+def test_initial_dns_timeout_returns_search_error_without_fetch() -> None:
+    with patch(_VALIDATE_PATCH, side_effect=TimeoutError("private-host-secret")), patch(
+        _READ_URL_PATCH
+    ) as read:
+        payload = SearXNGProvider(base_url="https://searx.example.com").search(
+            "q", **_search_kwargs()
+        )
+
+    assert payload["error"] == "searxng search failed: network error"
+    assert payload["sources"] == []
+    assert payload["citations"] == []
+    read.assert_not_called()
+
+
+def test_dns_consuming_search_budget_prevents_fetch(monkeypatch: pytest.MonkeyPatch) -> None:
+    now = [100.0]
+    monkeypatch.setattr(time, "monotonic", lambda: now[0])
+
+    def validate(url, **_kwargs):
+        now[0] += 1.0
+        return ValidatedUrl(url=url)
+
+    with patch(_VALIDATE_PATCH, side_effect=validate), patch(_READ_URL_PATCH) as read:
+        payload = SearXNGProvider(base_url="https://searx.example.com").search(
+            "q", **_search_kwargs(timeout_s=1)
+        )
+
+    assert payload["error"]
+    assert payload["sources"] == []
+    read.assert_not_called()
+
+
+def test_vendor_response_read_uses_remaining_search_budget(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    now = [100.0]
+    monkeypatch.setattr(time, "monotonic", lambda: now[0])
+    response = _mock_response(b"{}")
+
+    def validate(url, **_kwargs):
+        now[0] += 0.5
+        return ValidatedUrl(url=url)
+
+    def vendor_open(_request, **_kwargs):
+        now[0] += 0.25
+        return response
+
+    with patch(_VALIDATE_PATCH, side_effect=validate), patch(
+        _URLOPEN_PATCH, side_effect=vendor_open
+    ):
+        payload = BraveProvider(api_key="key").search("q", **_search_kwargs(timeout_s=1))
+
+    assert payload["error"] == ""
+    response.settimeout.assert_called_once_with(0.25)

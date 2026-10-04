@@ -20,7 +20,6 @@ from sidecar.ai.tools.contracts import ToolExecutionFailure
 from sidecar.runtime.chat import (
     _approval_resume_descriptor,
     _approval_resume_exhausted_factory,
-    _terminal_chat_response,
     build_chat_send_response,
 )
 from sidecar.runtime.chat_models import ChatRequestContext, ChatRequestError, ChatResponse
@@ -28,7 +27,6 @@ from sidecar.runtime.turn_retry import InnerRetryableTurnError
 from sidecar.runtime.turn_state import (
     TURN_STATE_PREEMPTED,
 )
-
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -285,8 +283,9 @@ def test_tool_result_notification_includes_generated_artifacts() -> None:
 def test_context_token_estimation_uses_char_backend_when_tokenizer_unavailable() -> None:
     """Lines 733, 738-744: when context_tokens_estimate is None and TOKEN_BUDGET is on,
     CharEstimationBackend is used as fallback when tokenizer import fails."""
+    from unittest import mock
+
     from sidecar.ai.feature_flags import FEATURE_TOKEN_BUDGET
-    import unittest.mock as mock
 
     decision = ChatDecision(
         thinking_text=None,
@@ -414,7 +413,6 @@ def test_approval_resume_descriptor_returns_descriptor_from_entry() -> None:
 def test_approval_resume_call_window_raises_when_approved_call_missing() -> None:
     """Line 882: approved call_id not found in tool_calls → InnerRetryableTurnError."""
     from sidecar.runtime.chat import _approval_resume_call_window
-    from sidecar.runtime.approval_plan import ApprovalPlan
 
     plan = SimpleNamespace(
         approved_call_id="call-missing",
@@ -486,10 +484,9 @@ def test_approval_resume_call_window_reports_dropped_reserved_calls() -> None:
 
 def test_build_live_dynamic_system_messages_appends_runtime_messages_from_plan() -> None:
     """Line 959: runtime system messages from plan.working_messages[1:] are appended."""
-    from sidecar.runtime.chat import _build_live_dynamic_system_messages
-
     # Build a plan with a runtime system message in position 1
     from sidecar.ai.context.runtime_message_markers import RUNTIME_SYSTEM_MESSAGE_HEADINGS
+    from sidecar.runtime.chat import _build_live_dynamic_system_messages
     runtime_content = RUNTIME_SYSTEM_MESSAGE_HEADINGS[0] + " some runtime msg"
     plan = SimpleNamespace(
         working_messages=(
@@ -516,7 +513,7 @@ def test_build_live_dynamic_system_messages_appends_runtime_messages_from_plan()
     stack = SimpleNamespace(config=config, router=_FakeRouter())
     brain = SimpleNamespace(stack=stack)
 
-    import unittest.mock as mock
+    from unittest import mock
 
     with mock.patch(
         "sidecar.runtime.chat.build_dynamic_system_messages",
@@ -969,18 +966,14 @@ def test_plan_personality_block_present_reads_the_plan_not_the_messages() -> Non
 
 def test_validate_approval_plan_raises_on_tool_contract_mismatch() -> None:
     """Line 1086: tool_contract mismatch → InnerRetryableTurnError with mismatch."""
-    from sidecar.runtime.chat import _validate_approval_plan_live_context
-    from sidecar.runtime.approval_plan import ApprovalPlan, FrozenExecutionInputs
+    from sidecar.ai.personality import build_personality_system_message
     from sidecar.runtime.approval_plan import (
-        build_effective_args_fingerprint,
-        build_execution_context_fingerprint,
+        ApprovalPlan,
+        FrozenExecutionInputs,
         build_message_history_hash,
         stable_hash,
-        build_model_identity_fingerprint,
-        build_sampling_params_hash,
-        build_tool_contract_hash,
     )
-    from sidecar.ai.personality import build_personality_system_message
+    from sidecar.runtime.chat import _validate_approval_plan_live_context
 
     request_messages = [{"role": "user", "content": "write notes.md"}]
     frozen_input = FrozenExecutionInputs(
@@ -1143,7 +1136,7 @@ def test_validate_approval_plan_raises_on_tool_contract_mismatch() -> None:
     )
     brain = SimpleNamespace(stack=stack)
 
-    import unittest.mock as mock
+    from unittest import mock
 
     with mock.patch(
         "sidecar.runtime.chat._build_live_approval_system_prompt",
@@ -1192,8 +1185,6 @@ def test_build_chat_send_response_raises_on_non_dict_params() -> None:
 
 def test_build_chat_send_response_raises_on_cancelled_handle() -> None:
     """Line 1591: cancel_handle.raise_if_cancelled() triggers ChatRequestError path."""
-    from sidecar.runtime.multiplexer import TurnCancellationHandle
-
     decision = ChatDecision(
         thinking_text=None,
         response_text="",
@@ -1285,18 +1276,14 @@ def test_build_chat_send_response_raises_on_invalid_interactive_response() -> No
 def test_emit_agent_progress_includes_parent_agent_id_and_terminal_subcode() -> None:
     """Lines 1889, 1891: parent_agent_id and terminal_subcode appear in payload
     when the AgentProgressEvent has them set."""
-    from sidecar.ai.routing.agent_executor import AgentProgressEvent
-    from sidecar.runtime.chat import _build_router_response
-
-    captured_notifications: list[dict[str, Any]] = []
-
     # We patch _build_router_response indirectly by making executor.execute
     # trigger the emit_agent_progress callback with all optional fields.
     # To avoid spawning a real executor, we test the inner callback directly.
-
     # Extract the callback by monkeypatching AgentExecutor
-    import unittest.mock as mock
+    from unittest import mock
+
     from sidecar.ai.feature_flags import FEATURE_AGENT_EXECUTOR
+    from sidecar.ai.routing.agent_executor import AgentProgressEvent
 
     decision = ChatDecision(
         thinking_text=None,
@@ -1423,15 +1410,16 @@ def test_build_router_response_rewraps_tool_execution_failure() -> None:
 
 def test_validate_approval_plan_builds_summary_with_non_list_components() -> None:
     """Line 1129: describe_approval_plan_changes returns a dict with non-list components."""
-    from sidecar.runtime.chat import _validate_approval_plan_live_context
+    from unittest import mock
+
+    from sidecar.ai.personality import build_personality_system_message
     from sidecar.runtime.approval_plan import (
         ApprovalPlan,
         FrozenExecutionInputs,
         build_message_history_hash,
         stable_hash,
     )
-    from sidecar.ai.personality import build_personality_system_message
-    import unittest.mock as mock
+    from sidecar.runtime.chat import _validate_approval_plan_live_context
 
     request_messages = [{"role": "user", "content": "do something"}]
     frozen_input = FrozenExecutionInputs(

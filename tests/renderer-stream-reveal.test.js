@@ -31,7 +31,6 @@ test('streaming completion path has no paced drainer or post-complete bubble ado
     'styles/chat-tools.css',
     'styles/chat-thread.css',
     'styles/chat-bubble-v2.css',
-    'styles/chat-send-lifecycle-v2.css',
     'styles/chat-media-queries.css',
   ].map(readRepoFile).join('\n');
 
@@ -280,9 +279,9 @@ test('renderer reveals only the changed trailing assistant markdown blocks while
     assistantEntry.querySelector('.chat-message-content .chat-row[data-row-kind="assistant_text"][data-source-message-id="assistant_stream-reveal"]')
   );
   assert.ok(assistantEntry.querySelector('.chat-message-content [data-streaming-bubble="true"]'));
-  assert.ok(assistantEntry.classList.contains('stream-reveal-entry'));
+  assert.equal(assistantEntry.classList.contains('stream-reveal-entry'), false);
   assert.equal(revealUnits.length, 1);
-  assert.equal(revealUnits[0].classList.contains('is-revealed'), true);
+  assert.equal(assistantEntry.querySelectorAll('.chat-stream-unit.is-revealed').length, 0);
   assert.equal(revealUnits[0].classList.contains('is-streaming-tail'), false, 'streaming tail look removed (ISSUE-001 follow-up)');
 
   await shell.__emitChat({
@@ -306,7 +305,7 @@ test('renderer reveals only the changed trailing assistant markdown blocks while
   assert.equal(userEntryAfter, userEntryBefore);
   assert.equal(revealUnits.length, 2);
   assert.equal(revealUnits[0].classList.contains('is-revealed'), false);
-  assert.equal(revealUnits[1].classList.contains('is-revealed'), true);
+  assert.equal(assistantEntry.querySelectorAll('.chat-stream-unit.is-revealed').length, 0);
   assert.equal(revealUnits[0].classList.contains('is-streaming-tail'), false, 'streaming tail look removed (ISSUE-001 follow-up)');
   assert.equal(revealUnits[1].classList.contains('is-streaming-tail'), false, 'streaming tail look removed (ISSUE-001 follow-up)');
 

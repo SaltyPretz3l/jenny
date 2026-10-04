@@ -101,6 +101,9 @@
       overlayEl.className = 'ide-picker-overlay ide-mru-switcher hidden';
       overlayEl.innerHTML = '<div class="ide-picker-panel ide-mru-switcher-panel">'
         + '<div class="ide-picker-results ide-mru-switcher-results" role="listbox" aria-label="' + escapeHtml(jt('ide.mruSwitcher.recentTabs', 'Recent tabs')) + '"></div>'
+        // The overlay never takes focus, so the highlighted tab is announced
+        // through a polite live region instead of aria-activedescendant.
+        + '<div class="sr-only" aria-live="polite" data-ide-mru-announce="1"></div>'
         + '</div>';
       // A click on a row commits directly to that tab (mouse parity with the keys).
       overlayEl.addEventListener('click', handleOverlayClick);
@@ -124,6 +127,11 @@
         return;
       }
       resultsEl.innerHTML = items.map((path, index) => rowMarkup(path, index)).join('');
+      const announceEl = overlayEl?.querySelector('[data-ide-mru-announce]');
+      if (announceEl) {
+        const chosen = items[selectedIndex] || '';
+        announceEl.textContent = [basenameOf(chosen), dirOf(chosen)].filter(Boolean).join(', ');
+      }
       const active = resultsEl.querySelector('.ide-picker-row--selected');
       if (active && typeof active.scrollIntoView === 'function') {
         active.scrollIntoView({ block: 'nearest' });

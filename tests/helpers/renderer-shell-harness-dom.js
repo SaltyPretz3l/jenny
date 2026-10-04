@@ -17,6 +17,19 @@ async function waitForUi(window, ms = UI_TICK_MS) {
   await new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
+// The boot curtain owns the keyboard (palette, app chords) until it leaves the
+// DOM: after its fade, or the ~300 ms removal fallback since JSDOM fires no
+// transitionend. Throws when it never leaves.
+async function waitForStartupCurtainRemoval(window, timeoutMs = 3000) {
+  const deadline = Date.now() + timeoutMs;
+  while (window.document.getElementById('startupOverlay')) {
+    if (Date.now() >= deadline) {
+      throw new Error(`startup curtain still mounted after ${timeoutMs}ms`);
+    }
+    await waitForUi(window);
+  }
+}
+
 function readySignalCount(shellState) {
   return Number(shellState?.lifecycleReadySignals || 0);
 }
@@ -45,12 +58,41 @@ async function waitForRendererReady(
   );
 }
 
+// A test file loads the app many times, and every load used to re-read and
+// re-compile the same ~650 renderer scripts (about a fifth of each load,
+// profiled 2026-10-04). Repo files do not change during a test process, so
+// their text and compiled vm.Script are kept per process; anything outside the
+// repo (a test's own temp root) is always read fresh. The filename stays the
+// absolute on-disk path, which c8 needs to attribute coverage.
+const REPO_ROOT = path.resolve(__dirname, '..', '..') + path.sep;
+const repoTextCache = new Map();
+const repoScriptCache = new Map();
+
+function readRepoText(filePath) {
+  if (!filePath.startsWith(REPO_ROOT)) return fs.readFileSync(filePath, 'utf8');
+  let text = repoTextCache.get(filePath);
+  if (text === undefined) {
+    text = fs.readFileSync(filePath, 'utf8');
+    repoTextCache.set(filePath, text);
+  }
+  return text;
+}
+
+function runScriptFile(scriptPath, context) {
+  let script = repoScriptCache.get(scriptPath);
+  if (!script) {
+    script = new vm.Script(fs.readFileSync(scriptPath, 'utf8'), { filename: scriptPath });
+    if (scriptPath.startsWith(REPO_ROOT)) repoScriptCache.set(scriptPath, script);
+  }
+  return script.runInContext(context);
+}
+
 async function loadRendererApp({
   options = {},
   root,
   createShellStub,
 } = {}) {
-  const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+  const html = readRepoText(path.join(root, 'index.html'));
   const dom = new JSDOM(html, {
     pretendToBeVisual: true,
     runScripts: 'outside-only',
@@ -343,6 +385,9 @@ async function loadRendererApp({
   if (Number.isFinite(Number(settings.startupOverlaySlowMs))) {
     window.__JENNY_STARTUP_OVERLAY_SLOW_MS = Number(settings.startupOverlaySlowMs);
   }
+  // The starfield holds a warm start for 900 ms and collapses over 750 ms;
+  // harness boots run the plain curtain unless a test opts into the sky.
+  window.__JENNY_STARTUP_ANIMATION = settings.startupAnimation || 'off';
   window.jennyShell = createShellStub(settings.shell);
   if (settings.legacyMemoryCapturePreference !== undefined) {
     window.localStorage.setItem(
@@ -443,7 +488,6 @@ async function loadRendererApp({
   const context = dom.getInternalVMContext();
   async function runRendererScript() {
     const appScriptPath = path.join(root, 'renderer/app.js');
-    const rendererScriptContent = fs.readFileSync(appScriptPath, 'utf8');
     // Use the ABSOLUTE on-disk path as the vm script filename so c8/NODE_V8_COVERAGE
     // can reconcile the V8 coverage URL against its source files and attribute the
     // execution. With a repo-relative filename, c8 cannot map the profile back to
@@ -452,7 +496,7 @@ async function loadRendererApp({
     // Snapshot BEFORE the run: reloads re-enter this function and the counter never
     // resets, so the wait has to be for a signal newer than the one already there.
     const signalsBeforeRun = readySignalCount(window.jennyShell?.__state);
-    vm.runInContext(rendererScriptContent, context, { filename: appScriptPath });
+    runScriptFile(appScriptPath, context);
     await waitForUi(window);
     await waitForRendererReady(window, window.jennyShell?.__state, {
       afterSignals: signalsBeforeRun,
@@ -460,8 +504,7 @@ async function loadRendererApp({
   }
   for (const scriptName of SCRIPT_ORDER) {
     const scriptPath = path.join(root, scriptName);
-    const scriptContent = fs.readFileSync(scriptPath, 'utf8');
-    vm.runInContext(scriptContent, context, { filename: scriptPath });
+    runScriptFile(scriptPath, context);
   }
   // jsdom (runScripts:'outside-only', no resource loading) cannot fetch or run
   // a dynamically injected <script>, so the lazy loader can never bring Monaco
@@ -472,11 +515,14 @@ async function loadRendererApp({
   // latency that would otherwise delay render-gating setDocument() awaits.
   // Real injection (Monaco on artifact edit, Mermaid mid-stream) is owner GUI smoke.
   window.scriptLoaderUtils = {
-    async ensureScript({ src } = {}) {
-      if (!['renderer/shell/renderer-orchestration-view.js', 'renderer/shell/renderer-orchestration-controller.js'].includes(src)) return false;
+    requests: [],
+    async ensureScript({ src, isReady } = {}) {
+      this.requests.push(src);
+      if (isReady?.()) return true;
+      if (!window.rendererIdeScriptManifest?.some(([entry]) => entry === src) && !['renderer/shell/renderer-runs-view.js', 'renderer/shell/renderer-runtime-limits-view.js', 'renderer/shell/renderer-orchestration-controller.js'].includes(src)) return false;
       const scriptPath = path.join(root, src);
-      vm.runInContext(fs.readFileSync(scriptPath, 'utf8'), context, { filename: scriptPath });
-      return true;
+      runScriptFile(scriptPath, context);
+      return isReady ? Boolean(isReady()) : true;
     },
     _resetForTests() {},
   };
@@ -496,6 +542,7 @@ async function loadRendererApp({
       window[key] = value;
     }
   }
+  settings.beforeRendererBoot?.(window);
   await runRendererScript();
   return {
     dom,
@@ -508,5 +555,6 @@ async function loadRendererApp({
 
 module.exports = {
   loadRendererApp,
+  waitForStartupCurtainRemoval,
   waitForUi,
 };

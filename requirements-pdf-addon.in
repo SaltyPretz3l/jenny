@@ -1,0 +1,7 @@
+# Optional PDF reading add-on: PyMuPDF (AGPL-3.0) is NEVER bundled with Jenny.
+# The user installs it from Settings > Tools after a licence disclosure; the main
+# process downloads the per-platform wheel pinned in config/pdf-addon-manifest.json
+# and verifies it against this lock. Regenerate the lock with:
+#   uv pip compile --universal --python-version 3.11 --generate-hashes \
+#     -o requirements-pdf-addon-lock.txt requirements-pdf-addon.in
+PyMuPDF==1.27.2.2

@@ -42,6 +42,35 @@ test('timeline visibility tracker consumes hidden-stream catch-up exactly once',
   assert.equal(logs.some((entry) => entry.event === 'timeline.hidden_stream_dirty'), true);
 });
 
+test('timeline visibility tracker logs a hidden stretch once per stream, not once per delta', () => {
+  // Dogfood HB-027: one DEBUG line per hidden delta filled most of shell.log.
+  const logs = [];
+  const tracker = createTimelineVisibilityTracker({
+    appendClientLog(level, event, data) {
+      logs.push({ level, event, data });
+    },
+  });
+  const hiddenLogs = () => logs.filter((entry) => entry.event === 'timeline.hidden_stream_dirty');
+  const mark = (streamId) => tracker.markRenderableEvent('session-1', {
+    streamId, eventType: 'delta', visible: false, current: true, activeView: 'settings',
+  });
+
+  for (let index = 0; index < 50; index += 1) mark('stream-1');
+  assert.equal(hiddenLogs().length, 1);
+  assert.equal(hiddenLogs()[0].data.activeView, 'settings');
+  assert.equal(tracker.peek('session-1').hiddenRenderableEventCount, 50);
+
+  mark('stream-2');
+  assert.equal(hiddenLogs().length, 2, 'a new stream in the same stretch is logged');
+
+  // The count the per-delta lines used to carry arrives once, on return.
+  assert.equal(tracker.consumeHiddenCatchup('session-1').hiddenRenderableEventCount, 51);
+  tracker.markRenderCommitted('session-1');
+
+  mark('stream-2');
+  assert.equal(hiddenLogs().length, 3, 'hiding again after the catch-up starts a new stretch');
+});
+
 test('timeline visibility tracker ignores background streams and supports session rekeys', () => {
   const tracker = createTimelineVisibilityTracker();
 

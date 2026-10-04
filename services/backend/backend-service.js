@@ -202,7 +202,7 @@ class BackendService extends EventEmitter {
     this.ollamaManager = options.ollamaManager || new OllamaProcessManager({
       logger: emitLog,
       userDataPath: options.userDataPath,
-      resolveMaxLoadedModels: () => this._resolveOllamaMaxLoadedModels(),
+      resolveChatEngineType: () => this.currentEngineType,
       // Managed-engine liveness heartbeat for the sidecar's stream-inactivity
       // watchdog (a busy engine composing a buffered tool call streams no
       // chat chunks — see services/backend/ollama-process-manager.js).
@@ -232,7 +232,6 @@ class BackendService extends EventEmitter {
     this.skillsService = options.skillsService || null;
     this.knowledgeService = options.knowledgeService || null;
     this.mcpDiscoveryService = options.mcpDiscoveryService || null;
-    this.tipsService = options.tipsService || null;
     this.setupService = options.setupService || null;
     this.usageHistory = options.usageHistory || null;
     this.shellLogStore = options.shellLogStore || null;
@@ -277,6 +276,7 @@ class BackendService extends EventEmitter {
       configService: this.configService,
       authService: this.codexCliAuthService,
       logger: emitLog,
+      autoRefresh: this.hostMode !== 'server',
     });
     this.sidecarManager = options.sidecarManager || new SidecarManager({
       mode: 'managed-dev',
@@ -324,6 +324,9 @@ class BackendService extends EventEmitter {
     this._autoReconnectPending = false;
     this._autoReconnectAttempted = false;
     this._managedReadyOnce = false;
+    // The sidecarManager.process the managed client was last initialized for;
+    // see managedInitializedForCurrentProcess in local-engine-status.js.
+    this._managedInitializedProcess = null;
     this._stopping = false;
     this.sidecarManager.on('status', this._handleSidecarStatus);
     this.sidecarManager.on('log', this._handleSidecarLog);
@@ -484,31 +487,6 @@ class BackendService extends EventEmitter {
     return { ...this.featureFlags };
   }
 
-  // Decide the Ollama MAX_LOADED_MODELS ceiling for the next daemon spawn. Inline
-  // autocomplete loads a small FIM model alongside the chat model; on a single
-  // GPU the anti-thrash pin of 1 would force one to evict the other every time
-  // work bounces between editing and chat. When the feature is active with a
-  // selected completion model we raise the ceiling to 2 so both runners stay
-  // resident (the FIM model is CPU-pinned per-request in the sidecar by default,
-  // so it never erodes the chat model's VRAM budget). Returns null to keep the
-  // default ceiling. Read at start() time, so a toggle takes effect on the next
-  // managed Ollama (re)launch.
-  _resolveOllamaMaxLoadedModels() {
-    try {
-      if (this.featureFlags?.workspace_inline_suggest !== true) {
-        return null;
-      }
-      const ide = this.configService?.getState?.()?.workspaceIde || {};
-      if (ide.inlineSuggestEnabled === false) {
-        return null;
-      }
-      const model = String(ide.inlineSuggestModel || '').trim();
-      return model ? 2 : null;
-    } catch (_error) {
-      return null;
-    }
-  }
-
   getAuthState() {
     return _getAuthState(this);
   }
@@ -553,8 +531,8 @@ class BackendService extends EventEmitter {
     return _autoLoadDefaultModel(this);
   }
 
-  async unloadModel() {
-    return _unloadModel(this);
+  async unloadModel(options) {
+    return _unloadModel(this, options);
   }
 
   async _unloadManagedModelForShutdown() {
@@ -753,7 +731,7 @@ class BackendService extends EventEmitter {
     toolPreferences,
     approvalMode,
     debugOptions,
-    clientTiming, pluginCommandInvocation, skillInvocation, editedMessageId, failureRetry,
+    clientTiming, skillInvocation, editedMessageId, failureRetry,
     } = payload || {};
     // Runtime admission owns routed GPU/provider checks when composed. Minimal
     // embedded hosts retain the legacy entry check.
@@ -775,7 +753,7 @@ class BackendService extends EventEmitter {
       toolPreferences,
       approvalMode,
       debugOptions,
-      clientTiming, pluginCommandInvocation, skillInvocation, editedMessageId, failureRetry,
+      clientTiming, skillInvocation, editedMessageId, failureRetry,
     }, options);
   }
 

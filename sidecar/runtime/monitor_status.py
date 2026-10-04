@@ -193,6 +193,8 @@ def encode_monitor_status(
     expected_monitor_id: str | None = None,
 ) -> bytes:
     normalized = validate_monitor_status(payload, expected_monitor_id=expected_monitor_id)
+    events = normalized["events"]
+    assert isinstance(events, list)
     try:
         encoded = json.dumps(
             normalized,
@@ -202,6 +204,14 @@ def encode_monitor_status(
         ).encode("utf-8", errors="strict")
     except (TypeError, ValueError, UnicodeError) as error:
         raise MonitorStatusError("monitor status is not strict JSON") from error
+    while len(encoded) > MAX_MONITOR_STATUS_BYTES and events:
+        events.pop(0)
+        dropped = normalized["dropped_event_count"]
+        assert isinstance(dropped, int)
+        normalized["dropped_event_count"] = dropped + 1
+        encoded = json.dumps(
+            normalized, ensure_ascii=False, allow_nan=False, separators=(",", ":")
+        ).encode("utf-8", errors="strict")
     if len(encoded) > MAX_MONITOR_STATUS_BYTES:
         raise MonitorStatusError("monitor status exceeds its byte limit")
     return encoded

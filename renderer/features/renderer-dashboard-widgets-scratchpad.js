@@ -1,9 +1,9 @@
 /* Quick-capture scratchpad widget for the Home dashboard.
  *
- * Flag OFF (scratchpad_v2 default): a single multi-line note bound to the
- * active note — identical to the pre-v2 pad. Flag ON: a small set of named
- * notes (tabs), an "⋯" actions menu (send-to-chat / copy / open-loop /
- * calendar / save-as-file), inline rename, and quiet save trust signals.
+ * A small set of named notes (tabs), an "⋯" actions menu (send-to-chat /
+ * copy / open-loop / calendar / save-as-file), inline rename, and quiet save
+ * trust signals. A scratchpad with no notes yet renders the single-textarea
+ * pad.
  *
  * The DOM builds once per card body; repaints only sync the textarea value
  * when it is NOT focused (a paint mid-typing never clobbers input) and rebuild
@@ -427,16 +427,18 @@
         focusTextarea(body);
         return;
       }
-      localActiveId = noteId;
-      previewMode = false;                     // a switch always lands on edit
-      focusAfterRender = true;
-      renderMulti(body, lastScratchpad);      // optimistic instant switch
       // setActiveNote flushes the outgoing note's pending save first (the queued
       // save is pinned to the OLD note id), then persists the pointer.
       void Promise.resolve(actions.setActiveNote(noteId)).then((result) => {
         if (result && result.error) {
           setNote(body, result.error, true);
+          return;
         }
+        if (result?.ok !== true) return;
+        localActiveId = noteId;
+        previewMode = false;
+        focusAfterRender = true;
+        renderMulti(body, lastScratchpad);
       });
     }
 
@@ -963,8 +965,7 @@
         const scratchpad = ctx?.state?.homeConfig?.scratchpad;
         lastScratchpad = scratchpad;
         pinFeatureOn = ctx?.state?.features?.featureFlags?.scratchpad_pin === true;
-        const flagOn = ctx?.state?.features?.featureFlags?.scratchpad_v2 === true;
-        if (flagOn && getNotes(scratchpad).length > 0) {
+        if (getNotes(scratchpad).length > 0) {
           renderMulti(body, scratchpad);
         } else {
           renderLegacy(body, scratchpad);

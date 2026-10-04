@@ -160,7 +160,8 @@
       } else {
         const oldestMs = Date.parse(retention.oldest_at || '');
         const ageDays = Number.isFinite(oldestMs) ? Math.max(0, Math.floor((now() - oldestMs) / 86400000)) : 0;
-        copy = jtn('usage.retention.summary', ageDays, { retainedTurns: utils.formatInteger(retention.retained_turns), maxTurns: utils.formatInteger(retention.max_turns), ageDays }, 'Kept on this device: {retainedTurns} of {maxTurns} turns, oldest {ageDays} day ago.', 'Kept on this device: {retainedTurns} of {maxTurns} turns, oldest {ageDays} days ago.');
+        // With no turns there is no oldest one to date.
+        copy = !Number(retention.retained_turns) ? jt('usage.retention.summaryNoTurns', 'Kept on this device: 0 of {maxTurns} turns.', { maxTurns: utils.formatInteger(retention.max_turns) }) : jtn('usage.retention.summary', ageDays, { retainedTurns: utils.formatInteger(retention.retained_turns), maxTurns: utils.formatInteger(retention.max_turns), ageDays }, 'Kept on this device: {retainedTurns} of {maxTurns} turns, oldest {ageDays} day ago.', 'Kept on this device: {retainedTurns} of {maxTurns} turns, oldest {ageDays} days ago.');
       }
       dom.usageRetentionSummary.textContent = copy;
       dom.usageRetentionSummary.dataset.tone = tone;
@@ -171,17 +172,52 @@
       }
     }
 
-    function paintEmpty() {
+    // The Scope, By model and Recent turns groups have nothing to say without
+    // data, so they hide and one plain sentence stands in for all three.
+    function dataGroups() {
+      return [dom.usageScope || dom.usageStats, dom.usageByModel, dom.usageRecentTurns]
+        .map((node) => node?.closest?.('.settings-group') || null)
+        .filter(Boolean);
+    }
+
+    function emptyStateNode(create) {
+      const anchor = dataGroups()[0] || dom.usageStats || null;
+      const parent = anchor?.parentNode;
+      if (!parent) return null;
+      let node = parent.querySelector?.(':scope > [data-usage-empty]') || null;
+      if (!node && create && anchor.ownerDocument) {
+        node = anchor.ownerDocument.createElement('p');
+        node.className = 'usage-empty';
+        node.setAttribute('data-usage-empty', '');
+        parent.insertBefore(node, anchor);
+      }
+      return node;
+    }
+
+    function setDataGroupsVisible(visible, emptyMessage = '') {
+      for (const group of dataGroups()) group.hidden = !visible;
+      const node = emptyStateNode(!visible);
+      if (node) {
+        node.textContent = visible ? '' : emptyMessage;
+        node.hidden = visible;
+      }
+    }
+
+    function paintNoData(message) {
+      state.lastPaintSignature = '';
       if (dom.usageScope) dom.usageScope.hidden = true;
-      const empty = '<div class="usage-empty"><div class="empty-state-claim">' + utils.escapeHtml(jt('usage.emptyTitle', 'Nothing measured yet.')) + '</div>'
-        + '<div class="empty-state-claim">' + utils.escapeHtml(jt('usage.emptyDescription', 'Numbers appear here after your first retained turn.')) + '</div></div>';
-      if (dom.usageStats) dom.usageStats.innerHTML = empty;
+      if (dom.usageStats) dom.usageStats.innerHTML = '';
       if (dom.usageByModel) dom.usageByModel.innerHTML = '';
       if (dom.usageRecentMeta) dom.usageRecentMeta.textContent = '';
       if (dom.usageRecentTurns) dom.usageRecentTurns.innerHTML = '';
       if (dom.usageMore) dom.usageMore.innerHTML = '';
+      setDataGroupsVisible(false, message);
       paintRetention();
       paintActions();
+    }
+
+    function paintEmpty() {
+      paintNoData(jt('usage.emptyNoTurns', 'No turns recorded yet. Usage appears here after your first reply.'));
     }
 
     function paintFilterPressedState() {
@@ -226,20 +262,14 @@
       const available = state.snapshot.available !== false;
       if (dom.usageBadge) dom.usageBadge.textContent = available ? (state.snapshot.persistence?.durable ? jt('usage.localBadge', 'Local') : jt('usage.memoryBadge', 'Memory')) : jt('usage.unavailableBadge', 'Unavailable');
       if (!available && !state.snapshot.retention?.retained_turns) {
-        if (dom.usageScope) dom.usageScope.hidden = true;
-        if (dom.usageStats) dom.usageStats.innerHTML = '<div class="usage-empty"><div class="empty-state-claim">' + utils.escapeHtml(jt('usage.unavailable', 'Usage data is unavailable.')) + '</div></div>';
-        if (dom.usageByModel) dom.usageByModel.innerHTML = '';
-        if (dom.usageRecentMeta) dom.usageRecentMeta.textContent = '';
-        if (dom.usageRecentTurns) dom.usageRecentTurns.innerHTML = '';
-        if (dom.usageMore) dom.usageMore.innerHTML = '';
-        paintRetention();
-        paintActions();
+        paintNoData(jt('usage.unavailable', 'Usage data is unavailable.'));
         return;
       }
       if (state.snapshot.retention?.retained_turns === 0) {
         paintEmpty();
         return;
       }
+      setDataGroupsVisible(true);
       if (dom.usageScope) dom.usageScope.hidden = false;
       paintScopeOnce();
       const totals = scopeTotals();

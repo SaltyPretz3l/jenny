@@ -30,22 +30,36 @@
   const ACTION_SYMBOL = 'editor.action.quickOutline';
   const ACTION_REFERENCES = 'editor.action.referenceSearch.trigger';
 
-  // Open the project Search panel (Find in Files) without a controller-wired
-  // dependency: activate the Search activity-bar button, reusing the rail's own
-  // panel-switch + persist + synchronous render, then focus the search input.
-  // The rail button is absent only when Search has been moved to the secondary
-  // sidebar, where the input is already mounted - so focus still lands; if it is
-  // not mounted at all (closed secondary), this degrades to a no-op. Shared by
-  // the keydown handler (windowRef.document) and the palette item (doc).
-  function openSearchPanel(doc) {
+  // Panel hosts per location (index.html ids), so focus lands in the host that
+  // now shows Search rather than any stale copy in the other side's host.
+  const SEARCH_INPUT_IN_HOST = {
+    primary: '#ideRailPanel [data-ide-search-input]',
+    secondary: '#ideSecondarySidebarPanel [data-ide-search-input]',
+  };
+
+  // Open the project Search panel (Find in Files), then focus the search input.
+  // The controller-wired showPanel routes to whichever side hosts Search (the
+  // Move View model: rail, or the secondary sidebar - opening it when closed)
+  // and renders synchronously. Without it, activate the Search activity-bar
+  // button (the rail's own switch + persist + render); that button is absent
+  // when Search lives in the secondary sidebar, so this degrades to focusing an
+  // already-mounted input or a no-op. Shared by the keydown handler
+  // (windowRef.document) and the palette item (doc).
+  function openSearchPanel(doc, showPanel) {
     if (!doc || typeof doc.querySelector !== 'function') {
       return;
     }
-    const railButton = doc.querySelector('[data-ide-rail-panel="search"]');
-    if (railButton && typeof railButton.click === 'function') {
-      railButton.click();
+    let location = '';
+    if (typeof showPanel === 'function') {
+      location = showPanel('search');
+    } else {
+      const railButton = doc.querySelector('[data-ide-rail-panel="search"]');
+      if (railButton && typeof railButton.click === 'function') {
+        railButton.click();
+      }
     }
-    const input = doc.querySelector('[data-ide-search-input]');
+    const input = (SEARCH_INPUT_IN_HOST[location] && doc.querySelector(SEARCH_INPUT_IN_HOST[location]))
+      || doc.querySelector('[data-ide-search-input]');
     if (input && typeof input.focus === 'function') {
       input.focus();
     }
@@ -67,6 +81,8 @@
     const workspaceSymbolPicker = typeof options.workspaceSymbolPicker === 'function'
       ? options.workspaceSymbolPicker
       : () => {};
+    // Optional location-aware panel router (controller); absent -> rail-button path.
+    const showPanel = typeof options.showPanel === 'function' ? options.showPanel : null;
     const openFileMap = typeof options.openFileMap === 'function' ? options.openFileMap : () => {};
     const revealInMap = typeof options.revealInMap === 'function' ? options.revealInMap : () => {};
     const showBlastRadius = typeof options.showBlastRadius === 'function' ? options.showBlastRadius : () => {};
@@ -77,7 +93,6 @@
     const previewActiveFile = typeof options.previewActiveFile === 'function' ? options.previewActiveFile : () => {};
     const isPreviewSurfaceEnabled = typeof options.isPreviewSurfaceEnabled === 'function' ? options.isPreviewSurfaceEnabled : () => false;
     const toggleExplodedView = typeof options.toggleExplodedView === 'function' ? options.toggleExplodedView : () => {};
-    const isExplodedViewEnabled = typeof options.isExplodedViewEnabled === 'function' ? options.isExplodedViewEnabled : () => false;
     const toggleBookmark = typeof options.toggleBookmark === 'function' ? options.toggleBookmark : () => {};
     const nextBookmark = typeof options.nextBookmark === 'function' ? options.nextBookmark : () => {};
     const prevBookmark = typeof options.prevBookmark === 'function' ? options.prevBookmark : () => {};
@@ -89,11 +104,24 @@
       ? options.buildShortcutsHtml
       : () => '';
 
+    const appendClientLog = typeof options.appendClientLog === 'function' ? options.appendClientLog : () => {};
+    // Palette commands call into other controllers; a throw must not escape the
+    // palette, but it stays visible in the client log.
+    function logIgnoredError(site, error) {
+      appendClientLog('DEBUG', 'ide.command_ignored_error', { site, error: String(error?.message || error || '') });
+    }
+
+    function guarded(site, fn) {
+      return () => {
+        try { fn(); } catch (error) { logIgnoredError(site, error); }
+      };
+    }
+
     function runAction(id) {
       try {
         editorHost?.runAction?.(id);
-      } catch (_error) {
-        /* best-effort; Monaco may not be ready */
+      } catch (error) {
+        logIgnoredError(id, error); // Monaco may not be ready
       }
     }
 
@@ -126,7 +154,7 @@
           label: jt('ide.commands.goToSymbolInWorkspace', 'Go to Symbol in Workspace'),
           description: jt('ide.commands.goToSymbolInWorkspaceDescription', 'Search for a function, class, or symbol across open TS/JS files'),
           hint: 'Ctrl+T',
-          run: () => { try { workspaceSymbolPicker(); } catch (_error) { /* noop */ } },
+          run: guarded('workspaceSymbolPicker', workspaceSymbolPicker),
         },
         {
           id: 'ide:find-references',
@@ -142,7 +170,7 @@
           label: jt('ide.commands.findInFiles', 'Find in Files'),
           description: jt('ide.commands.findInFilesDescription', 'Search across every file in the workspace'),
           hint: 'Ctrl+Shift+F',
-          run: () => { try { openSearchPanel(doc); } catch (_error) { /* noop */ } },
+          run: () => openSearchPanel(doc, showPanel),
         },
         ...(isFileMapEnabled() ? [{
           id: 'ide:open-file-map',
@@ -150,21 +178,21 @@
           label: jt('ide.commands.openFileMap', 'Open File Map'),
           description: jt('ide.commands.openFileMapDescription', 'Open the workspace file map (dependency graph)'),
           hint: null,
-          run: () => { try { openFileMap(); } catch (_error) { /* noop */ } },
+          run: guarded('openFileMap', openFileMap),
         }, {
           id: 'ide:reveal-in-map',
           group: 'Workspace',
           label: jt('ide.commands.revealActiveFileInMap', 'Reveal Active File in Map'),
           description: jt('ide.commands.revealActiveFileInMapDescription', 'Frame and focus the active file on the workspace file map'),
           hint: null,
-          run: () => { try { revealInMap(); } catch (_error) { /* noop */ } },
+          run: guarded('revealInMap', revealInMap),
         }, {
           id: 'ide:show-blast-radius',
           group: 'Workspace',
           label: jt('ide.commands.showBlastRadius', 'Show Blast Radius of Active File'),
           description: jt('ide.commands.showBlastRadiusDescription', 'Light every file that depends on the active file (transitive importers)'),
           hint: null,
-          run: () => { try { showBlastRadius(); } catch (_error) { /* noop */ } },
+          run: guarded('showBlastRadius', showBlastRadius),
         }] : []),
         ...(isPreviewSurfaceEnabled() ? [{
           id: 'ide:open-preview',
@@ -172,30 +200,30 @@
           label: jt('ide.commands.openPreview', 'Open Preview'),
           description: jt('ide.commands.openPreviewDescription', 'Open the workspace Preview stage surface'),
           hint: null,
-          run: () => { try { openPreviewSurface(); } catch (_error) { /* noop */ } },
+          run: guarded('openPreviewSurface', openPreviewSurface),
         }, {
           id: 'ide:preview-active-file',
           group: 'Workspace',
           label: jt('ide.commands.previewActiveFile', 'Preview Active File'),
           description: jt('ide.commands.previewActiveFileDescription', 'Preview the active file in the Preview stage surface'),
           hint: null,
-          run: () => { try { previewActiveFile(); } catch (_error) { /* noop */ } },
+          run: guarded('previewActiveFile', previewActiveFile),
         }] : []),
-        ...(isExplodedViewEnabled() ? [{
+        {
           id: 'ide:toggle-exploded-view',
           group: 'Workspace',
           label: jt('ide.commands.toggleExplodedView', 'Toggle Exploded View'),
           description: jt('ide.commands.toggleExplodedViewDescription', 'Switch the active TS/JS file between code and an exploded node graph'),
           hint: null,
-          run: () => { try { toggleExplodedView(); } catch (_error) { /* noop */ } },
-        }] : []),
+          run: guarded('toggleExplodedView', toggleExplodedView),
+        },
         {
           id: 'ide:toggle-minimap',
           group: 'Workspace',
           label: jt('ide.commands.toggleMinimap', 'Toggle Minimap'),
           description: jt('ide.commands.toggleMinimapDescription', 'Show or hide the editor minimap'),
           hint: null,
-          run: () => { try { toggleMinimap(); } catch (_error) { /* noop */ } },
+          run: guarded('toggleMinimap', toggleMinimap),
         },
         {
           id: 'ide:reopen-closed-tab',
@@ -203,7 +231,7 @@
           label: jt('ide.commands.reopenClosedTab', 'Reopen Closed Tab'),
           description: jt('ide.commands.reopenClosedTabDescription', 'Reopen the most recently closed editor tab'),
           hint: 'Ctrl+Shift+T',
-          run: () => { try { reopenClosedTab(); } catch (_error) { /* noop */ } },
+          run: guarded('reopenClosedTab', reopenClosedTab),
         },
         {
           id: 'ide:toggle-bookmark',
@@ -211,7 +239,7 @@
           label: jt('ide.commands.toggleBookmark', 'Toggle Bookmark'),
           description: jt('ide.commands.toggleBookmarkDescription', 'Add or remove a line bookmark on the active line'),
           hint: 'Ctrl+Alt+K',
-          run: () => { try { toggleBookmark(); } catch (_error) { /* noop */ } },
+          run: guarded('toggleBookmark', toggleBookmark),
         },
         {
           id: 'ide:next-bookmark',
@@ -219,7 +247,7 @@
           label: jt('ide.commands.nextBookmark', 'Next Bookmark'),
           description: jt('ide.commands.nextBookmarkDescription', 'Jump to the next bookmark in the active file'),
           hint: 'Ctrl+Alt+L',
-          run: () => { try { nextBookmark(); } catch (_error) { /* noop */ } },
+          run: guarded('nextBookmark', nextBookmark),
         },
         {
           id: 'ide:prev-bookmark',
@@ -227,7 +255,7 @@
           label: jt('ide.commands.previousBookmark', 'Previous Bookmark'),
           description: jt('ide.commands.previousBookmarkDescription', 'Jump to the previous bookmark in the active file'),
           hint: 'Ctrl+Alt+J',
-          run: () => { try { prevBookmark(); } catch (_error) { /* noop */ } },
+          run: guarded('prevBookmark', prevBookmark),
         },
         {
           id: 'ide:list-bookmarks',
@@ -235,7 +263,7 @@
           label: jt('ide.commands.listAllBookmarks', 'List All Bookmarks'),
           description: jt('ide.commands.listAllBookmarksDescription', 'Pick from every bookmark and jump to it'),
           hint: 'Ctrl+Alt+P',
-          run: () => { try { listBookmarks(); } catch (_error) { /* noop */ } },
+          run: guarded('listBookmarks', listBookmarks),
         },
       ];
     }
@@ -269,7 +297,7 @@
 
     function disposeHelp() {
       if (overlay) {
-        try { overlay.destroy(); } catch (_error) { /* best-effort */ }
+        try { overlay.destroy(); } catch (error) { logIgnoredError('help_overlay_destroy', error); }
         overlay = null;
       }
     }
@@ -306,6 +334,7 @@
     const workspaceSymbolPicker = typeof options.workspaceSymbolPicker === 'function'
       ? options.workspaceSymbolPicker
       : () => {};
+    const showPanel = typeof options.showPanel === 'function' ? options.showPanel : null;
     const navBack = typeof options.navBack === 'function' ? options.navBack : () => {};
     const navForward = typeof options.navForward === 'function' ? options.navForward : () => {};
     const toggleBookmark = typeof options.toggleBookmark === 'function' ? options.toggleBookmark : () => {};
@@ -403,7 +432,7 @@
       // 'f4' tab-close branch above keys on 'f4', so plain 'f' never collides.
       if (ctrl && event.shiftKey && key === 'f' && !event.altKey) {
         event.preventDefault();
-        openSearchPanel(windowRef.document);
+        openSearchPanel(windowRef.document, showPanel);
         return;
       }
       // Ctrl+W is Electron-reserved, so reopen-closed-tab rides Ctrl+Shift+T.

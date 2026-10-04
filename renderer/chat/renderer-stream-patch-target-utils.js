@@ -10,7 +10,27 @@
   // The live bubble is the ground truth for which article is streaming.
   const STREAMING_BUBBLE_SELECTOR = '[data-streaming-bubble="true"]';
 
-  function resolveReasoningPatchBlocks(existingBlocks, nextStack, scope, rowModelList, getBlockKey) {
+  // The key a reasoning block aligns on: its phase key, else its thinking id,
+  // else its ordinal. Shared by the stack patch and the block resolver.
+  function getReasoningBlockKey(block, index) {
+    const key = String(
+      block?.getAttribute?.('data-phase-key')
+      || block?.getAttribute?.('data-thinking-id')
+      || ''
+    ).trim();
+    return key || `index:${index}`;
+  }
+
+  // `diagnostics` (optional): a plain object; every null return names why in
+  // diagnostics.reason. The fallback it triggers rebuilds the whole turn row
+  // list, and an anonymous null hid that rebuild behind "patch applied" for
+  // months (timeline-perf 2026-09-30). Keys stay short and fixed: they ship
+  // in client_timing.row_list_morph_reasons.
+  function resolveReasoningPatchBlocks(existingBlocks, nextStack, scope, rowModelList, getBlockKey, diagnostics) {
+    const reject = (reason) => {
+      if (diagnostics && typeof diagnostics === 'object') diagnostics.reason = reason;
+      return null;
+    };
     const nextBlocks = Array.from(nextStack.querySelectorAll('.reasoning-row-block'));
     if (!rowModelList || !scope?.matches?.('.chat-row[data-row-kind="reasoning"]')) {
       return nextBlocks;
@@ -21,17 +41,17 @@
     const nextByKey = new Map(nextBlocks.map((block, index) => [getBlockKey(block, index), block]));
     const localKeys = new Set(existingBlocks.map(getBlockKey));
     if (nextByKey.size !== nextBlocks.length || localKeys.size !== existingBlocks.length) {
-      return null;
+      return reject('duplicate_block_key');
     }
     const alignedBlocks = existingBlocks.map((block, index) => nextByKey.get(getBlockKey(block, index)));
     if (alignedBlocks.some((block) => !block)) {
-      return null;
+      return reject('block_unaligned');
     }
     const otherBlocks = Array.from(rowModelList.querySelectorAll('.reasoning-row-block'))
       .filter((block) => !scope.contains(block));
     const otherByKey = new Map(otherBlocks.map((block, index) => [getBlockKey(block, index), block]));
     if (otherByKey.size !== otherBlocks.length) {
-      return null;
+      return reject('sibling_duplicate_key');
     }
     // A sibling phase is left alone only while its rendered status and settled
     // fingerprint (summary, labels, body) still match the incoming stack.
@@ -39,13 +59,96 @@
     for (const [key, nextBlock] of nextByKey) {
       if (localKeys.has(key)) continue;
       const renderedBlock = otherByKey.get(key);
-      if (!renderedBlock
-        || !sameAttribute(renderedBlock, nextBlock, 'data-reasoning-status')
-        || !sameAttribute(renderedBlock, nextBlock, 'data-reasoning-fp')) {
-        return null;
-      }
+      if (!renderedBlock) return reject('sibling_missing');
+      if (!sameAttribute(renderedBlock, nextBlock, 'data-reasoning-status')) return reject('sibling_status_mismatch');
+      if (!sameAttribute(renderedBlock, nextBlock, 'data-reasoning-fp')) return reject('sibling_fp_mismatch');
     }
     return alignedBlocks;
+  }
+
+  // The reasoning row the LIVE segment streams into. A row-model turn article
+  // interleaves every segment's reasoning, so an article-wide first match would
+  // mirror the stream into segment 0. A row keeps its first segment as
+  // data-source-message-id when the reducer reuses it for a later segment (a
+  // phase/thinking id repeated across a tool boundary); the later segment is
+  // then named only in the space-separated data-source-message-ids (HB-005).
+  // Missing that row fell back to the LAST stack -- another segment's row --
+  // so every reasoning delta failed its block-key check and rebuilt the whole
+  // turn's row list, large diff rows included. Last resort stays the last stack.
+  function resolveLiveReasoningScope(rowModelList, messageId, escapeSelectorValue) {
+    const escape = typeof escapeSelectorValue === 'function' ? escapeSelectorValue : (value) => String(value || '');
+    const normalizedId = String(messageId || '').trim();
+    if (normalizedId) {
+      const reasoningRow = '.chat-row[data-row-kind="reasoning"]';
+      for (const attribute of ['data-source-message-id=', 'data-source-message-ids~=']) {
+        const rows = rowModelList.querySelectorAll(`${reasoningRow}[${attribute}"${escape(normalizedId)}"]`);
+        if (rows.length) return rows[rows.length - 1];
+      }
+    }
+    const stacks = rowModelList.querySelectorAll('.reasoning-row-stack');
+    if (stacks.length) {
+      return stacks[stacks.length - 1].closest('.chat-row') || rowModelList;
+    }
+    return rowModelList;
+  }
+
+  function rowNamesMessage(row, messageId) {
+    return row?.getAttribute?.('data-source-message-id') === messageId
+      || String(row?.getAttribute?.('data-source-message-ids') || '').split(/\s+/).includes(messageId);
+  }
+
+  function sameReasoningState(left, right) {
+    const leftBlocks = Array.from(left.querySelectorAll('.reasoning-row-block'));
+    const rightBlocks = Array.from(right.querySelectorAll('.reasoning-row-block'));
+    return leftBlocks.length === rightBlocks.length && leftBlocks.every((block, index) => (
+      ['data-phase-key', 'data-reasoning-status', 'data-reasoning-fp']
+        .every((name) => block.getAttribute(name) === rightBlocks[index].getAttribute(name))
+    ));
+  }
+
+  // HB-010: the incoming reasoning stack for a row-model patch. The
+  // message-level widget renders every phase of the stream (reasoning_phases
+  // is stream-scoped, and entries without a known thinking id group apart), so
+  // it never lines up with a one-phase row and every delta rebuilt the whole
+  // turn row list. Take the live row's own render instead: the live segment's
+  // reasoning rows rendered the way the turn article renders them. Only when
+  // the scope row names the live segment (the last-stack fallback belongs to
+  // another segment) and every other row the segment owns is already on screen
+  // with the same phase state -- a checkpoint continuation opening phase 2, or
+  // phase 1 settling, is structural and keeps the row-list morph. null means
+  // "use the message-level stack" (and its fallback).
+  // `options.diagnostics` (optional) receives the null reason, same contract
+  // as resolveReasoningPatchBlocks.
+  function buildLiveReasoningRowStackMarkup(options) {
+    const { scope, rowModelList, messageId, buildLiveReasoningRowsMarkup, doc, diagnostics } = options || {};
+    const reject = (reason) => {
+      if (diagnostics && typeof diagnostics === 'object') diagnostics.reason = reason;
+      return null;
+    };
+    const normalizedId = String(messageId || '').trim();
+    const rowId = String(scope?.getAttribute?.('data-row-id') || '').trim();
+    if (!normalizedId || !rowId || typeof buildLiveReasoningRowsMarkup !== 'function'
+      || typeof doc?.createElement !== 'function' || !rowModelList?.querySelectorAll) {
+      return reject('helper_unavailable');
+    }
+    if (!scope.matches?.('.chat-row[data-row-kind="reasoning"]')) return reject('scope_not_reasoning_row');
+    if (!rowNamesMessage(scope, normalizedId)) return reject('scope_names_other_segment');
+    const template = doc.createElement('template');
+    template.innerHTML = String(buildLiveReasoningRowsMarkup() || '').trim();
+    const renderedById = new Map(Array.from(rowModelList.querySelectorAll('.chat-row[data-row-kind="reasoning"]'))
+      .map((row) => [row.getAttribute('data-row-id'), row]));
+    let scopeStack = null;
+    for (const freshRow of template.content.querySelectorAll('.chat-row[data-row-kind="reasoning"]')) {
+      const freshId = freshRow.getAttribute('data-row-id');
+      if (freshId === rowId) {
+        scopeStack = freshRow.querySelector('.reasoning-row-stack');
+      } else if (!renderedById.has(freshId)) {
+        return reject('segment_row_not_rendered');
+      } else if (!sameReasoningState(renderedById.get(freshId), freshRow)) {
+        return reject('segment_row_state_mismatch');
+      }
+    }
+    return scopeStack ? scopeStack.outerHTML : reject('scope_stack_missing');
   }
 
   function createStreamPatchTargetUtils(deps) {
@@ -290,7 +393,10 @@
   }
 
   return {
+    getReasoningBlockKey,
+    buildLiveReasoningRowStackMarkup,
     createStreamPatchTargetUtils,
+    resolveLiveReasoningScope,
     resolveReasoningPatchBlocks,
   };
 });

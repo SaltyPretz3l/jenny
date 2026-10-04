@@ -10,7 +10,7 @@ Jenny is also a solo-maintained hobby project. Issues and PRs are read, and good
 
 ## Scope: what fits
 
-Jenny is deliberately a **local-first** harness for small-to-mid local models — coding workflows, data-viz artifacts, and well-bounded tool calls, plus a light companion shell. Good fits: reliability fixes, tool-call robustness, local-model compatibility, accessibility, docs. Out of scope: anything requiring cloud services, accounts, or telemetry; previously removed surfaces (cloud companions, speech, computer-use) stay removed.
+Jenny is deliberately a **local-first** harness for small-to-mid local models — coding workflows, data-viz artifacts, and well-bounded tool calls, plus a light companion shell. Good fits: reliability fixes, tool-call robustness, local-model compatibility, accessibility, docs. Optional ChatGPT sign-in and Codex CLI integrations already exist, as does experimental Docker/browser hosting. New cloud paths require an owner-scoped plan and the existing service/security boundaries. Telemetry, speech, ambient companion behavior and retired executable plugin tiers remain outside ordinary contribution scope.
 
 ## Development environment
 
@@ -25,13 +25,17 @@ npm run dev                    # launches the app via the dev launcher (start.js
 
 ## Gates before you open a PR
 
-Run these locally; CI runs the same set on every PR.
+Start with the smallest meaningful checks for the files and behavior changed.
+`npm run test:affected` is the normal code inner loop; documentation-only changes
+use the relevant documentation/policy scripts. CI and release gates are broader.
+Full `npm run check:all` and GUI smoke require an explicit owner request under
+AGENTS.md; see WORKFLOW.md for the cadence.
 
 ```sh
 npm run lint                     # eslint
 npm run test:dist                # the supported distribution gate (release metadata,
                                  # migrations, protocol contracts, tool loop)
-npm test                         # full deterministic Node suite — for non-trivial changes
+npm run test:affected             # select the relevant Node tests for code changes
 python -m pytest tests/sidecar   # sidecar (Python) suite — when you touch sidecar/
 ```
 
@@ -41,9 +45,10 @@ If a gate fails for a reason that looks unrelated to your change, say so in the 
 
 - `sidecar/ai/` must not import from the Electron side (`main.js`, `services/`) or `renderer/`.
 - Electron and Python communicate **only** through JSON-RPC over stdio; the schema lives in [`sidecar/protocol.py`](sidecar/protocol.py).
-- The sidecar is stateless per request; Electron owns conversation persistence.
-- Secrets live in Electron `safeStorage` only — never in environment variables, plaintext config, or the renderer.
-- Local-first engine posture: no new cloud engine paths.
+- The router is stateless per request; Electron owns desktop conversation persistence and consent. Documented memory/runtime subsystems retain bounded state.
+- Desktop secrets use Electron `safeStorage`; reject its unprotected `basic_text` backend. Never put keys in environment variables, plaintext config or the renderer. Hosted credentials use the explicit mounted-secret-file exception in AGENTS.md.
+- Jenny owns the ChatGPT OAuth flow. Never read or copy another tool's credentials; the Codex CLI route lets the CLI use its own login.
+- Local engines are the default. Cloud changes require a scoped plan, service boundary, redaction and focused checks. Browser-host changes follow [HOSTED_JENNY.md](docs/operations/HOSTED_JENNY.md).
 
 ## Conventions that catch new contributors
 
@@ -52,7 +57,7 @@ If a gate fails for a reason that looks unrelated to your change, say so in the 
 - A model-invocable capability is a `tool` — don't introduce `action` or `capability` as synonyms.
 - Error codes use `CMP-<DOMAIN>-<NNNN>`.
 - Branch prefixes: `feat/`, `fix/`, `docs/`, `chore/`.
-- Bug fixes come with a focused regression test that fails before the fix and passes after.
+- Prefer meaningful focused regression tests for bugs and contract changes, scaled to risk.
 
 ## Commits and pull requests
 
@@ -168,6 +173,6 @@ python -m pytest tests/sidecar/ai/tools/test_catalog.py tests/sidecar/ai/tools/t
 node scripts/run-node-tests-safe.js tests/tool-manifest-electron-parity.test.js --timeout-ms=600000
 ```
 
-Also run the focused tests for the handler itself. Before opening a PR, finish
-with the broader sidecar and Node gates listed above under “Gates before you
-open a PR.”
+Also run the focused tests for the handler itself. Complete the checks required
+by the changed boundary, record their results and any owner-run limits in the PR,
+and follow WORKFLOW.md for broader gates.

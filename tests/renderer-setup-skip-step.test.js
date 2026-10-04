@@ -59,21 +59,21 @@ test('hub skips only the selected step per update and never promotes setupComple
 
   await controller.init();
   const root = document.getElementById('homeSetupModalRoot');
-  root.querySelector('[data-action="skipStep"][data-step-id="localModel"]').click();
+  root.querySelector('[data-action="skipStep"][data-step-id="workspaceRoot"]').click();
   await settle();
   root.querySelector('[data-action="skipStep"][data-step-id="skills"]').click();
   await settle();
 
   assert.deepEqual(patches, [
-    { steps: { local_model: 'skipped' } },
+    { steps: { workspace_root: 'skipped' } },
     { steps: { skills: 'skipped' } },
   ]);
   assert.deepEqual(persistedSteps, {
     ...INITIAL_STEPS,
-    local_model: 'skipped',
+    workspace_root: 'skipped',
     skills: 'skipped',
   });
   assert.equal(patches.some((patch) => patch.setupComplete === true), false);
-  assert.equal(root.querySelector('[data-setup-step-id="workspaceRoot"] .setup-hub-glyph').getAttribute('aria-label'), 'Pending');
+  assert.equal(root.querySelector('[data-setup-step-id="workspaceRoot"] .setup-hub-glyph').getAttribute('aria-label'), 'Skipped');
   assert.equal(root.querySelector('[data-setup-step-id="personality"] .setup-hub-glyph').getAttribute('aria-label'), 'Pending');
 });

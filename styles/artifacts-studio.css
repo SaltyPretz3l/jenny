@@ -90,16 +90,14 @@
 }
 
 .catalog-entry-icon {
-  font-size: 28px;
+  font-size: var(--font-size-7xl);
   line-height: 1;
   color: color-mix(in srgb, var(--accent-cyan) 66%, var(--text-secondary));
 }
 
 .catalog-entry-media-label {
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+  font-size: var(--font-size-caption);
+  font-weight: 500;
   color: var(--text-secondary);
   text-align: center;
 }
@@ -111,18 +109,16 @@
 
 .catalog-entry-file-label,
 .catalog-entry-tool-label {
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
+  font-size: var(--font-size-caption);
+  font-weight: 500;
   color: var(--artifact-pane-kicker-color);
 }
 
 .catalog-entry-file-name {
   margin-top: auto;
   font-family: var(--font-family-display);
-  font-size: 19px;
-  line-height: 1.02;
+  font-size: var(--font-size-heading);
+  line-height: 1.2;
   letter-spacing: 0;
   color: var(--text-primary);
   display: -webkit-box;
@@ -136,7 +132,7 @@
   display: block;
   margin-top: 8px;
   font-family: var(--font-family-mono);
-  font-size: 11px;
+  font-size: var(--font-size-code);
   line-height: 1.5;
   color: color-mix(in srgb, var(--text-secondary) 90%, white 4%);
   white-space: normal;
@@ -182,16 +178,14 @@
   border: 1px solid color-mix(in srgb, var(--artifact-studio-divider) 84%, transparent);
   background: color-mix(in srgb, var(--surface-input-background) 72%, transparent);
   color: color-mix(in srgb, var(--text-secondary) 92%, white 6%);
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+  font-size: var(--font-size-caption);
+  font-weight: 500;
 }
 
 .catalog-entry-title {
   font-family: var(--font-family-display);
-  font-size: 20px;
-  line-height: 1.02;
+  font-size: var(--font-size-title);
+  line-height: 1.2;
   letter-spacing: 0;
   color: var(--text-primary);
   overflow-wrap: anywhere;
@@ -202,7 +196,7 @@
 }
 
 .catalog-entry-preview {
-  font-size: 13px;
+  font-size: var(--font-size-footnote);
   line-height: 1.55;
   color: color-mix(in srgb, var(--text-secondary) 92%, white 6%);
   display: -webkit-box;
@@ -212,7 +206,7 @@
 }
 
 .catalog-entry-meta {
-  font-size: 11px;
+  font-size: var(--font-size-caption);
   line-height: 1.5;
   color: color-mix(in srgb, var(--text-muted) 90%, white 4%);
   display: -webkit-box;
@@ -242,16 +236,14 @@
 }
 
 .artifacts-meta-section .section-header-label {
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
+  font-size: var(--font-size-caption);
+  font-weight: 500;
   color: var(--artifact-pane-kicker-color);
 }
 
 .dirty-badge {
-  font-size: 10px;
-  font-weight: 700;
+  font-size: var(--font-size-caption);
+  font-weight: 500;
   padding: var(--space-2) var(--space-4);
   border-radius: 999px;
   background: color-mix(in srgb, var(--accent-amber) 16%, transparent);
@@ -284,8 +276,8 @@
   border: 1px solid color-mix(in srgb, var(--accent) 20%, var(--artifact-studio-divider));
   background: color-mix(in srgb, var(--surface-input-background) 78%, transparent);
   color: color-mix(in srgb, var(--text-secondary) 90%, white 6%);
-  font-size: 9px;
-  font-weight: 700;
+  font-size: var(--font-size-caption);
+  font-weight: 500;
 }
 
 .provenance-entry::after {
@@ -307,23 +299,21 @@
 }
 
 .provenance-entry-label {
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
+  font-size: var(--font-size-caption);
+  font-weight: 500;
   color: color-mix(in srgb, var(--text-muted) 90%, var(--text-secondary));
 }
 
 .provenance-entry-detail {
-  font-size: 13px;
+  font-size: var(--font-size-footnote);
   line-height: 1.55;
   color: var(--text-primary);
   word-break: break-word;
 }
 
 .inv-artifact-primary {
-  font-size: 10px;
-  font-weight: 700;
+  font-size: var(--font-size-caption);
+  font-weight: 500;
   padding: var(--space-2) var(--space-4);
   border-radius: 999px;
   border: 1px solid color-mix(in srgb, var(--accent-cyan) 26%, transparent);

@@ -373,3 +373,61 @@ def test_wrapped_clean_call_has_no_argument_repairs() -> None:
 
     assert len(calls) == 1
     assert calls[0].argument_repairs == ()
+
+
+@pytest.mark.parametrize("healing", [False, True])
+@pytest.mark.parametrize("text", [
+    'Example: read_file({"path":"demo.txt"})',
+    '''I will call 'read_file({"path":"demo.txt"})' an example.''',
+    'I will check this example: read_file({"path":"demo.txt"})',
+    '`read_file({"path":"demo.txt"})` is an example.',
+    '```python\nread_file({"path":"demo.txt"})\n```',
+    '> read_file({"path":"demo.txt"})',
+    'Example:\n```json\n{"name":"read_file","arguments":{"path":"demo.txt"}}\n```',
+    '```xml\n<tool_call>{"name":"read_file","arguments":{"path":"demo.txt"}}</tool_call>\n```',
+    'An example is {"name":"read_file","arguments":{"path":"demo.txt"}}.',
+    '```\n{"name":"read_file","arguments":{"path":"demo.txt"}}\n```',
+])
+def test_execution_examples_are_not_calls(text, healing):
+    configure_tool_call_healing({"tool_call_reliability_net_enabled": healing})
+    result = extract_inband_tool_calls_detailed(text, KNOWN_TOOLS)
+    assert result.calls == ()
+    assert result.remaining_text == text
+    assert result.failed_attempt is False
+
+
+@pytest.mark.parametrize("healing", [False, True])
+@pytest.mark.parametrize(("text", "count"), [
+    ('read_file({"path":"a.txt"})\nread_file({"path":"b.txt"})', 2),
+    ('```json\n{"name":"read_file","arguments":{"path":"a.txt"}}\n```\n'
+     '```json\n{"name":"read_file","arguments":{"path":"b.txt"}}\n```', 2),
+    ("I'll check the README first.\n```json\n"
+     '{"name":"read_file","arguments":{"path":"README.md"}}\n```', 1),
+    ('First I need to see the config.\nread_file({"path":"config.json"})', 1),
+    ('I will read the documentation first.\n'
+     '<tool_call>{"name":"read_file","arguments":{"path":"docs.md"}}</tool_call>', 1),
+])
+def test_issued_calls_survive_prose_and_repetition(text, count, healing):
+    configure_tool_call_healing({"tool_call_reliability_net_enabled": healing})
+    result = extract_inband_tool_calls_detailed(text, KNOWN_TOOLS)
+    assert len(result.calls) == count
+
+
+WRITE_TOOLS = KNOWN_TOOLS | frozenset({"write_file"})
+
+
+@pytest.mark.parametrize("healing", [False, True])
+def test_backticks_inside_function_call_arguments_are_file_content(healing):
+    configure_tool_call_healing({"tool_call_reliability_net_enabled": healing})
+    text = 'write_file({"path":"x.js","content":"const s = `hello`;"})'
+    result = extract_inband_tool_calls_detailed(text, WRITE_TOOLS)
+    assert [call.arguments["content"] for call in result.calls] == ["const s = `hello`;"]
+    assert result.remaining_text.strip() == ""
+
+
+def test_backticks_inside_balanced_json_arguments_are_file_content():
+    configure_tool_call_healing({"tool_call_reliability_net_enabled": True})
+    text = 'Here it is.\n{"name":"write_file","arguments":{"path":"x.md","content":"Run `npm test` first."}}'
+    result = extract_inband_tool_calls_detailed(text, WRITE_TOOLS)
+    assert [call.arguments["content"] for call in result.calls] == ["Run `npm test` first."]
+    assert result.remaining_text.strip() == "Here it is."

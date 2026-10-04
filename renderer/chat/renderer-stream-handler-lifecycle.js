@@ -285,6 +285,8 @@
           try { globalThis.rendererHealthPillController?.observeStreamPayload?.(payload); } catch (_error) { /* presentation tap */ }
           try {
             if (state.runtimeSendController?.acceptAdmission?.(payload) === false) return { buffered: false, terminal: false };
+            // Desktop notifications see every admitted live payload once (a question request has no terminal).
+            try { state.desktopNotificationsController?.onStreamPayload?.(payload); } catch (_error) { /* presentation tap */ }
             const continuation = { continuationGuard: guard, signal, rendererEpoch };
             if (useEnvelopeHandler) {
               return await handleStreamEnvelope(payload, continuation);
@@ -468,9 +470,8 @@
             liveStateStore: getLiveStateStore(),
             appendClientLog,
             // DC1 flicker cure: row model is already confirmed enabled above, so
-            // the opt-in reduces to the global flag. Off by default =>
-            // byte-identical reopen seed.
-            deterministicRowId: state?.features?.featureFlags?.chat_timeline_deterministic_row_id === true,
+            // the reopen seed always stamps deterministic row_ids.
+            deterministicRowId: true,
           },
           persistedPayload,
         ),

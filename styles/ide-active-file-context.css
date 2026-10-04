@@ -20,7 +20,7 @@
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--text-muted);
-  font-size: 11px;
+  font-size: var(--font-size-caption);
 }
 
 .active-file-context-chip {
@@ -37,7 +37,7 @@
   border-radius: 999px;
   background: color-mix(in srgb, var(--accent) 10%, transparent);
   color: var(--text-secondary);
-  font-size: 11px;
+  font-size: var(--font-size-caption);
   line-height: 1.4;
 }
 
@@ -84,7 +84,7 @@
   border-radius: 8px;
   background: color-mix(in srgb, var(--bg-surface) 92%, transparent);
   color: var(--text-secondary);
-  font-size: 11px;
+  font-size: var(--font-size-footnote);
   line-height: 1.4;
   box-shadow: 0 2px 8px rgb(0 0 0 / 30%);
 }
@@ -105,7 +105,7 @@
   border-radius: 6px;
   background: transparent;
   color: var(--text-primary);
-  font-size: 11px;
+  font-size: var(--font-size-footnote);
   cursor: pointer;
 }
 
@@ -170,7 +170,7 @@
   gap: 8px;
   min-width: 0;
   padding: 4px 12px;
-  font-size: 12px;
+  font-size: var(--font-size-body);
   cursor: pointer;
   white-space: nowrap;
 }
@@ -194,18 +194,18 @@
   overflow: hidden;
   text-overflow: ellipsis;
   color: var(--text-muted);
-  font-size: 11px;
+  font-size: var(--font-size-caption);
 }
 
 .ide-mention-path mark {
   background: transparent;
   color: var(--accent);
-  font-weight: 600;
+  font-weight: 500;
 }
 
 .ide-mention-status {
   padding: 6px 12px;
   color: var(--text-muted);
-  font-size: 11px;
+  font-size: var(--font-size-caption);
   font-style: italic;
 }

@@ -4,7 +4,7 @@ const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
 
-const { VIEW_TAB_ORDER } = require('../capture-scenarios');
+const { VIEW_TAB_ORDER } = require('../scripts/dev/capture-scenarios');
 const { getPalettePresets } = require('../renderer/shared/appearance-utils');
 const {
   DEMO_SCENES,

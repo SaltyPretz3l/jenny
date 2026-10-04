@@ -53,18 +53,18 @@ def _build_ollama_engine() -> OllamaEngine:
     """Minimal real OllamaEngine instance (same idiom as test_ollama_wrapper)."""
     engine = object.__new__(OllamaEngine)
     engine.host = "http://localhost:11434"
-    engine._request_timeout_seconds = 300  # noqa: SLF001
+    engine._request_timeout_seconds = 300
     engine.model_name = "test-model"
-    engine._ready = True  # noqa: SLF001
-    engine._vision = False  # noqa: SLF001
-    engine._thinking = False  # noqa: SLF001
-    engine._tool_calls_enabled = True  # noqa: SLF001
-    engine._context_length = None  # noqa: SLF001
-    engine._configured_context_length = None  # noqa: SLF001
-    engine._thinking_capability_source = "unsupported"  # noqa: SLF001
-    engine._cached_tools_key = None  # noqa: SLF001
-    engine._cached_tools_payload = None  # noqa: SLF001
-    engine._request_context_lock = threading.Lock()  # noqa: SLF001
+    engine._ready = True
+    engine._vision = False
+    engine._thinking = False
+    engine._tool_calls_enabled = True
+    engine._context_length = None
+    engine._configured_context_length = None
+    engine._thinking_capability_source = "unsupported"
+    engine._cached_tools_key = None
+    engine._cached_tools_payload = None
+    engine._request_context_lock = threading.Lock()
     return engine
 
 
@@ -78,7 +78,7 @@ class _CapturedChunksResponse:
     def __enter__(self) -> "_CapturedChunksResponse":
         return self
 
-    def __exit__(self, exc_type, exc, tb) -> None:  # noqa: ANN001
+    def __exit__(self, exc_type, exc, tb) -> None:
         self.close()
 
     def __iter__(self):

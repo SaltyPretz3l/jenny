@@ -30,8 +30,10 @@ subprocess.
 
 ## Disposable copy and limits
 
-The worker mounts the durable typed-tool workspace as read-only `/inputs` and
-copies it into a fresh `/workspace` tmpfs for each job. The copy accepts regular
+The application stages only the approved project into a per-command UUID directory in the separate `jenny_staging` volume. The durable typed-tool workspace is never mounted into the worker. The worker mounts staging as read-only `/inputs` and copies that job directory into a fresh `/workspace` tmpfs. `input_root` is the staged UUID relative to `/inputs`; `cwd` is relative to the copied project root. Staging, execution, and cleanup hold one process-wide lock so another project cannot appear in `/inputs` during a job. The snapshot limits below apply to that project copy. A symlinked, missing, or
+non-directory project path fails job preparation. Each Linux path component is
+opened descriptor-relative with `O_NOFOLLOW | O_DIRECTORY`.
+The copy accepts regular
 single-link files only and rejects symlinks, hardlinks, devices, FIFOs, sockets,
 and other special entries. Linux traversal uses descriptor-relative
 `O_NOFOLLOW` operations and bounded path handling.
@@ -84,6 +86,11 @@ the socket is mode 0660. The supervisor checks the connecting application UID
 with `SO_PEERCRED`.
 
 Requests are schema version 1 and limited to `status`, `submit`, and `cancel`.
+`submit` requires `input_root`, a relative POSIX path validated like `cwd`.
+Application and worker images must be the same build: schema version remains 1,
+and differing submit key sets fail closed (`request_keys_not_exact` or
+`worker_request_keys_invalid`). Old persisted admissions without `input_root`
+are accepted only for interrupted recovery and are never replayed.
 The request envelope is bounded to 128 KiB, the response to 3 MiB, and socket
 transport waits are limited to five seconds. Submit retries match the complete
 live admission exactly. A stale incarnation, mismatched job, malformed state,

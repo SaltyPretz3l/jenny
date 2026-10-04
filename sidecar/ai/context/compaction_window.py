@@ -11,6 +11,9 @@ from sidecar.ai.context.token_budget import (
 
 _TOOL_PLACEHOLDER = "[tool output omitted for context space]"
 _SUMMARY_INPUT_SAFETY_TOKENS = 512
+# Non-exact token counts undershoot digit-heavy CSV/code on local tokenizers
+# (up to 1.37x on llama-server, HB-028).
+_HEURISTIC_ESTIMATE_MARGIN = 1.5
 MID_TURN_PRESERVE_MESSAGES = 6
 MID_TURN_TASK_PIN_MAX_TOKENS = 2000
 MID_TURN_TAIL_MAX_RATIO = 0.25
@@ -19,8 +22,21 @@ MID_TURN_NUDGE = (
     f"{MID_TURN_NUDGE_PREFIX} Continue from the Next Step in the summary above; "
     "do not redo completed steps or ask the user to repeat the request."
 )
+MID_TURN_APPROVED_PLAN_NUDGE = (
+    f"{MID_TURN_NUDGE_PREFIX} The user approved your plan in this turn (Build it). The earlier "
+    "user message above that asks you to plan or to present a plan for approval was answered by "
+    "that approval; it is not a new request. Do not present the plan again or ask for approval. "
+    "Build the approved plan (## Approved Plan) from the Next Step in the summary, writing files "
+    "with write_file/edit_file."
+)
+_MID_TURN_NUDGES = frozenset({MID_TURN_NUDGE, MID_TURN_APPROVED_PLAN_NUDGE})
 # Pinned in place of an oversized task prompt; Electron persists the same anchor.
 MID_TURN_TASK_STUB = "[Original request summarized above]"
+# Prefixes the pinned prompt once the plan it asked for was approved in-turn.
+MID_TURN_ANSWERED_TASK_PREFIX = (
+    "[Earlier request in this turn, already answered: "
+    "you presented the plan and the user approved it]\n"
+)
 
 
 def _row_role(row: dict[str, Any]) -> str:
@@ -28,7 +44,45 @@ def _row_role(row: dict[str, Any]) -> str:
 
 
 def is_mid_turn_nudge_content(content: Any) -> bool:
-    return str(content or "").strip() == MID_TURN_NUDGE
+    return str(content or "").strip() in _MID_TURN_NUDGES
+
+
+def mid_turn_task_pin(
+    task_message: dict[str, Any], *, plan_approved_in_turn: bool
+) -> dict[str, Any]:
+    """Copy of the task row to pin after the summary.
+
+    Once the plan was approved inside this request (the approval is a tool
+    result, never a user row), the pre-approval prompt must not read as a live
+    request, so it is prefixed as already answered. A pin from an earlier pass
+    keeps exactly one prefix; the verbatim prompt text stays after it.
+    """
+    pinned = dict(task_message)
+    text = pinned.get("content")
+    if (
+        plan_approved_in_turn
+        and isinstance(text, str)
+        # The stub stands in for an oversized prompt and must stay verbatim
+        # so every later pass still finds the anchor; the nudge covers it.
+        and text.strip() != MID_TURN_TASK_STUB
+    ):
+        pinned["content"] = MID_TURN_ANSWERED_TASK_PREFIX + text.removeprefix(
+            MID_TURN_ANSWERED_TASK_PREFIX
+        )
+    return pinned
+
+
+def _bare_task_text(content: str) -> str:
+    """The row text with the answered-task prefix (if any) removed."""
+    return content.strip().removeprefix(MID_TURN_ANSWERED_TASK_PREFIX).strip()
+
+
+def mid_turn_nudge_row(*, plan_approved_in_turn: bool) -> dict[str, Any]:
+    """The system row that closes a mid-turn window; the newest instruction the model reads."""
+    return {
+        "role": "system",
+        "content": MID_TURN_APPROVED_PLAN_NUDGE if plan_approved_in_turn else MID_TURN_NUDGE,
+    }
 
 
 def is_mid_turn_nudge_row(row: dict[str, Any]) -> bool:
@@ -59,7 +113,7 @@ def _find_task_index(rows: list[dict[str, Any]], task_content: str | None) -> in
         content = rows[index].get("content")
         if not isinstance(content, str):
             continue
-        text = content.strip()
+        text = _bare_task_text(content)
         if text == MID_TURN_TASK_STUB or (wanted and text == wanted):
             return index
     return user_indexes[0]
@@ -129,7 +183,7 @@ def split_mid_turn_window(
         tail_start = pair_starts[pair_start_position]
 
     summary_source = rows[:tail_start]
-    if len(summary_source) < 2:
+    if len(summary_source) < 2:  # noqa: PLR2004  # pair
         return _empty_mid_turn_window()
     tail = rows[tail_start:]
     covered_through_tool_call_id: str | None = None
@@ -246,38 +300,48 @@ def _estimate_message_tokens(
     return estimate_messages_tokens((message,), backend)
 
 
-def summary_input_limit(budget: TokenBudget, *, prompt_tokens: int) -> int:
-    """Return the token limit for conversation rows sent to the summariser."""
-    floor = max(1, budget.context_window // 4)
-    available = (
-        budget.context_window
-        - budget.reserved_for_summary
-        - prompt_tokens
-        - _SUMMARY_INPUT_SAFETY_TOKENS
-    )
-    return max(floor, available)
-
-
-def admit_summary_source(
-    messages: list[dict[str, Any]],
+def summary_input_limit(
     budget: TokenBudget,
-    backend: TokenizerBackend,
     *,
     prompt_tokens: int,
-) -> SummaryInputAdmission:
-    """Admit summariser input by stripping tools, then dropping oldest rows."""
-    limit = summary_input_limit(budget, prompt_tokens=prompt_tokens)
+    backend: TokenizerBackend,
+) -> int:
+    """Return the token limit for conversation rows sent to the summariser.
+
+    Counts from a backend that is not an exact match for the model's tokenizer
+    are scaled by ``_HEURISTIC_ESTIMATE_MARGIN`` so the request fits the window.
+    """
+    exact = getattr(backend, "is_exact_match", False) is True
+    margin = 1.0 if exact else _HEURISTIC_ESTIMATE_MARGIN
+    floor = max(1, budget.context_window // 4)
+    request_room = (
+        budget.context_window - budget.reserved_for_summary - _SUMMARY_INPUT_SAFETY_TOKENS
+    )
+    return max(floor, int(request_room / margin) - prompt_tokens)
+
+
+@dataclass(frozen=True)
+class StrippedSummarySource:
+    """Summary source after the tool-output strip (the input list when it already fit)."""
+
+    rows: list[dict[str, Any]]
+    token_counts: list[int]
+    tokens: int
+    stripped_messages: int
+
+
+def strip_summary_source(
+    messages: list[dict[str, Any]],
+    limit: int,
+    backend: TokenizerBackend,
+) -> StrippedSummarySource:
+    """Blank tool output oldest first until the rows fit ``limit`` or none is left."""
     message_token_counts = [
         _estimate_message_tokens(message, backend) for message in messages
     ]
     tokens_remaining = sum(message_token_counts)
     if tokens_remaining <= limit:
-        return SummaryInputAdmission(
-            messages=messages,
-            truncated=False,
-            stripped_messages=0,
-            dropped_messages=0,
-        )
+        return StrippedSummarySource(messages, message_token_counts, tokens_remaining, 0)
 
     rows = [_copy_message_for_compaction(message) for message in messages]
     call_index = _index_tool_calls(rows, stop_index=len(rows))
@@ -306,17 +370,65 @@ def admit_summary_source(
             message_token_counts[changed_index] = updated_count
             tokens_remaining += updated_count - previous_count
         if tokens_remaining <= limit:
-            return SummaryInputAdmission(
-                messages=rows,
-                truncated=True,
-                stripped_messages=stripped,
-                dropped_messages=0,
-            )
+            break
+    return StrippedSummarySource(rows, message_token_counts, tokens_remaining, stripped)
 
+
+def admit_summary_source(
+    messages: list[dict[str, Any]],
+    budget: TokenBudget,
+    backend: TokenizerBackend,
+    *,
+    prompt_tokens: int,
+    pin_first: bool = False,
+) -> SummaryInputAdmission:
+    """Admit summariser input by stripping tools, then dropping oldest rows.
+
+    ``pin_first`` keeps a leading prior compaction summary out of the drop so
+    it is re-folded, not lost, unless it alone exceeds half the limit.
+    """
+    limit = summary_input_limit(budget, prompt_tokens=prompt_tokens, backend=backend)
+    source = strip_summary_source(messages, limit, backend)
+    rows, message_token_counts = source.rows, source.token_counts
+    tokens_remaining, stripped = source.tokens, source.stripped_messages
+    if tokens_remaining <= limit:
+        return SummaryInputAdmission(
+            messages=rows,
+            truncated=stripped > 0,
+            stripped_messages=stripped,
+            dropped_messages=0,
+        )
+
+    keep = 1 if pin_first and message_token_counts[0] <= limit // 2 else 0
+    admitted_messages, dropped = drop_oldest_rows(
+        rows, message_token_counts, limit, backend, keep=keep
+    )
+    return SummaryInputAdmission(
+        messages=admitted_messages,
+        truncated=True,
+        stripped_messages=stripped,
+        dropped_messages=dropped,
+    )
+
+
+def drop_oldest_rows(
+    rows: list[dict[str, Any]],
+    token_counts: list[int],
+    limit: int,
+    backend: TokenizerBackend,
+    *,
+    keep: int,
+) -> tuple[list[dict[str, Any]], int]:
+    """Drop rows oldest first, after the first ``keep``, until the rest fits ``limit``.
+
+    Returns the admitted rows (an omission marker stands where the dropped
+    rows were) and how many were dropped. The newest row is never dropped.
+    """
+    tokens_remaining = sum(token_counts)
     dropped = 0
     marker: dict[str, Any] | None = None
-    while len(rows) - dropped > 1:
-        tokens_remaining -= message_token_counts[dropped]
+    while len(rows) - keep - dropped > 1:
+        tokens_remaining -= token_counts[keep + dropped]
         dropped += 1
         marker = {
             "role": "system",
@@ -326,13 +438,4 @@ def admit_summary_source(
         }
         if tokens_remaining + _estimate_message_tokens(marker, backend) <= limit:
             break
-
-    admitted_messages = rows[dropped:]
-    if marker is not None:
-        admitted_messages = [marker, *admitted_messages]
-    return SummaryInputAdmission(
-        messages=admitted_messages,
-        truncated=True,
-        stripped_messages=stripped,
-        dropped_messages=dropped,
-    )
+    return [*rows[:keep], *([marker] if marker else []), *rows[keep + dropped:]], dropped

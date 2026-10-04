@@ -132,7 +132,6 @@ function registerWorkspaceFsIpcHandlers(
   const handlers = {
     'workspaceFs.getRootState': () => workspaceIdeService.getRootState(),
     'workspaceFs.readFile': (_, payload) => workspaceIdeService.readFile(payload),
-    'workspaceFs.readFileBase64': (_, payload) => workspaceIdeService.readFileBase64(payload),
     'workspaceFs.stat': (_, payload) => workspaceIdeService.stat(payload),
     'workspaceFs.writeFile': (_, payload) => workspaceIdeService.writeFile(payload),
     'workspaceFs.readText': (_, payload) => (
@@ -233,7 +232,6 @@ function registerWorkspaceFileMapIpcHandlers(ipcMainLike, workspaceFileMapServic
 
 function registerWorkspaceTestRunnerIpcHandlers(ipcMainLike, testRunnerService, authorization = {}) {
   return registerIpcInvokeHandlers(ipcMainLike, {
-    'workspaceTestRunner.listConfigs': () => testRunnerService.listConfigs(),
     'workspaceTestRunner.run': (_event, payload) => testRunnerService.run(payload),
     'workspaceTestRunner.abort': () => testRunnerService.abort(),
     'workspaceTestRunner.saveConfigs': (_event, configs) => testRunnerService.saveConfigs(configs),
@@ -244,27 +242,22 @@ function registerWorkspaceTestRunnerIpcHandlers(ipcMainLike, testRunnerService, 
 function registerWorkspaceTerminalShutdownTask({
   getMainLifecycle = null,
   app = null,
-  workspaceTerminalService,
   workspacePtyService,
   log = null,
 } = {}) {
   const logEvent = typeof log === 'function' ? log : () => {};
-  const disposeOne = async (service, eventName) => {
-    if (!service || typeof service.dispose !== 'function') {
+  const disposeAll = async () => {
+    if (!workspacePtyService || typeof workspacePtyService.dispose !== 'function') {
       return;
     }
     try {
-      await service.dispose();
+      await workspacePtyService.dispose();
     } catch (error) {
-      logEvent('WARN', eventName, {
+      logEvent('WARN', 'workspace_pty.shutdown_dispose_failed', {
         message: String(error?.message || error || ''),
       });
     }
   };
-  const disposeAll = () => Promise.all([
-    disposeOne(workspaceTerminalService, 'workspace_terminal.shutdown_dispose_failed'),
-    disposeOne(workspacePtyService, 'workspace_pty.shutdown_dispose_failed'),
-  ]).then(() => undefined);
 
   const lifecycle = typeof getMainLifecycle === 'function' ? getMainLifecycle() : null;
   if (lifecycle && typeof lifecycle.registerShutdownTask === 'function') {

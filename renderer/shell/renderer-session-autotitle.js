@@ -1,8 +1,10 @@
 /* renderer/shell/renderer-session-autotitle.js
  *
  * Client-side session auto-titles (nav overhaul W9) — no model inference.
- * deriveTitleFromFirstMessage strips leading slash-commands, collapses
- * whitespace, and clips to ~48 chars at a word boundary. One controller
+ * deriveTitleFromFirstMessage is the shared rule in
+ * renderer/shared/string-utils.js (slash-commands and a leading greeting
+ * dropped, ~48 chars at a word boundary), the same rule the backend send
+ * preflight applies. One controller
  * serves both entry points: the send pipeline calls maybeAutoTitleSession
  * with the outgoing prompt the moment a first message leaves the composer,
  * and openSession calls it without text so legacy untitled sessions
@@ -16,48 +18,19 @@
  */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) {
-    module.exports = factory();
+    module.exports = factory(require('../shared/string-utils'));
     return;
   }
-  root.rendererSessionAutotitleUtils = factory();
-})(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  root.rendererSessionAutotitleUtils = factory(root.stringUtils);
+})(typeof globalThis !== 'undefined' ? globalThis : this, function (stringUtils) {
   'use strict';
 
-  var AUTOTITLE_MAX_LENGTH = 48;
+  var AUTOTITLE_MAX_LENGTH = stringUtils.SESSION_TITLE_MAX_LENGTH;
+  var deriveTitleFromFirstMessage = stringUtils.deriveSessionTitleFromMessage;
 
   function isDefaultSessionTitle(value) {
     var title = String(value || '').trim();
     return !title || title === 'New Chat';
-  }
-
-  function clipTitleAtWordBoundary(value, maxLength) {
-    if (value.length <= maxLength) {
-      return value;
-    }
-    var slice = value.slice(0, maxLength + 1);
-    var lastSpace = slice.lastIndexOf(' ');
-    // Cut at the last word boundary unless that loses too much of the
-    // budget (one giant token); then a hard clip beats an empty title.
-    var clipped = lastSpace >= Math.floor(maxLength * 0.6)
-      ? slice.slice(0, lastSpace)
-      : value.slice(0, maxLength);
-    clipped = clipped.replace(/[\s.,;:!?-]+$/, '');
-    return clipped ? `${clipped}...` : '';
-  }
-
-  function deriveTitleFromFirstMessage(text) {
-    var normalized = String(text || '').replace(/\s+/g, ' ').trim();
-    var stripped = normalized;
-    while (/^\/[\w:-]+(\s|$)/.test(stripped)) {
-      stripped = stripped.replace(/^\/[\w:-]+\s*/, '');
-    }
-    // A message that was only slash-commands still beats "New Chat":
-    // fall back to the raw text rather than leaving the session untitled.
-    var source = stripped || normalized;
-    if (!source) {
-      return '';
-    }
-    return clipTitleAtWordBoundary(source, AUTOTITLE_MAX_LENGTH);
   }
 
   function createSessionAutotitleController(deps) {

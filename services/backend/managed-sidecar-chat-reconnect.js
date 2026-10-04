@@ -146,7 +146,37 @@ async function ensureManagedEngineNotFallbackForChat(
   throw createEngineFallbackError(requested, reason);
 }
 
-function needsManagedSidecarChatReconnect(service) {
+// An initialization deadline ended Electron's wait, not the sidecar's
+// initialize: that process may still be blocked in its inline handler and read
+// no further requests. Marked here so the next chat preflight replaces it
+// (needsManagedSidecarChatReconnect); cleared once that process initializes.
+function markManagedInitializeStalled(service, stalledProcess, requestedModel, timeoutError) {
+  service._managedInitializeStalledProcess = stalledProcess;
+  service._emitServiceLog('WARN', 'backend.managed_sidecar_initialize_stalled', {
+    requestedModel,
+    message: String(timeoutError?.message || timeoutError),
+  });
+}
+
+function clearManagedInitializeStall(service, initializedProcess) {
+  if (service._managedInitializeStalledProcess === initializedProcess) {
+    service._managedInitializeStalledProcess = null;
+  }
+}
+
+function hasOtherActiveStream(service, ownStreamId) {
+  const streams = service.activeStreams;
+  if (!streams || typeof streams.keys !== 'function') {
+    return false;
+  }
+  const own = String(ownStreamId || '');
+  for (const streamId of streams.keys()) {
+    if (String(streamId) !== own) return true;
+  }
+  return false;
+}
+
+function needsManagedSidecarChatReconnect(service, ownStreamId) {
   if (!service?.sidecarManager) {
     return false;
   }
@@ -159,6 +189,13 @@ function needsManagedSidecarChatReconnect(service) {
   if (!service.sidecarManager.process) {
     return true;
   }
+  // Replacing the process ends every response on it, so a stalled initialize
+  // is acted on only when no other conversation is still streaming from it.
+  if (service._managedInitializeStalledProcess != null
+    && service._managedInitializeStalledProcess === service.sidecarManager.process
+    && !hasOtherActiveStream(service, ownStreamId)) {
+    return true;
+  }
   if (service.hostMode === 'server' && service._hostedPolicyProcess !== service.sidecarManager.process) {
     return true;
   }
@@ -166,7 +203,7 @@ function needsManagedSidecarChatReconnect(service) {
 }
 
 async function ensureManagedSidecarReadyForChat(service, { sessionId, streamId, traceId }) {
-  if (!needsManagedSidecarChatReconnect(service)) {
+  if (!needsManagedSidecarChatReconnect(service, streamId)) {
     return false;
   }
   if (service._autoReconnectPending) {
@@ -189,7 +226,7 @@ async function ensureManagedSidecarReadyForChat(service, { sessionId, streamId, 
     traceId,
   });
   const reconnected = await service._restartManagedSidecar('chat.preflight_reconnect');
-  if (!reconnected || needsManagedSidecarChatReconnect(service)) {
+  if (!reconnected || needsManagedSidecarChatReconnect(service, streamId)) {
     throw createReconnectError('Managed sidecar is unavailable after reconnect.');
   }
   service._emitServiceLog('INFO', 'chat.sidecar_preflight_reconnected', {
@@ -367,6 +404,8 @@ function scheduleManagedSidecarReconnectAfterFailure(
 
 module.exports = {
   waitForManagedInitialization,
+  clearManagedInitializeStall,
+  markManagedInitializeStalled,
   describeOllamaFailure,
   ensureManagedEngineNotFallbackForChat,
   ensureManagedLlamaServerReadyForChat,

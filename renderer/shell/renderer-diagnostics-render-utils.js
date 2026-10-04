@@ -8,7 +8,8 @@
       require('../inventory/codeblock'),
       require('../shared/log-contract-utils'),
       require('./renderer-phase-percentiles-utils'),
-      require('./renderer-runtime-health-utils')
+      require('./renderer-runtime-health-utils'),
+      require('./renderer-diagnostics-performance-utils')
     );
     return;
   }
@@ -20,7 +21,8 @@
     root.inventoryCodeBlock || {},
     root.logContractUtils || {},
     root.rendererPhasePercentilesUtils || {},
-    root.rendererRuntimeHealthUtils || {}
+    root.rendererRuntimeHealthUtils || {},
+    root.rendererDiagnosticsPerformanceUtils || {}
   );
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (
   issueUtils,
@@ -30,7 +32,8 @@
   codeBlock,
   logContractUtils,
   phaseUtils,
-  runtimeHealthUtils
+  runtimeHealthUtils,
+  performanceUtils
 ) {
   'use strict';
   var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
@@ -40,14 +43,8 @@
   var MAX_CORRELATION_CHARS = 160;
   var MAX_INVENTORY_VALUE_CHARS = 160;
 
-  function escapeHtml(value) {
-    return String(value == null ? '' : value)
-      .replaceAll('&', '&amp;')
-      .replaceAll('<', '&lt;')
-      .replaceAll('>', '&gt;')
-      .replaceAll('"', '&quot;')
-      .replaceAll("'", '&#39;');
-  }
+  const escapeHtml = ((typeof globalThis !== 'undefined' && globalThis.stringUtils)
+    || (typeof require === 'function' ? require('../shared/string-utils') : null)).escapeHtml;
 
   function paintMarkup(node, markup) {
     if (!node || markupCache.get(node) === markup) return false;
@@ -92,6 +89,7 @@
       }
       if (!query) return true;
       return [entry.event, entry.component, entry.message, source, entry.trace_id, entry.request_id, entry.session_id]
+        .concat([entry.stream_id, entry.data?.streamId, entry.data?.stream_id].filter(function (value) { return typeof value === 'string'; }))
         .some(function (value) { return String(value || '').toLowerCase().includes(query); });
     });
   }
@@ -107,7 +105,7 @@
 
   function formatCompactTime(value, includeDate) {
     var date = parsedDate(value);
-    if (!date) return String(value || 'Unknown');
+    if (!date) return String(value || jt('diagnostics.common.unknown', 'Unknown'));
     var time = pad(date.getHours()) + ':' + pad(date.getMinutes()) + ':' + pad(date.getSeconds());
     if (!includeDate) return time + '.' + pad(date.getMilliseconds(), 3);
     return pad(date.getMonth() + 1) + '/' + pad(date.getDate()) + ' ' + time;
@@ -115,7 +113,7 @@
 
   function formatDetailTime(value) {
     var date = parsedDate(value);
-    if (!date) return String(value || 'Unknown');
+    if (!date) return String(value || jt('diagnostics.common.unknown', 'Unknown'));
     return date.getFullYear() + '-' + pad(date.getMonth() + 1) + '-' + pad(date.getDate())
       + ' ' + pad(date.getHours()) + ':' + pad(date.getMinutes()) + ':' + pad(date.getSeconds())
       + '.' + pad(date.getMilliseconds(), 3);
@@ -123,8 +121,45 @@
 
   function humanize(value, fallback) {
     var text = String(value || '').trim();
-    if (!text) return fallback || 'Unknown';
+    if (!text) return fallback || jt('diagnostics.common.unknown', 'Unknown');
     return text.replace(/[._-]+/g, ' ').replace(/\b\w/g, function (letter) { return letter.toUpperCase(); });
+  }
+
+  function statusLabel(value) {
+    var labels = {
+      planner: jt('diagnostics.inventory.planner', 'Planner'),
+      chat: jt('diagnostics.inventory.chat', 'Chat'),
+      disabled: jt('diagnostics.inventory.off', 'Off'),
+      enabled: jt('diagnostics.inventory.on', 'On'),
+      consistent: jt('diagnostics.inventory.recoveryConsistent', 'No recovery needed'),
+      recovered: jt('diagnostics.inventory.recoveryRecovered', 'Recovered'),
+      plugins_disabled_required: jt('diagnostics.inventory.pluginsMustBeOff', 'Plugins must be turned off'),
+      read_only_incompatible: jt('diagnostics.inventory.readOnlyIncompatible', 'Read only due to incompatible plugin data'),
+      recovery_failed: jt('diagnostics.inventory.recoveryFailed', 'Recovery failed'),
+      not_required: jt('diagnostics.inventory.recoveryNotRequired', 'Not required'),
+      idle: jt('diagnostics.inventory.idle', 'Idle'),
+      running: jt('diagnostics.inventory.running', 'Running'),
+      stopped: jt('diagnostics.inventory.stopped', 'Stopped'),
+      failed: jt('diagnostics.inventory.failed', 'Failed'),
+      ready: jt('diagnostics.overall.ready', 'Ready'),
+      starting: jt('diagnostics.overall.starting', 'Starting'),
+      acquiring: jt('diagnostics.overall.acquiring', 'Acquiring model'),
+      loading: jt('diagnostics.overall.loading', 'Loading model'),
+      unknown: jt('diagnostics.common.unknown', 'Unknown'),
+      ok: jt('diagnostics.overall.ok', 'Healthy'),
+      warn: jt('diagnostics.overall.warn', 'Warning'),
+      error: jt('diagnostics.overall.error', 'Error'),
+      pending: jt('diagnostics.overall.pending', 'Pending'),
+      observed: jt('diagnostics.source.observed', 'Observed'),
+      capturing: jt('diagnostics.source.capturing', 'Capturing'),
+      waiting: jt('diagnostics.source.waiting', 'Waiting'),
+      stream: jt('diagnostics.correlations.stream', 'Stream'),
+      session: jt('diagnostics.correlations.session', 'Session'),
+      trace: jt('diagnostics.correlations.trace', 'Trace'),
+      request: jt('diagnostics.correlations.request', 'Request'),
+      turn: jt('diagnostics.correlations.turn', 'Turn'),
+    };
+    return Object.prototype.hasOwnProperty.call(labels, value) ? labels[value] : humanize(value);
   }
 
   function displayMessage(message, eventName) {
@@ -132,30 +167,7 @@
     return text && text !== String(eventName || '').trim() ? text : '';
   }
 
-  function formatNumber(value) {
-    var number = Number(value);
-    return Number.isFinite(number) ? number.toLocaleString(globalThis.jennyI18n?.tag?.()) : '0';
-  }
-
-  function formatMetricMs(value) {
-    if (value == null || String(value).trim() === '') return '—';
-    var number = Number(value);
-    if (!Number.isFinite(number)) return '—';
-    return number >= 1000 ? (number / 1000).toFixed(2) + 's' : Math.round(number) + 'ms';
-  }
-
-  function hasPositiveCounts(value) {
-    if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
-    return Object.values(value).some(function (item) {
-      var count = Number(item?.count);
-      return Number.isFinite(count) && count > 0;
-    });
-  }
-
-  function hasPerformanceSamples(status) {
-    return hasPositiveCounts(status.phase_percentiles?.phases)
-      || hasPositiveCounts(status.tool_observability?.tools);
-  }
+  var formatNumber = performanceUtils.formatNumber;
 
   function safeCorrelationValue(value) {
     var text = String(value == null ? '' : value).trim();
@@ -200,18 +212,19 @@
     var slot = document.getElementById('diagnosticsTabs');
     if (!slot || typeof actionButton !== 'function') return;
     var active = diagnosticsState(state).activeTab;
-    if (slot.dataset.activeTab === active && slot.childElementCount === 2) return;
+    if (slot.dataset.activeTab === active && slot.childElementCount === 3) return;
     var restoreFocus = Boolean(document.activeElement?.closest?.('#diagnosticsTabs [data-tab]'));
-    slot.innerHTML = ['overview', 'activity'].map(function (tab) {
+    slot.innerHTML = ['overview', 'activity', 'runs'].map(function (tab) {
+      var name = tab[0].toUpperCase() + tab.slice(1);
       return actionButton({
         id: 'diagnostics-tab',
-        domId: tab === 'overview' ? 'diagnosticsOverviewTab' : 'diagnosticsActivityTab',
-        label: tab[0].toUpperCase() + tab.slice(1),
+        domId: 'diagnostics' + name + 'Tab',
+        label: tab === 'runs' ? jt('diagnostics.tabs.runs', 'Runs') : tab === 'activity' ? jt('diagnostics.tabs.activity', 'Activity') : jt('diagnostics.tabs.overview', 'Overview'),
         variant: 'ghost',
         size: 'sm',
         role: 'tab',
         ariaSelected: active === tab,
-        ariaControls: tab === 'overview' ? 'diagnosticsOverview' : 'diagnosticsActivity',
+        ariaControls: 'diagnostics' + name,
         tabIndex: active === tab ? 0 : -1,
         dataset: { tab: tab },
         className: 'diagnostics-tab',
@@ -221,10 +234,16 @@
     if (restoreFocus) slot.querySelector('[data-tab="' + active + '"]')?.focus?.();
   }
 
-  function overallState(state, issues, sourceEvidence, integrity) {
+  // Live shell state wins over the diagnostics status fetched when the view opened, so the
+  // headline, health pane and performance summary never disagree about the backend.
+  function liveBackend(state) {
     var status = state.diagnosticsStatus || {};
-    var phase = String(status.backend?.phase || state.backend?.phase || 'unknown').toLowerCase();
-    var unavailable = ['failed', 'unavailable', 'stopped'].includes(phase);
+    return state.backend?.phase ? state.backend : (status.backend || state.backend || {});
+  }
+
+  function overallState(state, issues, sourceEvidence, integrity) {
+    var phase = phaseUtils.classifyBackendPhase(liveBackend(state).phase);
+    var unavailable = phase === 'unavailable' || phase === 'model_unavailable';
     var sourceGap = phase === 'ready' && SOURCE_NAMES.some(function (name) {
       return sourceEvidence[name]?.state !== 'observed';
     });
@@ -235,10 +254,12 @@
         : phase === 'ready'
           ? 'ok'
           : 'pending';
-    var headline = unavailable
+    var headline = phase === 'model_unavailable'
+      ? jt('diagnostics.phases.modelUnavailable', 'Model unavailable')
+      : unavailable
       ? jt('diagnostics.overall.runtimeUnavailable', 'Runtime unavailable')
       : tone === 'ok'
-        ? 'Ready'
+        ? jt('diagnostics.overall.ready', 'Ready')
         : tone === 'error'
           ? jt('diagnostics.overall.actionRequired', 'Action required')
           : tone === 'warn'
@@ -248,8 +269,8 @@
                 ? jt('diagnostics.overall.degradedSourceCoverage', 'Degraded source coverage')
                 : jt('diagnostics.overall.warningsDetected', 'Warnings detected')
             : phase === 'starting'
-              ? 'Starting'
-              : humanize(phase);
+              ? jt('diagnostics.overall.starting', 'Starting')
+              : statusLabel(phase);
     var summary = integrity.complete === false
       ? jt('diagnostics.partialEvidenceSummary', 'Some evidence is partial. Review Source integrity before drawing conclusions.')
       : sourceGap
@@ -269,10 +290,10 @@
     overall.dataset.tone = result.tone;
     paintMarkup(overall,
       '<div class="diagnostics-overall-copy">'
-      + '<span class="diagnostics-overall-state">' + escapeHtml(humanize(result.tone)) + '</span>'
+      + '<span class="diagnostics-overall-state">' + escapeHtml(statusLabel(result.tone)) + '</span>'
       + '<div><strong>' + escapeHtml(result.headline) + '</strong><p>' + escapeHtml(result.summary) + '</p></div>'
       + '</div>'
-      + '<span class="diagnostics-overall-count">' + issues.length + ' issue' + (issues.length === 1 ? '' : 's') + '</span>');
+      + '<span class="diagnostics-overall-count">' + escapeHtml(jtn('diagnostics.overall.issueCount', issues.length, { count: formatNumber(issues.length) }, '{count} issue', '{count} issues')) + '</span>');
     announce(result.headline + '. ' + result.summary, ['overview', result.tone, result.headline, issues.length].join('|'));
   }
 
@@ -289,9 +310,9 @@
       var dropped = Number(source.dropped || 0);
       return '<tr data-state="' + escapeHtml(state) + '">'
         + '<th scope="row"><code>' + escapeHtml(name) + '</code></th>'
-        + '<td>' + formatNumber(source.count || 0) + '</td>'
-        + '<td><span class="diagnostics-source-state">' + escapeHtml(humanize(state)) + '</span>'
-        + (dropped ? '<span class="diagnostics-source-drop">' + dropped + ' dropped</span>' : '') + '</td>'
+        + '<td>' + formatNumber(source.count) + '</td>'
+        + '<td><span class="diagnostics-source-state">' + escapeHtml(statusLabel(state)) + '</span>'
+        + (dropped ? '<span class="diagnostics-source-drop">' + escapeHtml(jt('diagnostics.source.droppedCount', '{count} dropped', { count: formatNumber(dropped) })) + '</span>' : '') + '</td>'
         + '<td><time datetime="' + escapeHtml(source.last_seen || '') + '" title="' + escapeHtml(source.last_seen || jt('diagnostics.source.noEventObserved', 'No event observed')) + '">'
         + escapeHtml(source.last_seen ? formatCompactTime(source.last_seen) : jt('diagnostics.source.notObserved', 'Not observed')) + '</time></td>'
         + '</tr>';
@@ -306,10 +327,10 @@
     paintMarkup(sources,
       '<div class="diagnostics-source-table-shell"><table class="diagnostics-source-table">'
       + '<caption class="sr-only">' + escapeHtml(jt('diagnostics.source.integrityCaption', 'Diagnostic source integrity')) + '</caption>'
-      + '<thead><tr><th scope="col">Source</th><th scope="col">Events</th><th scope="col">Capture</th><th scope="col">' + escapeHtml(jt('diagnostics.source.lastSeen', 'Last seen')) + '</th></tr></thead>'
+      + '<thead><tr><th scope="col">' + escapeHtml(jt('diagnostics.source.source', 'Source')) + '</th><th scope="col">' + escapeHtml(jt('diagnostics.source.events', 'Events')) + '</th><th scope="col">' + escapeHtml(jt('diagnostics.source.capture', 'Capture')) + '</th><th scope="col">' + escapeHtml(jt('diagnostics.source.lastSeen', 'Last seen')) + '</th></tr></thead>'
       + '<tbody>' + rows + '</tbody></table></div>'
       + '<div class="diagnostics-integrity-summary" data-tone="' + integrityTone + '">'
-      + '<div><span>Integrity</span><strong>' + (integrity.complete === true ? 'Complete' : 'Partial') + '</strong></div>'
+      + '<div><span>' + escapeHtml(jt('diagnostics.source.integrity', 'Integrity')) + '</span><strong>' + escapeHtml(integrity.complete === true ? jt('diagnostics.source.complete', 'Complete') : jt('diagnostics.source.partial', 'Partial')) + '</strong></div>'
       + '<p>' + escapeHtml(integrityCopy) + '</p></div>');
   }
 
@@ -329,7 +350,7 @@
         ? '<div class="diagnostics-issue-correlations" aria-label="' + escapeHtml(jt('diagnostics.issues.correlationIdentifiers', 'Correlation identifiers')) + '">'
           + correlationPairs.map(function (pair) {
             var safeValue = safeCorrelationValue(pair[1]);
-            return '<span><span>' + escapeHtml(humanize(pair[0].replace('_id', ''))) + '</span><code title="'
+            return '<span><span>' + escapeHtml(statusLabel(pair[0].replace('_id', ''))) + '</span><code title="'
               + escapeHtml(safeValue) + '">' + escapeHtml(safeValue) + '</code></span>';
           }).join('') + '</div>'
         : '';
@@ -347,86 +368,34 @@
         })
         : '';
       return '<article class="diagnostics-issue" role="listitem" data-severity="' + escapeHtml(issue.severity) + '">'
-        + '<span class="diagnostics-issue-level" data-label="Level">' + escapeHtml(issue.severity) + '</span>'
-        + '<div class="diagnostics-issue-copy" data-label="Issue"><strong><code>' + escapeHtml(issue.event) + '</code></strong>'
+        + '<span class="diagnostics-issue-level" data-label="' + escapeHtml(jt('diagnostics.labels.level', 'Level')) + '">' + escapeHtml(issue.severity) + '</span>'
+        + '<div class="diagnostics-issue-copy" data-label="' + escapeHtml(jt('diagnostics.labels.issue', 'Issue')) + '"><strong><code>' + escapeHtml(issue.event) + '</code></strong>'
         + (message ? '<p>' + escapeHtml(message) + '</p>' : '<p class="diagnostics-muted">' + escapeHtml(jt('diagnostics.issues.noAdditionalMessageRecorded', 'No additional message recorded.')) + '</p>')
         + correlations + remediation + '</div>'
-        + '<div class="diagnostics-issue-meta" data-label="Component"><code>' + escapeHtml(issue.component) + '</code>'
+        + '<div class="diagnostics-issue-meta" data-label="' + escapeHtml(jt('diagnostics.labels.component', 'Component')) + '"><code>' + escapeHtml(issue.component) + '</code>'
         + (issue.error_code ? '<span>' + escapeHtml(issue.error_code) + '</span>' : '') + '</div>'
-        + '<time data-label="Last seen" datetime="' + escapeHtml(issue.ts || '') + '" title="' + escapeHtml(issue.ts || jt('diagnostics.common.unknownTime', 'Unknown time')) + '">'
-        + escapeHtml(issue.ts ? formatCompactTime(issue.ts) : 'Unknown') + '</time>'
-        + '<span class="diagnostics-issue-count" data-label="Count">' + formatNumber(issue.count) + '×</span>'
+        + '<time data-label="' + escapeHtml(jt('diagnostics.source.lastSeen', 'Last seen')) + '" datetime="' + escapeHtml(issue.ts || '') + '" title="' + escapeHtml(issue.ts || jt('diagnostics.common.unknownTime', 'Unknown time')) + '">'
+        + escapeHtml(issue.ts ? formatCompactTime(issue.ts) : jt('diagnostics.common.unknown', 'Unknown')) + '</time>'
+        + '<span class="diagnostics-issue-count" data-label="' + escapeHtml(jt('diagnostics.labels.count', 'Count')) + '">' + formatNumber(issue.count) + '\u00d7</span>'
         + '<div class="diagnostics-issue-action">' + inspect + '</div></article>';
     }).join('');
     paintMarkup(issueList,
-      '<div class="diagnostics-issue-header" aria-hidden="true"><span>Level</span><span>Issue</span><span>Component</span><span>' + escapeHtml(jt('diagnostics.source.lastSeen', 'Last seen')) + '</span><span>Count</span><span></span></div>'
+      '<div class="diagnostics-issue-header" aria-hidden="true"><span>' + escapeHtml(jt('diagnostics.labels.level', 'Level')) + '</span><span>' + escapeHtml(jt('diagnostics.labels.issue', 'Issue')) + '</span><span>' + escapeHtml(jt('diagnostics.labels.component', 'Component')) + '</span><span>' + escapeHtml(jt('diagnostics.source.lastSeen', 'Last seen')) + '</span><span>' + escapeHtml(jt('diagnostics.labels.count', 'Count')) + '</span><span></span></div>'
       + rows);
   }
 
-  function renderPerformanceSummary(status) {
-    var anomalies = document.getElementById('performanceAnomaliesContainer');
-    var slow = status.slow_operations || null;
-    var items = Array.isArray(slow?.items) ? slow.items : [];
-    var hasSamples = hasPerformanceSamples(status);
-    var backendPhase = String(status.backend?.phase || '').toLowerCase();
-    var backendUnavailable = ['failed', 'unavailable', 'stopped', 'error', 'crashed'].includes(backendPhase);
-    var unavailableFacets = [];
-    if (status.phase_percentiles?.available === false) unavailableFacets.push(jt('diagnostics.performance.phaseLatencyFacet', 'phase latency'));
-    if (status.tool_observability?.available === false) unavailableFacets.push(jt('diagnostics.performance.toolLatencyFacet', 'tool latency'));
-    if (anomalies) {
-      var anomalyMarkup;
-      if (items.length) {
-        anomalyMarkup = '<div class="diagnostics-performance-summary" data-tone="warn"><strong>' + escapeHtml(jtn('diagnostics.performance.operationsOverTarget', items.length, { count: items.length }, '{count} operation over target', '{count} operations over target')) + '</strong>'
-          + '<ul>' + items.slice(0, 4).map(function (item) {
-            return '<li><code>' + escapeHtml(item.id || item.kind || 'operation') + '</code><span>'
-              + escapeHtml(formatMetricMs(item.observed_ms)) + ' observed · ' + escapeHtml(formatMetricMs(item.threshold_ms)) + ' target</span></li>';
-          }).join('') + '</ul></div>';
-      } else if (backendUnavailable) {
-        anomalyMarkup = '<div class="diagnostics-performance-summary"><strong>' + escapeHtml(jt('diagnostics.performance.evidenceUnavailable', 'Performance evidence unavailable')) + '</strong>'
-          + '<p>' + escapeHtml(jt('diagnostics.performance.backendUnavailable', 'Latency sampling is unavailable until the backend recovers.')) + '</p></div>';
-      } else if (!slow || slow.available === false) {
-        anomalyMarkup = '<div class="diagnostics-performance-summary"><strong>' + escapeHtml(jt('diagnostics.performance.evidenceUnavailable', 'Performance evidence unavailable')) + '</strong>'
-          + '<p>' + escapeHtml(jt('diagnostics.performance.slowEvidenceUnavailable', 'Slow-operation evidence could not be loaded for this run.')) + '</p></div>';
-      } else if (unavailableFacets.length) {
-        var allUnavailable = unavailableFacets.length === 2;
-        anomalyMarkup = '<div class="diagnostics-performance-summary"><strong>'
-          + escapeHtml(allUnavailable ? jt('diagnostics.performance.evidenceUnavailable', 'Performance evidence unavailable') : jt('diagnostics.performance.evidencePartial', 'Performance evidence partial')) + '</strong><p>'
-          + escapeHtml(jt('diagnostics.performance.facetsUnavailable', '{facets} evidence could not be loaded for this run.', { facets: humanize(unavailableFacets.join(' and ')) })) + '</p></div>';
-      } else if (!hasSamples) {
-        anomalyMarkup = '<div class="diagnostics-performance-summary"><strong>' + escapeHtml(jt('diagnostics.performance.noSamples', 'No performance samples yet')) + '</strong>'
-          + '<p>' + escapeHtml(jt('diagnostics.performance.collectEvidenceHint', 'Run a local chat or tool to collect latency evidence.')) + '</p></div>';
-      } else {
-        anomalyMarkup = '<div class="diagnostics-performance-summary" data-tone="ok"><strong>' + escapeHtml(jt('diagnostics.performance.noAnomalies', 'No performance anomalies')) + '</strong>'
-          + '<p>' + escapeHtml(jt('diagnostics.performance.noExceededTargets', 'No recorded phase or tool sample exceeded its latency target.')) + '</p></div>';
-      }
-      paintMarkup(anomalies, anomalyMarkup);
-    }
-    var budgetHost = document.getElementById('resourceBudgetsContainer');
-    if (!budgetHost) return;
-    var budgets = status.budgets || null;
-    var budgetRows = [];
-    if (budgets?.token_headroom != null) budgetRows.push([jt('diagnostics.budgets.tokenHeadroom', 'Token headroom'), formatNumber(budgets.token_headroom), Number(budgets.token_headroom) > 0 ? 'ok' : 'warn']);
-    if (budgets?.tool_quota_remaining != null) budgetRows.push([jt('diagnostics.budgets.toolQuotaRemaining', 'Tool quota remaining'), formatNumber(budgets.tool_quota_remaining), Number(budgets.tool_quota_remaining) > 0 ? 'ok' : 'warn']);
-    if (Number.isFinite(Number(budgets?.cost_remaining_usd))) budgetRows.push([jt('diagnostics.budgets.budgetRemaining', 'Budget remaining'), '$' + Number(budgets.cost_remaining_usd).toFixed(2), Number(budgets.cost_remaining_usd) > 0 ? 'ok' : 'warn']);
-    var budgetMarkup = budgetRows.length
-      ? '<dl class="diagnostics-budget-list">' + budgetRows.map(function (row) {
-        return '<div data-tone="' + row[2] + '"><dt>' + escapeHtml(row[0]) + '</dt><dd>' + escapeHtml(row[1]) + '</dd></div>';
-      }).join('') + '</dl>'
-      : '<div class="diagnostics-compact-empty"><strong>' + escapeHtml(jt('diagnostics.budgets.heading', 'Resource budgets')) + '</strong><p>'
-        + escapeHtml(budgets?.available === false ? jt('diagnostics.budgets.evidenceUnavailable', 'Budget evidence is unavailable.') : jt('diagnostics.budgets.noCounters', 'No resource budget counters are available for this run.'))
-        + '</p></div>';
-    paintMarkup(budgetHost, budgetMarkup);
-  }
-
   function renderHealth(state) {
+    var status = state.diagnosticsStatus || {};
+    var runtimeHealthState = {
+      // The diagnostics snapshot only fills runtime fields the live state lacks.
+      backend: liveBackend(state),
+      status: Object.assign({}, status.runtime, state.status),
+      modelList: state.modelList,
+      offline: state.offline || {},
+    };
     phaseUtils.renderPhasePercentilesPane?.({
       phasePercentilesState: state.phasePercentiles,
-      runtimeHealthState: {
-        backend: state.backend,
-        status: state.status,
-        modelList: state.modelList,
-        offline: state.offline || {},
-      },
+      runtimeHealthState: runtimeHealthState,
       harnessSnapshot: state.harness?.snapshot || null,
       deriveRuntimeHealthState: runtimeHealthUtils.deriveRuntimeHealthState,
       dom: {
@@ -438,7 +407,12 @@
       },
       escapeHtml: escapeHtml,
     });
-    renderPerformanceSummary(state.diagnosticsStatus || {});
+    var summary = document.getElementById('diagnosticsSummary');
+    if (summary && selectedRunId(state) && selectedRunId(state) !== String(state.diagnosticsSnapshot?.active_run?.run_id || '')) {
+      summary.insertAdjacentHTML('beforeend', '<p class="settings-note diagnostics-muted">'
+        + escapeHtml(jt('diagnostics.health.currentLaunchScope', 'Health shows the current launch, not the selected run.')) + '</p>');
+    }
+    performanceUtils.renderPerformanceSummary(status, runtimeHealthState, paintMarkup);
   }
 
   function isAvailableFacet(value) {
@@ -449,7 +423,7 @@
   }
 
   function unavailableFacet(label) {
-    return [label, 'Unavailable', 'warn'];
+    return [label, jt('diagnostics.common.unavailable', 'Unavailable'), 'warn'];
   }
 
   // isAvailableFacet reads a top-level `error` key as "this harness section
@@ -466,20 +440,20 @@
       : text;
   }
 
-  // Rows are [label, value, tone, mono?]. Tone is carried by the value colour
+  // Rows are [label, value, tone, mono?, title?]. Tone is carried by the value colour
   // only (see .diagnostics-inventory-list [data-tone] in diagnostics-health.css);
-  // the full value always rides the title so the two-line clamp never hides it.
+  // titles retain full values or technical identifiers behind product labels.
   function inventoryRow(item, groupStart) {
-    var value = String(item[1] == null ? '' : item[1]).trim() || 'Unavailable';
+    var value = String(item[1] == null ? '' : item[1]).trim() || jt('diagnostics.common.unavailable', 'Unavailable');
     return '<div data-tone="' + escapeHtml(item[2] || 'warn') + '"'
       + (groupStart ? ' data-group-start="true"' : '')
       + (item[3] ? ' data-mono="true"' : '') + '>'
       + '<dt>' + escapeHtml(item[0]) + '</dt>'
-      + '<dd title="' + escapeHtml(value) + '">' + escapeHtml(clampInventoryValue(value)) + '</dd></div>';
+      + '<dd title="' + escapeHtml(item[4] || value) + '">' + escapeHtml(clampInventoryValue(value)) + '</dd></div>';
   }
 
   function toolsFacetRow(facet) {
-    if (!facet) return unavailableFacet('Tools');
+    if (!facet) return unavailableFacet(jt('diagnostics.inventory.tools', 'Tools'));
     var counts = isAvailableFacet(facet.counts) ? facet.counts : null;
     var items = Array.isArray(facet.items) ? facet.items : null;
     var enabled = counts && Number.isFinite(Number(counts.enabled))
@@ -487,19 +461,19 @@
       : items
         ? items.filter(function (tool) { return tool && tool.enabled !== false; }).length
         : null;
-    if (enabled == null) return unavailableFacet('Tools');
+    if (enabled == null) return unavailableFacet(jt('diagnostics.inventory.tools', 'Tools'));
     var disabled = counts && Number.isFinite(Number(counts.disabled))
       ? Number(counts.disabled)
       : items ? Math.max(items.length - enabled, 0) : 0;
     return [
-      'Tools',
-      formatNumber(enabled) + ' enabled' + (disabled > 0 ? ' · ' + formatNumber(disabled) + ' disabled' : ''),
+      jt('diagnostics.inventory.tools', 'Tools'),
+      jt('diagnostics.inventory.enabledCount', '{count} enabled', { count: formatNumber(enabled) }) + (disabled > 0 ? ' \u00b7 ' + jt('diagnostics.inventory.disabledCount', '{count} disabled', { count: formatNumber(disabled) }) : ''),
       enabled > 0 ? 'ok' : 'warn',
     ];
   }
 
   function memoryFacetRow(facet) {
-    if (!facet) return unavailableFacet('Memory');
+    if (!facet) return unavailableFacet(jt('diagnostics.inventory.memory', 'Memory'));
     var counts = isAvailableFacet(facet.counts) ? facet.counts : null;
     var approved = counts && Number.isFinite(Number(counts.approved))
       ? Number(counts.approved)
@@ -508,13 +482,13 @@
       ? Number(counts.pending)
       : Array.isArray(facet.pending) ? facet.pending.length : null;
     if (approved == null || pending == null || facet.status?.available === false) {
-      return unavailableFacet('Memory');
+      return unavailableFacet(jt('diagnostics.inventory.memory', 'Memory'));
     }
-    return ['Memory', formatNumber(approved) + ' approved · ' + formatNumber(pending) + ' pending', 'ok'];
+    return [jt('diagnostics.inventory.memory', 'Memory'), jt('diagnostics.inventory.memoryCounts', '{approved} approved \u00b7 {pending} pending', { approved: formatNumber(approved), pending: formatNumber(pending) }), 'ok'];
   }
 
   function skillsFacetRow(facet) {
-    if (!facet || !Array.isArray(facet.scopes)) return unavailableFacet('Skills');
+    if (!facet || !Array.isArray(facet.scopes)) return unavailableFacet(jt('diagnostics.inventory.skills', 'Skills'));
     var scopes = facet.scopes.slice(0, 6);
     var counts = isAvailableFacet(facet.counts) ? facet.counts : null;
     var total = counts && Number.isFinite(Number(counts.total))
@@ -522,49 +496,50 @@
       : Array.isArray(facet.items) ? facet.items.length : 0;
     var blocked = scopes.filter(function (scope) { return scope && scope.status === 'blocked'; }).length;
     var clauses = [];
-    if (total > 0) clauses.push(formatNumber(total) + ' loaded');
-    clauses.push(scopes.length + ' scope' + (scopes.length === 1 ? '' : 's'));
-    if (blocked) clauses.push(blocked + ' blocked');
-    return ['Skills', clauses.join(' · '), blocked ? 'warn' : 'ok'];
+    if (total > 0) clauses.push(jt('diagnostics.inventory.loadedCount', '{count} loaded', { count: formatNumber(total) }));
+    clauses.push(jtn('diagnostics.inventory.scopeCount', scopes.length, { count: formatNumber(scopes.length) }, '{count} scope', '{count} scopes'));
+    if (blocked) clauses.push(jt('diagnostics.inventory.blockedCount', '{count} blocked', { count: formatNumber(blocked) }));
+    return [jt('diagnostics.inventory.skills', 'Skills'), clauses.join(' \u00b7 '), blocked ? 'warn' : 'ok'];
   }
 
   function workspaceFacetRow(facet) {
-    if (!facet) return unavailableFacet('Workspace');
+    if (!facet) return unavailableFacet(jt('diagnostics.inventory.workspace', 'Workspace'));
     var blockers = Array.isArray(facet.blockers) ? facet.blockers : [];
-    if (!String(facet.root || '').trim()) return ['Workspace', jt('diagnostics.inventory.notConfigured', 'Not configured'), 'warn'];
-    if (facet.exists !== true) return ['Workspace', jt('diagnostics.inventory.configuredRootUnavailable', 'Configured root unavailable'), 'warn'];
+    if (!String(facet.root || '').trim()) return [jt('diagnostics.inventory.workspace', 'Workspace'), jt('diagnostics.inventory.notConfigured', 'Not configured'), 'warn'];
+    if (facet.exists !== true) return [jt('diagnostics.inventory.workspace', 'Workspace'), jt('diagnostics.inventory.configuredRootUnavailable', 'Configured root unavailable'), 'warn'];
     if (blockers.length) {
-      return ['Workspace', jtn('diagnostics.inventory.availableWithBlockers', blockers.length, { count: blockers.length }, 'Available with {count} blocker', 'Available with {count} blockers'), 'warn'];
+      return [jt('diagnostics.inventory.workspace', 'Workspace'), jtn('diagnostics.inventory.availableWithBlockers', blockers.length, { count: blockers.length }, 'Available with {count} blocker', 'Available with {count} blockers'), 'warn'];
     }
-    return ['Workspace', 'Available', 'ok'];
+    return [jt('diagnostics.inventory.workspace', 'Workspace'), jt('diagnostics.inventory.available', 'Available'), 'ok'];
   }
 
   // The shell facet is a tree of settings groups. Read values out of it -- never
   // fall back to listing its keys, which reads as configuration but names
   // nothing the owner actually set.
   function shellFacetRow(facet) {
-    if (!facet) return unavailableFacet('Shell');
+    if (!facet) return unavailableFacet(jt('diagnostics.inventory.shell', 'Shell'));
     var clauses = [];
     var companion = String(facet.companion?.mode || '').trim();
-    if (companion) clauses.push('Companion ' + companion);
+    if (companion) clauses.push(statusLabel(companion));
     var offline = String(facet.offline?.mode || '').trim();
-    if (offline) clauses.push('offline ' + offline);
+    if (offline) clauses.push(jt('diagnostics.inventory.offlineMode', 'Offline: {mode}', { mode: statusLabel(offline) }));
     var preferences = isAvailableFacet(facet.tools_preferences) ? facet.tools_preferences : null;
     var keys = preferences ? Object.keys(preferences) : [];
     if (keys.length) {
       var on = keys.filter(function (key) { return preferences[key] === true; }).length;
-      clauses.push(jt('diagnostics.inventory.toolPrefsOn', '{enabled} of {total} tool prefs on', { enabled: on, total: keys.length }));
+      clauses.push(jt('diagnostics.inventory.toolPreferencesOn', '{enabled} of {total} tool preferences on', { enabled: on, total: keys.length }));
     }
-    return ['Shell', clauses.join(' · ') || 'Configured', 'ok'];
+    return [jt('diagnostics.inventory.shell', 'Shell'), clauses.join(' \u00b7 ') || jt('diagnostics.inventory.configured', 'Configured'), 'ok', false, [companion && 'companion ' + companion, offline && 'offline ' + offline].filter(Boolean).join(' \u00b7 ')];
   }
 
   function boundedFacetItems(snapshot) {
     var runtime = isAvailableFacet(snapshot?.runtime) ? snapshot.runtime : null;
     return [
       runtime && runtime.active_engine && runtime.active_model
-        ? ['Engine', runtime.active_engine + ' · ' + runtime.active_model + ' · '
-          + (runtime.active_mode || 'chat'), 'ok', true]
-        : unavailableFacet('Engine'),
+        ? [jt('diagnostics.inventory.engine', 'Engine'), runtime.active_engine + ' \u00b7 ' + runtime.active_model + ' \u00b7 '
+          + statusLabel(runtime.active_mode || 'chat'), 'ok', true,
+          runtime.active_engine + ' \u00b7 ' + runtime.active_model + ' \u00b7 ' + (runtime.active_mode || 'chat')]
+        : unavailableFacet(jt('diagnostics.inventory.engine', 'Engine')),
       toolsFacetRow(isAvailableFacet(snapshot?.tools) ? snapshot.tools : null),
       memoryFacetRow(isAvailableFacet(snapshot?.memories) ? snapshot.memories : null),
       skillsFacetRow(isAvailableFacet(snapshot?.skills) ? snapshot.skills : null),
@@ -574,37 +549,35 @@
   }
 
   function schedulerRow(scheduler) {
-    if (!isRecord(scheduler)) return unavailableFacet('Scheduler');
+    if (!isRecord(scheduler)) return unavailableFacet(jt('diagnostics.inventory.scheduler', 'Scheduler'));
     var lifecycle = isRecord(scheduler.lifecycle) ? scheduler.lifecycle : {};
     var phase = String(lifecycle.phase || 'unknown');
     var count = Number(lifecycle.qualifyingTaskCount || 0);
-    var clauses = [humanize(phase), jtn('diagnostics.inventory.enabledTaskCount', count, { count: count }, '{count} enabled task', '{count} enabled tasks')];
+    var clauses = [statusLabel(phase), jtn('diagnostics.inventory.enabledTaskCount', count, { count: formatNumber(count) }, '{count} enabled task', '{count} enabled tasks')];
     if (lifecycle.reason) clauses.push(String(lifecycle.reason));
     if (lifecycle.error) clauses.push(String(lifecycle.error));
-    return ['Scheduler', clauses.join(' · '), phase === 'failed' ? 'warn' : 'ok'];
+    return [jt('diagnostics.inventory.scheduler', 'Scheduler'), clauses.join(' \u00b7 '), phase === 'failed' ? 'warn' : 'ok', false, phase + ' \u00b7 ' + clauses.join(' \u00b7 ')];
   }
 
   function pluginRows(state) {
     if (state.features?.featureFlags?.plugins !== true) return [];
     var plugins = state.pluginPlatformDiagnostics;
     var platform = isRecord(plugins) && isRecord(plugins.platform) ? plugins.platform : null;
-    if (!platform) return [unavailableFacet('Plugins')];
+    if (!platform) return [unavailableFacet(jt('diagnostics.inventory.plugins', 'Plugins'))];
     var distribution = isRecord(plugins.distribution?.state)
       ? plugins.distribution.state
       : isRecord(plugins.distribution) ? plugins.distribution : {};
-    var catalog = isRecord(plugins.catalog) ? plugins.catalog : {};
-    var sources = Array.isArray(catalog.sources) ? catalog.sources.length : 0;
     var installed = Number(platform.installed_count);
-    var clauses = Number.isFinite(installed) ? [formatNumber(installed) + ' installed'] : [];
-    clauses.push('stage ' + String(platform.stage ?? 'unknown'), 'rev ' + String(platform.revision ?? 'unknown'));
+    var clauses = Number.isFinite(installed) ? [jt('diagnostics.inventory.installedCount', '{count} installed', { count: formatNumber(installed) })] : [];
+    if (platform.read_only) clauses.push(jt('diagnostics.inventory.readOnly', 'Read only'));
+    var technical = 'stage ' + String(platform.stage ?? 'unknown') + ' \u00b7 revision ' + String(platform.revision ?? 'unknown');
     var recovery = String(platform.recovery?.classification || '').trim();
     return [
-      ['Plugins', clauses.join(' · '), platform.read_only ? 'warn' : 'ok'],
-      ['Recovery', humanize(recovery || jt('diagnostics.inventory.recoveryNotRequired', 'not required')), recovery === 'recovery_failed' ? 'warn' : 'ok'],
-      sources
-        ? ['Distribution', 'rev ' + String(distribution.revision ?? jt('diagnostics.inventory.notPersisted', 'not persisted')) + ' · '
-          + jtn('diagnostics.inventory.catalogSourceCount', sources, { count: sources }, '{count} catalog source', '{count} catalog sources'), 'ok']
-        : ['Distribution', jt('diagnostics.inventory.noCatalogSources', 'No catalog sources'), 'muted'],
+      [jt('diagnostics.inventory.plugins', 'Plugins'), clauses.join(' \u00b7 '), platform.read_only ? 'warn' : 'ok', false, technical],
+      [jt('diagnostics.inventory.recovery', 'Recovery'), statusLabel(recovery || 'not_required'), recovery === 'recovery_failed' ? 'warn' : 'ok', false, recovery],
+      [jt('diagnostics.inventory.distribution', 'Distribution'), distribution.revision == null
+        ? jt('diagnostics.inventory.notPersisted', 'Not persisted')
+        : jt('diagnostics.inventory.revision', 'Revision {revision}', { revision: formatNumber(distribution.revision) }), 'ok', false, 'revision ' + String(distribution.revision ?? 'unknown')],
     ];
   }
 
@@ -630,8 +603,8 @@
     var loadedAt = Number(state.harness?.loadedAt || 0);
     if (!Number.isFinite(loadedAt) || loadedAt <= 0) return '';
     return '<p class="diagnostics-inventory-stamp" aria-hidden="true" title="'
-      + escapeHtml(formatDetailTime(loadedAt)) + '">Captured '
-      + escapeHtml(formatCompactTime(loadedAt, true)) + '</p>';
+      + escapeHtml(formatDetailTime(loadedAt)) + '">'
+      + escapeHtml(jt('diagnostics.inventory.capturedAt', 'Captured {time}', { time: formatCompactTime(loadedAt, true) })) + '</p>';
   }
 
   function renderRuntimeInventory(state) {
@@ -674,11 +647,11 @@
     var boundedMessage = String(message || jt('diagnostics.activity.noAdditionalMessage', 'No additional message'));
     if (boundedMessage.length > 320) boundedMessage = boundedMessage.slice(0, 319) + '…';
     return [
-      'Time ' + (timestamp || 'unknown'),
-      'Level ' + String(entry.level || 'INFO'),
-      'Source ' + String(entry.layer || entry.source || 'electron'),
-      'Event ' + eventName,
-      'Message ' + boundedMessage,
+      jt('diagnostics.activity.timeLabel', 'Time {time}', { time: timestamp || jt('diagnostics.common.unknown', 'Unknown') }),
+      jt('diagnostics.activity.levelLabel', 'Level {level}', { level: String(entry.level || 'INFO') }),
+      jt('diagnostics.activity.sourceLabel', 'Source {source}', { source: String(entry.layer || entry.source || 'electron') }),
+      jt('diagnostics.activity.eventLabel', 'Event {event}', { event: eventName }),
+      jt('diagnostics.activity.messageLabel', 'Message {message}', { message: boundedMessage }),
     ].join(', ');
   }
 
@@ -693,12 +666,12 @@
       + ' data-log-index="' + escapeHtml(id) + '" data-entry-id="' + escapeHtml(id) + '"'
       + ' data-level="' + escapeHtml(String(entry.level || 'INFO').toLowerCase()) + '"'
       + ' tabindex="' + (focusable || selected ? '0' : '-1') + '" aria-selected="' + selected + '">'
-      + '<time data-label="Time" datetime="' + escapeHtml(timestamp) + '" title="' + escapeHtml(timestamp || jt('diagnostics.common.unknownTime', 'Unknown time')) + '">'
+      + '<time data-label="' + escapeHtml(jt('diagnostics.labels.time', 'Time')) + '" datetime="' + escapeHtml(timestamp) + '" title="' + escapeHtml(timestamp || jt('diagnostics.common.unknownTime', 'Unknown time')) + '">'
       + escapeHtml(formatCompactTime(timestamp)) + '</time>'
-      + '<span class="log-entry-level" data-label="Level">' + escapeHtml(entry.level || 'INFO') + '</span>'
-      + '<span class="log-entry-source" data-label="Source">' + escapeHtml(entry.layer || entry.source || 'electron') + '</span>'
-      + '<code class="log-entry-event" data-label="Event">' + escapeHtml(eventName) + '</code>'
-      + '<span class="log-entry-message' + (message ? '' : ' diagnostics-muted') + '" data-label="Message">'
+      + '<span class="log-entry-level" data-label="' + escapeHtml(jt('diagnostics.labels.level', 'Level')) + '">' + escapeHtml(entry.level || 'INFO') + '</span>'
+      + '<span class="log-entry-source" data-label="' + escapeHtml(jt('diagnostics.labels.source', 'Source')) + '">' + escapeHtml(entry.layer || entry.source || 'electron') + '</span>'
+      + '<code class="log-entry-event" data-label="' + escapeHtml(jt('diagnostics.labels.event', 'Event')) + '">' + escapeHtml(eventName) + '</code>'
+      + '<span class="log-entry-message' + (message ? '' : ' diagnostics-muted') + '" data-label="' + escapeHtml(jt('diagnostics.labels.message', 'Message')) + '">'
       + (message ? escapeHtml(message) : '<span aria-hidden="true">—</span><span class="sr-only">' + escapeHtml(jt('diagnostics.activity.noAdditionalMessage', 'No additional message')) + '</span>') + '</span>'
       + '</article>';
   }
@@ -800,10 +773,24 @@
       markupCache.delete(list);
       mutated = true;
     } else if (cache.signature !== filterSignature || !idsMatch) {
+      var focusedRow = list.contains(document.activeElement) ? document.activeElement.closest('[data-entry-id]') : null;
+      var focusId = focusedRow?.dataset.entryId || '';
+      if (focusId && !ids.includes(focusId)) {
+        var focusIndex = cache.ids.indexOf(focusId);
+        focusId = cache.ids.slice(focusIndex + 1).find(function (id) { return ids.includes(id); })
+          || cache.ids.slice(0, focusIndex).reverse().find(function (id) { return ids.includes(id); })
+          || ids[0];
+      }
       list.innerHTML = filtered.map(function (entry, index) {
         return renderActivityRow(entry, view.selectedEntryId, !view.selectedEntryId && index === 0);
       }).join('');
       markupCache.delete(list);
+      if (focusId) {
+        var rows = Array.from(list.querySelectorAll('[data-entry-id]'));
+        var focusTarget = rows.find(function (row) { return row.dataset.entryId === focusId; });
+        rows.forEach(function (row) { row.tabIndex = row === focusTarget ? 0 : -1; });
+        focusTarget?.focus({ preventScroll: true });
+      }
       mutated = true;
     } else {
       updateSelection(list, previousSelectedId, view.selectedEntryId);
@@ -850,7 +837,7 @@
     var message = displayMessage(entry.message || entry.details?.message, entry.event);
     var correlations = issueUtils.correlations ? issueUtils.correlations(entry) : {};
     var correlationMarkup = Object.entries(correlations).map(function (pair) {
-      return detailField(humanize(pair[0].replace('_id', '')), safeCorrelationValue(pair[1]), true);
+      return detailField(statusLabel(pair[0].replace('_id', '')), safeCorrelationValue(pair[1]), true);
     }).join('');
     var codeMarkup = typeof codeBlock.codeblockTruncated === 'function'
       ? codeBlock.codeblockTruncated({
@@ -869,20 +856,30 @@
       '<header class="diagnostics-detail-header"><div><span class="diagnostics-detail-header-level" data-level="'
       + escapeHtml(String(entry.level || 'INFO').toLowerCase()) + '">' + escapeHtml(entry.level || 'INFO') + '</span><h3><code>'
       + escapeHtml(entry.event || 'event') + '</code></h3></div>' + close + '</header>'
-      + '<section class="diagnostics-detail-section"><h4>Summary</h4><dl class="diagnostics-detail-list">'
-      + detailField('Message', message || jt('diagnostics.issues.noAdditionalMessageRecorded', 'No additional message recorded.'))
-      + detailField('Time', formatDetailTime(entry.ts))
-      + detailField('Component', entry.component || 'unknown', true)
-      + detailField('Run', entry.run_id, true)
-      + detailField('Sequence', entry.sequence, true)
+      + '<section class="diagnostics-detail-section"><h4>' + escapeHtml(jt('diagnostics.detail.summary', 'Summary')) + '</h4><dl class="diagnostics-detail-list">'
+      + detailField(jt('diagnostics.labels.message', 'Message'), message || jt('diagnostics.issues.noAdditionalMessageRecorded', 'No additional message recorded.'))
+      + detailField(jt('diagnostics.labels.time', 'Time'), formatDetailTime(entry.ts))
+      + detailField(jt('diagnostics.labels.component', 'Component'), entry.component || 'unknown', true)
+      + detailField(jt('diagnostics.detail.run', 'Run'), entry.run_id, true)
+      + detailField(jt('diagnostics.detail.sequence', 'Sequence'), entry.sequence, true)
       + '</dl></section>'
-      + '<section class="diagnostics-detail-section"><h4>Identity</h4><dl class="diagnostics-detail-list">'
-      + detailField('Source', entry.layer || entry.source || 'electron', true)
-      + detailField('Event', entry.event || 'event', true)
-      + detailField('Level', entry.level || 'INFO')
+      + '<section class="diagnostics-detail-section"><h4>' + escapeHtml(jt('diagnostics.detail.identity', 'Identity')) + '</h4><dl class="diagnostics-detail-list">'
+      + detailField(jt('diagnostics.labels.source', 'Source'), entry.layer || entry.source || 'electron', true)
+      + detailField(jt('diagnostics.labels.event', 'Event'), entry.event || 'event', true)
+      + detailField(jt('diagnostics.labels.level', 'Level'), entry.level || 'INFO')
       + '</dl></section>'
-      + (correlationMarkup ? '<section class="diagnostics-detail-section"><h4>Correlation</h4><dl class="diagnostics-detail-list">' + correlationMarkup + '</dl></section>' : '')
+      + (correlationMarkup ? '<section class="diagnostics-detail-section"><h4>' + escapeHtml(jt('diagnostics.detail.correlation', 'Correlation')) + '</h4><dl class="diagnostics-detail-list">' + correlationMarkup + '</dl></section>' : '')
       + '<section class="diagnostics-detail-section"><h4>' + escapeHtml(jt('diagnostics.detail.structuredData', 'Structured data')) + '</h4>' + codeMarkup + '</section>');
+  }
+
+  // Runs (owner, 2026-10-03; moved from Settings). The board belongs to the
+  // shared runtime console, which the settings section binders publish (one
+  // poller with Settings › Limits & budgets). Each paint of this tab attaches
+  // it on first show and wakes it after; the console polls only while
+  // Diagnostics shows this tab.
+  function showRunsBoard() {
+    var host = document.getElementById('diagnosticsRunsMount');
+    if (host) globalThis.rendererRuntimeConsole?.showRuns?.(host);
   }
 
   function scrollLogsToBottom(list) {
@@ -916,10 +913,17 @@
       renderRunSelector(state);
       var overview = document.getElementById('diagnosticsOverview');
       var activity = document.getElementById('diagnosticsActivity');
+      var runs = document.getElementById('diagnosticsRuns');
       if (overview) overview.hidden = view.activeTab !== 'overview';
       if (activity) activity.hidden = view.activeTab !== 'activity';
+      if (runs) runs.hidden = view.activeTab !== 'runs';
+      // The evidence window and report speak of an app run; on the Runs tab
+      // ("work runs") they would read as part of the board, so they step away.
+      var headerActions = document.querySelector('#logsMasthead .diagnostics-header-actions');
+      if (headerActions) headerActions.hidden = view.activeTab === 'runs';
       if (view.activeTab === 'overview') renderOverview(state, entries);
-      else renderActivity(state, entries, virtualizer, activityCache);
+      else if (view.activeTab === 'activity') renderActivity(state, entries, virtualizer, activityCache);
+      else showRunsBoard();
       renderDetail(state, entries);
     }
 
@@ -941,7 +945,7 @@
 
     return {
       renderLogs: renderLogs,
-      stopRelativeTimeRefresh: dispose,
+      dispose: dispose,
       getLogEntryById: getLogEntryById,
       ensureLogRowMounted: function (id) { return virtualizer?.ensureMountedForId?.(id) || false; },
     };

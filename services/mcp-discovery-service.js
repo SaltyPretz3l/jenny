@@ -2,6 +2,7 @@ const {
   McpConfigStore,
   configurationDigest,
   normalizedServerConfig,
+  projectServerConfig,
   pendingTrust,
 } = require('./mcp-config-store');
 const { MCP_ERROR_CODES } = require('./backend/error-codes');
@@ -20,72 +21,10 @@ function normalizeTransport(value) {
   return token || 'stdio';
 }
 
-// Non-secret auth shape forwarded downstream. `secret_ref` is an opaque
-// pointer into safeStorage (or similar); the actual bearer token / client
-// secret is resolved later (MCP HTTP Transport Step 5) and is NEVER read
-// from mcp-servers.json here. If the on-disk config carries a literal
-// `token` or `client_secret`, it is intentionally dropped below.
-function normalizeConfiguredServerAuth(value) {
-  if (!isPlainObject(value)) {
-    return null;
-  }
-  const kind = String(value.kind || '').trim().toLowerCase();
-  const auth = {};
-  if (kind) {
-    auth.kind = kind;
-  }
-  const secretRef = String(value.secret_ref || '').trim();
-  if (secretRef) {
-    auth.secret_ref = secretRef;
-  }
-  const tokenUrl = String(value.token_url || '').trim();
-  if (tokenUrl) {
-    auth.token_url = tokenUrl;
-  }
-  const clientId = String(value.client_id || '').trim();
-  if (clientId) {
-    auth.client_id = clientId;
-  }
-  const scope = String(value.scope || '').trim();
-  if (scope) {
-    auth.scope = scope;
-  }
-  // SECURITY: `token` / `client_secret` are never copied from the on-disk
-  // json into the forwarded shape, even if present in the source file.
-  return Object.keys(auth).length ? auth : null;
-}
-
-function normalizeConfiguredServer(value) {
-  if (!isPlainObject(value)) {
-    return null;
-  }
+function runtimeServerIdentity(value) {
+  if (!isPlainObject(value)) return null;
   const name = String(value.name || '').trim();
-  if (!name) {
-    return null;
-  }
-  const transport = normalizeTransport(value.transport);
-  const row = {
-    name,
-    transport,
-  };
-  if (transport === 'stdio') {
-    row.command = String(value.command || '').trim();
-    row.args = Array.isArray(value.args)
-      ? [...value.args]
-      : [];
-  }
-  if (transport === 'sse' || transport === 'http') {
-    row.url = String(value.url || '').trim();
-    const initTimeoutSeconds = Number(value.init_timeout_seconds);
-    if (Number.isFinite(initTimeoutSeconds) && initTimeoutSeconds > 0) {
-      row.init_timeout_seconds = initTimeoutSeconds;
-    }
-    const auth = normalizeConfiguredServerAuth(value.auth);
-    if (auth) {
-      row.auth = auth;
-    }
-  }
-  return row;
+  return name ? { name, transport: normalizeTransport(value.transport) } : null;
 }
 
 function mcpAuthSecretRef(serverName) {
@@ -163,18 +102,19 @@ function countToolsByServer(toolsStatus = {}) {
 }
 
 // Non-secret auth summary for the renderer-facing discovery payload: never
-// carries `token` / `client_secret` (normalizeConfiguredServerAuth already
-// stripped those upstream) and never resolves the secret value from
+// carries `token` / `client_secret` and never resolves the secret value from
 // secureStore here. `secretRef` is an opaque pointer only.
 function summarizeServerAuth(auth) {
   if (!isPlainObject(auth)) {
     return null;
   }
-  const kind = String(auth.kind || '').trim() || 'bearer';
+  const kind = String(auth.kind || '').trim().toLowerCase();
   const secretRef = String(auth.secret_ref || '').trim() || null;
-  return { kind, secretRef,
-    token_url: String(auth.token_url || '').trim(), client_id: String(auth.client_id || '').trim(),
-    scope: String(auth.scope || '').trim() };
+  const tokenUrl = String(auth.token_url || '').trim();
+  const clientId = String(auth.client_id || '').trim();
+  const scope = String(auth.scope || '').trim();
+  if (!kind && !secretRef && !tokenUrl && !clientId && !scope) return null;
+  return { kind: kind || 'bearer', secretRef, token_url: tokenUrl, client_id: clientId, scope };
 }
 
 function normalizeRuntimeServers(status = {}, configuredServers = []) {
@@ -183,7 +123,7 @@ function normalizeRuntimeServers(status = {}, configuredServers = []) {
   const runtimeRows = Array.isArray(status.mcp_servers) ? status.mcp_servers : [];
   const candidates = [BUILTIN_SERVER, ...configuredServers, ...runtimeRows];
   for (const entry of candidates) {
-    const normalized = normalizeConfiguredServer(entry);
+    const normalized = runtimeServerIdentity(entry);
     if (!normalized || seen.has(normalized.name)) {
       continue;
     }
@@ -191,10 +131,10 @@ function normalizeRuntimeServers(status = {}, configuredServers = []) {
     rows.push({
       name: normalized.name,
       transport: normalized.transport,
-      url: normalized.url || '',
-      command: normalized.command || '',
-      args: Array.isArray(normalized.args) ? [...normalized.args] : [],
-      auth: summarizeServerAuth(normalized.auth),
+      url: ['sse', 'http'].includes(normalized.transport) ? String(entry.url || '').trim() : '',
+      command: normalized.transport === 'stdio' ? String(entry.command || '').trim() : '',
+      args: normalized.transport === 'stdio' && Array.isArray(entry.args) ? [...entry.args] : [],
+      auth: ['sse', 'http'].includes(normalized.transport) ? summarizeServerAuth(entry.auth) : null,
     });
   }
   for (const name of Array.isArray(status.mcp_servers_connected) ? status.mcp_servers_connected : []) {
@@ -247,7 +187,8 @@ function buildDiscoveryState({ backendStatus = {}, configuredServers = [], sseEn
       command: server.command || '',
       args: server.args || [],
       auth: server.auth || null,
-      enabled: configured?.enabled === true,
+      builtin: server.name === BUILTIN_SERVER.name,
+      enabled: server.name === BUILTIN_SERVER.name || configured?.enabled === true,
       trust: configured?.trust || null,
     };
   });
@@ -315,7 +256,7 @@ class McpDiscoveryService {
     }
     return {
       mcp_servers: supportedServers.map((server) => ({
-        ...normalizeConfiguredServer(server),
+        ...projectServerConfig(server),
         approved_tools_digest: server.trust.advertised_tools_digest,
       })),
       mcp_sse_enabled: effectiveSseEnabled,
@@ -379,11 +320,28 @@ class McpDiscoveryService {
 
   async updateServer(payload = {}) {
     const name = String(payload.name || '').trim();
-    const normalized = normalizedServerConfig(payload.server || payload.value || {});
-    if (!name || !normalized.ok) return structuredError(normalized.reason || 'invalid_server_name', 'The MCP server definition is invalid.');
     const rows = this._loadConfig().mcp_servers;
     const index = rows.findIndex((row) => row.name === name);
     if (index === -1) return structuredError('server_not_found', 'The MCP server was not found.');
+    const update = payload.server || payload.value || {};
+    const previous = rows[index];
+    const merged = { ...update,
+      init_timeout_seconds: update.init_timeout_seconds === undefined
+        ? previous.init_timeout_seconds : update.init_timeout_seconds,
+    };
+    const auth = update.auth === undefined ? previous.auth : update.auth;
+    if (isPlainObject(auth)) {
+      // A stored credential only follows an edit to the same destination: a new
+      // auth kind, URL origin or token URL must be re-entered, never re-sent.
+      const origin = (value) => { try { return new URL(String(value || '')).origin; } catch (_error) { return ''; } };
+      const sameDestination = auth.kind === previous.auth?.kind
+        && origin(merged.url ?? previous.url) === origin(previous.url)
+        && (auth.token_url ?? previous.auth?.token_url) === previous.auth?.token_url;
+      merged.auth = sameDestination ? { ...previous.auth, ...auth } : { ...auth };
+      if (!sameDestination) delete merged.auth.secret_ref;
+    } else if (update.auth !== undefined) merged.auth = update.auth;
+    const normalized = normalizedServerConfig(merged);
+    if (!name || !normalized.ok) return structuredError(normalized.reason || 'invalid_server_name', 'The MCP server definition is invalid.');
     if (rows.some((row, rowIndex) => rowIndex !== index && row.name === normalized.value.name)) {
       return structuredError('duplicate_server_identity', 'An MCP server with that name already exists.');
     }
@@ -415,8 +373,17 @@ class McpDiscoveryService {
   async testServer(payload = {}) {
     const name = String(payload.name || payload.serverName || '').trim();
     this.lastInspections.delete(name);
-    const server = this._loadConfig().mcp_servers.find((row) => row.name === name);
+    const config = this._loadConfig();
+    const server = config.mcp_servers.find((row) => row.name === name);
     if (!server) return structuredError('server_not_found', 'The MCP server was not found.');
+    // An explicit Test is the user's consent to one inspection connection, so
+    // only the Electron kill switch gates it. The document gate is turned on
+    // when an approved SSE server is enabled (D2) and governs live
+    // registration; requiring it here would block the first approval.
+    const sseEnabled = this.backendService?.featureFlags?.mcp_http_transport === true;
+    if (server.transport === 'sse' && !sseEnabled) {
+      return structuredError(MCP_ERROR_CODES.SSE_DISABLED, 'MCP SSE transport is disabled.');
+    }
     const client = this.backendService?.sidecarClient;
     if (!client?.connected || typeof client.request !== 'function') {
       return structuredError('sidecar_unavailable', 'MCP inspection is unavailable until the local runtime is ready.');
@@ -428,7 +395,7 @@ class McpDiscoveryService {
     const controller = new AbortController();
     this.inspectionControllers.set(name, controller);
     try {
-      const inspectionServer = normalizeConfiguredServer(server);
+      const inspectionServer = projectServerConfig(server);
       const secretRef = String(inspectionServer.auth?.secret_ref || '').trim();
       if (secretRef) {
         const secureStore = this._secureStore();
@@ -444,6 +411,7 @@ class McpDiscoveryService {
       const result = await client.request('mcp.inspect', {
         accept_version: require('./backend/sidecar-client').API_VERSION,
         server: inspectionServer,
+        mcp_sse_enabled: sseEnabled,
         confirmed_stdio: server.transport !== 'stdio' || payload.confirmed === true,
       }, { timeoutMs: 20_000, signal: controller.signal });
       if (!result?.ok || !/^[a-f0-9]{64}$/.test(String(result.tools_digest || ''))) return result;
@@ -501,6 +469,7 @@ class McpDiscoveryService {
       return structuredError('trust_review_required', 'Approve the discovered MCP tool surface before enabling this server.');
     }
     const result = this.configStore.update((document) => ({ ...document,
+      mcp_sse_enabled: document.mcp_sse_enabled || (enabled && server.transport === 'sse'),
       mcp_servers: document.mcp_servers.map((row) => row.name === name ? { ...row, enabled } : row),
     }));
     return this._afterMutation(result, enabled ? 'mcp_server_enabled' : 'mcp_server_disabled');
@@ -511,6 +480,9 @@ class McpDiscoveryService {
     if (this.backendService && typeof this.backendService.refreshManagedConfig === 'function') {
       try { await this.backendService.refreshManagedConfig(reason); } catch (error) {
         this.log('WARN', 'mcp.config.runtime_refresh_failed', { reason, error_name: error?.name || 'Error' });
+        return { ...structuredError(MCP_ERROR_CODES.SERVER_FAILED,
+          'The MCP configuration was saved, but application is pending. The previous runtime configuration may still be active.'),
+          saved: true, runtimeApplied: false, state: this.getState() };
       }
     }
     return { ok: true, state: this.getState() };

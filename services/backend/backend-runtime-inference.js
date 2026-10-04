@@ -11,7 +11,7 @@ const { getTrustedExecutionBinding } = require('./session-execution-authority');
 const { retainRuntimeSettlementHandler } = require('./sidecar-client-request-rpc');
 const { RUNTIME_ERROR_CODES } = require('./error-codes');
 
-const METHODS = new Set(['suggestions.generate', 'commit.generate_message', 'inline.complete', 'chat.compact']);
+const METHODS = new Set(['suggestions.generate', 'commit.generate_message', 'chat.compact']);
 const unsettledRequests = new WeakMap();
 
 function admissionError(reason) {
@@ -51,10 +51,7 @@ async function requestRuntimeInference(service, method, params, {
   const pending = unsettledRequests.get(service) || new Map();
   unsettledRequests.set(service, pending);
   if (pending.size >= 64) throw admissionError('runtime_unresolved_capacity');
-  // The only implemented FIM engine is Ollama, including the existing transient
-  // fallback. A selected completion model never chooses its resource class.
-  const route = captureSessionRuntimeProviderRoute(service,
-    method === 'inline.complete' ? { engineType: 'ollama' } : {});
+  const route = captureSessionRuntimeProviderRoute(service);
   const requestId = `aux_${randomUUID()}`;
   const sourceProcess = client.process;
   let binding;
@@ -145,4 +142,11 @@ async function requestRuntimeInference(service, method, params, {
   }
 }
 
-module.exports = { requestRuntimeInference };
+// Auxiliary operations still unsettled for this service: the chat GPU handoff
+// refuses to evict the chat engine while any is in flight (an evicted engine
+// would strand a suggestion/compaction request mid-generation).
+function pendingRuntimeInferenceCount(service) {
+  return unsettledRequests.get(service)?.size || 0;
+}
+
+module.exports = { pendingRuntimeInferenceCount, requestRuntimeInference };

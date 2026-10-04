@@ -164,3 +164,34 @@ test('an inference admission refused for a run-mode change classifies as run_mod
     error_message: 'inference_authority_stale',
   }), 'run_mode_changed');
 });
+
+// Dogfood TR-012: a turn interrupted because Jenny closed names that cause
+// instead of reading like a user Stop; it stays in the calm cancelled class.
+test('a turn cancelled by app shutdown gets its own copy in the cancelled class', () => {
+  const shutdown = buildAssistantErrorRecoveryMetadata({
+    code: 'CMP-SIDECAR-0002',
+    category: 'cancelled',
+    status: 'cancelled',
+    terminal_subcode: 'app_shutdown',
+  });
+  assert.equal(shutdown.recovery_class, 'cancelled');
+  assert.equal(shutdown.recovery_title, 'Stopped when Jenny closed');
+  assert.match(shutdown.recovery_hint, /closed while this reply was running/);
+
+  const user = buildAssistantErrorRecoveryMetadata({
+    code: 'CMP-SIDECAR-0002',
+    category: 'cancelled',
+    status: 'cancelled',
+    terminal_subcode: 'user_cancel',
+  });
+  assert.equal(user.recovery_title, 'Turn cancelled');
+});
+
+test('the app-shutdown copy also applies when the subcode arrives as an option', () => {
+  const metadata = buildAssistantErrorRecoveryMetadata(
+    { code: 'CMP-SIDECAR-0002', category: 'cancelled' },
+    { terminalStatus: 'cancelled', terminalSubcode: 'app_shutdown' },
+  );
+  assert.equal(metadata.recovery_class, 'cancelled');
+  assert.equal(metadata.recovery_title, 'Stopped when Jenny closed');
+});

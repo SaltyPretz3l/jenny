@@ -26,6 +26,29 @@ const BASE = {
   gitSnapshot: { available: false, summary: 'Git snapshot unavailable.', recentCommits: [] },
 };
 
+test('HOM-15 briefing Git deadline settles even when the executor never calls back', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
+  const timeouts = [];
+  const callbacks = [];
+  let killed = false;
+  const pending = require('../services/proactive/briefing').readGitSnapshot('repo', (_cmd, _args, opts, callback) => {
+    timeouts.push(opts.timeout);
+    callbacks.push(callback);
+    return { kill: () => { killed = true; } };
+  });
+  assert.deepEqual(timeouts, [10000]);
+  t.mock.timers.tick(4000);
+  callbacks[0](null, 'main\n', '');
+  await new Promise((resolve) => setImmediate(resolve));
+  // The three reads share one deadline: the second gets what is left.
+  assert.deepEqual(timeouts, [10000, 6000]);
+  t.mock.timers.tick(6000);
+  const snapshot = await pending;
+  assert.equal(snapshot.available, false);
+  assert.equal(snapshot.retryable, true);
+  assert.equal(killed, true);
+});
+
 test('the briefing renders one Notes line from the long-term notes snapshot', async () => {
   const snapshot = await buildDailyBriefingSnapshot({
     ...BASE,

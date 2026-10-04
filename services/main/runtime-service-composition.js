@@ -5,7 +5,7 @@ const { ArtifactWorkspaceService } = require('../artifact-workspace-service');
 const { AutomationService } = require('../automation-service');
 const { BrowserSessionService } = require('../browser-session-service');
 const { UsageHistoryService } = require('../usage-history-service');
-const { isFeatureEnabledByDefault } = require('../feature-flags');
+const { buildFeatureFlags, isFeatureEnabledByDefault } = require('../feature-flags');
 const { buildEffectiveFeatureFlags: buildEffectiveFeatureFlagsWithDeps } = require('../feature-settings-service');
 const {
   createI18nMain,
@@ -30,8 +30,76 @@ const { WorkspacePresentationService } = require('../workspace-presentation-serv
 const { WindowStateService } = require('../window-state-service');
 const { WorktreeService } = require('../worktree-service');
 const { WorktreeRegistryService, defaultRegistryPath } = require('../worktree-registry-service');
+const { createDesktopNotifier, isRuntimeChildSession } = require('./desktop-notifier');
 const { createReminderNotifier } = require('./reminder-notifier');
 const { createUnattendedGuard } = require('./unattended-guard');
+
+const STATS_WATCHED_INTERVAL_MS = 2000;
+const STATS_IDLE_INTERVAL_MS = 15000;
+
+// Slow when unread (owner decision, shell-chrome review 2026-09-29): the CPU/RAM
+// tick and the GPU probe it drives run every 2 s only while something on screen
+// shows them (the title-bar read-out, the open health popover), else every 15 s.
+// Watchers register by source so one closing never silences another.
+function createStatsWatchCadence(monitor, {
+  watchedMs = STATS_WATCHED_INTERVAL_MS,
+  idleMs = STATS_IDLE_INTERVAL_MS,
+} = {}) {
+  const watchers = new Set();
+  monitor.setIntervalMs(idleMs);
+  return {
+    setWatched(source, watched) {
+      const key = String(source || '').trim();
+      if (!key) return watchers.size > 0;
+      const before = watchers.size > 0;
+      if (watched) watchers.add(key);
+      else watchers.delete(key);
+      const after = watchers.size > 0;
+      if (after !== before) {
+        monitor.setIntervalMs(after ? watchedMs : idleMs);
+        // A watcher arriving mid-idle would otherwise wait out the slow tick.
+        if (after && monitor.timer) monitor.emit('stats', monitor.sample());
+      }
+      return after;
+    },
+    isWatched: () => watchers.size > 0,
+    sources: () => [...watchers],
+  };
+}
+
+// Pauses the stats monitor while the window is hidden or minimised and resumes
+// it with one immediate tick so the title-bar read-out catches up. start() and
+// stop() keep their meaning: a stopped monitor stays stopped whatever the
+// window does, and a start while hidden waits for the window to come back.
+function createStatsVisibilityPause(monitor) {
+  const startTimer = monitor.start.bind(monitor);
+  const stopTimer = monitor.stop.bind(monitor);
+  let running = false;
+  let visible = true;
+  monitor.start = () => {
+    running = true;
+    if (visible) startTimer();
+  };
+  monitor.stop = () => {
+    running = false;
+    stopTimer();
+  };
+  return {
+    setVisible(next) {
+      const nextVisible = next !== false;
+      if (nextVisible === visible) return;
+      visible = nextVisible;
+      if (!running) return;
+      if (!visible) {
+        stopTimer();
+        return;
+      }
+      startTimer();
+      monitor.emit('stats', monitor.sample());
+    },
+    isVisible: () => visible,
+  };
+}
 
 function createRuntimeServicesWithDeps({
   app,
@@ -66,6 +134,9 @@ function createRuntimeServicesWithDeps({
   const processLogWriter = new ProcessLogWriter({
     filePath: processLogPath,
     logger: log,
+    // DEBUG reaches shell.log only under the agent/dev launcher, matching
+    // renderer DEBUG forwarding (services/main/client-log-forwarding.js).
+    fileMinLevel: buildFeatureFlags(processRef.env).agent_test_hooks === true ? 'DEBUG' : 'INFO',
   });
   const logStore = new DiagnosticLogService({
     writer: processLogWriter,
@@ -113,7 +184,7 @@ function createRuntimeServicesWithDeps({
   registerMainTranslator(i18nMain);
   i18nMain.setLocale(resolveUiLanguage({ env: processRef.env, shellConfigService }));
   shellConfigService.on('changed', (_state, meta) => {
-    if (meta?.reason === 'ui_language_updated') {
+    if (meta?.reason === 'ui_language_updated' || meta?.reasons?.includes?.('ui_language_updated')) {
       i18nMain.setLocale(resolveUiLanguage({ env: processRef.env, shellConfigService }));
     }
   });
@@ -205,6 +276,12 @@ function createRuntimeServicesWithDeps({
     },
     logger: log,
   });
+  // Repairs a Linux archive publish a previous run was killed in the middle of.
+  try {
+    ollamaInstallService.reconcileArchiveInstall();
+  } catch (error) {
+    log('WARN', 'ollama_install.reconcile_failed', { reason: String(error?.message || error) });
+  }
   ollamaInstallService.on('install-progress', (payload) => {
     sendBridgeEvent('setup.onOllamaInstallProgress', payload);
   });
@@ -268,10 +345,11 @@ function createRuntimeServicesWithDeps({
   // does not exist yet during this composition pass, so a post-hoc assignment guard
   // would always be falsy and silently leave worktree status unpopulated.
   const systemStats = new SystemStatsMonitor({
-    // 2s keeps CPU/RAM near real-time (cheap OS reads). GPU telemetry has its
-    // own 15s controller cadence; when the sidecar declines mid-inference, the
-    // controller falls through to the platform probe.
-    intervalMs: 2000,
+    // 2s keeps CPU/RAM near real-time (cheap OS reads) while watched; the
+    // watch cadence below drops to 15s when nothing shows them. GPU telemetry
+    // has its own 15s controller cadence; when the sidecar declines
+    // mid-inference, the controller falls through to the platform probe.
+    intervalMs: STATS_WATCHED_INTERVAL_MS,
     powerMonitor,
   });
   const unattendedGuard = createUnattendedGuard({
@@ -301,11 +379,32 @@ function createRuntimeServicesWithDeps({
   reminderNotifier.start();
   systemStats.reminderNotifier = reminderNotifier;
   shellConfigService.reminderNotifier = reminderNotifier;
+  // Desktop toasts for renderer-detected replies/failures/permissions/
+  // questions. start() registers the notifications.notify send channel here
+  // (main.js is at its line cap); runtime-stop stops it via systemStats.
+  const desktopNotifier = createDesktopNotifier({
+    getShellConfigService: () => shellConfigService,
+    getMainWindow,
+    notificationFactory: (options) => new (require('electron').Notification)(options),
+    isSupported: () => require('electron').Notification.isSupported(),
+    ipcMainLike: require('electron').ipcMain,
+    sendBridgeEvent,
+    log,
+    isEnabled: () => buildEffectiveFeatureFlags().desktop_notifications === true,
+    isChildSession: (sessionId) => isRuntimeChildSession(getBackendService()?.sessionRuntime, sessionId),
+  });
+  desktopNotifier.start();
+  systemStats.desktopNotifier = desktopNotifier;
 
   systemStats.on('stats', (stats) => {
     sendBridgeEvent('system.onStats', getCurrentSystemStatsPayload(stats));
     void refreshGpuMemorySample().catch(() => null);
   });
+  // Nothing on screen, nothing sampled: main.js hands the window's visibility
+  // (main-window-composition's hide/minimize/show/restore) to this pause.
+  systemStats.visibilityPause = createStatsVisibilityPause(systemStats);
+  // Renderer watchers (system.setStatsWatch) pick the tick rate.
+  systemStats.watchCadence = createStatsWatchCadence(systemStats);
 
   const toolPathPolicy = new ToolPathPolicy({
     fs: require('fs/promises'),
@@ -333,6 +432,7 @@ function createRuntimeServicesWithDeps({
     toolsWorkspacePresentEnabled = buildEffectiveFeatureFlags().tools_workspace_present_enabled === true,
     toolsPreviewTestEnabled = buildEffectiveFeatureFlags().tools_preview_test_enabled === true,
     toolsVerifyEnabled = buildEffectiveFeatureFlags().tools_verify_enabled === true,
+    toolsImageGenerateEnabled = buildEffectiveFeatureFlags().tools_image_generate_enabled === true,
     toolsHomeEnabled = buildEffectiveFeatureFlags().tools_home_enabled === true,
     toolsTaskBoardEnabled = buildEffectiveFeatureFlags().tools_task_board_enabled === true,
   } = {}) {
@@ -342,6 +442,7 @@ function createRuntimeServicesWithDeps({
       toolsWorkspacePresentEnabled,
       toolsPreviewTestEnabled,
       toolsVerifyEnabled,
+      toolsImageGenerateEnabled,
       toolsHomeEnabled,
       toolsTaskBoardEnabled,
     });
@@ -398,6 +499,7 @@ function createRuntimeServicesWithDeps({
     const toolsWorkspacePresentEnabled = buildEffectiveFeatureFlags().tools_workspace_present_enabled === true;
     const toolsPreviewTestEnabled = buildEffectiveFeatureFlags().tools_preview_test_enabled === true;
     const toolsVerifyEnabled = buildEffectiveFeatureFlags().tools_verify_enabled === true;
+    const toolsImageGenerateEnabled = buildEffectiveFeatureFlags().tools_image_generate_enabled === true;
     const toolsHomeEnabled = buildEffectiveFeatureFlags().tools_home_enabled === true;
     const toolsTaskBoardEnabled = buildEffectiveFeatureFlags().tools_task_board_enabled === true;
     toolExecutor.registry = createToolRegistryForCurrentConfig({
@@ -406,6 +508,7 @@ function createRuntimeServicesWithDeps({
       toolsWorkspacePresentEnabled,
       toolsPreviewTestEnabled,
       toolsVerifyEnabled,
+      toolsImageGenerateEnabled,
       toolsHomeEnabled,
       toolsTaskBoardEnabled,
     });
@@ -431,6 +534,7 @@ function createRuntimeServicesWithDeps({
     skillsService,
     systemStats,
     reminderNotifier,
+    desktopNotifier,
     unattendedGuard,
     toolExecutor,
     toolPermissionStore,
@@ -445,5 +549,8 @@ function createRuntimeServicesWithDeps({
 
 module.exports = {
   createRuntimeServicesWithDeps,
+  createStatsWatchCadence,
+  STATS_WATCHED_INTERVAL_MS,
+  STATS_IDLE_INTERVAL_MS,
   resolveUiLanguage,
 };

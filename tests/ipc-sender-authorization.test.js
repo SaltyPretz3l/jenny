@@ -129,9 +129,6 @@ test('guidance settings accept only the trusted main frame when authorization is
     updateSettings: (patch) => { updates.push(patch); return { updated: patch }; },
     openScopeFolder: () => ({}),
   }, {
-    getState: () => ({}),
-    updateSettings: () => ({}),
-  }, {
     authorization: {
       authorize: createTrustedSenderAuthorizer({
         getMainWindow: () => trusted.window,

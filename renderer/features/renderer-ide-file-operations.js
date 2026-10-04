@@ -26,8 +26,11 @@
     webp: 'image/webp', svg: 'image/svg+xml', ico: 'image/x-icon', bmp: 'image/bmp',
   });
 
+  // No trim: a leading or trailing space is part of the name, and trimming it
+  // opened (and saved over) the sibling without the space.
   function normalizePath(value) {
-    return String(value || '').trim().replace(/\\/g, '/').replace(/^\/+/, '').replace(/\/{2,}/g, '/');
+    const raw = String(value || '');
+    return raw.trim() ? raw.replace(/\\/g, '/').replace(/^\/+/, '').replace(/\/{2,}/g, '/') : '';
   }
 
   function isWindowsPlatform(platform) {
@@ -270,6 +273,15 @@
       return Boolean(intent
         && !disposed
         && intent.id === openIntentSequence
+        && intent.controllerEpoch === controllerEpoch);
+    }
+
+    // Root-epoch only: a merely superseded open in the SAME root must still
+    // clean up its vanished tab, but one from an older root must not touch the
+    // new root's same-path tab.
+    function isOpenContextCurrent(intent) {
+      return Boolean(intent
+        && !disposed
         && intent.controllerEpoch === controllerEpoch);
     }
 
@@ -752,6 +764,7 @@
       dispose,
       getDocumentToken,
       getPreviewRequestSignature,
+      isOpenContextCurrent,
       isOpenIntentCurrent,
       isDocumentCurrent: sameDocument,
       noteDirty,

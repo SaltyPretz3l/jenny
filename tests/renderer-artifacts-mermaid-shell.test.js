@@ -35,6 +35,7 @@ function installDirectMermaidRenderer(window, options = {}) {
 test('generated Mermaid artifacts render preview-first and support editing and saving in the split review rail', async () => {
   const saves = [];
   const app = await loadRendererApp({
+    appearance: { artifactAutoOpen: true },
     artifactReviewPreferences: { enabled: true, collapsed: false, width: 420 },
     shell: {
       artifacts: {
@@ -163,6 +164,7 @@ test('generated Mermaid artifacts render preview-first and support editing and s
 
 test('generated Mermaid artifacts render preview-first in the split review rail when language metadata is blank', async () => {
   const app = await loadRendererApp({
+    appearance: { artifactAutoOpen: true },
     artifactReviewPreferences: { enabled: true, collapsed: false, width: 420 },
     shell: {
       artifacts: {

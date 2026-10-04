@@ -277,16 +277,15 @@
      * column-gap deliberately stays at its default space-5 — the per-row dot and
      * children-spine left calcs in chat-thread-rail.css bake that token in, and
      * overriding the gap here would drift them ~4px off the toggle axis. */
-    --thread-dot-hit-size: calc(16px * var(--chat-zoom-factor, 1));
-    --thread-dot-size: calc(7px * var(--chat-zoom-factor, 1));
-    --thread-node-gap: calc(10px * var(--chat-zoom-factor, 1));
-    --_dot-offset: calc(6px * var(--chat-zoom-factor, 1));
+    --thread-dot-hit-size: 16px;
+    --thread-dot-size: 7px;
+    --thread-node-gap: 10px;
+    --_dot-offset: 6px;
   }
 
   /* Preserve the primary Chat semantic fills/rings, but give the compact dock
    * dots enough interior paint to read as filled at their smaller scale. */
   .ide-chat-dock-body .chat-thread-toggle::before,
-  .ide-chat-dock-body .chat-thread-toggle-spacer::before,
   .ide-chat-dock-body .chat-row-node-dot {
     border-width: 1px;
   }
@@ -351,10 +350,11 @@
   }
 
   .ide-chat-dock-body .composer {
-    --composer-secondary-control-size: calc(30px * var(--chat-zoom-factor, 1));
-    --composer-secondary-icon-size: calc(14px * var(--chat-zoom-factor, 1));
-    --composer-secondary-meta-height: calc(28px * var(--chat-zoom-factor, 1));
-    padding: calc(var(--space-5) * var(--chat-zoom-factor, 1));
+    --composer-secondary-control-size: 30px;
+    --composer-primary-control-size: 32px;
+    --composer-secondary-icon-size: 14px;
+    --composer-secondary-meta-height: 28px;
+    padding: var(--space-5);
   }
 
   .ide-chat-dock-body .composer-icon-tools {
@@ -369,9 +369,9 @@
   }
 
   .ide-chat-dock-body .composer-input {
-    min-height: calc(54px * var(--chat-zoom-factor, 1));
+    min-height: 54px;
     max-height: 120px; /* spec: dock caps auto-grow lower than main chat's 168px */
-    font-size: calc(15px * var(--chat-zoom-factor, 1));
+    font-size: var(--font-size-prose);
   }
 
   .ide-chat-dock-body .composer-mode {
@@ -380,132 +380,19 @@
   }
 
   .ide-chat-dock-body .composer-mode-button {
-    min-height: calc(26px * var(--chat-zoom-factor, 1));
+    min-height: 26px;
     padding: 0 10px;
-    font-size: calc(11px * var(--chat-zoom-factor, 1));
+    font-size: var(--font-size-caption);
   }
 
-  .ide-chat-dock-body .composer-toolbar {
-    display: flex;
-    flex-wrap: wrap;
-    justify-content: flex-start;
-    align-items: center;
-    gap: var(--space-2) var(--space-2);
-    width: 100%;
-    padding-top: var(--space-3);
-    margin-top: var(--space-2);
-    border-top: 1px solid color-mix(in srgb, var(--widget-composer-signal-border) 14%, transparent);
+  .ide-chat-dock-body .composer-stop-button svg {
+    width: 14px;
+    height: 14px;
   }
 
-  .ide-chat-dock-body .composer-toolbar-left,
-  .ide-chat-dock-body .composer-toolbar-right {
-    display: contents;
-  }
-
-  .ide-chat-dock-body .composer-toolbar::after {
-    content: '';
-    flex-basis: 100%;
-    height: 0;
-    order: 10;
-  }
-
-  .ide-chat-dock-body #composerAttachShortcut {
-    flex: none;
-    order: 1;
-  }
-
-  /* The terminal shortcut is hidden above (§17.1); the order slot is kept so
-   * the row reads the same if it ever returns. */
-  .ide-chat-dock-body #composerTerminalShortcut {
-    flex: none;
-    order: 2;
-  }
-
-  /* Row 1 must fit at the 320px floor (~250px of toolbar): attach + run mode +
-   * tools already take ~185px, so the project pill (≈100px even with a capped
-   * label) cannot join it. The IDE header names the workspace folder, and the
-   * pill returns with the roomier single-row toolbar above 700px. */
-  .ide-chat-dock-body #composerProjectPillSlot {
-    display: none;
-  }
-
-  .ide-chat-dock-body #composerRunModeSlot {
-    flex: none;
-    order: 4;
-  }
-
-  /* Zero basis: flex lines are collected from the hypothetical (basis) size
-   * before shrinking, so an `auto` basis let a long model name push the tools
-   * chip onto its own line instead of ellipsizing. */
-  .ide-chat-dock-body #composerModelPillSlot {
-    flex: 1 1 0;
-    min-width: 0;
-    order: 5;
-  }
-
-  .ide-chat-dock-body #composerToolToggleSlot {
-    flex: none;
-    order: 6;
-  }
-
-  .ide-chat-dock-body #composerContextUsageSlot {
-    order: 11;
-  }
-
-  .ide-chat-dock-body #composerPlanUsageSlot {
-    order: 12;
-  }
-
-  .ide-chat-dock-body #composerSettingsButton {
-    order: 13;
-  }
-
-  .ide-chat-dock-body #stopStreamButton {
-    order: 14;
-  }
-
-  .ide-chat-dock-body #sendButton {
-    order: 15;
-  }
-
-  .ide-chat-dock-body #composerSendDisabledReason {
-    order: 16;
-  }
-
-  .ide-chat-dock-body #composerContextUsageSlot:not(:empty),
-  .ide-chat-dock-body #composerContextUsageSlot:empty + #composerPlanUsageSlot:not(:empty),
-  .ide-chat-dock-body #composerContextUsageSlot:empty + #composerPlanUsageSlot:empty + #composerSettingsButton {
-    margin-inline-start: auto;
-  }
-
-  .ide-chat-dock-body .composer-model-pill {
-    max-width: 100%;
-  }
-
-  .ide-chat-dock-body .composer-model-pill .inv-chip-label {
-    max-width: none;
-  }
-
-  .ide-chat-dock-body #composerRunModeSlot .composer-run-mode-chip {
-    min-width: 0;
-  }
-
-  .ide-chat-dock-body .composer-send,
-  .ide-chat-dock-body .composer-stop-button {
-    width: calc(36px * var(--chat-zoom-factor, 1));
-    height: calc(36px * var(--chat-zoom-factor, 1));
-  }
-
-  .ide-chat-dock-body .composer-gear {
-    width: calc(28px * var(--chat-zoom-factor, 1));
-    height: calc(28px * var(--chat-zoom-factor, 1));
-    flex-basis: calc(28px * var(--chat-zoom-factor, 1));
-  }
-
-  /* The fixed-width rule above ties chat-composer.css's queue-pill rule (0,2,0) and
-   * loads later; this (0,3,0) override keeps "Queue - runs in X" unclipped. */
-  .ide-chat-dock-body .composer-send.composer-send-queue {
-    width: auto;
+  .ide-chat-dock-body .composer-pause-button svg {
+    width: 13px;
+    height: 13px;
   }
 
   /* The dock is narrower than the 300px popover anchored to the pill slot:
@@ -521,13 +408,20 @@
     max-width: none;
   }
 
-  .ide-chat-dock-body .composer-model-picker-list {
-    max-height: 220px;
+  /* The Chat panel anchors to the composer the same way, so it never runs past
+   * a narrow dock's end edge from the chip's left-cluster position. */
+  .ide-chat-dock-body .composer-toggle-slot {
+    position: static;
   }
 
-  .ide-chat-dock-body .composer-stop-button {
-    min-width: calc(36px * var(--chat-zoom-factor, 1));
-    min-height: calc(36px * var(--chat-zoom-factor, 1));
+  .ide-chat-dock-body .composer-chat-panel {
+    inset-inline-start: 0;
+    inset-inline-end: 0;
+    width: auto;
+  }
+
+  .ide-chat-dock-body .composer-model-picker-list {
+    max-height: 220px;
   }
 
   .ide-chat-dock-body .composer-meta {

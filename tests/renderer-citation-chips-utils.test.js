@@ -7,7 +7,7 @@
 const { describe, test } = require('node:test');
 const assert = require('node:assert/strict');
 
-const { renderCitationChips, stripCitationMarkers } = require('../renderer/chat/renderer-citation-chips-utils');
+const { renderCitationChips, stripCitationMarkers, stripCitationMarkersForStreaming } = require('../renderer/chat/renderer-citation-chips-utils');
 
 function refs(...entries) {
   return entries.map((entry, index) => ({
@@ -121,5 +121,35 @@ describe('stripCitationMarkers', () => {
     assert.equal(stripCitationMarkers(null), '');
     assert.equal(stripCitationMarkers(undefined), '');
     assert.equal(stripCitationMarkers(''), '');
+  });
+});
+
+// Streaming variant: the live bubble must never show a marker the settled
+// bubble strips, and each frame must extend the previous one so the
+// incremental stream renderer keeps its stable prefix.
+describe('stripCitationMarkersForStreaming', () => {
+  test('strips complete markers and holds back one still arriving', () => {
+    assert.equal(stripCitationMarkersForStreaming('Built in 1889 [web:1]. Then'), 'Built in 1889. Then');
+    assert.equal(stripCitationMarkersForStreaming('Built in 1889 [web:1'), 'Built in 1889');
+    assert.equal(stripCitationMarkersForStreaming('Built in 1889【web: 1, '), 'Built in 1889');
+    assert.equal(stripCitationMarkersForStreaming('Built in 1889 [w'), 'Built in 1889');
+  });
+
+  test('leaves non-marker brackets alone', () => {
+    assert.equal(stripCitationMarkersForStreaming('See [the docs'), 'See [the docs');
+    assert.equal(stripCitationMarkersForStreaming('Register for the [webinar'), 'Register for the [webinar');
+  });
+
+  test('every streamed frame is a prefix of the settled text', () => {
+    const full = 'The tower opened in 1889 [web:1]. It is 330 m tall【web:2,7】 and [the docs](https://example.com) agree [web: 3].\n\nNext paragraph.';
+    const settled = stripCitationMarkers(full);
+    let previous = '';
+    for (let end = 0; end <= full.length; end += 1) {
+      const frame = stripCitationMarkersForStreaming(full.slice(0, end));
+      assert.ok(settled.startsWith(frame), `frame ${end} is not a prefix of the settled text: ${JSON.stringify(frame)}`);
+      assert.ok(frame.startsWith(previous), `frame ${end} rewrote earlier text`);
+      assert.doesNotMatch(frame, /web/);
+      previous = frame;
+    }
   });
 });

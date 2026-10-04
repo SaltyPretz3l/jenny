@@ -18,6 +18,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { loadRendererApp, waitForUi } = require('./helpers/renderer-shell-harness');
 const { buildFeatureFlags } = require('../services/feature-flags');
+const { waitForUiState } = require('./helpers/wait-for-ui-state');
 
 const PRE_TOOL_TEXT = 'Retry regression pre-tool text marker.';
 
@@ -102,6 +103,7 @@ async function boot(t, sessionId) {
 }
 
 async function streamTextThenApprovalTool(shell, window, sessionId, streamId) {
+  const doc = window.document;
   const emit = (payload) => shell.__emitChat({ sessionId, streamId, ...payload });
   await emit({ type: 'started' });
   await emit({ type: 'thinking_status', status: 'Thinking...' });
@@ -124,7 +126,9 @@ async function streamTextThenApprovalTool(shell, window, sessionId, streamId) {
     content: `${PRE_TOOL_TEXT}\n\n`,
     aggregate: `${PRE_TOOL_TEXT}\n\n`,
   });
-  await waitForUi(window, 300);
+  await waitForUiState(window, () => snapshotTimeline(doc).textShown, {
+    timeoutMs: 5000, message: 'streamed pre-tool text never rendered before the tool event.',
+  });
   await emit({
     type: 'tool_use',
     callId: `call-${streamId}`,
@@ -140,7 +144,10 @@ async function streamTextThenApprovalTool(shell, window, sessionId, streamId) {
     toolName: 'write_file',
     input: { path: 'notes/fix.md' },
   });
-  await waitForUi(window, 500);
+  await waitForUiState(window, () => snapshotTimeline(doc).approvalBlock, {
+    timeoutMs: 5000, message: 'the timeline approval block never rendered for the pending tool.',
+  });
+  await waitForUi(window, 40);
 }
 
 function snapshotTimeline(doc) {
@@ -194,14 +201,18 @@ test('retried turn keeps text + approval block at the first tool event', async (
     category: 'provider_unavailable',
     terminalStatus: 'error',
   });
-  await waitForUi(window, 300);
+  await waitForUiState(window, () => doc.getElementById('chatTimeline').querySelector(
+    '[data-inv-error-action="retry"], [data-inv-error-action="retry_turn"]'
+  ), { timeoutMs: 5000, message: 'the error card never offered a retry affordance.' });
 
   const retryButton = doc
     .getElementById('chatTimeline')
     .querySelector('[data-inv-error-action="retry"], [data-inv-error-action="retry_turn"]');
   assert.ok(retryButton, 'error card must offer a retry affordance');
   retryButton.dispatchEvent(new window.MouseEvent('click', { bubbles: true, cancelable: true }));
-  await waitForUi(window, 500);
+  await waitForUiState(window, () => rig.lastStreamId() !== streamA, {
+    timeoutMs: 5000, message: 'retry never opened a new stream.',
+  });
 
   const streamB = rig.lastStreamId();
   assert.notEqual(streamB, streamA, 'retry must open a new stream');

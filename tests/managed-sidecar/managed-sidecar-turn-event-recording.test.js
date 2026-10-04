@@ -316,7 +316,6 @@ test('tool_continuation reset preserves pre-tool commentary as a phased segment 
   const collector = new CanonicalTurnEventCollector({ turnId: streamId });
   const service = makeService(persistedMessages);
   // Phase 1 preservation is gated behind the shared display flag + canonical path.
-  service.featureFlags.response_loop_display_v2 = true;
   const runtime = makeRuntime(streamId, service, collector, { canonicalBridge: true });
   const context = { toolContext: {}, handleToolNotification() {} };
 
@@ -535,7 +534,6 @@ test('tool_continuation reset preserves commentary with the canonical bridge OFF
   const persistedMessages = [];
   const collector = new CanonicalTurnEventCollector({ turnId: streamId });
   const service = makeService(persistedMessages);
-  service.featureFlags.response_loop_display_v2 = true;
   const runtime = makeRuntime(streamId, service, collector, { canonicalBridge: false });
   const context = { toolContext: {}, handleToolNotification() {} };
 

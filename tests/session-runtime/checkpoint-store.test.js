@@ -164,6 +164,13 @@ test('capacity refusal never deletes existing recovery evidence', t => {
   for (let i = 0; i < MAX_RECORDS; i += 1) f.store.records.set(`occupied_${i}`, {});
   assert.throws(() => f.store.put(f.body, f.work), /checkpoint_record_capacity/);
   assert.equal(fs.readdirSync(f.root).length, 0);
+  // Retired records do not count as active but keep their directories, which
+  // the reopen walk caps at MAX_RECORDS * 4: admission refuses at that cap.
+  f.store.records.clear();
+  for (let i = 0; i < MAX_RECORDS * 4; i += 1) f.store.records.set(`retired_${i}`, { state: 'retired' });
+  assert.equal(f.store.snapshot().record_count, 0);
+  assert.throws(() => f.store.put(f.body, f.work), /checkpoint_record_capacity/);
+  assert.equal(fs.readdirSync(f.root).length, 0);
 });
 
 test('uncertain publication remains charged after restart without automatic replay', t => {
@@ -309,4 +316,73 @@ test('unregistered material cannot authorize resume without capacity reconstruct
   const ref = f.store.put(f.body, f.work);
   assert.equal(observer.validate(f.work, ref), false);
   assert.throws(() => observer.commit(ref, f.work), /checkpoint_unregistered/);
+});
+
+test('portable export treats a missing checkpoint root as empty and still fails closed on an unsafe root', t => {
+  const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-checkpoint-profile-'));
+  t.after(() => fs.rmSync(userData, { recursive: true, force: true }));
+  const root = path.join(userData, 'session-runtime-checkpoints');
+  const store = new CheckpointStore(root, { validateCanonical: canonicalEvidence });
+  fs.rmSync(root, { recursive: true, force: true });
+  assert.deepEqual(store.exportPortableSnapshot(), { schema_version: 1, records: [] });
+  assert.deepEqual(readPortableCheckpointSnapshot(root), { schema_version: 1, records: [] });
+  assert.equal(store.snapshot().read_only, false);
+
+  fs.writeFileSync(root, '');
+  assert.throws(() => store.exportPortableSnapshot(), /checkpoint_root_changed/);
+  assert.throws(() => readPortableCheckpointSnapshot(root), /checkpoint_root_changed/);
+  fs.rmSync(root, { force: true });
+  const outside = path.join(userData, 'outside');
+  fs.mkdirSync(outside);
+  fs.symlinkSync(outside, root, process.platform === 'win32' ? 'junction' : 'dir');
+  assert.throws(() => store.exportPortableSnapshot(), /checkpoint_root_changed/);
+  assert.throws(() => readPortableCheckpointSnapshot(root), /checkpoint_root_changed/);
+});
+
+test('portable export never reports an empty snapshot when registered checkpoints lost their root', t => {
+  const f = fixture(t);
+  f.store.put(f.body, f.work);
+  fs.rmSync(f.root, { recursive: true, force: true });
+  assert.throws(() => f.store.exportPortableSnapshot(), /checkpoint_root_changed/);
+});
+
+test('retired checkpoint identities do not consume active admission capacity after restart', t => {
+  const f = fixture(t);
+  const reference = f.store.put(f.body, f.work);
+  const terminalAt = '2026-01-01T00:00:00.000Z';
+  const work = { ...f.work, status: 'completed', submission_hash: 'a'.repeat(64), checkpoint_ref: null,
+    transition: { at: terminalAt, reason: 'completed' } };
+  f.store.beginRetirement(reference, work, '2026-03-01T00:00:00.000Z');
+  f.store.completeRetirement(reference, work, () => true);
+  assert.equal(f.store.snapshot().record_count, 0);
+  const reopened = new CheckpointStore(f.root, { validateCanonical: canonicalEvidence });
+  assert.equal(reopened.snapshot().record_count, 0);
+  for (let i = 1; i < MAX_RECORDS; i++) reopened.records.set(`synthetic_${i}`, { state: 'committed' });
+  const next = structuredClone(f.continuation);
+  next.identity.checkpoint_id = 'checkpoint_new';
+  assert.equal(reopened.begin(encodeContinuation(next).body, f.work, { canonicalBytes: CANONICAL_BYTES }).checkpoint_id, 'checkpoint_new');
+});
+
+test('portable checkpoint-store reader rejects a record path replaced during its descriptor read', t => {
+  const f = fixture(t);
+  f.store.put(f.body, f.work);
+  const root = f.root;
+  const target = path.join(root, fs.readdirSync(root)[0], 'record.json');
+  const backup = `${root}-original`;
+  t.after(() => fs.rmSync(backup, { force: true }));
+  const bytes = fs.readFileSync(target);
+  const open = fs.openSync;
+  let swapped = false;
+  fs.openSync = (file, ...args) => {
+    const descriptor = open(file, ...args);
+    if (file === target && !swapped) {
+      swapped = true;
+      fs.renameSync(target, backup);
+      fs.writeFileSync(target, bytes);
+    }
+    return descriptor;
+  };
+  try { assert.throws(() => readPortableCheckpointSnapshot(root), /checkpoint_document_invalid/); }
+  finally { fs.openSync = open; }
+  assert.equal(swapped, true);
 });

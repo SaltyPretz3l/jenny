@@ -11,7 +11,7 @@ from sidecar.ai.tools.workspace import WorkspaceGuard
 
 
 def _call(tools, workspace, name: str, arguments: dict[str, object]) -> dict[str, object]:
-    response = builtin_server._handle_tools_call(  # noqa: SLF001
+    response = builtin_server._handle_tools_call(
         name, tools, workspace, {"name": name, "arguments": arguments}
     )
     text = response["result"]["content"][0]["text"]
@@ -29,7 +29,7 @@ def test_dispatch_attributes_file_and_foreground_command_mutations(tmp_path: Pat
     subprocess.run(["git", "add", "."], cwd=tmp_path, check=True)
     subprocess.run(["git", "commit", "-q", "-m", "base"], cwd=tmp_path, check=True)
     workspace = WorkspaceGuard(str(tmp_path))
-    tools = builtin_server._default_tools(shell_enabled=True)  # noqa: SLF001
+    tools = builtin_server._default_tools({"tools_shell_enabled": True})
     session = {"_jenny_session_id": "session-test"}
     baseline = _call(tools, workspace, "workspace_change_baseline", session)
     _call(
@@ -64,7 +64,7 @@ def test_observation_failure_does_not_change_primary_tool_outcome(
         "begin_mutation_observation",
         lambda **kwargs: (_ for _ in ()).throw(RuntimeError("observation unavailable")),
     )
-    response = builtin_server._handle_tools_call(  # noqa: SLF001
+    response = builtin_server._handle_tools_call(
         "request-1",
         {"mutation": tool},
         WorkspaceGuard(str(tmp_path)),
@@ -89,7 +89,7 @@ def test_post_observation_failure_does_not_change_primary_tool_outcome(
         "finish_mutation_observation",
         lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("observation unavailable")),
     )
-    response = builtin_server._handle_tools_call(  # noqa: SLF001
+    response = builtin_server._handle_tools_call(
         "request-2",
         {"mutation": tool},
         WorkspaceGuard(str(tmp_path)),

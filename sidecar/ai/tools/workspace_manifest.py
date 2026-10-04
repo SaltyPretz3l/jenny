@@ -30,7 +30,7 @@ from sidecar.ai.tools.contracts import ToolExecutionFailure
 from sidecar.ai.tools.workspace import WorkspaceGuard
 from sidecar.ai.tools.workspace_manifest_policy import build_manifest_scan_policy
 from sidecar.ai.tools.workspace_manifest_scan import (
-    WorkspaceManifestLimits,  # noqa: F401 - re-exported public API.
+    WorkspaceManifestLimits,  # re-exported public API.
     read_readme_excerpt,
     scan_workspace,
 )

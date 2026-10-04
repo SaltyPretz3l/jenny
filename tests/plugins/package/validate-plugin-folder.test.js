@@ -265,7 +265,7 @@ test('folder traversal is a content-schema failure and never reads outside root'
 });
 
 test('emitted check ids retain the documented order', async () => {
-  const result = await validateFolder(path.join(EXAMPLES, 'command'));
+  const result = await validateFolder(path.join(EXAMPLES, 'skill'));
   const emitted = result.checks.map((row) => row.id)
     .filter((id, index, all) => index === 0 || id !== all[index - 1]);
   assert.deepEqual(emitted, CHECKS.map((check) => check.id));

@@ -36,18 +36,18 @@ import argparse
 import fnmatch
 import os
 import re
-import subprocess
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Sequence
 
 ROOT = Path(__file__).resolve().parents[2]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from scripts.checks import check_workspace_manifest as change_discovery  # noqa: E402
+
 CHANGED_FILES_ENV = "JENNYGC3_CHANGED_FILES"
-# origin/main first: on a checkout of local main itself, merge-base against
-# local main is HEAD and the diff is empty, so every commit-range-driven check
-# passes vacuously. The pushed base is the meaningful comparison point; local
-# main remains the fallback for clones without a remote.
-DEFAULT_MERGE_BASE_REFS = ("origin/main", "main")
 SKIP_MARKER = "[skip-doc]"
 DOMAIN_MANIFESTS = (
     "docs/manifests/ui-ux.md",
@@ -177,133 +177,22 @@ def _path_matches_pattern(candidate: str, pattern: str) -> bool:
 
 
 def _run_git_command(arguments: Sequence[str]) -> tuple[int, str, str]:
-    try:
-        completed = subprocess.run(
-            ["git", *arguments],
-            cwd=ROOT,
-            check=False,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-        )
-    except OSError as error:
-        return 1, "", str(error)
-    return completed.returncode, completed.stdout, completed.stderr
+    return change_discovery._run_git_command(arguments, root=ROOT)
 
 
-def _parse_changed_paths(lines: str) -> list[str]:
-    changed: list[str] = []
-    seen: set[str] = set()
-    for raw_line in lines.splitlines():
-        normalized = _normalize_repo_path(raw_line)
-        if not normalized or normalized in seen:
-            continue
-        changed.append(normalized)
-        seen.add(normalized)
-    return changed
+_parse_changed_paths = change_discovery._parse_changed_paths
 
 
 def _parse_status_paths(lines: str) -> list[str]:
-    changed: list[str] = []
-    seen: set[str] = set()
-    for raw_line in lines.splitlines():
-        line = raw_line.rstrip("\n")
-        if len(line) < 4:
-            continue
-        path_text = line[3:].strip()
-        if not path_text:
-            continue
-        if " -> " in path_text:
-            path_text = path_text.split(" -> ", maxsplit=1)[1]
-        normalized = _normalize_repo_path(path_text)
-        if not normalized or normalized in seen:
-            continue
-        candidate = ROOT / normalized
-        if candidate.is_dir():
-            for child in candidate.rglob("*"):
-                if not child.is_file():
-                    continue
-                child_normalized = _normalize_repo_path(child.relative_to(ROOT))
-                if not child_normalized or child_normalized in seen:
-                    continue
-                changed.append(child_normalized)
-                seen.add(child_normalized)
-            continue
-        changed.append(normalized)
-        seen.add(normalized)
-    return changed
+    return change_discovery._parse_status_paths(lines, root=ROOT)
 
 
 def _collect_git_changed_files(
     base_ref: str | None, head_ref: str | None
 ) -> tuple[list[str], str | None]:
-    if not (ROOT / ".git").exists():
-        return [], f"no .git metadata under {_normalize_repo_path(str(ROOT))}"
-
-    return_code, stdout, stderr = _run_git_command(["rev-parse", "--is-inside-work-tree"])
-    if return_code != 0 or stdout.strip().lower() != "true":
-        detail = stderr.strip() or stdout.strip() or "not a git work tree"
-        return [], f"git repository check failed: {detail}"
-
-    if base_ref or head_ref:
-        base = (base_ref or "HEAD~1").strip() or "HEAD~1"
-        head = (head_ref or "HEAD").strip() or "HEAD"
-        return_code, stdout, stderr = _run_git_command(
-            ["diff", "--name-only", "--diff-filter=ACDMR", f"{base}...{head}"]
-        )
-        if return_code != 0:
-            detail = stderr.strip() or stdout.strip() or "git diff failed"
-            return [], f"git diff failed for range {base}...{head}: {detail}"
-        return _parse_changed_paths(stdout), None
-
-    merge_base_changed: list[str] = []
-    merge_base_errors: list[str] = []
-    for merge_base_ref in DEFAULT_MERGE_BASE_REFS:
-        merge_base_code, merge_base_stdout, merge_base_stderr = _run_git_command(
-            ["merge-base", merge_base_ref, "HEAD"]
-        )
-        if merge_base_code != 0 or not merge_base_stdout.strip():
-            detail = merge_base_stderr.strip() or merge_base_stdout.strip() or "git merge-base failed"
-            merge_base_errors.append(
-                f"git merge-base failed for {merge_base_ref} and HEAD: {detail}"
-            )
-            continue
-
-        merge_base_commit = merge_base_stdout.strip()
-        diff_code, diff_stdout, diff_stderr = _run_git_command(
-            ["diff", "--name-only", "--diff-filter=ACDMR", f"{merge_base_commit}...HEAD"]
-        )
-        if diff_code == 0:
-            merge_base_changed = _parse_changed_paths(diff_stdout)
-            merge_base_errors = []
-            break
-        detail = diff_stderr.strip() or diff_stdout.strip() or "git diff failed"
-        merge_base_errors.append(
-            f"git diff from merge-base {merge_base_commit}...HEAD failed: {detail}"
-        )
-    merge_base_error = "; ".join(merge_base_errors) or None
-
-    status_code, status_stdout, status_stderr = _run_git_command(
-        ["status", "--porcelain", "--untracked-files=normal"]
+    return change_discovery._collect_git_changed_files(
+        base_ref, head_ref, root=ROOT, run_git=_run_git_command,
     )
-    if status_code != 0:
-        if merge_base_changed:
-            return merge_base_changed, None
-        detail = status_stderr.strip() or status_stdout.strip() or "git status failed"
-        if merge_base_error is not None:
-            return [], f"{merge_base_error}; git status failed: {detail}"
-        return [], f"git status failed: {detail}"
-
-    status_changed = _parse_status_paths(status_stdout)
-    if merge_base_changed:
-        combined: list[str] = []
-        seen: set[str] = set()
-        for item in [*merge_base_changed, *status_changed]:
-            if item and item not in seen:
-                combined.append(item)
-                seen.add(item)
-        return combined, None
-    return status_changed, None
 
 
 def _collect_changed_files(args: argparse.Namespace) -> tuple[str, list[str], str | None]:

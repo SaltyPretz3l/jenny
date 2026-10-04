@@ -546,3 +546,23 @@ test('F6: a stop landing during the local-engine join skips managed-sidecar init
   assert.equal(service.calls.includes('model:autoLoad'), false);
   assert.deepEqual(status, buildObservedBackendStatus(service, service.sidecarManager.getStatus()));
 });
+
+// Status loader (2026-09-29): main reports phase keys and facts, never
+// sentences; the renderer owns every word on the curtain and the pill.
+test('startup progress carries a phase key and facts, never a sentence', async () => {
+  const reports = [];
+  const service = makeService({ engine: 'ollama' });
+  service.defaultModel = 'qwen3:8b';
+  await startBackendService(service, {
+    onProgress: (phase, facts) => reports.push({ phase, facts }),
+  });
+  assert.ok(reports.length >= 4, 'the startup phases still report');
+  for (const { phase, facts } of reports) {
+    assert.equal(typeof phase, 'string');
+    assert.equal(typeof facts, 'object', `${phase} sends facts, not a sentence`);
+    assert.equal(facts.modelId, 'qwen3:8b');
+    assert.ok(Number.isFinite(facts.elapsedMs) && facts.elapsedMs >= 0);
+  }
+  assert.equal(reports.find((entry) => entry.phase === 'ollama_ready').facts.available, true);
+  assert.equal(reports.at(-1).phase, 'ready');
+});

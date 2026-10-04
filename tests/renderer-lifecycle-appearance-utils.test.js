@@ -85,18 +85,64 @@ function createHarness(overrides = {}) {
   return { layoutCalls, logs, state, utils, windowObject };
 }
 
-test('lifecycle appearance utils persist chat zoom and roll back on failure', async () => {
+test('chat zoom is retired: applying it never persists and keeps state at 100', async () => {
   const harness = createHarness();
+  let chatUiWrites = 0;
+  harness.windowObject.jennyShell.chatUi.updateSettings = async () => { chatUiWrites += 1; };
+  assert.equal(await harness.utils.applyChatZoomPercent(125), 100);
+  assert.equal(harness.state.ui.chatZoomPercent, 100);
+  assert.equal(chatUiWrites, 0, 'the persisted chatUi.zoomPercent is left untouched');
+});
 
-  assert.equal(await harness.utils.applyChatZoomPercent(120), 125);
-  assert.deepEqual(harness.layoutCalls.map((entry) => entry[0]), ['offset', 'sprite', 'offset', 'sprite']);
-
-  harness.windowObject.jennyShell.chatUi.updateSettings = async () => {
-    throw new Error('storage unavailable');
+test('zoom shortcuts step app zoom through the settings steps and roll back on failure', async () => {
+  const harness = createHarness();
+  const writes = [];
+  harness.state.ui.appZoomPercent = 100;
+  harness.windowObject.jennyShell.windowUi = {
+    updateSettings: async (patch) => { writes.push(patch.appZoomPercent); return { appZoomPercent: patch.appZoomPercent }; },
   };
-  await assert.rejects(() => harness.utils.applyChatZoomPercent(150), /storage unavailable/);
-  assert.equal(harness.state.ui.chatZoomPercent, 125);
-  assert.equal(harness.logs[0].event, 'chat.zoom_update_failed');
+  assert.equal(await harness.utils.adjustChatZoomPercent(1), 110);
+  assert.equal(await harness.utils.adjustAppZoomPercent(1), 125);
+  assert.equal(await harness.utils.adjustAppZoomPercent(-1), 110);
+  assert.equal(await harness.utils.adjustAppZoomPercent(1), 125);
+  assert.equal(await harness.utils.resetAppZoomPercent(), 110);
+  assert.equal(await harness.utils.resetChatZoomPercent(), 110);
+  assert.deepEqual(writes, [110, 125, 110, 125, 110]);
+  harness.state.ui.appZoomPercent = 150;
+  assert.equal(await harness.utils.adjustAppZoomPercent(1), 150, 'clamps at the top step without a write');
+  assert.equal(writes.length, 5);
+
+  harness.windowObject.jennyShell.windowUi.updateSettings = async () => { throw new Error('ipc down'); };
+  await assert.rejects(() => harness.utils.adjustAppZoomPercent(-1), /ipc down/);
+  assert.equal(harness.state.ui.appZoomPercent, 150);
+  assert.equal(harness.logs.at(-1).event, 'app.zoom_update_failed');
+});
+
+test('unknown app zoom falls back to 110 for shortcut steps and invalid requests', async () => {
+  const harness = createHarness();
+  assert.equal(await harness.utils.adjustAppZoomPercent(0), 110);
+  assert.equal(await harness.utils.adjustAppZoomPercent(1), 125);
+  harness.state.ui.appZoomPercent = 'unknown';
+  assert.equal(await harness.utils.adjustAppZoomPercent(-1), 100);
+  assert.equal(await harness.utils.applyAppZoomPercent('unknown'), 110);
+});
+
+test('overlapping zoom writes that both fail roll back to the persisted value', async () => {
+  const harness = createHarness();
+  harness.state.ui.appZoomPercent = 100;
+  const pending = [];
+  harness.windowObject.jennyShell.windowUi = {
+    updateSettings: () => new Promise((resolve, reject) => { pending.push({ resolve, reject }); }),
+  };
+  const first = harness.utils.adjustAppZoomPercent(1);
+  const second = harness.utils.adjustAppZoomPercent(1);
+  assert.equal(harness.state.ui.appZoomPercent, 125, 'optimistic value of the newest write');
+  pending[0].reject(new Error('ipc down'));
+  await assert.rejects(first, /ipc down/);
+  assert.equal(harness.state.ui.appZoomPercent, 125, 'a stale failure does not override the newer write');
+  pending[1].reject(new Error('ipc down'));
+  await assert.rejects(second, /ipc down/);
+  assert.equal(harness.state.ui.appZoomPercent, 100, 'rolls back to the persisted value, not 110');
 });
 
 test('lifecycle appearance utils render escaped select options', () => {
@@ -112,7 +158,7 @@ test('lifecycle appearance utils render escaped select options', () => {
   assert.match(markup, /Less &lt; More/);
 });
 
-test('appearance changes refresh composer and sprite holo eligibility after CSS variables apply', () => {
+test('appearance changes refresh composer and sprite layout after CSS variables apply', () => {
   const harness = createHarness();
 
   const applied = harness.utils.applyAppearancePreferences({
@@ -123,12 +169,7 @@ test('appearance changes refresh composer and sprite holo eligibility after CSS 
   assert.equal(applied.applied, true);
   assert.deepEqual(harness.layoutCalls, [
     ['composer'],
-    [
-      'sprite',
-      undefined,
-      undefined,
-      { refreshHolo: true },
-    ],
+    ['sprite'],
   ]);
 });
 

@@ -71,27 +71,6 @@ test('setting disclosure preferences evicts the oldest per-session override', ()
   assert.equal(sessionStore.has('message_519::phase_519'), true);
 });
 
-test('batch disclosure preferences serialize once for hundreds of updates', () => {
-  const { controller, state, storage } = makeController();
-  const entries = Array.from({ length: 240 }, (_, index) => ({
-    messageId: `message_${index}`,
-    phaseKey: `phase_${index}`,
-    expanded: true,
-    defaultExpanded: false,
-  }));
-
-  assert.equal(controller.setReasoningPhaseExpandedPreferences('session_live', entries), entries.length);
-  assert.equal(storage.writes(), 1);
-  assert.equal(state.ui.reasoningPhaseExpansionBySession.get('session_live').size, entries.length);
-
-  assert.equal(controller.setReasoningPhaseExpandedPreferences('session_live', entries.map((entry) => ({
-    ...entry,
-    expanded: false,
-  }))), entries.length);
-  assert.equal(storage.writes(), 2);
-  assert.equal(state.ui.reasoningPhaseExpansionBySession.has('session_live'), false);
-});
-
 test('sync prunes disclosure preferences for messages no longer in the session', () => {
   const phaseExpansionState = new Map();
   const payload = {

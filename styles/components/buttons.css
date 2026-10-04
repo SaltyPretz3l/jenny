@@ -19,7 +19,7 @@
   --btn-padding-block: 10px;
   --btn-padding-inline: 14px;
   --btn-min-height: 40px;
-  --btn-font-size: var(--font-size-base);
+  --btn-font-size: var(--font-size-body);
   --btn-bg: color-mix(in srgb, var(--widget-button-secondary-bg) 92%, transparent);
   --btn-border: color-mix(in srgb, var(--widget-button-secondary-border) 92%, transparent);
   --btn-color: var(--widget-button-secondary-color);
@@ -42,7 +42,7 @@
   background: var(--btn-bg);
   color: var(--btn-color);
   font-size: var(--btn-font-size);
-  font-weight: 700;
+  font-weight: 500;
   line-height: 1.15;
   cursor: pointer;
   box-shadow: var(--btn-shadow);
@@ -51,6 +51,12 @@
     border-color var(--motion-duration-fast) var(--motion-ease-standard),
     background var(--motion-duration-fast) var(--motion-ease-standard),
     box-shadow var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+/* `hidden` must win over the .btn display, or a toggle hidden by script keeps
+   its box (Home "Show all" with nothing more to show). */
+.btn[hidden] {
+  display: none;
 }
 
 .btn:hover {
@@ -100,14 +106,14 @@
   --btn-min-height: 32px;
   --btn-padding-block: 6px;
   --btn-padding-inline: 10px;
-  --btn-font-size: var(--font-size-sm);
+  --btn-font-size: var(--font-size-footnote);
 }
 
 .btn--lg {
   --btn-min-height: 44px;
   --btn-padding-block: 12px;
   --btn-padding-inline: 18px;
-  --btn-font-size: var(--font-size-md);
+  --btn-font-size: var(--font-size-body);
 }
 
 /* ── Variants ── */

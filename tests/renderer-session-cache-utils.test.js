@@ -18,6 +18,21 @@ function makeState(overrides = {}) {
 }
 
 describe('renderer-session-cache-utils getPinnedSessionIds', () => {
+  test('split view W1-4c: pins the session every pane shows, not only the focused one', () => {
+    const state = makeState({
+      currentSessionId: 'sessionFocused',
+      panes: { panes: [{ paneId: 0, sessionId: 'sessionFocused' }, { paneId: 1, sessionId: 'sessionBeside' }], focusedPaneId: 0, splitRatio: 0.5 },
+      messagesBySession: new Map([['sessionBeside', []], ['sessionCold', []]]),
+    });
+    const controller = createSessionCacheController({ state, getMultiStreamController: () => null });
+
+    const pinned = controller.getPinnedSessionIds();
+
+    assert.equal(pinned.has('sessionFocused'), true);
+    assert.equal(pinned.has('sessionBeside'), true, 'the non-focused pane keeps its transcript cached');
+    assert.equal(pinned.has('sessionCold'), false);
+  });
+
   test('pins exactly the sessions whose stream set holds a pending stream id', () => {
     const state = makeState({
       messagesBySession: new Map([

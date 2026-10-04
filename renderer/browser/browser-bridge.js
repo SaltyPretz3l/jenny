@@ -82,7 +82,7 @@
 
   function attachmentName(value) {
     const name = text(value).split(/[\\/]/).pop().trim();
-    return name.slice(0, 255) || 'attachment';
+    return name.slice(0, 240) || 'attachment';
   }
 
   function artifactMimeType(value) {
@@ -90,6 +90,18 @@
     const aliases = { 'text/html': 'html', 'text/markdown': 'markdown', 'image/svg+xml': 'svg+xml', 'image/png': 'png', 'image/jpeg': 'jpeg', 'image/webp': 'webp', 'application/json': 'json' };
     const normalized = aliases[raw] || raw;
     return ARTIFACT_MIME_TYPES.has(normalized) ? normalized : 'octet-stream';
+  }
+
+  // Text-artifact producers omit mime_type; mirror the host projection's narrow
+  // extension map (services/host/artifact-commands.js) for list-level decisions.
+  const ARTIFACT_EXTENSION_MIME_TYPES = Object.freeze({ '.md': 'text/markdown', '.markdown': 'text/markdown', '.txt': 'text/plain', '.json': 'application/json', '.html': 'text/html', '.htm': 'text/html', '.svg': 'image/svg+xml' });
+  function artifactRefMimeType(artifact) {
+    const declared = artifactMimeType(artifact?.mime_type);
+    if (declared !== 'octet-stream') return declared;
+    const name = text(artifact?.file_name).toLowerCase();
+    const dot = name.lastIndexOf('.');
+    return dot > 0 && Object.hasOwn(ARTIFACT_EXTENSION_MIME_TYPES, name.slice(dot))
+      ? artifactMimeType(ARTIFACT_EXTENSION_MIME_TYPES[name.slice(dot)]) : 'octet-stream';
   }
 
   async function readBinary(response) {
@@ -173,6 +185,8 @@
       this.random = typeof options.random === 'function' ? options.random : Math.random;
       this.requestTimeoutMs = Number.isFinite(options.requestTimeoutMs) && options.requestTimeoutMs > 0
         ? options.requestTimeoutMs : DEFAULT_REQUEST_TIMEOUT_MS;
+      this.eventsInactivityTimeoutMs = Number.isFinite(options.eventsInactivityTimeoutMs) && options.eventsInactivityTimeoutMs > 0
+        ? options.eventsInactivityTimeoutMs : 30_000;
       this.identityGeneration = 0;
       this.csrfToken = '';
       this.bootEpoch = '';
@@ -568,7 +582,7 @@
       const generation = this.identityGeneration;
       let response;
       try {
-        response = await this.fetchImpl(`${this.basePath}/events`, {
+        response = await this._fetchWithDeadline(`${this.basePath}/events`, {
           method: 'GET',
           credentials: 'same-origin',
           signal: abortController.signal,
@@ -580,8 +594,10 @@
             'Last-Event-ID': `${this.bootEpoch}:${cursor}`,
           },
         });
-      } catch (_error) {
+      } catch (error) {
         if (abortController.signal.aborted) throw new BrowserBridgeError('events_closed', { code: 'events_closed' });
+        if (this.eventsAbort === abortController) this.eventsAbort = null;
+        if (error.code === 'request_timeout') throw error;
         throw new BrowserBridgeError('events_unavailable', { code: 'events_unavailable', retryable: true });
       }
       const isCurrent = () => this.eventsAbort === abortController && !abortController.signal.aborted;
@@ -618,18 +634,34 @@
         this.cursor = Math.max(this.cursor, nextCursor);
         options.onEvent?.(payload);
       });
-      const done = this._consumeEvents(response.body.getReader(), parser, abortController.signal)
+      const done = this._consumeEvents(response.body.getReader(), parser, abortController)
         .finally(() => {
           if (this.eventsAbort === abortController) this.eventsAbort = null;
         });
       return { close: () => abortController.abort(), done };
     }
 
-    async _consumeEvents(reader, parser, signal) {
+    async _consumeEvents(reader, parser, abortController) {
+      const signal = abortController.signal;
       const decoder = typeof TextDecoder === 'function' ? new TextDecoder() : null;
       try {
         while (!signal.aborted) {
-          const result = await reader.read();
+          let timer;
+          let onAbort;
+          const deadline = new Promise((resolve, reject) => {
+            onAbort = () => resolve({ done: true });
+            signal.addEventListener('abort', onAbort, { once: true });
+            timer = setTimeout(() => {
+              reject(new BrowserBridgeError('events_timeout', { code: 'events_timeout', retryable: true }));
+              abortController.abort();
+            }, this.eventsInactivityTimeoutMs);
+          });
+          let result;
+          try { result = await Promise.race([reader.read(), deadline]); }
+          finally {
+            clearTimeout(timer);
+            signal.removeEventListener('abort', onAbort);
+          }
           if (signal.aborted) return;
           if (result.done) {
             parser.consume(decoder ? decoder.decode() : '', true);
@@ -638,7 +670,7 @@
           parser.consume(decoder ? decoder.decode(result.value, { stream: true }) : String(result.value || ''));
         }
       } finally {
-        try { await reader.cancel(); } catch (_error) { /* closed stream */ }
+        try { void Promise.resolve(reader.cancel()).catch(() => {}); } catch (_error) { /* closed stream */ }
       }
     }
 
@@ -681,5 +713,5 @@
     }
   }
 
-  return { API_VERSION, DEFAULT_REQUEST_TIMEOUT_MS, ATTACHMENT_MIME_TYPES, ARTIFACT_MIME_TYPES, ARTIFACT_ID_PATTERN, BrowserBridge, BrowserBridgeError, createSseParser, parseEventId, artifactMimeType };
+  return { API_VERSION, DEFAULT_REQUEST_TIMEOUT_MS, ATTACHMENT_MIME_TYPES, ARTIFACT_MIME_TYPES, ARTIFACT_ID_PATTERN, BrowserBridge, BrowserBridgeError, createSseParser, parseEventId, artifactMimeType, artifactRefMimeType };
 });

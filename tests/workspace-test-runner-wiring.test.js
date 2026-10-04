@@ -676,7 +676,7 @@ test('wave-c/s13: a run pushes onStateChanged via sendBridgeEvent (flag on); fla
 // 5) Production registration fn — exactly 4 channels, round-trips the real service
 // ---------------------------------------------------------------------------
 
-test('wave-c: registerWorkspaceTestRunnerIpcHandlers wires exactly 5 channels and round-trips', async (t) => {
+test('wave-c: registerWorkspaceTestRunnerIpcHandlers wires exactly 4 channels and round-trips', async (t) => {
   const { userDataDir, makeRoot } = sandbox(t);
   const root = makeRoot('rootA');
   writeConfigs(userDataDir, root, [{ id: 'unit', label: 'Unit', command: 'echo hi' }]);
@@ -697,21 +697,17 @@ test('wave-c: registerWorkspaceTestRunnerIpcHandlers wires exactly 5 channels an
   const expected = [
     'workspace-test-runner:abort',
     'workspace-test-runner:get-state',
-    'workspace-test-runner:list-configs',
     'workspace-test-runner:run',
     'workspace-test-runner:save-configs',
   ];
-  assert.deepEqual([...channels].sort(), expected, 'returns exactly the 5 registered channels');
-  assert.deepEqual(Object.keys(handlers).sort(), expected, 'registers exactly the 5 channels');
+  assert.deepEqual([...channels].sort(), expected, 'returns exactly the 4 registered channels');
+  assert.deepEqual(Object.keys(handlers).sort(), expected, 'registers exactly the 4 channels');
 
   // The abort channel round-trips a clean no-op when no run is active.
   const abortNoop = await handlers[getBridgeChannel('workspaceTestRunner.abort', 'invoke')](null);
   assert.deepEqual(abortNoop, { aborted: false });
 
   // Round-trip the real wiring through the registered handlers (event arg first).
-  const listed = await handlers[getBridgeChannel('workspaceTestRunner.listConfigs', 'invoke')](null);
-  assert.deepEqual(listed.configs.map((c) => c.id), ['unit']);
-
   const ran = await handlers[getBridgeChannel('workspaceTestRunner.run', 'invoke')](null, { configId: 'unit' });
   assert.equal(ran.status, 'passed');
   assert.equal(runner.calls.length, 1);
@@ -782,7 +778,6 @@ test('wave-a: registerMainIpcHandlers wires the workspaceTestRunner.* channels',
     shellConfigService,
     companionService: {},
     skillsService: { getState: () => ({}), updateSettings: () => ({}), openScopeFolder: () => ({}) },
-    tipsService: { getState: () => ({}), updateSettings: () => ({}) },
     suggestionCache: {},
     offlineIntelligenceService: {},
     applyFeatureSettingsPatch: () => ({}),
@@ -801,7 +796,6 @@ test('wave-a: registerMainIpcHandlers wires the workspaceTestRunner.* channels',
     ollamaInstallService: {},
     mcpDiscoveryService: {},
     schedulerService: {},
-    weatherService: {},
     linkStatusService: {},
     calendarService: {},
     chatStreamBridge: {},
@@ -811,12 +805,6 @@ test('wave-a: registerMainIpcHandlers wires the workspaceTestRunner.* channels',
     refreshGpuMemorySample: async () => null,
     getCurrentSystemStatsPayload: () => ({ cpu: 0 }),
     buildFeatureStatePayload: () => ({ flags: {} }),
-    getOverlayRef: () => null,
-    setOverlayRef: () => {},
-    isCometOverlayEnabled: () => false,
-    createCometOverlay: () => null,
-    handleCometOverlayToggle: () => null,
-    normalizeCometOverlayPresencePayload: (p) => p,
     getProcessLogWriter: () => null,
     getLogRedactionPrefixes: () => [],
     sendBridgeEvent: () => {},
@@ -827,7 +815,6 @@ test('wave-a: registerMainIpcHandlers wires the workspaceTestRunner.* channels',
   registerMainIpcHandlers(deps);
 
   for (const channel of [
-    'workspace-test-runner:list-configs',
     'workspace-test-runner:run',
     'workspace-test-runner:abort',
     'workspace-test-runner:save-configs',

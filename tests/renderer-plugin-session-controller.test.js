@@ -10,25 +10,7 @@ global.inventoryActionButton = ({ label = '', dataset = {}, trustedHtml = '' }) 
 };
 global.inventoryActionButton.escapeHtml = require('../renderer/inventory/action-button').escapeHtml;
 
-const {
-  createPluginSessionController,
-  providerRows,
-} = require('../renderer/shell/renderer-plugin-session-controller');
-
-const SNAPSHOT = {
-  ok: true,
-  plugins: [{
-    publisher_id: 'jenny-official',
-    plugin_id: 'local-image-generation',
-    generation_id: 'generation_1',
-    contributions: [{
-      contribution_id: 'local_image_generation',
-      display_name: 'Image',
-      kind: 'session_provider',
-      effective_enabled: true,
-    }],
-  }],
-};
+const { createPluginSessionController } = require('../renderer/shell/renderer-plugin-session-controller');
 
 function pluginSession(id = 'session_1') {
   return {
@@ -45,18 +27,17 @@ function pluginSession(id = 'session_1') {
   };
 }
 
-function harness({ snapshot = SNAPSHOT } = {}) {
+function harness() {
   const dom = new JSDOM(`<!doctype html><body>
     <span id="pluginSessionProviderActions"></span>
     <div id="pluginSessionFallback" hidden><p data-plugin-session-fallback-copy></p>
       <span id="pluginSessionFallbackAction"></span></div>
   </body>`);
   const { window } = dom;
-  let currentSnapshot = snapshot;
-  let changed = null;
+  let providerQueries = 0;
   window.jennyShell = { plugins: {
-    getState: async () => currentSnapshot,
-    onChanged: (callback) => { changed = callback; return () => { changed = null; }; },
+    getState: async () => { providerQueries += 1; return { ok: true, plugins: [] }; },
+    onChanged: () => { providerQueries += 1; return () => {}; },
   } };
   const state = { currentSessionId: '', sessions: [], ui: { activeView: 'chat' } };
   const calls = [];
@@ -69,87 +50,78 @@ function harness({ snapshot = SNAPSHOT } = {}) {
   };
   const controller = createPluginSessionController({ windowRef: window,
     documentRef: window.document, state, viewHost, callbacks: {
-      handleCreateSession: async (request) => {
-        calls.push(['create', request]);
-        const session = pluginSession();
-        state.sessions = [session];
-        state.currentSessionId = session.id;
-        return session.id;
-      },
       setActiveView: (view) => { state.ui.activeView = view; calls.push(['view', view]); },
       showToastMessage: (message) => calls.push(['toast', message]),
       openSettingsSection: (section) => calls.push(['settings', section]),
     } });
   return { controller, window, state, calls, viewHost,
-    setSnapshot: (value) => { currentSnapshot = value; },
-    emitChanged: () => changed?.(),
+    providerQueries: () => providerQueries,
+    activate: (id) => { activeSessionId = id; },
     setCloseResult: (value) => { closeResult = value; },
   };
 }
 
-test('provider discovery exposes only effective session providers', () => {
-  const rows = providerRows({ ok: true, plugins: [{ ...SNAPSHOT.plugins[0], contributions: [
-    ...SNAPSHOT.plugins[0].contributions,
-    { contribution_id: 'off', kind: 'session_provider', effective_enabled: false },
-    { contribution_id: 'panel', kind: 'panel', effective_enabled: true },
-  ] }] });
-  assert.deepEqual(rows, [{
-    publisherId: 'jenny-official', pluginId: 'local-image-generation',
-    providerContributionId: 'local_image_generation', generationId: 'generation_1',
-    displayName: 'Image',
-  }]);
-});
-
-test('provider action creates with exact authority then opens the bound panel with session id', async () => {
+test('a saved plugin session opens as a read-only transcript with the existing toast and notice', async () => {
   const h = harness();
-  h.controller.bind();
-  await h.controller.syncProviders();
-  h.window.document.querySelector('[data-plugin-session-action="new-plugin-session"]')
-    .dispatchEvent(new h.window.MouseEvent('click', { bubbles: true }));
-  await new Promise((resolve) => setImmediate(resolve));
-  const create = h.calls.find(([kind]) => kind === 'create')[1];
-  assert.deepEqual(create.providerAuthority, {
-    publisher_id: 'jenny-official', plugin_id: 'local-image-generation',
-    provider_contribution_id: 'local_image_generation', active_generation_id: 'generation_1',
-  });
-  const open = h.calls.find(([kind]) => kind === 'open')[1];
-  assert.equal(open.contribution_id, 'image_workspace');
-  assert.equal(open.sessionId, 'session_1');
-  h.controller.dispose();
-});
-
-test('missing provider keeps an ordinary read-only transcript and offers plugin management', async () => {
-  const h = harness({ snapshot: { ok: true, plugins: [] } });
   h.state.sessions = [pluginSession()];
   h.state.currentSessionId = 'session_1';
   h.controller.bind();
   const result = await h.controller.openSessionView('session_1');
-  assert.equal(result.fallback, true);
+  assert.deepEqual(result, { ok: false, reason: 'session_provider_unavailable', fallback: true });
   assert.equal(h.state.ui.activeView, 'chat');
+  assert.ok(!h.calls.some(([kind]) => kind === 'open'), 'no provider view is ever opened');
+  assert.deepEqual(h.calls.find(([kind]) => kind === 'toast')[1],
+    'This plugin is unavailable. The saved transcript remains readable.');
   const notice = h.window.document.getElementById('pluginSessionFallback');
   assert.equal(notice.hidden, false);
   assert.match(notice.textContent, /missing, disabled, or incompatible/);
+  assert.match(notice.textContent, /Manage plugins/);
   h.controller.dispose();
 });
 
-test('session leave is fail-closed when native cleanup is unproven', async () => {
+test('the notice offers only Manage plugins, and it opens the plugins settings section', async () => {
   const h = harness();
   h.state.sessions = [pluginSession()];
   h.state.currentSessionId = 'session_1';
   h.controller.bind();
-  await h.controller.openSessionView('session_1');
+  const buttons = h.window.document.querySelectorAll('[data-plugin-session-action]');
+  assert.deepEqual([...buttons].map((button) => button.dataset.pluginSessionAction), ['manage-plugins']);
+  buttons[0].dispatchEvent(new h.window.MouseEvent('click', { bubbles: true }));
+  assert.deepEqual(h.calls.find(([kind]) => kind === 'settings'), ['settings', 'plugins']);
+  h.controller.dispose();
+});
+
+test('non-plugin sessions and background opens do not trigger the fallback', async () => {
+  const h = harness();
+  h.state.sessions = [{ id: 'chat_1', session_type: 'chat' }, pluginSession()];
+  h.controller.bind();
+  assert.equal((await h.controller.openSessionView('chat_1')).reason, 'not_plugin_session');
+  assert.equal((await h.controller.openSessionView('session_1', { userInitiated: false })).skipped, true);
+  assert.equal(h.calls.length, 0);
+  assert.equal(h.window.document.getElementById('pluginSessionFallback').hidden, true);
+  h.controller.dispose();
+});
+
+test('the controller no longer resolves providers or renders create actions', async () => {
+  const h = harness();
+  h.controller.bind();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(h.providerQueries(), 0);
+  assert.equal(h.window.document.getElementById('pluginSessionProviderActions').innerHTML, '');
+  assert.equal(h.controller.createSession, undefined);
+  assert.equal(h.controller.syncProviders, undefined);
+  h.controller.dispose();
+});
+
+test('session leave stays fail-closed if a view host still reports an active session', async () => {
+  const h = harness();
+  h.state.sessions = [pluginSession()];
+  h.state.currentSessionId = 'session_1';
+  h.controller.bind();
+  assert.equal(await h.controller.guardLeaveSession('session_1', 'switch'), true);
+  h.activate('session_1');
   h.setCloseResult({ ok: false, reason: 'tree_death_unproven' });
   assert.equal(await h.controller.guardLeaveSession('session_1', 'switch'), false);
   assert.ok(h.calls.some(([kind]) => kind === 'toast'));
   h.controller.dispose();
-});
-
-test('disposed provider refresh cannot mutate the create-action slot', async () => {
-  const h = harness();
-  h.controller.bind();
-  h.controller.dispose();
-  h.setSnapshot(SNAPSHOT);
-  h.emitChanged();
-  await new Promise((resolve) => setImmediate(resolve));
-  assert.equal(h.window.document.getElementById('pluginSessionProviderActions').innerHTML, '');
 });

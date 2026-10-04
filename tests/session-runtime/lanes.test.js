@@ -57,6 +57,48 @@ test('cancellation and uncertain cleanup keep capacity until actual producer set
     { status: 'rejected', reason: 'cancelled' });
 });
 
+test('waiting refusals identify the leases that consume each capacity boundary', () => {
+  const local = route();
+  const cloud = route('chatgpt', 'cloud');
+  const otherCloud = route('codex-cli', 'cloud');
+  const sessionLanes = new RuntimeLaneAdmission({ limits: { local: { runnable_turns: 2 } } });
+  sessionLanes.tryAcquireTurn({ sessionId: 'shared', route: local });
+  const sessionBusy = sessionLanes.tryAcquireTurn({ sessionId: 'shared', route: cloud });
+  assert.deepEqual(sessionBusy, { status: 'waiting', reason: 'session_busy',
+    blockers: [{ session_id: 'shared', quarantined_at: null }] });
+  assert.equal(Object.isFrozen(sessionBusy.blockers), true);
+  assert.equal(Object.isFrozen(sessionBusy.blockers[0]), true);
+
+  const downstreamLanes = new RuntimeLaneAdmission({ maxRunnableTurns: 2,
+    limits: { local: { runnable_turns: 2 }, cloud: { runnable_turns: 2 } } });
+  downstreamLanes.tryAcquireTurn({ sessionId: 'local', route: local });
+  downstreamLanes.tryAcquireTurn({ sessionId: 'cloud', route: cloud });
+  assert.deepEqual(downstreamLanes.tryAcquireTurn({ sessionId: 'other', route: otherCloud }).blockers,
+    [{ session_id: 'local', quarantined_at: null },
+      { session_id: 'cloud', quarantined_at: null }]);
+
+  const laneLanes = new RuntimeLaneAdmission();
+  laneLanes.tryAcquireTurn({ sessionId: 'local', route: local });
+  assert.deepEqual(laneLanes.tryAcquireTurn({ sessionId: 'other', route: local }), {
+    status: 'waiting', reason: 'lane_capacity',
+    blockers: [{ session_id: 'local', quarantined_at: null }],
+  });
+});
+
+test('a quarantined lease is timestamped once and exposes that timestamp to blockers', () => {
+  let now = 100;
+  const lanes = new RuntimeLaneAdmission({ now: () => now });
+  const local = route();
+  const { lease } = lanes.tryAcquireTurn({ sessionId: 'shared', route: local });
+  assert.equal(lanes.release(lease, { producerSettled: false }), false);
+  now = 200;
+  assert.equal(lanes.release(lease, { producerSettled: false }), false);
+  assert.deepEqual(lanes.tryAcquireTurn({ sessionId: 'shared', route: route('chatgpt', 'cloud') }), {
+    status: 'waiting', reason: 'session_busy',
+    blockers: [{ session_id: 'shared', quarantined_at: 100 }],
+  });
+});
+
 test('lowering limits does not release active work and stale tokens cannot release new leases', () => {
   let nextId = 0;
   const lanes = new RuntimeLaneAdmission({ createId: () => String(++nextId), limits: { local: { runnable_turns: 2 } } });

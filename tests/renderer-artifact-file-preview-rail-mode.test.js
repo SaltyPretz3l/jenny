@@ -32,7 +32,7 @@ const PANEL_HTML = '<div id="workspace"><div id="chatView">'
   + '<div class="artifact-preview-content hidden" id="artifactReviewPreviewContent"></div>'
   + '<div id="artifactReviewEditorShell"></div><span id="artifactReviewDirtyBadge"></span>'
   + '</div></div></aside>'
-  + '<div id="artifactReviewStatus"></div></div></div>';
+  + '</div></div>';
 
 function withDomShim(t, store) {
   // A real origin: jsdom refuses localStorage for opaque (about:blank) ones.
@@ -62,7 +62,7 @@ function makeState() {
       autoOpenedSessionIds: [], deletedArtifactIds: [],
     },
     messagesBySession: new Map(),
-    features: { featureFlags: { artifact_panel_v2: false } },
+    features: { featureFlags: {} },
   };
 }
 
@@ -75,7 +75,6 @@ function makeManager(t, state, dom, extraCallbacks) {
       workspace: byId('workspace'),
       chatView: byId('chatView'),
       artifactReviewPanel: byId('artifactReviewPanel'),
-      artifactReviewStatus: byId('artifactReviewStatus'),
       artifactReviewDetailEmpty: byId('artifactReviewDetailEmpty'),
       artifactReviewDetailPanel: byId('artifactReviewDetailPanel'),
       artifactReviewDetailKicker: byId('artifactReviewDetailKicker'),
@@ -126,7 +125,7 @@ describe('file_preview rail mode — preferences', () => {
 });
 
 describe('openArtifactRail', () => {
-  test('opens the rail without selecting an artifact and clears the sticky dismissal', (t) => {
+  test('opens a closed rail without selecting an artifact', (t) => {
     const dom = withDomShim(t, {
       [STORAGE_KEY]: JSON.stringify({ enabled: false, collapsed: true, userDismissed: true }),
     });
@@ -136,8 +135,7 @@ describe('openArtifactRail', () => {
 
     assert.equal(manager.openArtifactRail('file_preview'), 'file_preview');
     assert.equal(state.ui.artifactReview.enabled, true);
-    assert.equal(state.ui.artifactReview.collapsed, false);
-    assert.equal(state.ui.artifactReview.userDismissed, false);
+    assert.equal('userDismissed' in state.ui.artifactReview, false, 'the retired global dismissal is gone');
     assert.equal(state.ui.activeView, 'chat', 'the rail lives on the chat page');
     assert.equal(state.artifacts.selectedArtifactId, '', 'no synthetic artifact selection');
   });
@@ -297,4 +295,30 @@ describe('bridge duplicate-normalizer regression', () => {
     assert.equal(previewSurfaces.length, 0);
     assert.equal(typeof bridge.openFilePreviewTarget, 'function', 'the bridge exposes the open verb');
   });
+});
+
+// W3 review P2-2: an explicit claim is not a session switch; the preview it opened survives its render.
+test('split view, owner A, focus B: a file preview claims the panel for B and survives its own render', (t) => {
+  const dom = withDomShim(t, {});
+  const state = makeState();
+  let resets = 0;
+  let owner = 'session-a';
+  state.currentSessionId = 'session-b';
+  const sidePanel = {
+    getSessionId: () => owner,
+    claim: () => { owner = state.currentSessionId; return true; },
+    getAutoOpenSessionId: () => owner,
+    syncOwnerLine: () => {},
+  };
+  const manager = makeManager(t, state, dom, {
+    renderFilePreviewSurface: () => {},
+    resetFilePreview: () => { resets += 1; },
+    getActiveSession: () => ({ id: owner }),
+    sidePanel,
+  });
+  manager.renderArtifactReviewPanel(); // the panel has rendered for owner A
+  // renderer-artifact-file-preview.js openFilePreviewTarget: openArtifactRail then render
+  manager.openArtifactRail('file_preview');
+  manager.renderArtifactReviewPanel();
+  assert.equal(state.ui.artifactReview.mode, 'file_preview', 'the preview just opened must survive its own open');
 });

@@ -16,7 +16,12 @@ class DiagnosticsStreamHandler(logging.Handler):
         self.setFormatter(formatter)
         self._stream = stream if stream is not None else sys.stderr
         self._lock = threading.Lock()
-        self.failure_count = 0
+        self._failure_count = 0
+
+    @property
+    def failure_count(self) -> int:
+        with self._lock:
+            return self._failure_count
 
     def emit(self, record: logging.LogRecord) -> None:
         try:
@@ -25,7 +30,8 @@ class DiagnosticsStreamHandler(logging.Handler):
                 self._stream.write(line)
                 self._stream.flush()
         except Exception:  # noqa: BLE001 - diagnostics transport is optional.
-            self.failure_count += 1
+            with self._lock:
+                self._failure_count += 1
 
 
 class DiagnosticsFanoutHandler(logging.Handler):
@@ -34,10 +40,29 @@ class DiagnosticsFanoutHandler(logging.Handler):
     def __init__(self, *handlers: logging.Handler) -> None:
         super().__init__()
         self.handlers = tuple(handler for handler in handlers if handler is not None)
+        # Configuration supplies file first, then the optional stderr mirror.
+        self._failure_lock = threading.Lock()
+        self._thrown_failures = [0 for _handler in self.handlers]
+        self._reported_failures = [0 for _handler in self.handlers]
 
     def emit(self, record: logging.LogRecord) -> None:
-        for handler in self.handlers:
+        for index, handler in enumerate(self.handlers):
             try:
                 handler.handle(record)
             except Exception:  # noqa: BLE001 - each sink degrades independently.
-                continue
+                with self._failure_lock:
+                    self._thrown_failures[index] += 1
+
+    def take_failure_deltas(self) -> dict[str, int]:
+        """Collect newly failed deliveries, including errors absorbed by sinks."""
+        deltas: dict[str, int] = {}
+        with self._failure_lock:
+            for index, (name, handler) in enumerate(
+                zip(("file", "mirror"), self.handlers, strict=False)
+            ):
+                total = getattr(handler, "failure_count", 0) + self._thrown_failures[index]
+                delta = total - self._reported_failures[index]
+                self._reported_failures[index] = total
+                if delta > 0:
+                    deltas[name] = delta
+        return deltas

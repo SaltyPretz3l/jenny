@@ -53,7 +53,7 @@ function pressKey(window, target, key) {
   return event;
 }
 
-test('top rail starts hidden and renders the five primary views in shortcut order', async (t) => {
+test('top rail starts hidden and renders the four tab views in shortcut order; Settings is the gear', async (t) => {
   const { window, doc, controller } = await loadAppWithRail(t);
   const topRail = doc.getElementById('topRail');
   assert.equal(topRail.classList.contains('hidden'), true, 'rail ships hidden until setTopRailVisible is called');
@@ -64,9 +64,20 @@ test('top rail starts hidden and renders the five primary views in shortcut orde
   const tabs = [...doc.querySelectorAll('#topRailTabs .toprail-tab')];
   assert.deepEqual(
     tabs.map((tab) => tab.dataset.tabId),
-    ['home', 'chat', 'ide', 'logs', 'settings'],
-    'rail order matches VIEW_TAB_ORDER'
+    ['home', 'chat', 'ide', 'logs'],
+    'rail order matches VIEW_TAB_ORDER; Settings is not a tab'
   );
+  assert.ok(tabs.every((tab) => !tab.querySelector('svg')), 'the nav is text only');
+  assert.equal(tabs.filter((tab) => tab.getAttribute('aria-selected') === 'true').length, 1, 'one tab is the active view');
+  assert.equal(new Set(tabs.map((tab) => tab.className)).size, 1, 'the active tab wears no fill class: the underline marks it');
+  const gear = doc.getElementById('settingsTopRailTab');
+  assert.ok(gear, 'the Settings gear renders into the title bar slot');
+  assert.equal(gear.parentElement, doc.getElementById('titlebarSettingsSlot'));
+  assert.equal(gear.getAttribute('aria-label'), 'Settings');
+  assert.equal(gear.getAttribute('title'), 'Settings (Ctrl+5)');
+  assert.equal(gear.querySelectorAll('svg path').length, 1, 'one cog outline');
+  assert.equal(gear.querySelector('svg circle')?.getAttribute('r'), '2.6', 'the gear hub, not the old 2.5 sun');
+  assert.equal(doc.querySelector('#topRail circle[r="2.5"]'), null, 'no sun glyph anywhere in the nav');
   assert.deepEqual(
     [...window.rendererTopRailUtils.VIEW_TAB_ORDER],
     ['home', 'chat', 'ide', 'logs', 'settings'],
@@ -76,6 +87,21 @@ test('top rail starts hidden and renders the five primary views in shortcut orde
   assert.ok(tabs.every((tab) => tab.id.endsWith('TopRailTab')), 'rail ids cannot collide with legacy nav ids');
   assert.equal(doc.getElementById('topRailTabs').getAttribute('role'), 'tablist');
   assert.equal(doc.getElementById('topRailTabs').getAttribute('aria-orientation'), 'horizontal');
+});
+
+test('every view tabpanel is labelled by a rail tab; Settings (the gear, not a tab) is a named region', async (t) => {
+  const { doc } = await loadAppWithRail(t);
+  const gear = doc.getElementById('settingsTopRailTab');
+  assert.ok(gear, 'the gear renders');
+  assert.notEqual(gear.getAttribute('role'), 'tab');
+  for (const panel of doc.querySelectorAll('.main-view[role="tabpanel"]')) {
+    const labelId = panel.getAttribute('aria-labelledby');
+    assert.notEqual(labelId, 'settingsTopRailTab', `${panel.id} is not labelled by the gear button`);
+  }
+  const settingsView = doc.getElementById('settingsView');
+  assert.equal(settingsView.getAttribute('role'), 'region');
+  assert.equal(settingsView.getAttribute('aria-labelledby'), null);
+  assert.equal(settingsView.getAttribute('aria-label'), 'Settings');
 });
 
 test('rail tabs expose tab semantics with a roving tabindex on the active view', async (t) => {
@@ -147,11 +173,11 @@ test('horizontal arrow keys move and activate; Home/End jump; Enter activates', 
   assert.deepEqual(activations, ['chat', 'home'], 'ArrowLeft goes back');
 
   pressKey(window, doc.getElementById('homeTopRailTab'), 'ArrowLeft');
-  assert.deepEqual(activations.at(-1), 'settings', 'ArrowLeft wraps from the first tab to the last');
+  assert.deepEqual(activations.at(-1), 'logs', 'ArrowLeft wraps from the first tab to the last');
 
-  pressKey(window, doc.getElementById('settingsTopRailTab'), 'End');
-  assert.equal(activations.at(-1), 'settings');
-  pressKey(window, doc.getElementById('settingsTopRailTab'), 'Home');
+  pressKey(window, doc.getElementById('logsTopRailTab'), 'End');
+  assert.equal(activations.at(-1), 'logs');
+  pressKey(window, doc.getElementById('logsTopRailTab'), 'Home');
   assert.equal(activations.at(-1), 'home');
 
   const enterEvent = pressKey(window, doc.getElementById('homeTopRailTab'), 'Enter');
@@ -284,4 +310,19 @@ test('repeated view-chrome synchronization keeps one rail binding and one Resize
   controller.bind();
   controller.bind();
   assert.equal(roInstances.length, 1, 'bind is idempotent across view and feature refreshes');
+});
+
+test('the gear activates Settings and carries aria-current while Settings is active', async (t) => {
+  const { window, doc, controller, activations } = await loadAppWithRail(t);
+  window.__rendererState.ui.activeView = 'chat';
+  controller.renderTopRail();
+  await waitForUi(window, 20);
+  const gear = doc.getElementById('settingsTopRailTab');
+  assert.equal(gear.hasAttribute('aria-current'), false);
+
+  gear.click();
+  await waitForUi(window, 20);
+  assert.deepEqual(activations, ['settings']);
+  assert.equal(gear.getAttribute('aria-current'), 'page');
+  assert.ok([...doc.querySelectorAll('#topRailTabs .toprail-tab')].every((tab) => tab.getAttribute('aria-selected') === 'false'));
 });

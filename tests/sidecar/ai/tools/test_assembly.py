@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
+from typing import Any
 
 from sidecar.ai.error_codes import CMP_TSRCH_DEFERRED_TOOL
 from sidecar.ai.mode_policy import MODE_ASSIST
@@ -8,8 +9,8 @@ from sidecar.ai.tools.assembly import (
     CONFIG_DISABLED_REASON,
     ENGINE_UNSUPPORTED_REASON,
     MODE_DISABLED_REASON,
-    READ_ONLY_UNAVAILABLE_REASON,
     PLATFORM_UNSUPPORTED_REASON,
+    READ_ONLY_UNAVAILABLE_REASON,
     REQUEST_DISABLED_REASON,
     REQUEST_NOT_ENABLED_REASON,
     RUNTIME_UNAVAILABLE_REASON,
@@ -31,6 +32,24 @@ from sidecar.ai.tools.catalog import (
     manifest_descriptors,
 )
 from sidecar.ai.tools.tool_search import ToolResolutionContext, build_search_index
+
+
+def test_runtime_status_preserves_connection_and_side_effect_metadata() -> None:
+    from sidecar.ai.context.builder_shared import RuntimeToolStatus
+    from sidecar.ai.tools.assembly import AssembledToolEntry
+
+    default = RuntimeToolStatus(name="read_file", display_name="Read File", available=True)
+    assert default.connection_id is None
+    assert default.side_effecting is False
+    descriptor = CanonicalToolDescriptor(
+        name="plugin:pub:tools:write", description="Write", input_schema={},
+        side_effecting=True, read_only=False, connection_id="plugin:pub:tools",
+    )
+    status = AssembledToolEntry(descriptor, available=False, reason="disabled").runtime_status()
+    assert status.connection_id == "plugin:pub:tools"
+    assert status.side_effecting is True
+    assert status.available is False
+    assert status.reason == "disabled"
 
 
 def _descriptor(
@@ -275,27 +294,6 @@ def test_assemble_tool_contract_blocks_non_enabled_request_tools() -> None:
     assert contract.entry("web_search").reason == REQUEST_NOT_ENABLED_REASON
 
 
-def test_request_allowlist_keeps_generation_bound_native_plugin_tools_available() -> None:
-    plugin_tool = _descriptor(
-        "plugin:jenny-official:stage8-conformance:echo",
-        source_kind="plugin_native_mcp",
-    )
-    contract = assemble_tool_contract(
-        (plugin_tool,),
-        ToolAssemblyContext(
-            surface=MANAGED_SIDECAR_SURFACE,
-            config={},
-            engine_supports_tool_calling=True,
-            mode=MODE_ASSIST,
-            plan_mode=False,
-            tool_preferences={"enabled_tools": ("read_file",)},
-            workspace_root_present=True,
-        ),
-    )
-
-    assert contract.entry(plugin_tool.name).available is True
-
-
 def test_strict_safety_mode_blocks_network_tool_family() -> None:
     read_file = _descriptor("read_file", tool_family="filesystem")
     web_search = _descriptor(
@@ -526,36 +524,36 @@ def _home_entry(*, read_only: bool):
     return contract.entry("home")
 
 
-def test_home_is_withheld_in_read_only_contexts_despite_not_being_side_effecting() -> None:
-    # `home` is the one manifest entry that is read_only=False AND
-    # side_effecting=False. Every read-only gate keyed on side_effecting alone,
-    # so the sidecar advertised it in Plan Mode / research subagents and
-    # Electron then refused it at dispatch — a wasted model turn per call.
+def test_home_read_actions_keep_it_available_in_read_only_contexts() -> None:
+    # HB-002 (dogfood 2026-09-27): `home` declares per-action side effects, so
+    # Plan Mode keeps calendar_list/scratchpad_read (a plan told the owner no
+    # calendar existed) while every write action stays refused per call.
     home = next(
         descriptor for descriptor in _home_catalog() if descriptor.name == "home"
     )
     assert home.read_only is False
-    assert home.side_effecting is False
+    assert home.side_effecting is True
+    assert {
+        name for name, spec in (home.actions or {}).items() if spec.side_effecting is False
+    } == {"calendar_list", "scratchpad_read"}
 
-    blocked = _home_entry(read_only=True)
-    assert blocked.available is False
-    assert blocked.reason == READ_ONLY_UNAVAILABLE_REASON
+    assert _home_entry(read_only=True).available is True
 
 
 def test_home_is_available_when_the_request_is_not_read_only() -> None:
     assert _home_entry(read_only=False).available is True
 
 
-def test_home_is_the_only_manifest_entry_that_is_not_read_only_and_not_side_effecting() -> None:
-    # Bounds the blast radius of the gate above: if a second entry ever adopts
-    # this pair, it silently inherits read-only withholding and should be a
-    # deliberate decision, not a surprise.
+def test_no_manifest_entry_is_neither_read_only_nor_side_effecting() -> None:
+    # The read_only=False + side_effecting=False pair is withheld from
+    # read-only contexts by a special case; `home` left it for per-action
+    # side effects (HB-002). A new entry adopting it should be deliberate.
     offenders = tuple(
         descriptor.name
         for descriptor in manifest_descriptors()
         if descriptor.read_only is False and descriptor.side_effecting is False
     )
-    assert offenders == ("home",)
+    assert offenders == ()
 
 
 def test_current_info_remediation_engine_unsupported() -> None:
@@ -580,3 +578,30 @@ def test_current_info_remediation_unknown_reason_is_empty() -> None:
     assert current_info_remediation("some unmapped reason") == ""
     assert current_info_remediation(None) == ""
     assert current_info_remediation("") == ""
+
+def test_request_safety_mode_on_the_context_wins_over_the_config() -> None:
+    read_file = _descriptor("read_file", tool_family="filesystem")
+    web_search = _descriptor(
+        "web_search",
+        tool_family="web",
+        availability=CanonicalToolAvailability(config_flag="tools_web_enabled"),
+    )
+
+    def contract(config_mode: str, request_mode: str | None) -> Any:
+        return assemble_tool_contract(
+            (read_file, web_search),
+            ToolAssemblyContext(
+                surface=MANAGED_SIDECAR_SURFACE,
+                config={"tools_web_enabled": True, "safety_mode": config_mode},
+                engine_supports_tool_calling=True,
+                mode=MODE_ASSIST,
+                workspace_root_present=True,
+                safety_mode=request_mode,
+            ),
+        )
+
+    # Switching to Strict applies from the next message, and back again.
+    assert contract("normal", "strict").entry("web_search").available is False
+    assert contract("normal", "strict").entry("web_search").reason == SAFETY_MODE_STRICT_REASON
+    assert contract("strict", "normal").entry("web_search").available is True
+    assert contract("strict", None).entry("web_search").available is False

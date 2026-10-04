@@ -1,9 +1,61 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const MAX_FLUSH_PASSES = 8;
 
 function buildTempPath(filePath) {
   return `${filePath}.${Date.now()}.${crypto.randomBytes(6).toString('hex')}.tmp`;
+}
+
+// Stable-storage barrier for a freshly written file. Rename alone protects
+// against a process crash; the bytes must also be flushed before the rename
+// publishes them, or a power loss can leave a published but empty file.
+function syncFile(filePath) {
+  const fd = fs.openSync(filePath, 'r+');
+  try {
+    fs.fsyncSync(fd);
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+async function syncFileAsync(filePath) {
+  const handle = await fs.promises.open(filePath, 'r+');
+  try {
+    await handle.sync();
+  } finally {
+    await handle.close();
+  }
+}
+
+// Best-effort flush of the rename itself. Windows cannot open directories, and
+// the data file is already flushed, so a failure here never fails the write.
+function syncDirectory(dirPath) {
+  if (process.platform === 'win32') return;
+  try {
+    const fd = fs.openSync(dirPath, 'r');
+    try {
+      fs.fsyncSync(fd);
+    } finally {
+      fs.closeSync(fd);
+    }
+  } catch (directoryError) {
+    void directoryError;
+  }
+}
+
+async function syncDirectoryAsync(dirPath) {
+  if (process.platform === 'win32') return;
+  try {
+    const handle = await fs.promises.open(dirPath, 'r');
+    try {
+      await handle.sync();
+    } finally {
+      await handle.close();
+    }
+  } catch (directoryError) {
+    void directoryError;
+  }
 }
 
 // Optional logger contract: logger(level, event, data) matches the
@@ -25,6 +77,9 @@ class FileJsonStore {
     const logger = options && typeof options.logger === 'function' ? options.logger : null;
     this._logger = logger;
     this._onWriteSettled = typeof options?.onWriteSettled === 'function' ? options.onWriteSettled : null;
+    // High-churn machine-only stores (sessions, the session index, usage
+    // history) skip pretty-printing: every rewrite is 20-30% fewer bytes.
+    this._jsonIndent = options?.compact === true ? undefined : 2;
     const rawDebounce = options && options.writeDebounceMs;
     this._writeDebounceMs = Number.isFinite(Number(rawDebounce))
       ? Math.max(0, Math.trunc(Number(rawDebounce)))
@@ -34,6 +89,9 @@ class FileJsonStore {
     this._debounceTimer = null;
     this._asyncWriteChain = Promise.resolve();
     this._asyncWriteCount = 0;
+    this._queuedAsyncWrite = null;
+    this._drainStep = null;
+    this._resolveDrainStep = null;
     this._writeGeneration = 0;
     this._durableGeneration = 0;
     this._failedGeneration = 0;
@@ -133,6 +191,7 @@ class FileJsonStore {
       this._notifyWriteSettled();
       return { generation, durable: true };
     }
+    this._queuedAsyncWrite = null;
     this._pendingWriteValue = value;
     this._lastUnflushedValue = value;
     this._hasPendingWrite = true;
@@ -183,12 +242,15 @@ class FileJsonStore {
       clearTimeout(this._debounceTimer);
       this._debounceTimer = null;
     }
-    if (!this._hasPendingWrite) {
+    if (!this._hasPendingWrite && (
+      this._asyncWriteCount === 0 || this._durableGeneration === this._writeGeneration
+    )) {
       return false;
     }
-    const value = this._pendingWriteValue;
+    const value = this._hasPendingWrite ? this._pendingWriteValue : this._lastUnflushedValue;
     this._pendingWriteValue = undefined;
     this._hasPendingWrite = false;
+    this._queuedAsyncWrite = null;
     try {
       this._writeNow(value);
       this._durableGeneration = this._writeGeneration;
@@ -204,6 +266,9 @@ class FileJsonStore {
     }
     if (this._asyncWriteCount === 0) {
       this._lastUnflushedValue = undefined;
+    } else {
+      this._lastImmediateGeneration = this._writeGeneration;
+      this._lastImmediateValue = value;
     }
     this._notifyWriteSettled();
     return true;
@@ -211,23 +276,37 @@ class FileJsonStore {
 
   async flushAsync() {
     if (this._disposed) return false;
+    // Writes accepted after this call are a later flush's job; the pass cap
+    // stops a writer that supersedes every snapshot from holding the flush.
+    const target = this._writeGeneration;
     let wroteAny = false;
-    if (this._debounceTimer != null) {
-      clearTimeout(this._debounceTimer);
-      this._debounceTimer = null;
-    }
-    if (this._hasPendingWrite) {
-      const value = this._pendingWriteValue;
-      const generation = this._writeGeneration;
-      this._pendingWriteValue = undefined;
-      this._hasPendingWrite = false;
-      this._enqueueAsyncWrite(value, generation);
-      wroteAny = true;
-    }
-    if (this._asyncWriteCount > 0) {
-      wroteAny = true;
-      await this._asyncWriteChain;
-    }
+    let passes = 0;
+    do {
+      if (this._debounceTimer != null) {
+        clearTimeout(this._debounceTimer);
+        this._debounceTimer = null;
+      }
+      if (this._hasPendingWrite) {
+        const value = this._pendingWriteValue;
+        const generation = this._writeGeneration;
+        this._pendingWriteValue = undefined;
+        this._hasPendingWrite = false;
+        this._enqueueAsyncWrite(value, generation);
+        wroteAny = true;
+      }
+      if (this._asyncWriteCount > 0) {
+        wroteAny = true;
+        // One write at a time: the drain may keep consuming later writes, so the
+        // flush re-checks its target after each instead of awaiting the drain.
+        await this._nextDrainStep();
+      }
+      passes += 1;
+    } while (
+      this.hasPendingWrite()
+      && this._durableGeneration < target
+      && this._failedGeneration < target
+      && passes < MAX_FLUSH_PASSES
+    );
     return wroteAny;
   }
 
@@ -264,6 +343,7 @@ class FileJsonStore {
       if (value === undefined) { this._disposed = true; return; }
       this._pendingWriteValue = undefined;
       this._hasPendingWrite = false;
+      this._queuedAsyncWrite = null;
       try {
         this._writeNow(value);
         this._durableGeneration = this._writeGeneration;
@@ -327,6 +407,7 @@ class FileJsonStore {
     }
     this._pendingWriteValue = undefined;
     this._hasPendingWrite = false;
+    this._queuedAsyncWrite = null;
   }
 
   _clearImmediateCorrection() {
@@ -335,27 +416,51 @@ class FileJsonStore {
   }
 
   _enqueueAsyncWrite(value, generation) {
-    this._asyncWriteCount += 1;
-    const operation = this._asyncWriteChain
-      .then(() => this._writeNowAsync(value, generation))
-      .catch((error) => {
-        if (generation === this._writeGeneration) {
-          this._failedGeneration = generation;
-        }
-        this._logDebouncedWriteFailure(error);
-      })
-      .finally(() => {
-        this._asyncWriteCount = Math.max(0, this._asyncWriteCount - 1);
-        if (this._asyncWriteCount === 0) {
-          this._clearImmediateCorrection();
-          if (!this._hasPendingWrite) {
-            this._lastUnflushedValue = undefined;
+    // The drain owns one active snapshot; this slot replaces all older work
+    // before it can be serialized or touch storage.
+    this._queuedAsyncWrite = { value, generation };
+    if (this._asyncWriteCount > 0) return this._asyncWriteChain;
+    this._asyncWriteCount = 1;
+    this._asyncWriteChain = Promise.resolve()
+      .then(() => this._drainAsyncWrites())
+      .catch(() => {});
+    return this._asyncWriteChain;
+  }
+
+  async _drainAsyncWrites() {
+    try {
+      while (this._queuedAsyncWrite) {
+        const { value, generation } = this._queuedAsyncWrite;
+        this._queuedAsyncWrite = null;
+        try {
+          await this._writeNowAsync(value, generation);
+        } catch (error) {
+          if (generation === this._writeGeneration) {
+            this._failedGeneration = generation;
           }
+          this._logDebouncedWriteFailure(error);
         }
-        this._notifyWriteSettled();
-      });
-    this._asyncWriteChain = operation.catch(() => {});
-    return operation;
+        this._settleDrainStep();
+      }
+    } finally {
+      this._asyncWriteCount = 0;
+      this._clearImmediateCorrection();
+      if (!this._hasPendingWrite) this._lastUnflushedValue = undefined;
+      this._notifyWriteSettled();
+      this._settleDrainStep();
+    }
+  }
+
+  _nextDrainStep() {
+    if (!this._drainStep) this._drainStep = new Promise((resolve) => { this._resolveDrainStep = resolve; });
+    return this._drainStep;
+  }
+
+  _settleDrainStep() {
+    const resolve = this._resolveDrainStep;
+    this._drainStep = null;
+    this._resolveDrainStep = null;
+    resolve?.();
   }
 
   _notifyWriteSettled() {
@@ -396,11 +501,13 @@ class FileJsonStore {
   _writeNow(value) {
     const dir = path.dirname(this.filePath);
     fs.mkdirSync(dir, { recursive: true });
-    const payload = JSON.stringify(value, null, 2);
+    const payload = JSON.stringify(value, null, this._jsonIndent);
     const tempPath = buildTempPath(this.filePath);
     try {
       fs.writeFileSync(tempPath, payload, 'utf8');
+      syncFile(tempPath);
       fs.renameSync(tempPath, this.filePath);
+      syncDirectory(dir);
     } catch (error) {
       try {
         fs.unlinkSync(tempPath);
@@ -412,12 +519,15 @@ class FileJsonStore {
   }
 
   async _writeNowAsync(value, generation) {
+    if (generation !== this._writeGeneration || generation <= this._durableGeneration) return false;
     const dir = path.dirname(this.filePath);
     await fs.promises.mkdir(dir, { recursive: true });
-    const payload = JSON.stringify(value, null, 2);
+    if (generation !== this._writeGeneration || generation <= this._durableGeneration) return false;
+    const payload = JSON.stringify(value, null, this._jsonIndent);
     const tempPath = buildTempPath(this.filePath);
     try {
       await fs.promises.writeFile(tempPath, payload, 'utf8');
+      await syncFileAsync(tempPath);
       if (generation !== this._writeGeneration) {
         try {
           await fs.promises.unlink(tempPath);
@@ -427,6 +537,7 @@ class FileJsonStore {
         return false;
       }
       await fs.promises.rename(tempPath, this.filePath);
+      await syncDirectoryAsync(dir);
       if (generation !== this._writeGeneration) {
         await this._repairStaleAsyncRename(generation);
         return false;
@@ -474,4 +585,6 @@ class FileJsonStore {
 module.exports = {
   buildTempPath,
   FileJsonStore,
+  syncDirectoryAsync,
+  syncFileAsync,
 };

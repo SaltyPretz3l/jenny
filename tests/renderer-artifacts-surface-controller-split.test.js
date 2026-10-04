@@ -236,18 +236,13 @@ test('WS2: flag ON routes an html artifact through the sanitized web kind (addit
   assert.ok(!html.includes('onerror'), `event handler survived sanitize: ${html}`);
 });
 
-test('Artifact Panel V3 removes in-content view toggles while V3 rollback preserves them', (t) => {
+test('the Canvas chrome owns the view control: no in-content view toggles', (t) => {
   const mermaid = generatedArtifactFixture({ language: 'mermaid', fileName: 'diagram.mmd' });
   const harness = makeParityHarness(t, { registryEnabled: true });
   harness.state.artifacts.dirtyContent = 'flowchart TD\n  A-->B';
   harness.state.artifacts.loadedArtifactContent = harness.state.artifacts.dirtyContent;
-  harness.state.features.featureFlags.artifact_panel_v3 = true;
   harness.controller.renderSelectedArtifactDetail(harness.surface, mermaid);
   assert.equal(harness.surface.previewContent.querySelector('[data-artifact-mermaid-mode]'), null);
-
-  harness.state.features.featureFlags.artifact_panel_v3 = false;
-  harness.controller.renderSelectedArtifactDetail(harness.surface, mermaid);
-  assert.ok(harness.surface.previewContent.querySelector('[data-artifact-mermaid-mode]'));
 });
 
 test('WS2: setArtifactViewMode round-trips viewModeByKind and keeps the mermaidViewMode alias synced', (t) => {

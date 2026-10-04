@@ -20,6 +20,7 @@ const {
 const { archiveError } = require('./archive-format');
 
 const RUNTIME_LEDGER_DIRECTORY = 'session-runtime';
+const MUTATION_RECOVERY_CURSOR_FILE = 'mutation-recovery-cursor.json';
 const MAX_RUNTIME_LEDGER_BYTES = 64 * 1024 * 1024;
 const LEDGER_KEYS = Object.freeze(['index', 'records', 'schema_version']);
 const PROJECTION_KIND = 'runtime_ledger_projection';
@@ -149,7 +150,11 @@ function collectRuntimeLedgerPayload(userDataPath) {
   const root = path.join(path.resolve(userDataPath), RUNTIME_LEDGER_DIRECTORY);
   const rootEntries = safeDirectoryEntries(root, { missingAllowed: true, source: true });
   if (rootEntries === null) return null;
-  if (rootEntries.some((entry) => !['index.json', 'work'].includes(entry.name))
+  // The recovery cursor (RuntimeStore.advanceMutationRecoveryCursor) is scan
+  // fairness only, never authority: it is tolerated here and left out of the
+  // archive, and a restored profile simply restarts its recovery scan.
+  if (rootEntries.some((entry) => !['index.json', 'work', MUTATION_RECOVERY_CURSOR_FILE].includes(entry.name))
+    || rootEntries.some((entry) => entry.name === MUTATION_RECOVERY_CURSOR_FILE && !entry.isFile())
     || rootEntries.some((entry) => entry.name === 'index.json' && !entry.isFile())
     || rootEntries.some((entry) => entry.name === 'work' && !entry.isDirectory())
     || !rootEntries.some((entry) => entry.name === 'index.json')) {

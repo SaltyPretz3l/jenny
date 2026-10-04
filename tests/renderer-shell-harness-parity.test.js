@@ -5,7 +5,7 @@ const path = require('path');
 const vm = require('node:vm');
 
 const {
-  SCRIPT_ORDER,
+  SCRIPT_ORDER, IDE_SCRIPT_ORDER,
   extractRendererScriptOrder,
   isExcludedScriptSource,
 } = require('./helpers/renderer-shell-harness-support');
@@ -198,11 +198,10 @@ test('File Map atlas factories load before the controller without CommonJS', () 
   const controller = 'renderer/features/renderer-ide-map-controller.js';
 
   for (const dependency of dependencies) {
-    assert.ok(productionScripts.indexOf(dependency) < productionScripts.indexOf(controller));
-    assert.ok(SCRIPT_ORDER.indexOf(dependency) < SCRIPT_ORDER.indexOf(controller));
+    assert.ok(IDE_SCRIPT_ORDER.indexOf(dependency) < IDE_SCRIPT_ORDER.indexOf(controller));
   }
   assert.ok(
-    productionScripts.indexOf(dependencies[0]) < productionScripts.indexOf(dependencies[1]),
+    IDE_SCRIPT_ORDER.indexOf(dependencies[0]) < IDE_SCRIPT_ORDER.indexOf(dependencies[1]),
     'atlas-layout must precede atlas-view'
   );
 

@@ -54,7 +54,7 @@
 .skills-folders-summary .settings-field-row-text small,
 .skills-folders-disclosure .settings-field-row-text small {
   color: var(--text-muted);
-  font-size: var(--font-size-md);
+  font-size: var(--font-size-footnote);
   line-height: 1.5;
 }
 
@@ -92,22 +92,12 @@
   color: var(--text-danger-soft);
 }
 
-.plugin-catalog-list {
-  display: flex;
-  flex-direction: column;
-}
-
-.plugin-catalog-row > .settings-field-row-text {
-  min-width: 0;
-}
-
 /* The shared row primitive styles descriptions but not <small>, so plugin and
    MCP row metadata needs secondary typography. */
 .plugins-settings-row .settings-field-row-text small,
-.plugin-catalog-row .settings-field-row-text small,
 .mcp-servers-row .settings-field-row-text small {
   color: var(--text-muted);
-  font-size: var(--font-size-md);
+  font-size: var(--font-size-footnote);
   line-height: 1.5;
 }
 
@@ -115,12 +105,6 @@
 #pluginsSourcesHost:empty,
 #mcpServersHost:empty {
   display: none;
-}
-
-.plugins-mirror-form {
-  display: grid;
-  gap: var(--space-3);
-  padding: var(--space-4) 0;
 }
 
 .plugins-sources-actions {

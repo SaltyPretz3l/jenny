@@ -22,7 +22,6 @@ async function runTurn({ withStreamReset }) {
     featureFlags: {
       canonical_bridge: true,
       canonical_turn_events: true,
-      response_loop_display_v2: true,
     },
   });
   service.sidecarClient = {

@@ -8,6 +8,7 @@ can be collected independently.  Monkeypatch approach mirrors the sibling file.
 from __future__ import annotations
 
 import json
+import logging
 import urllib.error
 import urllib.request
 from typing import Any
@@ -18,7 +19,6 @@ from sidecar.ai.engines import ollama_runtime
 from sidecar.ai.engines.ollama import OllamaEngine
 from sidecar.ai.engines.ollama_runtime import (
     _extract_content_and_thinking,
-    _is_retryable_transport_error,
     _raise_reasoning_effort_rejection,
     _raise_stream_transport_error,
     _register_response_cancel_callback,
@@ -127,7 +127,9 @@ class FakeEngine:
     def _record_provider_request(self, **kw: Any) -> None:
         self.provider_requests.append(kw)
 
-    def _complete_provider_request(self, *, outcome: str = "completed") -> None:
+    def _complete_provider_request(
+        self, *, outcome: str = "completed", finish_reason: str | None = None
+    ) -> None:
         self.completed += 1
         self.outcomes.append(outcome)
 
@@ -366,7 +368,6 @@ def test_request_telemetry_uses_actual_final_allowance() -> None:
 
 def test_stream_sets_think_and_json_format_in_request(monkeypatch):
     captured: dict[str, Any] = {}
-    original_urlopen = urllib.request.urlopen
 
     def _fake_open(req: urllib.request.Request, timeout: Any = None) -> FakeResponse:
         captured["body"] = json.loads(req.data)
@@ -548,9 +549,8 @@ def test_stream_suppresses_parser_reasoning_after_guard_trips(monkeypatch, caplo
     monkeypatch.setenv("JENNY_ENABLE_THINKING_BUDGET_ABORT", "0")
 
     with caplog.at_level("INFO"):
-        events = list(stream(engine, prompt="hi"))
+        list(stream(engine, prompt="hi"))
 
-    thinking_events = [e for e in events if e.kind == "thinking"]
     # Parser text gets suppressed by the guard — no thinking events from parser.
     # (The guard built by stream() has max_chars=4 and reasoning text "more reasoning"=14 chars,
     # so the guard must trip and log exactly once.)
@@ -730,12 +730,12 @@ def test_stream_with_tools_skips_malformed_lines(monkeypatch, caplog):
 
 
 # ---------------------------------------------------------------------------
-# stream_with_tools — normalizer.feed exception swallowed (lines 556-557)
+# stream_with_tools — a normalizer classifier crash is logged, never fatal
 # ---------------------------------------------------------------------------
 
 
-def test_stream_with_tools_swallows_normalizer_feed_exception(monkeypatch):
-    """If the normalizer raises on feed(), streaming should continue normally."""
+def test_stream_with_tools_swallows_normalizer_feed_exception(monkeypatch, caplog):
+    """If the normalizer's classifier raises, streaming continues and it is logged."""
     lines = [
         json.dumps({"message": {"content": "answer"}, "done": True}).encode() + b"\n",
     ]
@@ -747,22 +747,22 @@ def test_stream_with_tools_swallows_normalizer_feed_exception(monkeypatch):
     original_cls = psn_mod.ProviderStreamNormalizer
 
     class BrokenNormalizer(original_cls):
-        def feed(self, chunk):
+        def process_chunk(self, raw_chunk):
             raise RuntimeError("normalizer explodes")
-
-    import sidecar.ai.routing.provider_stream_normalizer as psn
-
-    monkeypatch.setattr(psn, "ProviderStreamNormalizer", BrokenNormalizer)
-    import importlib
 
     import sidecar.ai.engines.ollama_runtime as orm
 
     # Patch at the module level where stream_with_tools uses it.
     monkeypatch.setattr(orm, "ProviderStreamNormalizer", BrokenNormalizer)
 
-    gen = stream_with_tools(engine, prompt="hi", tools=[])
-    events, result = _collect_stream(gen)
+    with caplog.at_level(logging.WARNING, logger=psn_mod.__name__):
+        gen = stream_with_tools(engine, prompt="hi", tools=[])
+        events, result = _collect_stream(gen)
     assert result is not None  # didn't crash
+    assert result.content == "answer"
+    assert [r.getMessage() for r in caplog.records if r.name == psn_mod.__name__] == [
+        "stream normalizer failed on a ollama chunk (failure 1 this stream)"
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -1183,7 +1183,7 @@ def test_generate_with_tools_impl_sets_think_and_format_flags():
     engine._post = _post
 
     # Add response_format override by wrapping.
-    result = generate_with_tools_impl(
+    generate_with_tools_impl(
         engine,
         prompt="hi",
         tools=[],

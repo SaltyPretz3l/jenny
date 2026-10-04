@@ -34,10 +34,6 @@ function harness(options = {}) {
         artifactDigest: activeDescriptor.artifact_digest, commitEpoch: activeDescriptor.commit_epoch,
         lifecycleEpoch: 0, allowedOperations: activeDescriptor.content.allowed_bridge_operations,
         allowedEventTopics: activeDescriptor.content.allowed_event_topics || [],
-        sessionId: this.active.options?.sessionId || '',
-        sessionIncarnation: this.active.options?.sessionIncarnation || '',
-        sessionProviderAuthorized: Boolean(
-          this.active.options?.sessionId && this.active.options?.sessionIncarnation),
       };
     },
     setOnViewDestroyed(callback) { destroyed = callback; },
@@ -51,8 +47,6 @@ function harness(options = {}) {
   const control = createStage7ControlPlane({ runtimeCoordinator: sidecar, viewHost,
     pluginService: { getState: async () => options.pluginState || ({ ok: true }),
       updateSettings: async () => ({ ok: true }) },
-    authorizeSessionView: options.authorizeSessionView,
-    sessionProviderCall: options.sessionProviderCall,
   });
   return { control, viewHost, descriptor };
 }
@@ -61,7 +55,7 @@ test('artifact chunks are authority-bound and erased on view teardown', async ()
   const { control, viewHost, descriptor } = harness();
   const prepared = await control.runtimeCoordinator.prepare({ compiled: {
     snapshot: { runtime_schema_version: 5, active_generation_id: 'gen-stage7', commit_epoch: 7 },
-    view_descriptors: [descriptor], view_assets: new Map(), provider_descriptor_values: [],
+    view_descriptors: [descriptor], view_assets: new Map(),
   } });
   assert.equal(prepared.ok, true);
   assert.deepEqual(await prepared.commit(), { ok: true, degraded: false });
@@ -102,7 +96,7 @@ test('artifact payload follows the successfully replaced view instance', async (
   };
   const prepared = await control.runtimeCoordinator.prepare({ compiled: {
     snapshot: { runtime_schema_version: 5, active_generation_id: 'gen-stage7', commit_epoch: 7 },
-    view_descriptors: [descriptor], view_assets: new Map(), provider_descriptor_values: [],
+    view_descriptors: [descriptor], view_assets: new Map(),
   } });
   await prepared.commit();
   const identity = { publisher_id: descriptor.publisher_id, plugin_id: descriptor.plugin_id,
@@ -127,7 +121,7 @@ test('artifact payload validation rejection leaves the active view payload intac
   const { control, viewHost, descriptor } = harness();
   const prepared = await control.runtimeCoordinator.prepare({ compiled: {
     snapshot: { runtime_schema_version: 5, active_generation_id: 'gen-stage7', commit_epoch: 7 },
-    view_descriptors: [descriptor], view_assets: new Map(), provider_descriptor_values: [],
+    view_descriptors: [descriptor], view_assets: new Map(),
   } });
   await prepared.commit();
   const identity = { publisher_id: descriptor.publisher_id, plugin_id: descriptor.plugin_id,
@@ -155,7 +149,7 @@ test('stale view identities cannot resolve a current contribution after generati
   const { control, descriptor } = harness();
   const prepared = await control.runtimeCoordinator.prepare({ compiled: {
     snapshot: { runtime_schema_version: 5, active_generation_id: 'gen-stage7', commit_epoch: 7 },
-    view_descriptors: [descriptor], view_assets: new Map(), provider_descriptor_values: [],
+    view_descriptors: [descriptor], view_assets: new Map(),
   } });
   await prepared.commit();
   const result = await control.openViewContribution({ publisher_id: descriptor.publisher_id,
@@ -165,72 +159,34 @@ test('stale view identities cannot resolve a current contribution after generati
   await control.dispose();
 });
 
-test('session views bind through core authority and expose only an authorization marker', async () => {
-  const calls = [];
-  const authorizeSessionView = async (sessionId, descriptor) => {
-    calls.push(['authorize', sessionId, descriptor.contribution_id]);
-    return { ok: true, sessionIncarnation: 'incarnation-1' };
-  };
-  const sessionProviderCall = async (call, context) => {
-    calls.push(['call', call.action, context.sessionId, JSON.parse(call.payload_json)]);
-    return { ok: true, value: { bound: true } };
-  };
-  const { control, viewHost, descriptor } = harness({ authorizeSessionView, sessionProviderCall });
+test('a session-bound view open is refused cleanly and the provider call never reaches a handler', async () => {
+  const { control, viewHost, descriptor } = harness();
   const panel = { ...descriptor, contribution_id: 'image_workspace', kind: 'panel',
     content: { ...descriptor.content, allowed_bridge_operations: ['get_context'] } };
   const prepared = await control.runtimeCoordinator.prepare({ compiled: {
     snapshot: { runtime_schema_version: 5, active_generation_id: 'gen-stage7', commit_epoch: 7 },
-    view_descriptors: [panel], view_assets: new Map(), provider_descriptor_values: [],
+    view_descriptors: [panel], view_assets: new Map(),
   } });
   await prepared.commit();
+  const identity = { publisher_id: panel.publisher_id, plugin_id: panel.plugin_id,
+    contribution_id: panel.contribution_id, generation_id: panel.generation_id };
 
-  const opened = await control.openViewContribution({ publisher_id: panel.publisher_id,
-    plugin_id: panel.plugin_id, contribution_id: panel.contribution_id,
-    generation_id: panel.generation_id, sessionId: 'plugin-session' });
+  const refused = await control.openViewContribution({ ...identity, sessionId: 'plugin-session' });
+  assert.deepEqual(refused, { ok: false, reason: 'plugin_session_view_unavailable' });
+  assert.equal(viewHost.active, null, 'no view was opened');
+
+  const opened = await control.openViewContribution(identity);
   assert.equal(opened.ok, true);
-  assert.deepEqual(viewHost.active.options, {
-    sessionId: 'plugin-session', sessionIncarnation: 'incarnation-1',
-  });
-
   const event = { sender: { id: 42 }, senderFrame: {
     origin: `jenny-plugin-view://${panel.artifact_digest}`,
   } };
-  const contextResult = await control.bridge(event, { method: 'request', request_id: 'context-one',
-    operation: 'get_context', payload: {} });
-  const context = JSON.parse(contextResult.payload_json);
-  assert.equal(context.session_provider_authorized, true);
-  assert.equal(Object.hasOwn(context, 'session_id'), false);
-  assert.equal(Object.hasOwn(context, 'session_incarnation'), false);
-
+  const context = JSON.parse((await control.bridge(event, { method: 'request',
+    request_id: 'context-one', operation: 'get_context', payload: {} })).payload_json);
+  assert.equal(Object.hasOwn(context, 'session_provider_authorized'), false);
   const providerResult = await control.bridge(event, { method: 'request', request_id: 'provider-one',
-    operation: 'session_provider_call', payload: { action: 'get_context', payload: {
-      session_id: 'spoofed-session',
-    } } });
-  assert.equal(providerResult.status, 'succeeded');
-  assert.deepEqual(JSON.parse(providerResult.payload_json), { bound: true });
-  assert.deepEqual(calls, [
-    ['authorize', 'plugin-session', 'image_workspace'],
-    ['call', 'get_context', 'plugin-session', { session_id: 'spoofed-session' }],
-  ]);
+    operation: 'session_provider_call', payload: { action: 'get_context', payload: {} } });
+  assert.equal(providerResult.status, 'rejected');
   await control.dispose();
-});
-
-test('session view open fails closed without an authorizer or when authorization is denied', async () => {
-  for (const options of [{}, { authorizeSessionView: async () => (
-    { ok: false, reason: 'plugin_session_view_binding_mismatch' }
-  ) }]) {
-    const { control, descriptor } = harness(options);
-    const prepared = await control.runtimeCoordinator.prepare({ compiled: {
-      snapshot: { runtime_schema_version: 5, active_generation_id: 'gen-stage7', commit_epoch: 7 },
-      view_descriptors: [descriptor], view_assets: new Map(), provider_descriptor_values: [],
-    } });
-    await prepared.commit();
-    const result = await control.openViewContribution({ publisher_id: descriptor.publisher_id,
-      plugin_id: descriptor.plugin_id, contribution_id: descriptor.contribution_id,
-      generation_id: descriptor.generation_id, sessionId: 'plugin-session' });
-    assert.equal(result.ok, false);
-    await control.dispose();
-  }
 });
 
 test('read_settings returns only the calling contribution settings projection', async () => {
@@ -244,7 +200,7 @@ test('read_settings returns only the calling contribution settings projection', 
     allowed_bridge_operations: ['read_settings'] } };
   const prepared = await control.runtimeCoordinator.prepare({ compiled: {
     snapshot: { runtime_schema_version: 5, active_generation_id: 'gen-stage7', commit_epoch: 7 },
-    view_descriptors: [settingsDescriptor], view_assets: new Map(), provider_descriptor_values: [],
+    view_descriptors: [settingsDescriptor], view_assets: new Map(),
   } });
   await prepared.commit();
   await control.openViewContribution({ publisher_id: descriptor.publisher_id,
@@ -263,68 +219,21 @@ test('read_settings returns only the calling contribution settings projection', 
   await control.dispose();
 });
 
-test('provider auth is bound to the committed official setup scene and provider ref', async () => {
-  let authCalls = 0;
-  let destroyed = () => {};
-  const hostCommands = [];
-  const setup = {
-    publisher_id: 'jenny-official', plugin_id: 'chatgpt-subscription',
-    contribution_id: 'chatgpt-setup', kind: 'setup_scene', artifact_digest: 'd'.repeat(64),
-    generation_id: 'gen-auth', commit_epoch: 9,
-    content: { entry_path: 'view/index.html', provider_ref: 'chatgpt',
-      allowed_bridge_operations: ['provider_auth_status', 'provider_activate'], allowed_event_topics: [] },
-  };
-  const viewHost = {
-    active: null,
-    async commitGeneration() { return { ok: true }; },
-    async destroyAll() { this.active = null; return { ok: true }; },
-    async open(value) { this.active = { descriptor: value, viewInstanceId: 'view-auth' }; return { ok: true }; },
-    contextForEvent(event) {
-      const descriptor = this.active?.descriptor;
-      if (!descriptor || event?.sender?.id !== 42) return null;
-      return { senderId: 42, origin: `jenny-plugin-view://${descriptor.artifact_digest}`,
-        viewInstanceId: 'view-auth', contributionId: descriptor.contribution_id,
-        artifactDigest: descriptor.artifact_digest, commitEpoch: descriptor.commit_epoch,
-        lifecycleEpoch: 0, allowedOperations: descriptor.content.allowed_bridge_operations,
-        allowedEventTopics: descriptor.content.allowed_event_topics };
-    },
-    setOnViewDestroyed(callback) { destroyed = callback; },
-    setBounds: () => ({ ok: true }), setZoom: () => ({ ok: true }), focus() {}, sendEvent: () => true,
-    sendHostCommand: (...args) => { hostCommands.push(args); return true; },
-  };
-  const sidecar = { prepare: async () => ({ ok: true, commit: async () => ({ ok: true }) }),
-    reconcile: async () => ({ ok: true }), getState: () => ({}), detach() {} };
-  const auth = { getStatus: () => { authCalls += 1; return { state: 'signed_out' }; },
-    onStatusChange: () => () => {}, cancel() {}, signOut: async () => ({ state: 'signed_out' }),
-    start: async () => ({ state: 'signed_in' }) };
-  const control = createStage7ControlPlane({ runtimeCoordinator: sidecar, viewHost,
-    pluginService: { getState: async () => ({ ok: true, plugins: [] }), updateSettings: async () => ({ ok: true }) },
-    chatgptAuthService: auth,
-    activateProvider: async (providerId) => ({ ok: true, value: { provider_id: providerId } }),
-  });
-  const prepared = await control.runtimeCoordinator.prepare({ compiled: {
-    snapshot: { runtime_schema_version: 5, active_generation_id: 'gen-auth', commit_epoch: 9 },
-    view_descriptors: [setup], view_assets: new Map(),
-    provider_descriptor_values: [{ provider_id: 'chatgpt' }],
-  } });
-  await prepared.commit();
-  await control.openViewContribution({ publisher_id: setup.publisher_id, plugin_id: setup.plugin_id,
-    contribution_id: setup.contribution_id, generation_id: setup.generation_id });
-  const event = { sender: { id: 42 }, senderFrame: { origin: `jenny-plugin-view://${setup.artifact_digest}` } };
-  const accepted = await control.bridge(event, { method: 'request', request_id: 'auth-ok',
-    operation: 'provider_auth_status', payload: { provider_id: 'chatgpt' } });
-  assert.equal(accepted.status, 'succeeded');
-  assert.equal(authCalls, 1);
-  const activated = await control.bridge(event, { method: 'request', request_id: 'activate-ok',
-    operation: 'provider_activate', payload: { provider_id: 'chatgpt' } });
-  assert.equal(activated.status, 'succeeded');
-  await new Promise((resolve) => setImmediate(resolve));
-  assert.deepEqual(hostCommands, [['provider_activated', { provider_id: 'chatgpt' }, 'view-auth']]);
-  const rejected = await control.bridge(event, { method: 'request', request_id: 'auth-cross-provider',
-    operation: 'provider_auth_status', payload: { provider_id: 'other' } });
-  assert.equal(rejected.status, 'failed');
-  assert.equal(rejected.reason_code, 'provider_view_authority_rejected');
-  assert.equal(authCalls, 1);
-  destroyed('view-auth', 'test');
+test('retired provider bridge operations have no handler even when a view lists them', async () => {
+  const panel = { publisher_id: 'jenny-official', plugin_id: 'fixture', contribution_id: 'panel',
+    kind: 'panel', artifact_digest: 'd'.repeat(64), generation_id: 'gen-p', commit_epoch: 3,
+    content: { entry_path: 'view/index.html', allowed_bridge_operations: [
+      'provider_auth_status', 'provider_auth_start', 'provider_auth_cancel',
+      'provider_auth_sign_out', 'provider_activate'], allowed_event_topics: [] } };
+  const { control, viewHost } = harness();
+  viewHost.active = { descriptor: panel, viewInstanceId: 'view-p' };
+  const event = { sender: { id: 42 }, senderFrame: { origin: `jenny-plugin-view://${panel.artifact_digest}` } };
+  for (const operation of panel.content.allowed_bridge_operations) {
+    const result = await control.bridge(event, { method: 'request', request_id: `r-${operation}`,
+      operation, payload: { provider_id: 'chatgpt' } });
+    assert.equal(result.status, 'rejected', operation);
+    assert.equal(result.reason_code, 'bridge_operation_unavailable', operation);
+  }
+  assert.equal(control.getProviderAuthority, undefined);
   await control.dispose();
 });

@@ -165,33 +165,14 @@ _DROPPED_KEYS: frozenset[str] = frozenset(
 )
 _SECRET_KEY_RE = re.compile(r"(api[_-]?key|token|secret|password|credential)", re.I)
 _DATA_URI_RE = re.compile(r"data:[a-z0-9.+-]+/[a-z0-9.+-]+;base64,[a-z0-9+/=_-]+", re.I)
-# Path redaction, ported from the tool-loop rules fixed in 224aa0c6
-# (services/backend/tool-loop-input-sanitization.js): the drive-letter rule was
-# the only deliberate catch here, so bare POSIX paths rode verbatim into
-# persisted turn events on macOS/Linux, while file:// and http(s) URLs were
-# mangled by accident (the unguarded rule read the "e:/" inside "file:/").
-# Order matters — file URL, drive letter, then POSIX at a delimiter. Quotes
-# sit in the delimiter class so JSON-quoted POSIX values match their Windows
-# twins. Unlike the tool-loop rules, the POSIX rules here are ROOT-ANCHORED
-# (telemetry.py / runtime_gap.py precedent): this sanitizer runs over EVERY
-# payload string including assistant text/reasoning deltas, where an
-# unanchored rule mangles ordinary code and prose (app.get('/api/users'),
-# "GET /api/users") into [redacted:path]. Host filesystem roots are the
-# privacy payload; route-shaped slash strings are content.
-# Lookbehind rather than \b, whose Unicode semantics differ across the two
-# runtimes; these mirrors must stay byte-identical. Behavior table:
-# tests/fixtures/canonical-turn-events/cases.json.
-# Mirrored by services/backend/canonical-turn-event.js; keep in sync.
-_WINDOWS_PATH_RE = re.compile(r"(?<![A-Za-z0-9_])[A-Za-z]:[\\/][^\s\"'<>|]+")
-_FILE_URL_RE = re.compile(r"(?<![A-Za-z0-9_])file://[^\s\"'<>|]+", re.I)
-_UNIX_PATH_RE = re.compile(
-    r"(^|[\s(])/(?:Users|home|var|tmp|etc|opt|srv|root|private|workspace|mnt|Volumes)"
-    r"(?:/[^\s\"'<>|]+|(?=$|[\s)\"'<>|,]))"
-)
-_UNIX_PATH_AFTER_DELIMITER_RE = re.compile(
-    r"([\"':=,])/(?:Users|home|var|tmp|etc|opt|srv|root|private|workspace|mnt|Volumes)"
-    r"(?:/[^\s\"'<>|]+|(?=$|[\s)\"'<>|,]))"
-)
+# Paths are NOT redacted here (HB-012, owner rule 2026-09-28): canonical
+# payloads feed the persisted transcript, the timeline and the model's history
+# replay, where a [redacted:path] placeholder was copied back by the model as
+# a literal tool argument. Real paths are presented everywhere in the app;
+# anonymisation happens when a transcript leaves it
+# (services/backend/transcript-export-redaction.js). Secrets and data URIs are
+# still redacted here. Mirrored by services/backend/canonical-turn-event.js;
+# behavior table: tests/fixtures/canonical-turn-events/cases.json.
 _SECRET_VALUE_RE = re.compile(r"\b(?:sk|pk|tok|ghp|gho)_[A-Za-z0-9_-]{8,}|\bsk-[A-Za-z0-9_-]{8,}")
 
 
@@ -307,43 +288,9 @@ def _diagnostic(code: str, **fields: Any) -> dict[str, Any]:
 
 
 def _sanitize_string(value: str) -> str:
-    def redact_file_url(match: re.Match[str]) -> str:
-        remainder = match.group(0)[len("file://") :]
-        segments = [segment for segment in remainder.split("/") if segment]
-        if segments and (re.fullmatch(r"[A-Za-z]:", segments[0]) or not remainder.startswith("/")):
-            segments.pop(0)
-        if len(segments) <= 1:
-            return "file:///[redacted:path]"
-        trailing_separator = "/" if match.group(0).endswith("/") else ""
-        return f"file:///[redacted:path]/{segments[-1][:80]}{trailing_separator}"
-
-    def redact_windows_path(match: re.Match[str]) -> str:
-        matched_path = match.group(0)
-        trailing_separator = matched_path[-1] if matched_path[-1] in "\\/" else ""
-        path = matched_path[:-1] if trailing_separator else matched_path
-        segments = [segment for segment in re.split(r"[\\/]", path[3:]) if segment]
-        if len(segments) <= 1:
-            return "[redacted:path]"
-        separator = path[max(path.rfind("/"), path.rfind("\\"))]
-        return f"[redacted:path]{separator}{segments[-1][:80]}{trailing_separator}"
-
-    def redact_unix_path(match: re.Match[str]) -> str:
-        prefix = match.group(1)
-        path = match.group(0)[len(prefix) :]
-        trailing_separator = "/" if path.endswith("/") and len(path) > 1 else ""
-        segments = [segment for segment in path.split("/") if segment]
-        if len(segments) <= 1:
-            return f"{prefix}[redacted:path]"
-        return f"{prefix}[redacted:path]/{segments[-1][:80]}{trailing_separator}"
-
     text = str(value or "")
     text = _DATA_URI_RE.sub("[redacted:data-uri]", text)
-    text = _FILE_URL_RE.sub(redact_file_url, text)
-    text = _WINDOWS_PATH_RE.sub(redact_windows_path, text)
-    text = _UNIX_PATH_RE.sub(redact_unix_path, text)
-    text = _UNIX_PATH_AFTER_DELIMITER_RE.sub(redact_unix_path, text)
-    text = _SECRET_VALUE_RE.sub("[redacted:secret]", text)
-    return text
+    return _SECRET_VALUE_RE.sub("[redacted:secret]", text)
 
 
 def _redacted_value_for_key(normalized_key: str) -> str | None:
@@ -358,7 +305,7 @@ def _redacted_value_for_key(normalized_key: str) -> str | None:
 def _redacted_tool_input_value_for_key(normalized_key: str) -> str | None:
     # A tool call's own arguments are model-authored content (an ask_user
     # question's prompt, an image prompt), not engine prompt payloads; only
-    # secrets and paths are redacted inside them (gate A7 F10).
+    # secrets are redacted inside them (gate A7 F10; paths since HB-012).
     if _SECRET_KEY_RE.search(normalized_key):
         return "[redacted:secret]"
     return None

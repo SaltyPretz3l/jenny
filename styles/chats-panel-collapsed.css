@@ -156,9 +156,8 @@ html[data-top-nav-shell="true"] .view-shell.panel-collapsed .view-panel > :not(.
 }
 
 .chats-strip__chip-monogram {
-  font-size: var(--font-size-sm);
-  font-weight: 700;
-  letter-spacing: 0.08em;
+  font-size: var(--font-size-caption);
+  font-weight: 500;
 }
 
 .chats-strip__chip-monogram--provider-icon {
@@ -199,7 +198,7 @@ html[data-top-nav-shell="true"] .view-shell.panel-collapsed .view-panel > :not(.
   color: var(--text-muted);
   font-size: var(--font-size-xs);
   font-variant-numeric: tabular-nums;
-  font-weight: 700;
+  font-weight: 500;
 }
 
 /* Pin notch (top-right) — pinned chips lead the strip but stay scannable. */
@@ -262,8 +261,8 @@ html[data-top-nav-shell="true"] .view-shell.panel-collapsed .view-panel > :not(.
 }
 
 .chats-strip__peek-title {
-  font-size: var(--font-size-md);
-  font-weight: 600;
+  font-size: var(--font-size-body);
+  font-weight: 500;
   color: var(--text-primary);
   white-space: nowrap;
   overflow: hidden;
@@ -279,9 +278,7 @@ html[data-top-nav-shell="true"] .view-shell.panel-collapsed .view-panel > :not(.
 .chats-strip__peek-state {
   margin-top: var(--space-3);
   font-size: var(--font-size-xs);
-  font-weight: 700;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
+  font-weight: 500;
   color: var(--text-muted);
 }
 

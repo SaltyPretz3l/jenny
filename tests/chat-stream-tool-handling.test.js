@@ -18,6 +18,7 @@ const {
   workspaceIdentityForDiffMetadata,
 } = require('../services/backend/chat-stream-tool-payload-utils');
 const { workspaceRootId } = require('../services/workspace-root-identity');
+const { normalizeGeneratedArtifactMetadataList } = require('../services/artifact-metadata-utils');
 
 /* ---- D1: path traversal validation ---- */
 
@@ -620,19 +621,18 @@ test('handleToolNotification redacts sensitive-looking input values before persi
   const messages = sessionStore.getSessionMessages('session-redact-input');
   assert.equal(messages.length, 1);
   const serialized = JSON.stringify(messages[0]);
-  assert.equal(serialized.includes('C:/Users/demo/private/notes.txt'), false);
+  // HB-012: the real path is presented and replayed; only secrets are redacted.
+  assert.equal(serialized.includes('C:/Users/demo/private/notes.txt'), true);
+  assert.equal(serialized.includes('[redacted:path]'), false);
   assert.equal(serialized.includes('sk-managedsecret1234567890'), false);
   assert.equal(serialized.includes('super-secret-token'), false);
   assert.equal(messages[0].tool_call.input.token, '[redacted]');
   assert.match(messages[0].tool_call.input.note, /\[redacted\]/);
   assert.equal(
     messages[0].tool_call.input_json,
-    '{"path":"[redacted:path]/notes.txt","note":"temporary value [redacted] should not persist","token":"[redacted]"}'
+    '{"path":"C:/Users/demo/private/notes.txt","note":"temporary value [redacted] should not persist","token":"[redacted]"}'
   );
-  assert.equal(
-    messages[0].tool_call.model_input_json,
-    '{"path":"./notes.txt","note":"temporary value [redacted] should not persist","token":"[redacted]"}'
-  );
+  assert.equal(messages[0].tool_call.model_input_json, undefined);
 });
 
 test('handleToolNotification restores trusted local artifact paths with session scope only from bridge state', () => {
@@ -678,7 +678,7 @@ test('handleToolNotification restores trusted local artifact paths with session 
     eventBase: { sessionId: 'session-artifact', streamId: 'stream-artifact', model: 'mock-model' },
   };
 
-  handleToolNotification(service, context, {
+  const result = {
     method: 'tool.result',
     params: {
       request_id: 'stream-artifact',
@@ -695,18 +695,23 @@ test('handleToolNotification restores trusted local artifact paths with session 
         mime_type: 'image/png',
       }],
     },
-  });
-
-  const [toolResult] = sessionStore.getSessionMessages('session-artifact')
-    .filter((message) => String(message.kind || '') === 'tool_result');
-  assert.equal(toolResult.tool_result.generated_artifacts[0].absolute_path, '[redacted:path]');
-  assert.equal(
-    toolResult.tool_result.generated_artifacts[0].absolute_path.includes('C:/workspace'),
-    false
-  );
-  assert.equal(toolResult.tool_result.generated_artifacts[0].local_trusted, true);
-  assert.equal(toolResult.tool_result.generated_artifacts[0].session_id, 'session-artifact');
-  assert.equal(service._electronToolGeneratedArtifactsByCall.size, 0);
+  };
+  // The live notification and its canonical replay (tool_execution_completed)
+  // both upsert the same row; the replay must not strip the trusted path.
+  for (const _pass of ['live', 'canonical replay']) {
+    handleToolNotification(service, context, structuredClone(result));
+    const [toolResult] = sessionStore.getSessionMessages('session-artifact')
+      .filter((message) => String(message.kind || '') === 'tool_result');
+    assert.equal(toolResult.tool_result.generated_artifacts[0].absolute_path, '[redacted:path]');
+    assert.equal(
+      toolResult.tool_result.generated_artifacts[0].absolute_path.includes('C:/workspace'),
+      false
+    );
+    assert.equal(toolResult.tool_result.generated_artifacts[0].local_trusted, true);
+    assert.equal(toolResult.tool_result.generated_artifacts[0].session_id, 'session-artifact');
+  }
+  assert.equal(normalizeGeneratedArtifactMetadataList(sessionStore.getSessionMessages('session-artifact')
+    .find((message) => String(message.kind || '') === 'tool_result').tool_result.generated_artifacts).length, 1);
 });
 
 test('handleToolNotification preserves explicit untrusted local artifact markers', () => {

@@ -6,14 +6,31 @@ const {
 
 const ACTIVE_TURN_STATUSES = new Set(['awaiting_assistant', 'streaming']);
 const TOOL_CATEGORY_OVERRIDE_KEYS = Object.freeze([
-  'files', 'web', 'local_browser', 'python', 'terminal',
+  'files', 'web', 'local_browser', 'python', 'terminal', 'git', 'code',
+  'checks', 'artifacts', 'images', 'knowledge', 'home', 'helpers',
 ]);
+const TOOL_CONNECTION_OVERRIDES_MAX = 64;
+// The longest connection id: 'plugin:' + a 64-char publisher id + ':' + a 64-char plugin id.
+const TOOL_CONNECTION_KEY_MAX = 136;
 
 function normalizeToolCategoryOverrides(value) {
   const source = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
   const normalized = {};
   for (const key of TOOL_CATEGORY_OVERRIDE_KEYS) {
     if (typeof source[key] === 'boolean') normalized[key] = source[key];
+  }
+  return normalized;
+}
+
+function normalizeToolConnectionOverrides(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  const prototype = Object.getPrototypeOf(value);
+  if (prototype !== Object.prototype && prototype !== null) return {};
+  const normalized = {};
+  for (const [rawKey, enabled] of Object.entries(value)) {
+    const key = rawKey.trim();
+    if (key && key.length <= TOOL_CONNECTION_KEY_MAX && /^(mcp|plugin):[^\s]+$/.test(key)
+      && typeof enabled === 'boolean') normalized[key] = enabled;
   }
   return normalized;
 }
@@ -170,6 +187,7 @@ function normalizeSessionStartDate(value, createdAt = '') {
 }
 
 module.exports = {
+  TOOL_CONNECTION_OVERRIDES_MAX,
   activeTurnClearMatchIsExplicit,
   activeTurnMatchesRequest,
   activeTurnPassesStreamCas,
@@ -184,4 +202,5 @@ module.exports = {
   normalizeSessionProjectId,
   normalizeSessionStartDate,
   normalizeToolCategoryOverrides,
+  normalizeToolConnectionOverrides,
 };

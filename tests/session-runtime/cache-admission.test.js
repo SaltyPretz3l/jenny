@@ -45,7 +45,9 @@ function fixture(t) {
   };
   const canonical = h.service.sessionStore;
   const pressureId = canonical.createSession({ title: 'Pressure source' }).id;
-  function dirty({ debounce = false, known = false } = {}) {
+  // Pressure is a dirty transcript over the byte ceiling: an unknown size is
+  // measured when admission reads pressure, so it no longer holds turns alone.
+  function dirty({ debounce = false } = {}) {
     const backend = canonical._backend;
     const record = canonical.getSession(pressureId);
     record.messages.push({ role: 'assistant', content: 'retained dirty content' });
@@ -55,19 +57,30 @@ function fixture(t) {
       backend._indexStore._writeDebounceMs = 15;
     }
     backend.upsertSession(pressureId, record, { persist: debounce });
-    if (known) {
-      backend._transcriptCache.limitBytes = 1;
-      backend._transcriptCache.measure(pressureId, backend._loadedSessions.get(pressureId));
-    }
+    backend._transcriptCache.limitBytes = 1;
     assert.equal(canonical.getTranscriptCachePressure().backpressured, true);
   }
   const submit = () => runtime.submit({ sessionId: h.sessionId, prompt: 'hello' }, { idempotencyKey: 'send_1' });
   return { ...h, runtime, actors, canonical, pressureId, dirty, submit, starts, logs };
 }
 
-for (const known of [false, true]) test(`cache pressure (${known ? 'known bytes' : 'unknown dirty bytes'}) queues without actor/history allocation and flush wakes`, async t => {
+test('unknown dirty bytes (a streaming turn progress touch) are measured at admission and do not hold another turn', async t => {
   const h = fixture(t);
-  h.dirty({ known });
+  const backend = h.canonical._backend;
+  const record = h.canonical.getSession(h.pressureId);
+  record.messages.push({ role: 'assistant', content: 'unsaved progress' });
+  backend.upsertSession(h.pressureId, record, { persist: false });
+  assert.equal(backend._transcriptCache.entries.get(h.pressureId).bytes, null);
+  assert.equal(backend.hasPendingWriteForSession(h.pressureId), true);
+  const work = await h.submit();
+  await waitFor(() => h.runtime.store.get(work.work_id).status === 'completed', 'a dirty transcript held admission');
+  assert.equal(h.starts.length, 1);
+  assert.equal(backend.hasPendingWriteForSession(h.pressureId), true);
+});
+
+test('cache pressure queues without actor/history allocation and flush wakes', async t => {
+  const h = fixture(t);
+  h.dirty();
   const get = h.canonical.getSession;
   h.canonical.getSession = () => { throw new Error('pending transcript hydration'); };
   const work = await h.submit();

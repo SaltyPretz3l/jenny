@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import re
+import threading
 import time
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
@@ -36,6 +37,16 @@ _STALE_LOCK_SECONDS = 30.0
 _TIMESTAMP_RE = re.compile(
     r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?Z$"
 )
+
+
+# A terminal receipt never changes status again (settle only moves pending ->
+# terminal, and create joins an existing receipt), so the per-turn pending scan
+# re-reads a receipt only when its directory stat changes. Every turn builds a
+# fresh OperationLedger, so the cache is per operations directory, not per
+# instance. Values: receipt file name -> (st_mtime_ns, st_size) of a verified
+# terminal receipt.
+_TERMINAL_SCAN_STAMPS: dict[str, dict[str, tuple[int, int]]] = {}
+_TERMINAL_SCAN_STAMPS_LOCK = threading.Lock()
 
 
 class OperationLedgerUnavailable(Exception):
@@ -240,8 +251,24 @@ class OperationLedger:
     def pending_receipts(self) -> tuple[list[dict], int]:
         pending: list[dict] = []
         corrupt_count = 0
-        for path in self._operations.path.glob("*.json"):
-            operation_id = path.name[: -len(".json")]
+        cache_key = str(self._operations.path)
+        with _TERMINAL_SCAN_STAMPS_LOCK:
+            known_terminal = _TERMINAL_SCAN_STAMPS.get(cache_key, {})
+        terminal: dict[str, tuple[int, int]] = {}
+        try:
+            entries = list(os.scandir(self._operations.path))
+        except FileNotFoundError:
+            # Parity with the old glob(): a vanished directory lists nothing.
+            entries = []
+        for entry in entries:
+            # normcase keeps glob("*.json") semantics: case-blind on Windows only.
+            if not os.path.normcase(entry.name).endswith(".json"):
+                continue
+            stamp = _scan_stamp(entry)
+            if stamp is not None and known_terminal.get(entry.name) == stamp:
+                terminal[entry.name] = stamp
+                continue
+            operation_id = entry.name[: -len(".json")]
             try:
                 existing = self._get_receipt(operation_id)
             except (OSError, RuntimePathError):
@@ -251,11 +278,14 @@ class OperationLedger:
                 corrupt_count += 1
                 continue
             receipt = existing.get("receipt")
-            if (
-                isinstance(receipt, dict)
-                and receipt["status"] == "pending"
-            ):
+            if not isinstance(receipt, dict):
+                continue
+            if receipt["status"] == "pending":
                 pending.append(receipt)
+            elif stamp is not None:
+                terminal[entry.name] = stamp
+        with _TERMINAL_SCAN_STAMPS_LOCK:
+            _TERMINAL_SCAN_STAMPS[cache_key] = terminal
         return sorted(pending, key=lambda item: str(item["operation_id"])), corrupt_count
 
     def compact(
@@ -433,6 +463,19 @@ class OperationLedger:
             yield
         finally:
             _release_lock_if_owned(lock_path, lock_token)
+
+
+def _scan_stamp(entry: os.DirEntry[str]) -> tuple[int, int] | None:
+    # Windows fills DirEntry stat from the directory listing, so this costs no
+    # extra syscall there. A link is never trusted from the cache: the guarded
+    # read decides what it is.
+    try:
+        if entry.is_symlink():
+            return None
+        stat = entry.stat(follow_symlinks=False)
+    except OSError:
+        return None
+    return (stat.st_mtime_ns, stat.st_size)
 
 
 def ledger_status_for_rollback(status: object) -> str:

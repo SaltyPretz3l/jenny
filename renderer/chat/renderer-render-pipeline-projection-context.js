@@ -43,6 +43,7 @@
       }),
       buildHydratedProjectionDigest = () => '',
       isLiveRowModelEnabledForSession = () => false,
+      isTurnStreamLive = () => false,
       getLiveProjectionStateForSession = () => null,
       overlayProjectedRows = () => {},
       pruneConsumedLiveProjectionState = () => {},
@@ -74,6 +75,10 @@
         });
         return rowsByRenderMessageId;
       },
+      // Split view W1-4a: the session this pane shows (one pane: currentSessionId).
+      getPaneSessionId = () => String(state.currentSessionId || '').trim(),
+      // Transcript view of the session this pane shows (renderer-render-pipeline-utils.js).
+      getPaneTranscriptView = () => 'thinking',
     } = callbacks;
     const turnEventArrayRevisionByIdentity = new WeakMap();
     let nextTurnEventArrayRevision = 1;
@@ -147,7 +152,7 @@
       const messageFingerprints = renderInputs && Array.isArray(renderInputs.messageFingerprints)
         ? renderInputs.messageFingerprints
         : null;
-      const normalizedSessionId = String(state.currentSessionId || '').trim();
+      const normalizedSessionId = getPaneSessionId();
       const turnEventState = getPersistedTurnEventState(normalizedSessionId);
       // INVARIANT (audit E1): the turn-event contribution to this cache key is
       // (event_id, event_seq) only — deliberately NOT the event payload. This is
@@ -410,7 +415,7 @@
             }
             // Phase 2 follow-up: derive a canonical view-model from the
             // live provisional turn's event stream so consumers (composer
-            // status, comet presence, transcript emphasis) have the same
+            // status, transcript emphasis) have the same
             // authority during streaming as after reconciliation.
             let liveViewModel = null;
             if (typeof projectTurn === 'function' && Array.isArray(entry.events) && entry.events.length > 0) {
@@ -473,6 +478,18 @@
             ? liveActiveTurnId
             : ''
         );
+        // Transcript view 'answers' live-turn marker: the whole in-flight turn,
+        // tool gaps included, so the root-scope turn rather than activeTurnId.
+        // A turn re-attached after a reload has neither; the hydration
+        // pipeline's stream-ownership check vouches for the newest turn only,
+        // so an old turn's unresolved tool never reads live.
+        const hydratedTurns = turnProjection.turnTree?.turns;
+        const newestTurn = Array.isArray(hydratedTurns) ? hydratedTurns[hydratedTurns.length - 1] : null;
+        const liveTurnId = activeRootScopeTurnId || (
+          newestTurn && isTurnStreamLive(newestTurn, messageById, { sessionId: normalizedSessionId, isNewestTurn: true })
+            ? String(newestTurn.turn_id || '').trim()
+            : ''
+        );
         const activeTurn = activeRootScopeTurnId ? turnById.get(activeRootScopeTurnId) : null;
         const activeTurnRootMessageId = activeTurn
           ? resolveThreadRootMessageId(
@@ -493,6 +510,7 @@
           rowsByRenderMessageId,
           viewModelByTurnId,
           activeTurnId,
+          liveTurnId,
           activeStreamingMessageId: activeMessageId,
           activeTurnRootMessageId,
           activeTurnStructureHash: activeTurn ? computeTurnStructureHash(activeTurn, activeRows) : 0,
@@ -617,10 +635,9 @@
           logToolRowProjectionFallbackOnce(projectedToolRow.row_id || messageId, 'missing_tool_call_id');
         }
       }
-      // When chat_tool_trace_rows_fix is enabled, settled projected tool calls use trace rows; unsettled calls retain the classic approval affordances. When disabled, use the legacy path.
+      // Settled projected tool calls use trace rows; unsettled calls retain the classic approval affordances.
       if (
-        Boolean(state?.features?.featureFlags?.chat_tool_trace_rows_fix)
-        && projectedToolRow
+        projectedToolRow
         && String(projectedToolRow.kind || '').trim() === 'tool_call'
         && typeof buildProjectedToolCallRowMarkup === 'function'
       ) {
@@ -645,7 +662,8 @@
           const traceRowMarkup = buildProjectedToolCallRowMarkup(projectedToolRow, messages, {
             pairedToolResultRow,
             messageById: toolRowContext && toolRowContext.messageById,
-            sessionId: String(state.currentSessionId || '').trim(),
+            sessionId: getPaneSessionId(),
+            transcriptView: getPaneTranscriptView(),
             turnIdByMessageId: toolRowContext && toolRowContext.turnIdByMessageId,
             retryMessageId: resolveRetryMessageIdForToolRow(projectedToolRow, messages, toolRowContext),
           });
@@ -676,12 +694,13 @@
                   projectedToolRow,
                   messageById: toolRowContext.messageById,
                   canonicalToolCall,
-                  sessionId: String(state.currentSessionId || '').trim(),
+                  sessionId: getPaneSessionId(),
+                  transcriptView: getPaneTranscriptView(),
                   turnId: projectedToolRow.turn_id,
                   rowId: projectedToolRow.row_id,
                   turnIdByMessageId: toolRowContext.turnIdByMessageId,
                 }
-              : undefined)}
+              : { sessionId: getPaneSessionId(), transcriptView: getPaneTranscriptView() })}
           `;
     }
 

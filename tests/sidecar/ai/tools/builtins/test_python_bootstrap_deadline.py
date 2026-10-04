@@ -67,7 +67,7 @@ def test_no_deadline_keeps_the_existing_signature_working(tmp_path, monkeypatch)
     monkeypatch.setattr(interpreter, "_create_runtime_venv", fake_create)
     monkeypatch.setattr(interpreter, "_validate_runtime_imports", lambda *_a, **_k: True)
     monkeypatch.setattr(interpreter, "_interpreter_identity", lambda _path: "3.13.14")
-    interpreter._READY_VENV_CACHE.clear()  # noqa: SLF001
+    interpreter._READY_VENV_CACHE.clear()
 
     result = ensure_runtime_venv(_config(tmp_path))
 
@@ -79,7 +79,7 @@ def test_lock_wait_ends_at_the_deadline_with_limit_exceeded(tmp_path, monkeypatc
     longer has: the wait stops at the deadline and reports limit_exceeded,
     not a bare lock timeout 300s later."""
     config = _config(tmp_path)
-    lock_path = interpreter._lock_path(interpreter._venv_dir(config))  # noqa: SLF001
+    lock_path = interpreter._lock_path(interpreter._venv_dir(config))
     lock_path.parent.mkdir(parents=True, exist_ok=True)
     # A live foreign owner (the test runner's parent) with a fresh lock.
     lock_path.write_text(
@@ -90,7 +90,7 @@ def test_lock_wait_ends_at_the_deadline_with_limit_exceeded(tmp_path, monkeypatc
         "_create_runtime_venv",
         lambda *_a, **_k: pytest.fail("must not build while the lock is held"),
     )
-    interpreter._READY_VENV_CACHE.clear()  # noqa: SLF001
+    interpreter._READY_VENV_CACHE.clear()
 
     started = time.perf_counter()
     with pytest.raises(ToolExecutionFailure) as exc_info:

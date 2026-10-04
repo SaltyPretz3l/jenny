@@ -10,18 +10,17 @@ const { pathToFileURL } = require('node:url');
 
 const { verifyLocalPackage } = require('../../../services/plugins/package/local-package-intake');
 const { computeCanonicalMetadataDigest } = require('../../../services/plugins/package/canonical-metadata');
-const { dependencyMapFor } = require('../../../services/plugins/contribution-control-plane');
-const { compileWorkflow } = require('../../../services/plugins/runtime/workflow-compiler');
+const { declaresRetiredKind } = require('../../../services/plugins/runtime/declarative-compiler-constants');
 const {
   keyIdentity,
   validateTrustedPublisherRoots,
 } = require('../../../services/plugins/package/trusted-publisher-roots');
 
 const PACKAGER_PATH = path.resolve(__dirname, '../../../scripts/plugins/jenny-plugin-packager.mjs');
-const PACKAGER_SHA256 = 'c5543a42af1a09807f971891e2c6964ceffa55a0f7d9ce2e1afbfcd0111a009e';
+const PACKAGER_SHA256 = '807ed20bf4e95f9cc446ed78b74436a1921f96ea4e495568f6e117f4db684769';
 const NOW = '2026-08-04T00:00:00Z';
 const SOURCE_PATH_DIGEST = 'a'.repeat(64);
-const OWNER_SMOKE_CANONICAL_DIGEST = 'f461b63c783f50c7f69ac9e80385d8d253bde2a6548d5524f8847b85179cf023';
+const OWNER_SMOKE_CANONICAL_DIGEST = '4e1cfd3348f3f24b73dd2b1512fd17b8df602dd0879c5a3a4448898bd87662f4';
 
 let packager;
 
@@ -90,34 +89,11 @@ test('standalone owner packager produces deterministic bytes accepted by product
   assert.equal(verdict.manifest.manifest_schema_version, 2);
   assert.deepEqual(
     new Set(verdict.manifest.contributions.map((entry) => entry.kind)),
-    new Set(['skill', 'prompt', 'settings_schema', 'theme', 'workflow', 'command', 'mcp_descriptor'])
+    new Set(['skill', 'prompt', 'settings_schema', 'theme'])
   );
-
-  const byId = new Map(verdict.declarative_contents.map((entry) => [entry.contribution_id, entry]));
-  assert.equal(byId.get('command-prompt').payload.target_contribution_id, 'prompt-main');
-  assert.equal(byId.get('command-workflow').payload.target_contribution_id, 'workflow-read');
-  assert.equal(byId.get('workflow-read').payload.nodes.at(-1).tool_id, 'read_file');
-  assert.deepEqual(byId.get('workflow-read').payload.nodes.at(-1).bindings, [{
-    target: 'path',
-    value: { source: 'setting', settings_contribution_id: 'settings-main', key: 'path' },
-  }]);
-  assert.equal(byId.get('mcp-inspect').payload.kind, 'mcp_descriptor');
-
-  const dependencies = dependencyMapFor(verdict.declarative_contents);
-  assert.deepEqual(dependencies.get('workflow-read').sort(), ['prompt-main', 'settings-main']);
-  assert.deepEqual(dependencies.get('command-prompt'), ['prompt-main']);
-  assert.deepEqual(dependencies.get('command-workflow'), ['workflow-read']);
-  const compiled = compileWorkflow({
-    publisherId: verdict.publisher_id,
-    pluginId: verdict.plugin_id,
-    workflowId: 'workflow-read',
-    payload: byId.get('workflow-read').payload,
-    contents: verdict.declarative_contents,
-    settingsFields: new Map([['settings-main', byId.get('settings-main').payload.fields]]),
-    invocationFields: byId.get('command-workflow').payload.inputs,
-  });
-  assert.equal(compiled.ok, true, JSON.stringify(compiled));
-  assert.equal(compiled.tool_bindings[0].tool_id, 'read_file');
+  // Stage 4 refuses a new package that declares a retired kind, so the owner
+  // fixture must stay installable.
+  assert.equal(declaresRetiredKind(verdict.manifest), false);
 });
 
 test('embedded production key identity stays synchronized with the checked-in public trust root', () => {

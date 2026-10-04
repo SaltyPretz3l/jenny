@@ -174,11 +174,13 @@
 
   // Consolidated effect PRNG — the LCG the migrated effects already use, so
   // adopting the runtime never reshuffles an existing field for a given seed.
+  // Half-open [0, 1): dividing by 2^32 (not 2^32 - 1) keeps
+  // Math.floor(rng() * n) a valid index even at state 0xffffffff.
   function makeRng(seed) {
     let s = ((seed ^ 0xdeadbeef) >>> 0) || 1;
     return function () {
       s = (Math.imul(s, 1664525) + 1013904223) >>> 0;
-      return s / 0xffffffff;
+      return s / 0x100000000;
     };
   }
 
@@ -284,14 +286,28 @@
   }
 
   // The reduced-motion + visibility listener pair every effect currently
-  // duplicates; returns a single disposer.
+  // duplicates; returns a single disposer. Optional window focus/blur
+  // (windowRef + onFocusChange) lets an effect throttle while unfocused.
   function bindVisibilityAndMotionListeners({
     documentRef = null,
     reducedMotionQuery = null,
     onVisibilityChange = null,
     onMotionPreferenceChange = null,
+    windowRef = null,
+    onFocusChange = null,
   } = {}) {
     const disposers = [];
+    if (windowRef && typeof windowRef.addEventListener === 'function'
+      && typeof onFocusChange === 'function') {
+      const focusListener = () => onFocusChange(true);
+      const blurListener = () => onFocusChange(false);
+      windowRef.addEventListener('focus', focusListener);
+      windowRef.addEventListener('blur', blurListener);
+      disposers.push(() => {
+        windowRef.removeEventListener('focus', focusListener);
+        windowRef.removeEventListener('blur', blurListener);
+      });
+    }
     if (documentRef && typeof documentRef.addEventListener === 'function'
       && typeof onVisibilityChange === 'function') {
       const visibilityListener = () => onVisibilityChange(Boolean(documentRef.hidden));
@@ -591,27 +607,23 @@
   // Every registry `requiredTokens` entry must have a row (parity-tested).
 
   const SURFACE_EFFECT_TOKEN_SCHEMAS = Object.freeze({
-    // reactive-grid — colors read via getStyleValue(style, name, fallback) in
-    // renderer-reactive-grid-utils.js; no clamp on colors, fallback only.
+    // reactive-grid — readStyles() in renderer-reactive-grid-utils.js reads every
+    // row below through readStyleToken; fallbacks mirror the foundation.css floors.
+    // hit-radius alone re-parses with a cellSize-derived fallback when absent.
     '--widget-reactive-grid-dot-idle': Object.freeze({ name: '--widget-reactive-grid-dot-idle', type: 'color', fallback: 'rgba(157, 197, 255, 0.18)' }),
-    '--widget-reactive-grid-dot-active': Object.freeze({ name: '--widget-reactive-grid-dot-active', type: 'color', fallback: 'rgba(111, 210, 255, 0.82)' }),
-    '--widget-reactive-grid-dot-glow': Object.freeze({ name: '--widget-reactive-grid-dot-glow', type: 'color', fallback: 'rgba(109, 130, 255, 0.28)' }),
+    '--widget-reactive-grid-dot-active': Object.freeze({ name: '--widget-reactive-grid-dot-active', type: 'color', fallback: 'rgba(160, 230, 255, 0.96)' }),
     '--reactive-grid-cell-size': Object.freeze({ name: '--reactive-grid-cell-size', type: 'length-px', fallback: 24, min: 12 }),
-    '--reactive-grid-hit-radius': Object.freeze({ name: '--reactive-grid-hit-radius', type: 'number', fallback: 192, min: 32 }),
+    '--reactive-grid-hit-radius': Object.freeze({ name: '--reactive-grid-hit-radius', type: 'number', fallback: 170, min: 32 }),
     '--reactive-grid-strength': Object.freeze({ name: '--reactive-grid-strength', type: 'number', fallback: 1, min: 0.1, max: 4 }),
-    '--reactive-grid-idle-amplitude': Object.freeze({ name: '--reactive-grid-idle-amplitude', type: 'number', fallback: 0.26, min: 0, max: 2 }),
     '--reactive-grid-motion-scale': Object.freeze({ name: '--reactive-grid-motion-scale', type: 'number', fallback: 1, min: 0.4, max: 2 }),
-    '--reactive-grid-friction': Object.freeze({ name: '--reactive-grid-friction', type: 'number', fallback: 0.90, min: 0.85, max: 0.98 }),
-    '--reactive-grid-spring': Object.freeze({ name: '--reactive-grid-spring', type: 'number', fallback: 0.055, min: 0.005, max: 0.08 }),
+    '--reactive-grid-wave-contrast': Object.freeze({ name: '--reactive-grid-wave-contrast', type: 'number', fallback: 1.3, min: 0, max: 2 }),
+    '--reactive-grid-friction': Object.freeze({ name: '--reactive-grid-friction', type: 'number', fallback: 0.86, min: 0.85, max: 0.98 }),
+    '--reactive-grid-spring': Object.freeze({ name: '--reactive-grid-spring', type: 'number', fallback: 0.04, min: 0.005, max: 0.08 }),
     '--reactive-grid-push': Object.freeze({ name: '--reactive-grid-push', type: 'number', fallback: 0.9, min: 0.1, max: 8 }),
-    '--reactive-grid-glow-blur': Object.freeze({ name: '--reactive-grid-glow-blur', type: 'number', fallback: 14, min: 0 }),
-    '--reactive-grid-glow-curve': Object.freeze({ name: '--reactive-grid-glow-curve', type: 'number', fallback: 3, min: 1, max: 6 }),
     '--reactive-grid-fade-rise-ms': Object.freeze({ name: '--reactive-grid-fade-rise-ms', type: 'number', fallback: 240, min: 50 }),
     '--reactive-grid-fade-decay-ms': Object.freeze({ name: '--reactive-grid-fade-decay-ms', type: 'number', fallback: 520, min: 50 }),
-    '--reactive-grid-breath-amplitude': Object.freeze({ name: '--reactive-grid-breath-amplitude', type: 'number', fallback: 0.05, min: 0, max: 0.4 }),
 
-    // playlist-scroll — bounds/fallbacks from getEntryConfig() in
-    // renderer-playlist-scroll-utils.js.
+    // playlist-scroll — read by readStyles() in renderer-playlist-scroll-utils.js.
     '--playlist-scroll-line-color': Object.freeze({ name: '--playlist-scroll-line-color', type: 'color', fallback: 'rgba(157, 197, 255, 0.5)' }),
     '--playlist-scroll-lane-alpha': Object.freeze({ name: '--playlist-scroll-lane-alpha', type: 'alpha', fallback: 0.10, min: 0, max: 1 }),
     '--playlist-scroll-bar-alpha': Object.freeze({ name: '--playlist-scroll-bar-alpha', type: 'alpha', fallback: 0.18, min: 0, max: 1 }),
@@ -623,14 +635,15 @@
     '--playlist-scroll-bar-width': Object.freeze({ name: '--playlist-scroll-bar-width', type: 'length-px', fallback: 120, min: 20 }),
     '--playlist-scroll-speed': Object.freeze({ name: '--playlist-scroll-speed', type: 'number', fallback: 0.4, min: 0, max: 4 }),
     '--playlist-scroll-sub-alpha': Object.freeze({ name: '--playlist-scroll-sub-alpha', type: 'alpha', fallback: 0.07, min: 0, max: 1 }),
-    '--playlist-scroll-band-alpha': Object.freeze({ name: '--playlist-scroll-band-alpha', type: 'alpha', fallback: 0.025, min: 0, max: 1 }),
     '--playlist-scroll-edge-fade': Object.freeze({ name: '--playlist-scroll-edge-fade', type: 'length-px', fallback: 32, min: 0 }),
     '--playlist-scroll-subdivisions': Object.freeze({ name: '--playlist-scroll-subdivisions', type: 'integer', fallback: 4, min: 1, max: 64 }),
+    // Light palettes raise line/ghost contrast so the scrolling grid stays legible.
+    '--playlist-scroll-contrast': Object.freeze({ name: '--playlist-scroll-contrast', type: 'number', fallback: 1, min: 0.5, max: 2.5 }),
 
     // atomic-burst — bounds/fallbacks from readStyles() in
     // renderer-atomic-burst-utils.js (baseSize/density already migrated above).
-    '--widget-atomic-burst-size': Object.freeze({ name: '--widget-atomic-burst-size', type: 'length-px', fallback: 14, min: 4, max: 200 }),
-    '--widget-atomic-burst-density': Object.freeze({ name: '--widget-atomic-burst-density', type: 'number', fallback: 6.2, min: 0.5, max: 20 }),
+    '--widget-atomic-burst-size': Object.freeze({ name: '--widget-atomic-burst-size', type: 'length-px', fallback: 8, min: 4, max: 200 }),
+    '--widget-atomic-burst-density': Object.freeze({ name: '--widget-atomic-burst-density', type: 'number', fallback: 18.75, min: 0.5, max: 20 }),
     '--widget-atomic-burst-color-a': Object.freeze({ name: '--widget-atomic-burst-color-a', type: 'color', fallback: 'rgba(47, 174, 230, 0.78)' }),
     '--widget-atomic-burst-color-b': Object.freeze({ name: '--widget-atomic-burst-color-b', type: 'color', fallback: 'rgba(255, 90, 160, 0.78)' }),
     '--widget-atomic-burst-color-c': Object.freeze({ name: '--widget-atomic-burst-color-c', type: 'color', fallback: 'rgba(245, 207, 58, 0.78)' }),
@@ -639,32 +652,21 @@
     // first read) as their JS fallback, not a literal default of their own.
     '--widget-atomic-burst-link-color': Object.freeze({ name: '--widget-atomic-burst-link-color', type: 'color', fallback: 'rgba(255, 255, 255, 0.96)' }),
     '--widget-atomic-burst-wave-color': Object.freeze({ name: '--widget-atomic-burst-wave-color', type: 'color', fallback: 'rgba(255, 255, 255, 0.96)' }),
-    '--widget-atomic-burst-bloom': Object.freeze({ name: '--widget-atomic-burst-bloom', type: 'number', fallback: 0.7, min: 0, max: 2 }),
     '--widget-atomic-burst-link-radius': Object.freeze({ name: '--widget-atomic-burst-link-radius', type: 'length-px', fallback: 220, min: 40, max: 800 }),
     '--widget-atomic-burst-link-max': Object.freeze({ name: '--widget-atomic-burst-link-max', type: 'integer', fallback: 6, min: 2, max: 16 }),
-    '--widget-atomic-burst-wave-speed': Object.freeze({ name: '--widget-atomic-burst-wave-speed', type: 'number', fallback: 620, min: 60, max: 4000 }),
     '--widget-atomic-burst-wave-lifetime': Object.freeze({ name: '--widget-atomic-burst-wave-lifetime', type: 'number', fallback: 1100, min: 200, max: 5000 }),
 
-    // circuit-trace — bounds/fallbacks from readStyles() in
-    // renderer-circuit-trace-utils.js / DEFAULT_* constants in
-    // renderer-circuit-trace-core.js.
-    '--widget-circuit-trace-grid-color': Object.freeze({ name: '--widget-circuit-trace-grid-color', type: 'color', fallback: 'rgba(106, 58, 255, 0.16)' }),
-    '--widget-circuit-trace-line-color': Object.freeze({ name: '--widget-circuit-trace-line-color', type: 'color', fallback: 'rgba(41, 192, 255, 0.92)' }),
-    '--widget-circuit-trace-glow-color': Object.freeze({ name: '--widget-circuit-trace-glow-color', type: 'color', fallback: 'rgba(255, 90, 160, 0.85)' }),
-    // accentColor reads with entry.lineColor (itself DEFAULT_LINE_COLOR at first
-    // read) as its JS fallback, not a literal default of its own.
-    '--widget-circuit-trace-accent-color': Object.freeze({ name: '--widget-circuit-trace-accent-color', type: 'color', fallback: 'rgba(41, 192, 255, 0.92)' }),
-    // version is resolved via core.resolveVersion(): unknown/malformed values
-    // (including out-of-range integers) fall back to DEFAULT_VERSION outright —
-    // that is a discrete allow-list check, not a min/max clamp, so no min/max here.
-    '--widget-circuit-trace-version': Object.freeze({ name: '--widget-circuit-trace-version', type: 'integer', fallback: 2 }),
-    '--widget-circuit-trace-hex-size': Object.freeze({ name: '--widget-circuit-trace-hex-size', type: 'length-px', fallback: 32, min: 8, max: 96 }),
+    // circuit-trace — readSceneConfig() in renderer-circuit-trace-utils.js
+    // reads every row below through readStyleToken.
+    '--widget-circuit-trace-grid-color': Object.freeze({ name: '--widget-circuit-trace-grid-color', type: 'color', fallback: 'rgba(138, 120, 255, 0.34)' }),
+    '--widget-circuit-trace-line-color': Object.freeze({ name: '--widget-circuit-trace-line-color', type: 'color', fallback: 'rgba(79, 214, 255, 0.94)' }),
+    '--widget-circuit-trace-glow-color': Object.freeze({ name: '--widget-circuit-trace-glow-color', type: 'color', fallback: 'rgba(255, 111, 177, 0.94)' }),
+    '--widget-circuit-trace-accent-color': Object.freeze({ name: '--widget-circuit-trace-accent-color', type: 'color', fallback: 'rgba(160, 142, 255, 0.72)' }),
+    '--widget-circuit-trace-inner-color': Object.freeze({ name: '--widget-circuit-trace-inner-color', type: 'color', fallback: 'rgba(90, 110, 210, 0.10)' }),
+    '--widget-circuit-trace-shadow-color': Object.freeze({ name: '--widget-circuit-trace-shadow-color', type: 'color', fallback: 'rgba(0, 0, 0, 0.28)' }),
+    '--widget-circuit-trace-pitch': Object.freeze({ name: '--widget-circuit-trace-pitch', type: 'length-px', fallback: 14, min: 10, max: 28 }),
     '--widget-circuit-trace-density': Object.freeze({ name: '--widget-circuit-trace-density', type: 'number', fallback: 1.0, min: 0.1, max: 3 }),
-    '--widget-circuit-trace-trail-length': Object.freeze({ name: '--widget-circuit-trace-trail-length', type: 'integer', fallback: 14, min: 2, max: 40 }),
     '--widget-circuit-trace-speed': Object.freeze({ name: '--widget-circuit-trace-speed', type: 'number', fallback: 1.0, min: 0.1, max: 4 }),
-    '--widget-circuit-trace-bloom': Object.freeze({ name: '--widget-circuit-trace-bloom', type: 'number', fallback: 0.7, min: 0, max: 2 }),
-    '--widget-circuit-trace-lift-px': Object.freeze({ name: '--widget-circuit-trace-lift-px', type: 'length-px', fallback: 4, min: 0, max: 20 }),
-    '--widget-circuit-trace-energy': Object.freeze({ name: '--widget-circuit-trace-energy', type: 'alpha', fallback: 0, min: 0, max: 1 }),
 
     // context-weave — one thread colour plus the lattice/interlace geometry.
     // Restyled 2026-08-21: pulse/glow colours, bloom, tension and damping
@@ -677,6 +679,8 @@
     '--widget-context-weave-interlace': Object.freeze({ name: '--widget-context-weave-interlace', type: 'length-px', fallback: 3, min: 0, max: 6 }),
     '--widget-context-weave-weft-alpha': Object.freeze({ name: '--widget-context-weave-weft-alpha', type: 'alpha', fallback: 0.7, min: 0, max: 1 }),
     '--widget-context-weave-lit-gain': Object.freeze({ name: '--widget-context-weave-lit-gain', type: 'number', fallback: 3, min: 1, max: 5 }),
+    // Motion axis scales pointer gain and pluck amplitude, never resting alpha.
+    '--widget-context-weave-motion-scale': Object.freeze({ name: '--widget-context-weave-motion-scale', type: 'number', fallback: 1, min: 0.5, max: 2 }),
   });
 
   function getTokenSchema(name) {

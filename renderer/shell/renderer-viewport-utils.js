@@ -16,9 +16,13 @@
       || (typeof require === 'function' ? require('../chat/renderer-render-pipeline-thread-state') : null)
       || {};
   }
-  const turnShellUtils = (typeof globalThis !== 'undefined' && globalThis.rendererTurnShell)
-    || (typeof require === 'function' ? require('../chat/renderer-turn-shell') : null)
-    || {};
+  // Resolved per call: index.html loads renderer-turn-shell.js after this
+  // script, so a factory-time read is always empty in the app (dogfood B15).
+  function getTurnShellUtils() {
+    return (typeof globalThis !== 'undefined' && globalThis.rendererTurnShell)
+      || (typeof require === 'function' ? require('../chat/renderer-turn-shell') : null)
+      || {};
+  }
   const viewportLayoutUtils = (typeof globalThis !== 'undefined' && globalThis.rendererViewportLayoutUtils)
     || (typeof require === 'function' ? require('./renderer-viewport-layout-utils') : null)
     || {};
@@ -38,15 +42,17 @@
     || (typeof require === 'function' ? require('./renderer-viewport-scheduling-utils') : null) || {};
   const viewportThinkingPanelUtils = (typeof globalThis !== 'undefined' && globalThis.rendererViewportThinkingPanelUtils)
     || (typeof require === 'function' ? require('./renderer-viewport-thinking-panel-utils') : null) || {};
-  const resolveVisibleMessageDomTarget = typeof turnShellUtils.resolveVisibleMessageDomTarget === 'function'
-    ? turnShellUtils.resolveVisibleMessageDomTarget
-    : function fallbackResolveVisibleMessageDomTarget(container, messageId) {
-      const normalizedMessageId = String(messageId || '').trim();
-      if (!container || !normalizedMessageId || typeof container.querySelector !== 'function') {
-        return null;
-      }
-      return container.querySelector(`[data-message-id="${normalizedMessageId}"]`);
-    };
+  function resolveVisibleMessageDomTarget(container, messageId, options) {
+    const turnShellUtils = getTurnShellUtils();
+    if (typeof turnShellUtils.resolveVisibleMessageDomTarget === 'function') {
+      return turnShellUtils.resolveVisibleMessageDomTarget(container, messageId, options);
+    }
+    const normalizedMessageId = String(messageId || '').trim();
+    if (!container || !normalizedMessageId || typeof container.querySelector !== 'function') {
+      return null;
+    }
+    return container.querySelector(`[data-message-id="${normalizedMessageId}"]`);
+  }
 
   /* Minimum px clearance between chat-thread-stage bottom and composer top.
      Used by measureComposerSafeOffset() so the last visible message never
@@ -102,6 +108,13 @@
     } = deps.controllers || {};
     let scrollCoordinator = initialScrollCoordinator;
     let timelineVirtualizer = initialTimelineVirtualizer;
+    // Split view: each pane owns its follow intent and shows its own session. Unsupplied,
+    // the single-pane backing (state.ui.followLatest, state.currentSessionId).
+    const followState = deps.followState || {
+      get: () => state.ui.followLatest,
+      set: (value) => { state.ui.followLatest = value; },
+    };
+    const getSessionId = typeof deps.getSessionId === 'function' ? deps.getSessionId : () => state.currentSessionId;
 
     let viewportDisposed = false; // guards transient thinking-panel rAF/timeout bodies post-dispose
 
@@ -137,6 +150,8 @@
 
     const liveFollowController = viewportLiveFollowUtils.createViewportLiveFollowUtils({
       state,
+      followState,
+      getSessionId,
       chatThreadScroll,
       requestViewportFrame,
       cancelViewportFrame,
@@ -199,8 +214,9 @@
     });
     schedulingController = viewportSchedulingUtils.createViewportSchedulingUtils({
       state,
+      followState,
       readerAwayPauseReason: READER_AWAY_PAUSE_REASON,
-      dom: { chatTimeline, chatThreadScroll },
+      dom: { chatTimeline, chatThreadScroll, composerWrap },
       controllers: { thinkingController, reducedMotionQuery },
       callbacks: {
         requestViewportFrame,
@@ -228,6 +244,7 @@
     } = schedulingController;
     panelSyncController = viewportThinkingPanelUtils.createViewportThinkingPanelUtils({
       state,
+      followState,
       dom: { chatTimeline },
       controllers: { thinkingController, reducedMotionQuery },
       callbacks: {
@@ -296,8 +313,8 @@
 
     function setFollowLatest(value) {
       if (viewportDisposed) return;
-      state.ui.followLatest = Boolean(value);
-      if (!state.ui.followLatest) {
+      followState.set(Boolean(value));
+      if (!followState.get()) {
         cancelLiveStreamingFollow();
       }
     }
@@ -342,7 +359,7 @@
         }
         clearReaderRelease();
       }
-      if (!userInitiated && !nearBottom && state.ui.followLatest !== false) {
+      if (!userInitiated && !nearBottom && followState.get() !== false) {
         const attributed = Boolean(snapshot && snapshot.programmaticReason);
         if (direction !== 'up' || attributed) {
           /* Attribution preserves follow across programmatic movement; an
@@ -374,12 +391,10 @@
         return;
       }
       cancelLiveStreamingFollow();
-      chatThreadScroll.scrollTo({
-        top: 0,
-        behavior: getScrollBehavior(),
-      });
+      const behavior = getScrollBehavior();
+      chatThreadScroll.scrollTo({ top: 0, behavior });
       setFollowLatest(false);
-      scrollCoordinator?.noteExplicitNavigation?.({ followLatest: false });
+      scrollCoordinator?.noteExplicitNavigation?.({ followLatest: false, smooth: behavior === 'smooth' });
     }
 
     function scrollThreadToBottom({ behavior = getScrollBehavior(), forceFollowLatest = true } = {}) {
@@ -409,7 +424,7 @@
       if (typeof canonicalGetter === 'function') {
         return canonicalGetter(state, sessionId, options);
       }
-      const resolvedSessionId = String(sessionId || state.currentSessionId || '').trim();
+      const resolvedSessionId = String(sessionId || getSessionId() || '').trim();
       if (!resolvedSessionId) {
         return null;
       }
@@ -439,7 +454,7 @@
       ) {
         return false;
       }
-      const sessionId = String(state.currentSessionId || '').trim();
+      const sessionId = String(getSessionId() || '').trim();
       if (!sessionId) {
         return false;
       }
@@ -527,6 +542,7 @@
       toggleContextCompactionDetails,
     } = viewportRecapUtils.createViewportRecapUtils({
       state,
+      getSessionId,
       chatTimeline,
       escapeSelectorValue,
       getCurrentMessageById,

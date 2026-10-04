@@ -12,14 +12,8 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
 
-  function escapeHtml(value) {
-    return String(value || '')
-      .replaceAll('&', '&amp;')
-      .replaceAll('<', '&lt;')
-      .replaceAll('>', '&gt;')
-      .replaceAll('"', '&quot;')
-      .replaceAll("'", '&#39;');
-  }
+  const escapeHtml = ((typeof globalThis !== 'undefined' && globalThis.stringUtils)
+    || (typeof require === 'function' ? require('../shared/string-utils') : null)).escapeHtml;
 
   function sanitizeClassName(value) {
     return String(value || '')
@@ -88,6 +82,24 @@
       + '</label>';
   }
 
+  /**
+   * Render a bare native radio input; the caller owns the surrounding label.
+   * @param {Object} opts
+   * @param {string} opts.name - Radio group name
+   * @param {string} opts.value
+   * @param {boolean} [opts.checked]
+   * @param {string} [opts.className]
+   * @returns {string} HTML string
+   */
+  function radio(opts) {
+    var o = opts || {};
+    var extraClassName = sanitizeClassName(o.className);
+    return '<input type="radio"'
+      + (extraClassName ? ' class="' + escapeHtml(extraClassName) + '"' : '')
+      + ' name="' + escapeHtml(o.name || '') + '" value="' + escapeHtml(o.value || '') + '"'
+      + (o.checked ? ' checked' : '') + '>';
+  }
+
   function setChecked(inputEl, value) {
     if (!inputEl) return;
     var checked = Boolean(value);
@@ -98,6 +110,7 @@
 
   return {
     checkbox: checkbox,
+    radio: radio,
     setChecked: setChecked,
   };
 });

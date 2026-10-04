@@ -8,11 +8,19 @@ handler compacts it, replies with a structured result, and re-emits the
 EXISTING ``context.compacted`` notification on success.
 
 Fail-closed contract (never raises across the sidecar boundary):
-- ``compaction_manual`` flag off  -> ``{"status": "error", "reason": "feature_disabled"}``
 - circuit breaker open            -> ``{"status": "error", "reason": "circuit_breaker_open"}``
 - no messages to compact          -> ``{"status": "error", "reason": "no_active_turn"}``
+- nothing older than the latest round to fold
+  -> ``{"status": "ok", "compacted": false, "reason": "single_round" | "no_user_round"}``
 - compaction raised / insufficient / no summary
   -> ``{"status": "error", "reason": "compaction_failed"}``
+
+Token figures are on the next ``chat.send``'s basis: Electron sends the same
+prepared history that send would carry (snapshot applied, full tool output),
+and the estimate uses the budget tracker's tokenizer backend like the send
+path. ``conversation_tokens`` is that history's size and ``foldable_tokens``
+the part older than the latest round, which a summary would replace. The live
+request's prompt block and tool schemas are not part of this request.
 
 The manual circuit breaker is a module-level singleton shared across requests
 and resets after its five-minute cooldown. The auto path instead uses its
@@ -31,6 +39,8 @@ from sidecar.ai.container import BrainContainer
 from sidecar.ai.context.compaction import (
     CompactionCircuitBreaker,
     CompactionResult,
+    _split_latest_user_round,
+    _split_leading_system_run,
     compact_context,
 )
 from sidecar.ai.context.compaction_prompts import resolve_compaction_prompt
@@ -42,7 +52,6 @@ from sidecar.ai.context.token_budget import (
 from sidecar.ai.engines.admitted import InferenceAdmissionError
 from sidecar.ai.error_codes import CMP_PROTO_VERSION_MISMATCH
 from sidecar.ai.feature_flags import (
-    FEATURE_COMPACTION_MANUAL,
     FEATURE_PROMPT_CACHE,
     is_feature_flag_enabled,
 )
@@ -71,6 +80,13 @@ _ERROR_DETAIL_MAX_CHARS = 300
 # Shared across manual compact requests so consecutive manual failures trip the
 # breaker; monkeypatched in tests.
 _MANUAL_COMPACTION_BREAKER = CompactionCircuitBreaker()
+
+
+@dataclass(frozen=True)
+class _ManualCompaction:
+    result: CompactionResult
+    foldable_tokens: int
+    not_needed_reason: str
 
 
 @dataclass(frozen=True)
@@ -127,7 +143,22 @@ def _compactable_messages(params: dict[str, Any]) -> list[dict[str, Any]]:
     return [entry for entry in raw if isinstance(entry, dict)]
 
 
-def process_compact_method(  # noqa: PLR0911, PLR0913, PLR0917 -- uniform dispatch hook contract
+def _split_rounds(
+    messages: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], str]:
+    """The rows a summary would fold, and why there are none.
+
+    Same split ``compact_context`` uses: the latest user-anchored round is kept
+    verbatim, so only what precedes it (after any leading system run) folds.
+    """
+    _leading_system, conversation = _split_leading_system_run(messages)
+    foldable, latest_round = _split_latest_user_round(conversation)
+    if not latest_round:
+        return foldable, "no_user_round"
+    return foldable, "" if foldable else "single_round"
+
+
+def process_compact_method(  # noqa: PLR0911, PLR0913 -- uniform dispatch hook contract
     method: str,
     message_id: Any,
     params: Any,
@@ -239,10 +270,6 @@ def _process_compact_request(context: _CompactRequestContext) -> ProcessOutcome:
     config = stack.config
     feature_flags = getattr(config, "feature_flags", None) or {}
 
-    # R5: gate at the sidecar dispatch layer too, not just the renderer button.
-    if not is_feature_flag_enabled(feature_flags, FEATURE_COMPACTION_MANUAL):
-        return _error_result(initialized, message_id, "feature_disabled")
-
     # "no_active_turn" is the wire reason for "nothing to compact": empty,
     # missing, or all-non-dict message lists all funnel here. The renderer
     # surfaces it as a benign "nothing to compact" note.
@@ -273,9 +300,13 @@ def _process_compact_request(context: _CompactRequestContext) -> ProcessOutcome:
         request_id=request_id,
     )
 
-    compaction_result = _run_manual_compaction(context, messages, feature_flags)
-    if isinstance(compaction_result, ProcessOutcome):
-        return compaction_result
+    manual = _run_manual_compaction(context, messages, feature_flags)
+    if isinstance(manual, ProcessOutcome):
+        return manual
+    compaction_result = manual.result
+    not_needed_reason = "" if compaction_result.compacted else (
+        manual.not_needed_reason or "not_needed"
+    )
 
     _emit_log_event(
         logger,
@@ -288,10 +319,17 @@ def _process_compact_request(context: _CompactRequestContext) -> ProcessOutcome:
             "strategy": compaction_result.strategy,
             "tokens_before": compaction_result.tokens_before,
             "tokens_after": compaction_result.tokens_after,
+            "foldable_tokens": manual.foldable_tokens,
+            "reason": not_needed_reason,
         },
         request_id=request_id,
     )
 
+    summary_source_dropped = (
+        max(0, int(compaction_result.summary_input_dropped_messages or 0))
+        if compaction_result.compacted
+        else 0
+    )
     notifications: list[dict[str, Any]] = []
     if compaction_result.compacted:
         # Reuse the EXISTING context.compacted notification — same payload shape
@@ -308,10 +346,11 @@ def _process_compact_request(context: _CompactRequestContext) -> ProcessOutcome:
                         "strategy": compaction_result.strategy,
                         "tokens_before": compaction_result.tokens_before,
                         "tokens_after": compaction_result.tokens_after,
+                        "summary_source_dropped_messages": summary_source_dropped,
                     },
                 )
             )
-        except Exception:  # noqa: BLE001 — never raise across the boundary
+        except Exception:  # never raise across the boundary
             logger.exception("manual chat.compact notification emission failed")
             notifications = []
 
@@ -325,6 +364,10 @@ def _process_compact_request(context: _CompactRequestContext) -> ProcessOutcome:
                 "strategy": compaction_result.strategy,
                 "tokens_before": compaction_result.tokens_before,
                 "tokens_after": compaction_result.tokens_after,
+                "conversation_tokens": compaction_result.tokens_before,
+                "foldable_tokens": manual.foldable_tokens,
+                "summary_source_dropped_messages": summary_source_dropped,
+                **({"reason": not_needed_reason} if not_needed_reason else {}),
                 # JCA-003: the compacted replacement history. Electron owns
                 # canonical history, so the result must carry the messages or
                 # the pass is spent and discarded. Omitted when nothing was
@@ -344,7 +387,7 @@ def _run_manual_compaction(
     context: _CompactRequestContext,
     messages: list[dict[str, Any]],
     feature_flags: Any,
-) -> CompactionResult | ProcessOutcome:
+) -> _ManualCompaction | ProcessOutcome:
     """Run compaction and map every failure to the dispatcher result contract."""
     stack = context.brain_container.stack
     config = stack.config
@@ -382,14 +425,16 @@ def _run_manual_compaction(
                 inference_admission=context.inference_admission,
             ),
         )
-        # Manual requests carry no live system preamble, so tokens_after runs
-        # slightly lower than an automatic compaction of the same turn. The
-        # compacted replacement messages are returned in the result (JCA-003):
-        # Electron persists them as a session-owned compaction snapshot and
-        # substitutes them for the summarized prefix on future chat.send calls.
+        # Manual requests carry no live system preamble: the figures count the
+        # conversation only. The compacted replacement messages are returned in
+        # the result (JCA-003): Electron persists them as a session-owned
+        # compaction snapshot and substitutes them for the summarized prefix on
+        # future chat.send calls.
+        foldable, not_needed_reason = _split_rounds(messages)
         result = compact_context(
             messages,
             budget,
+            backend=tracker.backend,
             generate_fn=generate_fn,
             num_tools=0,
             base_prompt=resolve_compaction_prompt(config),
@@ -415,7 +460,7 @@ def _run_manual_compaction(
                 )
     except InferenceAdmissionError:
         raise
-    except Exception as error:  # noqa: BLE001 -- never raise across the boundary
+    except Exception as error:  # never raise across the boundary
         context.logger.exception("manual chat.compact failed")
         return _error_result(
             context.initialized,
@@ -425,6 +470,17 @@ def _run_manual_compaction(
             detail=sanitize_diagnostic_text(str(error), limit=_ERROR_DETAIL_MAX_CHARS),
         )
 
+    if not_needed_reason and result.strategy == "micro" and result.error is None:
+        # Only the latest round is present and a summary keeps it verbatim, so a
+        # forced pass past the threshold can only clear tool output in place,
+        # which the manual path never persists. Nothing to compact. (A round
+        # too long even after that still reports its compaction_failed.)
+        result = CompactionResult(
+            messages=list(messages),
+            strategy="none",
+            tokens_before=result.tokens_before,
+            tokens_after=result.tokens_before,
+        )
     if result.error is not None:
         return _error_result(
             context.initialized,
@@ -453,4 +509,8 @@ def _run_manual_compaction(
             "compaction_failed",
             detail=result.summary_failure_code or "summary_not_created",
         )
-    return result
+    return _ManualCompaction(
+        result=result,
+        foldable_tokens=estimate_messages_tokens(foldable, tracker.backend),
+        not_needed_reason=not_needed_reason,
+    )

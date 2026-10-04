@@ -131,7 +131,16 @@
       var lastTimestamp = lastDiagnosticAtByEvent.get(eventName);
       if (lastTimestamp !== undefined && timestamp - lastTimestamp < DIAGNOSTIC_INTERVAL_MS) return;
       lastDiagnosticAtByEvent.set(eventName, timestamp);
-      try { appendClientLog(level, eventName, details || {}); } catch (_error) { /* best-effort */ }
+      safeLog(level, eventName, details);
+    }
+
+    // The one catch that cannot forward anywhere: the guarded call IS the logger.
+    function safeLog(level, eventName, details) {
+      try { appendClientLog(level, eventName, details || {}); } catch (_error) { /* logger failed; nothing to report to */ }
+    }
+
+    function logIgnoredError(site, error) {
+      safeLog('DEBUG', 'chat.timeline_virtualizer_ignored_error', { site: site, error: String(error?.message || error || '') });
     }
 
     function getEntries() {
@@ -159,14 +168,12 @@
       fallbackReason = String(reason || '');
       chatTimeline?.setAttribute?.('data-timeline-render-strategy', strategy);
       if (changed) {
-        try {
-          appendClientLog('INFO', 'chat.timeline_virtualizer_strategy', {
-            strategy: strategy,
-            reason: fallbackReason || 'selected',
-            articleCount: stats.articles,
-            threshold: threshold,
-          });
-        } catch (_error) { /* best-effort */ }
+        safeLog('INFO', 'chat.timeline_virtualizer_strategy', {
+          strategy: strategy,
+          reason: fallbackReason || 'selected',
+          articleCount: stats.articles,
+          threshold: threshold,
+        });
       }
     }
 
@@ -283,16 +290,16 @@
     function publishStats(reason) {
       stats.queueDepth = pendingIntersectionRecordCount + unmountQueue.size;
       if (!onStatsChange) return;
-      try { onStatsChange(getCurrentBudgetStats(), reason || 'update'); } catch (_error) { /* best-effort */ }
+      try { onStatsChange(getCurrentBudgetStats(), reason || 'update'); } catch (error) { logIgnoredError('stats_change', error); }
     }
 
     function captureIfDetached() {
-      try { captureReaderAnchor(); } catch (_error) { /* best-effort */ }
+      try { captureReaderAnchor(); } catch (error) { logIgnoredError('capture_anchor', error); }
     }
 
     function restoreIfDetached() {
-      try { noteProgrammaticWrite?.('virtualizer'); } catch (_error) { /* best-effort */ }
-      try { restoreReaderAnchor(); } catch (_error) { /* best-effort */ }
+      try { noteProgrammaticWrite?.('virtualizer'); } catch (error) { logIgnoredError('note_write', error); }
+      try { restoreReaderAnchor(); } catch (error) { logIgnoredError('restore_anchor', error); }
     }
 
     function mountEntryContents(entryEl) {
@@ -331,7 +338,7 @@
 
     function cancelUnmountFrame() {
       if (!unmountFrame) return;
-      try { win?.cancelAnimationFrame?.(unmountFrame); } catch (_error) { /* best-effort */ }
+      win?.cancelAnimationFrame?.(unmountFrame);
       unmountFrame = 0;
     }
 
@@ -360,7 +367,7 @@
         // with no restore write to attribute (restore is skipped while follow
         // is latched). The virtualizer knows its own mutations — attribute the
         // batch regardless of whether a restore ran.
-        try { noteProgrammaticWrite?.('virtualizer'); } catch (_error) { /* best-effort */ }
+        try { noteProgrammaticWrite?.('virtualizer'); } catch (error) { logIgnoredError('note_write', error); }
       }
       if (unmountQueue.size > 0) scheduleUnmountWork();
       publishStats('unmount_batch');
@@ -377,7 +384,7 @@
 
     function cancelIntersectionFrame() {
       if (!intersectionFrame) return;
-      try { win?.cancelAnimationFrame?.(intersectionFrame); } catch (_error) { /* best-effort */ }
+      win?.cancelAnimationFrame?.(intersectionFrame);
       intersectionFrame = 0;
     }
 
@@ -574,7 +581,7 @@
     function disconnectObserver() {
       observerGeneration += 1;
       if (observer) {
-        try { observer.disconnect(); } catch (_error) { /* best-effort */ }
+        observer.disconnect();
       }
       observer = null;
       observerRootMargin = '';
@@ -692,7 +699,7 @@
       var nextEntries = new Set(entries);
       observedEntries.forEach(function unobserveRemoved(entryEl) {
         if (nextEntries.has(entryEl)) return;
-        try { observer?.unobserve?.(entryEl); } catch (_error) { /* best-effort */ }
+        observer?.unobserve?.(entryEl);
         observedEntries.delete(entryEl);
         unmountQueue.delete(entryEl);
       });
@@ -817,7 +824,7 @@
 
     function clearResizeTimer() {
       if (resizeTimer == null) return;
-      try { win?.clearTimeout?.(resizeTimer); } catch (_error) { /* best-effort */ }
+      win?.clearTimeout?.(resizeTimer);
       resizeTimer = null;
     }
 
@@ -878,10 +885,9 @@
       if (!rootEl) return '';
       var inlineStyle = rootEl.style;
       return [
-        rootEl.getAttribute?.('data-chat-zoom') || '',
+        rootEl.getAttribute?.('data-font-scale') || '',
         rootEl.getAttribute?.('data-chat-width') || '',
-        inlineStyle?.getPropertyValue?.('--chat-zoom-percent') || '',
-        inlineStyle?.getPropertyValue?.('--chat-zoom-factor') || '',
+        inlineStyle?.getPropertyValue?.('--font-scale') || '',
       ].join('\x1f');
     }
 
@@ -894,7 +900,7 @@
     }
 
     function connectLayoutInvalidationHooks() {
-      try { win?.addEventListener?.('resize', handleWindowResize); } catch (_error) { /* best-effort */ }
+      win?.addEventListener?.('resize', handleWindowResize);
       var ResizeObserverCtor = win && typeof win.ResizeObserver === 'function' ? win.ResizeObserver : null;
       if (ResizeObserverCtor && (chatThreadScroll || chatTimeline)) {
         try {
@@ -911,11 +917,11 @@
           layoutAxisObserver = new MutationObserverCtor(handleLayoutMutation);
           layoutAxisObserver.observe(doc.documentElement, {
             attributes: true,
-            attributeFilter: ['data-chat-zoom', 'data-chat-width', 'style'],
+            attributeFilter: ['data-font-scale', 'data-chat-width', 'style'],
           });
         } catch (_error3) { layoutAxisObserver = null; }
       }
-      try { chatTimeline?.addEventListener?.('focusin', handleTimelineFocus, true); } catch (_error4) { /* best-effort */ }
+      chatTimeline?.addEventListener?.('focusin', handleTimelineFocus, true);
     }
 
     function handleTimelineFocus(event) {
@@ -934,12 +940,12 @@
       disconnectObserver();
       cancelUnmountQueue();
       clearResizeTimer();
-      try { win?.removeEventListener?.('resize', handleWindowResize); } catch (_error) { /* best-effort */ }
-      try { chatTimeline?.removeEventListener?.('focusin', handleTimelineFocus, true); } catch (_error2) { /* best-effort */ }
-      try { resizeObserver?.disconnect?.(); } catch (_error3) { /* best-effort */ }
-      try { layoutAxisObserver?.disconnect?.(); } catch (_error4) { /* best-effort */ }
+      win?.removeEventListener?.('resize', handleWindowResize);
+      chatTimeline?.removeEventListener?.('focusin', handleTimelineFocus, true);
+      resizeObserver?.disconnect?.();
+      layoutAxisObserver?.disconnect?.();
       if (canonicalRerenderFrame) {
-        try { win?.cancelAnimationFrame?.(canonicalRerenderFrame); } catch (_error5) { /* best-effort */ }
+        win?.cancelAnimationFrame?.(canonicalRerenderFrame);
       }
       canonicalRerenderFrame = 0;
       resizeObserver = null;

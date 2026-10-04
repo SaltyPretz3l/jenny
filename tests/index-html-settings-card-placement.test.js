@@ -59,11 +59,13 @@ test('Readiness is the first settings card and the content header carries no con
   assert.equal(firstCard.getAttribute('data-settings-section'), 'readiness');
   assert.ok(firstCard.querySelector('#settingsControlTowerHost'), 'the list host lives inside the Readiness card');
   assert.ok(firstCard.querySelector('#readinessBadge.settings-badge'), 'static card header carries the summary badge');
-  const header = doc.querySelector('#settingsView .settings-content-header');
-  assert.ok(header, 'masthead still present');
-  assert.equal(header.querySelector('.settings-control-tower-host, #settingsControlTowerHost'), null, 'header is static: no injected host');
-  assert.ok(header.querySelector('.settings-masthead-title'), 'title stays');
-  assert.ok(header.querySelector('.settings-overview-traits'), 'traits stay');
+  assert.equal(doc.querySelector('#settingsView .settings-content-header'), null);
+  assert.equal(doc.querySelector('.settings-nav-kicker, .settings-nav-copy'), null);
+  for (const id of ['editorBadge', 'homeBadge', 'accountBadge', 'appearanceBadge', 'contextBadge', 'offlineBadge', 'appearanceStatus']) assert.equal(doc.getElementById(id), null);
+  assert.ok(doc.getElementById('modelBadge'));
+  assert.ok(doc.getElementById('memoryBadge'));
+  assert.equal(doc.querySelector('[data-settings-section="tools"] .settings-badge'), null);
+
 });
 
 test('activating Advanced from the settings nav shows its card inside the settings view only', async (t) => {
@@ -91,4 +93,45 @@ test('activating Advanced from the settings nav shows its card inside the settin
   assert.ok(card.closest('#settingsView .settings-content-scroll'), 'Advanced card is hosted by the settings view');
   const active = [...doc.querySelectorAll('.settings-card.settings-section-active')];
   assert.deepEqual(active.map((n) => n.getAttribute('data-settings-section')), ['advanced']);
+});
+
+// Rows are rendered by script, so the static markup shows only their hosts.
+const ROW_HOSTS = '[data-setting-mount], .settings-toggle-list, .settings-editor-field-list, .settings-field-row, .settings-field';
+
+test('a list of rows always sits inside a group or a fold, so it never spans the whole page', () => {
+  const doc = loadIndexDocument();
+  const loose = [];
+  const check = (parent, section) => {
+    for (const child of parent.children) {
+      if (!child.matches(ROW_HOSTS) && !child.querySelector(ROW_HOSTS)) continue;
+      if (child.matches('.settings-flow')) check(child, section);
+      else if (!child.matches('.settings-group, .settings-fold')) loose.push(`${section}: ${child.id || child.className}`);
+    }
+  };
+  for (const card of doc.querySelectorAll('.settings-card[data-settings-section]')) check(card, card.getAttribute('data-settings-section'));
+  assert.deepEqual(loose, []);
+});
+
+test('the rail tablist owns tabs only, and the Settings view has its page heading', () => {
+  const doc = loadIndexDocument();
+  assert.equal(require('../renderer/shell/renderer-settings-nav-utils').renderSettingsNav(doc, {}), true);
+  const tablists = doc.querySelectorAll('#settingsView [role="tablist"]');
+  assert.equal(tablists.length, 1);
+  const tabs = [...tablists[0].querySelectorAll('[role="tab"]')];
+  assert.ok(tabs.length >= 10, 'the rail carries the section tabs');
+  const strays = [...tablists[0].querySelectorAll('*')]
+    .filter((el) => !el.closest('[role="tab"]') && el.getAttribute('role') !== 'presentation' && el.getAttribute('aria-hidden') !== 'true')
+    .map((el) => el.outerHTML.slice(0, 80));
+  assert.deepEqual(strays, [], 'the picker, the search field and group names are not children of the tablist');
+  for (const tab of tabs) {
+    assert.ok(doc.getElementById(tab.getAttribute('aria-describedby'))?.textContent.trim(), `${tab.id} is read with its group name`);
+  }
+  assert.equal(doc.querySelector('#settingsView nav.settings-nav').hasAttribute('role'), false, 'the rail stays a navigation landmark');
+  assert.deepEqual([...doc.querySelectorAll('#settingsView h2')].map((heading) => heading.textContent), ['Settings']);
+});
+
+test('the PDF add-on block is a named group', () => {
+  const host = loadIndexDocument().getElementById('toolsPdfAddonHost');
+  assert.equal(host.getAttribute('role'), 'group');
+  assert.equal(host.getAttribute('aria-labelledby'), 'toolsPdfAddonHeading');
 });

@@ -186,7 +186,7 @@ class RestoredToolInputs:
 
         return _frozen(_decode(self.canonical_bytes, self.source_sha256))
 
-    def bind_for_attempt(  # noqa: PLR0913
+    def bind_for_attempt(
         self,
         *,
         call: ToolCallRequest,

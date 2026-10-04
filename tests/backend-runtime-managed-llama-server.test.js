@@ -10,7 +10,7 @@ const { loadModel } = require('../services/backend/backend-runtime');
 
 function makeManagedLlamaLoadService({ managerState = 'ready', managerError = '', ensureState = 'ready',
   enabled = true, perModelEngine = 'llama-server', unloadError = null, fallbackAfterInit = null,
-  lastUsedTag = 'ornith-9b', stopError = '' } = {}) {
+  lastUsedTag = 'ornith-9b', stopError = '', ollamaManager } = {}) {
   const calls = [], logs = [];
   const entry = { engine: perModelEngine, modelPath: 'G:\\models\\ornith.gguf', tag: '', mtp: { mode: 'mtp' } };
   const managed = { enabled, profileId: 'balanced', lastUsedTag, perModel: { 'ornith-9b': entry } };
@@ -20,7 +20,7 @@ function makeManagedLlamaLoadService({ managerState = 'ready', managerError = ''
     async stop() { calls.push(['stop']); return { state: 'stopped', lastError: stopError }; },
   };
   const service = {
-    calls, logs, currentEngineType: 'ollama', currentModel: 'old:latest', _lastEngineFallback: null,
+    calls, logs, ollamaManager, currentEngineType: 'ollama', currentModel: 'old:latest', _lastEngineFallback: null,
     providerIntegrationRegistry: null,
     options: { getLlamaServerManager: () => manager },
     sidecarClient: { async modelsUnload(model) { calls.push(['modelsUnload', model]); if (unloadError) throw unloadError; } },
@@ -50,8 +50,12 @@ test('managed llama-server load persists nothing when the sidecar falls back aft
   await assert.rejects(loadModel(service, { model: 'ornith:9b', engine_type: 'openai-compatible' }), /Could not load openai-compatible engine/);
   assert.deepEqual(service.calls.map(([name]) => name), ['modelsUnload', 'ensureRunning', 'initialize']);
 });
-test('managed llama-server load continues after generic unload failure but stops on launch failure', async () => {
-  const service = makeManagedLlamaLoadService({ ensureState: 'crashed', unloadError: new Error('unload failed') });
+test('managed llama-server load continues after an unload failure only when the Ollama daemon is confirmed down, then stops on launch failure', async () => {
+  const service = makeManagedLlamaLoadService({
+    ensureState: 'crashed',
+    unloadError: new Error('unload failed'),
+    ollamaManager: { isConfirmedDown: async () => true },
+  });
   await assert.rejects(
     loadModel(service, { model: 'ornith:9b', engine_type: 'openai-compatible' }),
     /Could not start llama-server for "ornith:9b": launch failed/
@@ -60,7 +64,16 @@ test('managed llama-server load continues after generic unload failure but stops
   assert.equal(service.logs.some(({ event }) => event === 'backend.engine_switch_unload_failed'), true);
 });
 
-// A timeout leaves GPU residency unknown; a definitive generic rejection does not.
+// Any unload failure leaves GPU residency unknown unless the daemon is positively down.
+test('managed llama-server load stops after a generic unload failure when the daemon is not known to be down', async () => {
+  const service = makeManagedLlamaLoadService({ unloadError: new Error('unload failed') });
+  await assert.rejects(
+    loadModel(service, { model: 'ornith:9b', engine_type: 'openai-compatible' }),
+    /could not be confirmed evicted.*aborted so the GPU is not double-loaded/i
+  );
+  assert.deepEqual(service.calls.map(([name]) => name), ['modelsUnload']);
+});
+
 test('managed llama-server load stops after a timed-out unload', async () => {
   const unloadError = Object.assign(new Error('unload timed out'), { category: 'timeout' });
   const service = makeManagedLlamaLoadService({ unloadError });
@@ -100,9 +113,13 @@ test('switching to Ollama stops an active llama-server first, then forgets the a
   const failed = makeManagedLlamaLoadService({ managerState: 'stopped', managerError: 'llama_server_binary_not_found' });
   await loadModel(failed, { model: 'ornith:9b', engine_type: 'ollama' });
   assert.deepEqual(failed.calls.map(([name]) => name), ['stop', 'initialize', 'updateManagedLlamaServer', 'updatePreferredEngineType']);
-  // A stop that could not be confirmed is a WARN, not a success line; the switch still proceeds.
+  // A stop that could not be confirmed is a WARN, not a success line, and aborts the switch.
   const unconfirmed = makeManagedLlamaLoadService({ stopError: 'stop_unconfirmed' });
-  await loadModel(unconfirmed, { model: 'ornith:9b', engine_type: 'ollama' });
+  await assert.rejects(
+    loadModel(unconfirmed, { model: 'ornith:9b', engine_type: 'ollama' }),
+    /managed llama-server could not be confirmed stopped/
+  );
+  assert.deepEqual(unconfirmed.calls.map(([name]) => name), ['stop']);
   const stopLogs = unconfirmed.logs.filter(({ event }) => event.startsWith('backend.engine_switch_stop_llama_server'));
   assert.deepEqual(stopLogs.map(({ level, event }) => [level, event]), [['WARN', 'backend.engine_switch_stop_llama_server_failed']]);
   assert.equal(stopLogs[0].details.message, 'stop_unconfirmed');

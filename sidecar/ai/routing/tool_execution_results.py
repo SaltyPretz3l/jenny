@@ -189,6 +189,9 @@ def _side_effecting_by_tool() -> dict[str, bool]:
     }
 
 
+side_effecting_by_tool = _side_effecting_by_tool
+
+
 def _derive_failure_class(outcome: ToolExecutionOutcome) -> str | None:
     if outcome.success:
         return None

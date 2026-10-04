@@ -70,6 +70,11 @@
       .filter(function uniqueRoot(rootEl, index, roots) {
         return rootEl && roots.indexOf(rootEl) === index;
       });
+    // Split view: a second pane mounts after boot, so its transcript and
+    // inspector are found at event time under `paneHost` (the document): the
+    // [data-chat-node] timeline or inspector of a pane root other than pane
+    // 0 (pane 0's own roots keep their direct listeners above).
+    var paneHost = settings.paneHost || null;
     var doc = (chatTimeline && chatTimeline.ownerDocument)
       || windowRef.document
       || null;
@@ -299,16 +304,41 @@
       };
     }
 
+    function otherPaneRoot(node) {
+      var pane = paneHost && node && typeof node.closest === 'function'
+        ? node.closest('.chat-pane[data-pane-id]')
+        : null;
+      if (!pane || pane.getAttribute('data-pane-id') === '0' || !paneHost.contains(pane)) {
+        return null;
+      }
+      var rootEl = node.closest('[data-chat-node="chatTimeline"], [data-chat-node="subagentInspector"]');
+      return rootEl && pane.contains(rootEl) ? rootEl : null;
+    }
+
     function insideTimeline(node) {
+      var paneRoot = otherPaneRoot(node);
+      if (paneRoot) {
+        return paneRoot.getAttribute('data-chat-node') === 'chatTimeline';
+      }
       return !chatTimeline
         || typeof chatTimeline.contains !== 'function'
         || chatTimeline.contains(node);
     }
 
     function insidePathRoot(node) {
-      return pathRoots.length === 0 || pathRoots.some(function containsNode(rootEl) {
+      return pathRoots.length === 0 || Boolean(otherPaneRoot(node)) || pathRoots.some(function containsNode(rootEl) {
         return typeof rootEl.contains !== 'function' || rootEl.contains(node);
       });
+    }
+
+    // The pane host's listeners act only for another pane's roots, so a pane 0
+    // event is never handled twice.
+    function forOtherPane(handler) {
+      return function handleOtherPaneEvent(event) {
+        if (otherPaneRoot(event && event.target)) {
+          handler(event);
+        }
+      };
     }
 
     function handleChipClick(event) {
@@ -476,7 +506,7 @@
         items: items,
         anchorX: event.clientX,
         anchorY: event.clientY,
-        rootEl: chatTimeline || undefined,
+        rootEl: otherPaneRoot(target) || chatTimeline || undefined,
         onActionError: function reportMenuActionError(error) {
           appendClientLog('WARN', 'chat.path_menu_action_failed', {
             path: resolved.path,
@@ -485,6 +515,10 @@
         },
       });
     }
+
+    var paneHostClick = forOtherPane(handleChipClick);
+    var paneHostKeydown = forOtherPane(handleChipKeydown);
+    var paneHostContextMenu = forOtherPane(handleContextMenu);
 
     function attach() {
       if (typeof windowRef.addEventListener === 'function') {
@@ -495,6 +529,11 @@
         rootEl.addEventListener('keydown', handleChipKeydown, true);
         rootEl.addEventListener('contextmenu', handleContextMenu);
       });
+      if (paneHost && typeof paneHost.addEventListener === 'function') {
+        paneHost.addEventListener('click', paneHostClick, true);
+        paneHost.addEventListener('keydown', paneHostKeydown, true);
+        paneHost.addEventListener('contextmenu', paneHostContextMenu);
+      }
       return function dispose() {
         disposed = true;
         if (typeof windowRef.removeEventListener === 'function') {
@@ -505,6 +544,11 @@
           rootEl.removeEventListener('keydown', handleChipKeydown, true);
           rootEl.removeEventListener('contextmenu', handleContextMenu);
         });
+        if (paneHost && typeof paneHost.removeEventListener === 'function') {
+          paneHost.removeEventListener('click', paneHostClick, true);
+          paneHost.removeEventListener('keydown', paneHostKeydown, true);
+          paneHost.removeEventListener('contextmenu', paneHostContextMenu);
+        }
       };
     }
 

@@ -10,9 +10,10 @@ import time
 import uuid
 from collections import OrderedDict
 from dataclasses import dataclass, field, replace
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Callable, Iterable, TypeVar
 
+from sidecar.ai.config import read_environment_value
 from sidecar.ai.error_codes import (
     CMP_TOOL_INVALID_PATH,
     CMP_TOOL_PRECONDITION_UNMET,
@@ -38,6 +39,23 @@ MAX_OPERATION_LEDGER_ENTRIES = 128
 MAX_OPERATION_LEDGER_PATHS = 256
 MIN_PORCELAIN_RECORD_CHARS = 4
 _DIRECT_SESSION_ID = "builtin-mcp"
+# TR-015: foreground shell tools report ``workspace_changed`` from a status diff
+# (``JENNY_ENABLE_SHELL_CHANGE_EVIDENCE=0`` disables the probe). Interpreter and
+# test caches are not the model's edits.
+SHELL_CHANGE_EVIDENCE_FLAG = "JENNY_ENABLE_SHELL_CHANGE_EVIDENCE"
+_SHELL_EVIDENCE_TOOLS = frozenset({"run_command", "run_temp_script"})
+_CACHE_PATH_SEGMENTS = frozenset({"__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache"})
+# ``source_changed`` narrows that to saved source: index-only transitions
+# (``git add``/``commit``) and untracked outputs without a source suffix (a stray
+# ``cfile=none``, a repo-root ``holdout/`` data folder) are not saves. New stray
+# outputs are named in the result so the model notices them (MQ-014/MQ-027).
+_SOURCE_SUFFIXES = frozenset({
+    ".py", ".pyi", ".js", ".mjs", ".cjs", ".ts", ".tsx", ".jsx", ".json",
+    ".toml", ".cfg", ".ini", ".yaml", ".yml", ".md", ".rst", ".txt",
+})
+MAX_STRAY_NOTE_ENTRIES = 5
+MAX_STRAY_NOTE_CHARS = 400
+_STRAY_NOTE_PREFIX = "New untracked files outside ignored folders: "
 _INTERNAL_STATUS_PREFIXES = (
     ".jenny/artifacts/",
     ".jenny/backups/",
@@ -70,6 +88,13 @@ class WorktreeBaseline:
     background_active: bool = False
     observation_degraded: bool = False
     operation_ledger: list[dict[str, object]] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class ShellChangeEvidence:
+    workspace_changed: bool
+    source_changed: bool
+    created_untracked: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -171,6 +196,12 @@ def run_with_worktree_observation(  # noqa: PLR0913 - dispatch context is explic
                 "worktree attribution pre-observation failed",
                 extra={"tool_name": tool_name, "error_type": type(error).__name__},
             )
+    # A live baseline already attributes changed paths; probe only without one.
+    shell_probe = (
+        _begin_shell_change_probe(tool_name, arguments, workspace)
+        if observation is None
+        else None
+    )
     try:
         result = handler()
     except BaseException:
@@ -191,11 +222,139 @@ def run_with_worktree_observation(  # noqa: PLR0913 - dispatch context is explic
         tool_name=tool_name,
         logger=logger,
     )
-    if isinstance(result, ToolHandlerResult) and attribution is not None:
-        metadata = dict(result.metadata)
-        metadata["worktree_observation"] = attribution
-        return replace(result, metadata=metadata)
-    return result
+    evidence: dict[str, object] = {}
+    if attribution is not None:
+        evidence["worktree_observation"] = attribution
+    shell_change = _finish_shell_change_probe(shell_probe, workspace)
+    if shell_change is not None:
+        evidence["workspace_changed"] = shell_change.workspace_changed
+        evidence["source_changed"] = shell_change.source_changed
+    if not isinstance(result, ToolHandlerResult) or not evidence:
+        return result
+    output = result.output
+    if shell_change is not None and shell_change.created_untracked:
+        evidence["created_untracked_paths"] = list(
+            shell_change.created_untracked[:MAX_STRAY_NOTE_ENTRIES]
+        )
+        output = _with_stray_note(output, _stray_note(shell_change.created_untracked))
+    return replace(result, output=output, metadata={**result.metadata, **evidence})
+
+
+def _begin_shell_change_probe(
+    tool_name: str, arguments: dict[str, object], workspace: WorkspaceGuard
+) -> WorktreeSnapshot | None:
+    """Status snapshot before a foreground shell tool, for ``workspace_changed`` evidence.
+
+    Consumers (the write-progress streak, the verification gate) treat a command
+    as a save only on this evidence. No git repository, a background job, or any
+    probe failure yields no evidence rather than a guess.
+    """
+    if (
+        tool_name not in _SHELL_EVIDENCE_TOOLS
+        or arguments.get("run_in_background") is True
+        or read_environment_value(SHELL_CHANGE_EVIDENCE_FLAG, "1") == "0"
+    ):
+        return None
+    try:
+        return _status_snapshot(_repo_root_for(arguments, workspace), workspace=workspace)
+    except Exception:  # noqa: BLE001 - evidence is optional; the tool result is primary.
+        return None
+
+
+def _finish_shell_change_probe(
+    before: WorktreeSnapshot | None, workspace: WorkspaceGuard
+) -> ShellChangeEvidence | None:
+    if before is None:
+        return None
+    try:
+        after = _status_snapshot(before.repo_root, workspace=workspace)
+        changed = sorted(
+            path for path in _changed_paths(before, after) if not _is_cache_path(path)
+        )
+        return ShellChangeEvidence(
+            workspace_changed=bool(changed),
+            source_changed=any(_is_source_change(before, after, path) for path in changed),
+            created_untracked=_created_untracked_entries(before, after, changed),
+        )
+    except Exception:  # noqa: BLE001 - evidence is optional; the tool result is primary.
+        return None
+
+
+def _is_source_like(path: str) -> bool:
+    return PurePosixPath(path).suffix.lower() in _SOURCE_SUFFIXES
+
+
+def _is_source_change(before: WorktreeSnapshot, after: WorktreeSnapshot, path: str) -> bool:
+    """Content changed and the path is tracked, or untracked with a source suffix.
+
+    A status change with unchanged bytes is an index-only transition. A path
+    that left status (committed or cleaned) is compared against a fresh lstat.
+    A path that was clean (or absent) before and is in status now differs from
+    HEAD because of this call, also when the same command staged it.
+    """
+    before_state, after_state = before.status.get(path), after.status.get(path)
+    if before_state is not None:
+        if after_state is not None:
+            after_print = after.fingerprints.get(path)
+        else:
+            after_print = _fingerprint_status_paths(after.repo_root, {path: ""})[path]
+        if before.fingerprints.get(path) == after_print:
+            return False
+    tracked = "??" not in (before_state, after_state)
+    return tracked or _is_source_like(path)
+
+
+def _created_untracked_entries(
+    before: WorktreeSnapshot, after: WorktreeSnapshot, changed: list[str]
+) -> tuple[str, ...]:
+    """New untracked, non-source outputs; 2+ under one top-level folder collapse."""
+    strays = [
+        path for path in changed
+        if after.status.get(path) == "??"
+        and before.status.get(path) != "??"
+        and not _is_source_like(path)
+    ]
+    by_folder: dict[str, list[str]] = {}
+    for path in strays:
+        top, _, rest = path.partition("/")
+        by_folder.setdefault(f"{top}/" if rest else path, []).append(path)
+    entries = [
+        f"{key} ({len(paths)} files)" if len(paths) > 1 else paths[0]
+        for key, paths in sorted(by_folder.items())
+    ]
+    return tuple(_printable(entry) for entry in entries)
+
+
+def _printable(text: str) -> str:
+    return "".join(char if char.isprintable() else "?" for char in text)
+
+
+def _stray_note(entries: tuple[str, ...]) -> str:
+    shown = entries[:MAX_STRAY_NOTE_ENTRIES]
+    hidden = len(entries) - len(shown)
+    suffix = f" (+{hidden} more)" if hidden else ""
+    body = ", ".join(shown)
+    budget = MAX_STRAY_NOTE_CHARS - len(_STRAY_NOTE_PREFIX) - len(suffix)
+    if len(body) > budget:
+        body = body[: budget - 3] + "..."
+    return f"{_STRAY_NOTE_PREFIX}{body}{suffix}"
+
+
+def _with_stray_note(output: str, note: str) -> str:
+    """One more line for the model; a JSON object result gains a key instead."""
+    try:
+        payload = json.loads(output)
+    except ValueError:
+        payload = None
+    if isinstance(payload, dict):
+        return json.dumps({**payload, "new_untracked_files": note}, ensure_ascii=False, indent=2)
+    return f"{output}\n{note}" if output else note
+
+
+def _is_cache_path(path: str) -> bool:
+    return path.endswith(".pyc") or any(
+        part in _CACHE_PATH_SEGMENTS for part in path.split("/")
+    )
 
 
 def _finish_observation_fail_soft(  # noqa: PLR0913 - dispatch evidence context.
@@ -351,6 +510,10 @@ def _safe_mark_observation_failure(
 
 
 def _capture(arguments: dict[str, object], workspace: WorkspaceGuard) -> WorktreeSnapshot:
+    return _capture_repo(_repo_root_for(arguments, workspace), workspace=workspace)
+
+
+def _repo_root_for(arguments: dict[str, object], workspace: WorkspaceGuard) -> Path:
     cwd = _resolve_cwd(arguments, workspace)
     workspace_root = workspace.require_root().resolve()
     repo_root = _find_git_root(cwd, workspace_root)
@@ -364,10 +527,13 @@ def _capture(arguments: dict[str, object], workspace: WorkspaceGuard) -> Worktre
                 "failure_class": "precondition_unmet",
             },
         )
-    return _capture_repo(repo_root, workspace=workspace)
+    return repo_root
 
 
-def _capture_repo(repo_root: Path, *, workspace: WorkspaceGuard | None = None) -> WorktreeSnapshot:
+def _status_snapshot(
+    repo_root: Path, *, workspace: WorkspaceGuard | None = None
+) -> WorktreeSnapshot:
+    """Status and path fingerprints only; HEAD and branch stay unresolved."""
     raw_status = _run_git_raw(
         ["status", "--porcelain=v1", "-z", "--untracked-files=all"],
         cwd=repo_root, workspace=workspace,
@@ -379,18 +545,23 @@ def _capture_repo(repo_root: Path, *, workspace: WorkspaceGuard | None = None) -
             message=f"worktree status exceeds {MAX_STATUS_PATHS} path limit",
             retryable=False,
         )
+    return WorktreeSnapshot(
+        repo_root=repo_root.resolve(),
+        head=None,
+        branch=None,
+        status=status,
+        fingerprints=_fingerprint_status_paths(repo_root, status),
+    )
+
+
+def _capture_repo(repo_root: Path, *, workspace: WorkspaceGuard | None = None) -> WorktreeSnapshot:
+    snapshot = _status_snapshot(repo_root, workspace=workspace)
     try:
         head = _run_git(["rev-parse", "--verify", "HEAD"], cwd=repo_root, workspace=workspace)
     except ToolExecutionFailure:
         head = None
     branch = _run_git(["branch", "--show-current"], cwd=repo_root, workspace=workspace)
-    return WorktreeSnapshot(
-        repo_root=repo_root.resolve(),
-        head=head,
-        branch=branch or None,
-        status=status,
-        fingerprints=_fingerprint_status_paths(repo_root, status),
-    )
+    return replace(snapshot, head=head, branch=branch or None)
 
 
 def _parse_porcelain(raw: str) -> dict[str, str]:

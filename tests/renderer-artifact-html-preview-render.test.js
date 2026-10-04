@@ -14,7 +14,6 @@ const {
   shouldRenderHtmlPreview,
   renderHtmlPreviewKind,
 } = require('../renderer/features/renderer-artifact-html-preview-render.js');
-const { renderArtifactViewModeButton } = require('../renderer/features/renderer-artifacts-render.js');
 
 const escapeHtml = (value) => String(value ?? '')
   .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -52,7 +51,6 @@ function makeCtx(t, {
   editable = true,
   artifact = null,
   messages = null,
-  artifactPanelV3 = false,
 } = {}) {
   const dom = new JSDOM('<body></body>', { runScripts: 'outside-only' });
   t.after(() => dom.window.close());
@@ -77,7 +75,7 @@ function makeCtx(t, {
   const surface = { key: 'full', previewContent: el(), editorShell: el(), detailNote: el() };
   const state = {
     artifacts: { loading: false, lastError: '' },
-    features: { featureFlags: { artifact_html_preview: flagOn, artifact_panel_v3: artifactPanelV3 } },
+    features: { featureFlags: { artifact_html_preview: flagOn } },
   };
   if (messages) state.messagesBySession = new Map([['s1', messages]]);
   const deps = {
@@ -90,7 +88,6 @@ function makeCtx(t, {
     ensureEditor: () => ({ setDocument: () => Promise.resolve() }),
     getPreferredEditorValue: () => content,
     getArtifactViewMode: () => viewMode,
-    renderArtifactViewModeButton,
   };
   const resolvedArtifact = artifact || {
     id: 'a1',
@@ -166,12 +163,10 @@ test('renders the featherweight strip, sandboxed staged-src iframe, and Running 
   assert.equal(stagedDocuments.length, 1);
   assert.ok(stagedDocuments[0].includes('<p>live</p>'), 'artifact body must travel in the staged document');
   assert.equal(surface.editorShell.classList.contains('hidden'), true);
-  // The view-mode toolbar survives so the user can still reach the source.
-  assert.ok(html.includes('data-artifact-view-kind="html"'), html);
 });
 
-test('Artifact Panel V3 suppresses the executable-HTML in-content view toolbar', (t) => {
-  const { surface, ctx } = makeCtx(t, { artifactPanelV3: true });
+test('the Canvas chrome owns the view control: no executable-HTML in-content toolbar', (t) => {
+  const { surface, ctx } = makeCtx(t);
   renderHtmlPreviewKind(ctx, 'html');
   assert.equal(surface.previewContent.querySelector('[data-artifact-view-kind]'), null);
 });

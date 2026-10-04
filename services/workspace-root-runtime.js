@@ -47,6 +47,19 @@ function persistConfiguredRoot(configService, context, reason) {
   }
 }
 
+// The renderer-facing shape of ensureWorkspaceProject's answer. Hosted
+// profiles never provision implicitly (`host_mode_server`), which is not a
+// failure worth telling anyone about, so it yields no outcome at all.
+function provisionedOutcome(provisioned) {
+  if (provisioned?.ok === true && typeof provisioned.project?.id === 'string') {
+    return { ok: true, project_id: provisioned.project.id };
+  }
+  const reason = typeof provisioned?.reason === 'string' && provisioned.reason
+    ? provisioned.reason.slice(0, 80)
+    : 'provisioning_failed';
+  return reason === 'host_mode_server' ? null : { ok: false, reason };
+}
+
 function participant({ id, reason, isActive, terminate }) {
   return {
     id,
@@ -56,20 +69,11 @@ function participant({ id, reason, isActive, terminate }) {
 }
 
 function registerRuntimeParticipants(coordinator, {
-  terminalService = null,
   ptyService = null,
   testRunnerService = null,
   runTaskService = null,
 } = {}) {
   const unregister = [];
-  if (terminalService) {
-    unregister.push(coordinator.registerParticipant(participant({
-      id: 'workspace_terminal',
-      reason: 'terminal_active',
-      isActive: () => terminalService.hasSession?.() === true,
-      terminate: async () => terminalService.kill?.({}),
-    })));
-  }
   if (ptyService) {
     unregister.push(coordinator.registerParticipant(participant({
       id: 'workspace_pty',
@@ -119,7 +123,6 @@ function createWorkspaceRootRuntime({
   getOwnerWindow = () => null,
   backendService = null,
   watcher = null,
-  terminalService = null,
   ptyService = null,
   testRunnerService = null,
   runTaskService = null,
@@ -131,6 +134,7 @@ function createWorkspaceRootRuntime({
   }
   let watcherShouldRun = false;
   let pendingRefresh = Promise.resolve();
+  let lastProvisioning = null;
   const coordinator = new WorkspaceRootCoordinator({
     ...coordinatorOptions,
     initialRootPath: currentConfiguredRoot(configService),
@@ -174,15 +178,22 @@ function createWorkspaceRootRuntime({
         }
       }
       // The chosen folder is the project: provision (or find) the project bound
-      // to it so new chats land there. A provisioning failure is logged by the
-      // provisioner and never rolls the root transition back.
+      // to it so new chats land there. A provisioning failure never rolls the
+      // root transition back; its outcome rides on the commit result (below)
+      // so the renderer can say the project could not be created, and why.
       if (context.reason === 'commit' && context.rootPath
         && typeof backendService?.ensureWorkspaceProject === 'function') {
+        let outcome;
         try {
-          await backendService.ensureWorkspaceProject(context.rootPath, 'workspace_root_commit');
+          const provisioned = await backendService.ensureWorkspaceProject(
+            context.rootPath, 'workspace_root_commit'
+          );
+          outcome = provisionedOutcome(provisioned);
         } catch (_error) {
           // The root is already persisted; chats fall back to General until a retry.
+          outcome = { ok: false, reason: 'provisioning_failed' };
         }
+        lastProvisioning = { transitionId: context.transitionId, outcome };
       }
     },
     stopRootServices: async (context) => {
@@ -207,8 +218,20 @@ function createWorkspaceRootRuntime({
       ? (level, event, details) => logger(String(level).toUpperCase(), event, details)
       : null,
   });
+  // The coordinator builds the commit result after refreshManagedRoot (where
+  // provisioning runs) has finished, so the outcome recorded for this
+  // transition is attached as `project_provisioning` on a committed result.
+  // Every caller of workspaceRoot.commit goes through this instance method.
+  const commitTransition = coordinator.commit.bind(coordinator);
+  coordinator.commit = (payload) => commitTransition(payload).then((result) => {
+    const recorded = lastProvisioning;
+    if (!result?.committed || !recorded || !recorded.outcome
+      || recorded.transitionId !== String(payload?.transitionId || '')) {
+      return result;
+    }
+    return { ...result, project_provisioning: { ...recorded.outcome } };
+  });
   const unregisterParticipants = registerRuntimeParticipants(coordinator, {
-    terminalService,
     ptyService,
     testRunnerService,
     runTaskService,

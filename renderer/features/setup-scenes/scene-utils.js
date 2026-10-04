@@ -26,25 +26,11 @@
     return null;
   }
 
-  function getStringUtils() {
-    return resolveDependency('stringUtils', '../../shared/string-utils');
-  }
   function getStepModal() {
     return resolveDependency('inventoryStepModal', '../../inventory/step-modal');
   }
 
-  function escapeHtml(value) {
-    var utils = getStringUtils();
-    if (utils && typeof utils.escapeHtml === 'function') {
-      return utils.escapeHtml(value);
-    }
-    return String(value == null ? '' : value)
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;')
-      .replace(/'/g, '&#39;');
-  }
+  var escapeHtml = resolveDependency('stringUtils', '../../shared/string-utils').escapeHtml;
 
   // Canonical renderer setup registry. Tile order, persistence names, and
   // user-facing counts are projections of this one table so adding an optional

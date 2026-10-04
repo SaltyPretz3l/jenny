@@ -18,14 +18,8 @@
 
   const DEFAULT_SCROLL_TOP_PX = 7 * 60; // first build lands at 07:00
 
-  function escapeHtml(value) {
-    return String(value || '')
-      .replaceAll('&', '&amp;')
-      .replaceAll('<', '&lt;')
-      .replaceAll('>', '&gt;')
-      .replaceAll('"', '&quot;')
-      .replaceAll("'", '&#39;');
-  }
+  const escapeHtml = ((typeof globalThis !== 'undefined' && globalThis.stringUtils)
+    || (typeof require === 'function' ? require('../shared/string-utils') : null)).escapeHtml;
 
   function asObject(value) {
     return value && typeof value === 'object' && !Array.isArray(value) ? value : null;

@@ -37,6 +37,19 @@ function createFakeWebContents() {
   };
 }
 
+// Every fake window any test builds, so afterEach can emit 'closed' and let the
+// startup lifecycle clear its armed reveal timeout (otherwise each lingers ~5 s).
+const allCreatedWindows = [];
+
+test.afterEach(() => {
+  const windows = allCreatedWindows.splice(0);
+  for (const win of windows) {
+    for (const [event, fn] of win.onHandlers) {
+      if (event === 'closed') fn();
+    }
+  }
+});
+
 function makeFakeBrowserWindowClass() {
   const created = [];
   class FakeBrowserWindow {
@@ -51,6 +64,7 @@ function makeFakeBrowserWindowClass() {
       this.loadedFile = undefined;
       this.webContents = createFakeWebContents();
       created.push(this);
+      allCreatedWindows.push(this);
     }
 
     on(event, fn) {
@@ -123,6 +137,7 @@ function makeDeps(overrides = {}) {
       currentWindow = w;
       calls.setMainWindow.push(w);
     },
+    env: {},
     ...overrides,
   };
   return { deps, calls, FakeBrowserWindow };
@@ -380,4 +395,70 @@ test('navigation guard hands http(s) targets to shell.openExternal and denies wi
     ['https://evil.example.com/page', 'https://other.example.com/'],
     'window.open external url also handed to shell.openExternal',
   );
+});
+
+// Top chrome (area 1, 2026-09-29): hide / minimize / show / restore report
+// whether the window is on screen, so main can pause the stats monitor.
+test('window visibility events report on-screen state for the stats monitor pause', () => {
+  const seen = [];
+  const { deps, FakeBrowserWindow } = makeDeps({ onWindowVisibilityChange: (visible) => seen.push(visible) });
+  createMainWindowWithDeps(deps);
+  const win = FakeBrowserWindow.created[0];
+  let visible = true;
+  let minimized = false;
+  win.isVisible = () => visible;
+  win.isMinimized = () => minimized;
+  const fire = (event) => win.onHandlers.filter(([name]) => name === event).forEach(([, fn]) => fn());
+
+  minimized = true; fire('minimize');
+  minimized = false; fire('restore');
+  visible = false; fire('hide');
+  visible = true; fire('show');
+  assert.deepEqual(seen, [false, true, false, true]);
+});
+
+// A-2: the env-only startup_animation kill switch reaches the page before its
+// first paint (theme-bootstrap stamps it), not after the sky is mounted.
+test('projects the startup_animation kill switch into the renderer query only when it is off', () => {
+  const off = makeDeps({ getUiLanguage: () => 'en', env: { JENNY_ENABLE_STARTUP_ANIMATION: '0' } });
+  assert.deepEqual(createMainWindowWithDeps(off.deps).loadOptions, {
+    query: { jennyUiLanguage: 'en', jennyStartupAnimation: 'off' },
+  });
+  const on = makeDeps({ getUiLanguage: () => 'en', env: {} });
+  assert.deepEqual(createMainWindowWithDeps(on.deps).loadOptions, { query: { jennyUiLanguage: 'en' } });
+});
+
+test('installs an application menu with no reload role before the window is created', () => {
+  const order = [];
+  const Menu = {
+    buildFromTemplate: (template) => ({ template }),
+    setApplicationMenu: (menu) => order.push(['menu', menu.template]),
+  };
+  const { deps } = makeDeps({
+    Menu,
+    isPackaged: true,
+    platform: 'win32',
+    setMainWindow: (w) => order.push(['window', w]),
+  });
+  createMainWindowWithDeps(deps);
+  assert.equal(order[0][0], 'menu', 'menu installed before the window exists');
+  const roles = JSON.stringify(order[0][1]);
+  assert.equal(/reload/i.test(roles), false, `no reload accelerator in ${roles}`);
+  assert.match(roles, /editMenu/);
+});
+
+// Real-app B4b: a renderer beforeunload that cancels the unload silently
+// swallowed window close / reload and tripped the unresponsive shutdown. Main
+// overrides any such cancel and logs it.
+test('a prevented unload is logged and overridden so close/reload always proceed', () => {
+  const { deps, calls } = makeDeps();
+  const win = createMainWindowWithDeps(deps);
+
+  const handler = win.webContents.onHandlers.find(([name]) => name === 'will-prevent-unload');
+  assert.ok(handler, 'will-prevent-unload is handled');
+  let prevented = 0;
+  handler[1]({ preventDefault: () => { prevented += 1; } });
+
+  assert.equal(prevented, 1, 'preventDefault here means "ignore beforeunload and unload"');
+  assert.ok(calls.log.some(([level, event]) => level === 'WARN' && event === 'window.unload_prevented'));
 });

@@ -42,7 +42,6 @@ export default [
       // Workspace File Map corpus fixtures are intentionally-shaped ES-module /
       // Python / CSS / HTML source samples fed to the scanner, not project code.
       "tests/fixtures/file-map-scan/**",
-      "comet/**",
       "docs/**",
     ],
   },
@@ -83,44 +82,6 @@ export default [
     },
     rules: {
       "no-redeclare": "off",
-    },
-  },
-  {
-    files: ["remote/portal/**/*.js"],
-    languageOptions: {
-      ecmaVersion: "latest",
-      sourceType: "module",
-      globals: globals.browser,
-    },
-  },
-  {
-    files: ["remote/relay/src/**/*.js"],
-    languageOptions: {
-      ecmaVersion: "latest",
-      sourceType: "module",
-      globals: {
-        ...globals.browser,
-        WebSocketPair: "readonly",
-      },
-    },
-  },
-  {
-    files: ["remote/relay/test/**/*.js"],
-    languageOptions: {
-      ecmaVersion: "latest",
-      sourceType: "module",
-      globals: {
-        ...globals.node,
-        ...globals.browser,
-      },
-    },
-  },
-  {
-    files: ["scripts/build-remote-portal.mjs"],
-    languageOptions: {
-      ecmaVersion: "latest",
-      sourceType: "module",
-      globals: globals.node,
     },
   },
   {

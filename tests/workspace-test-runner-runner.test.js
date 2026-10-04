@@ -160,6 +160,132 @@ test('root-process exit without containment proof remains uncertain', async () =
   });
 });
 
+// IDE-004: a POSIX run is spawned detached, so the child leads its own process
+// group. These fakes stand in for process.kill(-pgid, 0) group probes and the
+// process-tree killer; the real functions are never called with a fake pid.
+function makeGroupFakes({ initiallyEmpty }) {
+  const state = { empty: initiallyEmpty, probes: [], killCalls: [] };
+  return {
+    state,
+    processKillImpl: (pid, signal) => {
+      state.probes.push([pid, signal]);
+      if (signal !== 0) throw new Error('only signal-0 probes are expected');
+      if (state.empty) throw Object.assign(new Error('no such process'), { code: 'ESRCH' });
+      return true;
+    },
+    killProcessTreeImpl: async (pid, options) => {
+      state.killCalls.push([pid, options]);
+      return { terminated: true };
+    },
+  };
+}
+
+test('IDE-004: a natural close with an empty process group confirms containment without any signal', async () => {
+  const fc = makeFakeChild(4242);
+  const fakes = makeGroupFakes({ initiallyEmpty: true });
+  const promise = runTestCommand({
+    command: 'npm test',
+    platform: 'linux',
+    spawn: () => fc.child,
+    now: fixedClock(0, 10),
+    processKillImpl: fakes.processKillImpl,
+    killProcessTreeImpl: fakes.killProcessTreeImpl,
+  });
+  fc.emitClose(0, null);
+  const result = await promise;
+  assert.equal(result.status, 'passed');
+  assert.equal(result.terminationConfirmed, true);
+  assert.equal(result.retryTermination, undefined);
+  assert.deepEqual(fakes.state.probes, [[-4242, 0]], 'only a signal-0 group probe was sent');
+  assert.equal(fakes.state.killCalls.length, 0, 'an already-empty group is never signalled');
+});
+
+test('IDE-004: a lingering group member is killed once, then the emptied group is confirmed', async () => {
+  const fc = makeFakeChild(4242);
+  const fakes = makeGroupFakes({ initiallyEmpty: false });
+  fakes.killProcessTreeImpl = async (pid, options) => {
+    fakes.state.killCalls.push([pid, options]);
+    fakes.state.empty = true;
+    return { terminated: true };
+  };
+  const promise = runTestCommand({
+    command: 'npm test',
+    platform: 'linux',
+    spawn: () => fc.child,
+    now: fixedClock(0, 10),
+    terminationTimeoutMs: 500,
+    processKillImpl: fakes.processKillImpl,
+    killProcessTreeImpl: fakes.killProcessTreeImpl,
+  });
+  fc.emitClose(0, null);
+  const result = await promise;
+  assert.equal(result.terminationConfirmed, true);
+  assert.equal(fakes.state.killCalls.length, 1);
+  assert.equal(fakes.state.killCalls[0][0], 4242);
+  assert.deepEqual(
+    fakes.state.killCalls[0][1],
+    { force: true, processGroup: true, confirmExit: true, timeoutMs: 500, platform: 'linux' }
+  );
+});
+
+test('IDE-004: a group that never empties stays unconfirmed and a later retry confirms once it empties', async () => {
+  const fc = makeFakeChild(4242);
+  const fakes = makeGroupFakes({ initiallyEmpty: false });
+  const promise = runTestCommand({
+    command: 'npm test',
+    platform: 'linux',
+    spawn: () => fc.child,
+    now: fixedClock(0, 10),
+    terminationTimeoutMs: 120,
+    processKillImpl: fakes.processKillImpl,
+    killProcessTreeImpl: fakes.killProcessTreeImpl,
+  });
+  fc.emitClose(0, null);
+  const result = await promise;
+  assert.equal(result.terminationConfirmed, false);
+  assert.equal(result.terminationWarning, 'process_tree_containment_unconfirmed');
+  assert.equal(typeof result.retryTermination, 'function');
+
+  fakes.state.empty = true;
+  assert.deepEqual(await result.retryTermination(), { confirmed: true, warning: '' });
+});
+
+test('IDE-004: a group probe that fails with anything but ESRCH is not confirmation', async () => {
+  const fc = makeFakeChild(4242);
+  const promise = runTestCommand({
+    command: 'npm test',
+    platform: 'linux',
+    spawn: () => fc.child,
+    now: fixedClock(0, 10),
+    terminationTimeoutMs: 120,
+    processKillImpl: () => { throw Object.assign(new Error('not permitted'), { code: 'EPERM' }); },
+    killProcessTreeImpl: async () => ({ terminated: true }),
+  });
+  fc.emitClose(0, null);
+  const result = await promise;
+  assert.equal(result.terminationConfirmed, false);
+});
+
+test('IDE-004: the win32 default terminator still reports unconfirmed containment', async () => {
+  const fc = makeFakeChild(4242);
+  const probes = [];
+  const killCalls = [];
+  const promise = runTestCommand({
+    command: 'npm test',
+    platform: 'win32',
+    spawn: () => fc.child,
+    now: fixedClock(0, 10),
+    processKillImpl: (...args) => { probes.push(args); },
+    killProcessTreeImpl: async (pid, options) => { killCalls.push([pid, options.processGroup]); return { terminated: true }; },
+  });
+  fc.emitClose(0, null);
+  const result = await promise;
+  assert.equal(result.terminationConfirmed, false);
+  assert.equal(result.terminationWarning, 'process_tree_containment_unconfirmed');
+  assert.deepEqual(killCalls, [[4242, false]]);
+  assert.deepEqual(probes, [], 'no POSIX group probe on win32');
+});
+
 test('s14: an already-aborted signal settles as aborted without spawning', async () => {
   // The pre-spawn guard: an AbortSignal that is already aborted means no child
   // is spawned at all.

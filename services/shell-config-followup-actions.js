@@ -11,6 +11,7 @@ const {
   calculateDeferredUntilForPreset,
   followUpRecordsEqual,
   getFollowUpPresetLabel,
+  hasOwn,
   readPatchedValue,
   readPatchedIsoString,
   readPatchedString,
@@ -22,6 +23,42 @@ function companionFollowUpError(message) {
   error.code = COMPANION_ERROR_CODES.FOLLOW_UP_INVALID;
   error.errorCode = COMPANION_ERROR_CODES.FOLLOW_UP_INVALID;
   return error;
+}
+
+// Electron IPC rejections keep only the message, so the code leads it; the
+// renderer matches the code in the message text.
+function companionCodedError(code, message) {
+  const error = new Error(`${code}: ${message}`);
+  error.code = code;
+  error.errorCode = code;
+  return error;
+}
+
+function isFutureIso(value, now) {
+  const parsed = Date.parse(normalizeString(value));
+  return Number.isFinite(parsed) && parsed > now.valueOf();
+}
+
+/* A patch that carries a defer preset but no explicit timestamp must re-derive
+ * deferredUntil: the {...existing, ...patch} merge would otherwise carry the
+ * old timestamp into _buildFollowUpRecord, which prefers it. The same preset
+ * on a still-future deferral keeps its timestamp so a no-op edit never shifts
+ * time. Returns '' when the carried value should stand. */
+function recomputeDeferredUntilForPatch(existing, merged, patch, now, scheduleOptions) {
+  const carriesPreset = hasOwn(patch, 'deferPreset') || hasOwn(patch, 'defer_preset');
+  const carriesTimestamp = hasOwn(patch, 'deferredUntil') || hasOwn(patch, 'deferred_until');
+  if (!carriesPreset || carriesTimestamp) {
+    return '';
+  }
+  const patchedPreset = normalizeFollowUpDeferPreset(readPatchedString(patch, 'deferPreset', 'defer_preset', ''));
+  if (!patchedPreset || resolveRequestedFollowUpStatus(merged, existing) !== 'deferred') {
+    return '';
+  }
+  const keepsFutureDeferral =
+    existing.status === 'deferred'
+    && normalizeFollowUpDeferPreset(existing.deferPreset) === patchedPreset
+    && isFutureIso(existing.deferredUntil, now);
+  return keepsFutureDeferral ? '' : calculateDeferredUntilForPreset(patchedPreset, now, scheduleOptions);
 }
 
 function assertAllowedFollowUpPayload(followUp = {}) {
@@ -130,6 +167,20 @@ const followUpActionMethods = {
     });
   },
 
+  /* IPC-only guard: the Home handlers call this so a stale id surfaces as
+   * FOLLOW_UP_NOT_FOUND. The mutators themselves stay silent on a missing id
+   * because the task-board tool calls them directly and relies on that. */
+  assertFollowUpExists(id) {
+    const normalizedId = normalizeString(id);
+    const existing = normalizedId
+      ? this.state.followUps.find((followUp) => followUp.id === normalizedId) || null
+      : null;
+    if (!existing) {
+      throw companionCodedError(COMPANION_ERROR_CODES.FOLLOW_UP_NOT_FOUND, 'That open loop no longer exists.');
+    }
+    return existing;
+  },
+
   _withFollowUpUpdate(followUpId, buildNextFollowUp, reason, details = {}) {
     const normalizedId = normalizeString(followUpId);
     if (!normalizedId) {
@@ -234,6 +285,13 @@ const followUpActionMethods = {
     if (!existing) {
       return this.getState();
     }
+    // Re-deferring a completed loop would silently clear resolvedAt/archivedAt.
+    if (existing.status === 'resolved' || existing.archivedAt) {
+      throw companionCodedError(
+        COMPANION_ERROR_CODES.FOLLOW_UP_STATE_CONFLICT,
+        'Completed open loops cannot be deferred. Reopen it first.'
+      );
+    }
     const now = this._getNow();
     const nowIso = now.toISOString();
     const deferredUntil = calculateDeferredUntilForPreset(normalizedPreset, now, scheduleOptions);
@@ -311,28 +369,44 @@ const followUpActionMethods = {
       normalizedId,
       (existing, now) => {
         const safePatch = { ...patch };
+        // Fold snake_case aliases into camelCase before merging, or the
+        // existing camelCase value would outrank the patched alias.
+        for (const [camel, snake] of [['deferPreset', 'defer_preset'], ['deferredUntil', 'deferred_until']]) {
+          if (hasOwn(safePatch, snake)) {
+            if (!hasOwn(safePatch, camel)) {
+              safePatch[camel] = safePatch[snake];
+            }
+            delete safePatch[snake];
+          }
+        }
         if (existing.archivedAt || existing.status === 'resolved') {
           delete safePatch.status;
           delete safePatch.resolved;
           delete safePatch.deferPreset;
-          delete safePatch.defer_preset;
           delete safePatch.deferredUntil;
-          delete safePatch.deferred_until;
         }
-        const nextFollowUp = this._buildFollowUpRecord(
-          {
-            ...existing,
-            ...safePatch,
-            id: normalizedId,
-            updatedAt: now.toISOString(),
-          },
-          existing,
-          now,
-          scheduleOptions
+        const merged = { ...existing, ...safePatch, id: normalizedId };
+        const recomputedDeferredUntil = recomputeDeferredUntilForPatch(
+          existing, merged, safePatch, now, scheduleOptions
         );
-        if (followUpRecordsEqual(existing, nextFollowUp)) {
+        if (recomputedDeferredUntil) {
+          merged.deferredUntil = recomputedDeferredUntil;
+        }
+        // Compare content before stamping updatedAt: a no-op edit must not
+        // write history, bump updatedAt or re-sort the board. Timestamps the
+        // builder backfills onto a legacy record (empty and not patched) are
+        // not content; a real edit still persists them.
+        const candidate = this._buildFollowUpRecord(merged, existing, now, scheduleOptions);
+        const comparable = { ...candidate, updatedAt: '' };
+        for (const [camel, snake] of [['createdAt', 'created_at'], ['resolvedAt', 'resolved_at']]) {
+          if (!existing[camel] && !hasOwn(safePatch, camel) && !hasOwn(safePatch, snake)) {
+            comparable[camel] = existing[camel];
+          }
+        }
+        if (followUpRecordsEqual({ ...existing, updatedAt: '' }, comparable)) {
           return existing;
         }
+        const nextFollowUp = { ...candidate, updatedAt: now.toISOString() };
         const detailsChanged =
           nextFollowUp.label !== existing.label
           || nextFollowUp.body !== existing.body;
@@ -361,7 +435,10 @@ const followUpActionMethods = {
       return this.getState();
     }
     if (existing.status !== 'resolved') {
-      throw new Error('Only resolved open loops can be archived.');
+      throw companionCodedError(
+        COMPANION_ERROR_CODES.FOLLOW_UP_STATE_CONFLICT,
+        'Only resolved open loops can be archived.'
+      );
     }
     return this._withFollowUpUpdate(
       normalizedId,

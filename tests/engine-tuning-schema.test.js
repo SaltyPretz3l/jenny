@@ -246,15 +246,20 @@ test('local turn working-time limit is schema-owned and user configurable', () =
   const field = getFieldDefinition('maxLoopWallSeconds');
 
   assert.equal(field.rawKey, 'max_loop_wall_seconds');
-  // 2026-08-30: local working-time default raised to 1800 seconds.
-  assert.equal(field.default, 1_800);
+  assert.equal(field.default, 3_600);
   assert.equal(field.min, 30);
-  assert.equal(field.max, 3_600);
-  assert.deepEqual(field.presets.map((preset) => preset.value), [600, 1_800, 3_600]);
+  assert.equal(field.max, 7_200);
+  assert.deepEqual(field.presets.map((preset) => preset.value), [1_800, 3_600, 7_200]);
   assert.match(field.help, /approval.*does not count/i);
   assert.equal(
     ENGINE_TUNING_KEYS.some((key) => getFieldDefinition(key).rawKey === 'cloud_max_loop_wall_seconds'),
     false,
     'cloud timing remains an internal engine profile rather than a misleading local setting'
   );
+});
+
+test('W2-4: code intelligence is shared and local conversation picks include the default', () => {
+  assert.equal(getFieldDefinition('maxCodeIntelligenceToolCallsPerTurn').scope, 'shared');
+  assert.deepEqual(getFieldDefinition('maxToolCallsPerSession').presets.map(pick => pick.value), [500, 1000, 2000]);
+  for (const key of ['maxLoopIterations', 'tokenBudgetReservedForSummary', 'tokenBudgetToolOverhead', 'tokenBudgetAutoCompactRatio', 'maxBudgetUsd']) assert.ok(getFieldDefinition(key));
 });

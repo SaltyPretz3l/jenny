@@ -38,6 +38,15 @@ test('context panel yields whenever the artifact rail is open (priority 1)', () 
   );
 });
 
+test('a shared artifact panel leaves a composer floor after the sidebar and resizer', () => {
+  const guard = contextPanelCss.match(
+    /\.chat-view\.artifact-review-open:not\(\.artifact-review-maximized\) > \.artifact-review-panel\s*\{([^}]*)\}/
+  );
+  assert.ok(guard, 'the shared panel guard excludes maximized and overlay layouts');
+  assert.match(guard[1], /min-width:\s*0;/);
+  assert.match(guard[1], /max-width:\s*max\(0px,\s*calc\(100vw - var\(--sidebar-current-width,\s*0px\) - var\(--artifact-review-resizer-width,\s*10px\) - 320px\)\);/);
+});
+
 test('compact desktop widths hide the context rail before it crushes the thread', () => {
   assert.match(
     chatMediaQueriesCss,

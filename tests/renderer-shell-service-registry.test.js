@@ -26,11 +26,10 @@ test('shell service registry forwards workspace session activation to the IDE co
 test('shell service registry exposes idempotent safe binders for lazy shell controllers', () => {
   const state = {
     skills: { featureEnabled: false },
-    tips: { featureEnabled: false },
   };
-  const createCalls = { skills: 0, tips: 0, offline: 0 };
-  const bindCalls = { skills: 0, tips: 0, offline: 0 };
-  const sectionDomCalls = { skills: 0, tips: 0 };
+  const createCalls = { skills: 0, offline: 0 };
+  const bindCalls = { skills: 0, offline: 0 };
+  const sectionDomCalls = { skills: 0 };
 
   const registry = createShellServiceRegistry({
     state,
@@ -61,17 +60,6 @@ test('shell service registry exposes idempotent safe binders for lazy shell cont
           };
         },
       },
-      tipsUtils: {
-        createTipsManager() {
-          createCalls.tips += 1;
-          return {
-            bindShellEvents() {
-              bindCalls.tips += 1;
-              return function disposeTipsBindings() {};
-            },
-          };
-        },
-      },
       offlineUtils: {
         createOfflineManager() {
           createCalls.offline += 1;
@@ -87,46 +75,36 @@ test('shell service registry exposes idempotent safe binders for lazy shell cont
   });
 
   registry.bindSkillsShellEventsSafe(false);
-  registry.bindTipsShellEventsSafe(false);
   registry.bindOfflineShellEventsSafe();
   registry.bindSkillsShellEventsSafe(false);
-  registry.bindTipsShellEventsSafe(false);
   registry.bindOfflineShellEventsSafe();
 
   assert.deepEqual(createCalls, {
     skills: 1,
-    tips: 1,
     offline: 1,
   });
   assert.deepEqual(bindCalls, {
     skills: 0,
-    tips: 0,
     offline: 1,
   });
 
   state.skills.featureEnabled = true;
-  state.tips.featureEnabled = true;
 
   registry.bindSkillsShellEventsSafe(false);
-  registry.bindTipsShellEventsSafe(false);
   registry.bindOfflineShellEventsSafe();
   registry.bindSkillsShellEventsSafe(false);
-  registry.bindTipsShellEventsSafe(false);
   registry.bindOfflineShellEventsSafe();
 
   assert.deepEqual(createCalls, {
     skills: 1,
-    tips: 1,
     offline: 1,
   });
   assert.deepEqual(bindCalls, {
     skills: 1,
-    tips: 1,
     offline: 1,
   });
   assert.deepEqual(sectionDomCalls, {
     skills: 1,
-    tips: 0,
   });
 });
 

@@ -73,12 +73,6 @@
   /* Hero / Sprites */
   --widget-hero-avatar-bg: linear-gradient(180deg, #7f97ff, #6682ff);
   --widget-sprite-color: rgba(239, 243, 255, 0.94);
-  --widget-sprite-streaming-border: rgba(164, 181, 236, 0.34);
-  --widget-sprite-streaming-shadow:
-    0 0 0 1px rgba(0, 0, 0, 0.34),
-    0 12px 30px rgba(109, 130, 255, 0.14),
-    0 0 22px rgba(109, 130, 255, 0.12),
-    inset 0 1px 0 rgba(255, 255, 255, 0.09);
   /* Home orbit */
   --widget-face-glow-color: var(--accent-cyan);
   --widget-face-shine-color: rgba(239, 248, 250, 0.82);

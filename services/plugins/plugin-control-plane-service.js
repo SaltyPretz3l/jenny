@@ -1,5 +1,4 @@
 'use strict';
-const crypto = require('node:crypto');
 const { PLUGIN_ERROR_CODES } = require('../backend/error-codes');
 const { redactText } = require('./lifecycle/operation-result');
 const { readCommittedState } = require('./lifecycle/commit-sequence');
@@ -14,11 +13,10 @@ const {
 const { createProgressLog } = require('./lifecycle/progress-log');
 const { compactReceipts } = require('./store/operation-receipts');
 const { sha256Hex } = require('./store/content-store');
-const { reverifyInstalledPackage } = require('./runtime/declarative-compiler');
+const { reverifyInstalledPackage, declaresRetiredKind } = require('./runtime/declarative-compiler');
 const { CONTROL_PLANE_STAGE } = require('./lifecycle/stage-gate');
 const { safeModeRefusal } = require('./safe-mode');
-const { initializeManagedPolicy, managedPolicyGrantRef, createManagedInstallPolicy,
-  policyGrantRefForMutation, managedActivationDenial } = require('./policy/managed-policy-service');
+const { unmanagedPolicyGrantRef, policyGrantRefForMutation } = require('./policy-grant-ref');
 const { createControlPlaneRuntime, createMutationSerializer } = require('./runtime/control-plane-runtime');
 const { createControlPlaneQueries } = require('./control-plane-queries');
 const {
@@ -54,9 +52,6 @@ function createPluginControlPlaneService({
   readPackageBytes = unavailablePackageReader,
   newOperationId = defaultNewOperationId,
   runtimeCoordinator = null,
-  remoteMcpRuntime = null,
-  privilegedRuntime = null,
-  managedPolicy = null,
   log = () => {},
 } = {}) {
   const logEvent = typeof log === 'function' ? log : () => {};
@@ -68,8 +63,6 @@ function createPluginControlPlaneService({
     baseDir,
     verifyPackage,
     runtimeCoordinator,
-    remoteMcpRuntime,
-    privilegedRuntime,
     now: clock,
   });
 
@@ -132,7 +125,6 @@ function createPluginControlPlaneService({
     if (!recoveryPromise) {
       recoveryPromise = (async () => {
         const futureState = await detectIncompatibleRetainedState(facade, baseDir);
-        if (!futureState) await initializeManagedPolicy(managedPolicy, logEvent);
         const report = await recoverStore(facade, baseDir, {
           now: clock(), validateCandidate: runtime.validateRecoveryCandidate,
         });
@@ -297,7 +289,7 @@ function createPluginControlPlaneService({
     };
   }
 
-  async function settleAndPublishMutation(operation, outcome, timestamp, subject = null) {
+  async function settleAndPublishMutation(operation, outcome, timestamp) {
     const publish = !disposed;
     const settled = settleMutation(operation, outcome, publish);
     if (!publish) return settled;
@@ -307,27 +299,6 @@ function createPluginControlPlaneService({
         commit_epoch: outcome.commitEpoch ?? settled.commit_epoch,
         revision: outcome.revision ?? settled.revision,
       });
-      const eventByOperation = {
-        install_local_package: 'plugin.updated', enable: 'plugin.enabled', disable: 'plugin.disabled',
-        set_contribution: 'plugin.updated', update_settings: 'plugin.updated',
-        uninstall: 'plugin.uninstalled',
-      };
-      const hookEvent = eventByOperation[operation];
-      if (hookEvent && subject?.publisher_id && subject?.plugin_id
-        && typeof privilegedRuntime?.enqueueHook === 'function') {
-        const eventId = crypto.createHash('sha256').update([
-          String(outcome.operationId || outcome.result?.operation_id || ''), hookEvent,
-          subject.publisher_id, subject.plugin_id,
-        ].join('\0'), 'utf8').digest('hex');
-        const queued = await privilegedRuntime.enqueueHook({
-          event_id: eventId, event: hookEvent, publisher_id: subject.publisher_id,
-          plugin_id: subject.plugin_id, causal_depth: 1,
-          commit_epoch: outcome.commitEpoch ?? settled.commit_epoch,
-        });
-        if (!queued?.ok) logEvent('WARN', 'plugins.hook_enqueue_rejected', {
-          reason_code: String(queued?.reason || 'hook_enqueue_failed').slice(0, 120),
-        });
-      }
     }
     return settled;
   }
@@ -347,7 +318,7 @@ function createPluginControlPlaneService({
     runtime,
     runtimeCoordinator,
     emptyPolicyGrantRef: EMPTY_POLICY_GRANT_REF,
-    getPolicyGrantRef: () => managedPolicyGrantRef(managedPolicy, EMPTY_POLICY_GRANT_REF),
+    getPolicyGrantRef: () => unmanagedPolicyGrantRef(EMPTY_POLICY_GRANT_REF),
     controlPlaneStage: CONTROL_PLANE_STAGE,
     createForwardingProgressLog,
     settleAndPublishMutation,
@@ -371,30 +342,28 @@ function createPluginControlPlaneService({
         return refuse(source?.code || PLUGIN_ERROR_CODES.INTEGRITY_FAILED, source?.reason || 'package_source_unavailable');
       }
       return serializeMutation(async () => {
-        const installPolicy = createManagedInstallPolicy(managedPolicy, 'local_package');
         const operationId = newOperationId();
         const timestamp = clock();
         const outcome = await installPackage(facade, baseDir, {
           packageBytes: source.bytes,
           sourcePathDigest: source.sourcePathDigest,
           verifyPackage,
+          // Same admission as the distribution path: a new package may not
+          // declare a retired kind (leftovers are handled at enable).
+          validateVerifiedPackage: (verdict) => (declaresRetiredKind(verdict?.manifest)
+            ? { ok: false, reason: 'contribution_kind_retired' } : { ok: true }),
           requireConsent,
           newOperationId: () => operationId,
           clientRequestId: envelope.clientRequestId,
           safeMode,
           now: timestamp,
           generationId: `gen-${operationId}`,
-          policyGrantRef: managedPolicyGrantRef(managedPolicy, EMPTY_POLICY_GRANT_REF),
+          policyGrantRef: unmanagedPolicyGrantRef(EMPTY_POLICY_GRANT_REF),
           dataSchemaRefs: [],
           progressLog: createForwardingProgressLog(operationId),
           isCanceled: () => disposed,
-          validateVerifiedPackage: installPolicy.validate,
-          commitAuthority: installPolicy.commit,
         });
-        return settleAndPublishMutation('install_local_package', outcome, timestamp, {
-          publisher_id: outcome?.publisher_id,
-          plugin_id: outcome?.plugin_id,
-        });
+        return settleAndPublishMutation('install_local_package', outcome, timestamp);
       });
     });
   }
@@ -410,13 +379,13 @@ function createPluginControlPlaneService({
       const currentEntry = current.generation?.plugins?.find((item) => (
         item.publisher_id === envelope.publisherId && item.plugin_id === envelope.pluginId
       ));
-      const managedDenial = await managedActivationDenial({
-        operation, currentEntry, managedPolicy,
-        reverify: (pluginEntry) => reverifyInstalledPackage({
-          facade, baseDir, pluginEntry, verifyPackage, now: clock(),
-        }),
-      });
-      if (managedDenial) return refuse(PLUGIN_ERROR_CODES.POLICY_BLOCKED, managedDenial);
+      if (operation === 'enable' && currentEntry) {
+        const checked = await reverifyInstalledPackage({ facade, baseDir,
+          pluginEntry: currentEntry, verifyPackage, now: clock() });
+        if (checked.ok && declaresRetiredKind(checked.verdict.manifest)) {
+          return refuse(PLUGIN_ERROR_CODES.POLICY_BLOCKED, 'contribution_kind_retired');
+        }
+      }
       if (current.generation?.generation_schema_version === 2) {
         const currentEntry = current.generation.plugins.find((item) => (
           item.publisher_id === envelope.publisherId && item.plugin_id === envelope.pluginId
@@ -442,8 +411,8 @@ function createPluginControlPlaneService({
         safeMode,
         now: timestamp,
         generationId: `gen-${operationId}`,
-        policyGrantRef: managedPolicyGrantRef(
-          managedPolicy, policyGrantRefForMutation(current.generation, EMPTY_POLICY_GRANT_REF)
+        policyGrantRef: unmanagedPolicyGrantRef(
+          policyGrantRefForMutation(current.generation, EMPTY_POLICY_GRANT_REF)
         ),
         dataSchemaRefs: [],
         progressLog: createForwardingProgressLog(operationId),
@@ -451,9 +420,7 @@ function createPluginControlPlaneService({
         dependencyMap,
         stage: CONTROL_PLANE_STAGE,
       });
-      return settleAndPublishMutation(operation, outcome, timestamp, {
-        publisher_id: envelope.publisherId, plugin_id: envelope.pluginId,
-      });
+      return settleAndPublishMutation(operation, outcome, timestamp);
     }));
   }
 
@@ -481,7 +448,7 @@ function createPluginControlPlaneService({
       const entry = committedState.generation?.plugins?.find((item) => (
         item.publisher_id === authority.publisherId && item.plugin_id === authority.pluginId
       ));
-      const runtimeWithdrawal = entry?.effective_state === 'active'
+      const runtimeWithdrawal = entry && committedState.generation.plugins.some((item) => item.effective_state === 'active')
         ? await runtime.activeUninstallParticipant({
           generation: committedState.generation,
           pointer: committedState.pointer,
@@ -504,8 +471,7 @@ function createPluginControlPlaneService({
           safeMode,
           now: timestamp,
           generationId: `gen-${operationId}`,
-          policyGrantRef: managedPolicyGrantRef(
-            managedPolicy,
+          policyGrantRef: unmanagedPolicyGrantRef(
             policyGrantRefForMutation(committedState.generation, EMPTY_POLICY_GRANT_REF)
           ),
           dataSchemaRefs: [],
@@ -513,16 +479,11 @@ function createPluginControlPlaneService({
           isCanceled: () => disposed,
           participantPrepare: runtimeWithdrawal?.participantPrepare || null,
           controlPlaneStage: CONTROL_PLANE_STAGE,
-          terminateResources: typeof privilegedRuntime?.terminatePluginResources === 'function'
-            ? (request) => privilegedRuntime.terminatePluginResources(request)
-            : null,
         });
       } finally {
         runtimeWithdrawal?.finish?.(outcome);
       }
-      return settleAndPublishMutation('uninstall', outcome, timestamp, {
-        publisher_id: authority.publisherId, plugin_id: authority.pluginId,
-      });
+      return settleAndPublishMutation('uninstall', outcome, timestamp);
     }));
   }
 
@@ -552,13 +513,11 @@ function createPluginControlPlaneService({
     getRecoverySummary: () => recoverySummary,
     getReceiptEvictionCount: () => receiptEvictionCount,
     getLastOperation: () => lastOperation,
-    managedPolicy,
   });
 
   return {
     getState: queries.getState,
     getDetails: queries.getDetails,
-    getPolicyStatus: queries.getPolicyStatus,
     getOperation: queries.getOperation,
     installLocalPackage,
     enable,
@@ -571,12 +530,6 @@ function createPluginControlPlaneService({
     onChanged: (listener) => subscribe(changedListeners, listener),
     onOperationProgress: (listener) => subscribe(progressListeners, listener),
     prepareDistributionParticipant: () => runtime.distributionParticipant(),
-    async rehydrateManagedPolicyChange() {
-      await ensureRecovered();
-      const committed = await readCommittedState(facade, baseDir);
-      if (!committed.pointer || !committed.generation) return { ok: true, reason: 'empty_store' };
-      return runtime.rehydrate({ generation: committed.generation, pointer: committed.pointer });
-    },
     dispose() {
       disposed = true;
       changedListeners.clear();
@@ -592,7 +545,6 @@ module.exports = {
   MAX_REPORTED_PLUGINS,
   NEUTRAL_DISPLAY_NAME,
   EMPTY_POLICY_GRANT_REF,
-  policyGrantRefForMutation,
   LIFECYCLE_TO_CONSENT_OPERATION,
   resolvePluginStoreRoot,
   defaultRequireConsent,

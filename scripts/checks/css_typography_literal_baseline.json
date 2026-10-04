@@ -1,0 +1,4 @@
+{
+  "_comment": "Ratchet for scan 5 of check_css_typography_contract.py: literal px/rem font sizes per file. Counts may only go down; regenerate with --update-baseline after a migration lowers them.",
+  "files": {}
+}

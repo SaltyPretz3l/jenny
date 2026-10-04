@@ -30,16 +30,18 @@ test('renderer Offline card shows the forced-inference boundary and selected-mod
   });
   const { document } = app.window;
 
-  assert.equal(document.getElementById('offlineBadge').textContent, 'Forced');
+  assert.equal(document.getElementById('offlineBadge'), null);
   assert.match(document.getElementById('offlineSummary').textContent, /Force local inference is on/i);
-  assert.match(document.getElementById('offlineModelStatus').textContent, /llava:7b is ready for local inference/i);
+  assert.equal(document.getElementById('offlineModelStatus').textContent, 'Local inference uses llava:7b. Change it in Model Library.');
   assert.match(document.getElementById('offlineModelActions').textContent, /Manage in Model Library/i);
   assert.equal(document.getElementById('offlineLocalModelSelect'), null);
   assert.equal(document.getElementById('offlineRuntimeStatus'), null);
   assert.equal(document.getElementById('localEnginesContainer'), null);
   assert.equal(document.querySelector('.settings-json-slice'), null);
-  assert.equal(document.getElementById('composerGearPostureDot').dataset.posture, 'local-only-ready');
-  assert.match(document.getElementById('composerSettingsButton').getAttribute('data-tooltip'), /Force local inference: using llava:7b/i);
+  assert.equal(document.getElementById('composerChatPosture').hidden, false);
+  assert.equal(document.getElementById('composerChatPostureDot').dataset.posture, 'local-only-ready');
+  assert.equal(document.getElementById('composerChatPostureDot').classList.contains('status-dot--active'), true);
+  assert.match(document.getElementById('composerChatPostureText').textContent, /Force local inference: using llava:7b/i);
 });
 
 test('Offline toggle persists through the bridge and the model shortcut routes to Model Library', async (t) => {
@@ -60,7 +62,7 @@ test('Offline toggle persists through the bridge and the model shortcut routes t
   assert.equal(document.querySelector('.settings-nav-item[data-settings-section="models"]').classList.contains('active'), true);
 });
 
-test('composer tooltip separates local readiness from the disabled force-local setting', async (t) => {
+test('hidden panel posture text separates local readiness from the disabled force-local setting', async (t) => {
   const { window } = await loadOfflineApp(t, {
     shell: {
       offline: {
@@ -74,9 +76,41 @@ test('composer tooltip separates local readiness from the disabled force-local s
       },
     },
   });
-  const tooltip = window.document.getElementById('composerSettingsButton').getAttribute('data-tooltip');
+  assert.equal(window.document.getElementById('composerChatPosture').hidden, true);
+  const tooltip = window.document.getElementById('composerChatPostureText').textContent;
   assert.match(tooltip, /Force local inference is off/i);
   assert.match(tooltip, /configured inference providers may use the network/i);
+});
+
+test('Offline reads a Model Library GGUF served by llama-server as the installed local model', async (t) => {
+  // The Ollama catalog never lists a library GGUF; the service still reports
+  // it installed and local (offline-intelligence-service findManagedLibraryModel).
+  const { window } = await loadOfflineApp(t, {
+    shell: {
+      offline: {
+        state: {
+          mode: 'disabled', preferredLocalModel: 'ternary-bonsai-2-27b-pq2_0',
+          localCatalog: { available: true, reason: '', models: ['qwen3.5:9b'] },
+          managedSidecar: { mode: 'managed-dev', phase: 'ready', ready: true },
+          selectedLocalEngineType: 'openai-compatible',
+          selectedLocalModelInstalled: true, localChatReady: true, localVisionReady: false,
+          unavailableReason: 'Forced local inference is unavailable right now.', visionUnavailableReason: '',
+          summary: 'Local chat is ready with ternary-bonsai-2-27b-pq2_0.',
+        },
+      },
+    },
+  });
+  const { document } = window;
+  const modelStatus = document.getElementById('offlineModelStatus').textContent;
+  assert.equal(modelStatus, 'Local inference uses ternary-bonsai-2-27b-pq2_0. Change it in Model Library.');
+  assert.doesNotMatch(modelStatus, /not available in the local catalog/i);
+  assert.doesNotMatch(document.getElementById('offlineSummary').textContent, /not installed/i);
+  // The group states the model once; the boundary is stated by the lede and
+  // the toggle help, not repeated as group copy.
+  const card = document.querySelector('.settings-card[data-settings-section="offline"]');
+  assert.equal(card.querySelector('[data-i18n="settings.offline.inferenceBoundary.description"]'), null);
+  assert.equal(card.querySelector('[data-i18n="settings.offline.localModel.description"]'), null);
+  assert.ok(card.querySelector('[data-i18n="settings.offline.description"]'), 'the lede stays');
 });
 
 test('Offline shows unavailable selected-model remediation without exposing engine details', async (t) => {
@@ -95,7 +129,7 @@ test('Offline shows unavailable selected-model remediation without exposing engi
     },
   });
   const { document } = window;
-  assert.equal(document.getElementById('offlineBadge').textContent, 'Blocked');
+  assert.equal(document.getElementById('offlineBadge'), null);
   assert.match(document.getElementById('offlineModelStatus').textContent, /gemma3:4b is not available/i);
   assert.match(document.getElementById('offlineModelActions').textContent, /Manage in Model Library/i);
   assert.equal(document.getElementById('offlineRuntimeStatus'), null);

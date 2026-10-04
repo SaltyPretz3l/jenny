@@ -26,7 +26,7 @@ class _FakeFigure:
     def __init__(self, num: int) -> None:
         self.num = num
 
-    def savefig(self, path, **_kwargs) -> None:  # noqa: ANN001
+    def savefig(self, path, **_kwargs) -> None:
         # Write a placeholder so the wrapper's "did a file land?" logic is real.
         Path(path).write_bytes(b"\x89PNG\r\n\x1a\n")
 
@@ -94,7 +94,7 @@ def test_main_statement_only_has_no_last_expression(env) -> None:
 
 
 def test_child_stdout_capture_is_bounded_before_result_serialization(env) -> None:
-    capture = env.wrapper._BoundedTextCapture(max_chars=8)  # noqa: SLF001
+    capture = env.wrapper._BoundedTextCapture(max_chars=8)
 
     assert capture.write("secret-output") == len("secret-output")
     assert capture.total_chars == len("secret-output")
@@ -178,17 +178,17 @@ def test_main_collects_dataframe_tables(env) -> None:
 def test_child_table_collection_caps_count_columns_cells_and_aggregate(env) -> None:
     pd = pytest.importorskip("pandas")
     frame = pd.DataFrame(
-        [["x" * 10_000] * (env.wrapper._MAX_TABLE_COLUMNS + 4)],  # noqa: SLF001
+        [["x" * 10_000] * (env.wrapper._MAX_TABLE_COLUMNS + 4)],
     )
     namespace = {f"table_{index}": frame for index in range(20)}
 
-    tables = env.wrapper._collect_tables(namespace)  # noqa: SLF001
+    tables = env.wrapper._collect_tables(namespace)
 
-    assert len(tables) == env.wrapper._MAX_TABLES  # noqa: SLF001
+    assert len(tables) == env.wrapper._MAX_TABLES
     assert sum(len(str(table["html"])) for table in tables) <= (
-        env.wrapper._MAX_TOTAL_TABLE_HTML_CHARS  # noqa: SLF001
+        env.wrapper._MAX_TOTAL_TABLE_HTML_CHARS
     )
-    assert "x" * (env.wrapper._MAX_TABLE_CELL_CHARS + 1) not in str(tables)  # noqa: SLF001
+    assert "x" * (env.wrapper._MAX_TABLE_CELL_CHARS + 1) not in str(tables)
 
 
 # --- helper-level coverage of edge branches ----------------------------------
@@ -199,7 +199,7 @@ def test_collect_tables_skips_private_and_non_dataframe(env) -> None:
     frame = pd.DataFrame({"a": [1]})
     namespace = {"_hidden": frame, "scalar": 5, "visible": frame}
 
-    tables = env.wrapper._collect_tables(namespace)  # noqa: SLF001
+    tables = env.wrapper._collect_tables(namespace)
 
     assert [t["name"] for t in tables] == ["visible"]
 
@@ -208,11 +208,11 @@ def test_collect_tables_without_pandas_returns_empty(env, monkeypatch: pytest.Mo
     # Make `import pandas` fail inside the helper to exercise the except branch.
     monkeypatch.setitem(sys.modules, "pandas", None)
 
-    assert env.wrapper._collect_tables({"frame": object()}) == []  # noqa: SLF001
+    assert env.wrapper._collect_tables({"frame": object()}) == []
 
 
 def test_compile_user_code_separates_trailing_expression(env) -> None:
-    exec_code, expr_code = env.wrapper._compile_user_code("x = 10\nx * 2\n")  # noqa: SLF001
+    exec_code, expr_code = env.wrapper._compile_user_code("x = 10\nx * 2\n")
 
     namespace: dict[str, object] = {}
     exec(exec_code, namespace, namespace)
@@ -221,7 +221,7 @@ def test_compile_user_code_separates_trailing_expression(env) -> None:
 
 
 def test_compile_user_code_no_trailing_expression(env) -> None:
-    exec_code, expr_code = env.wrapper._compile_user_code("x = 10\n")  # noqa: SLF001
+    exec_code, expr_code = env.wrapper._compile_user_code("x = 10\n")
 
     assert expr_code is None
     namespace: dict[str, object] = {}
@@ -230,7 +230,7 @@ def test_compile_user_code_no_trailing_expression(env) -> None:
 
 
 def test_compile_user_code_empty_source(env) -> None:
-    exec_code, expr_code = env.wrapper._compile_user_code("")  # noqa: SLF001
+    exec_code, expr_code = env.wrapper._compile_user_code("")
 
     assert expr_code is None
     exec(exec_code, {}, {})  # must not raise
@@ -239,15 +239,15 @@ def test_compile_user_code_empty_source(env) -> None:
 def test_format_traceback_without_user_frames_returns_full_trace(env) -> None:
     try:
         raise RuntimeError("native boom")
-    except RuntimeError as error:  # noqa: BLE001
-        formatted = env.wrapper._format_traceback(error)  # noqa: SLF001
+    except RuntimeError as error:
+        formatted = env.wrapper._format_traceback(error)
 
     # No frame has filename "<analysis>", so the full default formatting is used.
     assert "RuntimeError: native boom" in formatted
 
 
 def test_safe_json_dumps_replaces_lone_surrogate(env) -> None:
-    serialized = env.wrapper._safe_json_dumps({"k": "bad\udc8fvalue"})  # noqa: SLF001
+    serialized = env.wrapper._safe_json_dumps({"k": "bad\udc8fvalue"})
 
     assert "\udc8f" not in serialized
     assert json.loads(serialized) == {"k": "bad�value"}

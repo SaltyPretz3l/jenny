@@ -126,12 +126,6 @@ test('empty sessions preserve the composer without chips or background suggestio
 
   await shell.__emitBackendStatus({ phase: 'ready', model_loaded: true });
   await shell.__emitAuthState({ authenticated: true, user: { display_name: 'Local User' } });
-  await shell.__emitTipsChanged({
-    featureEnabled: true,
-    settings: { enabled: true, sessionCount: 3, historyByTipId: {} },
-    relevantTips: [],
-    activeTip: { id: 'workspace-root', title: 'Choose a workspace', settingsSection: 'tools' },
-  });
   await waitForUi(window, 40);
   assertNoChips();
   assert.equal(input.value, 'Keep my unfinished request');
@@ -142,7 +136,7 @@ test('empty sessions preserve the composer without chips or background suggestio
   assert.ok(window.__rendererState.currentSessionId, 'new session creation still works');
   assertNoChips();
   assert.equal(doc.activeElement, input);
-  doc.querySelector('.toprail-tab[data-tab-id="settings"]').click();
+  doc.getElementById('settingsTopRailTab').click();
   await waitForUi(window, 40);
   assert.equal(window.__rendererState.ui.activeView, 'settings');
   const sessionRow = doc.querySelector(`.conversation-item[data-session-id="${window.__rendererState.currentSessionId}"] [data-session-open]`);
@@ -364,6 +358,9 @@ test('the surface-effect host leaves normal wheel input native while preserving 
   assert.equal(lineWheelEvent.defaultPrevented, false);
   assert.equal(chatThreadScroll.scrollTop, 40);
 
+  // timeline-perf 2026-09-30: the non-passive zoom listener exists only while
+  // Ctrl is held (the window sees the keydown first, as a real press does).
+  window.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Control', ctrlKey: true }));
   const ctrlWheelEvent = dispatchWheel(window, chatSurfaceEffectLeft, { ctrlKey: true, deltaY: 80 });
 
   assert.equal(ctrlWheelEvent.defaultPrevented, true, 'ctrl-wheel should continue through the existing chat zoom path');
@@ -390,15 +387,15 @@ test('renderer places transcript utilities in the height-free chat overlay', asy
   await waitForUi(window, 40);
   assert.equal(doc.getElementById('composerTokenLabel'), null, 'composer token label should be removed from the UI');
   assert.equal(wayfinderHost.parentElement, doc.getElementById('chatTimelineUtilityCluster'), 'wayfinder should mount in the height-free timeline utility cluster');
-  assert.equal(doc.getElementById('timelineCollapseExpandToggle').parentElement, wayfinderHost.parentElement, 'collapse-all and wayfinder should share the overlay cluster');
+  assert.equal(doc.getElementById('timelineCollapseExpandToggle'), null, 'the bulk collapse/expand toggle retired with transcript views');
+  assert.equal(doc.querySelector('[data-transcript-view-toggle]')?.parentElement, wayfinderHost.parentElement, 'the transcript view control and wayfinder should share the overlay cluster');
   assert.equal(doc.getElementById('artifactSplitViewToggle').parentElement, wayfinderHost.parentElement, 'artifact toggle should share the chat-only overlay cluster');
   for (const obsoleteId of ['workbenchHeader', 'workbenchSessionTitle', 'workbenchModeLabel', 'workbenchModelLabel']) {
     assert.equal(doc.getElementById(obsoleteId), null, `${obsoleteId} should be absent`);
   }
   const healthPillSlot = doc.getElementById('workbenchHealthPillSlot');
-  assert.ok(healthPillSlot.closest('.titlebar-brand'), 'runtime health should live beside the titlebar wordmark');
-  assert.equal(doc.getElementById('topRailActions').contains(healthPillSlot), false, 'global rail should not own runtime health');
-  assert.equal(doc.getElementById('topRailActions').contains(doc.getElementById('artifactSplitViewToggle')), false, 'global rail should no longer own the chat-specific artifact toggle');
+  assert.ok(healthPillSlot.closest('.titlebar-status'), 'runtime health is the dot in the title bar right cluster');
+  assert.equal(doc.getElementById('topRailActions'), null, 'the dead rail action mount is gone');
 
   input.value = 'Show the navigation affordances only when needed';
   input.dispatchEvent(new window.Event('input', { bubbles: true }));
@@ -451,8 +448,8 @@ test('composer rail (D3): meta row gone, model pill + popover host the selects, 
   assert.ok(jumpTools.closest('#chatThreadStage'), 'cluster anchors inside the chat thread stage');
 
   assert.ok(
-    doc.querySelector('#composerSettingsButton #composerGearPostureDot'),
-    'gear carries the local-only posture dot'
+    doc.querySelector('#composerChatPanel #composerChatPostureDot'),
+    'Chat panel carries the local-only posture dot'
   );
   assert.equal(doc.getElementById('composerLocalOnlyLabel'), null, 'meta-row Local only label is gone');
   assert.equal(doc.getElementById('composerOfflineLabel'), null, 'meta-row offline label is gone');
@@ -462,7 +459,9 @@ test('composer tools chip owns web search: popover switch persists tools.web and
   const { window, shell } = await loadRendererTestApp(t, {
     shell: {
       tools: {
-        list: () => ['web_search', 'run_command', 'read_file'],
+        list: () => [{ name: 'web_search', surfaceFamily: 'web', available: true },
+          { name: 'run_command', surfaceFamily: 'terminal', available: true },
+          { name: 'read_file', surfaceFamily: 'files', available: true }],
       },
     },
   });
@@ -475,14 +474,14 @@ test('composer tools chip owns web search: popover switch persists tools.web and
 
   const chip = doc.getElementById('composerToolsChip');
   assert.ok(chip, 'tools chip renders into the tool-toggle slot');
-  assert.equal(chip.getAttribute('title'), 'Session tools: 2/3 enabled');
+  assert.equal(chip.getAttribute('aria-label'), 'Tools for this chat: 2 on');
   assert.equal(
-    chip.querySelector('.inv-chip-count').textContent,
-    '2/3',
+    chip.querySelector('.inv-chip-label').textContent,
+    '2 tools',
     'hydration honors the persisted tools config (web starts off in the stub config)'
   );
 
-  const popover = doc.getElementById('composerToolsPopover');
+  const popover = doc.getElementById('composerChatPanel');
   assert.ok(popover, 'tools popover renders');
   assert.equal(popover.hidden, true, 'popover starts closed');
 
@@ -491,23 +490,24 @@ test('composer tools chip owns web search: popover switch persists tools.web and
   assert.equal(popover.hidden, false, 'chip click opens the popover');
   assert.equal(chip.getAttribute('aria-expanded'), 'true');
 
-  const webSwitch = popover.querySelector('[data-inv-toggle="tool-toggle-web_search"]');
+  popover.querySelector('[data-chat-panel-action="all-tools"]').click();
+  const webSwitch = popover.querySelector('[data-inv-toggle="tool-target:web"]');
   assert.ok(webSwitch, 'web search switch lives only in the tools popover');
   assert.equal(webSwitch.getAttribute('aria-checked'), 'false', 'switch reflects hydrated web=off');
   webSwitch.click();
   await waitForUi(window, 20);
 
   assert.equal(popover.hidden, false, 'toggling a switch keeps the popover open');
-  const rolledBackSwitch = doc.querySelector('[data-inv-toggle="tool-toggle-web_search"]');
+  const rolledBackSwitch = doc.querySelector('[data-inv-toggle="tool-target:web"]');
   const rolledBackChip = doc.getElementById('composerToolsChip');
   assert.equal(rolledBackSwitch.getAttribute('aria-checked'), 'false', 'unsaved chat rejects and rolls back the override');
-  assert.equal(rolledBackChip.querySelector('.inv-chip-count').textContent, '2/3', 'chip count rolls back in place');
-  assert.match(doc.body.textContent, /previous value was restored/i);
+  assert.equal(rolledBackChip.querySelector('.inv-chip-label').textContent, '2 tools', 'chip count rolls back in place');
+  assert.ok(window.__rendererState.logs.some((entry) => entry.event === 'composer.tool_toggle_persist_failed'), 'failed overrides are reported through the renderer log');
 
   rolledBackSwitch.click();
   await waitForUi(window, 20);
-  assert.equal(doc.querySelector('[data-inv-toggle="tool-toggle-web_search"]').getAttribute('aria-checked'), 'false');
-  assert.equal(doc.getElementById('composerToolsChip').querySelector('.inv-chip-count').textContent, '2/3');
+  assert.equal(doc.querySelector('[data-inv-toggle="tool-target:web"]').getAttribute('aria-checked'), 'false');
+  assert.equal(doc.getElementById('composerToolsChip').querySelector('.inv-chip-label').textContent, '2 tools');
 });
 
 test('context log disclosure stays collapsed by default and does not persist a separate preference', async (t) => {
@@ -525,17 +525,16 @@ test('context log disclosure stays collapsed by default and does not persist a s
   await waitForUi(window, 60);
 
   assert.ok(logDisclosure, 'expected a context log disclosure button');
-
-  if (!logDisclosure.classList.contains('hidden')) {
-    assert.equal(logDisclosure.getAttribute('aria-expanded'), 'false');
-  } else {
-    assert.equal(logFeed.hidden, false, 'empty-state log copy should remain visible when there are no entries');
-    return;
-  }
+  // The Activity header is the disclosure: always shown, collapsed by default.
+  assert.equal(logDisclosure.classList.contains('hidden'), false);
+  assert.equal(logDisclosure.getAttribute('aria-expanded'), 'false');
+  assert.equal(logFeed.hidden, true);
 
   const persistedBefore = window.localStorage.getItem('jenny.contextPanel.v1');
   logDisclosure.click();
   await waitForUi(window, 20);
+  assert.equal(logDisclosure.getAttribute('aria-expanded'), 'true');
+  assert.equal(logFeed.hidden, false);
 
   assert.equal(window.localStorage.getItem('jenny.contextPanel.v1'), persistedBefore, 'log disclosure should not persist a new panel preference');
 

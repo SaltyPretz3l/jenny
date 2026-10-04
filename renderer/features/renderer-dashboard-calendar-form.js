@@ -17,14 +17,8 @@
   const { pad2 } = windowRef.rendererDashboardWidgetsCore
     || (typeof require === 'function' ? require('./renderer-dashboard-widgets-core') : {});
 
-  function escapeHtml(value) {
-    return String(value || '')
-      .replaceAll('&', '&amp;')
-      .replaceAll('<', '&lt;')
-      .replaceAll('>', '&gt;')
-      .replaceAll('"', '&quot;')
-      .replaceAll("'", '&#39;');
-  }
+  const escapeHtml = ((typeof globalThis !== 'undefined' && globalThis.stringUtils)
+    || (typeof require === 'function' ? require('../shared/string-utils') : null)).escapeHtml;
 
   function resolvePrimitives(deps = {}) {
     return {
@@ -92,6 +86,9 @@
       date: start.slice(0, 10),
       start: start.slice(11, 16),
       end: end.slice(11, 16),
+      originalStart: start,
+      originalEnd: end,
+      originalAllDay: event?.allDay === true,
       allDay: event?.allDay === true,
       categoryId: String(event?.categoryId || 'default'),
       recurrence: String(event?.recurrence || 'none'),
@@ -221,15 +218,26 @@
       if (!/^\d{2}:\d{2}$/.test(String(v.end || ''))) {
         return { error: jt('dashboard.calendar.form.pickEndTimeError', 'Pick an end time (or mark the event all-day).') };
       }
-      // The form is single-date, so end must follow start on the same day.
-      // Without this the schema silently self-heals end -> start+30min, which
-      // looks to the user like their chosen end time was ignored.
-      if (String(v.end) <= String(v.start)) {
-        return { error: jt('dashboard.calendar.form.endAfterStartError', 'End time must be after start time.') };
-      }
+    }
+    // The form shows one date, so a stored multi-day or overnight event keeps
+    // its hidden end-date offset (moved with the date); the typed times win.
+    const originalDay = Date.parse(`${String(v.originalStart || '').slice(0, 10)}T00:00Z`);
+    const originalEndDay = Date.parse(`${String(v.originalEnd || '').slice(0, 10)}T00:00Z`);
+    const keepsOffset = Number.isFinite(originalDay) && Number.isFinite(originalEndDay)
+      && (v.originalAllDay === true) === (v.allDay === true);
+    const endOffset = keepsOffset ? originalEndDay - originalDay : 0;
+    if (v.allDay !== true && String(v.end) === String(v.start) && endOffset === 0) {
+      return { error: jt('dashboard.calendar.form.endAfterStartError', 'End time must be after start time.') };
     }
     const start = v.allDay === true ? `${v.date}T00:00` : `${v.date}T${v.start}`;
-    const end = v.allDay === true ? `${v.date}T00:00` : `${v.date}T${v.end}`;
+    // UTC is only a wall-clock arithmetic coordinate; stored values stay local.
+    const startClock = Date.parse(`${start}Z`);
+    let endClock = Date.parse(`${v.date}T${v.allDay === true ? '00:00' : v.end}Z`) + endOffset;
+    if (v.allDay !== true && endClock <= startClock) endClock += 86400000;
+    if (!Number.isFinite(startClock) || !Number.isFinite(endClock)) {
+      return { error: jt('dashboard.calendar.form.pickEndTimeError', 'Pick an end time (or mark the event all-day).') };
+    }
+    const end = new Date(endClock).toISOString().slice(0, 16);
     return {
       payload: {
         title: String(v.title || ''),

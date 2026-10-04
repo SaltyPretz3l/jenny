@@ -4,7 +4,9 @@
  * #homeView-rooted event delegation still covers the panels (the dashboard
  * grid lives inside #homeView), and the Memory Hub Commitments mirror keeps
  * reading the same follow-up data. No IPC or schema changes.
- *   - open-loops: #homeOpenLoopsPanel (board + add/edit form)
+ *   - open-loops: #homeOpenLoopsPanel (board + add/edit form). Every loop
+ *     action, including "Start a session", dispatches through the companion
+ *     action utils, so the host adds no listeners of its own.
  */
 
 (function (root, factory) {
@@ -15,59 +17,12 @@
   root.rendererDashboardLoops = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
-  const TASK_SESSION_ACTION_PREFIX = 'start_task_session:';
-
-  function findTaskLoop(state, actionId) {
-    const board = state?.companion?.openLoopsBoard || {};
-    for (const section of ['active', 'deferred', 'recentResolved', 'archived']) {
-      const loop = (Array.isArray(board[section]) ? board[section] : []).find((entry) =>
-        entry?.actions?.some?.((action) => action?.id === actionId)
-      );
-      if (loop) return loop;
-    }
-    return null;
-  }
-
-  function buildTaskBrief(loop, options) {
-    const sharedBuildTaskBrief = globalThis.rendererTaskBriefUtils?.buildTaskBrief;
-    if (typeof sharedBuildTaskBrief === 'function') return sharedBuildTaskBrief(loop, options);
-    const title = String(loop?.title || '').trim();
-    const notes = String(loop?.body || '').trim();
-    return notes ? `${title}\n\n${notes}` : title;
-  }
-
-  function bindTaskSessionAction(panel, getState) {
-    if (panel.dataset.taskSessionActionBound === 'true') return;
-    panel.dataset.taskSessionActionBound = 'true';
-    panel.addEventListener('click', (event) => {
-      const button = event.target?.closest?.('[data-companion-action-id]');
-      const actionId = String(button?.dataset?.companionActionId || '');
-      if (!actionId.startsWith(TASK_SESSION_ACTION_PREFIX)) return;
-      const loop = findTaskLoop(getState(), actionId);
-      const start = globalThis.rendererTaskSessionActions?.start;
-      event.preventDefault();
-      event.stopPropagation();
-      if (!loop || typeof start !== 'function') {
-        globalThis.console?.error?.('Task session unavailable.');
-        return;
-      }
-      void Promise.resolve(start({
-        title: loop.title,
-        initialPrompt: buildTaskBrief(loop, { linkedTaskId: loop.followUpId }),
-        ...(loop.followUpId ? { linkedTaskId: loop.followUpId } : {}),
-      }))
-        .catch(() => globalThis.console?.error?.('Task session creation failed.'));
-    });
-  }
-
   function createAdoptedPanelWidget({ id, panelId, unavailableCopy }) {
-    let latestState = null;
     return {
       id,
       // No card title: the adopted panel brings its own header.
       title: '',
       render(body, ctx) {
-        latestState = ctx?.state || latestState;
         if (!body) {
           return;
         }
@@ -82,7 +37,6 @@
           body.append(panel);
           panel.hidden = false;
         }
-        bindTaskSessionAction(panel, () => latestState);
       },
     };
   }
@@ -96,7 +50,6 @@
   }
 
   return {
-    buildTaskBrief,
     createOpenLoopsWidget,
   };
 });

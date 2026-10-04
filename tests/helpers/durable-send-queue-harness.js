@@ -16,7 +16,7 @@ const summary = (i, overrides = {}) => ({ work_id: `work_${i}`, project_id: 'pro
 function queueHarness(t, overrides = {}) {
   let sequence = 0;
   const calls = { snapshots: [], works: [], cancels: [], resumes: [], pauses: [] };
-  const h = createControllerHarness([], { durableRuntime: true, ...overrides.harness, shell: { sessionRuntime: {
+  const h = createControllerHarness([], { durableRuntime: true, ...overrides.harness, shell: { backend: overrides.backend, sessionRuntime: {
     submit: async payload => receipt(payload, ++sequence),
     getWork: async payload => { calls.works.push(payload); return overrides.getWork
       ? overrides.getWork(payload)

@@ -90,7 +90,6 @@ test('settings shell controller binds child controllers once and owns settings s
               renderComposerPopover() { calls.push('renderComposerPopover'); },
               renderCommandPopover() { calls.push('renderCommandPopover'); },
               syncComposerInputHeight() { calls.push('syncComposerInputHeight'); },
-              syncComposerModelSelectWidth() { calls.push('syncComposerModelSelectWidth'); },
             };
           },
         },
@@ -126,7 +125,6 @@ test('settings shell controller binds child controllers once and owns settings s
     controller.renderComposerPopover();
     controller.renderCommandPopover();
     controller.syncComposerInputHeight();
-    controller.syncComposerModelSelectWidth();
     controller.dispose();
     controller.dispose();
 
@@ -150,7 +148,6 @@ test('settings shell controller binds child controllers once and owns settings s
       'renderComposerPopover',
       'renderCommandPopover',
       'syncComposerInputHeight',
-      'syncComposerModelSelectWidth',
       'settingsEvents.dispose',
       'settingsNav.dispose',
     ]);
@@ -181,8 +178,8 @@ test('settings shell controller initializes retained lazy sections once and read
 
   const sectionDomCalls = { proactive: 0, skills: 0, tips: 0, offline: 0 };
   const bindingCalls = { proactive: 0, skills: 0, tips: 0, offline: 0 };
-  const lazyBinderCalls = { skills: 0, tips: 0, offline: 0 };
-  const refreshCalls = { proactive: 0, offline: 0, skills: 0, tips: 0, personality: 0, memories: 0 };
+  const lazyBinderCalls = { skills: 0, offline: 0 };
+  const refreshCalls = { proactive: 0, offline: 0, skills: 0, personality: 0, memories: 0 };
   let navArgs = null;
 
   global.window = { localStorage };
@@ -226,8 +223,6 @@ test('settings shell controller initializes retained lazy sections once and read
         refreshProactiveState: async () => { refreshCalls.proactive += 1; },
         refreshSkillsState: async () => { refreshCalls.skills += 1; },
         bindSkillsShellEvents: () => { lazyBinderCalls.skills += 1; },
-        refreshTipsState: async () => { refreshCalls.tips += 1; },
-        bindTipsShellEvents: () => { lazyBinderCalls.tips += 1; },
         refreshOfflineState: async () => { refreshCalls.offline += 1; },
         bindOfflineShellEvents: () => { lazyBinderCalls.offline += 1; },
         refreshPersonalityWorkspace: async () => { refreshCalls.personality += 1; },
@@ -294,14 +289,12 @@ test('settings shell controller initializes retained lazy sections once and read
     });
     assert.deepEqual(lazyBinderCalls, {
       skills: 1,
-      tips: 0,
       offline: 1,
     });
     assert.deepEqual(refreshCalls, {
       proactive: 0,
       offline: 1,
       skills: 2,
-      tips: 0,
       personality: 0,
       memories: 0,
     });
@@ -455,7 +448,6 @@ test('settings shell controller forwards the setup action callbacks into the eve
               renderComposerPopover() {},
               renderCommandPopover() {},
               syncComposerInputHeight() {},
-              syncComposerModelSelectWidth() {},
             };
           },
         },

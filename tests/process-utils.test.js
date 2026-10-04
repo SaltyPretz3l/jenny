@@ -225,6 +225,26 @@ describe('isProcessAlive', () => {
 // killProcessTree(pid) + waitForProcessExit(pid)
 // ---------------------------------------------------------------------------
 describe('killProcessTree + waitForProcessExit', () => {
+  test('nonzero taskkill exit is failure without target-exit confirmation', async () => {
+    const child = new EventEmitter();
+    const pending = procUtils.killProcessTree(555, {
+      platform: 'win32', spawnImpl: () => child,
+    });
+    child.emit('exit', 5);
+    assert.deepEqual(await pending, { terminated: false });
+  });
+
+  test('nonzero taskkill exit succeeds only when requested target exit is confirmed', async () => {
+    for (const exited of [true, false]) {
+      const child = new EventEmitter();
+      const pending = procUtils.killProcessTree(555, {
+        platform: 'win32', spawnImpl: () => child, confirmExit: true,
+        waitForProcessExitImpl: async () => exited,
+      });
+      child.emit('exit', 5);
+      assert.deepEqual(await pending, { terminated: exited });
+    }
+  });
   test('wide-016: detached POSIX children target the process group, Windows targets the pid', () => {
     assert.equal(typeof procUtils.resolveProcessTreeTarget, 'function');
     assert.equal(procUtils.resolveProcessTreeTarget(4242, { platform: 'linux', processGroup: true }), -4242);
@@ -390,6 +410,54 @@ describe('getProcessCommandLine', () => {
 });
 
 describe('synchronous process identity helpers', () => {
+  test('creation time lookup is bounded and refuses failed OS queries', () => {
+    const calls = [];
+    const identity = procUtils.getProcessStartTimeSync(555, {
+      platform: 'win32', spawnSyncImpl: (command, args, options) => {
+        calls.push({ command, args, options });
+        return { status: 0, stdout: '638900000000000000\r\n' };
+      },
+    });
+    assert.equal(identity, '638900000000000000');
+    assert.equal(calls[0].command, 'powershell.exe');
+    assert.match(calls[0].args.at(-1), /ProcessId=555.*CreationDate/);
+    assert.equal(calls[0].options.timeout, 1000);
+    for (const result of [{ status: 1, stdout: 'untrusted' }, { error: new Error('timeout') }]) {
+      assert.equal(procUtils.getProcessStartTimeSync(555, {
+        platform: 'win32', spawnSyncImpl: () => result,
+      }), '');
+    }
+    assert.equal(procUtils.getProcessStartTimeSync(0), '');
+  });
+
+  test('async creation time lookup is bounded and refuses failed OS queries', async () => {
+    const calls = [];
+    const ok = await procUtils.getProcessStartTime(555, {
+      platform: 'win32', execFileImpl: (command, args, options, callback) => {
+        calls.push({ command, args, options });
+        callback(null, '638900000000000000' + String.fromCharCode(13, 10));
+      },
+    });
+    assert.equal(ok, '638900000000000000');
+    assert.equal(calls[0].command, 'powershell.exe');
+    assert.match(calls[0].args.at(-1), /ProcessId=555.*CreationDate/);
+    assert.ok(calls[0].options.timeout > 0);
+    assert.equal(await procUtils.getProcessStartTime(555, {
+      platform: 'win32', execFileImpl: (_c, _a, _o, callback) => callback(new Error('timeout'), ''),
+    }), '');
+    assert.equal(await procUtils.getProcessStartTime(0), '');
+  });
+
+  test('Linux creation identity reads the start tick after a parenthesized command', () => {
+    const fields = ['S', ...Array(18).fill('0'), '1234567', '0'];
+    const identity = procUtils.getProcessStartTimeSync(555, {
+      platform: 'linux', readFileSyncImpl: (file) => {
+        assert.equal(file, '/proc/555/stat');
+        return `555 (command with ) spaces) ${fields.join(' ')}`;
+      },
+    });
+    assert.equal(identity, '1234567');
+  });
   test('getProcessCommandLineSync uses a bounded platform query', () => {
     const calls = [];
     const result = procUtils.getProcessCommandLineSync(321, {

@@ -526,7 +526,35 @@ function releaseLease(registry, lease, { status = '', preserveActiveTurn = false
   };
 }
 
+// Backend-restart proof (B3D-1): the producer of this turn already returned an
+// unproven outcome and its sidecar is gone, so nothing can settle the lease.
+// Drop it from memory only, as the delete commit tears a lease down: the actor
+// then matches what a new process builds (no lease). A durable active-turn
+// bracket, the generation and any continuation stay for the orphan/checkpoint
+// recovery. Refuses, changing nothing, unless the lease is exactly this turn's.
+function abandonLeaseAfterBackendRestart(registry, { sessionId, streamId, turnId = null } = {}) {
+  const actor = registry?._actors?.get(normalizeId(sessionId));
+  const lease = actor?.lease;
+  let reason = '';
+  if (!actor) reason = 'actor_missing';
+  else if (actor.deleting || actor.tombstoned) reason = 'session_deleting';
+  else if (!lease || lease.released) reason = 'lease_missing';
+  else if (!normalizeId(streamId) || lease.identity?.streamId !== normalizeId(streamId)
+    || (turnId !== null && lease.identity?.turnId !== normalizeId(turnId))) reason = 'lease_identity_mismatch';
+  else if (lease.controller || actor.controller || lease.activeStreams?.get?.(lease.identity.streamId)) {
+    reason = 'lease_stream_active';
+  }
+  if (reason) return { dropped: false, reason };
+  registry._removeController(lease, actor);
+  lease.released = true;
+  lease.settleLease();
+  actor.lease = null;
+  registry._touch(actor);
+  return { dropped: true };
+}
+
 module.exports = {
+  abandonLeaseAfterBackendRestart,
   adoptPendingTerminalRepair,
   blockCheckpointOrphan,
   createLeaseLifecycle,

@@ -885,3 +885,15 @@ def test_build_repository_delta_block_empty_workspace_root_returns_none(
     )
 
     assert result is None
+
+
+@pytest.mark.parametrize("data", [b"\xff", b" " * 65537], ids=["invalid_utf8", "oversized"])
+def test_anchor_read_rejects_corrupt_or_oversized_input(tmp_path, monkeypatch, data):
+    from sidecar.ai.repo_delta import service
+
+    target = tmp_path / "anchor.json"
+    target.write_bytes(data)
+    reasons = []
+    monkeypatch.setattr(service, "_log_anchor_read_degraded", reasons.append)
+    assert service.read_repo_anchor(target) is None
+    assert reasons == ["corrupt_json" if data == b"\xff" else "oversized"]

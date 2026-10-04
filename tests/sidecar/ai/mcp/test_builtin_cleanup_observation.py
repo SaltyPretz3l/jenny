@@ -25,7 +25,7 @@ CONFIRMED = OwnedProcessCleanupVerdict(
 
 
 def _call(tool: builtin_server.BuiltinTool, workspace_root: Path) -> dict:
-    return builtin_server._handle_tools_call(  # noqa: SLF001
+    return builtin_server._handle_tools_call(
         "cleanup-observation-call",
         {tool.name: tool},
         WorkspaceGuard(str(workspace_root)),
@@ -57,7 +57,7 @@ def test_plain_git_string_receives_exact_owned_process_cleanup_metadata(
         )
 
     monkeypatch.setattr(git_ops, "_run_owned_process", run_git)
-    tool = builtin_server._default_tools()["git_status"]  # noqa: SLF001
+    tool = builtin_server._default_tools()["git_status"]
     response = _call(tool, tmp_path)
 
     assert response["result"]["content"][0]["text"] == "## main"
@@ -130,9 +130,9 @@ def test_soft_ttl_manifest_refresh_is_pending_before_thread_runs(
     cache.read(tmp_path)
     now += 31.0
     monkeypatch.setattr(workspace_manifest, "_CACHE", cache)
-    tool = builtin_server._default_tools(  # noqa: SLF001
-        workspace_manifest_enabled=True
-    )["workspace_manifest_read"]
+    tool = builtin_server._default_tools({"tools_workspace_manifest_enabled": True})[
+        "workspace_manifest_read"
+    ]
 
     try:
         response = _call(tool, tmp_path)

@@ -10,11 +10,9 @@ const {
   buildInteractiveQuestionBatchVisibleText,
   buildInteractiveRoundRecap,
   buildInteractiveRoundRecapTranscript,
-  buildAutomaticSessionTitleCandidate,
   shouldApplyAutomaticSessionTitle,
   isDefaultSessionTitle,
   hasValidInteractiveQuestionCount,
-  clipTitle,
 } = require('../services/backend/interactive-session-utils');
 
 // ---------------------------------------------------------------------------
@@ -301,35 +299,6 @@ test('buildInteractiveRoundRecapTranscript: recap from buildInteractiveRoundReca
 });
 
 // ---------------------------------------------------------------------------
-// buildAutomaticSessionTitleCandidate
-// ---------------------------------------------------------------------------
-
-test('buildAutomaticSessionTitleCandidate: no interactiveResponse + prompt -> clipTitle(prompt)', () => {
-  const result = buildAutomaticSessionTitleCandidate('Tell me about cats', null);
-  assert.equal(result, 'Tell me about cats');
-});
-
-test('buildAutomaticSessionTitleCandidate: with interactiveResponse -> empty string', () => {
-  const response = makeResponse();
-  const normalized = normalizeInteractiveResponse(response);
-  const result = buildAutomaticSessionTitleCandidate('Some prompt', normalized);
-  assert.equal(result, '');
-});
-
-test('buildAutomaticSessionTitleCandidate: empty prompt + no response -> empty string (not New Chat)', () => {
-  // The function returns '' when promptText is empty, even without interactiveResponse
-  const result = buildAutomaticSessionTitleCandidate('', null);
-  assert.equal(result, '');
-});
-
-test('buildAutomaticSessionTitleCandidate: long prompt gets clipped to 80 chars', () => {
-  const longPrompt = 'A'.repeat(100);
-  const result = buildAutomaticSessionTitleCandidate(longPrompt, null);
-  assert.equal(result.length, 80);
-  assert.equal(result, 'A'.repeat(80));
-});
-
-// ---------------------------------------------------------------------------
 // shouldApplyAutomaticSessionTitle
 // ---------------------------------------------------------------------------
 
@@ -449,31 +418,6 @@ test('hasValidInteractiveQuestionCount: 6 questions -> false (exceeds MAX_INTERA
   // Actually normalizePendingQuestionBatch doesn't cap questions, so 6 passes normalize
   // and then hasValidInteractiveQuestionCount returns false because 6 > 5.
   assert.equal(hasValidInteractiveQuestionCount(batch), false);
-});
-
-// ---------------------------------------------------------------------------
-// clipTitle
-// ---------------------------------------------------------------------------
-
-test('clipTitle: > 80 chars gets truncated to exactly 80', () => {
-  const input = 'B'.repeat(100);
-  const result = clipTitle(input);
-  assert.equal(result.length, 80);
-  assert.equal(result, 'B'.repeat(80));
-});
-
-test('clipTitle: empty string -> "New Chat"', () => {
-  assert.equal(clipTitle(''), 'New Chat');
-  assert.equal(clipTitle(null), 'New Chat');
-});
-
-test('clipTitle: normal title returned as-is', () => {
-  assert.equal(clipTitle('Hello World'), 'Hello World');
-});
-
-test('clipTitle: exactly 80 chars -> returned unchanged', () => {
-  const input = 'C'.repeat(80);
-  assert.equal(clipTitle(input), input);
 });
 
 // ---------------------------------------------------------------------------

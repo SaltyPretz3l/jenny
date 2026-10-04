@@ -41,7 +41,7 @@
 
 const path = require('node:path');
 
-const { VIEW_TAB_ORDER } = require('../../capture-scenarios');
+const { VIEW_TAB_ORDER } = require('../dev/capture-scenarios');
 const { getPalettePresets } = require('../../renderer/shared/appearance-utils');
 
 const REPLAY_SCRIPT_DIR = path.join(__dirname, 'demo-replay-scripts');

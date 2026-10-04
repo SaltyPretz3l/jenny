@@ -63,29 +63,17 @@ function stubWidgetModules(overrides = {}) {
   };
 }
 
-test('info strip renders clock, greeting, and configured weather', () => {
+test('info strip renders clock, date, and greeting', () => {
   const { infoStrip } = createDom();
   const renderer = widgetsCore.createInfoStripRenderer({
     nowProvider: () => new Date(2026, 5, 11, 8, 5),
   });
-  renderer.render(infoStrip, {
-    state: {
-      weather: {
-        available: true,
-        configured: true,
-        tempC: 21.4,
-        tempF: 70.5,
-        description: 'partly cloudy',
-        units: 'metric',
-      },
-    },
-  });
+  renderer.render(infoStrip, { state: {} });
 
   assert.equal(infoStrip.hidden, false);
   assert.equal(infoStrip.querySelector('.home-info-strip__time').textContent, '8:05 AM');
   assert.match(infoStrip.querySelector('.home-info-strip__date').textContent, /June 11|11/);
   assert.equal(infoStrip.querySelector('.home-info-strip__greeting').textContent, 'Good morning');
-  assert.equal(infoStrip.querySelector('.home-info-strip__weather').textContent, '21°C · partly cloudy');
 });
 
 test('info strip digest composes next event, open loops, and next run', () => {
@@ -154,22 +142,21 @@ test('info strip digest tiers up today with then + more-today', () => {
   assert.equal(digest, 'Next: Standup at 9:15 AM · then Review 11 AM · +1 more today');
 });
 
-test('info strip omits weather while unconfigured and honors imperial units', () => {
+test('info strip renders no weather reading, even from a stale weather slice', () => {
+  // Home weather was retired (DPR-010); a leftover state.weather from an older
+  // build must not resurrect the reading or its right-hand container.
   const { infoStrip } = createDom();
   const renderer = widgetsCore.createInfoStripRenderer({
     nowProvider: () => new Date(2026, 5, 11, 23, 40),
   });
 
-  renderer.render(infoStrip, { state: { weather: { available: false, configured: false } } });
-  assert.equal(infoStrip.querySelector('.home-info-strip__weather'), null);
-  assert.equal(infoStrip.querySelector('.home-info-strip__greeting').textContent, 'Up late');
-
   renderer.render(infoStrip, {
-    state: {
-      weather: { available: true, tempC: 21, tempF: 69.8, description: 'clear', units: 'imperial' },
-    },
+    state: { weather: { available: true, tempC: 21, tempF: 69.8, description: 'clear', units: 'metric' } },
   });
-  assert.equal(infoStrip.querySelector('.home-info-strip__weather').textContent, '70°F · clear');
+  assert.equal(infoStrip.querySelector('.home-info-strip__weather'), null);
+  assert.equal(infoStrip.querySelector('.home-info-strip__actions'), null);
+  assert.doesNotMatch(infoStrip.textContent, /°[CF]/);
+  assert.equal(infoStrip.querySelector('.home-info-strip__greeting').textContent, 'Up late');
 });
 
 // The page-menu trigger/rows themselves are covered by
@@ -209,49 +196,6 @@ test('open loops widget adopts the live companion panel without rebuilding it', 
   widget.render(body, { documentRef });
   assert.equal(panel.parentNode, body, 'repeat renders leave the adopted node in place');
   assert.equal(documentRef.getElementById('homeOpenLoopList'), innerList);
-});
-
-test('agent-task action starts a session with a title-and-notes draft', async (t) => {
-  const dom = new JSDOM('<div id="homeView"><section id="homeOpenLoopsPanel"><button data-companion-action-id="start_task_session:task-1">Start a session</button></section></div>');
-  const calls = [];
-  const previous = globalThis.rendererTaskSessionActions;
-  t.after(() => { globalThis.rendererTaskSessionActions = previous; });
-  globalThis.rendererTaskSessionActions = { start: async (options) => calls.push(options) };
-  const loop = { title: 'Ship WO-10c', body: 'Keep the brief unsent.', actions: [{ id: 'start_task_session:task-1' }] };
-  const widget = dashboardLoops.createOpenLoopsWidget();
-  const body = dom.window.document.createElement('div');
-  widget.render(body, { documentRef: dom.window.document,
-    state: { companion: { openLoopsBoard: { active: [loop] } } } });
-  body.querySelector('button').click();
-  await new Promise((resolve) => setImmediate(resolve));
-  assert.deepEqual(calls, [{ title: 'Ship WO-10c', initialPrompt: 'Ship WO-10c\n\nKeep the brief unsent.' }]);
-  assert.equal(dashboardLoops.buildTaskBrief({ title: 'Title only', body: '  ' }), 'Title only');
-});
-
-test('unavailable task-session action is contained and logged', (t) => {
-  const dom = new JSDOM('<div id="homeView"><section id="homeOpenLoopsPanel"><button data-companion-action-id="start_task_session:task-1">Start a session</button></section></div>');
-  const previousActions = globalThis.rendererTaskSessionActions;
-  const previousError = globalThis.console.error;
-  const errors = [];
-  t.after(() => {
-    globalThis.rendererTaskSessionActions = previousActions;
-    globalThis.console.error = previousError;
-    dom.window.close();
-  });
-  globalThis.rendererTaskSessionActions = null;
-  globalThis.console.error = (message) => errors.push(message);
-  const loop = { title: 'Ship WO-10c', actions: [{ id: 'start_task_session:task-1' }] };
-  const body = dom.window.document.createElement('div');
-  dashboardLoops.createOpenLoopsWidget().render(body, { documentRef: dom.window.document,
-    state: { companion: { openLoopsBoard: { active: [loop] } } } });
-  let fellThrough = false;
-  dom.window.document.getElementById('homeView').addEventListener('click', () => { fellThrough = true; });
-  const click = new dom.window.MouseEvent('click', { bubbles: true, cancelable: true });
-  body.querySelector('button').dispatchEvent(click);
-
-  assert.equal(click.defaultPrevented, true);
-  assert.equal(fellThrough, false);
-  assert.deepEqual(errors, ['Task session unavailable.']);
 });
 
 test('open loops widget degrades to a note when the panel is missing', () => {
@@ -348,7 +292,7 @@ test('edit layout: toolbar reveals, hide/reorder persist, hidden strip restores'
   const state = {
     ui: { activeView: 'home' },
     homeConfig: {
-      links: [], weather: {}, widgets: { order: [], hidden: [] },
+      links: [], widgets: { order: [], hidden: [] },
       scratchpad: { notes: [], activeNoteId: '', settings: {}, pins: [] },
       calendar: {}, focusMode: false, showContextualTips: true,
     },

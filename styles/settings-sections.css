@@ -12,63 +12,6 @@
   gap: var(--space-8);
 }
 
-/* Flush compact header: the header belongs to the content column — no
-   floating-card chrome; a hairline separates it from the section card. */
-.settings-content-header {
-  max-width: min(var(--settings-shell-content-max), 100%);
-  width: 100%;
-  margin-inline: auto;
-  padding: 0 var(--space-2) var(--space-5);
-  border: none;
-  border-bottom: 1px solid color-mix(in srgb, var(--settings-shell-muted-border) 70%, transparent);
-  background: none;
-  box-shadow: none;
-}
-
-.settings-masthead {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-4) var(--space-6);
-  min-width: 0;
-}
-
-.settings-masthead-title {
-  display: flex;
-  align-items: baseline;
-  flex-wrap: wrap;
-  gap: var(--space-3);
-  min-width: 0;
-}
-
-.settings-masthead-title .page-title {
-  margin: 0;
-  font-size: var(--font-size-2xl);
-  line-height: 1.15;
-  letter-spacing: 0;
-}
-
-/* The three overview chips demoted to one quiet inline text run. */
-.settings-overview-traits {
-  color: var(--text-muted);
-  font-size: var(--font-size-sm);
-  letter-spacing: 0.02em;
-  white-space: nowrap;
-}
-
-.settings-appearance-proof {
-  border: 1px solid var(--settings-shell-chip-border);
-  background: var(--settings-shell-chip-bg);
-  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--text-primary) 6%, transparent);
-}
-
-.settings-overview-chip-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-3);
-}
-
 .settings-content-scroll {
   flex: 1;
   min-height: 0;
@@ -82,7 +25,7 @@
 .settings-content-scroll .settings-card {
   display: none;
   max-width: min(var(--settings-shell-content-max), 100%);
-  margin-inline: auto;
+  margin-inline: 0;
 }
 
 .settings-content-scroll .settings-card + .settings-card {
@@ -160,7 +103,7 @@
 .settings-card h3 {
   margin: 0;
   color: var(--text-primary);
-  font-size: var(--font-size-2xl);
+  font-size: var(--font-size-title);
   font-family: var(--font-family-display);
   letter-spacing: 0;
   line-height: 1.2;
@@ -179,16 +122,14 @@
   border: 1px solid var(--settings-shell-badge-border);
   background: var(--widget-settings-badge-bg);
   color: var(--settings-shell-badge-color);
-  font-size: var(--font-size-xs);
-  font-weight: 700;
-  letter-spacing: var(--tracking-kicker-lg);
-  text-transform: uppercase;
+  font-size: var(--font-size-caption);
+  font-weight: 500;
 }
 
 .settings-copy,
 .settings-note {
   color: var(--text-secondary);
-  font-size: var(--font-size-lg);
+  font-size: var(--font-size-body);
   line-height: 1.65;
 }
 
@@ -218,64 +159,11 @@
 .settings-field-label {
   margin-top: var(--space-8);
   color: var(--text-muted);
-  font-size: var(--font-size-xs);
-  font-weight: 700;
-  letter-spacing: var(--tracking-kicker-sm);
-  text-transform: uppercase;
+  font-size: var(--font-size-body);
+  font-weight: 500;
 }
 
 /* Hide the Offline Intelligence status host when it has nothing to say. */
 #offlineStatus:empty {
   display: none;
-}
-
-.settings-appearance-proof {
-  margin-top: var(--space-7);
-  padding: var(--space-4);
-  border-radius: var(--radius-lg);
-}
-
-.settings-appearance-swatch-row {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: var(--space-4);
-  margin-top: 0;
-}
-
-.settings-appearance-swatch {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-  min-height: 48px;
-  padding: var(--space-3) var(--space-4);
-  border-radius: var(--radius-lg);
-  border: 1px solid var(--settings-shell-muted-border);
-  color: var(--text-primary);
-  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--text-primary) 6%, transparent);
-}
-
-.settings-appearance-swatch-chrome {
-  background: var(--mat-chrome-bg);
-}
-
-.settings-appearance-swatch-live {
-  background: var(--surface-composer-signal-background);
-}
-
-.settings-appearance-swatch-work {
-  background: var(--surface-card-background);
-}
-
-.settings-appearance-swatch-label {
-  color: var(--text-muted);
-  font-size: var(--font-size-xs);
-  font-weight: 700;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-}
-
-.settings-appearance-swatch-value {
-  font-size: var(--font-size-sm);
-  font-weight: 700;
-  line-height: 1.4;
 }

@@ -112,7 +112,7 @@ def test_watchdog_disabled_for_invalid_pid() -> None:
     try:
         assert not fired.wait(timeout=0.2)
         # No thread is started when there is no valid parent pid.
-        assert watchdog._thread is None  # noqa: SLF001
+        assert watchdog._thread is None
     finally:
         watchdog.stop()
 

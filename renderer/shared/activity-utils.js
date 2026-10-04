@@ -275,6 +275,15 @@
 
   var singleton = createActivityRegistry();
 
+  // Split view W3-1: a composer preference save is keyed by the session it
+  // saves (`scope + ':' + sessionId`), so each pane's rail reads only its own
+  // session's busy state. No session (the draft) keeps the bare scope.
+  function sessionScope(scope, sessionId) {
+    var resolvedScope = normalizeScope(scope);
+    var resolvedSession = String(sessionId || '').trim();
+    return resolvedScope && resolvedSession ? resolvedScope + ':' + resolvedSession : resolvedScope;
+  }
+
   return {
     beginActivity: singleton.beginActivity,
     clearActivity: singleton.clearActivity,
@@ -284,6 +293,7 @@
     getMostRecentActivity: singleton.getMostRecentActivity,
     isReducedMotionEnabled: singleton.isReducedMotionEnabled,
     resolveActivity: singleton.resolveActivity,
+    sessionScope: sessionScope,
     setChangeListener: singleton.setChangeListener,
     updateActivity: singleton.updateActivity,
   };

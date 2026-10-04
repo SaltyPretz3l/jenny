@@ -369,13 +369,22 @@
       return memoryStatusLoadPromise;
     }
 
+    // A memory's project in words, never a raw `project_…` id (D10): its name,
+    // "General", "Deleted project" when the read registry no longer has it,
+    // or a plain "Project" before any registry read landed.
     function getMemoryProjectLabel(projectId) {
       const id = String(projectId || '').trim();
+      if (!id) return '';
+      if (id === 'project_general') return jt('projects.switcher.generalName', 'General');
       const projects = Array.isArray(state.memoryManager.projects) ? state.memoryManager.projects : [];
-      return projects.find((project) => project.id === id)?.name || id;
+      const name = projects.find((project) => project.id === id)?.name;
+      if (name) return name;
+      return projects.length
+        ? jt('settings.projects.deletedProject', 'Deleted project')
+        : jt('settings.projects.unknownProject', 'Project');
     }
 
-    // Project names are display-only; a failed registry read leaves rows labelled by id.
+    // Project names are display-only; a failed registry read labels rows generically.
     function refreshMemoryProjects() {
       const projectsApi = window.jennyShell?.projects || null;
       if (!projectsApi || typeof projectsApi.list !== 'function') return Promise.resolve();

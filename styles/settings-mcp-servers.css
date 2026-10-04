@@ -51,7 +51,7 @@
   margin: var(--space-2) 0 0;
   padding: var(--space-2) var(--space-3);
   border-radius: var(--radius-sm);
-  font-size: var(--font-size-sm);
+  font-size: var(--font-size-footnote);
   overflow-wrap: anywhere;
 }
 

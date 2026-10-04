@@ -76,7 +76,7 @@ test('minimal-row path chips shrink and truncate without displacing status metad
 test('minimal tool rows use the shared trailing disclosure and rotate it in place', () => {
   const css = readRepoFile('styles/chat-machinery.css');
   const disclosureRule = css.match(/\.reasoning-row-caret,\s*\.tool-call-disclosure\s*\{([^}]+)\}/)?.[1] || '';
-  const expandedRule = css.match(/\.tool-call-row--minimal \.tool-call-row-toggle\[aria-expanded="true"\] \.tool-call-disclosure\s*\{([^}]+)\}/)?.[1] || '';
+  const expandedRule = css.match(/\.tool-call-row--minimal \.tool-call-row-toggle\[aria-expanded="true"\] \.tool-call-disclosure(?:,\s*[^{]+)?\s*\{([^}]+)\}/)?.[1] || '';
   assert.match(disclosureRule, /transform:\s*rotate\(45deg\)/);
   assert.match(expandedRule, /transform:\s*rotate\(-135deg\)/);
   assert.doesNotMatch(css, /tool-call-caret/);

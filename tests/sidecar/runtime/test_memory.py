@@ -40,7 +40,7 @@ def _insert_pending_candidate(  # noqa: PLR0913 - migrated-row fixture mirrors s
     project_id: str = "project_general",
 ) -> int:
     timestamp = datetime.now(timezone.utc).isoformat()
-    cursor = store._connection.execute(  # noqa: SLF001
+    cursor = store._connection.execute(
         """
         INSERT INTO pending_memory_candidates (
             session_id, source_request_id, title, lesson_text, lesson_kind,
@@ -63,7 +63,7 @@ def _insert_pending_candidate(  # noqa: PLR0913 - migrated-row fixture mirrors s
             project_id,
         ),
     )
-    store._connection.commit()  # noqa: SLF001
+    store._connection.commit()
     assert cursor.lastrowid is not None
     return int(cursor.lastrowid)
 

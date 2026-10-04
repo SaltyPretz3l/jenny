@@ -322,7 +322,7 @@ def generate_step(
         user_override=getattr(kernel._config, "resolved_user_max_output_tokens", None),
     )
     # Preview helpers load on use to preserve the server startup budget.
-    from sidecar.ai.routing import preview_vision as _preview_vision  # noqa: PLC0415
+    from sidecar.ai.routing import preview_vision as _preview_vision
 
     prompt_messages, max_tokens = _preview_vision.prepare_preview_messages(
         kernel, runtime, prompt_messages,
@@ -340,6 +340,12 @@ def generate_step(
         request_id=request_id,
         system_prompt=system_prompt,
         tool_schemas=tool_schemas,
+    )
+    prefix_observation = _generation_diagnostics.observe_prefix(
+        source_key=source_key,
+        system_prompt=system_prompt,
+        tool_schemas=tool_schemas,
+        prompt_messages=prompt_messages,
     )
     attempt_stream_event_types: set[str] = set()
     retry_stream_event_types: set[str] = set()
@@ -450,7 +456,7 @@ def generate_step(
         ) from error
     except (TerminalChatStateError, ToolExecutionFailure):
         raise
-    except Exception as error:  # noqa: BLE001
+    except Exception as error:
         retryable = _is_retryable_generation_error(error)
         failure_metadata = _generation_failure_metadata(error)
         log_event(
@@ -522,6 +528,16 @@ def generate_step(
                 },
                 request_id=source_key,
             )
+    _generation_diagnostics.record_prefix_reuse(
+        current_diagnostics_store(kernel._engine),
+        _generation_diagnostics.PrefixReuseRecord(
+            request_id=request_id,
+            observation=prefix_observation,
+            engine_type=kernel._config.engine_type,
+            model=kernel._config.model,
+            iteration=getattr(runtime, "current_iteration", None),
+        ),
+    )
     return result, streamed_event_types
 
 
@@ -613,7 +629,7 @@ def attempt_fallback_generation(
                 user_override=getattr(fallback_config, "resolved_user_max_output_tokens", None),
             )
             # Fallback generation shares the lazy preview path.
-            from sidecar.ai.routing import preview_vision as _preview_vision  # noqa: PLC0415
+            from sidecar.ai.routing import preview_vision as _preview_vision
 
             prompt_messages, max_tokens = _preview_vision.prepare_preview_messages(
                 SimpleNamespace(_engine=fallback_engine, _config=fallback_config),

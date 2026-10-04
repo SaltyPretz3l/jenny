@@ -11,6 +11,9 @@
   const MAX_REASONING_EXPANSION_SESSIONS = 128;
   const MAX_REASONING_EXPANSIONS_PER_SESSION = 512;
   const MAX_CHAT_TIMELINE_SIGNAL_KEYS_PER_SESSION = 512;
+  const TRANSCRIPT_VIEW_STORAGE_KEY = 'jenny.transcriptViewBySession.v1';
+  const MAX_TRANSCRIPT_VIEW_SESSIONS = 256;
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
 
   function evictOldestMapEntries(map, limit) {
     if (!(map instanceof Map)) return;
@@ -233,28 +236,10 @@
       return result;
     }
 
-    function setExpandedPreferences(sessionId, entries) {
-      let handledCount = 0;
-      for (const entry of Array.isArray(entries) ? entries : []) {
-        const result = applyExpandedPreference(
-          sessionId,
-          entry?.messageId,
-          entry?.phaseKey,
-          entry?.expanded,
-          { defaultExpanded: entry?.defaultExpanded === true },
-        );
-        if (result !== null) {
-          handledCount += 1;
-        }
-      }
-      if (handledCount > 0) {
-        savePreferences();
-      }
-      return handledCount;
-    }
-
-    function syncPersistedExpansionState(sessionId, messages) {
-      const controllerStore = getThinkingController()?.phaseExpansionState;
+    // `controller` is the calling pane's own reasoning controller (split view);
+    // omitted, the app-level one.
+    function syncPersistedExpansionState(sessionId, messages, controller) {
+      const controllerStore = (controller || getThinkingController())?.phaseExpansionState;
       if (!(controllerStore instanceof Map)) {
         return;
       }
@@ -299,9 +284,179 @@
       loadReasoningPhaseExpansionPreferences: loadPreferences,
       saveReasoningPhaseExpansionPreferences: savePreferences,
       setReasoningPhaseExpandedPreference: setExpandedPreference,
-      setReasoningPhaseExpandedPreferences: setExpandedPreferences,
       syncPersistedReasoningPhaseExpansionState: syncPersistedExpansionState,
     };
+  }
+
+  function createTranscriptViewController({
+    state,
+    storage,
+    thinkingController = null,
+    // Split view: the other panes' own reasoning controllers (pane 1 has one).
+    getPaneThinkingControllers = () => [],
+    renderAll = () => {},
+    appendClientLog = () => {},
+    reasoningExpansionController = null,
+  }) {
+    const {
+      normalizeTranscriptView, resolveTranscriptView, cycleTranscriptView,
+    } = root.rendererTranscriptViewUtils
+      || (typeof require === 'function' ? require('../chat/renderer-transcript-view-utils.js') : {});
+    // setDefault writes are serialized: each request evaluates against the
+    // confirmed default left by the previous one and publishes only its own
+    // confirmed snapshot (no lost last choice, no disk/renderer split).
+    let defaultWriteChain = Promise.resolve();
+
+    function getViewStore() {
+      if (!(state.ui?.transcriptViewBySession instanceof Map)) {
+        state.ui = state.ui && typeof state.ui === 'object' ? state.ui : {};
+        state.ui.transcriptViewBySession = new Map();
+      }
+      return state.ui.transcriptViewBySession;
+    }
+
+    function loadViews() {
+      const views = new Map();
+      try {
+        const parsed = JSON.parse(storage?.getItem?.(TRANSCRIPT_VIEW_STORAGE_KEY) || '{}');
+        for (const [sessionId, view] of Object.entries(isPlainObject(parsed) ? parsed : {})) {
+          const normalizedSessionId = String(sessionId || '').trim();
+          const normalizedView = normalizeTranscriptView(view, '');
+          if (normalizedSessionId && normalizedView) views.set(normalizedSessionId, normalizedView);
+        }
+      } catch (_error) {
+        return new Map();
+      }
+      evictOldestMapEntries(views, MAX_TRANSCRIPT_VIEW_SESSIONS);
+      return views;
+    }
+
+    function saveViews() {
+      const viewStore = getViewStore();
+      evictOldestMapEntries(viewStore, MAX_TRANSCRIPT_VIEW_SESSIONS);
+      try {
+        storage?.setItem?.(TRANSCRIPT_VIEW_STORAGE_KEY, JSON.stringify(Object.fromEntries(viewStore)));
+      } catch (_error) {
+        // Storage may be unavailable or full.
+      }
+    }
+
+    // A view change starts the affected sessions clean: per-row reasoning and
+    // tool disclosure overrides give way to the view's defaults.
+    function resetSessionOverrides(sessionIds) {
+      const reasoningStore = state.ui?.reasoningPhaseExpansionBySession;
+      let reasoningRemoved = false;
+      for (const sessionId of sessionIds) {
+        if (typeof reasoningStore?.delete === 'function' && reasoningStore.delete(sessionId)) reasoningRemoved = true;
+      }
+      if (reasoningRemoved) reasoningExpansionController?.saveReasoningPhaseExpansionPreferences?.();
+      for (const sessionId of sessionIds) {
+        globalThis.rendererTurnRowToolRenderUtils?.clearToolRowExpansionOverridesForSession?.(sessionId);
+        globalThis.rendererTranscriptToolCallUtils?.clearToolCallExpansionOverridesForSession?.(sessionId);
+      }
+    }
+
+    // Every pane's controller: a view change (the default above all) can
+    // re-open or fold reasoning in a pane other than the focused one.
+    function announceChange() {
+      for (const controller of [thinkingController, ...(getPaneThinkingControllers() || [])]) {
+        controller?.clearFollowExemptions?.();
+        controller?.syncReasoningExpansionPause?.({ userInitiated: true });
+      }
+      renderAll();
+    }
+
+    function getView(sessionId) {
+      return resolveTranscriptView(state, sessionId);
+    }
+
+    function setView(sessionId, view, { source = 'control' } = {}) {
+      const normalizedSessionId = String(sessionId || '').trim();
+      const nextView = normalizeTranscriptView(view);
+      if (!normalizedSessionId) return getView(normalizedSessionId);
+      const viewStore = getViewStore();
+      if (viewStore.get(normalizedSessionId) === nextView) return nextView;
+      const previousView = getView(normalizedSessionId);
+      viewStore.delete(normalizedSessionId);
+      viewStore.set(normalizedSessionId, nextView);
+      saveViews();
+      // Pinning the view the session already shows changes nothing on screen:
+      // the user's open rows stay open (a reset here would leave the DOM
+      // expanded over a cleared override, since the render would be a no-op).
+      if (previousView === nextView) return nextView;
+      resetSessionOverrides([normalizedSessionId]);
+      announceChange();
+      appendClientLog('INFO', 'chat.transcript_view_changed', { sessionId: normalizedSessionId, view: nextView, source });
+      return nextView;
+    }
+
+    function cycle(sessionId, options) {
+      return setView(sessionId, cycleTranscriptView(getView(sessionId)), options);
+    }
+
+    function setDefault(view, { source = 'settings' } = {}) {
+      const run = defaultWriteChain.then(() => writeDefault(normalizeTranscriptView(view), source));
+      defaultWriteChain = run.catch(() => {});
+      return run;
+    }
+
+    async function writeDefault(nextView, source) {
+      if (nextView === normalizeTranscriptView(state.transcriptViewDefault)) return nextView;
+      // The renderer default changes only once the save is confirmed: a render
+      // between the request and the confirmation (a streaming delta) keeps the
+      // old view, so the final render below is the one view change that resets
+      // the inherited sessions. Nothing optimistic, so a failure leaves the
+      // last confirmed default in place and there is nothing to roll back.
+      try {
+        const api = root.jennyShell?.chatUi;
+        if (typeof api?.updateSettings !== 'function') throw new Error('Chat settings are unavailable.');
+        const snapshot = await api.updateSettings({ transcriptViewDefault: nextView });
+        if (normalizeTranscriptView(snapshot?.transcriptViewDefault, '') !== nextView) {
+          throw new Error(jt('settings.chatUi.confirmError', 'The saved setting could not be confirmed.'));
+        }
+      } catch (error) {
+        appendClientLog('WARN', 'chat.transcript_view_default_failed', { view: nextView, message: String(error?.message || error) });
+        throw error;
+      }
+      state.transcriptViewDefault = nextView;
+      // Sessions without an explicit view follow the default: reset every one the
+      // renderer knows (loaded list, plus any with saved reasoning prefs on disk).
+      const viewStore = getViewStore();
+      const reasoningStore = state.ui?.reasoningPhaseExpansionBySession;
+      const candidateIds = new Set(typeof reasoningStore?.keys === 'function' ? reasoningStore.keys() : []);
+      for (const session of Array.isArray(state.sessions) ? state.sessions : []) {
+        const sessionId = String(session?.id || '').trim();
+        if (sessionId) candidateIds.add(sessionId);
+      }
+      resetSessionOverrides([...candidateIds].filter((sessionId) => !viewStore.has(sessionId)));
+      announceChange();
+      appendClientLog('INFO', 'chat.transcript_view_default_changed', { view: nextView, source });
+      return nextView;
+    }
+
+    function forgetSession(sessionId) {
+      if (!getViewStore().delete(String(sessionId || '').trim())) return false;
+      saveViews();
+      return true;
+    }
+
+    function rekeySession(fromSessionId, toSessionId) {
+      const fromId = String(fromSessionId || '').trim();
+      const toId = String(toSessionId || '').trim();
+      const viewStore = getViewStore();
+      if (!fromId || !toId || fromId === toId || !viewStore.has(fromId)) return false;
+      const view = viewStore.get(fromId);
+      viewStore.delete(fromId);
+      viewStore.delete(toId);
+      viewStore.set(toId, view);
+      saveViews();
+      return true;
+    }
+
+    state.ui = state.ui && typeof state.ui === 'object' ? state.ui : {};
+    state.ui.transcriptViewBySession = loadViews();
+
+    return { cycle, forgetSession, getView, rekeySession, setDefault, setView };
   }
 
   function createStartupAuditRuntime({
@@ -770,5 +925,6 @@
     createChatTimelinePreferenceController,
     createReasoningPhaseExpansionController,
     createStartupAuditRuntime,
+    createTranscriptViewController,
   };
 })(typeof window !== 'undefined' ? window : globalThis);

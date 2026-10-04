@@ -3,10 +3,10 @@ const test = require('node:test');
 const { JSDOM } = require('jsdom');
 
 const { createMemoryContextEditor } = require('../renderer/features/renderer-personality-utils');
+const { createDirtySurfaceRegistry } = require('../renderer/features/renderer-window-exit-preflight');
 
 const NOTES_HTML = `
   <div id="fieldHost"></div>
-  <span id="memoryNotesHint">hint</span>
   <span id="memoryNotesCounter"></span>
   <span id="counter"></span>
   <p id="lint" hidden></p>
@@ -35,6 +35,8 @@ function createHarness(t, overrides = {}) {
     ...overrides,
   };
   dom.window.jennyShell = { memory: { contextFiles } };
+  const dirtySurfaces = createDirtySurfaceRegistry();
+  dom.window.rendererWindowExitPreflight = { dirtySurfaces };
   const state = {
     memoryContextFiles: {
       body: '', savedBody: '', dirty: false, loading: false, saving: false, savedAt: 0,
@@ -57,7 +59,7 @@ function createHarness(t, overrides = {}) {
     controller.dispose();
     dom.window.close();
   });
-  return { calls, controller, document, dom, durable, state };
+  return { calls, controller, document, dom, dirtySurfaces, durable, state };
 }
 
 function typeNotes(harness, value) {
@@ -75,7 +77,7 @@ test('Long-term notes load MEMORY.md into one textarea with its own budget', asy
   assert.equal(fields[0].value, 'Brendan drinks tea.');
   assert.equal(fields[0].getAttribute('aria-label'), 'Long-term notes');
   assert.equal(harness.document.getElementById('counter').textContent, '19 / 1,500');
-  assert.equal(harness.document.getElementById('status').textContent, 'Ready');
+  assert.equal(harness.document.getElementById('status').textContent, '', 'an idle notes field shows no status');
   assert.equal(harness.document.querySelector('[data-action="memory-notes-save"]').disabled, true);
 });
 
@@ -145,14 +147,39 @@ test('clearing the notes empties the textarea and does not touch approved memori
   assert.equal(harness.controller.hasUnsavedChanges(), false);
 });
 
-test('the notes editor warns before unload while a draft is dirty', async (t) => {
+test('a dirty notes draft never cancels an unload; it joins the window-exit prompt instead', async (t) => {
   const harness = createHarness(t);
   await harness.controller.refresh();
+  assert.deepEqual(harness.dirtySurfaces.listDirty(), [], 'a clean editor is not listed');
   typeNotes(harness, '# draft');
 
   const event = new harness.dom.window.Event('beforeunload', { cancelable: true });
   harness.dom.window.dispatchEvent(event);
-  assert.equal(event.defaultPrevented, true);
+  assert.equal(event.defaultPrevented, false, 'a beforeunload cancel would silently swallow close/reload');
+
+  const dirty = harness.dirtySurfaces.listDirty();
+  assert.deepEqual(dirty.map((entry) => [entry.id, entry.label]), [['memory-notes', 'Long-term notes']]);
+  assert.equal(await dirty[0].save(), true, 'the exit prompt Save writes the draft');
+  assert.deepEqual(harness.calls.writes, [{ body: '# draft' }]);
+  assert.deepEqual(harness.dirtySurfaces.listDirty(), []);
+});
+
+test('the exit prompt Save reports a rejected notes write as a failure', async (t) => {
+  const harness = createHarness(t, { async writeFile() { return { ok: false, code: 'CMP-TEST-0001' }; } });
+  await harness.controller.refresh();
+  typeNotes(harness, '# draft');
+
+  const [surface] = harness.dirtySurfaces.listDirty();
+  assert.equal(await surface.save(), false);
+  assert.equal(harness.controller.hasUnsavedChanges(), true, 'the draft is kept');
+});
+
+test('disposing the notes editor unregisters it from the exit prompt', async (t) => {
+  const harness = createHarness(t);
+  await harness.controller.refresh();
+  typeNotes(harness, '# draft');
+  harness.controller.dispose();
+  assert.deepEqual(harness.dirtySurfaces.listDirty(), []);
 });
 
 test('a failed load keeps the last draft and reports an unavailable state', async (t) => {
@@ -262,13 +289,13 @@ test('a rejected notes clear names its error code and keeps the body', async (t)
   assert.equal(harness.state.memoryContextFiles.body, 'Brendan drinks tea.');
 });
 
-test('the notes textarea is described by its hint, counter and lint', async (t) => {
+test('the notes textarea is described by its counter and lint', async (t) => {
   const harness = createHarness(t);
   await harness.controller.refresh();
 
   assert.equal(
     harness.document.getElementById('memoryNotesInput').getAttribute('aria-describedby'),
-    'memoryNotesHint memoryNotesCounter memoryNotesLint'
+    'memoryNotesCounter memoryNotesLint'
   );
 });
 

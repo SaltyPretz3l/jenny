@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import builtins
 import importlib
+import io
 import json
 from pathlib import Path
 
 import pytest
 
+from sidecar.ai.error_codes import CMP_TOOL_OUTSIDE_WORKSPACE
+from sidecar.ai.tools.contracts import ToolExecutionFailure
 from sidecar.ai.tools.workspace import WorkspaceGuard
 
 
@@ -168,6 +172,44 @@ def test_notebook_inspect_invalid_json_returns_unsupported(tmp_path: Path) -> No
 
     result = _notebook_tool()({"path": "broken.ipynb"}, WorkspaceGuard(str(workspace_root)))
 
-    assert result.success is True
+    assert result.success is False
     assert result.metadata["status"] == "unsupported"
     assert result.metadata["failure"]["reason"] == "notebook_parse_failed"
+
+
+def test_notebook_parser_rejects_redirected_handle_after_validation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = importlib.import_module("sidecar.ai.tools.builtins.rich_files.notebook")
+    workspace_root = tmp_path / "workspace"
+    workspace_root.mkdir()
+    path = workspace_root / "sample.ipynb"
+    outside = tmp_path / "outside.ipynb"
+    _write_notebook(path)
+    _write_notebook(outside)
+    original_validate = module.validate_rich_file_source
+    original_open = builtins.open
+    original_io_open = io.open
+
+    def validate_then_redirect(**kwargs):
+        source = original_validate(**kwargs)
+
+        def redirect(file, *args, **options):
+            target = outside if isinstance(file, (str, Path)) and Path(file) == path else file
+            return original_open(target, *args, **options)
+
+        def redirect_io(file, *args, **options):
+            target = outside if isinstance(file, (str, Path)) and Path(file) == path else file
+            return original_io_open(target, *args, **options)
+
+        monkeypatch.setattr(builtins, "open", redirect)
+        monkeypatch.setattr(io, "open", redirect_io)
+        return source
+
+    monkeypatch.setattr(module, "validate_rich_file_source", validate_then_redirect)
+    with pytest.raises(ToolExecutionFailure) as exc:
+        module.notebook_inspect_tool(
+            {"path": "sample.ipynb"}, WorkspaceGuard(str(workspace_root))
+        )
+    assert exc.value.code == CMP_TOOL_OUTSIDE_WORKSPACE

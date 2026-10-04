@@ -1,6 +1,7 @@
 const crypto = require('node:crypto');
 
 const { normalizeLogEntry, toPersistedMainLog } = require('./log-entry-normalizer');
+const { normalizeLogIdentifier } = require('../renderer/shared/log-contract-utils');
 const { ShellLogStore } = require('./shell-log-store');
 const { readProcessLogHistory } = require('./process-log-reader');
 
@@ -51,11 +52,12 @@ function boundEntry(entry) {
     component: boundedText(entry?.component, 160), event: boundedText(entry?.event, 240),
     message: boundedText(entry?.message, 4096), status: boundedText(entry?.status, 80),
     duration_ms: Number.isFinite(Number(entry?.duration_ms)) ? Number(entry.duration_ms) : null,
-    trace_id: boundedText(entry?.trace_id, 160), request_id: boundedText(entry?.request_id, 160),
-    session_id: boundedText(entry?.session_id, 160), tool_call_id: boundedText(entry?.tool_call_id, 160),
-    approval_id: boundedText(entry?.approval_id, 160), rpc_id: boundedText(entry?.rpc_id, 160),
-    run_id: boundedText(entry?.run_id, 160), entry_id: boundedText(entry?.entry_id, 240),
-    origin_entry_id: boundedText(entry?.origin_entry_id, 160), sequence: Number(entry?.sequence) || 0,
+    trace_id: entry?.trace_id, request_id: entry?.request_id,
+    session_id: entry?.session_id, tool_call_id: entry?.tool_call_id,
+    agent_id: entry?.agent_id, stream_id: entry?.stream_id,
+    approval_id: entry?.approval_id, rpc_id: entry?.rpc_id,
+    run_id: entry?.run_id, entry_id: entry?.entry_id,
+    origin_entry_id: entry?.origin_entry_id, sequence: Number(entry?.sequence) || 0,
     redaction_mode: 'redacted', schema_version: Number(entry?.schema_version) || 1,
     data: {
       _truncated: true,
@@ -148,7 +150,8 @@ class DiagnosticLogService {
     this.filePath = filePath;
     this.onEntry = typeof onEntry === 'function' ? onEntry : () => {};
     this.now = now;
-    this.runId = boundedText(runId || createRunId(), 160);
+    // Reserve room for the colon and a safe-integer sequence in entry IDs.
+    this.runId = normalizeLogIdentifier(runId) && runId.length <= 143 ? runId : createRunId();
     this.startedAt = this.now().toISOString();
     this.sequence = 0;
     this.originIds = new Set();
@@ -157,14 +160,14 @@ class DiagnosticLogService {
     this.priorEntries = [];
     this.priorRun = null;
     this.priorDroppedBySource = {};
+    this.priorLoss = { dropped: 0, sinkFailures: { file: 0, mirror: 0 } };
     this.historyIntegrity = { malformed_count: 0, truncated: false, errors: [] };
     this.droppedBySource = { electron: 0, renderer: 0, sidecar: 0 };
+    this.sinkFailuresBySource = { sidecar: { file: 0, mirror: 0 } };
   }
 
   append(rawEntry, { broadcast = true, persist = true, defaults = {} } = {}) {
     if (!rawEntry || typeof rawEntry !== 'object' || Array.isArray(rawEntry)) return null;
-    const originEntryId = boundedText(String(rawEntry.origin_entry_id || '').trim(), 160);
-    if (originEntryId && this.originIds.has(originEntryId)) return null;
     let normalized;
     try {
       normalized = normalizeLogEntry({ ...rawEntry, redaction_mode: 'redacted' }, {
@@ -174,11 +177,24 @@ class DiagnosticLogService {
     } catch (_error) {
       return null;
     }
+    const originEntryId = normalized.origin_entry_id;
+    if (originEntryId && this.originIds.has(originEntryId)) return null;
+    if (normalized.layer === 'sidecar' && normalized.event === 'sidecar.runtime.diagnostics_queue_dropped') {
+      const count = normalized.data?.dropped_count;
+      if (Number.isSafeInteger(count) && count > 0) this.recordDrop('sidecar', count);
+      const failures = normalized.data?.sink_failures;
+      for (const sink of ['file', 'mirror']) {
+        if (!Number.isSafeInteger(failures?.[sink]) || failures[sink] <= 0) continue;
+        this.sinkFailuresBySource.sidecar[sink] = Math.min(
+          MAX_DROP_COUNT,
+          this.sinkFailuresBySource.sidecar[sink] + normalizeDropCount(failures[sink]),
+        );
+      }
+    }
     this.sequence += 1;
     normalized.run_id = this.runId;
     normalized.sequence = this.sequence;
     normalized.entry_id = `${this.runId}:${this.sequence}`;
-    if (originEntryId) normalized.origin_entry_id = originEntryId;
     normalized = boundEntry(normalized);
     const persisted = this.store.append(toPersistedMainLog(normalized.level, normalized));
     if (originEntryId) {
@@ -233,11 +249,14 @@ class DiagnosticLogService {
     if (writerDrops > 0) droppedBySource.writer = writerDrops;
     const partialReasons = [];
     if (Object.values(droppedBySource).some((count) => count > 0)) partialReasons.push('entries_dropped');
+    const sinkFailures = { sidecar: { ...this.sinkFailuresBySource.sidecar } };
+    if (Object.values(sinkFailures.sidecar).some((count) => count > 0)) partialReasons.push('sidecar_sink_failed');
     if (this.writer?.fileDisabled === true) partialReasons.push('history_writer_unavailable');
     const integrity = {
       complete: partialReasons.length === 0,
       partial_reasons: partialReasons,
       dropped_by_source: droppedBySource,
+      sink_failures: sinkFailures,
       capture_policy: {
         electron: 'info_and_above_with_debug_when_emitted',
         renderer: 'info_and_above; debug_in_agent_mode',
@@ -253,22 +272,35 @@ class DiagnosticLogService {
     this.historyIntegrity = result || this.historyIntegrity;
     const recovered = Array.isArray(result?.entries) ? result.entries : [];
     const candidates = recovered.filter((entry) => String(entry?.run_id || '') !== this.runId);
-    const priorRawRunId = String(candidates[candidates.length - 1]?.run_id || '').trim();
-    const priorRunId = boundedText(priorRawRunId, 160);
+    const priorRawRunId = candidates[candidates.length - 1]?.run_id;
+    const priorRunId = normalizeLogIdentifier(priorRawRunId);
     const selected = priorRawRunId
-      ? candidates.filter((entry) => String(entry?.run_id || '') === priorRawRunId)
+      ? candidates.filter((entry) => entry?.run_id === priorRawRunId)
       : candidates.filter((entry) => !String(entry?.run_id || '').trim());
     const legacy = !priorRunId;
     const priorStore = new ShellLogStore({ limit: PRIOR_RUN_LIMIT, maxBytes: MAX_SNAPSHOT_BYTES });
+    const priorLoss = { dropped: 0, sinkFailures: { file: 0, mirror: 0 } };
     selected.forEach((raw, index) => {
       const entry = boundEntry(normalizeLogEntry({ ...raw, redaction_mode: 'redacted' }));
+      // The prior run's own loss records count toward its integrity, as they did live.
+      if (entry.layer === 'sidecar' && entry.event === 'sidecar.runtime.diagnostics_queue_dropped') {
+        const count = entry.data?.dropped_count;
+        if (Number.isSafeInteger(count) && count > 0) priorLoss.dropped = Math.min(MAX_DROP_COUNT, priorLoss.dropped + count);
+        for (const sink of ['file', 'mirror']) {
+          const failures = entry.data?.sink_failures?.[sink];
+          if (Number.isSafeInteger(failures) && failures > 0) {
+            priorLoss.sinkFailures[sink] = Math.min(MAX_DROP_COUNT, priorLoss.sinkFailures[sink] + failures);
+          }
+        }
+      }
       entry.run_id = priorRunId || 'legacy-prior';
       entry.sequence = Number(raw?.sequence) || index + 1;
-      entry.entry_id = boundedText(raw?.entry_id || `${entry.run_id}:${entry.sequence}`, 240);
+      entry.entry_id = entry.entry_id || normalizeLogIdentifier(`${entry.run_id}:${entry.sequence}`);
       priorStore.append(boundEntry(entry));
     });
     this.priorEntries = priorStore.list();
     this.priorDroppedBySource = priorStore.getStats().dropped_by_source;
+    this.priorLoss = priorLoss;
     if (this.priorEntries.length > 0) {
       this.priorRun = {
         run_id: priorRunId || 'legacy-prior',
@@ -339,6 +371,7 @@ class DiagnosticLogService {
     const activeSources = sourceSummary(currentRetained, activeIntegrity);
     const activeRun = {
       run_id: this.runId,
+      sequence: this.sequence,
       started_at: this.startedAt,
       sources: activeSources,
       integrity: activeIntegrity,
@@ -349,6 +382,11 @@ class DiagnosticLogService {
       const priorReasons = historyReasons.slice();
       if (snapshotDropsByRun[priorRun.run_id] > 0) priorReasons.push('snapshot_truncated');
       const priorDropped = { ...this.priorDroppedBySource };
+      if (this.priorLoss.dropped > 0) {
+        priorReasons.push('entries_dropped');
+        priorDropped.sidecar = Number(priorDropped.sidecar || 0) + this.priorLoss.dropped;
+      }
+      if (Object.values(this.priorLoss.sinkFailures).some((count) => count > 0)) priorReasons.push('sidecar_sink_failed');
       for (const removed of selection.removed) {
         if (String(removed?.run_id || '') !== priorRun.run_id) continue;
         const source = entrySource(removed);
@@ -358,6 +396,7 @@ class DiagnosticLogService {
         complete: priorReasons.length === 0,
         partial_reasons: Array.from(new Set(priorReasons)).slice(0, 12),
         dropped_by_source: priorDropped,
+        sink_failures: { sidecar: { ...this.priorLoss.sinkFailures } },
         capture_policy: metadata.integrity.capture_policy,
         history_malformed_count: Number(this.historyIntegrity?.malformed_count || 0),
       };

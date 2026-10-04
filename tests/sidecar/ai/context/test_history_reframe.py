@@ -213,7 +213,9 @@ def test_envelope_values_are_bounded_and_vocabulary_checked() -> None:
     content = str(reframed["content"])
     assert "effects:" not in content
     assert "elapsed_ms:" not in content
-    failed_phase_line = next(l for l in content.splitlines() if l.startswith("failed_phase: "))
+    failed_phase_line = next(
+        line for line in content.splitlines() if line.startswith("failed_phase: ")
+    )
     assert len(failed_phase_line) <= len("failed_phase: ") + 240
 
 

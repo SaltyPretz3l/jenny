@@ -33,14 +33,10 @@
   const ACCEPTANCE = Object.freeze({ licenseAccepted: true });
   const BYTES_PER_MB = 1000 * 1000;
 
-  function escapeHtml(value) {
-    return String(value == null ? '' : value)
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;')
-      .replace(/'/g, '&#39;');
-  }
+  const escapeHtml = ((typeof globalThis !== 'undefined' && globalThis.stringUtils)
+    || (typeof require === 'function' ? require('../shared/string-utils') : null)).escapeHtml;
+  const settingsSupport = (typeof globalThis !== 'undefined' && globalThis.rendererSettingsSupport)
+    || (typeof require === 'function' ? require('./renderer-settings-support.js') : null);
 
   function text(value, max = 200) {
     return String(value == null ? '' : value).trim().slice(0, max);
@@ -197,7 +193,7 @@
     }
 
     function actionsMarkup() {
-      const licence = model.licenseUrl ? button('pdfAddonLicence', jt('settings.pdfAddon.readLicence', 'Read the licence'), 'ghost', 'sm') : '';
+      const licence = model.licenseUrl ? button('pdfAddonLicence', jt('settings.pdfAddon.readLicence', 'Read the license'), 'ghost', 'sm') : '';
       const fromFile = button('pdfAddonFromFile', jt('settings.pdfAddon.installFromFile', 'Install from a file…'), 'ghost', 'sm');
       const canInstall = model.state === 'not_installed' || model.state === 'failed';
       if (canInstall && disclosureOpen) {
@@ -223,39 +219,65 @@
 
     function getMarkup() {
       const status = statusFor(model);
-      const statusMarkup = typeof inventory.statusRow === 'function'
-        ? inventory.statusRow({
-          tone: status.tone,
-          label: jt('settings.pdfAddon.statusLabel', 'Status'),
-          message: status.message,
-          spinner: status.spinner === true,
-          progress: status.progress || null,
-          ariaLive: 'polite',
-        })
-        : '<p class="settings-note" role="status" aria-live="polite">' + escapeHtml(status.message) + '</p>';
+      const ready = model.state === 'ready' || (model.state === 'development' && model.developmentAvailable === true);
+      const working = WORKING_STATES.has(model.state) || (model.state === 'development' && model.developmentAvailable === null);
+      const blocked = !ready && !working && model.state !== 'not_installed';
+      const labels = {
+        ready: jt('settings.pdfAddon.short.ready', 'Ready'),
+        not_installed: jt('settings.pdfAddon.short.not_installed', 'Not installed'),
+        downloading: jt('settings.pdfAddon.short.downloading', 'Working…'),
+        verifying: jt('settings.pdfAddon.short.verifying', 'Working…'),
+        installing: jt('settings.pdfAddon.short.installing', 'Working…'),
+        failed: jt('settings.pdfAddon.short.failed', 'Failed'),
+        load_failed: jt('settings.pdfAddon.short.load_failed', 'Failed'),
+        unsupported: jt('settings.pdfAddon.short.unsupported', 'Not available'),
+        development: jt('settings.pdfAddon.short.development', 'Not available'),
+      };
+      const label = ready ? labels.ready : model.state === 'development' && working ? labels.downloading : labels[model.state];
+      const statusMarkup = '<span class="settings-page-status" role="status"'
+        + (ready ? ' data-state="ready"' : blocked ? ' data-state="blocked"' : '') + '>'
+        + (ready ? '<span class="settings-page-status-dot" aria-hidden="true"></span>' : '') + escapeHtml(label) + '</span>';
       const canInstall = model.state === 'not_installed' || model.state === 'failed';
-      const actions = actionsMarkup();
-      return '<h4 class="settings-group-heading" id="toolsPdfAddonHeading">'
-        + escapeHtml(jt('settings.pdfAddon.heading', 'PDF reading add-on')) + '</h4>'
-        + '<p class="settings-group-copy">'
-        + escapeHtml(jt('settings.pdfAddon.description', 'Lets Jenny read PDF text, tables and scanned pages. Viewing and editing PDFs in the Workspace works without it.'))
-        + '</p>'
-        + statusMarkup
-        + (canInstall && disclosureOpen ? disclosureMarkup() : '')
+      const expanded = (canInstall && disclosureOpen) || confirmRemove;
+      const workspaceDetail = jt('settings.pdfAddon.workspaceDetail', 'Viewing and editing PDFs in the Workspace works without it.');
+      const row = inventory.settingsField({
+        id: 'toolsPdfAddonRow', variant: 'row', titleId: 'toolsPdfAddonHeading',
+        label: jt('settings.pdfAddon.heading', 'PDF reading add-on'),
+        // While a progress line is shown under the row it carries the message; saying it in the help too reads it twice.
+        help: ((ready || model.state === 'not_installed') && !model.applyPending) || status.progress ? jt('settings.pdfAddon.rowHelp', 'Needed for PDF text, tables and scanned pages.') : status.message,
+        detail: ready ? status.message + ' ' + workspaceDetail : model.state === 'not_installed' ? workspaceDetail : '',
+        detailLabel: jt('settings.field.detailAria', 'More about {label}', { label: jt('settings.pdfAddon.heading', 'PDF reading add-on') }),
+        controlHtml: statusMarkup + (expanded ? '' : actionsMarkup()),
+      });
+      const block = (canInstall && disclosureOpen ? disclosureMarkup() : '')
+        + (status.progress && typeof inventory.statusRow === 'function' ? inventory.statusRow({
+          tone: status.tone, message: status.message, progress: status.progress, ariaLive: 'polite',
+        }) : '')
         + (WORKING_STATES.has(model.state) && !model.applyPending
-          ? '<p class="settings-field-note">' + escapeHtml(jt('settings.pdfAddon.workingNote', 'Then: verify fingerprint → install → start using it. Chats keep working meanwhile.')) + '</p>'
-          : '')
-        + (confirmRemove && (model.state === 'ready' || model.state === 'load_failed')
-          ? '<p class="settings-field-note">' + escapeHtml(jt('settings.pdfAddon.removeConfirm', 'Remove the PDF reading add-on? Jenny will stop reading PDFs until you install it again.')) + '</p>'
-          : '')
+          ? '<p class="settings-field-note">' + escapeHtml(jt('settings.pdfAddon.workingNote', 'Then: verify fingerprint → install → start using it. Chats keep working meanwhile.')) + '</p>' : '')
+        + (confirmRemove ? '<p class="settings-field-note">' + escapeHtml(jt('settings.pdfAddon.removeConfirm', 'Remove the PDF reading add-on? Jenny will stop reading PDFs until you install it again.')) + '</p>' : '')
         + (actionError ? '<p class="settings-field-note" role="alert">' + escapeHtml(actionError) + '</p>' : '')
-        + (actions ? '<div class="settings-actions">' + actions + '</div>' : '');
+        + (expanded ? '<div class="settings-actions">' + actionsMarkup() + '</div>' : '');
+      return row + (block ? '<div class="settings-field-block" data-pdf-addon-block>' + block + '</div>' : '');
     }
 
     function render() {
       if (disposed) return;
       if (fieldList?.dataset) {
-        fieldList.dataset.pdfAddonNeeded = model.state === 'ready' || model.state === 'development' ? 'false' : 'true';
+        const needed = !(model.state === 'ready' || (model.state === 'development' && model.developmentAvailable !== false));
+        fieldList.dataset.pdfAddonNeeded = needed ? 'true' : 'false';
+        for (const key of ['richFiles', 'imageRead']) {
+          const row = fieldList.querySelector?.(`[data-settings-field="settings-tool-config-${key}"]`);
+          const help = row?.querySelector('.settings-field-help');
+          const toggle = row?.querySelector('[data-inv-toggle]');
+          if (!help) continue;
+          // The runtime blocks a switch the page left unavailable, or disabled for no other
+          // reason: not because its parent is off, and not for a save in flight.
+          const blocked = Boolean(toggle) && !row.hasAttribute('data-setting-parent-off')
+            && (toggle.hasAttribute('data-setting-unavailable') || (toggle.disabled && !toggle.hasAttribute('data-setting-busy')));
+          const field = settingsSupport.DEFAULT_TOOL_CONFIG_FIELDS.find((entry) => entry.key === key);
+          help.textContent = settingsSupport.composeToolHelp(field, { pdfAddonNeeded: needed, blocked });
+        }
       }
       if (!host) return;
       const active = documentRef?.activeElement;

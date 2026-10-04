@@ -74,19 +74,6 @@ async function handleElectronToolRequest(client, message) {
   }
 }
 
-async function handlePluginHostRequest(client, message) {
-  const params = message.params && typeof message.params === 'object' ? message.params : {};
-  const handler = client.pluginHostHandlers.get(String(params.request_id || '').trim());
-  try {
-    if (typeof handler !== 'function') throw new Error('Plugin host bridge is unavailable for this request.');
-    client._writeFrame(buildBoundedElectronToolBridgeResult(message.id, await handler(params)).response);
-  } catch (error) {
-    const text = String(error?.message || error || 'Plugin host bridge failed.');
-    client._writeFrame(buildElectronToolBridgeErrorResponse(message.id, text, { reason: 'plugin_host_failed' }));
-    emitSidecarErrorSafely(client, error instanceof Error ? error : new Error(text), 'plugin_host_handler');
-  }
-}
-
 function runtimeOperationRejected(params, reason, message) {
   return {
     schema_version: 1,
@@ -142,7 +129,6 @@ async function handleRuntimeOperationRequest(client, message) {
 
 module.exports = {
   handleElectronToolRequest,
-  handlePluginHostRequest,
   handleRuntimeOperationRequest,
   retainRuntimeSettlementHandler,
 };

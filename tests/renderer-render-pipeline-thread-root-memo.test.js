@@ -310,7 +310,7 @@ test('Review fix case 9: the edited root is excluded from memo; sibling roots st
 
 test('Review fix case 10: selectionModeActive suspends memo for every root', () => {
   // Selection mode grows a checkbox/handle on every settled root
-  // (article-markup resolveSelectionState reads state.ui.selectionMode
+  // (article-markup resolveSelectionState reads the pane's selection ownership
   // directly), so no root may be served from cache while it is active.
   const callLog = [];
   const buildArticle = buildSpyArticle(callLog);
@@ -372,4 +372,36 @@ test('Review fix case 11: an isArtifactReviewVisible() toggle busts the settled-
     ['a1', 'a1'],
     'toggling isArtifactReviewVisible must invalidate the cached settled root so review_artifact is not served stale'
   );
+});
+
+test('Transcript view: a sessionGlobals.transcriptView change busts the settled-root key', () => {
+  // Expansion defaults are baked into row markup per view, so a memoized root
+  // built under 'thinking' must not be served to an 'everything' render.
+  const callLog = [];
+  const buildArticle = buildSpyArticle(callLog);
+  const pipeline = createThreadDomPipeline({ callbacks: { escapeHtml } });
+  const tree = buildThreadTree([buildRootNode('a1', 'a settled turn')]);
+  const globals = {
+    sessionId: 's1',
+    latestReplyAssistantMessageId: 'a1',
+    followUpDisabledReason: '',
+    regenerateRequestFingerprint: '',
+    artifactReviewVisible: false,
+    transcriptView: 'thinking',
+  };
+  const renderOptions1 = baseRenderOptions({ sessionGlobals: Object.assign({}, globals) });
+  const sharedCache = renderOptions1.markupCache;
+
+  pipeline.renderThreadTree(tree, 's1', new Set(), buildArticle, renderOptions1);
+  pipeline.renderThreadTree(tree, 's1', new Set(), buildArticle, baseRenderOptions({
+    markupCache: sharedCache,
+    sessionGlobals: Object.assign({}, globals),
+  }));
+  assert.deepEqual(callLog, ['a1'], 'the same view serves the memoized root');
+
+  pipeline.renderThreadTree(tree, 's1', new Set(), buildArticle, baseRenderOptions({
+    markupCache: sharedCache,
+    sessionGlobals: Object.assign({}, globals, { transcriptView: 'everything' }),
+  }));
+  assert.deepEqual(callLog, ['a1', 'a1'], 'a view change rebuilds the settled root');
 });

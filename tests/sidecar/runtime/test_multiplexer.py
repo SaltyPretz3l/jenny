@@ -31,13 +31,13 @@ from sidecar.runtime.multiplexer import (
 
 @pytest.fixture
 def isolated_engine_liveness_state() -> Iterator[None]:
-    with engine_liveness._state.lock:  # noqa: SLF001
-        engine_liveness._state.last_activity_monotonic = None  # noqa: SLF001
-        engine_liveness._state.active_generations = 0  # noqa: SLF001
+    with engine_liveness._state.lock:
+        engine_liveness._state.last_activity_monotonic = None
+        engine_liveness._state.active_generations = 0
     yield
-    with engine_liveness._state.lock:  # noqa: SLF001
-        engine_liveness._state.last_activity_monotonic = None  # noqa: SLF001
-        engine_liveness._state.active_generations = 0  # noqa: SLF001
+    with engine_liveness._state.lock:
+        engine_liveness._state.last_activity_monotonic = None
+        engine_liveness._state.active_generations = 0
 
 
 def _queued_reader(items: "queue.Queue[dict[str, object]]"):
@@ -124,7 +124,7 @@ def test_approval_reader_factory_cancels_when_turn_is_cancelled() -> None:
         with pytest.raises(ApprovalResponseCancelledError):
             reader(1.0)
         thread.join(timeout=1.0)
-        assert 1001 not in multiplexer._approval_waiters  # noqa: SLF001
+        assert 1001 not in multiplexer._approval_waiters
     finally:
         multiplexer.close()
 
@@ -141,7 +141,7 @@ def test_approval_reader_stays_registered_across_timeout_for_extension() -> None
 
         with pytest.raises(TimeoutError):
             reader(0.0)
-        assert 1003 in multiplexer._approval_waiters  # noqa: SLF001
+        assert 1003 in multiplexer._approval_waiters
 
         incoming.put({"jsonrpc": "2.0", "id": 1003, "result": {"approved": True}})
         incoming.put({"jsonrpc": "2.0", "id": 43, "method": "initialize", "params": {}})
@@ -167,7 +167,9 @@ def test_turn_cancellation_handle_runs_registered_close_callbacks_once() -> None
     assert calls == ["second:sidecar_cancel", "late:sidecar_cancel"]
 
 
-def test_chat_cancel_reason_round_trips_to_handle_and_terminal_subcode() -> None:
+# app_shutdown: Electron's reason when Jenny closes mid-turn (dogfood TR-012).
+@pytest.mark.parametrize("reason", ["user_cancel", "app_shutdown"])
+def test_chat_cancel_reason_round_trips_to_handle_and_terminal_subcode(reason: str) -> None:
     incoming: queue.Queue[dict[str, object]] = queue.Queue()
     multiplexer = StdioTransportMultiplexer(
         reader=_queued_reader(incoming),
@@ -190,7 +192,7 @@ def test_chat_cancel_reason_round_trips_to_handle_and_terminal_subcode() -> None
                     "request_id": "req_reason",
                     "trace_id": "trace_reason",
                     "session_id": "session_reason",
-                    "cancel_reason": "user_cancel",
+                    "cancel_reason": reason,
                 },
             }
         )
@@ -198,10 +200,10 @@ def test_chat_cancel_reason_round_trips_to_handle_and_terminal_subcode() -> None
 
         assert multiplexer.read_request()["method"] == "shutdown"
         assert handle.cancelled is True
-        assert handle.reason == "user_cancel"
+        assert handle.reason == reason
         with pytest.raises(TerminalChatStateError) as exc:
             handle.raise_if_cancelled()
-        assert exc.value.terminal_subcode == "user_cancel"
+        assert exc.value.terminal_subcode == reason
     finally:
         multiplexer.close()
 
@@ -403,8 +405,8 @@ def test_cancel_tombstones_are_capped_and_warn_when_oldest_is_evicted(caplog) ->
             incoming.put({"jsonrpc": "2.0", "id": 50, "method": "shutdown", "params": {}})
             assert multiplexer.read_request()["method"] == "shutdown"
 
-        assert len(multiplexer._cancel_tombstones) == 3  # noqa: SLF001
-        assert "missing-0" not in multiplexer._cancel_tombstones  # noqa: SLF001
+        assert len(multiplexer._cancel_tombstones) == 3
+        assert "missing-0" not in multiplexer._cancel_tombstones
         assert any(
             getattr(record, "event", "") == "sidecar.runtime.cancel_tombstone_evicted"
             for record in caplog.records
@@ -613,7 +615,7 @@ def test_outbound_writer_stops_after_first_write_error_and_reports_abandoned(cap
                     control=False,
                 )
             deadline = time.monotonic() + 1.0
-            while writer._write_error is None and time.monotonic() < deadline:  # noqa: SLF001
+            while writer._write_error is None and time.monotonic() < deadline:
                 time.sleep(0.01)
             writer.close()
 
@@ -634,7 +636,7 @@ def test_outbound_writer_stops_after_first_write_error_and_reports_abandoned(cap
                 },
                 control=False,
             )
-        assert writer._buffered_bytes == 0  # noqa: SLF001
+        assert writer._buffered_bytes == 0
     finally:
         writer.close()
 
@@ -727,7 +729,7 @@ def test_session_single_flight_allows_newer_generation_and_preempts_old() -> Non
         assert original.reason == "sidecar_cancel"
         assert replacement.cancelled is False
         multiplexer.unregister_turn("req_session_old", expected_handle=original)
-        assert multiplexer._active_turns_by_session["session_shared"] is replacement  # noqa: SLF001
+        assert multiplexer._active_turns_by_session["session_shared"] is replacement
     finally:
         multiplexer.close()
 
@@ -756,10 +758,10 @@ def test_terminal_bundle_admission_is_all_or_none() -> None:
             "result": {"request_id": "req_atomic", "summary": "y" * 700},
         }
 
-        before = multiplexer._writer.stats()  # noqa: SLF001
+        before = multiplexer._writer.stats()
         with pytest.raises(TransportBackpressureError):
             multiplexer.send_terminal_result(notifications, response)
-        after = multiplexer._writer.stats()  # noqa: SLF001
+        after = multiplexer._writer.stats()
 
         assert after["buffered_bytes"] == before["buffered_bytes"] == 0
         assert after["pending_frames"] == before["pending_frames"] == 0
@@ -830,7 +832,7 @@ def test_transport_close_shares_one_deadline_between_reader_and_writer() -> None
         logger=logging.getLogger("tests.multiplexer.deadline"),
         message_reader_cls=SlowReader,
     )
-    original_writer = multiplexer._writer  # noqa: SLF001
+    original_writer = multiplexer._writer
     original_writer.close(join_timeout_seconds=1.0)
 
     class RecordingWriter:
@@ -838,7 +840,7 @@ def test_transport_close_shares_one_deadline_between_reader_and_writer() -> None
             writer_timeouts.append(join_timeout_seconds)
             return WriterDrainResult(True, 0, 0, False, None)
 
-    multiplexer._writer = RecordingWriter()  # type: ignore[assignment] # noqa: SLF001
+    multiplexer._writer = RecordingWriter()  # type: ignore[assignment]
     result = multiplexer.close(timeout_seconds=0.05)
 
     assert result.drained is True
@@ -883,7 +885,7 @@ def test_noncontrol_backlog_cannot_consume_reserved_cancel_ack_capacity(
             session_id=None,
         )
 
-        data_limit = multiplexer._writer.stats()["data_high_water_mark_bytes"]  # noqa: SLF001
+        data_limit = multiplexer._writer.stats()["data_high_water_mark_bytes"]
         backlog = _sized_data_message(
             data_limit - 20,
             request_id="req_backpressure_cancel",
@@ -891,7 +893,7 @@ def test_noncontrol_backlog_cannot_consume_reserved_cancel_ack_capacity(
         if backlog_lane == "data":
             multiplexer.send_data(backlog)
         else:
-            multiplexer._writer.enqueue_batch([backlog], lane="terminal")  # noqa: SLF001
+            multiplexer._writer.enqueue_batch([backlog], lane="terminal")
 
         incoming.put(
             {
@@ -930,9 +932,9 @@ def test_approval_reader_close_removes_registered_waiter() -> None:
     )
     try:
         reader = multiplexer.approval_reader_factory(42)
-        assert 42 in multiplexer._approval_waiters  # noqa: SLF001
+        assert 42 in multiplexer._approval_waiters
         reader.close()  # type: ignore[attr-defined]
-        assert 42 not in multiplexer._approval_waiters  # noqa: SLF001
+        assert 42 not in multiplexer._approval_waiters
     finally:
         multiplexer.close()
 
@@ -960,7 +962,7 @@ def test_control_frame_rejected_log_includes_control_lane_counters(caplog) -> No
             session_id=None,
         )
 
-        multiplexer._writer.enqueue_batch(  # noqa: SLF001
+        multiplexer._writer.enqueue_batch(
             [_sized_data_message(1024 - 40, request_id="req_control_lane_stats")],
             lane="control",
         )

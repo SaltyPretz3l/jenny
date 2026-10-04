@@ -291,7 +291,7 @@ test('workspace IDE IPC reports a future-schema write refusal and preserves byte
     version: CONFIG_VERSION + 1,
     toolsWorkspaceRoot: workspaceRoot,
     workspaceIde: {
-      preferences: { fontSize: 13 },
+      preferences: { fontSize: 14 },
       rootLru: [rootId],
       roots: { [rootId]: { openTabs: ['before.txt'] } },
     },
@@ -318,7 +318,7 @@ test('workspace IDE IPC reports a future-schema write refusal and preserves byte
 
     assert.equal(result.updated, false);
     assert.equal(result.code, 'config_write_blocked');
-    assert.equal(configService.getWorkspaceIdeStore().preferences.fontSize, 13);
+    assert.equal(configService.getWorkspaceIdeStore().preferences.fontSize, 14);
     assert.equal(fs.readFileSync(configPath, 'utf8'), rawText);
     const preferenceResult = await handlers.get('workspace-ide:update-settings')(null, { fontSize: 20 });
     assert.equal(preferenceResult.updated, false);
@@ -387,14 +387,14 @@ test('auxiliary IPC handlers delegate chat UI zoom state through shell config se
 test('auxiliary IPC handlers persist app zoom and apply it live to the requesting frame', async () => {
   const handlers = new Map();
   const { registerAuxiliaryIpcHandlers } = require('../services/auxiliary-ipc-handlers');
-  const windowUiState = { appZoomPercent: 100 };
+  const windowUiState = { appZoomPercent: 110 };
   const shellConfigService = {
     getWindowUiState() {
       return { ...windowUiState };
     },
     updateWindowUiSettings(patch) {
       // Mimic the real clamp/step (80–150, step 5) just enough for the assert.
-      const raw = Number(patch?.appZoomPercent || 100);
+      const raw = Number(patch?.appZoomPercent || 110);
       windowUiState.appZoomPercent = Math.min(150, Math.max(80, raw));
       return { ...windowUiState };
     },
@@ -434,13 +434,16 @@ test('auxiliary IPC handlers persist app zoom and apply it live to the requestin
     speechService: {},
   });
 
-  assert.deepEqual(await handlers.get('window-ui:get-state')(), { appZoomPercent: 100 });
+  assert.deepEqual(await handlers.get('window-ui:get-state')(), { appZoomPercent: 110 });
 
   const zoomCalls = [];
   const event = { sender: { setZoomFactor(factor) { zoomCalls.push(factor); } } };
   const result = await handlers.get('window-ui:update-settings')(event, { appZoomPercent: 125 });
   assert.deepEqual(result, { appZoomPercent: 125 });
   assert.deepEqual(zoomCalls, [1.25]);
+  shellConfigService.updateWindowUiSettings = () => ({});
+  await handlers.get('window-ui:update-settings')(event, {});
+  assert.deepEqual(zoomCalls, [1.25, 1.1], 'missing app zoom uses the service default');
 });
 
 test('auxiliary artifact IPC handlers preserve structured artifact error codes', async () => {
@@ -661,6 +664,74 @@ function registerToolsListHandler({ backendService, registryTools = [] }) {
   return handlers.get('tools:list');
 }
 
+test('IPC tool status preserves connection and side effect metadata in both casings', () => {
+  const { normalizeRuntimeToolStatusMap } = require('../services/ipc-validation-helpers');
+  for (const camel of [false, true]) {
+    const raw = camel
+      ? { connectionId: 'plugin:pub:tools', serverName: 'electron_tool_bridge', sideEffecting: false }
+      : { connection_id: 'plugin:pub:tools', server_name: 'electron_tool_bridge', side_effecting: false };
+    const status = normalizeRuntimeToolStatusMap({ plugin_tool: { available: true, ...raw } }).plugin_tool;
+    assert.equal(status.connectionId, 'plugin:pub:tools');
+    assert.equal(status.serverName, 'electron_tool_bridge');
+    assert.equal(status.sideEffecting, false);
+  }
+  assert.equal(normalizeRuntimeToolStatusMap({ legacy: {} }).legacy.sideEffecting, undefined);
+});
+
+test('tools list delivers panel metadata through managed status and the registered IPC entry point', async () => {
+  const { normalizeToolsStatus } = require('../services/backend/managed-sidecar-status');
+  const toolsStatus = normalizeToolsStatus({
+    read_file: { available: true, source_kind: 'builtin', tool_family: 'filesystem', side_effecting: false },
+    monitor: { available: true, tool_family: 'shell', side_effecting: true },
+    home: { available: true, side_effecting: true },
+    write_file: { available: true, side_effecting: true },
+    mcp__github__x: { available: false, source_kind: 'mcp', tool_family: 'other', server_name: 'github',
+      connection_id: 'mcp:github', side_effecting: true },
+    'plugin:pub:first:x': { available: true, source_kind: 'restricted', server_name: 'electron_tool_bridge',
+      connection_id: 'plugin:pub:first', side_effecting: true },
+    'plugin:pub:second:x': { available: true, source_kind: 'plugin_native_mcp', server_name: 'electron_tool_bridge',
+      connection_id: 'plugin:pub:second', side_effecting: true },
+    mcp__legacy__x: { available: true, source_kind: 'mcp', server_name: 'legacy' },
+    legacy_bridge: { available: true, source_kind: 'mcp', server_name: 'electron_tool_bridge' },
+    override: { available: true, side_effecting: false },
+    registry_only: { available: true },
+  });
+  const registryTools = [
+    { name: 'read_file', description: ' Read file ', readOnly: true, category: 'builtin' },
+    { name: 'override', readOnly: false }, { name: 'registry_only', readOnly: false },
+  ];
+  for (const phase of ['ready', 'failed']) {
+    const listTools = registerToolsListHandler({ registryTools, backendService: {
+      currentStatus: { tools_status: toolsStatus }, getBackendStatus: () => ({ phase }),
+    } });
+    const byName = Object.fromEntries((await listTools()).map(tool => [tool.name, tool]));
+    assert.equal(byName.read_file.surfaceFamily, 'files');
+    assert.equal(byName.read_file.toolFamily, 'filesystem');
+    assert.equal(byName.read_file.sourceKind, 'builtin');
+    assert.equal(byName.read_file.description, 'Read file');
+    assert.equal(byName.read_file.readOnly, true);
+    assert.equal(byName.read_file.category, 'builtin');
+    assert.equal(byName.read_file.connectionId, '');
+    assert.equal(byName.read_file.sideEffecting, false);
+    assert.equal(byName.monitor.surfaceFamily, 'terminal');
+    assert.equal(byName.mcp__github__x.surfaceFamily, '');
+    assert.equal(byName.mcp__github__x.connectionId, 'mcp:github');
+    assert.equal(byName.mcp__github__x.serverName, 'github');
+    assert.equal(byName.mcp__github__x.approvalDefault, 'ask');
+    assert.equal(byName.home.approvalDefault, 'auto');
+    assert.equal(byName.write_file.approvalDefault, 'ask');
+    assert.equal(byName['plugin:pub:first:x'].connectionId, 'plugin:pub:first');
+    assert.equal(byName['plugin:pub:second:x'].connectionId, 'plugin:pub:second');
+    assert.equal(byName.mcp__legacy__x.connectionId, 'mcp:legacy');
+    assert.equal(byName.legacy_bridge.connectionId, '');
+    assert.equal(byName.override.sideEffecting, false);
+    assert.equal(byName.override.approvalDefault, 'auto');
+    assert.equal(byName.registry_only.sideEffecting, true);
+    assert.equal(byName.registry_only.approvalDefault, 'ask');
+    assert.equal(byName.read_file.available, phase === 'ready');
+  }
+});
+
 test('tools list includes managed sidecar-only availability statuses', async () => {
   const listTools = registerToolsListHandler({
     backendService: {
@@ -697,6 +768,8 @@ test('tools list includes managed sidecar-only availability statuses', async () 
   assert.equal(byName.get('read_file').available, false);
   assert.equal(byName.get('read_file').reason, 'workspace requirement missing');
   assert.equal(byName.get('web_search').available, true);
+  assert.equal(byName.get('web_search').lockdownAvailable, false);
+  assert.equal(byName.get('read_file').lockdownAvailable, true);
   assert.equal(byName.get('web_search').category, 'web');
   assert.equal(byName.get('list_dir').available, true);
   assert.equal(byName.get('list_dir').category, 'filesystem');
@@ -728,6 +801,8 @@ test('tools list fails closed when managed tool status has not been reported', a
       category: 'builtin',
       available: false,
       reason: 'Tool availability has not been reported yet.',
+      toolFamily: '', sourceKind: '', serverName: '', connectionId: '',
+      sideEffecting: false, surfaceFamily: 'files', approvalDefault: 'auto', lockdownAvailable: true,
     },
   ]);
 });
@@ -760,6 +835,8 @@ test('tools list fails closed while managed backend phase is not ready', async (
       category: 'web',
       available: false,
       reason: 'Managed sidecar is not ready yet.',
+      toolFamily: 'web', sourceKind: '', serverName: '', connectionId: '',
+      sideEffecting: false, surfaceFamily: 'web', approvalDefault: 'auto', lockdownAvailable: false,
     },
   ]);
 });
@@ -799,118 +876,10 @@ test('main shell config refresh reasons exclude model-tuning transactions with t
   assert.equal(mainModule.shouldRefreshManagedConfigForShellConfigReason('unrelated_change'), false);
 });
 
-test('comet overlay enablement reads the current feature flag state instead of a stale startup snapshot', () => {
+test('main module no longer exports the removed comet overlay helpers', () => {
   const mainModule = loadWithElectronMock('../main.js', createElectronMock());
 
-  assert.equal(mainModule.isCometOverlayEnabled({
-    configService: {
-      getState() {
-        return {
-          featureOverrides: {
-            comet_overlay: true,
-          },
-        };
-      },
-    },
-    env: {},
-  }), true);
-
-  assert.equal(mainModule.isCometOverlayEnabled({
-    configService: {
-      getState() {
-        return {
-          featureOverrides: {
-            comet_overlay: false,
-          },
-        };
-      },
-    },
-    env: {},
-  }), false);
-});
-
-test('comet overlay payload normalization clamps unexpected values at the main-process bridge', () => {
-  const mainModule = loadWithElectronMock('../main.js', createElectronMock());
-
-  assert.deepEqual(
-    mainModule.normalizeCometOverlayPresencePayload({
-      state: 'ALERT',
-      phaseKind: 'approval_wait',
-      terminalStatus: 'TIMEOUT',
-      terminalSubcode: 'provider',
-      ignored: 'value',
-    }),
-    {
-      state: 'alert',
-      phaseKind: 'approval_wait',
-      terminalStatus: 'timeout',
-      terminalSubcode: 'provider',
-    }
-  );
-
-  assert.deepEqual(
-    mainModule.normalizeCometOverlayPresencePayload({
-      state: 'wild-state',
-      phaseKind: 'tool<script>',
-      terminalStatus: 'mystery',
-      terminalSubcode: 'x'.repeat(200),
-    }),
-    {
-      state: 'idle',
-      phaseKind: '',
-      terminalStatus: '',
-      terminalSubcode: 'x'.repeat(64),
-    }
-  );
-});
-
-test('comet overlay toggle disposes an existing overlay even after the feature flag is disabled', () => {
-  const mainModule = loadWithElectronMock('../main.js', createElectronMock());
-  let disposed = 0;
-  const overlayRef = {
-    window: {
-      isDestroyed: () => false,
-    },
-    dispose() {
-      disposed += 1;
-    },
-  };
-
-  const nextOverlayRef = mainModule.handleCometOverlayToggle({
-    data: { enabled: false },
-    mainWindowRef: { isDestroyed: () => false },
-    currentOverlayRef: overlayRef,
-    isOverlayEnabled: () => false,
-    createOverlay() {
-      throw new Error('overlay should not be created while disabling');
-    },
-  });
-
-  assert.equal(disposed, 1);
-  assert.equal(nextOverlayRef, null);
-});
-
-test('comet overlay toggle creates an overlay only when requested and enabled', () => {
-  const mainModule = loadWithElectronMock('../main.js', createElectronMock());
-  const created = [];
-
-  const nextOverlayRef = mainModule.handleCometOverlayToggle({
-    data: { enabled: true },
-    mainWindowRef: { isDestroyed: () => false },
-    currentOverlayRef: null,
-    isOverlayEnabled: () => true,
-    createOverlay(ownerWindow, options) {
-      const overlayRef = {
-        ownerWindow,
-        options,
-        window: { isDestroyed: () => false },
-        dispose() {},
-      };
-      created.push(overlayRef);
-      return overlayRef;
-    },
-  });
-
-  assert.equal(created.length, 1);
-  assert.equal(nextOverlayRef, created[0]);
+  for (const name of ['isCometOverlayEnabled', 'normalizeCometOverlayPresencePayload', 'handleCometOverlayToggle']) {
+    assert.equal(Object.hasOwn(mainModule, name), false, `${name} must not survive the comet removal`);
+  }
 });

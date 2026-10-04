@@ -29,7 +29,7 @@ from sidecar.ai.tools.builtins.python_runtime.errors import (
 from sidecar.ai.tools.contracts import ToolExecutionFailure
 from sidecar.ai.tools.workspace import WorkspaceGuard
 
-_EMBED = Path(interpreter._SIDECAR_PACKAGE_DIR).parent / "vendor" / "python-embed"  # noqa: SLF001
+_EMBED = Path(interpreter._SIDECAR_PACKAGE_DIR).parent / "vendor" / "python-embed"
 
 
 def test_managed_runtime_invocations_disable_user_site(
@@ -47,11 +47,11 @@ def test_managed_runtime_invocations_disable_user_site(
     wheelhouse.mkdir()
     (wheelhouse / "example-1.0-py3-none-any.whl").write_bytes(b"pure Python wheel")
 
-    interpreter._interpreter_identity(python)  # noqa: SLF001
-    interpreter._validate_runtime_imports(python)  # noqa: SLF001
-    interpreter._install_from_wheelhouse(python, wheelhouse)  # noqa: SLF001
-    interpreter._install_via_network_pip(python)  # noqa: SLF001
-    pip_bootstrap._probe_pip(python, timeout=1)  # noqa: SLF001
+    interpreter._interpreter_identity(python)
+    interpreter._validate_runtime_imports(python)
+    interpreter._install_from_wheelhouse(python, wheelhouse)
+    interpreter._install_via_network_pip(python)
+    pip_bootstrap._probe_pip(python, timeout=1)
 
     assert calls
     assert all(call[:2] == [str(python), "-s"] for call in calls), calls
@@ -71,7 +71,7 @@ def test_embedded_runtime_import_validation_ignores_user_site(
     (user_site / "jenny_user_site_probe.py").write_text("VALUE = 1\n", encoding="utf-8")
     monkeypatch.setenv("APPDATA", str(tmp_path / "appdata"))
 
-    assert not interpreter._validate_runtime_imports(  # noqa: SLF001
+    assert not interpreter._validate_runtime_imports(
         runtime / "python.exe", ("jenny_user_site_probe",)
     )
 
@@ -98,7 +98,7 @@ def test_default_wheelhouse_without_manifest_is_treated_as_absent(
     (wheelhouse / ".gitignore").write_text("*\n!.gitignore\n", encoding="utf-8")
     monkeypatch.setattr(interpreter, "DEFAULT_RUNTIME_WHEELHOUSE", wheelhouse)
 
-    assert interpreter._runtime_wheelhouse({}) is None  # noqa: SLF001
+    assert interpreter._runtime_wheelhouse({}) is None
 
 
 def test_runtime_fingerprint_binds_the_bundle_contract(tmp_path: Path) -> None:
@@ -117,7 +117,7 @@ def test_runtime_fingerprint_binds_the_bundle_contract(tmp_path: Path) -> None:
             ),
             encoding="utf-8",
         )
-        return interpreter._runtime_requirements_fingerprint_for_wheelhouse(  # noqa: SLF001
+        return interpreter._runtime_requirements_fingerprint_for_wheelhouse(
             wheelhouse
         )
 
@@ -129,7 +129,7 @@ def test_runtime_fingerprint_binds_the_bundle_contract(tmp_path: Path) -> None:
     assert contract_b != no_contract
     assert contract_c != no_contract
     expected_legacy = hashlib.sha256(
-        f"{interpreter._requirements_fingerprint()}\n{'a' * 64}".encode("utf-8")  # noqa: SLF001
+        f"{interpreter._requirements_fingerprint()}\n{'a' * 64}".encode("utf-8")
     ).hexdigest()
     assert no_contract == expected_legacy
     with pytest.raises(PythonRuntimeWheelhouseIntegrityError):
@@ -216,7 +216,7 @@ def test_cp313_wheelhouse_rejects_python311_before_pip(
     )
 
     with pytest.raises(interpreter.PythonRuntimeError) as caught:
-        interpreter._install_runtime_packages(  # noqa: SLF001
+        interpreter._install_runtime_packages(
             tmp_path / "python.exe",
             {"tools_python_runtime_wheelhouse_dir": str(wheelhouse)},
         )
@@ -256,7 +256,7 @@ def test_mixed_wheelhouse_rejects_python311_before_pip(
     )
 
     with pytest.raises(interpreter.PythonRuntimeError) as caught:
-        interpreter._install_runtime_packages(  # noqa: SLF001
+        interpreter._install_runtime_packages(
             tmp_path / "python.exe",
             {"tools_python_runtime_wheelhouse_dir": str(wheelhouse)},
         )
@@ -291,7 +291,7 @@ def test_abi3_wheel_does_not_reject_later_python(
         or subprocess.CompletedProcess(command, 0, "", ""),
     )
 
-    interpreter._install_runtime_packages(  # noqa: SLF001
+    interpreter._install_runtime_packages(
         tmp_path / "python.exe",
         {"tools_python_runtime_wheelhouse_dir": str(wheelhouse)},
     )
@@ -339,7 +339,7 @@ def test_bootstrap_lock_recovers_current_process_unlink_residue(
     monkeypatch.setattr(bootstrap_lock, "_process_exists", lambda _pid: True)
     _disable_lock_wait(monkeypatch)
 
-    with interpreter._bootstrap_lock(lock_path):  # noqa: SLF001
+    with interpreter._bootstrap_lock(lock_path):
         payload = json.loads(lock_path.read_text(encoding="utf-8"))
         assert payload["pid"] == os.getpid()
 
@@ -362,7 +362,7 @@ def test_bootstrap_lock_recovers_stale_live_recycled_pid(
     monkeypatch.setattr(bootstrap_lock, "_process_exists", lambda _pid: True)
     _disable_lock_wait(monkeypatch)
 
-    with interpreter._bootstrap_lock(lock_path):  # noqa: SLF001
+    with interpreter._bootstrap_lock(lock_path):
         assert lock_path.exists()
 
     assert not lock_path.exists()
@@ -381,7 +381,7 @@ def test_bootstrap_lock_write_failure_closes_descriptor_and_removes_file(
     monkeypatch.setattr(bootstrap_lock, "_write_bootstrap_lock", fail_write)
 
     with pytest.raises(OSError, match="disk full"):
-        with interpreter._bootstrap_file_lock(lock_path):  # noqa: SLF001
+        with interpreter._bootstrap_file_lock(lock_path):
             pytest.fail("write failure must prevent lock acquisition")
 
     assert acquired_fds
@@ -394,17 +394,17 @@ def test_bootstrap_lock_waits_for_unpublished_owner_record_grace(tmp_path: Path)
     lock_path = tmp_path / ".bootstrap.lock"
     lock_path.write_text("", encoding="utf-8")
 
-    assert bootstrap_lock._should_recover_bootstrap_lock(lock_path) is False  # noqa: SLF001
+    assert bootstrap_lock._should_recover_bootstrap_lock(lock_path) is False
 
     old_mtime = time.time() - bootstrap_lock.BOOTSTRAP_LOCK_PUBLISH_GRACE_SECONDS - 1
     os.utime(lock_path, (old_mtime, old_mtime))
 
-    assert bootstrap_lock._should_recover_bootstrap_lock(lock_path) is True  # noqa: SLF001
+    assert bootstrap_lock._should_recover_bootstrap_lock(lock_path) is True
 
     lock_path.write_text("{not-json", encoding="utf-8")
-    assert bootstrap_lock._should_recover_bootstrap_lock(lock_path) is False  # noqa: SLF001
+    assert bootstrap_lock._should_recover_bootstrap_lock(lock_path) is False
     os.utime(lock_path, (old_mtime, old_mtime))
-    assert bootstrap_lock._should_recover_bootstrap_lock(lock_path) is True  # noqa: SLF001
+    assert bootstrap_lock._should_recover_bootstrap_lock(lock_path) is True
 
 
 def test_bootstrap_thread_lock_honors_deadline_before_file_lock(tmp_path: Path) -> None:
@@ -415,7 +415,7 @@ def test_bootstrap_thread_lock_honors_deadline_before_file_lock(tmp_path: Path) 
 
     def run_owner() -> None:
         try:
-            with bootstrap_lock._bootstrap_thread_lock(lock_path):  # noqa: SLF001
+            with bootstrap_lock._bootstrap_thread_lock(lock_path):
                 owner_entered.set()
                 release_owner.wait(timeout=2)
         except BaseException as error:  # noqa: BLE001
@@ -431,7 +431,7 @@ def test_bootstrap_thread_lock_honors_deadline_before_file_lock(tmp_path: Path) 
         started = time.monotonic()
         deadline = started + 0.02
         with pytest.raises(TimeoutError) as exc_info:
-            with interpreter._bootstrap_lock(  # noqa: SLF001
+            with interpreter._bootstrap_lock(
                 lock_path,
                 deadline_monotonic=deadline,
             ):
@@ -451,7 +451,7 @@ def test_bootstrap_thread_lock_honors_deadline_before_file_lock(tmp_path: Path) 
     assert not owner.is_alive()
     assert not errors
 
-    with interpreter._bootstrap_lock(  # noqa: SLF001
+    with interpreter._bootstrap_lock(
         lock_path,
         deadline_monotonic=time.monotonic() + 0.1,
     ):
@@ -503,11 +503,11 @@ def test_validated_interpreter_probes_with_python_code_not_version_flag(
         return subprocess.CompletedProcess(argv, 0, "3.13.14\n", "")
 
     monkeypatch.setattr(bootstrap_subprocess, "run", fake_run)
-    interpreter._VALIDATED_INTERPRETER_CACHE.pop(str(candidate), None)  # noqa: SLF001
+    interpreter._VALIDATED_INTERPRETER_CACHE.pop(str(candidate), None)
 
-    assert interpreter._validated_interpreter(candidate) == candidate  # noqa: SLF001
+    assert interpreter._validated_interpreter(candidate) == candidate
     assert probes and probes[0][1] == "-c"
-    assert interpreter._VALIDATED_INTERPRETER_VERSIONS[str(candidate)] == "3.13.14"  # noqa: SLF001
+    assert interpreter._VALIDATED_INTERPRETER_VERSIONS[str(candidate)] == "3.13.14"
 
 
 def test_mixed_tag_wheelhouse_fails_fast_before_pip(
@@ -532,7 +532,7 @@ def test_mixed_tag_wheelhouse_fails_fast_before_pip(
     )
 
     with pytest.raises(interpreter.PythonRuntimeError) as exc_info:
-        interpreter._install_from_wheelhouse(tmp_path / "python.exe", wheelhouse)  # noqa: SLF001
+        interpreter._install_from_wheelhouse(tmp_path / "python.exe", wheelhouse)
 
     assert "scipy-1.17.1-cp312-cp312-win_amd64.whl" in str(exc_info.value)
     assert "cp312" in str(exc_info.value)
@@ -552,7 +552,7 @@ def test_retained_staging_from_another_interpreter_is_rebuilt(
     (staging_dir / interpreter.RUNTIME_INSTALL_SENTINEL).write_text(
         json.dumps(
             {
-                "requirements_fingerprint": interpreter._runtime_requirements_fingerprint(  # noqa: SLF001
+                "requirements_fingerprint": interpreter._runtime_requirements_fingerprint(
                     config
                 ),
                 "base_interpreter": str(tmp_path / "old-python.exe"),
@@ -575,7 +575,7 @@ def test_retained_staging_from_another_interpreter_is_rebuilt(
     monkeypatch.setattr(interpreter, "_create_runtime_venv", fake_create)
     monkeypatch.setattr(interpreter, "_validate_runtime_imports", lambda *_a, **_k: True)
     monkeypatch.setattr(interpreter, "_interpreter_identity", lambda _path: "3.13.14")
-    interpreter._READY_VENV_CACHE.clear()  # noqa: SLF001
+    interpreter._READY_VENV_CACHE.clear()
 
     with caplog.at_level("INFO"):
         interpreter.ensure_runtime_venv(config)

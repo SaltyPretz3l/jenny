@@ -285,9 +285,6 @@ class Supervisor:
         except OSError:
             pass
 
-    def _prepare_snapshot(self) -> None:
-        """Compatibility hook; snapshots are created by each job entrypoint."""
-
     def _load_metadata(self) -> None:
         data = _read_private(self.metadata_path, METADATA_LIMIT, strict=self.enforce_identity)
         if data is None:
@@ -306,7 +303,10 @@ class Supervisor:
         admission, result = raw["admission"], raw["result"]
         if admission is not None and (
             not isinstance(admission, dict)
-            or set(admission) != {"incarnation", "job_id", "command", "cwd", "timeout_seconds"}
+            or set(admission) not in (
+                {"incarnation", "job_id", "command", "cwd", "timeout_seconds"},
+                {"incarnation", "job_id", "command", "cwd", "input_root", "timeout_seconds"},
+            )
         ):
             raise StartupError("corrupt worker admission")
         if (admission is not None and result is not None) or not _record_valid(result):
@@ -323,6 +323,7 @@ class Supervisor:
                         "schema_version": 1,
                         "request_id": str(uuid.uuid4()),
                         "operation": "submit",
+                        "input_root": ".",
                         **admission,
                     }
                 )
@@ -390,7 +391,9 @@ class Supervisor:
             if op == "submit":
                 args = {
                     key: request[key]
-                    for key in ("incarnation", "job_id", "command", "cwd", "timeout_seconds")
+                    for key in (
+                        "incarnation", "job_id", "command", "cwd", "input_root", "timeout_seconds"
+                    )
                 }
                 if self.current is not None:
                     if all(self.current[key] == args[key] for key in args):
@@ -436,6 +439,7 @@ class Supervisor:
             result = run_command(
                 args["command"],
                 args["cwd"],
+                input_root=args["input_root"],
                 timeout_seconds=float(args["timeout_seconds"]),
                 workspace_root=str(self.workspace_dir),
                 cancel_event=self._cancel,
@@ -447,7 +451,7 @@ class Supervisor:
                 self._persist(None, record)
                 self.phase = "recycling"
                 self._exit_after_commit()
-        except BaseException:
+        except BaseException:  # noqa: BLE001 - namespace must exit even on helper failure
             # A failed result commit must still tear down the namespace. The
             # durable admission becomes interrupted on the next startup.
             self._exit_func(1)

@@ -133,6 +133,11 @@
     // searchSeq bump (which already invalidates any in-flight literal search).
     let disposed = false;
     const collapsedFiles = new Set();
+    // The query/replace input with an open IME composition (null otherwise):
+    // its input events defer to compositionend and a re-render never writes it.
+    let composingEl = null;
+    // What this instance last painted in full: { root, scope, toolbar, tail }.
+    let painted = null;
 
     // Runtime-only fields beyond the seeded { query, results, busy } slice. The
     // replace controller seeds the remaining replace fields (replacing,
@@ -344,13 +349,17 @@
       return `<div class="ide-search-results">${markup}</div>`;
     }
 
-    function buildPanelMarkup() {
+    // The panel split into regions so a re-render can patch the stable parts
+    // (query/replace inputs, option toggles) in place and swap only the scope
+    // chip or the status + results tail when they change.
+    function buildPanelParts() {
       const search = getSearchState();
+      const placeholder = search.scope ? jt('ide.search.searchInScope', 'Search in {scope}', { scope: search.scope }) : jt('ide.search.searchInWorkspace', 'Search in workspace');
       const field = typeof textField === 'function'
         ? textField({
           className: 'ide-search-field',
           value: search.query,
-          placeholder: search.scope ? jt('ide.search.searchInScope', 'Search in {scope}', { scope: search.scope }) : jt('ide.search.searchInWorkspace', 'Search in workspace'),
+          placeholder,
           ariaLabel: jt('ide.search.searchInWorkspace', 'Search in workspace'),
           maxLength: 256,
           dataset: { 'ide-search-input': '1' },
@@ -378,8 +387,73 @@
           dataset: { 'ide-replace-input': '1' },
         })
         : '';
-      return `<div class="ide-search">${field}${scopeChip}${replaceField}`
-        + `${buildReplaceToolbarMarkup(search)}${buildStatusMarkup(search)}${buildResultsMarkup(search)}</div>`;
+      return {
+        search,
+        placeholder,
+        field,
+        scopeChip,
+        replaceField,
+        toolbar: buildReplaceToolbarMarkup(search),
+        tail: buildStatusMarkup(search) + buildResultsMarkup(search),
+      };
+    }
+
+    function panelMarkupOf(parts) {
+      return `<div class="ide-search">${parts.field}${parts.scopeChip}${parts.replaceField}`
+        + `${parts.toolbar}${parts.tail}</div>`;
+    }
+
+    // Attribute/text morph for the small toolbar: the toggle chips and Replace
+    // All keep their identity (and focus); an appearing/disappearing Undo is
+    // appended/removed.
+    function morphElement(oldEl, newEl) {
+      if (oldEl.tagName !== newEl.tagName) {
+        oldEl.replaceWith(newEl);
+        return;
+      }
+      for (const attr of Array.from(oldEl.attributes)) if (!newEl.hasAttribute(attr.name)) oldEl.removeAttribute(attr.name);
+      for (const attr of Array.from(newEl.attributes)) if (oldEl.getAttribute(attr.name) !== attr.value) oldEl.setAttribute(attr.name, attr.value);
+      const oldKids = Array.from(oldEl.children);
+      const newKids = Array.from(newEl.children);
+      if (oldEl.childNodes.length !== oldKids.length || newEl.childNodes.length !== newKids.length || !newKids.length) {
+        if (oldEl.innerHTML !== newEl.innerHTML) oldEl.innerHTML = newEl.innerHTML;
+        return;
+      }
+      newKids.forEach((newKid, index) => {
+        if (oldKids[index]) morphElement(oldKids[index], newKid);
+        else oldEl.appendChild(newKid);
+      });
+      oldKids.slice(newKids.length).forEach((kid) => kid.remove());
+    }
+
+    // Still our panel in this host: the query/replace inputs stay the same
+    // nodes (value written only on a programmatic change, e.g. Escape or a root
+    // reset, and never mid-composition, so focus/caret/IME survive), the
+    // toolbar is morphed, and the scope chip / status + results swap alone.
+    function patchPainted(panel, parts) {
+      const root = painted?.root?.parentNode === panel && panel.childElementCount === 1 ? painted.root : null;
+      const queryEl = root?.querySelector(':scope > label > [data-ide-search-input]');
+      const replaceEl = root?.querySelector(':scope > label > [data-ide-replace-input]');
+      const toolbarEl = root?.querySelector(':scope > .ide-search-toolbar');
+      if (!queryEl || !replaceEl || !toolbarEl) return false;
+      [[queryEl, parts.search.query], [replaceEl, parts.search.replaceText]].forEach(([input, value]) => {
+        if (input !== composingEl && input.value !== value) input.value = value;
+      });
+      if (queryEl.getAttribute('placeholder') !== parts.placeholder) queryEl.setAttribute('placeholder', parts.placeholder);
+      if (painted.scope !== parts.scopeChip) {
+        root.querySelector(':scope > .ide-search-scope-chip')?.remove();
+        if (parts.scopeChip) queryEl.closest('label').insertAdjacentHTML('afterend', parts.scopeChip);
+      }
+      if (painted.toolbar !== parts.toolbar) {
+        const probe = panel.ownerDocument.createElement('template');
+        probe.innerHTML = parts.toolbar;
+        if (probe.content.firstElementChild) morphElement(toolbarEl, probe.content.firstElementChild);
+      }
+      if (painted.tail !== parts.tail) {
+        while (toolbarEl.nextSibling) toolbarEl.nextSibling.remove();
+        toolbarEl.insertAdjacentHTML('afterend', parts.tail);
+      }
+      return true;
     }
 
     function renderSearchPanel() {
@@ -391,32 +465,34 @@
         return;
       }
       if (replaceController?.isReplacing?.() !== true) replaceController?.checkRecovery?.();
-      const markup = buildPanelMarkup();
+      const parts = buildPanelParts();
+      const markup = panelMarkupOf(parts);
       if (panel.__jennyIdeRailMarkup === markup) {
         return;
       }
-      const doc = panel.ownerDocument;
-      const activeEl = doc?.activeElement || null;
-      const activeKey = activeEl?.closest?.('[data-ide-replace-input]')
-        ? '[data-ide-replace-input]'
-        : (activeEl?.closest?.('[data-ide-search-input]') ? '[data-ide-search-input]' : null);
-      const selectionStart = activeKey ? activeEl.selectionStart : null;
-      const selectionEnd = activeKey ? activeEl.selectionEnd : null;
-      panel.innerHTML = markup;
-      panel.__jennyIdeRailMarkup = markup;
-      if (activeKey) {
-        const input = panel.querySelector(activeKey);
+      if (!patchPainted(panel, parts)) {
+        // Full paint (first paint, or another panel painted this host). A focused
+        // query/replace input (the panel moved hosts) takes focus + selection back.
+        const activeEl = panel.ownerDocument?.activeElement || null;
+        const activeKey = ['[data-ide-replace-input]', '[data-ide-search-input]'].find((sel) => activeEl?.closest?.(sel)) || null;
+        const selection = activeKey ? [activeEl.selectionStart, activeEl.selectionEnd] : null;
+        panel.innerHTML = markup;
+        painted = { root: panel.firstElementChild };
+        // The composing input (if any) was just replaced; its compositionend never
+        // arrives, so the flag must not keep blocking Enter/Escape and input events.
+        composingEl = null;
+        const input = activeKey ? panel.querySelector(activeKey) : null;
         if (input) {
           input.focus();
-          if (selectionStart !== null) {
-            try {
-              input.setSelectionRange(selectionStart, selectionEnd);
-            } catch (_error) {
-              /* selection restore is best-effort */
-            }
+          try {
+            input.setSelectionRange(selection[0], selection[1]);
+          } catch (_error) {
+            /* selection restore is best-effort */
           }
         }
       }
+      Object.assign(painted, { scope: parts.scopeChip, toolbar: parts.toolbar, tail: parts.tail });
+      panel.__jennyIdeRailMarkup = markup;
     }
 
     async function runSearch() {
@@ -537,6 +613,11 @@
     }
 
     function handleInput(event) {
+      // Mid-composition keystrokes wait for compositionend (no preview rebuild
+      // or search per partial IME character).
+      if (event.isComposing === true || (composingEl && event.target === composingEl)) {
+        return;
+      }
       const replaceInput = event.target?.closest?.('[data-ide-replace-input]');
       if (replaceInput) {
         getSearchState().replaceText = String(replaceInput.value || '');
@@ -555,7 +636,26 @@
       scheduleSearch();
     }
 
+    function isPanelInput(target) {
+      return Boolean(target?.closest?.('[data-ide-replace-input], [data-ide-search-input]'));
+    }
+
+    function handleCompositionStart(event) {
+      if (isPanelInput(event.target)) composingEl = event.target;
+    }
+
+    function handleCompositionEnd(event) {
+      if (!isPanelInput(event.target)) return;
+      composingEl = null;
+      handleInput({ target: event.target });
+    }
+
     function handleKeydown(event) {
+      // An IME confirms its composition with Enter (and cancels with Escape):
+      // those keys belong to the IME, never to Replace All / search / clear.
+      if (isPanelInput(event.target) && (event.isComposing || event.keyCode === 229 || composingEl)) {
+        return;
+      }
       const replaceInput = event.target?.closest?.('[data-ide-replace-input]');
       if (replaceInput) {
         if (event.key === 'Enter') {
@@ -679,6 +779,8 @@
         host.addEventListener('input', handleInput);
         host.addEventListener('keydown', handleKeydown);
         host.addEventListener('click', handleClick);
+        host.addEventListener('compositionstart', handleCompositionStart);
+        host.addEventListener('compositionend', handleCompositionEnd);
       }
     }
 
@@ -716,6 +818,8 @@
         host.removeEventListener('input', handleInput);
         host.removeEventListener('keydown', handleKeydown);
         host.removeEventListener('click', handleClick);
+        host.removeEventListener('compositionstart', handleCompositionStart);
+        host.removeEventListener('compositionend', handleCompositionEnd);
       }
       boundHosts = [];
     }
@@ -723,7 +827,9 @@
     // Find-in-Folder entry point (called from the file-tree directory context
     // menu via the controller): scope the search to a folder, activate the search
     // rail, and re-run the current query within it. An empty query just shows the
-    // scope chip and waits for the user to type.
+    // scope chip and waits for the user to type, so focus lands in the query
+    // input (like Ctrl+Shift+F): when Explorer and Search share a host, the
+    // focused tree row was just replaced and focus would otherwise drop to body.
     function beginScopedSearch(folderPath) {
       const search = getSearchState();
       search.scope = String(folderPath || '');
@@ -736,6 +842,7 @@
       search.busy = false;
       onActivateSearch();
       runSearch();
+      getMountEl()?.querySelector?.('[data-ide-search-input]')?.focus?.();
     }
 
     return {

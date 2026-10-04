@@ -48,7 +48,7 @@ class _BindableEngine(_TextOnlyEngine):
     def begin_request_context(self, **kwargs: Any) -> None:
         install_request_context(self, request_id=str(kwargs.get("request_id") or "req"))
 
-    def clear_request_context(self, *, request_id: str) -> None:  # noqa: ARG002
+    def clear_request_context(self, *, request_id: str) -> None:
         clear_request_context(self)
 
 
@@ -92,19 +92,17 @@ def _send(
     return caught.value
 
 
-@pytest.mark.parametrize("enabled", [True, False])
 def test_live_plan_usage_is_emitted_before_terminal_error_and_cleared(
-    monkeypatch: pytest.MonkeyPatch, enabled: bool
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _raise_rate_limited_after_stash(monkeypatch)
     messages: list[dict[str, Any]] = []
     engine = _BindableEngine()
-    _send(engine, {"chatgpt_plan_meter": enabled, "context_usage_live": False}, messages.append)
+    _send(engine, {}, messages.append)
     readings = [m for m in messages if m.get("method") == "chat.plan_usage"]
-    assert len(readings) == int(enabled)
-    if enabled:
-        assert readings[0]["params"]["plan_usage"] == _EXPECTED
-        assert readings[0]["params"]["request_id"] == "req-plan-429"
+    assert len(readings) == 1
+    assert readings[0]["params"]["plan_usage"] == _EXPECTED
+    assert readings[0]["params"]["request_id"] == "req-plan-429"
     assert current_request_context(engine) is None
     record_plan_usage_snapshot(engine, SimpleNamespace(headers=_HEADERS))
     assert len([m for m in messages if m.get("method") == "chat.plan_usage"]) == len(readings)
@@ -114,7 +112,7 @@ def test_router_path_chat_request_error_carries_plan_usage(monkeypatch: pytest.M
     _raise_rate_limited_after_stash(monkeypatch)
     engine = _BindableEngine()
 
-    error = _send(engine, {"chatgpt_plan_meter": True})
+    error = _send(engine, {})
 
     assert current_request_context(engine) is None, "request context is cleared on the way out"
     assert error.data == {"plan_usage": _EXPECTED}
@@ -122,15 +120,6 @@ def test_router_path_chat_request_error_carries_plan_usage(monkeypatch: pytest.M
     assert params["plan_usage"] == _EXPECTED
     assert params["code"] == "CMP-LOOP-0010"
     assert params["retryable"] is True
-
-
-def test_router_path_flag_off_leaves_error_data_untouched(monkeypatch: pytest.MonkeyPatch) -> None:
-    _raise_rate_limited_after_stash(monkeypatch)
-
-    error = _send(_BindableEngine(), {"chatgpt_plan_meter": False})
-
-    assert error.data == {}
-    assert "plan_usage" not in chat_error_notification(error)["params"]
 
 
 def test_approval_resume_rebinds_live_usage_after_the_original_context_clears(

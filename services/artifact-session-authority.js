@@ -33,6 +33,59 @@ class ArtifactSessionAuthority {
     return provider;
   }
 
+  async retentionScopes(fsImpl, pathImpl) {
+    const provider = this.getProjectAuthority();
+    if (!provider) {
+      const scope = this.capture('legacy-artifact-session');
+      return [{ rootPath: scope.rootPath, assertCurrent: () => this.assertCurrent(scope) }];
+    }
+    const store = provider._store;
+    if (!store || store.getStatus().read_only) throw new Error('Project storage is unavailable.');
+    const projects = store.getSnapshot().projects;
+    if (!projects || Array.isArray(projects)) throw new Error('Project index is unreadable.');
+    const groups = new Map();
+    for (const id of Object.keys(projects)) {
+      try {
+        const authority = provider.captureProject(id);
+        if (!authority.root_path) continue;
+        const rootPath = await fsImpl.realpath(authority.root_path);
+        const stats = await fsImpl.stat(rootPath, { bigint: true });
+        provider.requireCurrent(authority);
+        if (!stats.isDirectory()) continue;
+        const key = stats.dev && stats.ino ? `${stats.dev}:${stats.ino}` : pathImpl.normalize(rootPath);
+        if (!groups.has(key)) groups.set(key, { rootPath, authorities: [], stats });
+        groups.get(key).authorities.push(authority);
+      } catch (_) {
+        // Disconnected or stale projects never authorize a sweep.
+      }
+    }
+    return [...groups.values()].map(({ rootPath, authorities, stats }) => ({
+      rootPath,
+      assertCurrent: async () => {
+        if (store.getStatus().read_only) throw new Error('Project storage is unavailable.');
+        for (const authority of authorities) provider.requireCurrent(authority);
+        const current = await fsImpl.stat(await fsImpl.realpath(rootPath), { bigint: true });
+        if (current.dev !== stats.dev || current.ino !== stats.ino) throw new Error('Project root changed.');
+        for (const authority of authorities) provider.requireCurrent(authority);
+      },
+    }));
+  }
+
+  async pruneOrphans(owner, activeSessionIds) {
+    const { createArtifactRetentionService } = require('./artifact-retention-service');
+    const service = createArtifactRetentionService({
+      getWorkspaceScopes: () => this.retentionScopes(owner._fs, owner._path),
+      getSessionStore: () => this.getProjectAuthority()._sessionStore,
+      fsImpl: owner._fs, pathImpl: owner._path, logger: owner._logger,
+      caps: { maxUnreferencedAgeMs: 0, maxUnreferencedDirs: 0 },
+    });
+    const result = await service.sweep({ activeSessionIds: () => [
+      ...(typeof activeSessionIds === 'function' ? activeSessionIds() : activeSessionIds || []),
+      ...owner._pruneProtectedSessionIds.keys(),
+    ], orphanOnly: true });
+    return { removed: result.quarantined };
+  }
+
   capture(sessionId, admittedAuthority = null) {
     const safeSessionId = this._sanitizeSessionId(sessionId);
     const provider = this.getProjectAuthority();

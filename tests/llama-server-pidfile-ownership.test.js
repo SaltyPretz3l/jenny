@@ -362,3 +362,81 @@ test('a POSIX force kill counts a process that is already gone as killed, and no
     process.kill = realKill;
   }
 });
+
+// reconcileRetainedPid settles a record kept after an unconfirmed kill. The
+// manager lets another server start only on `confirmed`, so nothing short of a
+// dead pid, a readable foreign command line, or a verified kill may confirm.
+const RETAINED_RECORD = Object.freeze({
+  pid: 47211,
+  command: 'llama-server.exe -m model.gguf --port 8033',
+  startedAt: '2026-10-01T00:00:00.000Z',
+});
+
+function reconcileRetained({ record = RETAINED_RECORD, alive, commandLine }) {
+  const userDataPath = makeUserDataDir('jenny-llama-reconcile-');
+  writeIdentityPidFile(userDataPath, record);
+  const kills = [];
+  let killed = false;
+  const result = lifecycle.reconcileRetainedPid({
+    userDataPath,
+    platform: 'win32',
+    spawnSyncImpl: (command, args) => {
+      kills.push([command, ...args].join(' '));
+      killed = true;
+      return { status: 0 };
+    },
+    isProcessAliveImpl: () => alive({ killed }),
+    getProcessCommandLineSyncImpl: () => {
+      if (commandLine instanceof Error) throw commandLine;
+      return commandLine;
+    },
+  });
+  return { result, kills, recorded: recordedPid(userDataPath) };
+}
+
+test('reconcile keeps the record and stays unconfirmed when the command line cannot be read', () => {
+  for (const commandLine of ['', new Error('wmic timed out')]) {
+    const { result, kills, recorded } = reconcileRetained({ alive: () => true, commandLine });
+    assert.deepEqual(result, { confirmed: false, pid: RETAINED_RECORD.pid });
+    assert.equal(recorded, RETAINED_RECORD.pid, 'the record survives for a later reconcile');
+    assert.deepEqual(kills, [], 'an unidentified pid is never signalled');
+  }
+});
+
+test('reconcile stays unconfirmed for a live pid whose record stored no command', () => {
+  const { result, kills, recorded } = reconcileRetained({
+    record: { ...RETAINED_RECORD, command: '' },
+    alive: () => true,
+    commandLine: 'llama-server.exe -m model.gguf --port 8033',
+  });
+  assert.equal(result.confirmed, false);
+  assert.equal(recorded, RETAINED_RECORD.pid);
+  assert.deepEqual(kills, []);
+});
+
+test('reconcile confirms and clears a dead pid or a pid recycled by another program', () => {
+  const dead = reconcileRetained({ alive: () => false, commandLine: '' });
+  assert.equal(dead.result.confirmed, true);
+  assert.equal(dead.recorded, 0);
+  assert.deepEqual(dead.kills, []);
+
+  const recycled = reconcileRetained({ alive: () => true, commandLine: 'notepad.exe notes.txt' });
+  assert.equal(recycled.result.confirmed, true);
+  assert.equal(recycled.recorded, 0);
+  assert.deepEqual(recycled.kills, [], 'another program on the recycled pid is left alone');
+});
+
+test('reconcile kills a still-running server and confirms only a verified exit', () => {
+  const killedCleanly = reconcileRetained({
+    alive: ({ killed }) => !killed,
+    commandLine: RETAINED_RECORD.command,
+  });
+  assert.equal(killedCleanly.result.confirmed, true);
+  assert.equal(killedCleanly.recorded, 0);
+  assert.equal(killedCleanly.kills.length, 1);
+  assert.match(killedCleanly.kills[0], /taskkill .*47211/);
+
+  const survives = reconcileRetained({ alive: () => true, commandLine: RETAINED_RECORD.command });
+  assert.equal(survives.result.confirmed, false);
+  assert.equal(survives.recorded, RETAINED_RECORD.pid, 'an unverified kill keeps the record');
+});

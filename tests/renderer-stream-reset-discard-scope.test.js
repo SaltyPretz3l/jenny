@@ -4,10 +4,10 @@
 // `reason` alone cannot tell the renderer what a reset erased. Main's branch
 // (services/backend/chat-stream-managed-runtime-notifications.js) decides three
 // different things under two reasons:
-//   * tool_continuation preserves ONLY when service.featureFlags
-//     .response_loop_display_v2 is true — with the flag off it discards the
-//     persisted segments AND every captured assistant_text_segment /
-//     reasoning_phase for the turn;
+//   * tool_continuation preserves; transcripts recorded before the post-1.2.0
+//     flag collapse (display flag off) instead discarded the persisted
+//     segments AND every captured assistant_text_segment / reasoning_phase for
+//     the turn, and still replay with discard_scope 'all';
 //   * model_winddown keeps its persisted segments but drops the captured events
 //     of the unsaved live slice (scoped to assistantBaseMessageId), and its
 //     textSegmentIndex has NOT advanced, so next_assistant_message_id comes
@@ -146,9 +146,9 @@ test('model_winddown after a tool boundary opens a FRESH row even though main ha
 });
 
 test('tool_continuation with preserve_prior_segments:false (display flag off) is treated as a full discard', async () => {
-  // S3. Main preserves a tool_continuation reset ONLY when
-  // response_loop_display_v2 is on; with the flag off it discards the persisted
-  // segments AND the captured events under that very same reason. A reducer
+  // S3. Before the post-1.2.0 flag collapse, main with the display flag off
+  // discarded the persisted segments AND the captured events under that very
+  // same reason, and those transcripts still replay. A reducer
   // that trusted `reason` kept the live rows numbered while the projector
   // renumbered from 0 — the double paint again.
   const rig = makeRig({ deterministicRowId: true });

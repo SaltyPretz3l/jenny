@@ -10,6 +10,7 @@ const { JSDOM } = require('jsdom');
 const coreRenderers = require('../renderer/shell/renderer-settings-core-renderers');
 const actionButton = require('../renderer/inventory/action-button');
 const selectField = require('../renderer/inventory/select-field');
+const { loadRendererApp, waitForUi } = require('./helpers/renderer-shell-harness');
 
 const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
 
@@ -303,4 +304,229 @@ test('F33: Settings > Tools names the project of a folder picked moments ago ins
   } finally {
     globalThis.window = previousWindow;
   }
+});
+
+test('D21: the Tools project line follows the switcher\'s change event without a list read, and has no 15 s timer cache', async () => {
+  const dom = new JSDOM('<p id="line"></p>');
+  const node = dom.window.document.getElementById('line');
+  let listCalls = 0;
+  dom.window.jennyShell = { projects: { async list() { listCalls += 1; return { ok: true, projects: [{ id: 'project_d21', name: 'd21-fixture', root_path: 'G:\\d21-fixture' }] }; } } };
+  const previousWindow = globalThis.window;
+  globalThis.window = dom.window;
+  const announce = (projects) => dom.window.dispatchEvent(new dom.window.CustomEvent('jenny:projects-changed', { detail: { source: 'switcher', projects } }));
+  try {
+    coreRenderers.paintToolsWorkspaceProject(node, 'G:\\d21-fixture', 'ready');
+    await flush();
+    assert.equal(node.textContent, 'Project: d21-fixture · new chats start here');
+    assert.equal(listCalls, 1, 'a folder the list does not know yet is read once');
+
+    // A rename on another surface: the switcher's event carries its list.
+    announce([{ id: 'project_d21', name: 'Renamed D21', rootPath: 'G:\\d21-fixture' }]);
+    assert.equal(node.textContent, 'Project: Renamed D21 · new chats start here', 'repainted from the event');
+    assert.equal(listCalls, 1, 'no projects.list read for the change');
+
+    // Main's is_current wins over a folder-string compare (junction / subst).
+    announce([{ id: 'project_real', name: 'Via junction', root_path: 'H:\\real', is_current: true }, { id: 'project_d21', name: 'Renamed D21', root_path: 'G:\\d21-fixture', is_current: false }]);
+    assert.equal(node.textContent, 'Project: Via junction · new chats start here');
+
+    announce([{ id: 'project_d21', name: 'Renamed D21', root_path: 'G:\\d21-fixture' }]);
+    const realNow = Date.now;
+    Date.now = () => realNow() + 60 * 1000;
+    try {
+      coreRenderers.paintToolsWorkspaceProject(node, 'G:\\d21-fixture', 'ready');
+      await flush();
+    } finally {
+      Date.now = realNow;
+    }
+    assert.equal(listCalls, 1, 'a minute later the known list still serves: no timer re-read');
+    assert.equal(node.textContent, 'Project: Renamed D21 · new chats start here');
+  } finally {
+    globalThis.window = previousWindow;
+  }
+});
+
+
+test('Tools parent switches update dependent rows through the existing feature-settings path', async (t) => {
+  const patches = [];
+  const { window, shell, dispose } = await loadRendererApp({
+    shell: { features: {
+      state: { tools: { fileTools: false, richFiles: true, bash: false, web: false }, featureFlags: { web_search_providers: true } },
+      async updateSettings(patch, { state }) {
+        patches.push(JSON.parse(JSON.stringify(patch)));
+        Object.assign(state.featuresState.tools, patch.tools);
+        return state.featuresState;
+      },
+    } },
+  });
+  t.after(dispose);
+  const doc = window.document;
+  doc.getElementById('settingsTopRailTab').click();
+  await waitForUi(window, 20);
+  doc.querySelector('.settings-nav-item[data-settings-section="tools"]').click();
+  await waitForUi(window, 20);
+  const row = (key) => doc.querySelector(`[data-settings-field="settings-tool-config-${key}"]`);
+  const track = (key) => row(key).querySelector('[data-inv-toggle]');
+  assert.equal(track('richFiles').disabled, true);
+  row('richFiles').querySelector('.settings-field-title').click();
+  await waitForUi(window, 20);
+  assert.deepEqual(patches, []);
+  assert.equal(track('richFiles').getAttribute('aria-checked'), 'true');
+  row('fileTools').querySelector('.settings-field-title').click();
+  await waitForUi(window, 30);
+  assert.deepEqual(patches, [{ tools: { fileTools: true } }]);
+  assert.equal(track('richFiles').disabled, false);
+  assert.equal(row('richFiles').hasAttribute('data-setting-parent-off'), false);
+  assert.equal(track('richFiles').getAttribute('aria-checked'), 'true');
+
+  const ready = { enabled: true, state: 'ready', platform: 'windows', qualified: true };
+  shell.commandSandbox = { async getState() { return ready; }, async retry() { return ready; } };
+  const sandbox = () => doc.querySelector('[data-settings-field="commandSandboxEnabled"]');
+  assert.equal(sandbox().dataset.settingParentOff, 'true');
+  assert.equal(sandbox().querySelector('[data-inv-toggle]').disabled, true);
+  row('bash').querySelector('.settings-field-title').click();
+  await waitForUi(window, 30);
+  assert.deepEqual(patches.at(-1), { tools: { bash: true } });
+  assert.equal(sandbox().hasAttribute('data-setting-parent-off'), false);
+  assert.equal(sandbox().querySelector('[data-inv-toggle]').disabled, false);
+  // The bridge arrived after the row bound, so the row offers Retry; with the parent on it reaches the bridge.
+  sandbox().querySelector('[data-action="commandSandboxRetry"]').click();
+  await waitForUi(window, 20);
+  assert.equal(sandbox().querySelector('[data-inv-toggle]').getAttribute('aria-checked'), 'true');
+  assert.equal(sandbox().querySelector('[data-inv-toggle]').disabled, false);
+
+  const provider = () => doc.getElementById('webSearchProviderSelect');
+  assert.equal(provider().disabled, true);
+  assert.equal(doc.querySelector('[data-web-search-test]').disabled, true);
+  assert.equal(provider().closest('.settings-field--row').dataset.settingParentOff, 'true');
+  row('web').querySelector('.settings-field-title').click();
+  await waitForUi(window, 30);
+  assert.deepEqual(patches.at(-1), { tools: { web: true } });
+  assert.equal(provider().disabled, false);
+  assert.equal(doc.querySelector('[data-web-search-section]').parentElement.id, 'toolsWebList');
+  shell.harness.inspect = async () => ({ web_search_probe: { ok: true, provider: 'duckduckgo' } });
+  doc.querySelector('[data-web-search-test]').click();
+  await waitForUi(window, 20);
+  assert.equal(doc.querySelector('[data-web-search-test-status]').textContent, 'Connected to duckduckgo.');
+});
+
+
+test('Tools workspace line shows ready paths without idle text and invalid roots with their message', async (t) => {
+  for (const rootState of ['ready', 'invalid']) {
+    const { window, dispose } = await loadRendererApp({ shell: { workspaceRoot: {
+      state: { workspaceRoot: 'G:/workspace/example', workspaceRootStatus: { state: rootState, message: 'The selected root is invalid.' } },
+    } } });
+    t.after(dispose);
+    const doc = window.document;
+    assert.equal(doc.getElementById('toolsWorkspaceLine').dataset.state, rootState === 'ready' ? 'ready' : 'blocked');
+    assert.equal(doc.getElementById('toolsWorkspacePath').textContent, 'G:/workspace/example');
+    assert.equal(doc.getElementById('toolsWorkspaceStatus').textContent, rootState === 'ready' ? '' : 'The selected root is invalid.');
+    await dispose();
+  }
+});
+
+test('a dependent tool row follows its parent while the Tools lists are held by focus', async (t) => {
+  const { window, dispose } = await loadRendererApp({
+    shell: { features: {
+      state: { tools: { fileTools: true, richFiles: true, bash: true, web: false } },
+      async updateSettings(patch, { state }) {
+        Object.assign(state.featuresState.tools, patch.tools);
+        return state.featuresState;
+      },
+    } },
+  });
+  t.after(dispose);
+  const doc = window.document;
+  doc.getElementById('settingsTopRailTab').click();
+  await waitForUi(window, 20);
+  doc.querySelector('.settings-nav-item[data-settings-section="tools"]').click();
+  await waitForUi(window, 20);
+  const row = (key) => doc.querySelector(`[data-settings-field="settings-tool-config-${key}"]`);
+  const held = row('web');
+  held.querySelector('[data-inv-toggle]').focus();
+  row('fileTools').querySelector('.settings-field-title').click();
+  await waitForUi(window, 30);
+  assert.equal(row('web'), held, 'the focused list was not repainted');
+  assert.equal(row('richFiles').dataset.settingParentOff, 'true');
+  assert.equal(row('richFiles').querySelector('[data-inv-toggle]').disabled, true);
+  assert.equal(row('richFiles').querySelector('[data-inv-toggle]').getAttribute('aria-checked'), 'true', 'the stored value is kept');
+});
+
+async function openHeldTools(t, tools, webSearch) {
+  const app = await loadRendererApp({
+    shell: { features: {
+      state: { tools, featureFlags: { web_search_providers: true }, webSearch },
+      async updateSettings(patch, { state }) {
+        Object.assign(state.featuresState.tools, patch.tools);
+        return state.featuresState;
+      },
+    } },
+  });
+  t.after(app.dispose);
+  const doc = app.window.document;
+  doc.getElementById('settingsTopRailTab').click();
+  await waitForUi(app.window, 20);
+  doc.querySelector('.settings-nav-item[data-settings-section="tools"]').click();
+  await waitForUi(app.window, 20);
+  const row = (key) => doc.querySelector(`[data-settings-field="settings-tool-config-${key}"]`);
+  // Focus inside the Tools page holds its lists, so a re-render patches nothing there.
+  row('fileTools').querySelector('[data-inv-toggle]').focus();
+  const flipWeb = async () => {
+    row('web').querySelector('.settings-field-title').click();
+    await waitForUi(app.window, 30);
+  };
+  return { ...app, doc, row, flipWeb };
+}
+
+test('web search rows follow Web tools while the Tools lists are held by focus', async (t) => {
+  const { doc, flipWeb } = await openHeldTools(t, { fileTools: true, richFiles: true, bash: true, web: false }, { provider: 'brave' });
+  const section = doc.querySelector('[data-web-search-section]');
+  const disabled = () => ['#webSearchProviderSelect', '[data-web-search-key-field="brave"]', '[data-web-search-key-save="brave"]', '[data-web-search-test]']
+    .map((selector) => doc.querySelector(selector).disabled);
+  const parentOffRows = () => section.querySelectorAll('.settings-field[data-setting-parent-off="true"]').length;
+  assert.deepEqual(disabled(), [true, true, true, true]);
+  await flipWeb();
+  assert.equal(doc.querySelector('[data-web-search-section]'), section, 'the held lists were not repainted');
+  assert.deepEqual(disabled(), [false, false, false, false]);
+  assert.equal(parentOffRows(), 0);
+  await flipWeb();
+  assert.equal(doc.querySelector('[data-web-search-section]'), section);
+  assert.deepEqual(disabled(), [true, true, true, true]);
+  assert.equal(parentOffRows(), section.querySelectorAll('.settings-field').length);
+});
+
+test('a running connection test keeps its lock through Web tools changes and releases to the parent state', async (t) => {
+  const { window, doc, shell, flipWeb } = await openHeldTools(t, { fileTools: true, web: true }, { provider: 'duckduckgo' });
+  let finishProbe;
+  shell.harness.inspect = () => new Promise((resolve) => { finishProbe = resolve; });
+  const testButton = doc.querySelector('[data-web-search-test]');
+  testButton.click();
+  assert.equal(testButton.disabled, true);
+  await flipWeb();
+  await flipWeb();
+  assert.equal(doc.querySelector('[data-web-search-test]'), testButton, 'the held lists were not repainted');
+  assert.equal(testButton.disabled, true, 'turning the parent on does not unlock a running test');
+  await flipWeb();
+  finishProbe({ web_search_probe: { ok: true, provider: 'duckduckgo' } });
+  await waitForUi(window, 20);
+  assert.equal(doc.querySelector('[data-web-search-test-status]').textContent, 'Connected to duckduckgo.');
+  assert.equal(testButton.disabled, true, 'a finished test does not unlock a button whose parent is off');
+  await flipWeb();
+  assert.equal(testButton.disabled, false, 'the parent is on again and the test has finished');
+});
+
+test('the tool row link to PDF reading opens Tools with keyboard focus on the first usable control of the add-on group', async (t) => {
+  const { window, dispose } = await loadRendererApp();
+  t.after(dispose);
+  const doc = window.document;
+  const host = doc.getElementById('toolsPdfAddonHost');
+  // The harness has no add-on bridge, so the group shows its unsupported state with no actions; give it two.
+  host.querySelector('.settings-field-control').insertAdjacentHTML('beforeend', '<button type="button" disabled>Cancel</button><button type="button" data-action="pdfAddonSetup">Set up</button>');
+  let scrolled = 0;
+  host.scrollIntoView = () => { scrolled += 1; };
+  doc.getElementById('chatTimeline').insertAdjacentHTML('beforeend', '<span role="link" tabindex="0" data-inv-error-action="open_pdf_addon_settings">Set up PDF reading</span>');
+  doc.querySelector('[data-inv-error-action="open_pdf_addon_settings"]').click();
+  await waitForUi(window, 80);
+  assert.equal(doc.querySelector('.settings-card.settings-section-active').dataset.settingsSection, 'tools');
+  assert.equal(doc.activeElement, host.querySelector('[data-action="pdfAddonSetup"]'));
+  assert.ok(scrolled > 0, 'the group is scrolled into view');
 });

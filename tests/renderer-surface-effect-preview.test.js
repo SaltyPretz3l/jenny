@@ -280,6 +280,26 @@ test('host pointer events reach the controller in scene coordinates', () => {
   strip.dispose();
 });
 
+test('a click takes the primary flag of the hovering pointer (Chromium reports click isPrimary false)', () => {
+  const windowRef = makeWindowRef();
+  const strip = preview.createSurfaceEffectPreview({ windowRef, documentRef: windowRef.document });
+  const host = makeHost({ left: 40, top: 12, width: 480, height: 84 });
+
+  strip.render({ host, effectId: 'context-weave', visible: true });
+  host.fire('pointermove', { clientX: 100, clientY: 30, pointerId: 1, isPrimary: true });
+  host.fire('click', { clientX: 100, clientY: 30, pointerId: 1, isPrimary: false });
+  // Interleaved contacts: each click takes its own pointer's flag.
+  host.fire('pointermove', { clientX: 90, clientY: 30, pointerId: 4, isPrimary: false });
+  host.fire('pointermove', { clientX: 95, clientY: 30, pointerId: 1, isPrimary: true });
+  host.fire('click', { clientX: 90, clientY: 30, pointerId: 4, isPrimary: false });
+  host.fire('pointerleave', { clientX: 90, clientY: 30, pointerId: 4, isPrimary: false });
+  host.fire('click', { clientX: 95, clientY: 30, pointerId: 1, isPrimary: false });
+
+  const clicks = windowRef.__controllers[0].inputs.filter((entry) => entry.type === 'click');
+  assert.deepEqual(clicks.map((entry) => [entry.pointerId, entry.isPrimary]), [[1, true], [4, false], [1, true]]);
+  strip.dispose();
+});
+
 test('the bind context is a single-host scene with no manager-owned regions', () => {
   const context = preview.buildBindContext(makeHost());
   assert.equal(context.hosts.length, 1);

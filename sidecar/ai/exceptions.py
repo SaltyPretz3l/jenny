@@ -1,4 +1,3 @@
-# ruff: noqa: PLR0913
 """
 Custom exception hierarchy for sidecar AI engines.
 

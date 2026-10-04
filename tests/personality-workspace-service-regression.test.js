@@ -7,6 +7,7 @@ const os = require('node:os');
 const path = require('node:path');
 
 const { PersonalityWorkspaceService } = require('../services/personality-workspace-service');
+const { CONTEXT_FILE_MAX_BYTES } = require('../services/personality-workspace-service');
 
 async function createWorkspace(t) {
   const userDataPath = await fs.mkdtemp(path.join(os.tmpdir(), 'jenny-personality-regression-'));
@@ -81,4 +82,120 @@ test('blank USER save preserves app-owned frontmatter without restoring the plac
   assert.equal(result.ok, true);
   assert.equal(await fs.readFile(userPath, 'utf8'), '---\ntimezone: America/Chicago\n---\n\n');
   assert.equal(await service.getResolvedTimeZone(), 'America/Chicago');
+});
+
+for (const filename of ['PERSONALITY.md', 'USER.md', 'MEMORY.md']) {
+  test(`unreadable ${filename} fails editor load and blocks blank saves after recovery`, async (t) => {
+    const { userDataPath, workspacePath } = await createWorkspace(t);
+    const service = new PersonalityWorkspaceService({ userDataPath });
+    await service.ensureSeeded();
+    const target = path.join(workspacePath, filename);
+    await fs.writeFile(target, 'precious bytes\n');
+    const realStat = fs.stat;
+    const mocked = t.mock.method(fs, 'stat', async (file, ...args) => {
+      if (file === target) throw Object.assign(new Error('denied'), { code: 'EACCES' });
+      return realStat(file, ...args);
+    });
+    const readEditor = () => filename === 'MEMORY.md' ? service.getNotesState() : service.getState();
+    await assert.rejects(readEditor(), { code: 'CMP-PERS-0001' });
+    mocked.mock.restore();
+    const save = () => filename === 'MEMORY.md'
+      ? service.writeNotes({ body: '', force: true }) : service.save({ personality: '', user: '', force: true });
+    assert.equal((await save()).ok, false);
+    assert.equal(await fs.readFile(target, 'utf8'), 'precious bytes\n');
+    if (filename === 'MEMORY.md') {
+      await service.getState();
+      assert.equal((await save()).ok, false);
+    }
+    await readEditor();
+    assert.equal((await save()).ok, true);
+  });
+}
+
+test('personality read caps bytes even when the path stat is stale', async (t) => {
+  const { userDataPath, workspacePath } = await createWorkspace(t);
+  const service = new PersonalityWorkspaceService({ userDataPath });
+  await service.ensureSeeded();
+  const target = path.join(workspacePath, 'PERSONALITY.md');
+  await fs.writeFile(target, 'x'.repeat(CONTEXT_FILE_MAX_BYTES + 1));
+  const realStat = fs.stat;
+  t.mock.method(fs, 'stat', async (file, ...args) => {
+    const stat = await realStat(file, ...args);
+    if (file === target) stat.size = 1;
+    return stat;
+  });
+  const state = await service.getState();
+  assert.equal(state.files.personality.oversized, true);
+  assert.equal(state.files.personality.body, '');
+  assert.equal((await service.save({ personality: '' })).ok, false);
+});
+
+test('migration rolls back oversized archives without loading their bytes', async (t) => {
+  const { userDataPath, workspacePath } = await createWorkspace(t);
+  const target = path.join(workspacePath, 'IDENTITY.md');
+  const bytes = Buffer.alloc(CONTEXT_FILE_MAX_BYTES * 2, 120);
+  await fs.writeFile(target, bytes);
+  const service = new PersonalityWorkspaceService({ userDataPath });
+  const realRead = fs.readFile;
+  t.mock.method(fs, 'readFile', async (file, ...args) => {
+    if (file === target) throw new Error('unbounded legacy read');
+    return realRead(file, ...args);
+  });
+  service._writePersonalityState = async () => { throw new Error('disk full'); };
+  await assert.rejects(service.ensureSeeded(), /disk full/);
+  assert.deepEqual(await realRead(target), bytes);
+  await assert.rejects(fs.access(path.join(workspacePath, 'legacy')));
+});
+
+test('a linked legacy file is archived unmerged instead of blocking migration', async (t) => {
+  const { userDataPath, workspacePath } = await createWorkspace(t);
+  const target = path.join(workspacePath, 'IDENTITY.md');
+  await fs.writeFile(target, 'kept elsewhere');
+  const service = new PersonalityWorkspaceService({ userDataPath });
+  const realRead = service._readBoundedFile.bind(service);
+  // Windows test hosts cannot create symlinks unprivileged; the unsafe-path
+  // refusal is what a linked file produces.
+  service._readBoundedFile = async (file, ...args) => {
+    if (file === target) throw Object.assign(new Error('linked'), { code: 'CONTEXT_FILE_PATH_UNSAFE' });
+    return realRead(file, ...args);
+  };
+  await service.ensureSeeded();
+  await assert.rejects(fs.access(target));
+  const archived = await fs.readdir(path.join(workspacePath, 'legacy'));
+  assert.ok(archived.some((name) => name.startsWith('IDENTITY')), archived.join(','));
+});
+
+test('an unreadable existence check never seeds over a personality file', async (t) => {
+  const { userDataPath, workspacePath } = await createWorkspace(t);
+  await new PersonalityWorkspaceService({ userDataPath }).ensureSeeded();
+  const target = path.join(workspacePath, 'PERSONALITY.md');
+  await fs.writeFile(target, 'precious bytes\n');
+  const realAccess = fs.access;
+  t.mock.method(fs, 'access', async (file, ...args) => {
+    if (file === target) throw Object.assign(new Error('denied'), { code: 'EACCES' });
+    return realAccess(file, ...args);
+  });
+  await assert.rejects(new PersonalityWorkspaceService({ userDataPath }).ensureSeeded(), { code: 'EACCES' });
+  assert.equal(await fs.readFile(target, 'utf8'), 'precious bytes\n');
+});
+
+test('migration rollback restores archives across devices and cleans snapshot backups', async (t) => {
+  const { userDataPath, workspacePath } = await createWorkspace(t);
+  const target = path.join(workspacePath, 'IDENTITY.md');
+  await fs.writeFile(target, 'user legacy voice\n');
+  await fs.writeFile(path.join(workspacePath, '.personality-state.json'), '{"version":2}\n');
+  const service = new PersonalityWorkspaceService({ userDataPath });
+  const realRename = fs.rename;
+  t.mock.method(fs, 'rename', async (from, to) => {
+    if (from.includes(`${path.sep}legacy${path.sep}`) || to.includes(`${path.sep}legacy${path.sep}`)) {
+      throw Object.assign(new Error('cross device'), { code: 'EXDEV' });
+    }
+    return realRename(from, to);
+  });
+  service._writePersonalityState = async () => { throw new Error('disk full'); };
+  await assert.rejects(service.ensureSeeded(), /disk full/);
+  assert.equal(await fs.readFile(target, 'utf8'), 'user legacy voice\n');
+  assert.equal(await fs.readFile(path.join(workspacePath, '.personality-state.json'), 'utf8'), '{"version":2}\n');
+  assert.equal((await fs.readdir(workspacePath)).some((name) => name.includes('.rollback-')), false);
+  await assert.rejects(fs.access(path.join(workspacePath, 'legacy')));
 });

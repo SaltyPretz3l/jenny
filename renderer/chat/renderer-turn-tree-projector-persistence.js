@@ -147,6 +147,15 @@
           payloadValue.is_error = payloadValue.canonical_event_type === 'tool_execution_failed'
             || payloadValue.success === false;
           payloadValue.output_text = String(payloadValue.tool_output_summary ?? payloadValue.output_text ?? '');
+          // An Electron-run tool (image_generate) registers its artifacts on
+          // Electron's side, so the runtime's event can journal none while the
+          // tool_result message holds them. The message is the owner here.
+          const resultMessage = messageById.get(normalizedSourceEvent.primaryMessageId);
+          const messageArtifacts = resultMessage?.tool_result?.generated_artifacts;
+          if ((!Array.isArray(payloadValue.generated_artifacts) || !payloadValue.generated_artifacts.length)
+            && Array.isArray(messageArtifacts) && messageArtifacts.length) {
+            try { payloadValue.generated_artifacts = deepCloneJsonValue(messageArtifacts); } catch (_error) { /* keep none */ }
+          }
         }
         const eventId = normalizeId(sourceEvent.event_id || sourceEvent.eventId) || `${turnId}:${kind}:${index}`;
         const anchorMessageId = normalizedSourceEvent.anchorMessageId;

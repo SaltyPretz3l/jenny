@@ -373,7 +373,6 @@ test('F8: composer context meter skips visible-message scan when sent context is
 test('renderer persists context settings on the active session without a static preview', async (t) => {
   const { window, shell } = await loadRendererTestApp(t);
   const newChatButton = window.document.getElementById('newChatButton');
-  const scopeSelect = window.document.getElementById('contextHistoryScopeSelect');
   // Context toggles are inventory switches: dispatch inv-toggle-change on the
   // stable container (its innerHTML is rebuilt each render, so child nodes go stale).
   const sourcesList = window.document.getElementById('contextSourcesList');
@@ -381,8 +380,9 @@ test('renderer persists context settings on the active session without a static 
   newChatButton.click();
   await waitForUi(window, 30);
 
-  scopeSelect.value = 'recent';
-  scopeSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
+  const scope = window.document.getElementById('contextHistoryScopeSelect');
+  scope.value = 'recent';
+  scope.dispatchEvent(new window.Event('change', { bubbles: true }));
   await waitForUi(window, 20);
 
   sourcesList.dispatchEvent(new window.CustomEvent('inv-toggle-change', {
@@ -435,52 +435,36 @@ test('renderer disables context controls when the backend is external', async (t
     },
   });
 
-  const badge = window.document.getElementById('contextBadge');
   const status = window.document.getElementById('contextStatus');
-  const scopeSelect = window.document.getElementById('contextHistoryScopeSelect');
+  const scopeGroup = window.document.getElementById('contextHistoryScopeSelect');
   const personalityToggle = window.document.querySelector('[data-inv-toggle="contextIncludePersonalityToggle"]');
   const memoryToggle = window.document.querySelector('[data-inv-toggle="contextIncludeMemoryToggle"]');
 
-  assert.equal(badge.textContent, 'Unavailable');
-  assert.equal(scopeSelect.disabled, true);
+  assert.equal(window.document.getElementById('contextBadge'), null);
+  assert.match(status.hidden ? '' : status.textContent, /only when the managed sidecar backend is active/, 'the unavailable state shows its reason');
+  assert.equal(scopeGroup.disabled, true, 'no scope can be chosen');
   assert.equal(personalityToggle.disabled, true);
   assert.equal(memoryToggle.disabled, true);
   assert.match(status.textContent, /managed sidecar backend is active/i);
   assert.equal(window.document.getElementById('contextPreview'), null);
 });
 
-test('context card groups its controls into labelled scopes with inventory switches', async (t) => {
-  const { window } = await loadRendererTestApp(t);
+test('context card shows what is sent and summaries as standard rows', async (t) => {
+  const patches = [];
+  const { window } = await loadRendererTestApp(t, { shell: { features: { async updateSettings(patch) { patches.push(patch); } } } });
   const doc = window.document;
   const card = doc.querySelector('section.settings-card[data-settings-section="context"]');
-
-  // Three ruled, labelled groups: sources / managed runtime / advanced context (T1/T9).
-  const groups = card.querySelectorAll('.settings-group');
-  assert.equal(groups.length, 3);
-  for (const group of groups) {
-    assert.equal(group.getAttribute('role'), 'group');
-    const headingId = group.getAttribute('aria-labelledby');
-    assert.ok(headingId && doc.getElementById(headingId), `group heading ${headingId} resolves`);
-  }
-
-  // History scope select is programmatically labelled (T9).
-  assert.ok(card.querySelector('label.settings-field-label[for="contextHistoryScopeSelect"]'));
-
-  // Every context toggle is now an inventory switch — no raw checkboxes remain (T4).
+  const groups = [...card.querySelectorAll('.settings-group')];
+  assert.deepEqual(groups.map((group) => group.querySelector('.settings-group-heading').textContent), ['What is sent', 'Summaries']);
+  const titles = (group) => [...group.querySelectorAll('.settings-field-title')].map((title) => title.textContent);
+  assert.deepEqual(titles(groups[0]), ['History scope', 'Personality and notes', 'Approved memories']);
+  assert.deepEqual(titles(groups[1]), ['Automatic summarization', 'Summary guidance']);
   assert.equal(card.querySelectorAll('input[type="checkbox"]').length, 0);
-  const switchIds = [
-    'contextIncludePersonalityToggle', 'contextIncludeMemoryToggle',
-    'contextTokenBudgetToggle', 'contextCompactionToggle',
-  ];
-  for (const id of switchIds) {
-    const sw = card.querySelector(`[data-inv-toggle="${id}"]`);
-    assert.ok(sw, `${id} renders as a switch`);
-    assert.equal(sw.getAttribute('role'), 'switch');
-  }
-
-  // Switches land in the right persistence-keyed container.
-  assert.equal(doc.getElementById('contextSourcesList').querySelectorAll('[data-inv-toggle]').length, 2);
-  assert.equal(doc.getElementById('contextRuntimeList').querySelectorAll('[data-inv-toggle]').length, 2);
+  assert.equal(card.querySelector('[data-inv-toggle="contextTokenBudgetToggle"]'), null);
+  assert.equal(card.querySelector('[data-inv-toggle="contextCompactionToggle"]').getAttribute('role'), 'switch');
+  card.querySelector('[data-inv-toggle="contextCompactionToggle"]').click();
+  await waitForUi(window, 20);
+  assert.equal(JSON.stringify(patches), JSON.stringify([{ featureOverrides: { context_compaction: false } }]));
 });
 
 test('Settings keeps only additive custom summarization guidance', async (t) => {
@@ -524,7 +508,7 @@ test('Settings keeps only additive custom summarization guidance', async (t) => 
   assert.match(window.document.getElementById('compactionTuningStatus').textContent,
     /Summarization guidance applied/i);
 
-  window.document.querySelector('[data-action="reset-compaction-prompt"]').click();
+  window.document.querySelector('[data-setting-revert="compactionPromptField"]').click();
   await waitForUi(window, 20);
   assert.equal(JSON.stringify(shell.__state.compactionSetTuningCalls[1]), JSON.stringify({ customPrompt: '' }));
 });
@@ -550,10 +534,8 @@ test('Settings clears pending summarization guidance after an IPC failure', asyn
   assert.doesNotMatch(window.document.getElementById('compactionTuningStatus').textContent, /Applying/i);
 });
 
-test('Settings never owns Compact now, including when the manual feature flag is on', async (t) => {
-  const { window } = await loadRendererTestApp(t, {
-    shell: { features: { state: { featureFlags: { compaction_manual: true } } } },
-  });
+test('Settings never owns Compact now', async (t) => {
+  const { window } = await loadRendererTestApp(t);
   window.document.getElementById('newChatButton').click();
   await waitForUi(window, 30);
 

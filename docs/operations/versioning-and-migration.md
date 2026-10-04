@@ -1,12 +1,11 @@
 # Versioning and Migration Policy
 
-Date: 2026-08-17
+Last reviewed against source: 2026-10-03
 
 Single-page operator doc for the versioned surfaces and credential-storage
-posture between the Electron shell and the Python sidecar. Updated through
-THOTH Phase 5F of
-BACKEND_PROMPT_LIFECYCLE_REVIEW.md
-and Round-2 findings K6 (corrupt-store signaling) and O4 (API_VERSION policy).
+posture between the Electron shell and the Python sidecar. The original THOTH Phase 5F and Round-2 K6/O4 evidence remains in
+BACKEND_PROMPT_LIFECYCLE_REVIEW.md.
+Live constants and schema registries below own the current values.
 
 - [Application release version](#application-release-version)
 - [API_VERSION handshake](#api_version-handshake)
@@ -25,7 +24,7 @@ and Round-2 findings K6 (corrupt-store signaling) and O4 (API_VERSION policy).
 - [Scheduled task store schema (JSON)](#scheduled-task-store-schema-json)
 - [Runtime config schema](#runtime-config-schema)
 - [Ollama catalog cache schema (JSON)](#ollama-catalog-cache-schema-json)
-- [Plugin catalog source schema (JSON)](#plugin-catalog-source-schema-json)
+- [Plugin catalog source schema (retired)](#plugin-catalog-source-schema-retired)
 - [Standalone MCP configuration schema (JSON)](#standalone-mcp-configuration-schema-json)
 - [FileJsonStore corruption policy](#filejsonstore-corruption-policy)
 - [Cache boundary marker (accepted risk)](#cache-boundary-marker-accepted-risk)
@@ -130,7 +129,7 @@ of the retired sidecar method receive JSON-RPC `METHOD_NOT_FOUND`.
    - [services/backend/sidecar-client.js:5](../../services/backend/sidecar-client.js) —
      `const API_VERSION`.
 2. Verify there are only these two sites (grep protects the invariant):
-   `rg -n "API_VERSION\s*=" sidecar services renderer-send-utils.js preload.js main.js`.
+   `rg -n "API_VERSION\s*=" sidecar/protocol.py services/backend/sidecar-client.js`.
 3. Update the dated comment in
    [sidecar/protocol.py](../../sidecar/protocol.py) if the bump records a
    notable shape change.
@@ -152,7 +151,7 @@ Registry rows are display-safe metadata:
   "surface": "Electron session store",
   "owner": "electron",
   "kind": "json_schema",
-  "version": 12,
+  "version": 22,
   "forward_policy": "migrate_forward_block_future_write",
   "source": "services/backend/session-store-migrations.js"
 }
@@ -341,10 +340,11 @@ stage tests. Every schema bump must add the immediate predecessor fixture.
 
 ## Electron session store schema (JSON)
 
-**Source of truth:** `STORE_SCHEMA_VERSION = 15` in
+**Source of truth:** `STORE_SCHEMA_VERSION = 22` in
 [services/backend/session-store-migrations.js](../../services/backend/session-store-migrations.js).
 
-The current session store is a split layout under `{userData}/sessions/`:
+The informal combined shape below describes normalized in-memory session data,
+not one physical monolithic file. The current session store is a split layout under `{userData}/sessions/`:
 `_index.json` carries the schema and session id list, and each session lives in
 `<session_id>.json`. Older monolithic `{userData}/sessions.json` payloads are
 still accepted by the migration path. Migrations run on every load via
@@ -354,7 +354,7 @@ still accepted by the migration path. Migrations run on every load via
 
 ```jsonc
 {
-  "schema_version": 15,           // integer; always equals STORE_SCHEMA_VERSION on write
+  "schema_version": 22,           // integer; always equals STORE_SCHEMA_VERSION on write
   "sessions": {
     "<session_id>": {
       "id": "<session_id>",
@@ -401,7 +401,7 @@ Top-level store fields (`schema_version`, `sessions`) follow the same rule:
 `normalizeStorePayload` only re-serializes known fields. Unknown top-level
 fields are dropped on the next write.
 
-### Migration chain (v1 -> v15)
+### Migration chain (v1 -> v22)
 
 | From | To | Repair function | What changed |
 |---|---|---|---|
@@ -418,6 +418,13 @@ fields are dropped on the next write.
 | 12 | 13 | `repairSessionForV13` | Normalize first-class diagnostic-session metadata used by frontier diagnostics. |
 | 13 | 14 | `repairSessionForV14` | Compact legacy per-delta `reasoning_phase` turn events into one bounded event per phase. |
 | 14 | 15 | `repairSessionForV15` | Add normalized durable `session_incarnation` and non-negative `turn_generation` lifecycle fences. |
+| 15 | 16 | `repairSessionForV16` | Add bounded manual-compaction snapshot state. |
+| 16 | 17 | `repairSessionForV17` | Introduce the historical core image-session shape. |
+| 17 | 18 | `repairSessionForV18` | Convert image sessions to generic plugin sessions/provider bindings while retaining readable history. |
+| 18 | 19 | `repairSessionForV19` | Retire research context and normalize origin-aware compaction snapshot v2. |
+| 19 | 20 | `repairSessionForV20` | Add bounded per-session tool-category overrides. |
+| 20 | 21 | `repairSessionForV21` | Add durable project attribution and canonical runtime continuations; legacy chats belong to General. |
+| 21 | 22 | `repairSessionForV22` | Normalize bounded failure-retry reasoning snapshots. |
 
 Each upgrade is idempotent and runs on every load. The matching one-line
 comments beside each `repairSessionForV*` helper in
@@ -427,39 +434,21 @@ same short summary next to the new repair helper.
 
 ### Template for the next migration
 
-1. Bump the constant:
+For the next incompatible session shape, bump `STORE_SCHEMA_VERSION` to 23,
+add/export a pure idempotent `repairSessionForV23(session)` helper, and append
+`[23, repairSessionForV23]` to `SESSION_MIGRATION_STEPS` in
+`services/backend/session-store-migrations.js`. The ordered `< threshold` loop
+applies each relevant repair and re-normalizes linked-session IDs.
 
-   ```js
-   const STORE_SCHEMA_VERSION = 16;
-   ```
-
-2. Add a `repairSessionForV16(session)` helper that takes a single session
-   object, does the one-way repair, and returns a new object. Keep it pure —
-   no closures over outer state.
-
-3. Extend `migrateStorePayload`
-   ([session-store-migrations.js](../../services/backend/session-store-migrations.js))
-   with a new branch:
-
-   ```js
-   if (version < 16) {
-     for (const [sessionId, session] of Object.entries(migrated.sessions)) {
-       const repaired = repairSessionForV16(session);
-       migrated.sessions[sessionId] = {
-         ...repaired,
-         linked_session_ids: normalizeLinkedSessionIds(repaired?.linked_session_ids, sessionId),
-       };
-     }
-   }
-   ```
-
-4. Add a test to
-   [tests/electron-session-store.test.js](../../tests/electron-session-store.test.js)
-   covering: v15 -> v16 upgrade, v16 idempotence, unknown-field tolerance.
+Cover v22 → v23, repeated normalization and forward-version write refusal with
+focused migration/session-store tests. Update the schema registry (which imports
+the live constant), this table and immutable release-compat fixtures together.
+Do not rewrite existing historical fixtures or reset the schema to an older value.
 
 **Invariants.**
 
-- `schema_version` is always rewritten to `STORE_SCHEMA_VERSION` on normalize
+- Supported older/current payloads normalize to `STORE_SCHEMA_VERSION`; future
+  files are preserved and writes blocked by the storage owner. See
   ([session-store-migrations.js](../../services/backend/session-store-migrations.js)).
 - Migrations run linearly with `<` bounds so an upgraded store re-runs later
   repairs even if it came from an earlier intermediate version.
@@ -529,20 +518,24 @@ registered as `electron.terminal_repair_store` with forward policy
 For the 1.1 candidate, v52 adds `uiLanguage`, `safetyMode` and
 `unattendedGuardMinutes`. V53 adds normalized `commandSandbox` configuration,
 defaulting off for existing profiles. The additive `use24HourTime` preference
-defaults false and does not require another schema bump. Older schema notes
-below explain earlier transitions rather than the complete current shape.
+defaults false and does not require another schema bump. V54 introduces runtime defaults, v55 the automatic-approval streak cap, v56
+workspace split-pane state, v57 the default-zoom migration, v58 retires hidden
+token-budget/compaction tuning overrides, and v59 drops retired Home weather
+coordinates. Older schema notes below explain earlier transitions rather than
+the complete current shape.
 Hosted configuration and command-worker journals are separate contracts; see
 [hosting operations](HOSTED_JENNY.md) and
 [desktop sandbox operations](DESKTOP_COMMAND_SANDBOX.md).
 
-**Source of truth:** `CONFIG_VERSION = 53` in
+**Source of truth:** `CONFIG_VERSION = 59` in
 [services/shell-config-state.js](../../services/shell-config-state.js), consumed
 by [services/shell-config-service.js](../../services/shell-config-service.js).
 
 The persisted file is `{userData}/shell-config.json`. It owns display-safe shell
-settings only: workspace root, feature toggles, local-engine defaults, speech
-settings, chat UI zoom, telemetry consent, follow-ups, proactive settings,
-memory capture suggestions, skills, and tips. Secret values stay out of this file per the
+settings only: workspace/project preferences, feature/tool toggles, local-engine
+defaults, chat UI/zoom, telemetry consent, reminders, runtime limits, memory
+capture suggestions and skills. Retired speech, weather and tips surfaces do
+not become active merely because an older file contains their keys. Secret values stay out of this file per the
 [credential storage policy](#credential-storage-policy).
 
 Schema v36 splits Workspace IDE persistence into global `preferences` and up to
@@ -829,17 +822,12 @@ Ollama catalog fields only (`id`, known boolean `capabilities`, and
 `models.list`. The cache stores display-safe metadata only and is safe to
 delete; it is derived state, not a source of truth.
 
-## Plugin catalog source schema (JSON)
+## Plugin catalog source schema (retired)
 
-Electron registers `electron.plugin_catalog_sources` schema v1. The durable
-store binds configured remote catalogs and user-trusted offline mirrors to a
-pinned TUF root and monotonically increasing revision. Future schemas are
-preserved and mutation-blocking. Invalid sources fail independently during
-catalog refresh; public state excludes pinned-root bytes, endpoints, local
-paths, and credentials. The versioned public metadata validators live in
-`config/plugins/catalog-source-v1.schema.json` and
-`config/plugins/catalog-entry-v1.schema.json`; these do not change the frozen
-plugin package or generation contract families.
+`electron.plugin_catalog_sources` is no longer registered: plugin catalogs,
+offline mirrors, and the pinned-TUF-root source store were retired with the
+plugin platform. The frozen plugin package and generation contract families are
+unchanged, and old `catalog` evidence in existing generations stays readable.
 
 ## Standalone MCP configuration schema (JSON)
 
@@ -863,7 +851,8 @@ The additive `mcp.inspect` request shares `API_VERSION` negotiation and adds no
 notification, turn-event kind, or durable sidecar state. Configuration edits or
 `CMP-MCP-0009` tool-surface drift invalidate approval and return the row to
 disabled/pending review. See
-[PLUGIN_SECURITY.md ` Plugin Catalogs and MCP Trust](../PLUGIN_SECURITY.md#plugin-catalogs-and-mcp-trust).
+[PLUGIN_SECURITY.md ` Plugin Catalogs and MCP Trust](../PLUGIN_SECURITY.md#surviving-plugins-and-standalone-mcp-trust)
+(plugin catalogs and plugin-supplied MCP were retired on 2026-10-02, plugin platform retirement stage 4; that section holds the retirement note and the standalone MCP trust model).
 
 ## Plugin contract and generation compatibility
 
@@ -971,9 +960,18 @@ this.store = new FileJsonStore(filePath, {
 });
 ```
 
-Existing single-arg call sites (nine as of 2026-04-20, enumerated in the
-Bundle 5C finding) keep working unchanged. A follow-up Bundle 6E pass can
-thread loggers through where it's cheap.
+The nine single-argument call sites counted on 2026-04-20 are historical
+Bundle 5C evidence, not a current count or pending task list. New ownership should
+follow the current service composition and structured logging contract.
+
+Current stores also distinguish absent, malformed and unreadable files through
+`readWithStatus`. Owners retry transient reads and preserve damaged bytes through
+`services/backend/corrupt-file-preserve.js` before replacement; unreadable files
+are not moved aside as corruption. Credential-file health separately blocks
+writes when prior bytes cannot safely be read/preserved. Writes flush their temp
+file before atomic rename; directory flush is best effort on POSIX and skipped
+on Windows. Durability claims use the store's settled generation/commit proof,
+not an in-memory update or a merely scheduled debounced write.
 
 ## Cache boundary marker (accepted risk)
 

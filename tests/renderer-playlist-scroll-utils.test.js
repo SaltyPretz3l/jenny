@@ -230,11 +230,12 @@ test('scroll is dt-based and moves right-to-left while ambient ghosts keep drawi
     const ctx = env.recorder.contexts.get(canvas);
     const start = inspectEntry(controller).totalScroll;
     ctx.calls.length = 0;
-    env.raf.flush(50);
+    env.raf.flush(60);
     const afterLong = inspectEntry(controller).totalScroll;
-    env.raf.flush(8);
+    env.raf.flush(30);
     const afterShort = inspectEntry(controller).totalScroll;
-    assert.ok(afterLong - start > (afterShort - afterLong) * 3);
+    assert.ok(Math.abs((afterLong - start) - 2 * (afterShort - afterLong)) < 0.001,
+      'scroll distance is proportional to the elapsed frame time');
     assert.ok(ctx.calls.some((call) => call.type === 'drawImage'), 'cached grid tile draws');
     assert.ok(ctx.calls.some((call) => call.type === 'fillRect'), 'ambient ghosts and accents draw');
     controller.dispose();
@@ -308,21 +309,21 @@ test('draw failures report through the shared fault seam and do not kill the loo
     const host = addHost(env.window.document);
     const controller = makeController(env, { report: (fault) => reports.push(fault) });
     controller.bind(context([host]));
-    env.raf.flush(16);
+    env.raf.flush(40);
     const ctx = env.recorder.contexts.get(host.element.querySelector('.widget-playlist-scroll-canvas'));
     const clearRect = ctx.clearRect;
     ctx.clearRect = () => { throw new Error('boom'); };
-    assert.doesNotThrow(() => env.raf.flush(16));
+    assert.doesNotThrow(() => env.raf.flush(40));
     assert.equal(reports.length, 1);
     ctx.clearRect = clearRect;
     const before = ctx.calls.length;
-    env.raf.flush(16);
+    env.raf.flush(40);
     assert.ok(ctx.calls.length > before, 'subsequent frame still draws');
     controller.dispose();
   });
 });
 
-test('manager-routed click draws a full-height user note without vertical placement overshoot', (t) => {
+test('manager-routed click draws one full-height flat note, batched, with no shadow and a click ripple', (t) => {
   withEnv(t, {}, (env) => {
     const host = addHost(env.window.document);
     const controller = makeController(env);
@@ -331,16 +332,14 @@ test('manager-routed click draws a full-height user note without vertical placem
     const ctx = env.recorder.contexts.get(host.element.querySelector('.widget-playlist-scroll-canvas'));
     ctx.calls.length = 0;
     controller.handleInput(input('click'));
-    env.raf.flush(16);
+    env.raf.flush(40);
     assert.equal(inspectEntry(controller).noteCount, 1);
-    assert.equal(inspectEntry(controller).noteSample[0].variation.velocity, 1);
     const noteShapes = ctx.calls.filter((call) => call.type === 'roundRect');
-    assert.equal(noteShapes.length, 3);
-    noteShapes.slice(0, 2).forEach((call) => {
-      assert.equal(call.args[1], 85, 'the initial placement pop remains centered in the snapped lane');
-      assert.equal(call.args[3], 26, 'the initial placement pop does not shrink or exceed the usable lane height');
-    });
-    assert.ok(ctx.calls.some((call) => call.type === 'arc'));
+    assert.equal(noteShapes.length, 1, 'one flat shape per note: no gradient or highlight overlay');
+    assert.equal(noteShapes[0].args[1], 85, 'the placement pop stays centered in the snapped lane');
+    assert.equal(noteShapes[0].args[3], 26, 'the placement pop does not shrink or exceed the usable lane height');
+    assert.equal(noteShapes[0].shadowBlur, 0, 'no per-note glow');
+    assert.ok(ctx.calls.some((call) => call.type === 'arc'), 'the click ripple draws');
     controller.dispose();
   });
   withEnv(t, { reducedMotion: true }, (env) => {
@@ -355,7 +354,7 @@ test('manager-routed click draws a full-height user note without vertical placem
   });
 });
 
-test('baseline rendering preserves fourth-bar accents, two-axis fades, residual note glow, and static flare width', (t) => {
+test('baseline rendering keeps the fourth-bar accent and a crossing ring, and the edge-fade mask is cached', (t) => {
   withEnv(t, {}, (env) => {
     const host = addHost(env.window.document, 'visual', 'chat-left', {
       left: 0, top: 0, width: 300, height: 280,
@@ -367,30 +366,32 @@ test('baseline rendering preserves fourth-bar accents, two-axis fades, residual 
     const canvas = host.element.querySelector('.widget-playlist-scroll-canvas');
     const ctx = env.recorder.contexts.get(canvas);
     const fullHeightMarkers = ctx.calls.filter((call) => (
-      call.type === 'fillRect' && call.args[2] === 1.5 && call.args[3] === 280
+      call.type === 'fillRect' && call.args[2] === 2 && call.args[3] === 280
     ));
-    assert.equal(fullHeightMarkers.length, 2, 'one fourth-bar accent plus the playhead render');
-    const fades = ctx.calls.filter((call) => call.type === 'createLinearGradient').map((call) => call.args);
-    assert.ok(fades.some((args) => args.join(',') === '0,0,300,0'), 'horizontal edge fade renders');
-    assert.ok(fades.some((args) => args.join(',') === '0,0,0,280'), 'vertical edge fade renders');
+    assert.equal(fullHeightMarkers.length, 1, 'one fourth-bar accent renders; the playhead is invisible at idle');
+    assert.equal(ctx.calls.filter((call) => call.type === 'createLinearGradient').length, 0,
+      'the edge fade is blitted from a cached mask, never rebuilt from gradients on the frame canvas');
+    assert.ok(ctx.calls.some((call) => call.type === 'drawImage'), 'grid tile and edge mask are blitted');
+    const sizeAfterFirst = env.recorder.contexts.size;
+    assert.equal(sizeAfterFirst, 3, 'frame canvas + cached grid tile + cached edge mask');
+    for (let i = 0; i < 6; i += 1) env.raf.flush(40);
+    assert.equal(env.recorder.contexts.size, sizeAfterFirst, 'nothing is rebuilt while size and DPR hold');
 
     controller.handleInput(input('click', 'chat-left', { localX: 215, sceneX: 215 }));
-    controller.setActivity({
-      scopeEpoch: 1, phase: 'streaming', phaseRevision: 1, targetEnergy: 0.46, attentionScale: 1,
-    });
-    for (let i = 0; i < 12; i += 1) env.raf.flush(16);
+    for (let i = 0; i < 16; i += 1) env.raf.flush(16);
     const crossingArcs = ctx.calls.filter((call) => (
       call.type === 'arc' && Math.abs(call.args[0] - 168) < 0.001
     ));
-    assert.ok(crossingArcs.length > 0, 'painted note creates a playhead crossing flare');
-    assert.ok(crossingArcs.every((call) => call.lineWidth === 1.5), 'streaming never boosts flare width');
+    assert.ok(crossingArcs.length > 0, 'painted note creates a playhead crossing ring');
+    assert.ok(crossingArcs.every((call) => call.lineWidth === 1.5));
+    assert.ok(ctx.calls.filter((call) => call.type === 'roundRect').every((call) => call.shadowBlur === 0),
+      'no note ever draws a glow');
 
-    for (let i = 0; i < 4; i += 1) env.raf.flush(80);
-    ctx.calls.length = 0;
-    env.raf.flush(80);
-    const residualGlow = ctx.calls.filter((call) => call.type === 'roundRect')
-      .some((call) => Math.abs(call.shadowBlur - 3) < 0.001);
-    assert.equal(residualGlow, true, 'settled notes retain the bounded residual glow');
+    Object.defineProperty(env.window, 'devicePixelRatio', { configurable: true, value: 1.5 });
+    for (let i = 0; i < 3; i += 1) env.raf.flush(40);
+    assert.equal(env.recorder.contexts.size, sizeAfterFirst + 2, 'a DPR change rebuilds the tile and the mask once');
+    for (let i = 0; i < 3; i += 1) env.raf.flush(40);
+    assert.equal(env.recorder.contexts.size, sizeAfterFirst + 2, 'and only once');
     controller.dispose();
   });
 });
@@ -407,7 +408,13 @@ test('two chat gutters share one bounded scene note pool', (t) => {
     controller.handleInput(input('click', 'chat-left'));
     assert.equal(inspectEntry(controller, 'chat-left').noteCount, 1);
     assert.equal(inspectEntry(controller, 'chat-right').noteCount, 1);
-    for (let i = 0; i < 150; i += 1) controller.handleInput(input('click', 'chat-right', { timeStamp: i + 20 }));
+    for (let i = 0; i < 150; i += 1) {
+      const x = (i % 16) * 30 + 1;
+      const y = Math.floor(i / 16) * 28 + 1;
+      controller.handleInput(input('click', 'chat-right', {
+        timeStamp: i + 20, localX: x, sceneX: x, localY: y, sceneY: y,
+      }));
+    }
     assert.equal(inspectEntry(controller, 'chat-right').noteCount, 96);
     controller.dispose();
   });
@@ -442,7 +449,7 @@ test('refresh re-reads palette tokens and rebuilds the cached tile on the next p
     const before = env.recorder.contexts.size;
     host.element.style.setProperty('--playlist-scroll-accent-color', 'rgba(10, 200, 30, 0.9)');
     controller.refresh(context([host], { generation: 2 }));
-    env.raf.flush(16);
+    env.raf.flush(40);
     assert.equal(env.recorder.contexts.size, before + 1, 'palette change rebuilds the cached tile canvas');
     controller.dispose();
   });
@@ -504,11 +511,10 @@ test('ghost generation remains deterministic and lane/subdivision bounded', () =
 });
 
 test('color helpers and subdivision schema preserve bounded legacy utility behavior', () => {
-  const { parseRgba, shadeRgba, resolveSubdivisions } = playlistScrollUtils._internals;
+  const { parseRgba, resolveSubdivisions } = playlistScrollUtils._internals;
   const color = parseRgba('rgba(120, 60, 200, 0.5)');
   assert.deepEqual(color, { r: 120, g: 60, b: 200, a: 0.5 });
-  assert.deepEqual(shadeRgba(color, 0.5), { r: 60, g: 30, b: 100, a: 0.5 });
-  assert.ok(shadeRgba(color, 1.5).r > color.r);
+  assert.equal(playlistScrollUtils._internals.shadeRgba, undefined, 'the retired gradient helper is gone');
   assert.equal(parseRgba('not-a-color'), null);
   assert.equal(resolveSubdivisions('999999999'), 64);
   assert.equal(resolveSubdivisions('-50'), 1);

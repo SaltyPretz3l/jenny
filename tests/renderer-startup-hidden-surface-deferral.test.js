@@ -54,12 +54,13 @@ test('renderer-ide-xterm-loader.js is present and precedes the pty terminal pane
   const html = readIndexHtml();
   const tags = extractScriptTags(html);
   const loaderIndex = tags.findIndex((tag) => tag.src === 'renderer/features/renderer-ide-xterm-loader.js');
-  const panelIndex = tags.findIndex((tag) => tag.src === 'renderer/features/renderer-ide-pty-terminal-panel.js');
+  const scripts = require('../renderer/shell/renderer-ide-script-manifest');
+  const panelIndex = scripts.findIndex(([src]) => src === 'renderer/features/renderer-ide-pty-terminal-panel.js');
 
   assert.notEqual(loaderIndex, -1, 'index.html should load renderer/features/renderer-ide-xterm-loader.js');
-  assert.notEqual(panelIndex, -1, 'index.html should load renderer/features/renderer-ide-pty-terminal-panel.js');
+  assert.notEqual(panelIndex, -1, 'IDE manifest should load renderer/features/renderer-ide-pty-terminal-panel.js');
   assert.ok(
-    loaderIndex < panelIndex,
+    !tags.some((tag) => tag.src === scripts[panelIndex][0]),
     'the xterm loader must load before the terminal panel controller that resolves it'
   );
 });

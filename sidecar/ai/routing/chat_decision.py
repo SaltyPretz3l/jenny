@@ -13,6 +13,7 @@ from dataclasses import dataclass, replace
 from typing import Any
 
 from sidecar.ai.config_models import uses_minimal_system_prompt
+from sidecar.ai.context import compaction_diagnostics as _compaction_diag
 from sidecar.ai.context import prompt_modes as _prompt_modes
 from sidecar.ai.context import runtime_overlays as _runtime_overlays
 from sidecar.ai.context.history_reframe import reframe_tool_history_messages
@@ -83,9 +84,11 @@ append_interrupted_turn_receipts_runtime_system_message = (
 ContextCompactionStartedEvent = _loop_events.ContextCompactionStartedEvent
 ContextCompactedEvent = _loop_events.ContextCompactedEvent
 build_request_system_messages = _system_messages.build_request_system_messages
+split_context_blocks = _system_messages.split_context_blocks
 ToolBudgetFilterInput = _tool_budget_filter.ToolBudgetFilterInput
 apply_budget_aware_tool_filter = _tool_budget_filter.apply_budget_aware_tool_filter
 build_system_prompt_for_statuses = _tool_budget_filter.build_system_prompt_for_statuses
+build_turn_context_row_for_statuses = _tool_budget_filter.build_turn_context_row_for_statuses
 count_full_tool_schemas = _tool_budget_filter.count_full_tool_schemas
 
 
@@ -340,6 +343,7 @@ def _run_context_compaction(
                 reason_code=compaction_result.summary_failure_code,
                 input_complete=context.input_complete,
                 summary_message=compaction_result.summary_message,
+                **_compaction_diag.compacted_event_extras(compaction_result),
             )
         )
     if compaction_result.error is not None:
@@ -632,7 +636,7 @@ def _build_runtime_overlay_messages(
             runtime_system_messages,
             config=kernel._config,
             context_builder=kernel._context_builder,
-            session_id=session_id,
+            execution_context=request_context.execution_context, session_id=session_id,
             log_context=RuntimeOverlayLogContext(
                 logger=logger,
                 component="ai.router",
@@ -796,7 +800,10 @@ def build_chat_decision(
     )
     tool_payload = list(tool_contract.prompt_schemas)
     tool_statuses = tool_contract.status_entries
-    context_blocks = getattr(request_context, "context_blocks", ())
+    # With the trailing turn context on, only personality stays a leading row.
+    context_blocks, trailing_context_blocks = split_context_blocks(
+        kernel._config, getattr(request_context, "context_blocks", ())
+    )
     include_personality_block = not uses_minimal_system_prompt(kernel._config)
     # Structural, not textual: the personality row is rendered EITHER from the
     # typed context block below OR by the runtime overlay builder, never both.
@@ -837,6 +844,7 @@ def build_chat_decision(
         has_active_background_jobs=tool_runtime_liveness.has_active_background_jobs,
         has_active_monitors=tool_runtime_liveness.has_active_monitors,
         has_pending_operations=tool_runtime_liveness.has_pending_operations,
+        trailing_context_blocks=trailing_context_blocks,
     )
     budget_filter_result = apply_budget_aware_tool_filter(
         budget_filter_context,
@@ -888,16 +896,11 @@ def build_chat_decision(
         runtime_system_messages=runtime_system_messages,
         personality_rendered=personality_rendered,
         skill_invocation=request_context.skill_invocation,
+        context_block_messages=context_block_messages,
+        history=semantic_history,
+        turn_context_row=build_turn_context_row_for_statuses(budget_filter_context, tool_statuses),
+        execution_context=request_context.execution_context,
     )
-    # Electron's typed context overlays (active file / @-mentions, git,
-    # personality, codebase, linked-session recall) join the TRUSTED
-    # system tier here — after the prompt + runtime overlays and BEFORE semantic
-    # history, so they sit ahead of any pinned compaction summary (derived,
-    # untrusted). They cannot arrive via `messages`: compact_semantic_messages
-    # rejects system rows on untrusted request history, which is exactly why the
-    # old Electron-side splice was silently inert.
-    working_messages.extend(context_block_messages)
-    working_messages.extend(semantic_history)
     read_snapshot_cache = kernel._rebuild_read_snapshot_cache(
         canonical_session_messages,
         execution_context=getattr(request_context, "execution_context", None),

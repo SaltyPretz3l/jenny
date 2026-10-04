@@ -25,6 +25,7 @@
     progress: null,
     operationId: '',
     errorReason: '',
+    retainedPartialPath: '',
     removalMode: '',
     archivePath: '',
     cleanupResults: [],
@@ -192,6 +193,9 @@
       : incomplete
         ? jt('uninstall.error.incomplete', 'Some selected items could not be removed. The receipt below lists the bounded cleanup results.')
         : jt('uninstall.error.failed', 'Jenny could not complete that operation. Your live data was not removed.');
+    var partial = state.retainedPartialPath
+      ? '<p class="data-lifecycle-warning"><span aria-hidden="true">!</span> ' + escapeHtml(jt('dataLifecycle.archive.failedPartialRetained', 'Archive failed: {reason}. An unfinished copy could not be removed and is still at {path}. Delete that folder to remove the data.', { reason: state.errorReason, path: state.retainedPartialPath })) + '</p>'
+      : '';
     var actions = incomplete
       ? button('cancel', jt('uninstall.error.closeReceipt', 'Close receipt'), 'secondary')
       : state.removalMode === 'archive_and_remove'
@@ -205,7 +209,7 @@
         }).join('') + '</ul>'
       : '';
     host.innerHTML = shell('<section class="data-lifecycle-result data-lifecycle-result--error"><span aria-hidden="true">!</span><h2>' + escapeHtml(jt('uninstall.error.stoppedTitle', 'Removal stopped safely')) + '</h2><p>'
-      + escapeHtml(reason) + '</p>' + cleanup + '<code>' + escapeHtml(state.errorReason || 'operation_failed') + '</code></section>', actions,
+      + escapeHtml(reason) + '</p>' + partial + cleanup + '<code>' + escapeHtml(state.errorReason || 'operation_failed') + '</code></section>', actions,
     { title: incomplete ? jt('uninstall.error.incompleteTitle', 'Cleanup is incomplete') : jt('uninstall.error.nothingDeletedTitle', 'Nothing was deleted'), subtitle: incomplete ? jt('uninstall.error.incompleteSubtitle', 'Jenny will not report this removal as complete.') : jt('uninstall.error.resolveSubtitle', 'Resolve the issue or choose app-only removal.') });
   }
 
@@ -277,11 +281,13 @@
     if (result && result.ok) {
       state.removalMode = result.removalMode;
       state.archivePath = result.archivePath || '';
+      state.retainedPartialPath = '';
       state.cleanupResults = Array.isArray(result.cleanupResults) ? result.cleanupResults : [];
       state.warnings = Array.isArray(result.warnings) ? result.warnings : [];
       state.view = 'receipt';
     } else {
       state.errorReason = String(result && result.error && result.error.reason || 'operation_failed');
+      state.retainedPartialPath = String(result && result.retainedPartial && result.retainedPartial.path || '');
       state.cleanupResults = Array.isArray(result && result.cleanupResults) ? result.cleanupResults : [];
       state.warnings = Array.isArray(result && result.warnings) ? result.warnings : [];
       state.view = 'error';
@@ -335,6 +341,7 @@
         } catch (error) {
           if (!workspaceReviewGate.isCurrent(reviewToken) || state.view !== 'archive') return;
           state.errorReason = String(error && error.message || 'workspace_review_failed').slice(0, 80);
+          state.retainedPartialPath = '';
           state.view = 'error';
           render();
           return;

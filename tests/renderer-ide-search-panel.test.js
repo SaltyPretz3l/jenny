@@ -129,12 +129,13 @@ test('ide search keeps focus in the query field across result re-renders', async
   dispatchInput(harness, input, 'findable');
   await settle(400);
 
-  // The panel re-rendered (results now present) with a fresh input element
-  // that took the focus back.
-  const freshInput = queryInput(harness);
-  assert.notEqual(freshInput, input);
-  assert.equal(harness.dom.window.document.activeElement, freshInput);
-  assert.equal(freshInput.value, 'findable');
+  // The panel re-rendered (results now present) around the SAME input element
+  // (bug-pass #4: the inputs are stable; only the results region swaps).
+  assert.ok(harness.getDom().ideRailPanel.querySelector('[data-ide-search-path]'), 'results rendered');
+  const sameInput = queryInput(harness);
+  assert.equal(sameInput, input, 'the query input is not recreated by a results render');
+  assert.equal(harness.dom.window.document.activeElement, input);
+  assert.equal(sameInput.value, 'findable');
 });
 
 test('dispose during an in-flight literal search cancels the render + result apply (F3)', async (t) => {

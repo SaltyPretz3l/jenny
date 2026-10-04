@@ -39,7 +39,6 @@ const SEQUENTIAL_BASENAME_PATTERNS = [
   /^main-lifecycle\.test\.js$/,
   /^main-window-startup-lifecycle\.test\.js$/,
   /^main-packaged-smoke\.test\.js$/,
-  /^packaged-plugin-stage8-smoke\.test\.js$/,
   /^packaging-/,
   // Real-store crash injection is disk-intensive: 37.5s on a quiet machine
   // versus 302s in the parallel pool. Keep it in the one-at-a-time tail so
@@ -54,6 +53,15 @@ const SEQUENTIAL_BASENAME_PATTERNS = [
   // renderer-lifecycle-shell genuinely fails under heavy contention (internal
   // timing waits). Those stay sequential; the other 29 shell files passed
   // twice under worst-case contention at <=81s and ride the parallel lane.
+  // They form their own one-at-a-time chain (JSDOM_CHAIN_BASENAME_PATTERNS)
+  // beside the resource chain when the lanes overlap.
+  /^workspace-ipc\.test\.js$/,
+];
+
+// The speed-only jsdom suites above: one-at-a-time among themselves, but with
+// nothing shared with the sidecar/Electron/packaging suites, so the runner
+// drains them as a second chain next to that one (splitSequentialChains).
+const JSDOM_CHAIN_BASENAME_PATTERNS = [
   /^renderer-chat-layout-shell\.test\.js$/,
   /^renderer-guidance-shell\.test\.js$/,
   /^renderer-lifecycle-shell\.test\.js$/,
@@ -65,10 +73,9 @@ const SEQUENTIAL_BASENAME_PATTERNS = [
   /^renderer-top-nav-shell\.test\.js$/,
   /^renderer-incremental-dom\.test\.js$/,
   /^renderer-controller-dispose\.test\.js$/,
-  /^workspace-ipc\.test\.js$/,
   /^renderer-workspace-shell\.test\.js$/,
-  /^overlay-window\.test\.js$/,
 ];
+SEQUENTIAL_BASENAME_PATTERNS.push(...JSDOM_CHAIN_BASENAME_PATTERNS);
 
 // Heavy full-renderer VM harnesses and suites that depend on Windows
 // path/process/native-watch behavior or exceed reliable hosted-runner timing
@@ -102,7 +109,6 @@ const STABLE_LANE_EXCLUDED_BASENAME_PATTERNS = [
   /^uninstall-script\.test\.js$/,
   /^update-service\.test\.js$/,
   /^vllm-process-manager-dark-paths\.test\.js$/,
-  /^weather-service\.test\.js$/,
   /^workspace-ide-gitdir\.test\.js$/,
   /^workspace-pty-spawn\.test\.js$/,
   /^workspace-test-runner-runner\.test\.js$/,
@@ -187,12 +193,38 @@ function selectRunGroups(parsed) {
   return parsed.shard ? applyShard(groups, parsed.shard) : groups;
 }
 
+function splitSequentialChains(sequentialArgs) {
+  const resourceArgs = [];
+  const jsdomArgs = [];
+  for (const file of sequentialArgs) {
+    const basename = testBasename(file);
+    const jsdom = JSDOM_CHAIN_BASENAME_PATTERNS.some((pattern) => pattern.test(basename));
+    (jsdom ? jsdomArgs : resourceArgs).push(file);
+  }
+  return { resourceArgs, jsdomArgs };
+}
+
+// Splits the sequential lane into the files that may overlap the pool and the
+// *.load.test.js tail whose wall-clock oracles run alone afterwards. Only the
+// load files need the quiet machine (2026-10-04: 72 non-load sequential files
+// ran alone for ~250 s of a 597 s heavy lane because 6 load files, 28 s,
+// forced the strict order for all of them).
+function splitLoadTail(sequentialArgs) {
+  const loadArgs = [];
+  const rest = [];
+  for (const file of sequentialArgs) {
+    (LOAD_TEST_PATTERN.test(testBasename(file)) ? loadArgs : rest).push(file);
+  }
+  return { sequentialArgs: rest, loadArgs };
+}
+
 // The sequential lane may run concurrently with the parallel pool on ONE
 // reserved worker slot (audited 2026-07-20: sequential suites use mkdtemp'd
 // state and fake-sidecar child processes -- no ports or paths shared with the
 // parallel lane). Overlap is skipped when:
-//  - the run carries *.load.test.js perf files: their wall-clock oracles need
-//    the post-parallel quiet machine (the reason the isolated lane exists);
+//  - the lane still carries *.load.test.js perf files: their wall-clock oracles
+//    need the post-parallel quiet machine (the runner strips them into a strict
+//    tail with splitLoadTail before asking);
 //  - fewer than 2 workers (no slot to reserve);
 //  - either lane is empty (overlap would only shrink the pool);
 //  - --no-lane-overlap / JENNY_TEST_LANE_OVERLAP=0 (rollback to strict order).
@@ -449,6 +481,8 @@ module.exports = {
   partitionChildArgs,
   selectRunGroups,
   laneOverlapEnabled,
+  splitLoadTail,
+  splitSequentialChains,
   loadQuarantineOverrides,
   loadLastFailed,
   writeLastRun,

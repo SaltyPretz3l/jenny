@@ -237,6 +237,22 @@ function createTimeline(t) {
   return { dom, timeline };
 }
 
+test('disposing a hand-off tracker removes it from reader-toggle traversal', (t) => {
+  const { dom, timeline } = createTimeline(t);
+  const tracker = createReasoningHandoffTracker({ chatTimeline: timeline,
+    buildOptions: () => ({ reducedMotion: true, windowRef: dom.window }) });
+  const article = timeline.querySelector('[data-message-id="m1"]');
+  const panel = article.querySelector('.reasoning-row-panel');
+  tracker.remember(article);
+  tracker.dispose();
+  tracker.dispose();
+  // Remember again to observe whether reader-toggle traversal still calls forget.
+  tracker.remember(article);
+  noteReasoningPanelReaderToggle(panel);
+  closeAsCaller(panel);
+  assert.equal(tracker.replay(), 1, 'reader toggle must no longer forget a disposed tracker');
+});
+
 test('collectOpenReasoningPhaseKeys lists visible open panels by identity and skips collapsing or hidden ones', (t) => {
   const { timeline } = createTimeline(t);
   assert.deepEqual(

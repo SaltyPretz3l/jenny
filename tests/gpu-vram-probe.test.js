@@ -3,6 +3,22 @@ const assert = require('node:assert/strict');
 
 const { probeNvidiaSmiVram } = require('../services/gpu-vram-probe');
 
+test('devices parsed, aggregate unchanged', async () => {
+  const { execFile } = fakeExecFile({ stdout: '1024, 8192, 21\n512, 4096, 88\n' });
+  const sample = await probeNvidiaSmiVram({ execFile });
+  assert.deepEqual(sample.devices, [
+    { index: 0, usedMb: 1024, totalMb: 8192 },
+    { index: 1, usedMb: 512, totalMb: 4096 },
+  ]);
+  assert.deepEqual({ available: sample.available, usedMb: sample.usedMb, totalMb: sample.totalMb,
+    utilPercent: sample.utilPercent, utilAvailable: sample.utilAvailable }, {
+    available: true, usedMb: 1536, totalMb: 12288, utilPercent: 88, utilAvailable: true,
+  });
+  const { normalizeGpuMemorySample } = require('../services/system-stats-payload');
+  assert.deepEqual(normalizeGpuMemorySample(sample).devices, sample.devices);
+  assert.equal(Object.hasOwn(normalizeGpuMemorySample({ devices: 'invalid' }), 'devices'), false);
+});
+
 // Build a fake node-style execFile(file, args, options, callback) that records
 // the invocation and invokes the callback with the supplied (error, stdout, stderr).
 function fakeExecFile({ error = null, stdout = '', stderr = '' } = {}) {

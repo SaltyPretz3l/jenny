@@ -20,7 +20,6 @@ const { spawn, spawnSync } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const electronPath = require('electron'); // resolves to the electron executable
 
 const repoRoot = path.join(__dirname, '..', '..');
 const profileDir = path.join(os.tmpdir(), 'jenny-onboarding-demo');
@@ -71,7 +70,7 @@ try {
   // a missing/stale shortcut is a convenience issue only — never block the demo
 }
 
-const child = spawn(electronPath, ['.'], {
+const child = spawn(process.execPath, [path.join(repoRoot, 'start.js')], {
   stdio: 'inherit',
   env,
   cwd: repoRoot,
@@ -119,6 +118,6 @@ child.on('error', (error) => {
   process.exit(1);
 });
 child.on('close', (code) => {
-  cleanedUp = true; // Electron already exited; it owns sidecar teardown on a clean exit
+  cleanedUp = true; // The launcher already exited; Electron owns sidecar teardown on a clean exit
   process.exit(code ?? 0);
 });

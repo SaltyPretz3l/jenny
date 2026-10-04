@@ -9,8 +9,11 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
+const parityFixture = require('./fixtures/context-budget-parity.json');
+
 const {
   CHARS_PER_TOKEN,
+  DEFAULT_SYSTEM_RESERVE_TOKENS,
   estimateTokensFromChars,
   estimateMessagesTokens,
   computeEffectiveContextBudget,
@@ -18,6 +21,8 @@ const {
   shrinkBlockContent,
   trimContextBlocks,
 } = require('../services/backend/context-budget-trimmer');
+
+const MESSAGE_OVERHEAD = 4; // per-message framing in estimateMessagesTokens
 
 function blockOf(kind, priority, chars, shrinkable) {
   return { kind, priority, shrinkable, content: 'X'.repeat(chars) };
@@ -47,14 +52,27 @@ test('estimateMessagesTokens mirrors content/4 plus per-message overhead', () =>
   assert.equal(tokens, 2 + 4 + 0 + 4);
 });
 
-test('computeEffectiveContextBudget mirrors the sidecar quarter-cap math', () => {
-  // window - max(window/4, 1024) - min(8192, window/4)
-  assert.equal(computeEffectiveContextBudget(32768), 16384); // 32768 - 8192 - 8192
-  assert.equal(computeEffectiveContextBudget(16384), 8192); // 16384 - 4096 - 4096
-  assert.equal(computeEffectiveContextBudget(8192), 4096); // 8192 - 2048 - 2048
-  // A large window: output reservation caps at window/4, summary at 8192.
-  assert.equal(computeEffectiveContextBudget(200000), 200000 - 50000 - 8192);
-  assert.equal(computeEffectiveContextBudget(272000), 272000 - 68000 - 8192);
+test('computeEffectiveContextBudget matches the shared sidecar parity fixture', () => {
+  // The answer and the compaction summary are separate requests, so only the
+  // larger reservation is held back. The Python twin asserts the same file.
+  assert.ok(parityFixture.cases.length > 0);
+  for (const { context_window: window, effective_context: expected } of parityFixture.cases) {
+    assert.equal(computeEffectiveContextBudget(window), expected, `window ${window}`);
+  }
+});
+
+test('a small active-file block survives an 8192 window with 2800 history tokens', () => {
+  // Same arithmetic as chat-stream-context-assembly.js availableForBlocks.
+  const history = [{ role: 'user', content: 'h'.repeat((2800 - MESSAGE_OVERHEAD) * CHARS_PER_TOKEN) }];
+  const consumed = estimateMessagesTokens(history);
+  assert.equal(consumed, 2800);
+  const effective = computeEffectiveContextBudget(8192);
+  const available = Math.max(0, effective - consumed - DEFAULT_SYSTEM_RESERVE_TOKENS);
+  assert.equal(available, 1844);
+  const block = blockOf('active_file', 100, 250 * CHARS_PER_TOKEN, true); // 250 tokens
+  const { kept } = trimContextBlocks([block], available);
+  assert.ok(kept.has('active_file'), 'active_file block kept');
+  assert.equal(kept.get('active_file').content, block.content);
 });
 
 test('computeEffectiveContextBudget returns null for unknown/invalid windows', () => {

@@ -187,29 +187,19 @@
       return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
     }
 
+    // Pretty-prints a bounded JSON object/array and reports whether it was one,
+    // so the section's json language needs no second parse; a cached entry for
+    // the same source answers both without parsing again.
     function prettyJson(text, copyId) {
       const raw = String(text == null ? '' : text);
       const key = String(copyId || '').trim();
       const cached = fullTextRegistry.get(key);
-      if (cached && cached.source === raw) return cached.text;
+      if (cached && cached.source === raw) return { text: cached.text, json: cached.json === true };
       const trimmed = raw.trim();
-      let result = raw;
       if ((trimmed.startsWith('{') || trimmed.startsWith('[')) && trimmed.length <= TOOL_DETAIL_PREVIEW_MAX_CHARS) {
-        try { result = JSON.stringify(JSON.parse(trimmed), null, 2); } catch (_error) { result = raw; }
+        try { return { text: JSON.stringify(JSON.parse(trimmed), null, 2), json: true }; } catch (_error) { /* not JSON: shown as is */ }
       }
-      return result;
-    }
-
-    function hasJsonContainer(text) {
-      const trimmed = String(text == null ? '' : text).trim();
-      if ((!trimmed.startsWith('{') && !trimmed.startsWith('['))
-        || trimmed.length > TOOL_DETAIL_PREVIEW_MAX_CHARS) return false;
-      try {
-        const parsed = JSON.parse(trimmed);
-        return parsed !== null && typeof parsed === 'object';
-      } catch (_error) {
-        return false;
-      }
+      return { text: raw, json: false };
     }
 
     function buildShowMoreLabel(lineCount, fullCharCount, previewCharCount) {
@@ -225,15 +215,18 @@
       const opts = options || {};
       const copyId = String(opts.copyId || '').trim();
       const sourceText = String(text == null ? '' : text);
-      const raw = opts.pretty === true ? prettyJson(sourceText, copyId) : sourceText;
-      const fullTextRegistered = registerFullText(copyId, raw, opts.pretty === true ? sourceText : undefined);
+      // A pretty section is tagged json exactly when its text parsed as JSON.
+      const pretty = opts.pretty === true ? prettyJson(sourceText, copyId) : null;
+      const raw = pretty ? pretty.text : sourceText;
+      const fullTextRegistered = registerFullText(copyId, raw, pretty ? sourceText : undefined);
+      if (pretty && fullTextRegistered) fullTextRegistry.get(copyId).json = pretty.json;
       const preview = raw.slice(0, TOOL_DETAIL_PREVIEW_MAX_CHARS);
       const capped = raw.length > TOOL_DETAIL_PREVIEW_MAX_CHARS;
       const fullLineCount = countLines(raw);
       const shouldClamp = capped || fullLineCount > TOOL_DETAIL_CLAMP_LINE_FLOOR;
       const moreLabel = buildShowMoreLabel(fullLineCount, raw.length, preview.length);
       const preClass = String(opts.className || 'tool-call-output');
-      const languageId = String(opts.language || '');
+      const languageId = String(opts.language || (pretty?.json ? 'json' : ''));
       const codeClass = languageId ? ` class="language-${escapeHtml(languageId)}"` : '';
       const highlightAttrs = languageId
         ? ` data-code-highlight="pending" data-language-id="${escapeHtml(languageId)}"`
@@ -313,23 +306,54 @@
       }
     }
 
+    // String code / command / content fields render as their own block in the
+    // tool's language (python for the Python tool, shell for a command, the
+    // file's language for written content); the rest stays Args.
+    const CODE_INPUT_FIELDS = ['code', 'command', 'content'];
+
+    function codeInputLanguage(model, parsed, key) {
+      if (key === 'command') return 'shell';
+      if (key === 'code') {
+        return String(model.toolKind || model.toolName || '') === 'python_execute'
+          ? 'python'
+          : codeHighlight?.getLanguageId?.(parsed.language || '') || '';
+      }
+      return codeHighlight?.getLanguageId?.(parsed.path || parsed.file_path || '') || '';
+    }
+
+    function codeInputSections(model, parsed, skip, domToken) {
+      if (!parsed) return '';
+      return CODE_INPUT_FIELDS
+        .filter((key) => !skip.has(key) && typeof parsed[key] === 'string' && parsed[key])
+        .map((key) => {
+          skip.add(key);
+          return textSection(key === 'command' ? 'Command' : 'Input', parsed[key], {
+            copyId: `${domToken}-${key}`,
+            className: key === 'command' ? 'tool-call-input bash-command' : 'tool-call-input',
+            language: codeInputLanguage(model, parsed, key),
+          });
+        }).join('');
+    }
+
     function inputSections(model, excludedKeys) {
       const parsed = parseInput(model);
       const skip = new Set(Array.isArray(excludedKeys) ? excludedKeys : []);
+      const domToken = model.domToken || model.callId || 'tool';
+      const codeBlocks = codeInputSections(model, parsed, skip, domToken);
       const filtered = parsed
         ? Object.fromEntries(Object.entries(parsed).filter(([key]) => !skip.has(key)))
         : null;
-      const domToken = model.domToken || model.callId || 'tool';
       if (scalarObject(filtered)) {
-        return kvSection(skip.size ? 'Args' : 'Input', filtered, `${domToken}-${skip.size ? 'args' : 'input'}`);
+        return kvSection(skip.size ? 'Args' : 'Input', filtered, `${domToken}-${skip.size ? 'args' : 'input'}`) + codeBlocks;
       }
       if (filtered && Object.keys(filtered).length > 0) {
         return textSection(skip.size ? 'Args' : 'Input', JSON.stringify(filtered, null, 2), {
           copyId: `${domToken}-${skip.size ? 'args' : 'input'}`,
           className: 'tool-call-input',
           language: 'json',
-        });
+        }) + codeBlocks;
       }
+      if (codeBlocks) return codeBlocks;
       if (model.inputExpected === true && model.inputRecorded === false) {
         return `<div class="tool-call-section">${sectionCaption('Input', '')}<div class="tool-call-empty">${escapeHtml(jt('chat.toolDetail.notRecorded', 'Not recorded.'))}</div></div>`;
       }
@@ -410,7 +434,6 @@
         parts.push(textSection('Output', model.outputText, {
           copyId: `${domToken}-output`,
           pretty: true,
-          language: hasJsonContainer(model.outputText) ? 'json' : '',
         }));
       }
       if (exitCode != null || timedOut) {
@@ -429,7 +452,6 @@
         body += textSection('Output', model.outputText, {
           copyId: `${model.domToken || model.callId || 'tool'}-output`,
           pretty: true,
-          language: hasJsonContainer(model.outputText) ? 'json' : '',
         });
       }
       return body;
@@ -447,9 +469,9 @@
       const parts = [inputSections(model, ['code'])];
       let hasStructuredOutput = false;
       if (code) parts.push(textSection('Input', code, { copyId: `${domToken}-input`, className: 'tool-call-input', language: 'python' }));
-      if (parsed.stdout) { parts.push(textSection('Stdout', parsed.stdout, { copyId: `${domToken}-stdout` })); hasStructuredOutput = true; }
+      if (parsed.stdout) { parts.push(textSection('Stdout', parsed.stdout, { copyId: `${domToken}-stdout`, pretty: true })); hasStructuredOutput = true; }
       if (parsed.stderr) { parts.push(textSection('Stderr', parsed.stderr, { copyId: `${domToken}-stderr` })); hasStructuredOutput = true; }
-      if (parsed.last_expr_repr) { parts.push(textSection('Result', parsed.last_expr_repr, { copyId: `${domToken}-result` })); hasStructuredOutput = true; }
+      if (parsed.last_expr_repr) { parts.push(textSection('Result', parsed.last_expr_repr, { copyId: `${domToken}-result`, pretty: true })); hasStructuredOutput = true; }
       const images = Array.isArray(parsed.images) ? parsed.images.filter((src) => typeof src === 'string') : [];
       const trustedImages = Array.isArray(model.trustedAttachmentImageUrls) ? model.trustedAttachmentImageUrls : [];
       const allowedImageSource = (raw) => {
@@ -490,7 +512,6 @@
         parts.push(textSection('Output', model.outputText, {
           copyId: `${domToken}-output`,
           pretty: true,
-          language: hasJsonContainer(model.outputText) ? 'json' : '',
         }));
       }
       return parts.join('');
@@ -535,7 +556,9 @@
 
     function readBody(model) {
       const parsed = parseInput(model) || {};
-      const filePath = String(model.path || parsed.path || parsed.file_path || '');
+      // The result's own "path: …" header names the file when the input does not.
+      const headerPath = /^path:\s*(.+)$/m.exec(String(model.outputText || '').split('\n', 1)[0] || '')?.[1] || '';
+      const filePath = String(model.path || parsed.path || parsed.file_path || headerPath.trim());
       const languageId = codeHighlight?.getLanguageId?.(filePath) || '';
       let lineRange = '';
       if (parsed.offset != null || parsed.limit != null) {

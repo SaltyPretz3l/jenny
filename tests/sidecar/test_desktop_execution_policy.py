@@ -139,19 +139,24 @@ def test_sandbox_registry_and_builtin_mcp_never_register_local_command(tmp_path:
     servers = _default_mcp_servers(config, tmp_path)
     assert len(servers) == 1
     args = servers[0].args
-    assert args[args.index("--desktop-execution-policy-version") : args.index(
-        "--desktop-execution-policy-version"
-    ) + 2] == ("--desktop-execution-policy-version", "1")
+    assert args[
+        args.index("--desktop-execution-policy-version") : args.index(
+            "--desktop-execution-policy-version"
+        )
+        + 2
+    ] == ("--desktop-execution-policy-version", "1")
     assert args[args.index("--shell-enabled") : args.index("--shell-enabled") + 2] == (
         "--shell-enabled",
         "0",
     )
 
-    tools = builtin_server._default_tools(  # noqa: SLF001
-        desktop_execution_policy_version=1,
+    tools = builtin_server._default_tools(
+        {
+            "desktop_execution_policy_version": 1,
+            "tools_shell_enabled": True,
+            "tools_mermaid_enabled": True,
+        },
         workspace_root_present=True,
-        shell_enabled=True,
-        mermaid_enabled=True,
     )
     assert "run_command" not in tools
     tools["run_command"] = builtin_server.BuiltinTool(
@@ -161,7 +166,7 @@ def test_sandbox_registry_and_builtin_mcp_never_register_local_command(tmp_path:
         input_schema={"type": "object", "properties": {}},
         handler=lambda *_args: pytest.fail("sandbox command escaped builtin MCP"),
     )
-    response = builtin_server._dispatch_message(  # noqa: SLF001
+    response = builtin_server._dispatch_message(
         {
             "id": 1,
             "method": "tools/call",

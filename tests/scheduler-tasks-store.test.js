@@ -29,6 +29,28 @@ test.afterEach(async () => {
   await cleanupTrackedResources();
 });
 
+test('HOM-02 locked scheduler writers preserve malformed and unreadable storage', async () => {
+  const userDataPath = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-home-storage-'));
+  trackDirectory(userDataPath);
+  const tasksPath = path.join(userDataPath, 'scheduled_tasks.json');
+  const scheduler = new SchedulerService({ userDataPath, configService: new FakeConfigService(), backendService: createBackendStub() });
+  for (const raw of ['{broken', 'null', '[]', '{}', '{"version":3,"tasks":{}}']) {
+    fs.writeFileSync(tasksPath, raw);
+    await assert.rejects(scheduler._ensureTaskFile(tasksPath), /scheduled tasks storage/i);
+    await assert.rejects(scheduler._recordTaskResult(tasksPath, { status: 'started' }, 'task'), /scheduled tasks storage/i);
+    assert.equal(fs.readFileSync(tasksPath, 'utf8'), raw);
+  }
+  scheduler.fs = {
+    ...fs,
+    readFileSync(filePath, ...args) {
+      if (filePath === tasksPath) throw Object.assign(new Error('Access denied'), { code: 'EACCES' });
+      return fs.readFileSync(filePath, ...args);
+    },
+  };
+  await assert.rejects(scheduler._ensureTaskFile(tasksPath), /scheduled tasks storage/i);
+  assert.equal(fs.readFileSync(tasksPath, 'utf8'), '{"version":3,"tasks":{}}');
+});
+
 test('scheduler reads scheduled tasks asynchronously when an async fs implementation is available', async () => {
   const calls = [];
   const payload = {

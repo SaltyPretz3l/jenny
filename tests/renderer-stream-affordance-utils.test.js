@@ -6,6 +6,20 @@ const {
   settleVisibleStreamAffordances,
 } = require('../renderer/chat/renderer-stream-affordance-utils');
 
+test('S4: terminal cleanup strips the reasoning reveal state', () => {
+  const dom = new JSDOM(`<main id="timeline"><article class="chat-entry stream-reveal-entry" data-message-id="assistant_s4">
+    <div class="chat-stream-unit is-revealed"></div>
+    <div class="reasoning-stream-unit is-revealed" style="animation-delay: 90ms" data-stream-unit-index="0"></div>
+  </article></main>`);
+  const timeline = dom.window.document.getElementById('timeline');
+  settleVisibleStreamAffordances({ chatTimeline: timeline, messageId: 'assistant_s4' });
+  const reasoning = timeline.querySelector('.reasoning-stream-unit');
+  assert.equal(reasoning.classList.contains('is-revealed'), false);
+  assert.equal(reasoning.style.animationDelay, '');
+  assert.equal(reasoning.hasAttribute('data-stream-unit-index'), false);
+  dom.window.close();
+});
+
 test('stream affordance utils clear targeted streaming classes and ARIA state', () => {
   const dom = new JSDOM(`
     <main id="timeline" aria-busy="true">

@@ -23,11 +23,8 @@ Targets the uncovered regions:
 
 from __future__ import annotations
 
-import sys
-import unittest.mock as mock
 from types import SimpleNamespace
-
-import pytest
+from unittest import mock
 
 from sidecar.ai.config import RuntimeConfig
 from sidecar.ai.context.builder import WorkspaceStatus
@@ -44,7 +41,6 @@ from sidecar.runtime.capabilities import (
     models_list_result,
 )
 from sidecar.runtime.provider_capabilities import ProviderCapability
-
 
 # ---------------------------------------------------------------------------
 # Helpers

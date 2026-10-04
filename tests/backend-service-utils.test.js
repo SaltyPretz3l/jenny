@@ -16,9 +16,19 @@ const {
   buildRecallQuery,
   promptHasExplicitResponseStyleInstruction,
   normalizeManagedToolPreferences,
-  TOOL_PREFERENCE_TOGGLE_TO_TOOL_IDS,
-  NON_TOGGLE_GROUP_TOOL_IDS,
 } = require('../services/backend/backend-service-utils');
+
+test('S1 regression: file toggle normalization is idempotent', () => {
+  const once = normalizeManagedToolPreferences({ file_tools: false });
+  assert.deepEqual(normalizeManagedToolPreferences(once), once);
+});
+
+test('S1 regression: MCP survives an enabled file toggle', () => {
+  const result = normalizeManagedToolPreferences({ file_tools: true }, {
+    catalog: { mcp__github__search: { source_kind: 'mcp', server_name: 'github', available: true } },
+  });
+  assert.equal(result?.enabled_tools, undefined);
+});
 
 /* ── inferEngineTypeFromModel ── */
 
@@ -254,69 +264,59 @@ test('normalizeManagedToolPreferences ignores absent or invalid payloads', () =>
   assert.equal(normalizeManagedToolPreferences({}), undefined);
 });
 
-test('normalizeManagedToolPreferences maps known false toggle to disabled tool ids', () => {
+test('normalizeManagedToolPreferences maps known false toggle to a deny-list', () => {
   assert.deepEqual(normalizeManagedToolPreferences({ web_search: false }), {
-    enabled_tools: [],
     disabled_tools: ['fetch_url', 'web_search'],
   });
 });
 
-test('normalizeManagedToolPreferences unions off-group tools into an engaged allowlist', () => {
-  const normalized = normalizeManagedToolPreferences({ web_search: true });
-  assert.deepEqual(normalized.disabled_tools, []);
-  const enabled = new Set(normalized.enabled_tools);
-  for (const toolId of ['fetch_url', 'web_search']) {
-    assert.ok(enabled.has(toolId), `${toolId} must be enabled by its own toggle`);
-  }
-  // Off-group tools must survive the exclusive allowlist (the delete_file /
-  // tool_search / mermaid vanish class).
-  for (const toolId of NON_TOGGLE_GROUP_TOOL_IDS) {
-    assert.ok(enabled.has(toolId), `off-group tool ${toolId} must not vanish`);
-  }
-  // Tools that belong to a group left un-toggled stay out of the allowlist.
-  assert.ok(!enabled.has('run_command'), 'un-toggled group tools stay excluded');
-  assert.ok(!enabled.has('stop_background_job'), 'un-toggled group tools stay excluded');
-  assert.ok(!enabled.has('delete_file'), 'file_tools members follow their toggle');
+test('normalizeManagedToolPreferences leaves all tools available for true legacy toggles', () => {
+  assert.equal(normalizeManagedToolPreferences({ web_search: true }), undefined);
+  assert.equal(normalizeManagedToolPreferences({ file_tools: true }), undefined);
 });
 
-test('every canonical manifest tool survives an exclusive composer toggle', () => {
-  const manifest = require('../services/tools/tool-manifest.json');
-  const grouped = new Set(
-    Object.values(TOOL_PREFERENCE_TOGGLE_TO_TOOL_IDS).flat()
-  );
-  // Derived from the manifest and the toggle map alone. Comparing against
-  // NON_TOGGLE_GROUP_TOOL_IDS -- as this test used to -- is a tautology:
-  // production DEFINES that constant as exactly this complement, so
-  // `grouped.has(name) || protectedIds.has(name)` held for every manifest entry
-  // no matter what the runtime allowlist actually did.
-  const ungrouped = manifest.tools
-    .map((tool) => tool.name)
-    .filter((name) => name && !grouped.has(name));
-  assert.ok(ungrouped.length > 0, 'fixture guard: the manifest must contain ungrouped tools');
-
-  // Exercise the runtime path instead: one composer toggle set makes the
-  // allowlist exclusive, and every ungrouped tool must still be offered.
-  const enabled = new Set(normalizeManagedToolPreferences({ web_search: true }).enabled_tools);
-  for (const name of ungrouped) {
-    assert.ok(
-      enabled.has(name),
-      `${name} is neither in a composer toggle group nor protected from ` +
-        'the exclusive allowlist — it would silently vanish from the model ' +
-        'offer whenever any composer toggle is set'
-    );
-  }
-});
-
-test('normalizeManagedToolPreferences maps Bash false to the full job lifecycle', () => {
+test('normalizeManagedToolPreferences maps Bash false to all six shell tools', () => {
   assert.deepEqual(normalizeManagedToolPreferences({ Bash: false }), {
-    enabled_tools: [],
-    disabled_tools: [
-      'check_background_job',
-      'run_command',
-      'run_temp_script',
-      'stop_background_job',
-    ],
+    disabled_tools: ['check_background_job', 'check_monitor', 'monitor',
+      'run_command', 'run_temp_script', 'stop_background_job'],
   });
+});
+
+test('normalizeManagedToolPreferences preserves only sorted non-empty request deny-lists', () => {
+  assert.deepEqual(normalizeManagedToolPreferences({
+    enabled_tools: ['read_file'], disabled_tools: ['web_search', '', ' fetch_url ', 'web_search', null, 1],
+    disabled_tool_families: ['web', '', 'shell', 'web'],
+  }), { disabled_tools: ['fetch_url', 'web_search'], disabled_tool_families: ['shell', 'web'] });
+  for (const value of [{ enabled_tools: ['read_file'] }, { enabled_tools: [] },
+    { disabled_tools: [] }, { disabled_tools: 'read_file', disabled_tool_families: [null, ' '] }]) {
+    assert.equal(normalizeManagedToolPreferences(value), undefined);
+  }
+});
+
+test('normalizeManagedToolPreferences resolves raw families and catalog connections', () => {
+  const catalog = {
+    mcp__github__search: { source_kind: 'mcp', server_name: 'github' },
+    plugin_render: { source_kind: 'plugin', connection_id: 'plugin:render' },
+  };
+  assert.deepEqual(normalizeManagedToolPreferences({ families: { web: false },
+    connections: { 'mcp:github': false, 'plugin:render': false } }, { catalog }), {
+    disabled_tools: ['fetch_url', 'mcp__github__search', 'plugin_render', 'web_search'],
+  });
+});
+
+test('normalizeManagedToolPreferences is idempotent across raw, legacy, and request shapes', () => {
+  const options = { catalog: { mcp__github__search: { source_kind: 'mcp', server_name: 'github' } } };
+  for (const value of [undefined, null, [], {}, { file_tools: false }, { file_tools: true },
+    { families: { files: false, artifacts: true, terminal: false } },
+    { connections: { 'mcp:github': false } }, { families: {}, connections: {} },
+    { disabled_tools: ['z', 'a', 'a', ''], disabled_tool_families: ['shell'] },
+    { enabled_tools: ['read_file'], families: { files: false } },
+    { disabled_tools: [], disabled_tool_families: [] }]) {
+    const once = normalizeManagedToolPreferences(value, options);
+    assert.deepEqual(normalizeManagedToolPreferences(once, options), once);
+    assert.equal(once?.enabled_tools, undefined);
+    for (const names of Object.values(once || {})) assert.ok(names.length > 0);
+  }
 });
 
 test('normalizeManagedToolPreferences ignores unknown keys and non-boolean values', () => {
@@ -467,4 +467,11 @@ test('promptHasExplicitResponseStyleInstruction detects style patterns', () => {
 test('promptHasExplicitResponseStyleInstruction returns false for plain prompts', () => {
   assert.equal(promptHasExplicitResponseStyleInstruction('what is the weather'), false);
   assert.equal(promptHasExplicitResponseStyleInstruction(''), false);
+});
+
+test('request-shaped tool preferences never disable an always-on tool', () => {
+  const { normalizeManagedToolPreferences } = require('../services/backend/backend-service-utils');
+  assert.deepEqual(normalizeManagedToolPreferences({ disabled_tools: ['ask_user', 'read_file', 'todo_write'] }),
+    { disabled_tools: ['read_file'] });
+  assert.equal(normalizeManagedToolPreferences({ disabled_tools: ['ask_user'] }), undefined);
 });

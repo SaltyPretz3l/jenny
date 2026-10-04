@@ -11,6 +11,8 @@
   // Mid-turn phase → SR-only kicker label. Only commentary/intermediate get a
   // label; final_answer keeps full emphasis and no kicker.
   const ASSISTANT_PHASE_KICKER_LABELS = { commentary: 'Commentary', intermediate: jt('chat.turnRow.continuedResponse', 'Continued response') };
+  // Same tool names renderToolCallBlock renders as a subagent summary.
+  const SUBAGENT_TOOL_NAME_PATTERN = /^(delegate|subagent_(run|batch))$/;
 
   const stringUtils = (function resolveStringUtils() {
     if (typeof globalThis !== 'undefined' && globalThis.stringUtils) {
@@ -326,14 +328,12 @@
       const text = String(payload.text || '');
       const renderOptions = options || {};
       const isStreaming = renderOptions.isStreaming === true;
-      // Mid-turn phase kicker: when the response-loop display is active, a
-      // preserved commentary/intermediate slice gets an SR-only label OUTSIDE
+      // Mid-turn phase kicker: a preserved commentary/intermediate slice gets
+      // an SR-only label OUTSIDE
       // the markdown bubble (the visible de-emphasis is the dimmed
       // [data-assistant-phase] wrapper added in buildRowWrapperMarkup). The
       // terminal final_answer keeps full emphasis and gets no kicker.
-      const kickerLabel = renderOptions.responseLoopDisplayV2 === true
-        ? (ASSISTANT_PHASE_KICKER_LABELS[normalizeId(row && row.assistant_phase)] || '')
-        : '';
+      const kickerLabel = ASSISTANT_PHASE_KICKER_LABELS[normalizeId(row && row.assistant_phase)] || '';
       const kickerMarkup = kickerLabel
         ? `<span class="chat-commentary-kicker"><span class="sr-only">${escapeHtml(kickerLabel)}</span></span>`
         : '';
@@ -346,7 +346,7 @@
             const streamingAttrs = isStreaming
               ? ` data-streaming-bubble="true" role="status" aria-live="polite" aria-atomic="false" aria-label="${escapeHtml(jt('chat.turnRow.streamingAssistantResponse', 'Assistant response (streaming)'))}"`
               : '';
-            return `<div class="${bubbleClassName}"${streamingAttrs}>${bubbleBodyHtml}</div>`;
+            return `<div class="${bubbleClassName}" dir="auto"${streamingAttrs}>${bubbleBodyHtml}</div>`;
           })()
         : '';
       const attachmentsMarkup = sourceMessage && shouldRenderMessageAttachments(row, renderOptions)
@@ -448,7 +448,8 @@
       );
       const widgetHtml = renderThinkingWidget(
         renderMessage,
-        reasoningStreaming ? renderMessage.id : ''
+        reasoningStreaming ? renderMessage.id : '',
+        { transcriptView: options && options.transcriptView }
       );
       const truncationMarkup = buildTruncationMarkerMarkup(payload);
       if (String(widgetHtml || '').trim()) {
@@ -534,27 +535,47 @@
       }, { escapeHtml });
     }
 
+    function buildToolBlockOptions(row, renderOptions, extra) {
+      return {
+        projectedToolRow: row,
+        messageById: renderOptions.messageById,
+        sessionId: renderOptions.sessionId,
+        transcriptView: renderOptions.transcriptView,
+        turnId: row && row.turn_id,
+        rowId: row && row.row_id,
+        turnIdByMessageId: renderOptions.turnIdByMessageId,
+        ...extra,
+      };
+    }
+
+    // A finished delegate is a tool_call row (live once its result lands, and
+    // after a reload); it renders the subagent summary so the inspector's
+    // "Open" trigger survives. No terminal report -> the default row below.
+    function buildSubagentSummaryRowMarkup(toolCallMessage, row, messages, renderOptions) {
+      const payload = row && row.payload && typeof row.payload === 'object' ? row.payload : {};
+      if (!SUBAGENT_TOOL_NAME_PATTERN.test(normalizeId(payload.tool_name))) return '';
+      const markup = renderToolCallBlock(toolCallMessage, Array.isArray(messages) ? messages : [],
+        buildToolBlockOptions(row, renderOptions, { subagentSummaryOnly: true }));
+      return String(markup || '').trim() ? markup : '';
+    }
+
     function buildToolCallRowMarkup(row, messages, options) {
-      const questionMarkup = buildUserQuestionsMarkup(buildToolCallMessage(row, messages, options), row);
-      return questionMarkup || buildDefaultToolCallRowMarkup(row, messages, options);
+      const renderOptions = options || {};
+      const toolCallMessage = buildToolCallMessage(row, messages, renderOptions);
+      return buildUserQuestionsMarkup(toolCallMessage, row)
+        || buildSubagentSummaryRowMarkup(toolCallMessage, row, messages, renderOptions)
+        || buildDefaultToolCallRowMarkup(row, messages, renderOptions);
     }
 
     function buildToolStepRowMarkup(row, messages, options) {
       const renderOptions = options || {};
-      const messageById = renderOptions.messageById;
       const toolCallMessage = buildToolCallMessage(row, messages, renderOptions);
       const questionMarkup = buildUserQuestionsMarkup(toolCallMessage, row);
       if (questionMarkup) {
         return questionMarkup;
       }
-      const primaryMarkup = renderToolCallBlock(toolCallMessage, Array.isArray(messages) ? messages : [], {
-        projectedToolRow: row,
-        messageById,
-        sessionId: renderOptions.sessionId,
-        turnId: row && row.turn_id,
-        rowId: row && row.row_id,
-        turnIdByMessageId: renderOptions.turnIdByMessageId,
-      });
+      const primaryMarkup = renderToolCallBlock(toolCallMessage, Array.isArray(messages) ? messages : [],
+        buildToolBlockOptions(row, renderOptions));
       if (String(primaryMarkup || '').trim()) {
         return primaryMarkup;
       }
@@ -747,7 +768,7 @@
       const rowKind = normalizeId(row && row.kind);
       const fallbackId = normalizeId(row && row.row_id) || 'row';
       if (rowKind === 'reasoning') {
-        const stableRowId = getFeatureFlags()?.chat_timeline_deterministic_row_id === true ? normalizeId(row && row.row_id) : '';
+        const stableRowId = normalizeId(row && row.row_id);
         return `${turnId}:reasoning:${stableRowId || normalizeId(payload.phase_id || row && row.phase_id || fallbackId)}`;
       }
       if (rowKind === 'assistant_text') {

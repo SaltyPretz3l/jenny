@@ -34,6 +34,29 @@ function deterministicVerify(password) {
   return Promise.resolve(password === 'correct horse battery staple');
 }
 
+test('owner password minimum is 12 UTF-8 bytes and the error states that bound', async (t) => {
+  const fixture = tempFile();
+  t.after(() => fs.rmSync(fixture.dir, { recursive: true, force: true }));
+  const auth = new AuthService({ filePath: fixture.filePath, passwordHasher: deterministicHash });
+  const rejected = await auth.initializePassword('12345678901');
+  assert.equal(rejected.code, 'AUTH_PASSWORD_INVALID');
+  assert.match(rejected.message, /at least 12 bytes/u);
+  assert.equal(fs.existsSync(fixture.filePath), false);
+  assert.equal((await auth.initializePassword('é'.repeat(6))).ok, true);
+});
+
+test('an owner password set under the earlier 8-byte minimum still signs in', async (t) => {
+  const fixture = tempFile();
+  t.after(() => fs.rmSync(fixture.dir, { recursive: true, force: true }));
+  const auth = new AuthService({
+    filePath: fixture.filePath,
+    passwordHasher: deterministicHash,
+    passwordVerifier: async (password) => password === 'short-pw',
+  });
+  assert.equal((await auth.initializePassword('correct horse battery staple')).ok, true);
+  assert.equal((await auth.login({ password: 'short-pw' })).ok, true);
+});
+
 test('auth initialization and login use real scrypt and never persist raw credentials', async (t) => {
   const fixture = tempFile();
   t.after(() => fs.rmSync(fixture.dir, { recursive: true, force: true }));

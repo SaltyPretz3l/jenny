@@ -57,18 +57,15 @@
 
 .artifact-detail-kicker {
   color: color-mix(in srgb, var(--accent-cyan) 72%, var(--text-secondary));
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
+  font-size: var(--font-size-caption);
+  font-weight: 500;
 }
 
 .artifact-detail-title {
   color: var(--text-primary);
   font-family: var(--font-family-display);
-  font-size: clamp(24px, 2vw, 34px);
-  line-height: 1.02;
-  letter-spacing: -0.04em;
+  font-size: var(--font-size-title);
+  line-height: 1.2;
   overflow-wrap: anywhere;
   display: -webkit-box;
   -webkit-line-clamp: 2;
@@ -79,7 +76,7 @@
 .artifact-detail-path {
   margin: 0;
   color: var(--text-secondary);
-  font-size: 13px;
+  font-size: var(--font-size-code);
   line-height: 1.6;
   word-break: break-word;
   font-family: var(--font-family-mono);
@@ -98,10 +95,8 @@
   border: 1px solid color-mix(in srgb, var(--accent) 18%, var(--border-subtle));
   background: color-mix(in srgb, var(--bg-surface) 64%, transparent);
   color: color-mix(in srgb, var(--text-primary) 86%, white 8%);
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
+  font-size: var(--font-size-caption);
+  font-weight: 500;
 }
 
 .artifact-preview-shell {
@@ -135,7 +130,7 @@
     linear-gradient(180deg, color-mix(in srgb, var(--bg-surface) 44%, transparent), color-mix(in srgb, var(--surface-input-background) 90%, transparent)),
     radial-gradient(circle at top left, color-mix(in srgb, var(--accent-cyan) 7%, transparent), transparent 58%);
   color: color-mix(in srgb, var(--text-secondary) 94%, white 2%);
-  font-size: 12px;
+  font-size: var(--font-size-footnote);
   line-height: 1.6;
 }
 
@@ -163,16 +158,14 @@
 }
 
 .artifact-detail-meta-label {
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
+  font-size: var(--font-size-caption);
+  font-weight: 500;
   color: color-mix(in srgb, var(--text-muted) 90%, var(--text-secondary));
 }
 
 .artifact-detail-meta-value {
   color: var(--text-primary);
-  font-size: 13px;
+  font-size: var(--font-size-footnote);
   line-height: 1.5;
   overflow-wrap: anywhere;
 }
@@ -212,7 +205,7 @@
   border: 0;
   background: transparent;
   color: var(--text-primary);
-  font: 13px/1.7 var(--font-family-mono);
+  font: var(--font-size-code)/1.7 var(--font-family-mono);
 }
 
 .artifact-preview-image {
@@ -245,10 +238,8 @@
   color: var(--text-secondary);
   border-radius: 999px;
   padding: 8px 12px;
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
+  font-size: var(--font-size-caption);
+  font-weight: 500;
 }
 
 .artifact-preview-mermaid-toggle.active {
@@ -297,7 +288,7 @@
   height: auto !important;
   width: auto !important;
   display: block;
-  font-size: 13px;
+  font-size: var(--font-size-footnote);
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -346,7 +337,7 @@
 .artifact-preview-mermaid-host .mermaid-control-btn {
   background: transparent;
   border: none;
-  font-size: 15px;
+  font-size: var(--font-size-body);
   line-height: 1;
   width: 28px;
   height: 28px;
@@ -368,7 +359,7 @@
 .artifact-preview-mermaid-host .mermaid-zoom-label {
   min-width: 38px;
   text-align: center;
-  font-size: 11px;
+  font-size: var(--font-size-caption);
   font-variant-numeric: tabular-nums;
   user-select: none;
 }
@@ -396,7 +387,7 @@
   white-space: pre-wrap;
   word-break: break-word;
   color: var(--text-primary);
-  font: 13px/1.7 var(--font-family-mono);
+  font: var(--font-size-code)/1.7 var(--font-family-mono);
   border-radius: 24px;
   overflow: auto;
   border: 1px solid color-mix(in srgb, var(--border-default) 74%, transparent);
@@ -412,6 +403,6 @@
   background: color-mix(in srgb, var(--bg-surface) 32%, transparent);
   box-shadow: var(--shadow-soft);
   color: var(--text-secondary);
-  font-size: 14px;
+  font-size: var(--font-size-body);
   line-height: 1.6;
 }

@@ -13,8 +13,7 @@
   // fails with the host's generic "could not open this isolated view" reads as a broken
   // view instead of a plugin that is simply turned off.
   var VIEW_BLOCKED_COPY = Object.freeze({
-    master_disabled: jt('plugins.manager.turnOnToOpenView', 'Turn this plugin on to open its view.'),
-    managed_policy: jt('plugins.manager.policyBlocksView', 'Managed policy blocks this plugin view.') });
+    master_disabled: jt('plugins.manager.turnOnToOpenView', 'Turn this plugin on to open its view.') });
 
   function viewBlockedTitle(contribution) {
     return VIEW_BLOCKED_COPY[String(contribution?.blocked_reason || '')]
@@ -101,14 +100,11 @@
       var contributions = Array.isArray(plugin.contributions) ? plugin.contributions : [];
       if (!contributions.length) return '<div class="settings-note">' + escapeHtml(jt('plugins.manager.noRendererContributions', 'No renderer-visible contributions.')) + '</div>';
       return contributions.map(function (item) {
-        var permissions = item.mcp ? 'MCP · ' + String(item.mcp.auth_policy || jt('plugins.manager.noAuth', 'no auth'))
-          : item.view ? 'View · ' + String(item.view.view_kind || 'sandboxed')
+        var permissions = item.view ? 'View · ' + String(item.view.view_kind || 'sandboxed')
           : item.theme ? jt('plugins.manager.themeTokens', 'Theme tokens') : item.settings ? jt('plugins.manager.typedSettings', 'Typed settings')
           : String(item.kind || 'contribution');
         var detail = item.settings ? '<small>' + escapeHtml(jt('plugins.manager.settingsRevisionValues', 'Settings revision {revision} · {count} stored value(s)', { revision: item.settings.revision || 0, count: Object.keys(item.settings.values || {}).length })) + '</small>'
-          : item.view ? '<small>' + escapeHtml((item.view.artifact_kinds || []).join(', ') || jt('plugins.manager.noArtifactKinds', 'No artifact kinds')) + '</small>'
-          : item.mcp ? '<small>' + escapeHtml(item.mcp.transport_class || '') + ' · '
-            + escapeHtml(item.mcp.active ? jt('plugins.manager.authorized', 'authorized') : jt('plugins.manager.inactiveOrRevoked', 'inactive or revoked')) + '</small>' : '';
+          : item.view ? '<small>' + escapeHtml((item.view.artifact_kinds || []).join(', ') || jt('plugins.manager.noArtifactKinds', 'No artifact kinds')) + '</small>' : '';
         var opensView = item.kind === 'view' || item.kind === 'setup_scene' || Boolean(item.view);
         var viewReady = item.effective_enabled === true;
         var openButton = opensView ? button({

@@ -30,7 +30,7 @@ function createLogCapture() {
 }
 
 function createFakeShell() {
-  const listeners = { scheduler: [], weather: [], stats: [] };
+  const listeners = { scheduler: [], stats: [] };
   const makeSubscribe = (bucket) => (callback) => {
     listeners[bucket].push(callback);
     return () => {
@@ -50,25 +50,14 @@ function createFakeShell() {
         }),
         onChanged: makeSubscribe('scheduler'),
       },
-      weather: {
-        getState: async () => ({
-          available: true,
-          configured: true,
-          tempC: 21,
-          tempF: 69.8,
-          description: 'clear',
-        }),
-        onChanged: makeSubscribe('weather'),
-      },
       home: {
         // applyHomeConfigPayload() adopts a payload only if it is a COMPLETE
-        // home config (links/weather/widgets/calendar/focusMode/
+        // home config (links/widgets/calendar/focusMode/
         // showContextualTips plus a full scratchpad); anything short is dropped
         // and state.homeConfig silently keeps its empty defaults. Model the real
         // shape here rather than the two fields this test reads.
         getConfig: async () => ({
           links: [{ id: 'group-1', name: 'Lab', tiles: [] }],
-          weather: { lat: 30.1, lon: -95.5, units: 'metric' },
           widgets: {},
           scratchpad: { notes: [], activeNoteId: '', settings: {}, pins: [] },
           calendar: {},
@@ -214,7 +203,6 @@ test('dashboard manager seeds state slices and primes them over the bridge on fi
   assert.deepEqual(state.scheduler, {
     upcoming: [], running: [], generatedAt: '', relevant: false, lifecycle: null,
   });
-  assert.equal(state.weather.configured, false);
   assert.deepEqual(state.homeConfig.links, []);
 
   const counts = manager.render();
@@ -224,7 +212,6 @@ test('dashboard manager seeds state slices and primes them over the bridge on fi
   await settle();
   assert.equal(state.scheduler.upcoming.length, 1);
   assert.equal(state.scheduler.upcoming[0].label, 'Nightly health check');
-  assert.equal(state.weather.tempC, 21);
   assert.equal(state.homeConfig.links[0].name, 'Lab');
   assert.equal(probeRenders, 2, 'prime resolution repaints the active home view');
 
@@ -277,13 +264,12 @@ test('dashboard manager applies change events and repaints only while home is ac
   assert.equal(probeRenders, 1);
 
   state.ui.activeView = 'chat';
-  listeners.weather[0]({ tempC: 5 });
-  assert.equal(state.weather.tempC, 5, 'state stays fresh while home is inactive');
+  listeners.scheduler[0]({ upcoming: [], running: [{ id: 'run-2', label: 'Index' }], generatedAt: 'g3' });
+  assert.equal(state.scheduler.running[0].label, 'Index', 'state stays fresh while home is inactive');
   assert.equal(probeRenders, 1, 'no repaint while home is inactive');
 
   manager.dispose();
   assert.equal(listeners.scheduler.length, 0);
-  assert.equal(listeners.weather.length, 0);
   assert.equal(listeners.stats.length, 0);
 });
 
@@ -332,7 +318,6 @@ test('dashboard manager disposal fences the initial refresh and rejects later re
     documentRef,
     shell: {
       scheduler: { getState: read },
-      weather: { getState: read },
       home: { getConfig: read, getAiJournal: read },
       proactive: { getState: read },
       calendar: { getState: read },

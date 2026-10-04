@@ -19,32 +19,30 @@ function lifecycleState(activeView = 'chat') {
   };
 }
 
-function createCurtainDom(extraBody = '') {
+function createCurtainDom(extraBody = '', options = {}) {
   return new JSDOM('<!doctype html><html><body>'
-    + '<div id="startupOverlay" role="status" aria-live="polite" aria-labelledby="startupOverlayLabel">'
+    + '<div id="startupOverlay" role="status" aria-live="polite" aria-labelledby="startupOverlaySublabel" aria-describedby="startupOverlaySecondary">'
+    + (options.sky ? '<canvas class="startup-overlay-sky" id="startupOverlaySky" aria-hidden="true"></canvas>' : '')
+    + '<div class="startup-overlay-content">'
     + '<div class="startup-overlay-wordmark">Jenny</div>'
-    + '<div id="startupOverlayProgressBar" role="progressbar" aria-valuenow="0">'
-    + '<div id="startupOverlayProgressFill"></div></div>'
-    + '<div id="startupOverlayLabel">Starting Jenny</div>'
     + '<div id="startupOverlaySublabel"></div>'
     + '<div id="startupOverlaySecondary"></div>'
-    + '<div id="startupOverlayActions"></div></div>'
+    + '<div class="startup-overlay-actions" id="startupOverlayActions"></div></div></div>'
     + extraBody
     + '</body></html>', { pretendToBeVisual: true });
 }
 
-function createController(documentRef, callbacks = {}) {
+function createController(documentRef, callbacks = {}, extra = {}) {
   return lifecycleUtils.createLifecycleProgressController({
-    state: lifecycleState(),
+    state: extra.state || lifecycleState(),
+    now: extra.now,
+    fatalActions: extra.fatalActions,
     dom: {
       startupOverlay: documentRef.getElementById('startupOverlay'),
-      startupOverlayLabel: documentRef.getElementById('startupOverlayLabel'),
       startupOverlaySublabel: documentRef.getElementById('startupOverlaySublabel'),
       startupOverlaySecondary: documentRef.getElementById('startupOverlaySecondary'),
     },
     callbacks: {
-      setTurnStatusPill() {},
-      clearTurnStatusPill() {},
       onStartupReady() {},
       ...callbacks,
     },
@@ -59,14 +57,22 @@ test('index composes one first-child boot surface and removes the auth overlay s
   assert.equal(documentRef.body.firstElementChild?.id, 'startupOverlay');
   assert.equal(documentRef.querySelectorAll('#startupOverlay').length, 1);
   assert.equal(documentRef.querySelector('.startup-overlay-wordmark')?.textContent.trim(), 'Jenny');
-  assert.equal(documentRef.getElementById('startupOverlayLabel')?.textContent.trim(), 'Starting Jenny');
+  const curtain = documentRef.getElementById('startupOverlay');
+  assert.equal(curtain.getAttribute('role'), 'status');
+  assert.equal(curtain.getAttribute('aria-labelledby'), 'startupOverlaySublabel', 'the status line is the curtain label');
+  assert.equal(documentRef.getElementById('startupOverlaySublabel')?.textContent.trim(), 'Restoring your chats');
+  assert.equal(curtain.querySelector('[role="progressbar"]'), null, 'no progress bar on the curtain');
+  assert.equal(documentRef.getElementById('startupOverlayProgressBar'), null);
+  assert.equal(curtain.querySelector('.startup-mark'), null, 'the mark-and-dot glyph is retired');
+  assert.ok(curtain.querySelector('canvas#startupOverlaySky'), 'the starfield canvas sits inside the curtain');
   assert.equal(documentRef.getElementById('authOverlay'), null);
   assert.equal(documentRef.getElementById('backendRetryButton'), null);
   assert.equal(documentRef.getElementById('backendBanner'), null);
   assert.equal(documentRef.getElementById('statusStrip'), null);
-  // Nothing sits between the toprail and the workspace any more, so the
-  // workspace can never be pushed down by a transient status surface.
-  assert.equal(documentRef.getElementById('topRail')?.nextElementSibling?.id, 'workspace');
+  // Nothing sits between the title bar (which now holds the view nav) and the
+  // workspace, so the workspace can never be pushed down by a transient
+  // status surface.
+  assert.equal(documentRef.querySelector('.titlebar')?.nextElementSibling?.id, 'workspace');
   assert.equal(documentRef.getElementById('heroTitle')?.textContent, 'New session');
   const chromeSource = fs.readFileSync(
     path.join(__dirname, '..', 'renderer', 'chat', 'renderer-render-pipeline-chrome.js'),
@@ -77,7 +83,7 @@ test('index composes one first-child boot surface and removes the auth overlay s
   dom.window.close();
 });
 
-test('curtain status stays plain text and progress is floored and monotonic', (t) => {
+test('curtain line is renderer-owned: detail never reaches it', (t) => {
   const previousActionButton = global.inventoryActionButton;
   global.inventoryActionButton = actionButton;
   t.after(() => { global.inventoryActionButton = previousActionButton; });
@@ -87,22 +93,13 @@ test('curtain status stays plain text and progress is floored and monotonic', (t
   const controller = createController(documentRef);
   t.after(() => controller.dispose());
 
+  assert.equal(documentRef.getElementById('startupOverlaySublabel').textContent, 'Restoring your chats');
   controller.handleLifecycleProgress({
-    scenario: 'startup', phase: 'sidecar_spawn', detail: '<b>Launching safely</b>', percent: 0.1,
+    scenario: 'startup', phase: 'sidecar_spawn', detail: '<b>Spawning sidecar...</b>', percent: 40,
   });
-  assert.equal(documentRef.getElementById('startupOverlayProgressFill').style.width, '6%');
-  assert.equal(documentRef.getElementById('startupOverlaySublabel').textContent, '<b>Launching safely</b>');
-  assert.equal(documentRef.getElementById('startupOverlaySublabel').querySelector('b'), null);
-
-  controller.handleLifecycleProgress({
-    scenario: 'startup', phase: 'ollama_start', detail: 'A stale update', percent: 2,
-  });
-  assert.equal(documentRef.getElementById('startupOverlayProgressBar').getAttribute('aria-valuenow'), '6');
-  assert.equal(documentRef.getElementById('startupOverlayLabel').textContent, 'Starting Jenny');
-
-  controller.handleBackendStatus({ phase: 'model_unavailable' });
-  assert.equal(documentRef.getElementById('startupOverlay').dataset.state, 'blocked');
-  assert.equal(documentRef.querySelector('[data-action="startup-continue"]')?.textContent, 'Continue');
+  controller.handleBackendStatus({ phase: 'model_loading', detail: 'Inspecting model capabilities' });
+  const line = documentRef.getElementById('startupOverlaySublabel');
+  assert.equal(line.textContent, 'Restoring your chats', 'main-process sentences never reach the curtain');
 });
 
 test('curtain removal callback runs only after the mounted surface is gone', (t) => {
@@ -121,6 +118,7 @@ test('curtain removal callback runs only after the mounted surface is gone', (t)
   t.after(() => controller.dispose());
 
   controller.notifyBootViewReady('chat');
+  controller.notifyShellHydrated();
   controller.handleBackendStatus({ phase: 'ready' });
   assert.equal(readyCalls, 1);
   assert.equal(removedCalls, 0);
@@ -159,10 +157,14 @@ test('non-terminal startup errors become fatal and retry progress restores norma
   assert.equal(overlay.getAttribute('role'), 'alertdialog', 'unconfirmed progress cannot clear a fatal dialog');
   controller.handleBackendStatus({ phase: 'sidecar_spawned', detail: 'Retrying startup.' });
   assert.equal(overlay.getAttribute('role'), 'status');
+  assert.equal(dom.window.document.getElementById('appShell').inert, true, 'fatal recovery retains normal curtain isolation');
+  controller.notifyBootViewReady();
+  controller.notifyShellHydrated();
+  overlay.dispatchEvent(new dom.window.Event('transitionend'));
   assert.equal(dom.window.document.getElementById('appShell').inert, false);
 });
 
-test('fatal inerting recurses around the exempt window-control branch and restores prior state', () => {
+test('fatal inerting recurses around the exempt window-control branch and restores prior state', (t) => {
   const dom = createCurtainDom(
     '<main id="appShell"><header><div id="brand"></div>'
     + '<div id="windowControls" data-startup-inert-exempt></div></header>'
@@ -175,6 +177,14 @@ test('fatal inerting recurses around the exempt window-control branch and restor
   const previousActionButton = global.inventoryActionButton;
   global.inventoryActionButton = actionButton;
 
+  let controller = null;
+  t.after(() => {
+    controller?.dispose();
+    global.inventoryActionButton = previousActionButton;
+    dom.window.close();
+  });
+
+  // Controller-less, as app.js's composition-failure guard calls it.
   lifecycleUtils.presentStartupOverlayFatalError(overlay, { onRetry() {} });
   assert.notEqual(documentRef.getElementById('appShell').inert, true);
   assert.equal(documentRef.getElementById('windowControls').inert, undefined);
@@ -183,55 +193,18 @@ test('fatal inerting recurses around the exempt window-control branch and restor
   assert.equal(alreadyInert.inert, true);
 
   lifecycleUtils.clearStartupOverlayFatalError(overlay);
+  assert.equal(documentRef.getElementById('brand').inert, true, 'clearing the dialog keeps the curtain isolation');
+  assert.equal(documentRef.getElementById('workspace').inert, true);
+
+  // The curtain's removal is what restores the prior inert state.
+  controller = createController(documentRef);
+  controller.notifyBootViewReady();
+  controller.notifyShellHydrated();
+  overlay.dispatchEvent(new dom.window.Event('transitionend'));
   assert.equal(documentRef.getElementById('brand').inert, false);
   assert.equal(documentRef.getElementById('workspace').inert, false);
   assert.equal(alreadyInert.inert, true);
   assert.equal(documentRef.querySelector('[data-startup-fatal-inert]'), null);
-
-  global.inventoryActionButton = previousActionButton;
-  dom.window.close();
-});
-
-test('surface-effect none suppresses circuit-trace startup', (t) => {
-  const previousCore = global.rendererCircuitTraceCore;
-  global.rendererCircuitTraceCore = {};
-  t.after(() => { global.rendererCircuitTraceCore = previousCore; });
-  const dom = createCurtainDom();
-  t.after(() => dom.window.close());
-  const documentRef = dom.window.document;
-  documentRef.documentElement.dataset.surfaceEffect = 'none';
-  const originalCreateElement = documentRef.createElement.bind(documentRef);
-  let canvasCreations = 0;
-  documentRef.createElement = (tagName, options) => {
-    if (String(tagName).toLowerCase() === 'canvas') { canvasCreations += 1; }
-    return originalCreateElement(tagName, options);
-  };
-  const controller = createController(documentRef);
-  controller.dispose();
-  assert.equal(canvasCreations, 0);
-});
-
-test('reduced motion suppresses circuit-trace startup', (t) => {
-  const previousCore = global.rendererCircuitTraceCore;
-  const previousMatchMedia = global.matchMedia;
-  global.rendererCircuitTraceCore = {};
-  global.matchMedia = (query) => ({ matches: String(query).includes('prefers-reduced-motion') });
-  t.after(() => {
-    global.rendererCircuitTraceCore = previousCore;
-    global.matchMedia = previousMatchMedia;
-  });
-  const dom = createCurtainDom();
-  t.after(() => dom.window.close());
-  const documentRef = dom.window.document;
-  const originalCreateElement = documentRef.createElement.bind(documentRef);
-  let canvasCreations = 0;
-  documentRef.createElement = (tagName, options) => {
-    if (String(tagName).toLowerCase() === 'canvas') { canvasCreations += 1; }
-    return originalCreateElement(tagName, options);
-  };
-  const controller = createController(documentRef);
-  controller.dispose();
-  assert.equal(canvasCreations, 0);
 });
 
 test('backend failure offers Retry and View logs, and logs handoff dismisses the curtain', (t) => {
@@ -291,54 +264,9 @@ test('slow timer offers manual continuation and emits a bounded diagnostic', () 
       detail: { reason: 'slow' },
     });
     controller.dispose();
-    const removal = scheduled.find((entry) => entry.delay === 420);
+    const removal = scheduled.find((entry) => entry.delay === lifecycleUtils.STARTUP_OVERLAY_REMOVAL_FALLBACK_MS);
     assert.ok(removal);
     assert.ok(cleared.includes(removal.id), 'disposal clears the pending curtain-removal timer');
-  } finally {
-    global.setTimeout = previous.setTimeout;
-    global.clearTimeout = previous.clearTimeout;
-    global.__JENNY_STARTUP_OVERLAY_SLOW_MS = previous.slowMs;
-    global.__JENNY_STARTUP_OVERLAY_MAX_VISIBLE_MS = previous.maxMs;
-    global.inventoryActionButton = previous.actionButton;
-    dom.window.close();
-  }
-});
-
-test('blocked state survives the slow threshold and dismisses at the hard backstop', () => {
-  const previous = {
-    setTimeout: global.setTimeout,
-    clearTimeout: global.clearTimeout,
-    slowMs: global.__JENNY_STARTUP_OVERLAY_SLOW_MS,
-    maxMs: global.__JENNY_STARTUP_OVERLAY_MAX_VISIBLE_MS,
-    actionButton: global.inventoryActionButton,
-  };
-  const scheduled = [];
-  global.setTimeout = (callback, delay) => { scheduled.push({ callback, delay }); return scheduled.length; };
-  global.clearTimeout = () => {};
-  global.__JENNY_STARTUP_OVERLAY_SLOW_MS = 8;
-  global.__JENNY_STARTUP_OVERLAY_MAX_VISIBLE_MS = 20;
-  global.inventoryActionButton = actionButton;
-  const dom = createCurtainDom();
-  const logs = [];
-  try {
-    const controller = createController(dom.window.document, {
-      appendClientLog(level, event, detail) { logs.push({ level, event, detail }); },
-    });
-    controller.handleBackendStatus({ phase: 'model_unavailable' });
-    scheduled.find((entry) => entry.delay === 8).callback();
-    const overlay = dom.window.document.getElementById('startupOverlay');
-    assert.equal(overlay.dataset.state, 'blocked');
-    assert.equal(dom.window.document.querySelector('[data-action="startup-continue"]')?.textContent, 'Continue');
-    assert.match(dom.window.document.getElementById('startupOverlaySecondary').textContent, /configured model is unavailable/i);
-
-    scheduled.find((entry) => entry.delay === 20).callback();
-    assert.equal(overlay.classList.contains('hidden'), true);
-    assert.deepEqual(logs[0], {
-      level: 'WARN',
-      event: 'startup.curtain_backstop_dismissed',
-      detail: { state: 'blocked' },
-    });
-    controller.dispose();
   } finally {
     global.setTimeout = previous.setTimeout;
     global.clearTimeout = previous.clearTimeout;
@@ -399,14 +327,12 @@ test('curtain handoff forwards once and backend Retry stays coalesced', async (t
   const previousGlobals = {
     lifecycleProgressUtils: global.lifecycleProgressUtils,
     rendererActivityPrefsUtils: global.rendererActivityPrefsUtils,
-    rendererTurnStatusPill: global.rendererTurnStatusPill,
     inventory: global.inventory,
     inventoryActionButton: global.inventoryActionButton,
     jennyShell: global.jennyShell,
   };
   global.lifecycleProgressUtils = lifecycleUtils;
   global.rendererActivityPrefsUtils = {};
-  global.rendererTurnStatusPill = {};
   global.inventoryActionButton = actionButton;
   global.inventory = {};
   let rejectRetry;
@@ -461,6 +387,7 @@ test('curtain handoff forwards once and backend Retry stays coalesced', async (t
 
   state.backend = { phase: 'ready', detail: '' };
   controller.notifyBootViewReady('chat');
+  controller.notifyShellHydrated();
   controller.handleLifecycleBackendStatus({ phase: 'ready' });
   documentRef.getElementById('startupOverlay').dispatchEvent(new dom.window.Event('transitionend'));
   assert.equal(removalRefreshes, 1, 'notice sync is forwarded once the curtain leaves the DOM');
@@ -511,16 +438,16 @@ test('boot styling owns cluster scale, window-control stacking, reduced motion, 
 
   assert.match(foundation, /--z-boot-curtain:\s*90/);
   assert.match(foundation, /--z-window-controls:\s*95/);
-  const rootTokenBlock = curtain.match(/:root\s*\{([\s\S]*?)\}/)?.[1] || '';
-  const contentBlock = curtain.match(/\.startup-overlay-content\s*\{([\s\S]*?)\}/)?.[1] || '';
-  const hiddenContentBlock = curtain.match(/\.startup-overlay\.hidden \.startup-overlay-content\s*\{([\s\S]*?)\}/)?.[1] || '';
-  assert.equal((rootTokenBlock.match(/--startup-[a-z-]+\s*:/g) || []).length, 8);
   assert.match(shellChrome, /\.window-controls\s*\{[\s\S]*z-index:\s*var\(--z-window-controls\)/);
-  assert.match(contentBlock, /transform:\s*scale\(1\.5\)/);
-  assert.match(contentBlock, /transform-origin:\s*center/);
-  assert.match(hiddenContentBlock, /transform:\s*translateY\(-6px\) scale\(1\.5\)/);
-  assert.match(curtain, /@media \(prefers-reduced-motion: reduce\)[\s\S]*\.startup-overlay\s*\{[\s\S]*transition:\s*none/);
-  assert.match(curtain, /@media \(prefers-reduced-motion: reduce\)[\s\S]*\.startup-overlay\.hidden \.startup-overlay-content\s*\{[\s\S]*transform:\s*scale\(1\.5\)/);
+  assert.doesNotMatch(curtain, /scale\(1\.5\)/, 'the 1.5x transform is retired');
+  assert.doesNotMatch(curtain, /--font-size-(?:sm|4xl)\b/, 'role type tokens only');
+  assert.doesNotMatch(curtain, /font-size:\s*\d/, 'no literal font sizes');
+  assert.doesNotMatch(curtain, /startup-progress|startup-mark|startup-circuit/, 'bar, mark and circuit trace are gone');
+  assert.match(curtain, /\.startup-overlay-sky\s*\{[\s\S]*position:\s*absolute/);
+  assert.match(curtain, /\.startup-overlay-wordmark\s*\{[\s\S]*font-family:\s*var\(--font-family-brand\)/);
+  const reducedMotion = curtain.match(/@media \(prefers-reduced-motion: reduce\)\s*\{([\s\S]*?)\n\}/)?.[1] || '';
+  assert.match(reducedMotion, /transition:\s*opacity\b/, 'reduced motion keeps a plain opacity fade');
+  assert.doesNotMatch(reducedMotion, /transform/, 'nothing moves under reduced motion');
   assert.match(curtain, /\.startup-overlay\.hidden\s*\{[\s\S]*display:\s*flex\s*!important;[\s\S]*opacity:\s*0/);
   assert.match(paper, /--text-primary:/);
   assert.doesNotMatch(paper, /\.auth-overlay/);

@@ -165,6 +165,22 @@
           hint: null,
           run: () => { try { togglePinActiveSession(); } catch (_err) { /* noop */ } },
         });
+        const transcriptViewController = globalThis.rendererTranscriptViewController;
+        const transcriptViewUtils = globalThis.rendererTranscriptViewUtils;
+        if (typeof transcriptViewController?.cycle === 'function' && typeof transcriptViewUtils?.cycleTranscriptView === 'function') {
+          const currentView = transcriptViewController.getView(currentSession.id);
+          items.push({
+            id: 'action:transcript-view',
+            group: 'Actions',
+            label: jt('commandPalette.actions.cycleTranscriptView', 'Cycle transcript view'),
+            description: jt('commandPalette.actions.cycleTranscriptViewDescription', 'Now {current}; next {next}', {
+              current: transcriptViewUtils.transcriptViewLabel(currentView),
+              next: transcriptViewUtils.transcriptViewLabel(transcriptViewUtils.cycleTranscriptView(currentView)),
+            }),
+            hint: null,
+            run: () => { try { transcriptViewController.cycle(currentSession.id, { source: 'palette' }); } catch (_err) { /* noop */ } },
+          });
+        }
         items.push({
           id: 'action:archive-session',
           group: 'Actions',
@@ -201,6 +217,19 @@
           description: jt('commandPalette.actions.openQuickSettingsDescription', 'Theme, model, and display settings in a compact overlay'),
           hint: null,
           run: () => { try { quickSettings.toggle(); } catch (_err) { /* noop */ } },
+        });
+      }
+      // The guarded reload (exit preflight first), the same route as
+      // Ctrl+Shift+R; the title bar has no reload tile.
+      const windowControls = globalRef.rendererWindowControlsUtils || null;
+      if (windowControls && typeof windowControls.reloadWindow === 'function') {
+        items.push({
+          id: 'action:reload-window',
+          group: 'Actions',
+          label: jt('commandPalette.actions.reloadWindow', 'Reload window'),
+          description: jt('commandPalette.actions.reloadWindowDescription', 'Restart the interface; unsaved work is checked first'),
+          hint: jt('commandPalette.actions.reloadWindowHint', 'Ctrl Shift R'),
+          run: () => { void windowControls.reloadWindow({ windowRef: globalRef }); },
         });
       }
       return items;

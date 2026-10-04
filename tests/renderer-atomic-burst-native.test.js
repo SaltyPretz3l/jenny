@@ -1,6 +1,12 @@
-// FROZEN RED-FIRST: Atomic Burst native contractVersion-3 suite
-// (Background Effects v3 packet S7). Legacy pure-field coverage remains in
-// renderer-atomic-burst-utils.test.js.
+// Atomic Burst native contractVersion-3 suite (Background Effects v3 packet S7).
+// Legacy pure-field coverage remains in renderer-atomic-burst-utils.test.js.
+//
+// 2026-09-30 owner direction change (amends the original freeze): the activity
+// channel is gone (the field never reacts to the model), shadowBlur glow, the
+// completion sweep, wave particles and rotation wobble were retired, and the loop
+// follows a frame budget (~30 fps idle/unfocused, full rate while the pointer or
+// a ring is answering the user). Hover flare + links fade in/out, rings flare the
+// sparkles they cross, and sparkles are painted in batched colour/alpha groups.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -17,6 +23,7 @@ const {
   withStubbedGlobals,
 } = require('./helpers/surface-effect-conformance.js');
 const { createRafHarness } = require('./helpers/surface-effect-router-harness.js');
+const { createRecordingContext, makeCoreEntry, step } = require('./helpers/atomic-burst-fixtures.js');
 
 const EFFECT_ID = 'atomic-burst';
 const POINTER_EVENTS = [
@@ -24,83 +31,36 @@ const POINTER_EVENTS = [
   'pointercancel', 'mousemove', 'mousedown', 'mouseup', 'click',
 ];
 
-function augmentCanvasContexts(documentRef) {
-  const createElement = documentRef.createElement.bind(documentRef);
+function makeFakeWindow(devicePixelRatio = 1) {
+  const listeners = new Map();
+  return {
+    devicePixelRatio,
+    addEventListener(name, listener) {
+      if (!listeners.has(name)) { listeners.set(name, new Set()); }
+      listeners.get(name).add(listener);
+    },
+    removeEventListener(name, listener) {
+      if (listeners.has(name)) { listeners.get(name).delete(listener); }
+    },
+    listenerCount(name) { return listeners.has(name) ? listeners.get(name).size : 0; },
+    fire(name) { Array.from(listeners.get(name) || []).forEach((listener) => listener({ type: name })); },
+  };
+}
+
+// A recording 2d context: one frame per clearRect, one record per fill()/stroke()
+function recordCanvases(documentRef) {
+  const contexts = [];
+  const createElement = documentRef.createElement;
   documentRef.createElement = (tag) => {
-    const element = createElement(tag);
-    if (String(tag).toLowerCase() !== 'canvas') { return element; }
-    const getContext = element.getContext.bind(element);
-    let contextResolved = false;
-    let cachedContext = null;
-    element.getContext = (...args) => {
-      if (contextResolved) { return cachedContext; }
-      const ctx = getContext(...args);
-      contextResolved = true;
-      cachedContext = ctx;
-      if (!ctx) { return null; }
-      if (typeof ctx.closePath !== 'function') { ctx.closePath = () => {}; }
-      if (typeof ctx.rotate !== 'function') { ctx.rotate = () => {}; }
-      return ctx;
-    };
+    const element = createElement.call(documentRef, tag);
+    if (tag === 'canvas') {
+      const ctx = createRecordingContext();
+      contexts.push(ctx);
+      element.getContext = () => ctx;
+    }
     return element;
   };
-}
-
-function createCoreCanvasRecorder() {
-  const operations = [];
-  let currentArc = null;
-  const ctx = {
-    globalAlpha: 1,
-    lineWidth: 1,
-    shadowBlur: 0,
-    shadowColor: '',
-    strokeStyle: '',
-    fillStyle: '',
-    save() {}, restore() {}, setTransform() {}, clearRect() {},
-    translate() {}, rotate() {}, scale() {}, beginPath() { currentArc = null; },
-    moveTo() {}, lineTo() {}, closePath() {},
-    arc(x, y, radius) { currentArc = { x, y, radius }; },
-    fill() {
-      operations.push({
-        type: 'fill', arc: currentArc, fillStyle: this.fillStyle,
-        globalAlpha: this.globalAlpha, shadowBlur: this.shadowBlur,
-      });
-    },
-    stroke() {
-      operations.push({
-        type: 'stroke', arc: currentArc, strokeStyle: this.strokeStyle,
-        lineWidth: this.lineWidth, globalAlpha: this.globalAlpha,
-        shadowBlur: this.shadowBlur, shadowColor: this.shadowColor,
-      });
-    },
-  };
-  return { ctx, operations };
-}
-
-function makeCoreEntry(simulation, recorder, configOverrides = {}) {
-  return {
-    canvas: {},
-    ctx: recorder.ctx,
-    w: 100,
-    h: 100,
-    dpr: 1,
-    simulation,
-    config: Object.assign({
-      baseSize: 14,
-      density: 6.2,
-      colorA: 'color-a',
-      colorB: 'color-b',
-      colorC: 'color-c',
-      flareColor: 'flare',
-      linkColor: 'link',
-      waveColor: 'wave',
-      bloom: 1,
-      linkRadius: 100,
-      linkMax: 6,
-      waveSpeed: 100,
-      waveLifetime: 1000,
-    }, configOverrides),
-  };
+  return contexts;
 }
 
 function makeEnv({
@@ -108,21 +68,25 @@ function makeEnv({
   rendererLaunchSeed = 4242,
   documentOptions = {},
   sceneRole,
+  windowRef = makeFakeWindow(),
+  record = true,
+  runtimeOverride = runtime,
 } = {}) {
   const documentRef = makeFixtureDocumentRef(documentOptions);
-  augmentCanvasContexts(documentRef);
+  const contexts = record ? recordCanvases(documentRef) : [];
   const reducedMotionQuery = createEffectMediaQueryList(reducedMotion);
   const reportCalls = [];
   const controller = atomicBurstUtils.createAtomicBurstController({
     effectId: EFFECT_ID,
     documentRef,
+    windowRef,
     reducedMotionQuery,
-    runtime,
+    runtime: runtimeOverride,
     rendererLaunchSeed,
     sceneRole,
     report: (fault) => reportCalls.push(fault),
   });
-  return { documentRef, reducedMotionQuery, controller, reportCalls };
+  return { documentRef, reducedMotionQuery, controller, reportCalls, windowRef, contexts };
 }
 
 function withAtomic(envOptions, fn) {
@@ -178,20 +142,31 @@ function inputPayload(overrides = {}) {
   }, overrides);
 }
 
-function setStreaming(controller, overrides = {}) {
-  controller.setActivity(Object.assign({
-    scopeEpoch: 1,
-    phase: 'streaming',
-    phaseRevision: 1,
-    targetEnergy: 0.46,
-    attentionScale: 1,
-  }, overrides));
+function click(controller, x, y = 100, overrides = {}) {
+  controller.handleInput(inputPayload(Object.assign({
+    type: 'click', localX: x, localY: y, sceneX: x, sceneY: y,
+  }, overrides)));
 }
 
-test('factory exposes native-v3 API, context reconciliation, staged reveal, and status', () => {
+function flushTicks(raf, count, ms = 16) {
+  for (let i = 0; i < count; i += 1) { raf.flush(ms); }
+}
+
+function paintCount(contexts) { return contexts[0].frames.length; }
+
+function lastFrame(contexts) { return contexts[0].frames.at(-1); }
+
+// ---- controller contract --------------------------------------------------
+
+test('factory exposes exactly the v3 API, with no activity channel, and accepts an immutable context with staged reveal', () => {
   withAtomic({}, ({ controller, raf }) => {
-    ['bind', 'refresh', 'dispose', 'handleInput', 'setActivity', 'handleActivityImpulse', 'getStatus']
-      .forEach((method) => assert.equal(typeof controller[method], 'function', method + ' is present'));
+    assert.deepEqual(
+      Object.keys(controller).sort(),
+      ['_internals', 'bind', 'dispose', 'getStatus', 'handleInput', 'refresh'],
+      'the controller exposes no setActivity/handleActivityImpulse: the field never reacts to the model',
+    );
+    assert.equal(controller.setActivity, undefined);
+    assert.equal(controller.handleActivityImpulse, undefined);
 
     const [host] = bindHosts(controller, [{ role: 'chat-left' }], { generation: 7, staged: true });
     assert.deepEqual(controller.getStatus(), {
@@ -219,11 +194,21 @@ test('factory exposes native-v3 API, context reconciliation, staged reveal, and 
   });
 });
 
-test('null 2d contexts are removed and zero-sized hosts stay dormant', () => {
-  withAtomic({ documentOptions: { nullContext: true } }, ({ controller, raf }) => {
+test('null 2d contexts are removed (even when the runtime leaves the canvas behind) and zero-sized hosts stay dormant', () => {
+  withAtomic({ documentOptions: { nullContext: true }, record: false }, ({ controller, raf }) => {
     const [host] = bindAndPrime(controller, raf, [{ role: 'chat-left' }]);
     assert.equal(host.element.children.length, 0);
     assert.equal(controller.getStatus().state, 'dormant');
+    controller.dispose();
+  });
+  // A runtime whose ensureCanvas2d fails WITHOUT removing the node: the controller
+  // must still remove the canvas it inserted (A6).
+  const leakyRuntime = Object.assign({}, runtime, { ensureCanvas2d: () => null });
+  withAtomic({ runtimeOverride: leakyRuntime }, ({ controller, raf }) => {
+    const [host] = bindAndPrime(controller, raf, [{ role: 'chat-left' }]);
+    assert.equal(host.element.children.length, 0, 'the inserted canvas is removed after a failed ensureCanvas2d');
+    assert.equal(controller.getStatus().state, 'dormant');
+    assert.equal(entryFor(controller).hasCanvas, false);
     controller.dispose();
   });
   withAtomic({}, ({ controller, raf }) => {
@@ -235,7 +220,7 @@ test('null 2d contexts are removed and zero-sized hosts stay dormant', () => {
   });
 });
 
-test('normalized manager input promotes scene coordinates into the shared simulation without layout reads', () => {
+test('normalized manager input promotes scene coordinates into the one shared pointer without layout reads', () => {
   withAtomic({}, ({ controller, raf }) => {
     const hosts = bindAndPrime(controller, raf, [
       { role: 'chat-left' }, { role: 'chat-right' },
@@ -263,12 +248,10 @@ test('normalized manager input promotes scene coordinates into the shared simula
   });
 });
 
-test('click waves use a fixed four-slot pool and evict the oldest origin', () => {
+test('click rings use a fixed four-slot pool and evict the oldest origin', () => {
   withAtomic({}, ({ controller, raf }) => {
     bindAndPrime(controller, raf, [{ role: 'chat-left' }]);
-    [10, 20, 30, 40, 50].forEach((x, index) => controller.handleInput(inputPayload({
-      type: 'click', localX: x, localY: 60, sceneX: x, timeStamp: 20 + index,
-    })));
+    [10, 20, 30, 40, 50].forEach((x, index) => click(controller, x, 60, { timeStamp: 20 + index }));
     const entry = entryFor(controller);
     assert.equal(entry.waveCapacity, 4);
     assert.equal(entry.waveCount, 4);
@@ -298,67 +281,6 @@ test('counter-parallax offsets move opposite the scene pointer and scale by dept
   });
 });
 
-test('core preserves eased wave expansion, dual bloom rings, particle gate, and line-distance falloff', () => {
-  const earlyState = atomicBurstCore.createSimulationState();
-  const earlyRecorder = createCoreCanvasRecorder();
-  const earlyEntry = makeCoreEntry(earlyState, earlyRecorder);
-  atomicBurstCore.spawnWave(earlyState, {
-    x: 50, y: 50, startTime: 0, config: earlyEntry.config,
-    sceneSeed: 1, makeRng: () => () => 0, kind: 'complete',
-  });
-  atomicBurstCore.drawFrame(earlyEntry, {
-    timestamp: 1, dtMs: 1, reducedMotion: false,
-    activityBrightnessScale: 1, sceneWidth: 100, sceneHeight: 100,
-  });
-  assert.equal(
-    earlyRecorder.operations.filter((operation) => operation.type === 'fill').length,
-    1,
-    'sub-four-pixel wave draws the inner flash but gates particle dust',
-  );
-
-  const waveState = atomicBurstCore.createSimulationState();
-  const waveRecorder = createCoreCanvasRecorder();
-  const waveEntry = makeCoreEntry(waveState, waveRecorder);
-  atomicBurstCore.spawnWave(waveState, {
-    x: 50, y: 50, startTime: 0, config: waveEntry.config,
-    sceneSeed: 1, makeRng: () => () => 0, kind: 'complete',
-  });
-  atomicBurstCore.drawFrame(waveEntry, {
-    timestamp: 250, dtMs: 80, reducedMotion: false,
-    activityBrightnessScale: 1, sceneWidth: 100, sceneHeight: 100,
-  });
-  const rings = waveRecorder.operations.filter((operation) => operation.type === 'stroke');
-  assert.equal(rings.length, 2, 'wave renders a soft halo plus a crisp leading ring');
-  assert.equal(rings[0].strokeStyle, 'wave');
-  assert.equal(rings[1].strokeStyle, 'flare');
-  assert.ok(rings[0].lineWidth > rings[1].lineWidth, 'halo is broader than the leading ring');
-  assert.ok(rings[0].shadowBlur > rings[1].shadowBlur && rings[1].shadowBlur > 0);
-  const expectedRadius = (1 - Math.pow(0.75, 2.4)) * 100;
-  assert.ok(Math.abs(rings[0].arc.radius - expectedRadius) < 0.001, 'radius follows the legacy ease-out curve');
-  assert.equal(
-    waveRecorder.operations.filter((operation) => operation.type === 'fill').length,
-    10,
-    'mature wave draws the bounded ten-particle leading-edge dust',
-  );
-
-  const linkState = atomicBurstCore.createSimulationState();
-  linkState.pointer = { active: true, x: 0, y: 0, sceneX: 0, sceneY: 0 };
-  linkState.sparkles = [
-    { x: 10, y: 0, depth: 0 },
-    { x: 50, y: 0, depth: 0 },
-  ];
-  linkState.sparklesByDepth = [[], [], []];
-  const linkRecorder = createCoreCanvasRecorder();
-  atomicBurstCore.drawFrame(makeCoreEntry(linkState, linkRecorder, { linkMax: 2 }), {
-    timestamp: 0, dtMs: 0, reducedMotion: true, activityBrightnessScale: 1,
-  });
-  const linkStroke = linkRecorder.operations.find((operation) => operation.type === 'stroke');
-  const cursorFalloff = 1 - Math.sqrt((100 + 2500) * 0.5) / 100;
-  const distanceFalloff = 1 - 40 / 70;
-  const expectedAlpha = cursorFalloff * cursorFalloff * distanceFalloff * 0.55;
-  assert.ok(Math.abs(linkStroke.globalAlpha - expectedAlpha) < 0.000001);
-});
-
 test('blank or malformed link and wave colors inherit the resolved flare color', () => {
   withAtomic({}, ({ controller, raf }) => {
     bindAndPrime(controller, raf, [{
@@ -373,42 +295,6 @@ test('blank or malformed link and wave colors inherit the resolved flare color',
     assert.equal(entry.flareColor, 'rgb(12, 34, 56)');
     assert.equal(entry.linkColor, entry.flareColor);
     assert.equal(entry.waveColor, entry.flareColor);
-    controller.dispose();
-  });
-});
-
-test('activity snapshots are replay-safe and streaming adds only a restrained brightness pulse', () => {
-  withAtomic({}, ({ controller, raf }) => {
-    bindAndPrime(controller, raf, [{ role: 'chat-left' }]);
-    setStreaming(controller, { scopeEpoch: 4 });
-    raf.flush(180);
-    const snapshot = inspect(controller);
-    assert.equal(snapshot.scopeEpoch, 4);
-    assert.equal(snapshot.phase, 'streaming');
-    assert.equal(snapshot.entries[0].waveCount, 0, 'snapshot changes never synthesize a gesture');
-    assert.ok(snapshot.activityBrightnessScale >= 1);
-    assert.ok(snapshot.activityBrightnessScale <= 1.15, 'streaming pulse stays restrained');
-    controller.dispose();
-  });
-});
-
-test('only a current-epoch complete impulse creates a centered completion sweep; cancel clears motion', () => {
-  withAtomic({}, ({ controller, raf }) => {
-    bindAndPrime(controller, raf, [{ role: 'chat-left' }]);
-    setStreaming(controller, { scopeEpoch: 8 });
-    controller.handleActivityImpulse({ scopeEpoch: 7, sequence: 1, kind: 'complete', timeStamp: 30 });
-    assert.equal(entryFor(controller).waveCount, 0, 'stale complete is ignored');
-
-    controller.handleActivityImpulse({ scopeEpoch: 8, sequence: 2, kind: 'complete', timeStamp: 31 });
-    let entry = entryFor(controller);
-    assert.equal(entry.waveCount, 1);
-    assert.deepEqual(entry.waveOrigins[0], { x: 150, y: 150, kind: 'complete' });
-
-    controller.handleInput(inputPayload({ localX: 33, localY: 44 }));
-    controller.handleActivityImpulse({ scopeEpoch: 8, sequence: 3, kind: 'cancel', timeStamp: 40 });
-    entry = entryFor(controller);
-    assert.equal(entry.waveCount, 0);
-    assert.equal(entry.pointerActive, false);
     controller.dispose();
   });
 });
@@ -438,7 +324,7 @@ test('same launch seed and scene role reproduce sparkles; chat gutters share a s
   });
 });
 
-test('split gutters render one wide scene field and filter deterministic spawn-avoidance regions', () => {
+test('split gutters render one wide scene field; spawn avoidance keeps the field and skips sparkles at draw time', () => {
   const leftRect = { left: 0, top: 0, width: 240, height: 300 };
   const rightRect = { left: 560, top: 0, width: 240, height: 300 };
   const sceneRect = { left: 0, top: 0, width: 800, height: 300 };
@@ -452,6 +338,7 @@ test('split gutters render one wide scene field and filter deterministic spawn-a
     assert.deepEqual(left.sparkleSample, right.sparkleSample, 'both viewports share one simulation');
     assert.ok(left.sparkleSample.some(([x]) => x > leftRect.width),
       'the scene field extends beyond the left viewport instead of duplicating a local field');
+    assert.equal(left.avoidedSparkleCount, 0);
     baseline = left;
     controller.dispose();
   });
@@ -467,23 +354,65 @@ test('split gutters render one wide scene field and filter deterministic spawn-a
       spawnAvoidanceRects: [blockedRect],
     });
     const filtered = entryFor(controller);
-    assert.ok(filtered.sparkleCount < baseline.sparkleCount);
-    assert.ok(filtered.sparkleSample.every(([x, y]) => !(
-      x >= blockedRect.left && x <= blockedRect.left + blockedRect.width
-      && y >= blockedRect.top && y <= blockedRect.top + blockedRect.height
-    )));
+    assert.equal(filtered.sparkleCount, baseline.sparkleCount, 'the field itself is not filtered by avoidance');
+    assert.deepEqual(filtered.sparkleSample, baseline.sparkleSample);
+    assert.ok(filtered.avoidedSparkleCount >= 1, 'the sparkle inside the rect is skipped at draw time');
     controller.dispose();
   });
+});
+
+test('a spawn-avoidance-only refresh keeps the field, rings and flares; avoided sparkles are skipped when drawn', () => {
+  withAtomic({}, ({ controller, raf, contexts }) => {
+    const rect = { left: 0, top: 0, width: 300, height: 300 };
+    const [host] = bindAndPrime(controller, raf, [{ role: 'chat-left', rect }], { sceneRect: rect, hostRects: [rect] });
+    const before = entryFor(controller);
+    const [sparkleX, sparkleY] = before.sparkleSample[0];
+    click(controller, sparkleX, sparkleY, { timeStamp: raf.now });
+    raf.flush(16);
+    assert.equal(entryFor(controller).waveCount, 1);
+    assert.ok(entryFor(controller).flareCount > 0, 'the ring flared the sparkles it crossed');
+
+    controller.refresh(buildFixtureContext({
+      generation: 1,
+      hosts: [{ element: host.element, role: 'chat-left' }],
+      sceneRect: rect,
+      hostRects: [rect],
+      layoutRevision: 2,
+      spawnAvoidanceRects: [{ left: sparkleX - 1, top: sparkleY - 1, width: 2, height: 2 }],
+    }));
+    const after = entryFor(controller);
+    assert.deepEqual(after.sparkleSample, before.sparkleSample, 'the field is not rebuilt');
+    assert.equal(after.sparkleCount, before.sparkleCount);
+    assert.equal(after.waveCount, 1, 'the live ring survives an avoidance-only refresh');
+    assert.ok(after.avoidedSparkleCount >= 1);
+    raf.flush(16);
+    assert.ok(entryFor(controller).waveCount === 1 && entryFor(controller).flareCount > 0,
+      'rings and flares keep running after the refresh repaint');
+    assert.ok(paintCount(contexts) > 0);
+    controller.dispose();
+  });
+
+  // Draw-time skip at the core: the same field, with and without an avoidance rect.
+  const free = makeCoreEntry({ sparkles: [{ x: 50, y: 50 }, { x: 150, y: 50 }, { x: 250, y: 50 }] });
+  const avoiding = makeCoreEntry({ sparkles: [{ x: 50, y: 50 }, { x: 150, y: 50 }, { x: 250, y: 50 }] });
+  atomicBurstCore.setAvoidance(avoiding.simulation, [{ left: 140, top: 40, width: 20, height: 20 }]);
+  const arcsOf = (entry) => step(entry, 1000) && entry.ctx.frames.at(-1).fills
+    .flatMap((fill) => fill.path.filter((op) => op.type === 'arc'));
+  assert.equal(arcsOf(free).length, 3);
+  const skipped = arcsOf(avoiding);
+  assert.equal(skipped.length, 2, 'the sparkle inside the avoidance rect is not drawn');
+  assert.ok(skipped.every((arc) => Math.abs(arc.x - 150) > 1));
+  assert.equal(avoiding.simulation.sparkles.length, 3, 'avoidance never removes a sparkle from the field');
 });
 
 test('one shared frame advances once while both gutter viewports paint the same scene state', () => {
   withAtomic({}, ({ controller, raf }) => {
     bindAndPrime(controller, raf, [{ role: 'chat-left' }, { role: 'chat-right' }]);
     const before = entryFor(controller, 'chat-left').drawCount;
-    raf.flush(16);
+    raf.flush(40);
     const left = entryFor(controller, 'chat-left');
     const right = entryFor(controller, 'chat-right');
-    assert.equal(left.drawCount, before + 1, 'shared simulation advances once for the rAF');
+    assert.equal(left.drawCount, before + 1, 'shared simulation advances once for the painted frame');
     assert.equal(right.drawCount, left.drawCount, 'both viewport snapshots observe the same frame state');
     assert.deepEqual(right.parallaxOffsets, left.parallaxOffsets);
     controller.dispose();
@@ -512,7 +441,7 @@ test('paint occlusion clears the viewport while the shared simulation continues 
       layoutRevision: 2,
       paintOcclusionRects: [rect],
     }));
-    raf.flush(17);
+    raf.flush(40);
 
     assert.ok(entryFor(controller).drawCount > before, 'occlusion does not pause scene simulation');
     assert.ok(clears.length >= 2, 'the frame clear and projected occlusion clear both execute');
@@ -522,14 +451,14 @@ test('paint occlusion clears the viewport while the shared simulation continues 
   });
 });
 
-test('long gaps clear transient waves without catch-up and hidden/detached entries do no work', () => {
+test('long gaps reset transient rings without catch-up; hidden and detached entries do no work', () => {
   withAtomic({}, ({ controller, raf, documentRef }) => {
     const [host] = bindAndPrime(controller, raf, [{ role: 'chat-left' }]);
-    controller.handleInput(inputPayload({ type: 'click', localX: 90, localY: 90 }));
+    click(controller, 90, 90, { timeStamp: raf.now });
     raf.flush(600);
-    assert.equal(entryFor(controller).waveCount, 0, 'a visible >500ms gap directly clears transient waves');
+    assert.equal(entryFor(controller).waveCount, 0, 'a visible >500ms gap directly clears transient rings');
 
-    controller.handleInput(inputPayload({ type: 'click', localX: 90, localY: 90 }));
+    click(controller, 90, 90, { timeStamp: raf.now });
     const before = entryFor(controller).drawCount;
 
     documentRef.hidden = true;
@@ -538,8 +467,8 @@ test('long gaps clear transient waves without catch-up and hidden/detached entri
     assert.equal(entryFor(controller).drawCount, before, 'hidden documents do not draw');
     documentRef.hidden = false;
     documentRef.fire('visibilitychange');
-    raf.flush(1000);
-    assert.equal(entryFor(controller).waveCount, 0, 'long-gap resume clears waves instead of fast-forwarding');
+    raf.flush(1200);
+    assert.equal(entryFor(controller).waveCount, 0, 'resume does not fast-forward a stale ring');
 
     host.element.isConnected = false;
     const detachedDraws = entryFor(controller).drawCount;
@@ -547,24 +476,42 @@ test('long gaps clear transient waves without catch-up and hidden/detached entri
     assert.equal(entryFor(controller).drawCount, detachedDraws, 'detached hosts do not draw');
     controller.dispose();
   });
+
+  const entry = makeCoreEntry({ sparkles: [{ x: 50, y: 50 }] });
+  atomicBurstCore.updatePointer(entry.simulation, 50, 50);
+  atomicBurstCore.spawnWave(entry.simulation, { x: 50, y: 50, startTime: 0, config: entry.config });
+  step(entry, 1);
+  step(entry, 2, { longGap: true, dtMs: 0 });
+  const after = atomicBurstCore.inspectSimulation(entry.simulation);
+  assert.equal(after.waveCount, 0);
+  assert.equal(after.pointerActive, false, 'a frame-clock long gap is a hard reset');
+  assert.equal(after.pointerFade, 0);
 });
 
-test('cancel clears all hosts before role lookup, including a mismatched synthetic role', () => {
+test('cancel clears the pointer only: rings keep settling, and a non-primary cancel leaves the primary hover alone', () => {
   withAtomic({}, ({ controller, raf }) => {
     bindAndPrime(controller, raf, [{ role: 'home' }], { surface: 'home' });
     controller.handleInput(inputPayload({
-      type: 'move', surfaceRole: 'home', localX: 30, localY: 40,
+      type: 'move', surfaceRole: 'home', sceneX: 30, sceneY: 40,
     }));
-    controller.handleInput(inputPayload({
-      type: 'click', surfaceRole: 'home', localX: 50, localY: 60,
-    }));
+    click(controller, 50, 60, { surfaceRole: 'home', timeStamp: raf.now });
     assert.equal(entryFor(controller, 'home').waveCount, 1);
     assert.equal(entryFor(controller, 'home').pointerActive, true);
 
+    // A second finger or pen contact never touches the primary pointer's state.
+    controller.handleInput(inputPayload({ type: 'cancel', isPrimary: false, pointerId: 2, surfaceRole: 'home' }));
+    controller.handleInput(inputPayload({ type: 'move', isPrimary: false, pointerId: 2, surfaceRole: 'home', sceneX: 200, sceneY: 200 }));
+    click(controller, 70, 70, { isPrimary: false, pointerId: 2, surfaceRole: 'home', timeStamp: raf.now });
+    let entry = entryFor(controller, 'home');
+    assert.equal(entry.pointerActive, true, 'non-primary cancel keeps the primary hover');
+    assert.equal(entry.pointerX, 30, 'a non-primary move does not steal the pointer');
+    assert.equal(entry.waveCount, 1, 'a non-primary click spawns no ring');
+
+    // The primary cancel, even with a mismatched synthetic role, clears the pointer only.
     controller.handleInput(inputPayload({ type: 'cancel', surfaceRole: 'synthetic-missing-role' }));
-    const entry = entryFor(controller, 'home');
-    assert.equal(entry.waveCount, 0);
+    entry = entryFor(controller, 'home');
     assert.equal(entry.pointerActive, false);
+    assert.equal(entry.waveCount, 1, 'the live ring settles on its own');
     controller.dispose();
   });
 });
@@ -601,26 +548,39 @@ test('hidden reduced-motion bind/refresh resumes with one static draw and reveal
   });
 });
 
-test('reduced motion suppresses waves and continuous animation while retaining static pointer focus', () => {
-  withAtomic({}, ({ controller, raf, reducedMotionQuery }) => {
+test('reduced motion: no rings or loop, and a binary flare that clears the instant the pointer leaves', () => {
+  withAtomic({}, ({ controller, raf, reducedMotionQuery, contexts }) => {
     bindAndPrime(controller, raf, [{ role: 'chat-left' }]);
-    controller.handleInput(inputPayload({ type: 'click' }));
+    click(controller, 100, 100, { timeStamp: raf.now });
     assert.equal(entryFor(controller).waveCount, 1);
     reducedMotionQuery.simulateChange(true);
-    assert.equal(entryFor(controller).waveCount, 0);
+    assert.equal(entryFor(controller).waveCount, 0, 'switching to reduced motion clears rings');
     assert.equal(raf.size, 0);
 
-    controller.handleInput(inputPayload({ type: 'click', localX: 200 }));
-    controller.handleInput(inputPayload({ localX: 33, localY: 44, sceneX: 333, sceneY: 144 }));
-    assert.equal(entryFor(controller).waveCount, 0);
-    assert.equal(entryFor(controller).pointerX, 333);
-    assert.equal(raf.size, 0);
+    click(controller, 200, 100);
+    assert.equal(entryFor(controller).waveCount, 0, 'rings stay suppressed under reduced motion');
+
+    const flareColor = entryFor(controller).flareColor;
+    const [sparkleX, sparkleY] = entryFor(controller).sparkleSample[0];
+    controller.handleInput(inputPayload({ sceneX: sparkleX, sceneY: sparkleY }));
+    assert.equal(entryFor(controller).pointerX, sparkleX, 'the static pointer highlight remains available');
+    let frame = lastFrame(contexts);
+    assert.ok(frame.fills.some((fill) => fill.fillStyle === flareColor), 'the hovered sparkle takes the flare colour');
+    assert.equal(frame.strokes.length, 0, 'no links or rings under reduced motion');
+    assert.ok(frame.fills.every((fill) => fill.path.every((op) => op.type !== 'arc' || op.r < 40)),
+      'no halo circle under reduced motion');
+
+    controller.handleInput(inputPayload({ type: 'leave' }));
+    frame = lastFrame(contexts);
+    assert.ok(frame.fills.every((fill) => fill.fillStyle !== flareColor), 'the flare clears immediately on leave');
+    assert.equal(raf.size, 0, 'static highlighting never restarts an ambient loop');
     controller.dispose();
   });
 });
 
 test('draw faults are contained and reported through the runtime fault seam', () => {
-  withAtomic({ documentOptions: { throwOnDraw: true } }, ({ controller, raf, reportCalls }) => {
+  // record: false keeps the fixture's own fault-injecting 2d context.
+  withAtomic({ documentOptions: { throwOnDraw: true }, record: false }, ({ controller, raf, reportCalls }) => {
     bindHosts(controller, [{ role: 'chat-left' }]);
     assert.doesNotThrow(() => raf.flush(16));
     assert.ok(reportCalls.length >= 1);
@@ -635,7 +595,7 @@ test('draw faults are contained and reported through the runtime fault seam', ()
 
 test('native controller owns no pointer listeners and disposal is terminal and leak-free', () => {
   withAtomic({}, ({
-    controller, raf, documentRef, reducedMotionQuery, ResizeObserverRef,
+    controller, raf, documentRef, reducedMotionQuery, ResizeObserverRef, windowRef,
   }) => {
     const hosts = bindAndPrime(controller, raf, [{ role: 'chat-left' }, { role: 'chat-right' }]);
     hosts.forEach(({ element }) => POINTER_EVENTS.forEach((eventName) => {
@@ -643,23 +603,105 @@ test('native controller owns no pointer listeners and disposal is terminal and l
     }));
     assert.equal(documentRef.listenerCount('visibilitychange'), 1);
     assert.equal(reducedMotionQuery.listenerCount(), 1);
+    assert.equal(windowRef.listenerCount('focus'), 1);
+    assert.equal(windowRef.listenerCount('blur'), 1);
     assert.equal(ResizeObserverRef.getActiveCount(), 0);
 
-    setStreaming(controller, { scopeEpoch: 5 });
-    controller.handleActivityImpulse({ scopeEpoch: 5, sequence: 1, kind: 'complete', timeStamp: 0 });
+    click(controller, 50, 50, { timeStamp: 0 });
     controller.dispose();
     assert.equal(raf.size, 0);
     assert.equal(documentRef.listenerCount('visibilitychange'), 0);
     assert.equal(reducedMotionQuery.listenerCount(), 0);
+    assert.equal(windowRef.listenerCount('focus'), 0);
+    assert.equal(windowRef.listenerCount('blur'), 0);
     assert.equal(ResizeObserverRef.getActiveCount(), 0);
     hosts.forEach(({ element }) => assert.equal(element.children.length, 0));
 
     const before = inspect(controller);
     assert.doesNotThrow(() => controller.dispose());
     controller.handleInput(inputPayload({ localX: 999 }));
-    setStreaming(controller, { scopeEpoch: 6 });
-    controller.handleActivityImpulse({ scopeEpoch: 6, sequence: 2, kind: 'complete', timeStamp: 1 });
     assert.deepEqual(inspect(controller), before, 'public methods are inert after dispose');
     assert.equal(before.disposed, true);
+  });
+});
+
+// ---- frame budget and DPR -------------------------------------------------
+
+test('frame budget: ~30fps at idle, every tick while the pointer is active, capped again when unfocused', () => {
+  withAtomic({}, ({ controller, raf, contexts, windowRef }) => {
+    bindAndPrime(controller, raf, [{ role: 'chat-left' }]);
+
+    let before = paintCount(contexts);
+    flushTicks(raf, 20);
+    const idlePaints = paintCount(contexts) - before;
+    assert.ok(idlePaints >= 9 && idlePaints <= 11, 'idle paints roughly every other 16ms tick (got ' + idlePaints + ')');
+    assert.equal(raf.size, 1, 'the breathing loop stays alive between budgeted paints');
+
+    controller.handleInput(inputPayload({ sceneX: 150, sceneY: 150 }));
+    before = paintCount(contexts);
+    flushTicks(raf, 20);
+    assert.equal(paintCount(contexts) - before, 20, 'an active pointer paints every tick');
+
+    windowRef.fire('blur');
+    before = paintCount(contexts);
+    flushTicks(raf, 20);
+    const blurredPaints = paintCount(contexts) - before;
+    assert.ok(blurredPaints >= 9 && blurredPaints <= 11, 'an unfocused window caps even with an active pointer (got ' + blurredPaints + ')');
+
+    windowRef.fire('focus');
+    before = paintCount(contexts);
+    flushTicks(raf, 10);
+    assert.equal(paintCount(contexts) - before, 10, 'refocus restores full rate');
+    controller.dispose();
+  });
+});
+
+test('frame budget: a live ring holds full rate until it and its flares expire, then the loop drops back to idle', () => {
+  withAtomic({}, ({ controller, raf, contexts }) => {
+    bindAndPrime(controller, raf, [{ role: 'chat-left' }]);
+    click(controller, 150, 150, { timeStamp: raf.now });
+    let before = paintCount(contexts);
+    flushTicks(raf, 10);
+    assert.equal(paintCount(contexts) - before, 10, 'a live ring paints every tick');
+    flushTicks(raf, 200);
+    assert.equal(entryFor(controller).waveCount, 0);
+    assert.equal(entryFor(controller).flareCount, 0);
+    before = paintCount(contexts);
+    flushTicks(raf, 20);
+    assert.ok(paintCount(contexts) - before <= 11, 'the settled field is back on the idle budget');
+    controller.dispose();
+  });
+});
+
+test('a DPR-only change re-backs the canvas on the next painted frame', () => {
+  const windowRef = makeFakeWindow(1);
+  withAtomic({ windowRef }, ({ controller, raf, contexts }) => {
+    const [host] = bindAndPrime(controller, raf, [{ role: 'chat-left' }]);
+    const canvas = host.element.children[0];
+    assert.equal(canvas.width, 300);
+    assert.equal(canvas.height, 300);
+
+    windowRef.devicePixelRatio = 1.5;
+    assert.equal(canvas.width, 300, 'nothing re-backs synchronously');
+    const before = paintCount(contexts);
+    flushTicks(raf, 2);
+    assert.ok(paintCount(contexts) > before, 'a frame was painted');
+    assert.equal(canvas.width, 450, 'the backing follows the new device pixel ratio');
+    assert.equal(canvas.height, 450);
+    assert.equal(entryFor(controller).dpr, 1.5);
+    controller.dispose();
+  });
+});
+
+test('reduced-motion static paints also re-back the canvas after a DPR-only change', () => {
+  const windowRef = makeFakeWindow(1);
+  withAtomic({ windowRef, reducedMotion: true }, ({ controller, raf }) => {
+    const [host] = bindAndPrime(controller, raf, [{ role: 'chat-left' }]);
+    const canvas = host.element.children[0];
+    assert.equal(canvas.width, 300);
+    windowRef.devicePixelRatio = 1.5;
+    controller.handleInput(inputPayload({ sceneX: 120, sceneY: 120 }));
+    assert.equal(canvas.width, 450, 'the static repaint follows the new device pixel ratio');
+    controller.dispose();
   });
 });

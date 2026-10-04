@@ -5,6 +5,7 @@ const {
   isReminderDue,
   reminderDueAt,
 } = require('../shell-config-followups-schema');
+const { normalizeNotificationSettings } = require('../shell-config-notifications-schema');
 
 const MAX_FAILURE_MESSAGES = 32;
 
@@ -54,7 +55,49 @@ function createReminderNotifier({
     sendBridgeEvent('reminders.onOpen', { id: reminderId });
   }
 
+  function isMainWindowFocused() {
+    try {
+      const mainWindow = getMainWindow?.();
+      if (!mainWindow || mainWindow.isDestroyed?.()) return false;
+      if (mainWindow.isMinimized?.() === true) return false;
+      if (mainWindow.isVisible?.() === false) return false;
+      return mainWindow.isFocused?.() === true;
+    } catch (_error) {
+      return false;
+    }
+  }
+
+  function readNotificationSettings() {
+    try {
+      return normalizeNotificationSettings(
+        getShellConfigService?.()?.getWindowUiState?.()?.notifications
+      );
+    } catch (error) {
+      logFailure('reminder_notifier.settings_failed', error);
+      return normalizeNotificationSettings(null);
+    }
+  }
+
+  function logInfo(event, details) {
+    try {
+      log('INFO', event, details);
+    } catch (_logError) {
+      // A diagnostic sink failure must not escape the synchronous poller.
+    }
+  }
+
   function showNotification(title, body, reminderId) {
+    // The OS toast honours windowUi.notifications (master switch, reminders
+    // category, sound); the in-app reminders.onFired event is unaffected.
+    // Every decision leaves a log line so a missing toast can be diagnosed.
+    const settings = readNotificationSettings();
+    if (settings.enabled === false) return logInfo('reminder_notifier.suppressed', { reason: 'disabled' });
+    if (settings.categories.reminders === false) return logInfo('reminder_notifier.suppressed', { reason: 'category_off' });
+    // "Only when Jenny is in the background" covers reminders too: the in-app
+    // reminders.onFired surface already shows a due reminder in a focused window.
+    if (settings.onlyWhenUnfocused === true && isMainWindowFocused()) {
+      return logInfo('reminder_notifier.suppressed', { reason: 'focused' });
+    }
     try {
       if (isSupported() !== true) {
         if (!unsupportedLogged) {
@@ -72,9 +115,10 @@ function createReminderNotifier({
       return;
     }
     try {
-      const notification = notificationFactory({ title, body, silent: false });
+      const notification = notificationFactory({ title, body, silent: settings.sound !== true });
       notification?.on?.('click', () => openReminder(reminderId));
       notification?.show?.();
+      logInfo('reminder_notifier.shown', { silent: settings.sound !== true });
     } catch (error) {
       logFailure('reminder_notifier.notification_failed', error);
     }

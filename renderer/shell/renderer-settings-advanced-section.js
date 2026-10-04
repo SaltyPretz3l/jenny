@@ -1,57 +1,38 @@
-/* renderer/shell/renderer-settings-advanced-section.js
- *
- * Settings -> Developer -> Advanced: the global engine-tuning surface.
- *
- * Every row is generated from renderer/shared/engine-tuning-schema.js rather
- * than hand-written, and every interaction is served by FOUR delegated
- * listeners bound to stable containers - not ~28 hand-wired handlers. The
- * containers outlive the innerHTML swap that a profile switch performs, which
- * is what keeps the delegation valid (same trick bindSkills uses).
- *
- * "Modified" is exactly `hasOwnProperty(values, key)`: the config normalizer
- * drops any value equal to the sidecar default, so an override is present in
- * the map if and only if the user actually set one. No diffing.
- */
+/* Settings -> Developer -> Limits & budgets. Stable rows share two persistence paths. */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) {
-    module.exports = factory(require('../shared/async-fence'));
+    module.exports = factory(require('../shared/async-fence'), require('./renderer-settings-field-binding'), require('./renderer-settings-field-descriptors'), require('./renderer-runtime-limits-view'));
     return;
   }
-  root.rendererSettingsAdvancedSection = factory(root.rendererAsyncFence);
-})(typeof globalThis !== 'undefined' ? globalThis : this, function (asyncFence) {
+  root.rendererSettingsAdvancedSection = factory(root.rendererAsyncFence, root.rendererSettingsFieldBinding, root.rendererSettingsFieldDescriptors, null);
+})(typeof globalThis !== 'undefined' ? globalThis : this, function (asyncFence, fieldBinding, fieldDescriptors, limitsView) {
   'use strict';
 
   var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
-  var jtn = (globalThis.jennyI18n && globalThis.jennyI18n.tn) || function (k, count, params, one, other) { return jt.call(null, k, count === 1 ? one : other, params); };
   var RESET_ARM_TIMEOUT_MS = 5000;
+  var STREAM_RECHECK_MS = 3000;
+  var FIELD_ID_PREFIX = 'advancedTuningField-';
+
+  // The page's rows live in the descriptors module, so the search stubs read the same labels and help.
+  var PAGE_GROUPS = fieldDescriptors.LIMITS_PAGE_GROUPS;
+
+  // The engine keys this page shows. A stored key with no row here (the spend cap) is not the page's to count.
+  var PAGE_TUNING_KEYS = Object.freeze(PAGE_GROUPS.reduce(function (keys, group) {
+    group.rows.forEach(function (row) {
+      row.lines.forEach(function (line) { if (line.tuning) keys.push(line.tuning); });
+    });
+    return keys;
+  }, []));
 
   function hasOwn(value, key) {
     return Boolean(value) && Object.prototype.hasOwnProperty.call(value, key);
   }
 
-  function escapeHtml(value) {
-    return String(value == null ? '' : value)
-      .replaceAll('&', '&amp;')
-      .replaceAll('<', '&lt;')
-      .replaceAll('>', '&gt;')
-      .replaceAll('"', '&quot;')
-      .replaceAll("'", '&#39;');
-  }
+  const escapeHtml = ((typeof globalThis !== 'undefined' && globalThis.stringUtils)
+    || (typeof require === 'function' ? require('../shared/string-utils') : null)).escapeHtml;
 
-  function formatUnit(unit) {
-    return unit ? ' ' + unit : '';
-  }
-
-  /* The default sits on the title line (see buildMetaMarkup), so the help text
-   * can stay a plain description. */
-  function describeField(field) {
-    return String(field.help || '');
-  }
-
-  function describeDefault(field) {
-    return field.default != null
-      ? 'Default ' + field.default + formatUnit(field.unit)
-      : jt('settings.advanced.autoEngineDecides', 'Auto = engine decides');
+  function fieldKeyOf(descriptorId) {
+    return String(descriptorId || '').slice(FIELD_ID_PREFIX.length);
   }
 
   function createAdvancedTuningSection(deps) {
@@ -62,11 +43,15 @@
     };
     var onStatus = typeof options.onStatus === 'function' ? options.onStatus : function () {};
 
-    var scope = 'local';
+    var statusOverride = null;
+    var builtHost = null;
     var lastState = { values: {}, fields: [], groups: [], pending: false, activeStream: false };
     var armedReset = '';
     var armTimer = null;
+    var streamRecheckTimer = null;
     var inFlight = false;
+    var painted = new WeakMap(); // node -> the markup last written into it
+    var foldErrors = new Set(); // rows inside the fold that already showed their error
     // The section instance is cached across Settings rebinds, so disposal is a
     // generation bump (not a one-shot latch): a rebind's fresh refresh mints a
     // new token, while the old binding's timer/response tokens go stale.
@@ -76,219 +61,166 @@
       return inventory && typeof inventory[name] === 'function' ? inventory[name] : null;
     }
 
-    function fieldsForScope() {
-      var fields = Array.isArray(lastState.fields) ? lastState.fields : [];
-      return fields.filter(function (field) {
-        return field.scope === scope || field.scope === 'shared';
-      });
-    }
-
     function isModified(field) {
       return hasOwn(lastState.values, field.key);
     }
 
-    function buildRowMarkup(field) {
-      var settingsField = inv('settingsField');
-      var numberInput = inv('numberInput');
-      if (!settingsField || !numberInput) return '';
-      var modified = isModified(field);
-      var control = numberInput({
-        id: 'advancedTuning-' + field.key,
-        min: field.min,
-        max: field.max,
-        step: field.step,
-        value: modified ? lastState.values[field.key] : field.default,
-        // A field with no sidecar default has to be able to show "unset";
-        // inventing a number would read as a value the user chose.
-        allowEmpty: field.default == null,
-        placeholder: field.default == null ? jt('settings.advanced.auto', 'Auto') : String(field.default),
-        suffix: field.unit,
-        ariaLabel: field.label,
-        dataset: { 'tuning-input': field.key },
-      });
-      // Default, "Modified", and the revert live on the title line in the text
-      // column (the same .settings-field-reset affordance Appearance uses), so
-      // the control column keeps its geometry whether or not a field is modified.
-      var metaMarkup = '<span class="settings-field-meta">'
-        + '<span class="settings-field-meta-default">' + escapeHtml(describeDefault(field)) + '</span>';
-      var actionButton = inv('actionButton');
-      if (modified) {
-        metaMarkup += '<span class="settings-field-meta-modified">Modified</span>';
-        if (actionButton) {
-          metaMarkup += actionButton({
-            id: 'advancedTuningReset-' + field.key,
-            label: jt('settings.advanced.revertButton', '\u21BA Revert'),
-            plain: true,
-            className: 'settings-field-reset',
-            ariaLabel: jt('settings.advanced.revertFieldAria', 'Revert {label} to its default', { label: field.label }),
-            title: jt('settings.advanced.revertToDefault', 'Revert to default'),
-            dataset: { 'tuning-reset': field.key },
-          });
+    // The skeleton is built before the engine state arrives and shows schema defaults,
+    // so the engine lines stay locked until the state has loaded.
+    function engineLocked() {
+      return Boolean(!lastState.fields.length || lastState.activeStream || lastState.pending || inFlight);
+    }
+
+    function rowOf(dom, key) {
+      var host = dom && dom.advancedTuningFields;
+      var input = key && host && typeof host.querySelector === 'function' ? host.querySelector('[data-tuning-input="' + key + '"]') : null;
+      return input ? input.closest('.settings-field') : null;
+    }
+
+    function buildRowMarkup(row) {
+      var label = row.label;
+      var view = limitsView || globalThis.rendererRuntimeLimitsView;
+      // One help line serves every control of the row.
+      var helpId = 'limitsRow-' + row.id + '-help';
+      var controls = row.lines.map(function (line) {
+        var id = line.tuning ? FIELD_ID_PREFIX + line.tuning : 'runtime_' + line.limit;
+        var side = line.side === 'both' ? jt('settings.limits.side.both', 'Both')
+          : line.side === 'cloud' ? jt('settings.limits.side.cloud', 'Cloud') : jt('settings.limits.side.local', 'Local');
+        var control;
+        if (line.tuning) {
+          var descriptor = fieldDescriptors.getSettingDescriptor(id);
+          control = fieldBinding.renderSettingControl(descriptor, descriptor.default, { inventory: inventory, describedBy: helpId });
+        } else {
+          if (!view) return '';
+          var entry = view.fields().find(function (item) { return item.draftKey === line.limit; });
+          control = view.limitLineHtml(entry, label + ', ' + side);
         }
-      }
-      metaMarkup += '</span>';
-      return settingsField({
-        id: 'advancedTuningField-' + field.key,
-        label: field.label,
-        help: describeField(field),
-        metaHtml: metaMarkup,
-        variant: 'row',
-        controlHtml: '<div class="settings-tuning-control">'
-          + '<div class="settings-tuning-control-row">' + control + '</div>'
-          + buildPresetsMarkup(field)
-          + '</div>',
-        dataset: { 'tuning-key': field.key },
+        return '<span class="settings-field-stack-line" data-limits-line="' + id + '">'
+          + '<span class="settings-field-revert-slot" data-setting-revert-slot="' + id + '"></span>'
+          + '<span class="settings-field-side">' + escapeHtml(side) + '</span>' + control + '</span>'
+          + (line.limit ? '<span class="settings-field-note" data-limits-note="' + line.limit + '" id="' + id + '_note" hidden></span>' : '');
+      }).join('');
+      if (!controls) return '';
+      return inventory.settingsField({
+        id: 'limitsRow-' + row.id, variant: 'row', className: 'settings-field--stack', label: label,
+        help: row.help, helpId: helpId,
+        metaHtml: '<span class="settings-field-meta"><span class="settings-field-meta-modified" hidden>'
+          + escapeHtml(jt('settings.field.modified', 'Modified')) + '</span></span>',
+        controlHtml: '<span class="settings-field-stack">' + controls + '</span>',
       });
-    }
-
-    /* Quick picks: one inventory action button per schema preset. The pick
-     * matching the EFFECTIVE value (override, else default) is pressed, so a
-     * default field shows which pick it already sits on. The builder has no
-     * aria-pressed slot, so render() stamps it from data-tuning-preset-pressed
-     * right after the innerHTML swap. */
-    function buildPresetsMarkup(field) {
-      var presets = Array.isArray(field.presets) ? field.presets : [];
-      var actionButton = inv('actionButton');
-      if (!presets.length || !actionButton) return '';
-      var effective = isModified(field) ? Number(lastState.values[field.key]) : field.default;
-      var html = '<div class="settings-tuning-presets" role="group" aria-label="'
-        + escapeHtml(jt('settings.advanced.quickPicksFor', 'Quick picks for {label}', { label: field.label })) + '">';
-      for (var i = 0; i < presets.length; i += 1) {
-        var preset = presets[i];
-        var pressed = effective != null && Number(preset.value) === Number(effective);
-        html += actionButton({
-          id: 'advancedTuningPreset-' + field.key + '-' + String(preset.value).replace(/[^0-9a-zA-Z]/g, '_'),
-          label: preset.label,
-          ariaLabel: field.label + ': ' + preset.label,
-          title: jt('settings.advanced.presetTitle', '{label} preset: {preset}', { label: field.label, preset: preset.label }),
-          variant: 'ghost',
-          size: 'sm',
-          className: 'settings-tuning-preset' + (pressed ? ' is-pressed' : ''),
-          dataset: {
-            'tuning-preset': field.key,
-            'tuning-preset-value': String(preset.value),
-            'tuning-preset-pressed': pressed ? 'true' : 'false',
-          },
-        });
-      }
-      return html + '</div>';
-    }
-
-    function stampPresetPressedState(host) {
-      if (!host || typeof host.querySelectorAll !== 'function') return;
-      var picks = host.querySelectorAll('[data-tuning-preset]');
-      for (var i = 0; i < picks.length; i += 1) {
-        picks[i].setAttribute('aria-pressed', picks[i].getAttribute('data-tuning-preset-pressed') === 'true' ? 'true' : 'false');
-      }
     }
 
     function buildFieldsMarkup() {
-      var groups = Array.isArray(lastState.groups) ? lastState.groups : [];
-      var fields = fieldsForScope();
-      if (!fields.length) return '<p class="settings-copy">' + escapeHtml(jt('settings.advanced.noTunableSettings', 'No tunable settings for this profile.')) + '</p>';
-      var html = '';
-      for (var g = 0; g < groups.length; g += 1) {
-        var group = groups[g];
-        var groupFields = fields.filter(function (field) {
-          return field.group === group.id;
-        });
-        if (!groupFields.length) continue;
-        var headingId = 'advancedTuningGroup-' + group.id;
-        html += '<div class="settings-group settings-group--wide" role="group" aria-labelledby="'
-          + escapeHtml(headingId) + '">'
-          + '<h4 class="settings-group-heading" id="' + escapeHtml(headingId) + '">'
-          + escapeHtml(group.label) + '</h4>'
-          + (group.help ? '<p class="settings-group-copy">' + escapeHtml(group.help) + '</p>' : '');
-        for (var f = 0; f < groupFields.length; f += 1) {
-          html += buildRowMarkup(groupFields[f]);
+      return PAGE_GROUPS.map(function (group) {
+        var label = escapeHtml(group.label);
+        var rows = group.rows.map(buildRowMarkup).join('');
+        if (group.id === 'rare') {
+          return '<details class="settings-fold" data-limits-fold><summary>' + label
+            + '<span class="settings-fold-count" hidden></span></summary>' + rows + '</details>';
         }
-        html += '</div>';
-      }
-      return html;
-    }
-
-    function buildProfileMarkup() {
-      var segmented = inv('segmentedControl');
-      if (!segmented) return '';
-      return segmented({
-        id: 'advancedTuningProfile',
-        ariaLabel: jt('settings.advanced.tuningProfile', 'Tuning profile'),
-        value: scope,
-        options: [
-          { value: 'local', label: jt('settings.advanced.local', 'Local') },
-          { value: 'cloud', label: jt('settings.advanced.cloud', 'Cloud') },
-        ],
-      });
+        return '<div class="settings-group" role="group" aria-labelledby="limitsGroup-' + group.id
+          + '" data-limits-group="' + group.id + '"><h4 class="settings-group-heading" id="limitsGroup-'
+          + group.id + '">' + label + '</h4>' + rows + '</div>';
+      }).join('');
     }
 
     function buildActionsMarkup() {
       var actionButton = inv('actionButton');
       if (!actionButton) return '';
-      var anyModified = fieldsForScope().some(isModified);
+      var anyModified = builtHost && builtHost.querySelector('.settings-field:not([hidden]) [data-setting-revert]');
       if (!anyModified) return '';
       var armed = armedReset === 'section';
-      // Two-step on purpose: this can change every field on the pane and forces
-      // a sidecar reinitialise.
+      // Two steps because this resets every limit on the page.
       return actionButton({
         id: 'advancedTuningResetAll',
         label: armed
-          ? jt('settings.advanced.confirmResetPaneButton', 'Confirm: reset every {pane} setting to default', { pane: paneLabel() })
-          : jt('settings.advanced.resetPaneButton', 'Reset {pane} settings to defaults', { pane: paneLabel() }),
-        ariaLabel: armed ? jt('settings.advanced.confirmResetPane', 'Confirm reset of every setting on the {pane} pane, including the shared ones, to its default', { pane: paneLabel() })
-          : jt('settings.advanced.resetPane', 'Reset every setting on the {pane} pane, including the shared ones, to its default', { pane: paneLabel() }),
-        title: armed ? jt('settings.advanced.confirmResetPane', 'Confirm reset of every setting on the {pane} pane, including the shared ones, to its default', { pane: paneLabel() })
-          : jt('settings.advanced.resetPane', 'Reset every setting on the {pane} pane, including the shared ones, to its default', { pane: paneLabel() }),
+          ? jt('settings.limits.resetPageConfirm', 'Confirm: reset every limit on this page')
+          : jt('settings.limits.resetPage', 'Reset this page'),
+        disabled: Boolean(lastState.activeStream || lastState.pending || inFlight),
         variant: armed ? 'danger' : 'secondary',
         dataset: { 'tuning-reset-all': armed ? 'confirm' : 'arm' },
       });
-    }
-
-    function paneLabel() {
-      return scope === 'cloud' ? jt('settings.advanced.cloud', 'Cloud') : jt('settings.advanced.local', 'Local');
     }
 
     function statusMessage() {
       if (lastState.activeStream) {
         return { tone: 'warning', text: jt('settings.advanced.finishReplyBeforeChanging', 'Finish the current reply before changing engine limits.') };
       }
-      var count = fieldsForScope().filter(isModified).length;
-      if (!count) {
-        return { tone: 'default', text: jt('settings.advanced.allDefaults', 'All settings are at their engine defaults.') };
+      if (lastState.pending || inFlight) {
+        return { tone: 'pending', text: describeFailure({ reason: 'update_in_progress' }) };
       }
-      return {
-        tone: 'pending',
-        text: jtn('settings.advanced.settingsDiffer', count, { count: count }, '{count} setting differs from the defaults.', '{count} settings differ from the defaults.'),
-      };
+      return statusOverride || { tone: 'default', text: '' };
     }
 
-    function render(dom) {
-      var target = dom || {};
-      if (target.advancedTuningProfileSwitch) {
-        target.advancedTuningProfileSwitch.innerHTML = buildProfileMarkup();
-      }
-      if (target.advancedTuningFields) {
-        target.advancedTuningFields.innerHTML = buildFieldsMarkup();
-        stampPresetPressedState(target.advancedTuningFields);
-        var disabled = Boolean(lastState.activeStream || lastState.pending);
-        var inputs = target.advancedTuningFields.querySelectorAll('input, button');
-        for (var i = 0; i < inputs.length; i += 1) {
-          inputs[i].disabled = disabled;
+    // Written only when it changed: a limits poll runs this, and a rewrite would
+    // drop keyboard focus from the button and announce the status again.
+    function writeMarkup(node, markup) {
+      if (!node || painted.get(node) === markup) return;
+      var held = node.contains(node.ownerDocument.activeElement);
+      node.innerHTML = markup;
+      painted.set(node, markup);
+      if (held) node.querySelector('button:not([disabled])')?.focus({ preventScroll: true });
+    }
+
+    function renderPageState(target) {
+      writeMarkup(target.advancedTuningActions, buildActionsMarkup());
+      if (builtHost) {
+        var engine = typeof options.getEngineType === 'function' ? options.getEngineType() : '';
+        var ollamaRow = builtHost.querySelector('[data-settings-field="limitsRow-ollamaRequest"]');
+        if (ollamaRow) ollamaRow.hidden = Boolean(engine && engine !== 'ollama');
+        var fold = builtHost.querySelector('[data-limits-fold]');
+        if (fold) {
+          // A refused row is not left inside the closed fold. It opens when a row turns to an
+          // error, not on every repaint: a person may close it again while the error stays.
+          var refused = Array.from(fold.querySelectorAll('.settings-field[data-state="error"]'));
+          if (refused.some(function (row) { return !foldErrors.has(row); })) fold.open = true;
+          foldErrors = new Set(refused);
         }
       }
-      if (target.advancedTuningActions) {
-        target.advancedTuningActions.innerHTML = buildActionsMarkup();
+      var countNode = builtHost && builtHost.querySelector('.settings-fold-count');
+      if (countNode) {
+        var count = Array.from(builtHost.querySelectorAll('[data-limits-fold] .settings-field')).filter(function (row) {
+          return Boolean(row.querySelector('[data-setting-revert]'));
+        }).length;
+        var countText = count ? jt('settings.limits.foldModified', '{count} modified', { count: count }) : '';
+        if (countNode.textContent !== countText) countNode.textContent = countText;
+        countNode.hidden = !count;
       }
+      var status = statusMessage();
       if (target.advancedTuningStatus) {
-        var status = statusMessage();
         var statusRow = inv('statusRow');
-        target.advancedTuningStatus.innerHTML = statusRow
-          ? statusRow({ tone: status.tone, message: status.text })
-          : escapeHtml(status.text);
+        writeMarkup(target.advancedTuningStatus, status.text
+          ? (statusRow ? statusRow({ tone: status.tone, message: status.text }) : escapeHtml(status.text)) : '');
+        target.advancedTuningStatus.hidden = !status.text;
       }
-      onStatus(statusMessage());
+      onStatus(status);
     }
 
-    function setState(nextState, dom) {
+    // forceKey: the engine line whose edit just settled or was refused. Its field takes the
+    // acknowledged value even while it has focus; every other focused field is left alone.
+    function render(dom, forceKey) {
+      var target = dom || {};
+      var host = target.advancedTuningFields;
+      if (host) {
+        if (builtHost !== host) {
+          host.innerHTML = buildFieldsMarkup();
+          builtHost = host;
+          host.querySelectorAll('[data-setting-input^="advancedTuningField-"]').forEach(function (input) {
+            input.setAttribute('data-tuning-input', fieldKeyOf(input.getAttribute('data-setting-input')));
+          });
+        }
+        lastState.fields.forEach(function (field) {
+          var descriptor = fieldDescriptors.getSettingDescriptor(FIELD_ID_PREFIX + field.key);
+          if (!descriptor) return;
+          var value = isModified(field) ? lastState.values[field.key] : field.default;
+          fieldBinding.syncSettingRow(host, descriptor, value, { liveDefault: field.default, inventory: inventory, force: field.key === forceKey });
+        });
+        setControlsDisabled(target, engineLocked());
+      }
+      renderPageState(target);
+    }
+
+    function setState(nextState, dom, forceKey) {
       var source = nextState && typeof nextState === 'object' ? nextState : {};
       lastState = {
         values: source.values && typeof source.values === 'object' ? source.values : {},
@@ -297,7 +229,23 @@
         pending: Boolean(source.pending),
         activeStream: Boolean(source.activeStream),
       };
-      render(dom);
+      render(dom, forceKey);
+      scheduleStreamRecheck(dom);
+    }
+
+    // A reply in progress locks the engine lines, and nothing pushes its end
+    // here: re-read while that lock holds, so the page unlocks once the reply
+    // is done instead of staying locked until restart (SW1-2 / F14).
+    function scheduleStreamRecheck(dom) {
+      if (streamRecheckTimer || !lastState.activeStream) return;
+      var recheckToken = lifecycleGate.capture();
+      streamRecheckTimer = setTimeout(function () {
+        streamRecheckTimer = null;
+        if (!lifecycleGate.isCurrent(recheckToken)) return;
+        if (inFlight) scheduleStreamRecheck(dom);
+        else void refresh(dom);
+      }, STREAM_RECHECK_MS);
+      if (typeof streamRecheckTimer?.unref === 'function') streamRecheckTimer.unref();
     }
 
     function clearArm() {
@@ -320,29 +268,44 @@
       render(dom);
     }
 
-    async function refresh(dom) {
+    async function refresh(dom, forceKey) {
+      render(dom);
       var bridge = getBridge();
-      if (!bridge || typeof bridge.getState !== 'function') return;
+      if (!bridge || typeof bridge.getState !== 'function') {
+        // Nothing can load the engine lines: they stay locked, and the page says why.
+        if (!lastState.fields.length) {
+          statusOverride = { tone: 'danger', text: jt('settings.advanced.readFailed', 'Could not read engine settings.') };
+          renderPageState(dom || {});
+        }
+        return;
+      }
       var refreshToken = lifecycleGate.capture();
       try {
         var payload = await bridge.getState();
         if (!lifecycleGate.isCurrent(refreshToken)) return;
-        setState(payload, dom);
+        setState(payload, dom, forceKey);
       } catch (_error) {
         if (!lifecycleGate.isCurrent(refreshToken)) return;
-        onStatus({ tone: 'danger', text: jt('settings.advanced.readFailed', 'Could not read engine settings.') });
+        statusOverride = { tone: 'danger', text: jt('settings.advanced.readFailed', 'Could not read engine settings.') };
+        renderPageState(dom);
+        // A failed read keeps the last reply lock, so keep re-checking it.
+        scheduleStreamRecheck(dom);
       }
     }
 
     function dispose() {
       lifecycleGate.bump();
       clearArm();
+      if (streamRecheckTimer) {
+        clearTimeout(streamRecheckTimer);
+        streamRecheckTimer = null;
+      }
     }
 
     function setControlsDisabled(dom, disabled) {
       var host = dom && dom.advancedTuningFields;
       if (!host || typeof host.querySelectorAll !== 'function') return;
-      var controls = host.querySelectorAll('input, button');
+      var controls = host.querySelectorAll('[data-tuning-input], [data-setting-preset^="advancedTuningField-"], [data-setting-revert^="advancedTuningField-"]');
       for (var i = 0; i < controls.length; i += 1) {
         controls[i].disabled = disabled;
       }
@@ -360,39 +323,59 @@
         return;
       }
       inFlight = true;
+      statusOverride = null;
+      var host = dom.advancedTuningFields;
+      var doc = host && host.ownerDocument;
+      // Locking the lines takes focus from the control that was used. It is remembered here
+      // (a quick pick as itself, Revert and the field as the line's field) and handed back
+      // when the change has settled, unless the person moved on.
+      var used = doc && host.contains(doc.activeElement) ? doc.activeElement : null;
+      var pick = used && used.closest('[data-setting-preset]');
+      var refocus = pick
+        ? '[data-setting-preset="' + pick.getAttribute('data-setting-preset') + '"][data-setting-preset-value="' + pick.getAttribute('data-setting-preset-value') + '"]'
+        : (used && fieldKey ? '[data-tuning-input="' + fieldKey + '"]' : '');
+      renderPageState(dom);
       setControlsDisabled(dom, true);
-      var settingsField = inv('settingsField');
-      var row = fieldKey && settingsField && typeof settingsField.findField === 'function'
-        ? settingsField.findField(dom.advancedTuningFields, 'advancedTuningField-' + fieldKey)
-        : null;
-      if (row && typeof settingsField.setFieldBusy === 'function') {
+      var settingsField = inventory && inventory.settingsField;
+      var row = settingsField ? rowOf(dom, fieldKey) : null;
+      if (row) {
+        settingsField.setFieldError(row, '');
         settingsField.setFieldBusy(row, true);
       }
       try {
         var result = await invoke();
         var status = result && result.status;
-        if (result && result.state) setState(result.state, dom);
-        else await refresh(dom);
+        if (result && result.state) setState(result.state, dom, fieldKey);
+        else await refresh(dom, fieldKey);
         if (status === 'applied' && result && result.reason === 'deferred') {
-          onStatus({ tone: 'success', text: jt('settings.advanced.savedForNextStart', 'Saved. The engine is not running right now, so this applies the next time it starts.') });
+          statusOverride = { tone: 'success', text: jt('settings.advanced.savedForNextStart', 'Saved. The engine is not running right now, so this applies the next time it starts.') };
+        }
+        if (status === 'applied' && !fieldKey && settingsField && host) {
+          // A page reset that went through leaves no engine line refused.
+          host.querySelectorAll('.settings-field[data-state="error"]').forEach(function (refused) {
+            if (refused.querySelector('[data-tuning-input]')) settingsField.setFieldError(refused, '');
+          });
         }
         if (status && status !== 'applied') {
           var message = describeFailure(result);
-          var freshRow = fieldKey && settingsField && typeof settingsField.findField === 'function'
-            ? settingsField.findField(dom.advancedTuningFields, 'advancedTuningField-' + fieldKey)
-            : null;
-          if (freshRow && typeof settingsField.setFieldError === 'function') {
-            settingsField.setFieldError(freshRow, message);
-          }
-          onStatus({ tone: 'danger', text: message });
+          if (row) settingsField.setFieldError(row, message);
+          statusOverride = { tone: 'danger', text: message };
         }
       } catch (_error) {
-        onStatus({ tone: 'danger', text: jt('settings.advanced.updateFailed', 'Engine settings update failed.') });
+        statusOverride = { tone: 'danger', text: jt('settings.advanced.updateFailed', 'Engine settings update failed.') };
+        if (row) settingsField.setFieldError(row, statusOverride.text);
       } finally {
         inFlight = false;
         // The result path re-renders (and so re-derives disabled from state);
         // the throw path does not, so release the controls explicitly.
-        setControlsDisabled(dom, Boolean(lastState.activeStream || lastState.pending));
+        if (row) settingsField.setFieldBusy(row, false);
+        setControlsDisabled(dom, engineLocked());
+        renderPageState(dom);
+        var now = doc && doc.activeElement;
+        if (refocus && (!now || now === doc.body || !now.isConnected || now.disabled)) {
+          var back = host.querySelector(refocus);
+          if (back && !back.disabled) back.focus({ preventScroll: true });
+        }
       }
     }
 
@@ -414,6 +397,18 @@
     /* FOUR delegated listeners for the whole surface. */
     function bind(dom, registerSectionListener) {
       var target = dom || {};
+      render(target);
+
+      function updateKey(key, value) {
+        clearArm();
+        submit(target, function () {
+          var bridge = getBridge();
+          if (!bridge || typeof bridge.update !== 'function') {
+            return { status: 'rejected', reason: 'bridge_unavailable' };
+          }
+          return bridge.update({ key: key, value: value });
+        }, key);
+      }
 
       registerSectionListener(target.advancedTuningFields, 'change', function (event) {
         var input = event.target && event.target.closest
@@ -421,55 +416,42 @@
           : null;
         if (!input) return;
         var key = input.getAttribute('data-tuning-input');
-        var raw = input.value;
+        var descriptor = fieldDescriptors.getSettingDescriptor(FIELD_ID_PREFIX + key);
+        var read = fieldBinding.readControlValue(descriptor, event);
+        if (!read) return;
         clearArm();
-        submit(target, function () {
-          var bridge = getBridge();
-          if (!bridge || typeof bridge.update !== 'function') {
-            return { status: 'rejected', reason: 'bridge_unavailable' };
-          }
-          return bridge.update({ key: key, value: raw === '' ? null : Number(raw) });
-        }, key);
+        // An empty field means "no override" only where the setting allows it. Anything
+        // that is not a number in range is refused here: it must never clear an override.
+        var unset = read.value === null && !(input.validity && input.validity.badInput);
+        var checked = unset ? { ok: true } : fieldDescriptors.validateSettingValue(descriptor, read.value);
+        var row = input.closest('.settings-field');
+        var setFieldError = inventory && inventory.settingsField && inventory.settingsField.setFieldError;
+        if (!checked.ok) {
+          if (row && setFieldError) setFieldError(row, checked.error);
+          // The refused text does not stay behind: the field shows the acknowledged value again,
+          // also when Enter committed it and it still has focus.
+          render(target, key);
+          return;
+        }
+        updateKey(key, unset ? null : read.value);
       });
 
       registerSectionListener(target.advancedTuningFields, 'click', function (event) {
         var closest = event.target && event.target.closest ? event.target.closest.bind(event.target) : null;
         if (!closest) return;
-        var preset = closest('[data-tuning-preset]');
-        if (preset) {
-          var presetKey = preset.getAttribute('data-tuning-preset');
-          var presetValue = Number(preset.getAttribute('data-tuning-preset-value'));
-          if (!Number.isFinite(presetValue)) return;
-          clearArm();
-          submit(target, function () {
-            var bridge = getBridge();
-            if (!bridge || typeof bridge.update !== 'function') {
-              return { status: 'rejected', reason: 'bridge_unavailable' };
-            }
-            return bridge.update({ key: presetKey, value: presetValue });
-          }, presetKey);
+        var preset = closest('[data-setting-preset]');
+        if (preset && preset.getAttribute('data-setting-preset').startsWith(FIELD_ID_PREFIX)) {
+          var presetValue = Number(preset.getAttribute('data-setting-preset-value'));
+          if (Number.isFinite(presetValue)) updateKey(fieldKeyOf(preset.getAttribute('data-setting-preset')), presetValue);
           return;
         }
-        var button = closest('[data-tuning-reset]');
-        if (!button) return;
-        var key = button.getAttribute('data-tuning-reset');
-        clearArm();
-        submit(target, function () {
-          var bridge = getBridge();
-          if (!bridge || typeof bridge.update !== 'function') {
-            return { status: 'rejected', reason: 'bridge_unavailable' };
-          }
-          return bridge.update({ key: key, value: null });
-        }, key);
+        var button = closest('[data-setting-revert]');
+        if (!button || !button.getAttribute('data-setting-revert').startsWith(FIELD_ID_PREFIX)) return;
+        updateKey(fieldKeyOf(button.getAttribute('data-setting-revert')), null);
       });
 
-      registerSectionListener(target.advancedTuningProfileSwitch, 'inv-segmented-change', function (event) {
-        var detail = (event && event.detail) || {};
-        var nextScope = detail.value === 'cloud' ? 'cloud' : 'local';
-        if (nextScope === scope) return;
-        scope = nextScope;
-        clearArm();
-        render(target);
+      registerSectionListener(target.advancedTuningFields, 'limits-lines-updated', function () {
+        renderPageState(target);
       });
 
       registerSectionListener(target.advancedTuningActions, 'click', function (event) {
@@ -482,13 +464,22 @@
           return;
         }
         clearArm();
-        submit(target, function () {
+        var limitsSaved = true;
+        submit(target, async function () {
+          if (typeof options.resetLimitsToDefaults === 'function') limitsSaved = (await options.resetLimitsToDefaults()) === true;
+          // Only the keys this page shows: a stored value with no row here is not a reason to reset the engine.
+          if (!lastState.fields.some(function (field) { return PAGE_TUNING_KEYS.indexOf(field.key) !== -1 && isModified(field); })) return { status: 'applied' };
           var bridge = getBridge();
           if (!bridge || typeof bridge.reset !== 'function') {
             return { status: 'rejected', reason: 'bridge_unavailable' };
           }
-          return bridge.reset({ scope: scope });
-        }, '');
+          return bridge.reset();
+        }, '').then(function () {
+          // A refused limits half outranks the engine half's "saved" line; an engine failure keeps its own message.
+          if (limitsSaved || (statusOverride && statusOverride.tone === 'danger')) return;
+          statusOverride = { tone: 'danger', text: jt('runtime.limits.failed', "Limits weren't saved. They changed elsewhere or were refused; review and save again.") };
+          renderPageState(target);
+        });
       });
     }
 

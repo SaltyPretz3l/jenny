@@ -74,7 +74,7 @@ def test_subprocess_deadline_terminates_over_budget_worker(
         deadline_fired.set()
 
     monkeypatch.setattr(manager, "terminate_task", terminate_task)
-    manager._watch_worker_deadline(  # noqa: SLF001
+    manager._watch_worker_deadline(
         _TimedOutProcess(),
         task_key="automation:run_123",
         timeout_seconds=0.01,

@@ -1,9 +1,9 @@
-/* Core Home surface: the info strip (clock / greeting / weather / today
- * digest) rendered directly into #homeInfoStrip by the dashboard manager,
- * plus the local date helpers the calendar family imports. The strip reads
- * existing renderer state slices (state.weather, state.calendar,
- * state.companion, state.scheduler) — no new IPC. Markup builds on the
- * inventory primitives (actionButton HTML strings); no raw form controls.
+/* Core Home surface: the info strip (clock / greeting / today digest)
+ * rendered directly into #homeInfoStrip by the dashboard manager, plus the
+ * local date helpers the calendar family imports. The strip reads existing
+ * renderer state slices (state.calendar, state.companion, state.scheduler)
+ * — no new IPC. Markup builds on the inventory primitives (actionButton HTML
+ * strings); no raw form controls.
  */
 
 (function (root, factory) {
@@ -29,14 +29,8 @@
     return value && typeof value === 'object' && !Array.isArray(value) ? value : null;
   }
 
-  function escapeHtml(value) {
-    return String(value || '')
-      .replaceAll('&', '&amp;')
-      .replaceAll('<', '&lt;')
-      .replaceAll('>', '&gt;')
-      .replaceAll('"', '&quot;')
-      .replaceAll("'", '&#39;');
-  }
+  const escapeHtml = ((typeof globalThis !== 'undefined' && globalThis.stringUtils)
+    || (typeof require === 'function' ? require('../shared/string-utils') : null)).escapeHtml;
 
   function formatClockTime(now) {
     if (globalThis.jennyI18n?.timeOptions?.().hourCycle) return `${pad2(now.getHours())}:${pad2(now.getMinutes())}`;
@@ -67,21 +61,6 @@
       return jt('dashboard.widgets.info.goodEvening', 'Good evening');
     }
     return jt('dashboard.widgets.info.upLate', 'Up late');
-  }
-
-  function formatWeatherSummary(weather) {
-    const source = asObject(weather);
-    if (!source || source.available !== true) {
-      return '';
-    }
-    const metric = String(source.units || 'metric') !== 'imperial';
-    const temp = metric ? source.tempC : source.tempF;
-    if (!Number.isFinite(Number(temp))) {
-      return '';
-    }
-    const reading = `${Math.round(Number(temp))}°${metric ? 'C' : 'F'}`;
-    const description = String(source.description || '').trim();
-    return description ? `${reading} · ${description}` : reading;
   }
 
   function pad2(value) {
@@ -298,13 +277,11 @@
         return;
       }
       const now = nowProvider();
-      const weatherSummary = formatWeatherSummary(ctx.state?.weather);
       const digest = formatTodayDigest(ctx.state, now);
-      // Lead = clock numeral + a stacked greeting/date heading; actions =
-      // the weather chip (pushed right — the focus/edit controls moved into
-      // the built-once ask region's page menu); digest wraps onto its own
-      // full-width line below. Leaf class names are unchanged so the strip's
-      // selector-based tests keep matching.
+      // Lead = clock numeral + a stacked greeting/date heading (the
+      // focus/edit controls live in the built-once ask region's page menu);
+      // digest wraps onto its own full-width line below. Leaf class names are
+      // unchanged so the strip's selector-based tests keep matching.
       chromeEl.innerHTML = ''
         + '<div class="home-info-strip__lead">'
         + `<span class="home-info-strip__time">${escapeHtml(formatClockTime(now))}</span>`
@@ -312,11 +289,6 @@
         + `<span class="home-info-strip__greeting">${escapeHtml(pickGreeting(now))}</span>`
         + `<span class="home-info-strip__date">${escapeHtml(formatClockDate(now))}</span>`
         + '</span>'
-        + '</div>'
-        + '<div class="home-info-strip__actions">'
-        + (weatherSummary
-          ? `<span class="home-info-strip__weather">${escapeHtml(weatherSummary)}</span>`
-          : '')
         + '</div>'
         + (digest
           ? `<div class="home-info-strip__digest">${escapeHtml(digest)}</div>`

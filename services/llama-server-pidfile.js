@@ -213,6 +213,56 @@ function shutdownLlamaServerSync({
   return { hadState: true, killed: true, pid };
 }
 
+// Settles a record retained after an unconfirmed kill, for an owner deciding
+// whether another server may start beside it. Unlike the startup reap, a
+// command line that cannot be read proves nothing here: the record is kept and
+// the cleanup stays unconfirmed, as it does for a record with no stored
+// command. Only a readable, different command line (a recycled pid) or a
+// verified exit clears it.
+function reconcileRetainedPid({
+  userDataPath,
+  logger,
+  platform = process.platform,
+  spawnSyncImpl = spawnSync,
+  isProcessAliveImpl = isProcessAlive,
+  getProcessCommandLineSyncImpl = getProcessCommandLineSync,
+} = {}) {
+  const log = normalizeLogger(logger);
+  const pidPath = getPidFilePath(userDataPath);
+  const record = readPidFile(pidPath);
+  const pid = record.pid;
+  if (!pid || !isProcessAliveImpl(pid)) {
+    clearPidFile(pidPath);
+    return { confirmed: true, pid };
+  }
+  let commandLine;
+  try {
+    commandLine = getProcessCommandLineSyncImpl(pid, { platform, spawnSyncImpl });
+  } catch (_error) {
+    commandLine = '';
+  }
+  if (!commandLine || !record.command) {
+    log('WARN', 'llama.server.cleanup_identity_unavailable', { pid, retained: true });
+    return { confirmed: false, pid };
+  }
+  if (!processCommandMatchesStored(commandLine, record.command)) {
+    log('WARN', 'llama.server.force_kill_identity_unconfirmed', {
+      pid,
+      status: 'skipped',
+      phase: 'reconcile',
+    });
+    clearPidFile(pidPath);
+    return { confirmed: true, pid };
+  }
+  forceKillProcessTreeSync(pid, { platform, spawnSyncImpl });
+  if (!verifyProcessExitedSync(pid, { isProcessAliveImpl })) {
+    log('WARN', 'llama.server.orphan_kill_unverified', { pid, retained: true });
+    return { confirmed: false, pid };
+  }
+  clearPidFile(pidPath);
+  return { confirmed: true, pid };
+}
+
 module.exports = {
   PID_FILENAME,
   buildPidRecordCommand,
@@ -222,6 +272,7 @@ module.exports = {
   llamaServerIdentityConfirmed,
   readPidFile,
   reapStalePidFile,
+  reconcileRetainedPid,
   shutdownLlamaServerSync,
   writePidFile,
 };

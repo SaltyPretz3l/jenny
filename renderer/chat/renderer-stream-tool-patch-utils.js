@@ -1,10 +1,10 @@
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) {
-    module.exports = factory(require('./tool-call-utils'));
+    module.exports = factory(require('./tool-call-utils'), require('./renderer-stream-dom-patch-utils'));
     return;
   }
-  root.rendererStreamToolPatchUtils = factory(root.toolCallUtils || {});
-})(typeof globalThis !== 'undefined' ? globalThis : this, function (toolCallUtils) {
+  root.rendererStreamToolPatchUtils = factory(root.toolCallUtils || {}, root.rendererStreamDomPatchUtils || null);
+})(typeof globalThis !== 'undefined' ? globalThis : this, function (toolCallUtils, streamDomPatchUtils) {
   'use strict';
 
   const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
@@ -103,8 +103,18 @@
     }
     if (type === 'tool_result') {
       const approvalState = normalizeId(payload?.approvalState || payload?.approval_state).toLowerCase();
+      const isError = payload?.isError === true || payload?.is_error === true;
+      if (typeof toolCallUtils.statusForToolResult === 'function') {
+        // Only the result fields: the merged patch payload can carry an unrelated
+        // call status (running/success) that the helper would read as the verdict.
+        return toolCallUtils.statusForToolResult({
+          approval_state: approvalState,
+          is_error: isError,
+          error_code: normalizeId(payload?.errorCode || payload?.error_code),
+        });
+      }
       if (approvalState === 'denied') return 'denied';
-      if (payload?.isError === true || payload?.is_error === true) return 'errored';
+      if (isError) return 'errored';
       return 'completed';
     }
     const rawStatus = normalizeId(payload?.status || payload?.tool_call?.status || 'running').toLowerCase();
@@ -292,6 +302,9 @@
     errored: { politeness: 'assertive', phrase: (name) => jt('chat.toolCall.failedAnnouncement', '{tool} failed', { tool: name }) },
     denied: { politeness: 'assertive', phrase: (name) => jt('chat.toolCall.deniedAnnouncement', '{tool} was denied', { tool: name }) },
     timed_out: { politeness: 'assertive', phrase: (name) => jt('chat.toolCall.timedOutAnnouncement', '{tool} timed out', { tool: name }) },
+    cancelled: { politeness: 'polite', phrase: (name) => `${name}: ${getStatusLabel('cancelled')}` },
+    blocked: { politeness: 'assertive', phrase: (name) => `${name}: ${getStatusLabel('blocked')}` },
+    interrupted: { politeness: 'assertive', phrase: (name) => `${name}: ${getStatusLabel('interrupted')}` },
   };
 
   function announceTerminalStatusChange(announcer, callId, previousStatus, nextStatus, toolName) {
@@ -330,7 +343,7 @@
     node.classList.toggle('tool-call-file-settled', !composing && settled);
   }
 
-  function patchStatus(targets, status, announceCtx) {
+  function patchStatus(targets, status, announceCtx, resultPayload) {
     const previousStatus = (targets.toolCallRow || targets.block)?.getAttribute?.('data-tool-status') || '';
     [targets.row, targets.block, targets.toolCallRow].filter(Boolean).forEach((node) => {
       if (node === targets.row) {
@@ -345,7 +358,13 @@
     if (targets.toolResultRow) {
       targets.toolResultRow.setAttribute('data-is-error', status === 'errored' ? 'true' : 'false');
     }
-    const statusLabel = getStatusLabel(status);
+    // A command that exited non-zero reads "exit N" here too (HB-035).
+    const statusLabel = resultPayload && typeof toolCallUtils.getResultStatusLabel === 'function'
+      ? toolCallUtils.getResultStatusLabel(status, {
+        exit_code: resultPayload.exit_code ?? resultPayload.tool_result?.exit_code,
+        metadata: resultPayload.metadata || resultPayload.tool_result?.metadata,
+      })
+      : getStatusLabel(status);
     const tone = getStatusTone(status);
     setTextIfPresent(targets.root, '.tool-call-status-label', statusLabel);
     setTextIfPresent(targets.root, '.tool-call-status-badge', statusLabel);
@@ -400,14 +419,74 @@
     return true;
   }
 
+  // Answers tool run (renderer-turn-row-list-utils): a status patch on a
+  // member row re-derives its run's summary from the members' patched DOM
+  // state, through the same summarizeToolRun a full render uses, so the live
+  // label and done count never wait for the next structural render.
+  // A step that turned running through a patch has no elapsed anchor: the run
+  // remembers when it first saw it running, keyed by the member node, which
+  // the keyed morph reuses (an attribute stamp would be dropped by it).
+  const toolRunRunningSince = new WeakMap();
+  function refreshToolRunSummary(memberRow, durationMs) {
+    const runId = memberRow?.getAttribute?.('data-run-id');
+    const list = runId ? memberRow.closest?.('.turn-row-list') : null;
+    if (!list || typeof toolCallUtils.summarizeToolRun !== 'function') return;
+    if (Number(durationMs) > 0) memberRow.setAttribute('data-run-duration-ms', String(Number(durationMs)));
+    const rows = toolCallUtils.getToolRunRows(list, runId);
+    const summaryRow = rows.find((node) => node.getAttribute('data-row-kind') === 'tool_run');
+    const toggle = summaryRow?.querySelector?.('[data-tool-run-toggle]');
+    if (!toggle) return;
+    const members = rows.filter((node) => node.getAttribute('data-run-member') === 'step').map((node) => {
+      // The same tool-row attributes the row-list builder reads from markup.
+      const toolRow = node.querySelector('[data-tool-status]');
+      const status = toolRow?.getAttribute('data-tool-status') || node.getAttribute('data-row-state') || '';
+      let startedAtMs = Number(node.querySelector('[data-elapsed-started-at]')?.getAttribute('data-elapsed-started-at'))
+        || toolRunRunningSince.get(node) || 0;
+      if (!startedAtMs && (status === 'running' || status === 'executing')) {
+        startedAtMs = Date.now();
+        toolRunRunningSince.set(node, startedAtMs);
+      }
+      return {
+        ...toolCallUtils.readToolRunMemberAttributes(node),
+        status,
+        isError: toolRow?.getAttribute('data-is-error') === 'true',
+        startedAtMs,
+      };
+    });
+    const summary = toolCallUtils.summarizeToolRun(members);
+    const template = toggle.ownerDocument?.createElement?.('template');
+    if (!template) return;
+    template.innerHTML = toolCallUtils.buildToolRunToggleInner(summary);
+    // The turn clock owns the ticking label: keep its text so a patch that
+    // lands on a new second does not rebuild the row and restart the shimmer.
+    const liveElapsed = toggle.querySelector('[data-elapsed-started-at]');
+    const nextElapsed = template.content.querySelector('[data-elapsed-started-at]');
+    if (liveElapsed && nextElapsed
+      && liveElapsed.getAttribute('data-elapsed-started-at') === nextElapsed.getAttribute('data-elapsed-started-at')) {
+      nextElapsed.textContent = liveElapsed.textContent;
+    }
+    if (toggle.innerHTML !== template.innerHTML) toggle.innerHTML = template.innerHTML;
+    summaryRow.querySelector('.tool-run-row')?.setAttribute('data-tool-run-state', toolCallUtils.toolRunState(summary));
+  }
+
+  // A minimal row's result presentation (detail model, failure line, output)
+  // comes from the keyed full render, not from this field-level patch.
+  function isMinimalRowTarget(targets) {
+    return !targets.block && targets.toolCallRow?.classList?.contains('tool-call-row--minimal') === true;
+  }
+
   function patchToolTarget(targets, entry, announcer) {
     const payload = entry?.payload || {};
+    // This lane writes the row's DOM directly: drop the row-list reconcile
+    // stamp so an identical later segment re-checks the row (timeline-perf).
+    streamDomPatchUtils?.invalidateRowStamp?.(targets.row || targets.root);
     const status = resolvePatchStatus(payload, entry?.eventType);
     const toolName = resolveToolName(payload);
     const summary = resolveSummary(payload);
     const outputText = resolveOutputText(payload);
     const durationLabel = formatDurationMs(payload.durationMs || payload.duration_ms || payload.tool_result?.duration_ms);
-    patchStatus(targets, status, announcer ? { announcer, callId: entry?.callId, toolName } : null);
+    patchStatus(targets, status, announcer ? { announcer, callId: entry?.callId, toolName } : null,
+      entry?.eventType === 'tool_result' || payload.type === 'tool_result' ? payload : null);
     if (toolName) {
       setTextIfPresent(targets.root, '.tool-call-name, .tool-result-label', toolName);
     }
@@ -418,6 +497,10 @@
       setTextIfPresent(targets.root, '.tool-call-duration, .tool-result-duration', durationLabel);
     }
     patchOutputText(targets, outputText);
+    if (entry?.eventType === 'tool_result' && isMinimalRowTarget(targets)) {
+      targets.toolCallRow.setAttribute('data-is-error', payload.isError === true || payload.is_error === true ? 'true' : 'false');
+    }
+    refreshToolRunSummary(targets.row, payload.durationMs || payload.duration_ms || payload.tool_result?.duration_ms);
     return true;
   }
 
@@ -572,6 +655,9 @@
           try {
             patchToolTarget(targets, entry, announcer);
             callPatched(entry);
+            if (entry.eventType === 'tool_result' && isMinimalRowTarget(targets)) {
+              callFallback(entry, 'result_needs_render');
+            }
           } catch (error) {
             logFallback('patch_failed', entry);
             appendClientLog('WARN', 'stream.live_tool_patch_failed', {
@@ -640,5 +726,6 @@
 
   return {
     createLiveToolPatchController,
+    refreshToolRunSummary,
   };
 });

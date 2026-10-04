@@ -33,7 +33,6 @@ function createToolsServiceStub({ options, state }) {
       }
       return { policies: {} };
     },
-    async setPermission() { return { ok: true }; },
   };
 }
 

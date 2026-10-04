@@ -15,14 +15,32 @@ test('NSIS uninstall hook skips updates and silent purges while mapping only fix
   assert.doesNotMatch(source, /RMDir \/r "\$PROFILE\\\.companion"/);
   assert.match(source, /StrCmp \$JennyRemovalMode "cleanup"/);
   assert.doesNotMatch(source, /RMDir \/r "\$APPDATA\\jenny"/);
-  for (const name of KNOWN_USER_DATA_CHILDREN) {
-    assert.match(source, new RegExp(`RemoveJennyProfileChild "${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"`));
-  }
+  const children = [...source.matchAll(/^\s*!insertmacro RemoveJennyProfileChild "([^"]+)"/gm)].map((match) => match[1]);
+  assert.deepEqual(children.sort(), [...KNOWN_USER_DATA_CHILDREN].sort());
   assert.match(source, /IfFileExists "\$APPDATA\\jenny\\\*\.\*"/);
   assert.match(source, /JennyCleanupIncomplete/);
   assert.match(source, /SetErrorLevel 24/);
   assert.match(source, /GetFileAttributesW/);
   assert.match(source, /0x400/);
+});
+
+test('NSIS profile cleanup rejects a linked or unreadable profile root before any child removal', () => {
+  const source = fs.readFileSync(path.join(__dirname, '..', 'build', 'installer.nsh'), 'utf8');
+  const hook = source.slice(source.indexOf('!macro customUnInstall'));
+  const rootCheck = hook.indexOf('GetFileAttributesW(t "$APPDATA\\jenny")');
+  const firstChild = hook.indexOf('!insertmacro RemoveJennyProfileChild');
+  assert.ok(rootCheck > 0, 'the profile root attributes are read');
+  assert.ok(rootCheck < firstChild, 'the root check precedes the first child removal');
+  const block = hook.slice(0, firstChild);
+  assert.match(block, /IfFileExists "\$APPDATA\\jenny" 0 jenny_root_clear/, 'a missing root skips the check');
+  assert.match(block, /IntOp \$1 \$0 & 0x400/);
+  assert.match(block, /StrCmp \$1 "0" jenny_root_clear/, 'only a zero reparse bit continues');
+  const linked = block.slice(block.indexOf('MessageBox'), block.indexOf('jenny_root_clear:'));
+  assert.match(linked, /link/i);
+  assert.match(linked, /SetErrorLevel 24/);
+  assert.match(linked, /Goto done/);
+  assert.doesNotMatch(linked, /RemoveJennyProfileChild|RMDir|Delete /);
+  assert.match(block, /jenny_root_clear:/);
 });
 
 test('electron-builder wires the NSIS include and DMG helper', () => {
@@ -36,7 +54,6 @@ test('macOS helper uses the same fixed profile-child allowlist', () => {
   const source = fs.readFileSync(path.join(__dirname, '..', 'uninstall.command'), 'utf8');
   assert.doesNotMatch(source, /rm -rf -- "\$PROFILE_ROOT"/);
   assert.match(source, /\[ -L "\$TARGET" \]/);
-  for (const name of KNOWN_USER_DATA_CHILDREN) {
-    assert.match(source, new RegExp(`remove_profile_child "${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"`));
-  }
+  const children = [...source.matchAll(/^\s+remove_profile_child "([^"]+)"/gm)].map((match) => match[1]);
+  assert.deepEqual(children.sort(), [...KNOWN_USER_DATA_CHILDREN].sort());
 });

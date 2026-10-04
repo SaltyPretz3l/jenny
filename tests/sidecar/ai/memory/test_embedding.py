@@ -47,7 +47,7 @@ def test_embedding_delete_failure_rolls_back_and_allows_next_write(tmp_path: Pat
     store = EmbeddingStore(tmp_path / "test.db")
     try:
         store.store_embedding(1, [0.1, 0.2])
-        store._connection.execute(  # noqa: SLF001
+        store._connection.execute(
             """
             CREATE TRIGGER fail_embedding_delete
             BEFORE DELETE ON memory_embeddings
@@ -56,15 +56,15 @@ def test_embedding_delete_failure_rolls_back_and_allows_next_write(tmp_path: Pat
             END
             """
         )
-        store._connection.commit()  # noqa: SLF001
+        store._connection.commit()
 
         with pytest.raises(sqlite3.IntegrityError, match="injected delete failure"):
             store.delete_embedding(1)
 
-        assert store._connection.in_transaction is False  # noqa: SLF001
+        assert store._connection.in_transaction is False
         assert store.get_embedding(1) is not None
-        store._connection.execute("DROP TRIGGER fail_embedding_delete")  # noqa: SLF001
-        store._connection.commit()  # noqa: SLF001
+        store._connection.execute("DROP TRIGGER fail_embedding_delete")
+        store._connection.commit()
         store.store_embedding(2, [0.3, 0.4])
         assert store.get_embedding(2) is not None
     finally:

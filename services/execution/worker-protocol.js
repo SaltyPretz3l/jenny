@@ -72,7 +72,7 @@ function validateExitCodes(value) {
 
 function validateCommand(input) {
   if (!record(input)) throw workerError('sandbox_arguments_invalid', HOST_ERROR_CODES.INVALID);
-  const allowed = ['command', 'cwd', 'timeoutSeconds', 'expectedExitCodes'];
+  const allowed = ['command', 'cwd', 'inputRoot', 'timeoutSeconds', 'expectedExitCodes'];
   if (Object.keys(input).some((key) => !allowed.includes(key))) {
     throw workerError('sandbox_arguments_invalid', HOST_ERROR_CODES.INVALID);
   }
@@ -83,10 +83,14 @@ function validateCommand(input) {
   const cwd = input.cwd === undefined ? '.' : input.cwd;
   const timeoutSeconds = input.timeoutSeconds === undefined ? 10 : input.timeoutSeconds;
   const expectedExitCodes = input.expectedExitCodes === undefined ? [0] : input.expectedExitCodes;
+  const inputRoot = input.inputRoot === undefined ? '.' : input.inputRoot;
+  try { validateCwd(inputRoot); } catch {
+    throw workerError('sandbox_input_root_invalid', HOST_ERROR_CODES.INVALID);
+  }
   validateCwd(cwd);
   validateTimeout(timeoutSeconds);
   validateExitCodes(expectedExitCodes);
-  return { command: input.command, cwd, timeoutSeconds, expectedExitCodes: [...expectedExitCodes] };
+  return { command: input.command, cwd, inputRoot, timeoutSeconds, expectedExitCodes: [...expectedExitCodes] };
 }
 
 function validateRequest(request) {
@@ -97,7 +101,7 @@ function validateRequest(request) {
   const required = request.operation === 'status'
     ? ['schema_version', 'request_id', 'operation']
     : request.operation === 'submit'
-      ? ['schema_version', 'request_id', 'operation', 'incarnation', 'job_id', 'command', 'cwd', 'timeout_seconds']
+      ? ['schema_version', 'request_id', 'operation', 'incarnation', 'job_id', 'command', 'cwd', 'input_root', 'timeout_seconds']
       : ['schema_version', 'request_id', 'operation', 'incarnation', 'job_id'];
   if (Object.keys(request).length !== required.length || Object.keys(request).some((key) => !required.includes(key))) {
     throw workerError('worker_request_keys_invalid', HOST_ERROR_CODES.INVALID);
@@ -110,6 +114,7 @@ function validateRequest(request) {
     boundedText(request.command, 'command', MAX_COMMAND_BYTES);
     if (!request.command.trim()) throw workerError('command_invalid', HOST_ERROR_CODES.INVALID);
     validateCwd(request.cwd);
+    validateCwd(request.input_root);
     validateTimeout(request.timeout_seconds);
   }
   return request;

@@ -85,7 +85,7 @@ test('Overview distinguishes ready, starting, and unavailable runtime states', a
   for (const [phase, label] of [['ready', 'Ready'], ['starting', 'Starting'], ['failed', 'Runtime unavailable']]) {
     const app = await loadRendererApp({
       windowGlobals: QUIET_MONACO_WINDOW_GLOBALS,
-      shell: { diagnostics: {
+      shell: { backend: { getStatus: async () => ({ phase, detail: '', mode: 'managed-dev' }) }, diagnostics: {
         logs: { getSnapshot: async () => ({ active_run: { run_id: phase }, entries: [], sources: OBSERVED_SOURCES, integrity: { complete: true, partial_reasons: [] } }) },
         getJennyStatus: async () => ({ schema_version: 3, backend: { phase } }),
       } },
@@ -94,6 +94,31 @@ test('Overview distinguishes ready, starting, and unavailable runtime states', a
     app.window.document.getElementById('logsTopRailTab').click(); await waitForUi(app.window, 40);
     assert.equal(app.window.document.querySelector('#diagnosticsOverall strong')?.textContent, label);
   }
+});
+
+test('Overview headline, performance and health agree on a live failure newer than the snapshot', async (t) => {
+  const app = await loadRendererApp({
+    windowGlobals: QUIET_MONACO_WINDOW_GLOBALS,
+    shell: { backend: { getStatus: async () => ({ phase: 'model_unavailable', detail: '', mode: 'managed-dev', model_acquisition: { requested_model: 'missing-model' } }) }, diagnostics: {
+      logs: { getSnapshot: async () => ({ active_run: { run_id: 'run' }, entries: [], sources: OBSERVED_SOURCES, integrity: { complete: true, partial_reasons: [] } }) },
+      getJennyStatus: async () => ({
+        schema_version: 3,
+        backend: { phase: 'ready' },
+        phase_percentiles: { available: true, phases: { provider_request_start_to_first_chunk: { count: 2, p50: 12 } } },
+        tool_observability: { available: true, tools: {} },
+        slow_operations: { available: true, count: 0, items: [] },
+      }),
+    } },
+  });
+  t.after(async () => app.dispose());
+  const doc = app.window.document;
+  doc.getElementById('logsTopRailTab').click();
+  await waitForUi(app.window, 40);
+  assert.match(doc.querySelector('#diagnosticsOverall strong')?.textContent, /Model unavailable/i);
+  const summary = doc.getElementById('performanceAnomaliesContainer').textContent;
+  assert.match(summary, /Model unavailable/);
+  assert.doesNotMatch(summary, /No performance anomalies/);
+  assert.match(doc.getElementById('diagnosticsBadge').textContent, /Model unavailable/i);
 });
 
 test('Overview renders bounded Runtime Inventory and clears stale health on refresh failure', async (t) => {
@@ -215,7 +240,7 @@ test('Runtime Inventory reads shell values instead of listing section keys', asy
 
   const inventory = app.window.document.getElementById('diagnosticsRuntimeInventory');
   const shellRow = inventoryRow(inventory, 'Shell');
-  assert.equal(shellRow.querySelector('dd').textContent, 'Companion planner · offline disabled · 2 of 4 tool prefs on');
+  assert.equal(shellRow.querySelector('dd').textContent, 'Planner \u00b7 Offline: Off \u00b7 2 of 4 tool preferences on');
   assert.equal(shellRow.getAttribute('data-tone'), 'ok');
   assert.doesNotMatch(inventory.textContent, /Tools Preferences/);
   const skillsRow = inventoryRow(inventory, 'Skills');
@@ -363,7 +388,7 @@ test('Overview labels performance evidence partial when one latency facet is una
 
 test('Overview does not recommend sampling while the backend is terminal', async (t) => {
   const app = await loadRendererApp({
-    shell: { diagnostics: {
+    shell: { backend: { getStatus: async () => ({ phase: 'failed', detail: '', mode: 'managed-dev' }) }, diagnostics: {
       logs: { getSnapshot: async () => ({ active_run: { run_id: 'run' }, entries: [], sources: OBSERVED_SOURCES, integrity: { complete: true, partial_reasons: [] } }) },
       getJennyStatus: async () => ({
         schema_version: 3,

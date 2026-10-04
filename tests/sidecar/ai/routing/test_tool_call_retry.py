@@ -8,6 +8,7 @@ across test files).
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -528,3 +529,26 @@ class TestParseFailureCounting:
         counters = store.get_reliability_counters(profile_id=profile_id)
         assert counters is not None
         assert counters.tool_call_parse_failure_count == 0
+
+
+def test_native_probe_failure_assumes_native_and_warns_once_per_engine_class(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    class _ExplodingProbeEngine:
+        @property
+        def supports_tool_calling(self) -> bool:
+            raise RuntimeError("probe exploded")
+
+    monkeypatch.setattr(tool_call_retry, "_PROBE_FAILURE_WARNED", set())
+    kernel = type("Kernel", (), {"_engine": _ExplodingProbeEngine()})()
+
+    with caplog.at_level(logging.DEBUG, logger=tool_call_retry.logger.name):
+        assert native_tools_active_for_kernel(kernel) is True
+        assert native_tools_active_for_kernel(kernel) is True
+
+    probe_records = [
+        r for r in caplog.records if "native tool-calling probe failed" in r.getMessage()
+    ]
+    assert [r.levelno for r in probe_records] == [logging.WARNING, logging.DEBUG]
+    assert "_ExplodingProbeEngine" in probe_records[0].getMessage()

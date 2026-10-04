@@ -49,11 +49,11 @@ def test_initialize_rejects_invalid_result_before_notification(
     )
 
     with pytest.raises(MCPError) as excinfo:
-        transport._ensure_initialized()  # noqa: SLF001
+        transport._ensure_initialized()
 
     assert excinfo.value.code == CMP_MCP_PROTOCOL_FAILED
     assert notifications == []
-    assert transport._initialized is False  # noqa: SLF001
+    assert transport._initialized is False
 
 
 @pytest.mark.parametrize(
@@ -69,6 +69,6 @@ def test_send_rejects_nonmatching_response_id(
     monkeypatch.setattr(transport, "_post", lambda *_args, **_kwargs: response)
 
     with pytest.raises(MCPError) as excinfo:
-        transport._send("tools/list", {}, timeout_seconds=1.0)  # noqa: SLF001
+        transport._send("tools/list", {}, timeout_seconds=1.0)
 
     assert excinfo.value.code == CMP_MCP_PROTOCOL_FAILED

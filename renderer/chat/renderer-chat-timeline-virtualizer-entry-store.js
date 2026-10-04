@@ -28,14 +28,8 @@
     return text.slice(0, SEMANTIC_PREVIEW_CAP - 1).trimEnd() + '\u2026';
   }
 
-  function escapeHtml(value) {
-    return String(value || '')
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;')
-      .replace(/'/g, '&#39;');
-  }
+  const escapeHtml = ((typeof globalThis !== 'undefined' && globalThis.stringUtils)
+    || (typeof require === 'function' ? require('../shared/string-utils') : null)).escapeHtml;
 
   function createTimelineVirtualizerEntryStore(deps) {
     var options = deps || {};

@@ -46,7 +46,7 @@
 
 .diagnostics-header h2 {
   margin: var(--space-1) 0 0;
-  font-size: var(--font-size-4xl);
+  font-size: var(--font-size-title);
   line-height: 1.2;
 }
 
@@ -54,16 +54,14 @@
   max-width: 680px;
   margin: var(--space-3) 0 0;
   color: var(--text-muted);
-  font-size: var(--font-size-md);
+  font-size: var(--font-size-body);
   line-height: 1.5;
 }
 
 .diagnostics-eyebrow {
   color: var(--text-muted);
-  font-size: var(--font-size-xs);
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+  font-size: var(--font-size-caption);
+  font-weight: 500;
 }
 
 .diagnostics-header-actions {
@@ -82,10 +80,8 @@
 .diagnostics-header-actions .inv-select-field-label,
 .diagnostics-toolbar .inv-select-field-label {
   color: var(--text-muted);
-  font-size: var(--font-size-xs);
-  font-weight: 700;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
+  font-size: var(--font-size-body);
+  font-weight: 500;
 }
 
 .diagnostics-header-actions .inv-select-field-control,
@@ -97,7 +93,7 @@
   background: var(--surface-input-background);
   color: var(--text-primary);
   font: inherit;
-  font-size: var(--font-size-base);
+  font-size: var(--font-size-body);
 }
 
 .diagnostics-header-actions .inv-select-field-control,
@@ -135,7 +131,7 @@
   background: transparent;
   box-shadow: none;
   color: var(--text-muted);
-  font-size: var(--font-size-md);
+  font-size: var(--font-size-body);
   transform: none;
 }
 
@@ -153,18 +149,26 @@
 }
 
 .diagnostics-overview,
-.diagnostics-activity {
+.diagnostics-activity,
+.diagnostics-runs {
   min-height: 0;
 }
 
-.diagnostics-overview {
+.diagnostics-overview,
+.diagnostics-runs {
   overflow: auto;
   scrollbar-gutter: stable;
 }
 
 .diagnostics-overview[hidden],
-.diagnostics-activity[hidden] {
+.diagnostics-activity[hidden],
+.diagnostics-runs[hidden] {
   display: none;
+}
+
+/* Runs (2026-10-03): the board sits in one diagnostics section. */
+.diagnostics-runs-board {
+  padding: var(--space-7) var(--space-8);
 }
 
 .diagnostics-overall {
@@ -186,10 +190,8 @@
   flex: 0 0 auto;
   min-width: 58px;
   color: var(--state-pending);
-  font-size: var(--font-size-xs);
-  font-weight: 800;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
+  font-size: var(--font-size-caption);
+  font-weight: 500;
 }
 
 .diagnostics-overall[data-tone="ok"] .diagnostics-overall-state {
@@ -206,13 +208,14 @@
 
 .diagnostics-overall strong {
   display: block;
-  font-size: var(--font-size-lg);
+  font-size: var(--font-size-heading);
+  font-weight: 500;
 }
 
 .diagnostics-overall p {
   margin: var(--space-1) 0 0;
   color: var(--text-muted);
-  font-size: var(--font-size-base);
+  font-size: var(--font-size-footnote);
 }
 
 .diagnostics-overall-count {
@@ -253,13 +256,13 @@
 
 .diagnostics-section-heading h3 {
   margin: 0;
-  font-size: var(--font-size-card-title);
+  font-size: var(--font-size-heading);
 }
 
 .diagnostics-section-heading p {
   margin: var(--space-2) 0 0;
   color: var(--text-muted);
-  font-size: var(--font-size-sm);
+  font-size: var(--font-size-footnote);
   line-height: 1.4;
 }
 
@@ -280,7 +283,8 @@
 
 .diagnostics-empty strong {
   color: var(--text-secondary);
-  font-size: var(--font-size-md);
+  font-size: var(--font-size-body);
+  font-weight: 500;
 }
 
 .diagnostics-empty p {
@@ -341,4 +345,8 @@
     flex-direction: column;
     gap: var(--space-5);
   }
+}
+
+.diagnostics-header-actions[hidden] {
+  display: none;
 }

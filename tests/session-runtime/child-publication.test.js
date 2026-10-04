@@ -8,6 +8,7 @@ const { waitFor } = require('../helpers/session-runtime-chat-adapter-harness');
 const { initializeSessionRuntimeComposition } = require('../../services/session-runtime/composition');
 const { RuntimeApplicationService } = require('../../services/session-runtime/application-service');
 const { fixture } = require('../helpers/session-runtime-children-fixture');
+const { isRuntimeChildSession } = require('../../services/main/desktop-notifier');
 
 const tick = () => new Promise(resolve => setImmediate(resolve));
 
@@ -42,6 +43,11 @@ test('real parent gateway publishes one durable read-only child, queues without 
   h.starts[0].complete();
   await waitFor(() => h.starts.length === 2, () => JSON.stringify(h.logs));
   assert.equal(admit(h.starts[1], 'child_inference').status, 'granted');
+  // A published child runs without a stream admission and its lineage never
+  // crosses the bridge, so main's desktop notifier asks the runtime store.
+  assert.equal(h.starts[1].request.runtimeAdmission, null);
+  assert.equal(isRuntimeChildSession(h.runtime, first.session_id), true);
+  assert.equal(isRuntimeChildSession(h.runtime, h.sessionId), false);
   const budget = h.runtime.budgetStore.get(h.started.root_run_id);
   assert.equal(h.runtime.budgetStore.snapshot().root_record_count, 1);
   assert.equal(budget.charged.inference_requests, 2);
@@ -454,4 +460,56 @@ test('repeated dependency proof accepts only settled canonical child results fro
   assert.throws(() => proveDependencyPrefix({ ...options, permittedStreams: [work.attempt.stream_id] }));
   waitEvents[2].payload.tool_output_summary = JSON.stringify({ ...receipt, result: 'forged output' });
   assert.throws(() => proveDependencyPrefix({ ...options, events: [...first.events, ...waitEvents] }), /spawn_result/);
+});
+
+test('settled lineage retires only inside an idle or explicit session deletion, while unfinished children block it', async t => {
+  const h = await fixture(t);
+  const child = await h.spawn();
+  h.starts[0].complete();
+  await waitFor(() => h.starts.length === 2, 'child starts');
+  assert.equal(h.runtime.hasSessionWork(h.sessionId), true);
+  assert.equal((await h.runtime.cancelSessionAndWait(h.sessionId, { deletionHandle: {} })).reason, 'runtime_lineage_retained');
+  h.starts[1].complete();
+  await waitFor(() => h.runtime.store.get(child.child_work_id).status === 'completed', 'child finishes');
+  await tick();
+  assert.equal(h.runtime.hasSessionWork(h.sessionId), false);
+  // The busy check is read-only; a refused idle delete keeps the lineage.
+  assert.equal(h.runtime.lineageStore.snapshot().root_record_count, 1);
+  const { deleteSessionWithQuiescence } = require('../../services/backend/backend-session-delete-lifecycle');
+  assert.equal((await deleteSessionWithQuiescence(h.service, h.sessionId, { onlyIfIdle: true,
+    expectedUpdatedAt: 'stale' })).deleted, false);
+  assert.equal(h.runtime.lineageStore.snapshot().root_record_count, 1);
+  assert.equal((await deleteSessionWithQuiescence(h.service, h.sessionId)).deleted, true);
+  assert.equal(h.runtime.lineageStore.snapshot().root_record_count, 0);
+  assert.equal(h.service.sessionStore.getSession(h.sessionId), null);
+  assert.equal(h.runtime.hasSessionWork(child.session_id), false);
+  const childSession = h.service.sessionStore.getSession(child.session_id);
+  assert.equal((await deleteSessionWithQuiescence(h.service, child.session_id, { onlyIfIdle: true,
+    expectedUpdatedAt: childSession.updated_at })).deleted, true);
+});
+
+test('child tool preserves capacity and argument reasons and redacts unexpected failures', async t => {
+  const h = await fixture(t);
+  const { executeRuntimeChildTool } = require('../../services/session-runtime/child-capabilities');
+  const { RUNTIME_ERROR_CODES, TOOL_ERROR_CODES } = require('../../services/backend/error-codes');
+  const binding = h.runtime.chatAdapter.contexts.get(h.started.work_id).binding;
+  const policy = await executeRuntimeChildTool({ ...binding }, 'session_spawn', { task: 'Read' }, 'call_policy');
+  assert.equal(policy.errorCode, TOOL_ERROR_CODES.POLICY_DENIED);
+  assert.match(policy.content, /runtime_child_capability_required/);
+  h.runtime.lanes.limits.local.descendants = 0;
+  const capacity = await executeRuntimeChildTool(binding, 'session_spawn', { task: 'Read' }, 'call_capacity');
+  assert.equal(capacity.errorCode, RUNTIME_ERROR_CODES.RESOURCE_EXCEEDED);
+  assert.match(capacity.content, /lineage_descendant_capacity/);
+  const invalid = await executeRuntimeChildTool(binding, 'session_spawn', {}, 'call_invalid');
+  assert.equal(invalid.errorCode, RUNTIME_ERROR_CODES.INVALID_REQUEST);
+  assert.match(invalid.content, /runtime_child_arguments_invalid/);
+  h.runtime.lanes.limits.local.descendants = 8;
+  h.runtime.lineageStore.create = () => { throw new Error('secret token planted-qx'); };
+  const failed = await executeRuntimeChildTool(binding, 'session_spawn', { task: 'Read' }, 'call_failure');
+  assert.equal(failed.errorCode, TOOL_ERROR_CODES.EXECUTION_FAILED);
+  assert.doesNotMatch(failed.content, /secret|planted-qx/);
+  const diagnostic = h.logs.at(-1);
+  assert.equal(diagnostic[1], 'runtime.child_operation_failed');
+  assert.equal(diagnostic[2].call_id, 'call_failure');
+  assert.doesNotMatch(JSON.stringify(diagnostic), /secret|planted-qx/);
 });

@@ -26,7 +26,6 @@ test('opening an image routes through versioned readImage into the image pane', 
   await settle();
 
   assert.deepEqual(harness.bridge.calls.readImage.map((call) => call.path), ['assets/logo.png']);
-  assert.deepEqual(harness.bridge.calls.readFileBase64, [], 'legacy base64 lane is not touched');
   assert.deepEqual(harness.bridge.calls.readFile, [], 'text read lane never touched');
   const pane = imagePane(harness);
   assert.ok(pane, 'image pane created');

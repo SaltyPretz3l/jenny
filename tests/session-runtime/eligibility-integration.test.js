@@ -279,6 +279,68 @@ test('cancellation, stream cancellation, OFF, session pause, shutdown and restar
   }
 });
 
+// Dogfood HB-034: Stop on a turn that paused behind a resource wait was refused
+// (no active entry) after its resume wait had already been forgotten, so the
+// work stayed paused with nothing left to move it.
+test('Stop on a paused stream cancels the paused work instead of stranding it', async t => {
+  const h = fixture(t);
+  const resourceLease = h.holdResources();
+  const suspended = await h.suspend('session_stop_paused');
+  assert.equal(h.store.get(suspended.workId).status, 'paused');
+  assert.equal(h.coordinator.snapshot().wait_count, 1);
+
+  const report = h.runtime.noteStreamCancellation(suspended.sourceAttempt.stream_id, 'user_cancel');
+  const settled = report.settlement ? await report.settlement : report;
+
+  assert.equal(report.paused, true);
+  assert.equal(report.work_id, suspended.workId);
+  assert.notEqual(report.status, 'rejected');
+  assert.equal(settled.cleanup_confirmed, true);
+  const cancelled = h.store.get(suspended.workId);
+  assert.equal(cancelled.status, 'cancelled');
+  assert.equal(cancelled.transition.reason, 'user_cancel');
+  assert.equal(h.coordinator.snapshot().wait_count, 0);
+  h.broker.release(resourceLease, { producerSettled: true });
+  await tick();
+  assert.equal(h.starts.length, 1, 'a stopped paused turn was resumed');
+});
+
+// The resource freed but another turn holds the lane: the continuation is
+// pending, still on its old stream, and would start as soon as the lane opens.
+test('Stop also cancels a continuation that is queued behind a busy lane', async t => {
+  const h = fixture(t);
+  const resourceLease = h.holdResources();
+  const suspended = await h.suspend('session_stop_queued');
+  const laneBlocker = h.lanes.tryAcquireTurn({ sessionId: 'session_blocker', route: h.route });
+  assert.equal(laneBlocker.status, 'granted');
+  h.broker.release(resourceLease, { producerSettled: true });
+  await tick();
+  assert.equal(h.store.get(suspended.workId).status, 'pending');
+
+  const report = h.runtime.noteStreamCancellation(suspended.sourceAttempt.stream_id, 'user_cancel');
+  const settled = report.settlement ? await report.settlement : report;
+
+  assert.equal(report.paused, true);
+  assert.notEqual(report.status, 'rejected');
+  assert.equal(settled.cleanup_confirmed, true);
+  assert.equal(h.store.get(suspended.workId).status, 'cancelled');
+  h.lanes.release(laneBlocker.lease, { producerSettled: true });
+  await tick();
+  assert.equal(h.starts.length, 1, 'a stopped queued continuation started when the lane opened');
+});
+
+test('a stream no paused or active work owns is still refused and clears nothing else', async t => {
+  const h = fixture(t);
+  const resourceLease = h.holdResources();
+  const suspended = await h.suspend('session_other_stream');
+  const report = h.runtime.noteStreamCancellation('stream_unknown', 'user_cancel');
+  assert.equal(report.status, 'rejected');
+  assert.equal(report.paused, undefined);
+  assert.equal(h.store.get(suspended.workId).status, 'paused');
+  assert.equal(h.coordinator.snapshot().wait_count, 1);
+  h.broker.release(resourceLease, { producerSettled: true });
+});
+
 test('a refused explicit resume preserves the live resource wakeup', async t => {
   const h = fixture(t, { retryResumeOnce: true });
   const resourceLease = h.holdResources();
@@ -407,4 +469,21 @@ test('final canonical busy claims and rollbacks do not schedule their own pump',
       'confirmed external release did not wake the pending canonical claim');
     assert.equal(h.starts.length, 2);
   }
+});
+
+test('failed automatic preparation loses tracking and projects actionable attention', async t => {
+  const h = fixture(t);
+  const lease = h.holdResources();
+  const { workId } = await h.suspend('session_failed_resume');
+  h.runtime.checkpointStore = { inspectReference: () => ({ progress: {}, wait: { kind: 'resource' } }) };
+  const { projectRunItems, projectWorkCoordination } = require('../../services/session-runtime/work-details');
+  const rows = () => projectRunItems(h.runtime, h.store.listRunSummaries().items);
+  assert.equal(rows()[0].group, 'waiting');
+  h.runtime.chatAdapter.prepareResume = () => { throw new Error('runtime_resume_unavailable'); };
+  h.broker.confirmCleanup(lease);
+  await tick();
+  assert.equal(h.coordinator.isTracked(workId), false);
+  assert.equal(rows()[0].group, 'needs_you');
+  assert.equal(projectWorkCoordination(h.runtime, h.store.get(workId)).attention, true);
+  assert.equal(h.attention.at(-1).work_id, workId);
 });

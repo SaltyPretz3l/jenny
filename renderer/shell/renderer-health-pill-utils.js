@@ -8,7 +8,6 @@
   'use strict';
 
   const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
-  const jtn = (globalThis.jennyI18n && globalThis.jennyI18n.tn) || function (k, count, params, one, other) { return jt.call(null, k, count === 1 ? one : other, params); };
   const POPOVER_OPEN_REFRESH_MS = 4000;
   const DEFAULT_REFRESH_OPTIONS = Object.freeze({ recentLogLimit: 25 });
 
@@ -31,6 +30,19 @@
       case 'stopped': return { tone: 'muted', label: jt('healthPill.offline', 'Offline') };
       default: return { tone: 'muted', label: jt('healthPill.unknown', 'Unknown') };
     }
+  }
+
+  const ELAPSED_TICK_MS = 1000;
+  // m:ss for the model-load clock ("0:14", "1:15"): the popover's "Last time"
+  // clock, one formatter (the markup module loads first).
+  const formatElapsed = resolveMarkupHelpers({}).formatLoadClock;
+
+  // The start the backend stamps on each initialization, else the moment
+  // this pill first saw the load.
+  function resolveLoadStart(acquisition, now, loadingSinceMs) {
+    const stamped = Date.parse(acquisition && acquisition.started_at);
+    if (Number.isFinite(stamped) && stamped <= now) return stamped;
+    return Number(loadingSinceMs) > 0 ? Number(loadingSinceMs) : now;
   }
 
   function combineHealthSignal(snapshot, deps) {
@@ -60,15 +72,25 @@
     let summary = '';
     if (derivedTone === 'danger') {
       tone = 'danger';
-      label = 'Blocked';
+      label = jt('titlebar.runtimeHealth.blocked', 'Blocked');
       summary = derivedSummary;
     } else if (derivedTone === 'warning' && tone !== 'danger') {
       tone = 'warning';
-      label = 'Degraded';
+      label = jt('titlebar.runtimeHealth.degraded', 'Degraded');
       summary = derivedSummary;
     }
 
     const acquisition = lifecycle && lifecycle.model_acquisition;
+    // A load names its model and carries a live clock; the accessible name
+    // (statusLabel) stays still so it never re-announces every second.
+    const loading = tone === 'pending' && (lifecycleState === 'model_loading' || lifecycleState === 'loading');
+    let statusLabel = '';
+    if (loading) {
+      const now = Number.isFinite(deps.now) ? deps.now : Date.now();
+      const model = normString((acquisition && acquisition.requested_model) || (lifecycle && lifecycle.requested_model));
+      statusLabel = model ? jt('shell.progress.loadingNamedModel', 'Loading {model}', { model }) : label;
+      label = statusLabel + ' · ' + formatElapsed(now - resolveLoadStart(acquisition, now, deps.loadingSinceMs));
+    }
     const acquisitionPercent = Number(acquisition && acquisition.percent);
     if (
       (lifecycleState === 'model_acquiring' || lifecycleState === 'acquiring')
@@ -80,11 +102,7 @@
       label += ' · ' + Math.round(Math.max(0, Math.min(100, acquisitionPercent))) + '%';
     }
 
-    const remote = deps.remoteStatus;
-    const connected = Array.isArray(remote?.devices) ? remote.devices.filter((device) => device?.connected === true).length : 0;
-    const segments = remote?.reachable === true
-      ? [{ tone: 'neutral', label: jtn('healthPill.remoteDevices', connected, { count: connected }, 'Remote · {count} device', 'Remote · {count} devices') }] : [];
-    return { tone, label, summary, lifecycle, segments };
+    return { tone, label, summary, lifecycle, segments: [], loading, statusLabel };
   }
 
   function resolveMarkupHelpers(deps) {
@@ -171,8 +189,8 @@
       ? dependencies.errorCenterStore
       : null;
     const noticeStorage = resolveNoticeStorage(dependencies.storage, windowRef);
+    const now = typeof dependencies.now === 'function' ? dependencies.now : () => Date.now();
     let unsubscribeErrorCenter = null;
-    let unsubscribeRemote = null;
     let unsubscribeUnattendedPause = null;
     let unsubscribeReminderFired = null;
     let unsubscribeReminderOpen = null;
@@ -200,14 +218,53 @@
       lastPillSig: '',
       lastPopoverSig: '',
       consecutiveFailures: 0,
-      remoteStatus: null,
       runModeFacet: { runMode: 'ask', pauseState: 'none' },
       unattendedPause: null,
       sandboxNoticeShown: false,
+      loadingSince: 0,
+      elapsedTimer: null,
+      systemStats: null,
     };
+    let unsubscribeStats = null;
 
     let popoverNode = null;
     let pillButton = null;
+
+    function computeSignal() {
+      const signal = combineHealthSignal(state.snapshot, {
+        deriveRuntimeHealthState, now: now(), loadingSinceMs: state.loadingSince,
+      });
+      state.loadingSince = signal.loading ? (state.loadingSince || now()) : 0;
+      return signal;
+    }
+
+    function cancelElapsedTick() {
+      if (state.elapsedTimer && windowRef) windowRef.clearTimeout(state.elapsedTimer);
+      state.elapsedTimer = null;
+    }
+
+    // Visibility-gated 1 s clock for "Loading {model} · m:ss". It rewrites
+    // the label text in place, so the button and its focus are never rebuilt.
+    function scheduleElapsedTick() {
+      cancelElapsedTick();
+      if (state.disposed || !windowRef || !state.toneLabel.loading || documentRef?.visibilityState === 'hidden') return;
+      state.elapsedTimer = windowRef.setTimeout(function elapsedTick() {
+        state.elapsedTimer = null;
+        if (state.disposed || !state.toneLabel.loading) return;
+        state.toneLabel = computeSignal();
+        const labelNode = pillButton && pillButton.querySelector('.workbench-health-pill-label');
+        if (labelNode) {
+          labelNode.textContent = state.toneLabel.label;
+          state.lastPillSig = buildPillSignature();
+        } else renderPill();
+        const statusNode = state.open && popoverNode && popoverNode.querySelector('.workbench-health-popover-status span:last-child');
+        if (statusNode) {
+          statusNode.textContent = state.toneLabel.label;
+          state.lastPopoverSig = buildPopoverSignature();
+        }
+        scheduleElapsedTick();
+      }, ELAPSED_TICK_MS);
+    }
 
     function getUnseenErrorCount() {
       return errorCenterStore ? errorCenterStore.getUnseenCount() : 0;
@@ -217,10 +274,45 @@
       return errorCenterStore ? errorCenterStore.list().slice(0, 5) : [];
     }
 
+    function getRuntimeNames() {
+      const runtime = state.snapshot && state.snapshot.runtime;
+      return {
+        engine: normString(runtime && runtime.engine),
+        model: normString(runtime && runtime.model),
+      };
+    }
+
     function buildPillSignature() {
-      return state.toneLabel.tone + '|' + state.toneLabel.label + '|'
+      const names = getRuntimeNames();
+      return state.toneLabel.tone + '|' + state.toneLabel.label + '|' + (state.toneLabel.statusLabel || '') + '|'
         + (state.toneLabel.segments?.[0]?.label || '') + '|' + getUnseenErrorCount()
-        + '|' + state.runModeFacet.runMode + '|' + state.runModeFacet.pauseState;
+        + '|' + state.runModeFacet.runMode + '|' + state.runModeFacet.pauseState
+        + '|' + names.engine + '|' + names.model;
+    }
+
+    // The title-bar read-out is shown when its group is visible (the header
+    // owns it; Settings > Appearance persists the choice).
+    function isTitlebarLoadShown() {
+      const metricList = documentRef && documentRef.getElementById('metricList');
+      return Boolean(metricList) && metricList.hidden !== true;
+    }
+
+    function buildPopoverExtras() {
+      return {
+        recentErrors: getRecentErrors(),
+        runMode: state.runModeFacet.runMode,
+        pauseState: state.runModeFacet.pauseState,
+        systemStats: state.systemStats,
+        titlebarLoad: isTitlebarLoadShown(),
+      };
+    }
+
+    function statsSignature() {
+      const stats = state.systemStats;
+      if (!stats) return '';
+      const gpu = stats.gpuMemory || {};
+      return [Math.round(stats.cpuPercent), Math.round(stats.ramPercent), gpu.available, gpu.utilAvailable,
+        Math.round(gpu.utilPercent), Math.round(Number(gpu.usedMb) / 102.4), gpu.totalMb].join(':');
     }
 
     function buildPopoverSignature() {
@@ -246,6 +338,7 @@
         server && server.acceleration_mode, server && server.last_error,
         logs && logs.available && Array.isArray(logs.recent_issues) ? logs.recent_issues.length : 0,
         slow && slow.available && Array.isArray(slow.items) ? slow.items.length : 0,
+        statsSignature(), isTitlebarLoadShown(),
         getRecentErrors().map(function entrySig(entry) {
           return entry.key + ':' + entry.code + ':' + entry.at + ':' + entry.seen;
         }).join(','),
@@ -268,20 +361,24 @@
         return;
       }
       const restorePillFocus = pillButton && documentRef && documentRef.activeElement === pillButton;
+      // The Auto chip is rebuilt with the pill: keep keyboard focus on it too.
+      const restoreChipFocus = Boolean(documentRef && documentRef.activeElement
+        && documentRef.activeElement.classList && documentRef.activeElement.classList.contains('workbench-health-pill-mode')
+        && slot.contains(documentRef.activeElement));
       state.lastPillSig = sig;
+      const names = getRuntimeNames();
       slot.innerHTML = buildPillMarkup(state.toneLabel, {
         unseenErrorCount: getUnseenErrorCount(),
         runMode: state.runModeFacet.runMode,
         pauseState: state.runModeFacet.pauseState,
+        engine: names.engine,
+        model: names.model,
       });
+      const modeChip = slot.querySelector('.workbench-health-pill-mode');
+      modeChip?.addEventListener('click', handleRunModeChipClick);
+      if (restoreChipFocus && modeChip) modeChip.focus();
       pillButton = slot.querySelector('#' + ID_PILL_BUTTON);
       if (pillButton) {
-        const segment = state.toneLabel.segments?.[0];
-        if (segment && documentRef) {
-          const node = documentRef.createElement('span');
-          node.className = 'workbench-health-pill-label'; node.dataset.healthTone = segment.tone;
-          node.textContent = segment.label; pillButton.appendChild(node);
-        }
         pillButton.addEventListener('click', handlePillClick);
         pillButton.setAttribute('aria-expanded', state.open ? 'true' : 'false');
         if (restorePillFocus) pillButton.focus();
@@ -293,11 +390,7 @@
       const host = documentRef.body;
       if (!host) return null;
       const wrapper = documentRef.createElement('div');
-      wrapper.innerHTML = buildPopoverMarkup(state, state.snapshot, {
-        recentErrors: getRecentErrors(),
-        runMode: state.runModeFacet.runMode,
-        pauseState: state.runModeFacet.pauseState,
-      });
+      wrapper.innerHTML = buildPopoverMarkup(state, state.snapshot, buildPopoverExtras());
       popoverNode = wrapper.firstElementChild;
       if (popoverNode) {
         host.appendChild(popoverNode);
@@ -314,11 +407,7 @@
         return;
       }
       state.lastPopoverSig = sig;
-      const next = buildPopoverMarkup(state, state.snapshot, {
-        recentErrors: getRecentErrors(),
-        runMode: state.runModeFacet.runMode,
-        pauseState: state.runModeFacet.pauseState,
-      });
+      const next = buildPopoverMarkup(state, state.snapshot, buildPopoverExtras());
       const wrapper = documentRef.createElement('div');
       wrapper.innerHTML = next;
       const fresh = wrapper.firstElementChild;
@@ -350,6 +439,65 @@
       }
     }
 
+    /* The Auto chip opens the run-mode setting: the composer's run-mode
+     * switcher in the chat view, focused. */
+    function handleRunModeChipClick(event) {
+      event.preventDefault();
+      event.stopPropagation();
+      if (state.open) closePopover();
+      invokeNavigation('chat', null);
+      const focusSwitcher = function focusRunModeSwitcher() {
+        if (!documentRef) return;
+        // The focused pane (the pane controller stamps data-pane-focused);
+        // pane 0 addresses its slot by id, a second pane by data-chat-node.
+        const pane = documentRef.querySelector('.chat-pane[data-pane-focused="true"]') || documentRef;
+        // A compact composer keeps the switcher inside a closed settings
+        // group: open it through its own pill first so the target is visible.
+        const composer = pane.querySelector('.composer[data-toolbar-compact]');
+        if (composer && !composer.hasAttribute('data-settings-open')) {
+          composer.querySelector('.composer-settings-summary')?.click?.();
+        }
+        // In priority order, one query each: a selector list would return the
+        // first match in document order, i.e. the unpressed segment.
+        const slot = pane.querySelector('#composerRunModeSlot, [data-chat-node="composerRunModeSlot"]');
+        const target = slot?.querySelector('[aria-pressed="true"]')
+          || slot?.querySelector('[data-inv-chip="composer-run-mode"]')
+          || pane.querySelector('#composerRunModeChip')
+          || slot?.querySelector('button');
+        if (target && typeof target.focus === 'function') target.focus();
+      };
+      if (windowRef && typeof windowRef.setTimeout === 'function') windowRef.setTimeout(focusSwitcher, 0);
+      else focusSwitcher();
+    }
+
+    // Machine load for the facts, only while the popover is open.
+    function applyStats(payload) {
+      if (state.disposed || !payload || typeof payload !== 'object') return;
+      state.systemStats = payload;
+      if (state.open) refreshPopoverContent();
+    }
+
+    // A stats watcher (system.setStatsWatch): main ticks at 2 s only while one is on screen. Best effort.
+    function sendStatsWatch(watched) {
+      try { Promise.resolve(windowRef?.jennyShell?.system?.setStatsWatch?.({ source: 'popover', watched })).catch(function ignoreWatchFailure() {}); } catch (_error) { /* best effort */ }
+    }
+    function subscribeStats() {
+      const system = windowRef && windowRef.jennyShell && windowRef.jennyShell.system;
+      if (!system || unsubscribeStats) return;
+      sendStatsWatch(true);
+      try { unsubscribeStats = typeof system.onStats === 'function' ? system.onStats(applyStats) : null; } catch (_error) { unsubscribeStats = null; }
+      if (typeof unsubscribeStats !== 'function') unsubscribeStats = null;
+      if (typeof system.getStats === 'function') {
+        Promise.resolve().then(() => system.getStats()).then(applyStats, function ignoreStatsFailure() {});
+      }
+    }
+
+    function unsubscribeStatsFeed() {
+      if (unsubscribeStats) sendStatsWatch(false);
+      try { unsubscribeStats?.(); } catch (_error) { /* best effort */ }
+      unsubscribeStats = null;
+    }
+
     function handlePopoverClick(event) {
       const target = event.target;
       if (!target || typeof target.closest !== 'function') return;
@@ -362,8 +510,19 @@
         if (errorCenterStore) errorCenterStore.clear();
         return;
       }
-      if (action === 'open-runtime-health') {
-        invokeNavigation('settings', 'diagnostics');
+      if (action === 'toggle-titlebar-load') {
+        // Settings owns the appearance record; it flips and persists the field.
+        if (documentRef && windowRef && typeof windowRef.CustomEvent === 'function') {
+          documentRef.dispatchEvent(new windowRef.CustomEvent('jenny:titlebar-load-toggle', {
+            detail: { enabled: !isTitlebarLoadShown() },
+          }));
+          // Settings flipped the read-out synchronously; relabel the action now
+          // instead of on the next poll.
+          if (state.open) refreshPopoverContent();
+        }
+      } else if (action === 'open-runtime-health') {
+        dependencies.setActiveDiagnosticsTab?.('overview');
+        invokeNavigation('logs', null);
       } else if (action === 'open-models') {
         invokeNavigation('settings', 'models');
       } else if (action === 'retry-model') {
@@ -454,11 +613,13 @@
       }
       /* EH-W11: opening the popover acknowledges the error badge. */
       if (errorCenterStore) errorCenterStore.markSeen();
+      subscribeStats();
       refresh({ silent: false });
     }
 
     function closePopover() {
       state.open = false;
+      unsubscribeStatsFeed();
       if (pillButton) pillButton.setAttribute('aria-expanded', 'false');
       if (popoverNode) popoverNode.setAttribute('data-open', 'false');
       schedulePoll();
@@ -502,6 +663,7 @@
     function handleVisibilityChange() {
       if (state.disposed) return;
       cancelPoll();
+      cancelElapsedTick();
       if (documentRef?.visibilityState === 'hidden') return;
       state.recoveryPolls = 0;
       refresh({ silent: true });
@@ -580,13 +742,14 @@
         state.snapshot = snapshot && typeof snapshot === 'object' && !Array.isArray(snapshot)
           ? snapshot
           : null;
-        state.toneLabel = combineHealthSignal(state.snapshot, { deriveRuntimeHealthState, remoteStatus: state.remoteStatus });
+        state.toneLabel = computeSignal();
         state.consecutiveFailures = 0;
         state.error = '';
         state.lastFetchAt = Date.now();
         announceSandboxNoticeOnce(state.snapshot);
         renderPill();
         if (state.open) refreshPopoverContent();
+        scheduleElapsedTick();
         return state.snapshot;
       } catch (error) {
         if (state.disposed) return null;
@@ -735,6 +898,7 @@
       if (state.disposed) return;
       state.disposed = true;
       state.queuedRefresh = null;
+      cancelElapsedTick();
       closePopover();
       if (documentRef) documentRef.removeEventListener('visibilitychange', handleVisibilityChange);
       if (typeof unsubscribeUnattendedPause === 'function') {
@@ -750,8 +914,7 @@
         unsubscribeErrorCenter();
         unsubscribeErrorCenter = null;
       }
-      try { unsubscribeRemote?.(); } catch (_error) { /* best effort */ }
-      unsubscribeRemote = null;
+      unsubscribeStatsFeed();
       if (popoverNode) {
         popoverNode.removeEventListener('click', handlePopoverClick);
         if (popoverNode.parentNode) {
@@ -776,15 +939,6 @@
         if (state.open) refreshPopoverContent();
       });
     }
-    const remoteApi = windowRef?.jennyShell?.remote;
-    const applyRemote = (next) => {
-      if (state.disposed) return;
-      state.remoteStatus = next && typeof next === 'object' ? next : null;
-      state.toneLabel = combineHealthSignal(state.snapshot, { deriveRuntimeHealthState, remoteStatus: state.remoteStatus });
-      renderPill(); if (state.open) refreshPopoverContent();
-    };
-    try { unsubscribeRemote = remoteApi?.onStateChanged?.(applyRemote) || null; } catch (_error) { unsubscribeRemote = null; }
-    Promise.resolve(remoteApi?.getState?.()).then(applyRemote, function ignoreRemoteFailure() {});
 
     if (documentRef) documentRef.addEventListener('visibilitychange', handleVisibilityChange);
 
@@ -837,5 +991,6 @@
     createHealthPillController,
     resolveLifecycleTone,
     combineHealthSignal,
+    formatElapsed,
   };
 });

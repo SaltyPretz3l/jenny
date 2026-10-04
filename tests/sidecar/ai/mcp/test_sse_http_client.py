@@ -23,10 +23,10 @@ class _FakeHandler(BaseHTTPRequestHandler):
     # Set per-test on the server instance.
     responder: Callable[["_FakeHandler", dict[str, Any]], None]
 
-    def log_message(self, *args: Any) -> None:  # noqa: A002 - silence test server logs
+    def log_message(self, *args: Any) -> None:  # silence test server logs
         return
 
-    def do_POST(self) -> None:  # noqa: N802 - required http.server hook name
+    def do_POST(self) -> None:  # required http.server hook name
         length = int(self.headers.get("Content-Length", "0") or "0")
         raw = self.rfile.read(length) if length else b""
         try:
@@ -435,3 +435,34 @@ def test_precancelled_jsonrpc_never_dispatches_request(
             timeout_seconds=5.0,
             cancel_handle=cancel_handle,
         )
+
+
+@pytest.mark.parametrize("sse", [False, True])
+def test_reads_body_buffered_with_headers_on_keepalive(sse: bool) -> None:
+    import http.client
+    import socket
+    left, right = socket.socketpair()
+    body = b'{"jsonrpc":"2.0","id":7,"result":{}}'
+    if sse:
+        body = b'data: ' + body + b'\n\n'
+    content_type = b'text/event-stream' if sse else b'application/json'
+    right.sendall(b'HTTP/1.1 200 OK\r\nContent-Type: ' + content_type + b'\r\nContent-Length: ' + str(len(body)).encode() + b'\r\n\r\n' + body)
+    response = http.client.HTTPResponse(left)
+    response.begin()
+    try:
+        reader = sse_module._read_sse_reply if sse else sse_module._read_json_reply
+        assert reader(response, request_id=7, deadline=time.monotonic() + 0.15, max_bytes=4096)["id"] == 7
+    finally:
+        response.close()
+        left.close()
+        right.close()
+
+
+@pytest.mark.parametrize("sse", [False, True])
+def test_deep_json_is_structured_protocol_failure(sse: bool) -> None:
+    raw = '[' * 2000 + '0' + ']' * 2000
+    with pytest.raises(SSEHttpError, match="invalid json"):
+        if sse:
+            sse_module._match_sse_payload(raw, request_id=1)
+        else:
+            sse_module._parse_jsonrpc_object(raw.encode())

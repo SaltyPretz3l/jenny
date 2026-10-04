@@ -81,6 +81,12 @@ function createCredentialService() {
   };
 }
 
+test('normal policy-2 composition still requires an execution broker', () => {
+  assert.throws(() => createHostedBackend({ hostMode: 'server', userDataPath: 'unused',
+    hostExecutionPolicyVersion: 2, modelEndpoint: { engine: 'replay', model: 'offline' } }),
+  (error) => error.reason === 'execution_broker_required');
+});
+
 function makeTempUserDataPath() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-host-composition-'));
 }
@@ -88,6 +94,155 @@ function makeTempUserDataPath() {
 function removeTempUserDataPath(userDataPath) {
   fs.rmSync(userDataPath, { recursive: true, force: true });
 }
+
+function createDiagnosticHost(t) {
+  const userDataPath = makeTempUserDataPath();
+  const hosted = createHostedBackend({
+    hostMode: 'server', userDataPath, workspaceRoot: null,
+    credentialService: createCredentialService(),
+    modelEndpoint: { engine: 'replay', model: 'offline' },
+    sidecarManager: new SidecarHarness(),
+    ollamaManager: new EngineManagerHarness('ollama'),
+    vllmManager: new EngineManagerHarness('vllm'),
+  });
+  t.after(async () => {
+    await hosted.dispose();
+    removeTempUserDataPath(userDataPath);
+  });
+  return { ...hosted, userDataPath };
+}
+
+function readHostedLog(hosted) {
+  return fs.readFileSync(path.join(hosted.userDataPath, 'logs', 'shell.log'), 'utf8')
+    .trim().split('\n').filter(Boolean).map((line) => JSON.parse(line));
+}
+
+test('hosted service logs persist desktop canonical entries and shutdown events before stop resolves', async (t) => {
+  const hosted = createDiagnosticHost(t);
+  hosted.backend.emit('service-log', { level: 'WARN', event: 'backend.test_warning',
+    details: { message: 'A bounded warning', status: 'failed', stage: 'process_exit' } });
+  hosted.backend.emit('service-log', { event: 'backend.test_default', details: { reason: 'metadata only' } });
+  hosted.backend.emit('service-log', { level: 'DEBUG', event: 'backend.test_debug' });
+  const result = await hosted.stop();
+  const entries = readHostedLog(hosted);
+  const warning = entries.find((entry) => entry.event === 'backend.test_warning');
+  assert.equal(warning.level, 'WARN');
+  assert.equal(warning.layer, 'electron');
+  assert.equal(warning.component, 'electron.main');
+  assert.equal(warning.message, 'A bounded warning');
+  assert.equal(warning.status, 'failed');
+  assert.deepEqual(warning.data, { message: 'A bounded warning', status: 'failed', stage: 'process_exit' });
+  assert.deepEqual(warning.details, warning.data);
+  assert.equal(warning.schema_version, 1);
+  assert.equal(warning.redaction_mode, 'redacted');
+  assert.equal(warning.run_id, hosted.logStore.runId);
+  assert.ok(warning.entry_id);
+  assert.ok(warning.ts);
+  assert.equal(entries.find((entry) => entry.event === 'backend.test_default').message, 'backend.test_default');
+  assert.equal(entries.some((entry) => entry.event === 'backend.test_debug'), false);
+  assert.ok(entries.some((entry) => entry.event === 'backend.sidecar_shutdown_stage'
+    && entry.data.stage === 'process_exit' && entry.status === 'ok'));
+  assert.equal(hosted.backend.shellLogStore, hosted.logStore);
+  assert.equal(result.exitConfirmed, true);
+  assert.equal(result.logFlush.flushed, true);
+});
+
+test('hosted mirrored sidecar diagnostics persist with secrets redacted', async (t) => {
+  const hosted = createDiagnosticHost(t);
+  hosted.backend.emit('diagnostic-entry', {
+    level: 'INFO', layer: 'sidecar', component: 'sidecar.runtime', event: 'sidecar.test_record',
+    message: 'Authorization: Bearer synthetic-host-secret-12345',
+    data: { stage: 'ready', api_key: ['sk', 'synthetic-host-secret-12345'].join('-') },
+  });
+  await hosted.stop();
+  const entry = readHostedLog(hosted).find((item) => item.event === 'sidecar.test_record');
+  assert.ok(entry);
+  assert.equal(entry.layer, 'sidecar');
+  assert.equal(entry.component, 'sidecar.runtime');
+  assert.equal(entry.data.stage, 'ready');
+  assert.doesNotMatch(JSON.stringify(entry), /synthetic-host-secret/);
+  assert.match(entry.message, /\[redacted\]/);
+  assert.equal(entry.data.api_key, '[redacted]');
+});
+
+test('hosted diagnostic drops and oversized sidecar records update integrity', async (t) => {
+  const hosted = createDiagnosticHost(t);
+  hosted.backend.emit('diagnostic-drop', { source: 'sidecar', count: 3 });
+  hosted.backend.emit('diagnostic-entry', { layer: 'sidecar', event: 'sidecar.diagnostics.oversized_record',
+    data: { dropped_count: 2 } });
+  hosted.backend.emit('diagnostic-entry', { layer: 'sidecar', event: 'sidecar.diagnostics.oversized_record' });
+  const metadata = hosted.logStore.getCurrentDiagnosticsMetadata();
+  assert.equal(metadata.integrity.dropped_by_source.sidecar, 6);
+  assert.equal(metadata.integrity.complete, false);
+  assert.ok(metadata.integrity.partial_reasons.includes('entries_dropped'));
+});
+
+test('hosted file write failure stays contained and backend remains usable', async (t) => {
+  const hosted = createDiagnosticHost(t);
+  fs.mkdirSync(path.join(hosted.userDataPath, 'logs', 'shell.log'), { recursive: true });
+  assert.doesNotThrow(() => hosted.backend.emit('service-log', {
+    level: 'INFO', event: 'backend.test_failed_sink', details: { message: 'Still running' },
+  }));
+  await hosted.logStore.writer.flush();
+  assert.equal(hosted.logStore.writer.fileDisabled, true);
+  assert.doesNotThrow(() => hosted.backend.emit('diagnostic-entry', {
+    layer: 'sidecar', event: 'sidecar.after_sink_failure', message: 'Still running',
+  }));
+  const session = await hosted.backend.createSession({ title: 'After sink failure' });
+  assert.ok(session.data.id);
+  const metadata = hosted.logStore.getCurrentDiagnosticsMetadata();
+  assert.equal(metadata.integrity.complete, false);
+  assert.ok(metadata.integrity.partial_reasons.includes('history_writer_unavailable'));
+  assert.ok(hosted.logStore.list().some((entry) => entry.event === 'sidecar.after_sink_failure'));
+});
+
+test('hosted thrown writer errors never escape backend diagnostic emits', async (t) => {
+  const hosted = createDiagnosticHost(t);
+  t.mock.method(hosted.logStore.writer, 'write', () => { throw new Error('synthetic sink failure'); });
+  assert.doesNotThrow(() => hosted.backend.emit('service-log', { event: 'backend.throwing_sink' }));
+  assert.doesNotThrow(() => hosted.backend.emit('diagnostic-entry', {
+    layer: 'sidecar', event: 'sidecar.throwing_sink',
+  }));
+  assert.ok((await hosted.backend.createSession({ title: 'After writer throw' })).data.id);
+  assert.ok(hosted.logStore.list().some((entry) => entry.event === 'backend.throwing_sink'));
+});
+
+test('hosted dispose drains pending diagnostics and detaches all sink subscriptions', async (t) => {
+  const hosted = createDiagnosticHost(t);
+  hosted.backend.emit('service-log', { event: 'backend.before_dispose' });
+  const drain = hosted.dispose();
+  const before = hosted.logStore.list();
+  const drops = hosted.logStore.getCurrentDiagnosticsMetadata().integrity.dropped_by_source;
+  for (const name of ['service-log', 'diagnostic-entry', 'diagnostic-drop']) {
+    assert.equal(hosted.backend.listenerCount(name), 0);
+  }
+  hosted.backend.emit('service-log', { event: 'backend.after_dispose' });
+  hosted.backend.emit('diagnostic-entry', { layer: 'sidecar', event: 'sidecar.after_dispose' });
+  hosted.backend.emit('diagnostic-drop', { source: 'sidecar', count: 9 });
+  assert.deepEqual(hosted.logStore.list(), before);
+  assert.deepEqual(hosted.logStore.getCurrentDiagnosticsMetadata().integrity.dropped_by_source, drops);
+  assert.equal((await drain).flushed, true);
+  assert.equal(hosted.dispose(), drain);
+  assert.ok(readHostedLog(hosted).some((entry) => entry.event === 'backend.before_dispose'));
+});
+
+test('hosted stop reports the existing writer timeout outcome without waiting for a stalled file', async (t) => {
+  const hosted = createDiagnosticHost(t);
+  let finishWrite;
+  const originalAppend = fs.promises.appendFile;
+  t.mock.method(hosted.logStore.writer.fs.promises, 'appendFile', (filePath, ...args) => {
+    if (filePath !== hosted.logStore.filePath) return originalAppend.call(fs.promises, filePath, ...args);
+    return new Promise((resolve) => { finishWrite = resolve; });
+  });
+  hosted.backend.emit('service-log', { event: 'backend.stalled_sink' });
+  try {
+    const result = await hosted.stop();
+    assert.equal(result.exitConfirmed, true);
+    assert.equal(result.logFlush.flushed, false);
+    assert.ok(result.logFlush.timedOutCount > 0);
+    assert.equal(await hosted.stop(), result);
+  } finally { finishWrite?.(); }
+});
 
 test('hosted composition uses external endpoint policy across lifecycle and chat preflight', async (t) => {
   const userDataPath = makeTempUserDataPath();
@@ -164,13 +319,13 @@ test('hosted composition uses external endpoint policy across lifecycle and chat
     await hosted.start();
     await hosted.stop();
     await assert.rejects(() => hosted.start(), /lifecycle has ended/);
-    hosted.dispose();
+    await hosted.dispose();
 
     assert.deepEqual(ollamaManager.calls, []);
     assert.deepEqual(vllmManager.calls, []);
     assert.deepEqual(sidecarManager.calls, ['start', 'stop', 'stop']);
   } finally {
-    hosted.dispose();
+    await hosted.dispose();
     removeTempUserDataPath(userDataPath);
   }
 });
@@ -284,7 +439,7 @@ test('a replacement sidecar cannot pass chat readiness using the prior process p
     await assert.rejects(() => ensureManagedSidecarReadyForChat(hosted.backend, {}), /unavailable after reconnect/);
     assert.equal(reconnects, 1);
     assert.equal(hosted.backend._hostedPolicyProcess, null);
-  } finally { hosted.dispose(); removeTempUserDataPath(userDataPath); }
+  } finally { await hosted.dispose(); removeTempUserDataPath(userDataPath); }
 });
 
 
@@ -305,6 +460,6 @@ test('hosted runtime is composed by default and force-deny preserves inspection 
     assert.equal(result.ok, false); assert.equal(hosted.backend.sessionRuntime.store.listReadyCandidates().length, 0);
   } finally {
     if (prior === undefined) delete process.env.JENNY_ENABLE_SESSION_RUNTIME; else process.env.JENNY_ENABLE_SESSION_RUNTIME = prior;
-    hosted?.dispose(); removeTempUserDataPath(userDataPath);
+    await hosted?.dispose(); removeTempUserDataPath(userDataPath);
   }
 });

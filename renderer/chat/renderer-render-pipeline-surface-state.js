@@ -34,6 +34,8 @@
       // fired at the end of every syncStableChatSurfaceState call. Absent by
       // default so pre-existing callers/tests are untouched.
       onSurfaceLifecycleSync = null,
+      // Split view W1-4a: the session this pane shows (one pane: currentSessionId).
+      getPaneSessionId = () => String(state.currentSessionId || '').trim(),
     } = callbacks;
     const disposalFence = asyncFence.createDisposalFence();
 
@@ -46,7 +48,7 @@
     }
 
     function resolveChatSendLifecycle(sessionId) {
-      var normalizedSessionId = String(sessionId || state.currentSessionId || '').trim();
+      var normalizedSessionId = String(sessionId || getPaneSessionId() || '').trim();
       if (!normalizedSessionId) {
         return 'idle';
       }
@@ -79,7 +81,8 @@
     }
 
     function syncStableChatSurfaceState() {
-      var currentLifecycle = resolveChatSendLifecycle(state.currentSessionId);
+      var paneSessionId = getPaneSessionId();
+      var currentLifecycle = resolveChatSendLifecycle(paneSessionId);
       var changed = false;
       if (chatView) {
         changed = writeDatasetValue(chatView, 'chatMode', String(state.ui.chatMode || 'empty')) || changed;
@@ -87,11 +90,8 @@
       changed = writeSendLifecycle(chatView, currentLifecycle) || changed;
       changed = writeSendLifecycle(composerWrap, currentLifecycle) || changed;
       changed = writeSendLifecycle(composer, currentLifecycle) || changed;
-      if (typeof windowRef.rendererRemoteControlBannerSync === 'function') {
-        windowRef.rendererRemoteControlBannerSync();
-      }
       if (typeof onSurfaceLifecycleSync === 'function') {
-        onSurfaceLifecycleSync({ sessionId: state.currentSessionId });
+        onSurfaceLifecycleSync({ sessionId: paneSessionId });
       }
       return changed;
     }
@@ -228,7 +228,7 @@
     }
 
     function syncChatState(hasMessages, { animate = false } = {}) {
-      var currentSendLifecycle = resolveChatSendLifecycle(state.currentSessionId);
+      var currentSendLifecycle = resolveChatSendLifecycle(getPaneSessionId());
 
       if (!hasMessages) {
         clearThreadTransitionCleanup();

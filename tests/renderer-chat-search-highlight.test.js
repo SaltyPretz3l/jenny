@@ -152,7 +152,7 @@ test('matches inside the search bar itself are excluded (F1)', () => {
   assert.equal(matches.length, 5);
 });
 
-test('canonical search documents include bounded virtualized tool details', () => {
+test('canonical search documents include virtualized tool details in full', () => {
   const documents = buildCanonicalSearchDocuments([
     {
       id: 'tool-message', role: 'assistant', kind: 'tool_use',
@@ -162,7 +162,7 @@ test('canonical search documents include bounded virtualized tool details', () =
   assert.equal(documents.length, 1);
   assert.equal(documents[0].field, 'tool_detail');
   assert.equal(documents[0].toolCallId, 'call-1');
-  assert.equal(documents[0].text.length, 10_000);
+  assert.equal(documents[0].text.length, 'Write report\n'.length + 20_000, 'no field is cut at the old 10,000-character bound');
   const matches = findDocumentMatches(documents, 'Write report');
   assert.equal(matches.length, 1);
   assert.equal(matches[0].messageId, 'tool-message');
@@ -301,4 +301,30 @@ test('the controller reports whether the last scan was truncated', () => {
   }
   controller.scanDocuments(documents, 'needle', {});
   assert.equal(controller.wasTruncated(), true, 'an at-cap result reports the omitted state');
+});
+
+test('CTR-005: a turn event repeating its message’s tool summary is one match; event-only text is its own document', () => {
+  const highlight = require('../renderer/chat/renderer-chat-search-highlight');
+  const messages = [
+    { id: 'u1', role: 'user', content: 'Please write it' },
+    { id: 'a1', role: 'assistant', content: 'On it.' },
+    { id: 't1', role: 'assistant', kind: 'tool_use', content: '', tool_call: { call_id: 'call-1', summary: 'Write a4-twelve.txt', input_json: '{"path":"a4-twelve.txt"}' } },
+  ];
+  const turnEvents = [
+    { kind: 'reasoning_phase', turn_id: 'turn-1', primary_message_id: 'a1', payload: { summary: 'Reasoning through the turn' } },
+    { kind: 'tool_use', turn_id: 'turn-1', primary_message_id: 't1', tool_call_id: 'call-1', payload: { summary: 'Write a4-twelve.txt' } },
+    { kind: 'approval_requested', turn_id: 'turn-1', primary_message_id: 't1', tool_call_id: 'call-1', payload: { summary: 'Tool policy requires approval' } },
+  ];
+  const documents = highlight.buildCanonicalSearchDocuments(messages, { turnEvents });
+
+  assert.equal(highlight.findDocumentMatches(documents, 'Write a4-twelve').length, 1, 'the event copy of the tool summary is not a second match');
+  const approval = highlight.findDocumentMatches(documents, 'requires approval');
+  assert.equal(approval.length, 1);
+  assert.equal(approval[0].field, 'tool_detail');
+  assert.equal(approval[0].toolCallId, 'call-1');
+  const reasoning = highlight.findDocumentMatches(documents, 'Reasoning through');
+  assert.equal(reasoning.length, 1);
+  assert.equal(reasoning[0].field, 'event', 'event text binds outside the prose rows');
+  assert.equal(reasoning[0].sourceMessageId, 'a1');
+  assert.equal(reasoning[0].messageId, 'a1', 'under the turn’s article');
 });

@@ -254,6 +254,10 @@ function createHarness(options = {}) {
       await streamEnvelopeListener(payload);
     },
     restore() {
+      // Dispose the handler so a still-armed 30 s buffered-event sweep timer
+      // does not hold the test process open (renderer-stream-handler.test.js
+      // took 31 s for ~1 s of tests, 2026-10-04).
+      try { handler.dispose?.(); } catch { /* teardown is best-effort */ }
       global.window = previousWindow;
       global.requestAnimationFrame = previousRequestAnimationFrame;
       global.cancelAnimationFrame = previousCancelAnimationFrame;

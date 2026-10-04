@@ -18,11 +18,11 @@ from sidecar.runtime.local_engine.request_context import (
 )
 from sidecar.runtime.plan_usage_snapshot import read_plan_usage_snapshot
 from tests.sidecar.ai.engines.test_chatgpt_subscription import (
-    _FakeSSEStream,
     _TOKEN,
     _completed,
     _drain_stream,
     _engine,
+    _FakeSSEStream,
     _sse,
 )
 

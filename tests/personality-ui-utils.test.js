@@ -5,6 +5,7 @@ const { JSDOM } = require('jsdom');
 const counters = require('../renderer/features/renderer-personality-counters');
 const personalityForm = require('../renderer/features/personality-form');
 const { createPersonalityEditor } = require('../renderer/features/renderer-personality-utils');
+const { createDirtySurfaceRegistry } = require('../renderer/features/renderer-window-exit-preflight');
 
 const SECTION_HTML = `
   <section data-settings-section="personality">
@@ -46,6 +47,8 @@ function createHarness(t, overrides = {}) {
       ...overrides,
     },
   };
+  const dirtySurfaces = createDirtySurfaceRegistry();
+  dom.window.rendererWindowExitPreflight = { dirtySurfaces };
   const state = {
     personality: {
       agentName: 'Jenny', personality: '', user: '',
@@ -75,7 +78,7 @@ function createHarness(t, overrides = {}) {
     controller.dispose();
     dom.window.close();
   });
-  return { calls, controller, document, dom, el, state };
+  return { calls, controller, dirtySurfaces, document, dom, el, state };
 }
 
 function typeInto(harness, suffix, value) {
@@ -114,7 +117,7 @@ test('per-section clipping marks the section instead of truncating the joined bl
     { agentName: 'Jenny', personality: 'a'.repeat(60), user: 'about', memory: 'notes' },
     { personality: 20, user: 1000, memory: 1500 }
   );
-  assert.match(compiled, /### Voice\n\na+ \[…\]\n\n### About the user\n\nabout\n\n### Notes\n\nnotes$/);
+  assert.match(compiled, /### Voice\n\na+ \[\.\.\.\]\n\n### About the user\n\nabout\n\n### Notes\n\nnotes$/);
   assert.equal(compiled.startsWith('## Personality\nYour name is Jenny. '), true);
 });
 
@@ -322,7 +325,7 @@ test('a background refresh never clobbers an unsaved draft', async (t) => {
   assert.equal(harness.state.personality.personality, 'unsaved local edit');
 });
 
-test('clear wipes both fields and warns before unload while dirty', async (t) => {
+test('clear wipes both fields; a dirty draft never cancels an unload', async (t) => {
   const harness = createHarness(t);
   await harness.controller.refreshPersonalityWorkspace();
 
@@ -330,7 +333,8 @@ test('clear wipes both fields and warns before unload while dirty', async (t) =>
   assert.equal(harness.controller.hasPersonalityUnsavedChanges(), true);
   const unloadEvent = new harness.dom.window.Event('beforeunload', { cancelable: true });
   harness.dom.window.dispatchEvent(unloadEvent);
-  assert.equal(unloadEvent.defaultPrevented, true);
+  assert.equal(unloadEvent.defaultPrevented, false, 'a beforeunload cancel would silently swallow close/reload');
+  assert.deepEqual(harness.dirtySurfaces.listDirty().map((entry) => [entry.id, entry.label]), [['personality', 'Personality']]);
 
   await harness.controller.handlePersonalityReset();
   assert.equal(harness.calls.clear, 1);
@@ -338,6 +342,31 @@ test('clear wipes both fields and warns before unload while dirty', async (t) =>
   assert.equal(harness.state.personality.user, '');
   assert.equal(harness.document.getElementById('settings-personality-note').value, '');
   assert.equal(harness.controller.hasPersonalityUnsavedChanges(), false);
+});
+
+test('a dirty personality draft joins the window-exit prompt and its Save reports the outcome', async (t) => {
+  const harness = createHarness(t);
+  await harness.controller.refreshPersonalityWorkspace();
+  assert.deepEqual(harness.dirtySurfaces.listDirty(), []);
+
+  typeInto(harness, 'note', 'Be warm.');
+  const [surface] = harness.dirtySurfaces.listDirty();
+  assert.equal(await surface.save(), true);
+  assert.equal(harness.calls.save.length, 1);
+  assert.deepEqual(harness.dirtySurfaces.listDirty(), []);
+
+  harness.controller.dispose();
+  typeInto(harness, 'note', 'Be warmer.');
+  assert.deepEqual(harness.dirtySurfaces.listDirty(), [], 'dispose unregisters');
+});
+
+test('a rejected personality save fails the exit-prompt Save', async (t) => {
+  const harness = createHarness(t, { async save() { return { ok: false, code: 'CMP-TEST-0001' }; } });
+  await harness.controller.refreshPersonalityWorkspace();
+  typeInto(harness, 'note', 'Be warm.');
+
+  const [surface] = harness.dirtySurfaces.listDirty();
+  assert.equal(await surface.save(), false);
 });
 
 /* ── Electron parity (services/personality-workspace-compile.js is the oracle) ── */
@@ -390,7 +419,7 @@ test('the joined preview is held under the 4 KiB UTF-8 backstop without dropping
   assert.match(compiled, /### Voice/);
   assert.match(compiled, /### About the user/);
   assert.match(compiled, /### Notes/);
-  assert.match(compiled, /\[…\]/);
+  assert.match(compiled, /\[\.\.\.\]/);
 
   const under = counters.buildCompiledText(
     { agentName: 'Jenny', personality: 'short', user: 'short', memory: 'short' },
@@ -532,4 +561,17 @@ test('the footer buttons are not rebuilt on every keystroke', async (t) => {
     afterFirst,
     'further keystrokes must not churn the action buttons'
   );
+});
+
+test('the window-exit Save reports failure when only the note saved and the name kept its old value', async (t) => {
+  const harness = createHarness(t, {
+    async save(payload) {
+      return { ok: false, failed: ['agentName'], agentName: 'Jenny', compiled: { text: '', tokensEstimate: 0 }, payload };
+    },
+  });
+  await harness.controller.refreshPersonalityWorkspace();
+  typeInto(harness, 'name', 'Echo');
+  typeInto(harness, 'note', 'Be warm.');
+  const [surface] = harness.dirtySurfaces.listDirty();
+  assert.equal(await surface.save(), false, 'a partial save must cancel the exit, not lose the new name');
 });

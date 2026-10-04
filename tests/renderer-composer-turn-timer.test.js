@@ -32,10 +32,8 @@ function createHarness(t, {
     <button id="stopStreamButton"></button>
     <label class="composer-select-shell" for="composerModelSelect"><select id="composerModelSelect"><option value="">Default</option></select></label>
     <label class="composer-select-shell" for="composerEffortSelect"><select id="composerEffortSelect" data-reasoning-supported="true"><option value="default">Default</option></select></label>
-    <button id="composerSettingsButton"></button>
     <span id="composerModelDisabledReason"></span>
     <span id="composerEffortDisabledReason"></span>
-    <span id="composerSettingsDisabledReason"></span>
     <div id="composerRunModeSlot"><button id="composerRunModeChip"></button></div>
   </body>`);
   const previousWindow = global.window;
@@ -79,7 +77,6 @@ function createHarness(t, {
       stopStreamButton: byId('stopStreamButton'),
       composerModelSelect: byId('composerModelSelect'),
       composerEffortSelect: byId('composerEffortSelect'),
-      composerSettingsButton: byId('composerSettingsButton'),
     },
     callbacks: {
       getCurrentRuntimePreferences: () => ({ preferredModel: '', reasoningEffort: 'default', runMode: 'ask' }),

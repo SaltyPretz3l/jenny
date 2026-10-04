@@ -1,12 +1,14 @@
 'use strict';
 
 // Projects v2 (2026-09-20): the one shared project menu and the switcher glue
-// behind it. The menu is a plain listbox (rows through action-button, option
-// roles applied after paint, arrows/Home/End/Escape, outside click closes,
-// focus returns to the anchor). The switcher owns the 15 s project-list
-// cache, switches by PROJECT ID (never a path), creates through the existing
-// folder dialog, clears for General, moves ONE chat idle-only, and raises
-// `jenny:projects-changed` so every surface repaints from one list.
+// behind it. The menu is a role=menu popover (rows through action-button,
+// menu roles applied after paint, arrows/Home/End/Escape, outside click
+// closes, focus returns to the anchor). The switcher owns the 15 s
+// project-list cache, switches by PROJECT ID (never a path), creates through
+// the existing folder dialog, clears for General, moves chats idle-only, and
+// raises `jenny:projects-changed` so every surface repaints from one list.
+// The 2026-09-27 intents (headings, Fork 2 A, move engine, Locate) are in
+// renderer-project-switcher-intents.test.js.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -50,7 +52,7 @@ test('pure helpers: chat counts default to General, folder keys ignore separator
   assert.equal(sorted[0].folderMissing, true, 'an empty authority key marks the folder missing');
 });
 
-test('the menu is a listbox: option roles, the selected row is checked and focused, click picks and closes, Escape restores focus', () => {
+test('the menu is a menu: radio rows for projects, the selected row is checked and focused, click picks and closes, Escape restores focus', () => {
   const dom = makeDom();
   const anchor = dom.window.document.getElementById('anchor');
   const menu = menuUtils.createProjectMenu({ windowRef: dom.window, documentRef: dom.window.document, actionButton });
@@ -66,28 +68,29 @@ test('the menu is a listbox: option roles, the selected row is checked and focus
     onPick: (row) => picks.push(row.id),
   });
   const list = dom.window.document.getElementById('projectMenu');
-  assert.equal(list.getAttribute('role'), 'listbox');
+  assert.equal(list.getAttribute('role'), 'menu');
   assert.equal(anchor.getAttribute('aria-expanded'), 'true');
   const rows = menuRows(dom);
   assert.equal(rows.length, 4);
-  assert.ok(rows.every((row) => row.getAttribute('role') === 'option'));
-  assert.equal(rows[0].getAttribute('aria-selected'), 'true');
-  assert.equal(rows[1].getAttribute('aria-selected'), 'false');
+  assert.deepEqual(rows.map((row) => row.getAttribute('role')), ['menuitemradio', 'menuitemradio', 'menuitem', 'menuitem']);
+  assert.equal(rows[0].getAttribute('aria-checked'), 'true');
+  assert.equal(rows[1].getAttribute('aria-checked'), 'false');
   assert.equal(dom.window.document.activeElement, rows[0], 'focus lands on the selected row');
   assert.match(rows[0].querySelector('.project-menu-check').textContent, /✓/);
   assert.equal(rows[0].querySelector('.project-menu-count').textContent, '6');
   assert.ok(rows[1].querySelector('.project-menu-name--danger'), 'a missing folder is marked in the danger colour');
   assert.equal(list.querySelectorAll('.project-menu-separator').length, 1);
-  assert.equal(rows[3].disabled, true);
+  assert.equal(rows[3].getAttribute('aria-disabled'), 'true');
 
   key(dom, rows[0], 'ArrowDown');
   assert.equal(dom.window.document.activeElement, rows[1]);
   key(dom, rows[1], 'ArrowDown');
-  assert.equal(dom.window.document.activeElement, rows[2], 'the disabled row is skipped by keyboard');
   key(dom, rows[2], 'ArrowDown');
+  assert.equal(dom.window.document.activeElement, rows[3], 'the disabled row is reachable (D19), not skipped');
+  key(dom, rows[3], 'ArrowDown');
   assert.equal(dom.window.document.activeElement, rows[0], 'arrows wrap');
   key(dom, rows[0], 'End');
-  assert.equal(dom.window.document.activeElement, rows[2]);
+  assert.equal(dom.window.document.activeElement, rows[3]);
 
   rows[3].click();
   assert.deepEqual(picks, [], 'a disabled row cannot be picked');
@@ -169,7 +172,7 @@ test('switcher rows: current project first and checked with chat counts, then Ne
   assert.equal(rows[0].selected, true);
   assert.equal(rows[0].count, 2);
   assert.equal(rows[2].danger, true);
-  assert.match(rows[2].detail, /folder missing/);
+  assert.equal(rows[2].detail, 'Locate…', 'a missing folder offers Locate');
   assert.equal(rows[3].separatorBefore, true);
   assert.equal(rows[4].disabled, false, 'No folder is available while a folder is open');
   state.workspaceRoot.path = '';
@@ -211,10 +214,7 @@ test('picking a project switches by id through the facade, New runs the folder d
   assert.equal(rootCalls.length, 2, 'Manage never touches the Workspace');
 });
 
-test('the open chat follows the Workspace: a switch opens the newest chat of the new project, or a new chat when it has none; nothing moves when the open chat already belongs', async (t) => {
-  // The real transition moves the Workspace folder; the mock does the same so
-  // the switcher's current-project read sees the new project afterwards.
-  const rootService = { async switchToProject(id) { state.workspaceRoot.path = PROJECTS.find((project) => project.id === id).root_path; return { committed: true, changed: true }; } };
+test('"Open latest chat" (the switch toast action) opens the newest live chat of the project, or a new chat when it has none; nothing moves when the open chat already belongs', async (t) => {
   const state = {
     workspaceRoot: { path: 'D:\\Projects\\Ascend' },
     currentSessionId: 's1',
@@ -226,20 +226,19 @@ test('the open chat follows the Workspace: a switch opens the newest chat of the
       { id: 's5', project_id: 'project_budget', updated_at: '2026-09-20T12:30:00Z', session_type: 'plugin' },
     ],
   };
-  const { switcher, calls } = makeSwitcher(t, { state, rootService });
+  const { switcher, calls } = makeSwitcher(t, { state });
   await switcher.refresh();
-  await switcher.switchToProject('project_budget');
-  assert.deepEqual(calls.opened, ['s3'], 'the newest live chat of the new project opens (archived and plugin sessions skipped)');
+  await switcher.followWorkspaceChat('project_budget');
+  assert.deepEqual(calls.opened, ['s3'], 'the newest live chat of the project opens (archived and plugin sessions skipped)');
   assert.equal(calls.newChats, 0);
-  assert.ok(calls.refreshed >= 1, 'the session list is reloaded before choosing');
 
   state.currentSessionId = 's3';
-  await switcher.switchToProject('project_grants');
+  await switcher.followWorkspaceChat('project_grants');
   assert.deepEqual(calls.opened, ['s3'], 'no chat to open');
   assert.equal(calls.newChats, 1, 'a project with no chats starts a new one');
 
-  await switcher.switchToProject('project_budget');
-  assert.deepEqual(calls.opened, ['s3'], 'the open chat already belongs to the new project: nothing moves');
+  await switcher.followWorkspaceChat('project_budget');
+  assert.deepEqual(calls.opened, ['s3'], 'the open chat already belongs to the project: nothing moves');
   assert.equal(calls.newChats, 1);
 });
 
@@ -269,7 +268,7 @@ test('New project from folder: the existing dialog runs and a project that was n
   state.workspaceRoot.path = 'D:\\Projects\\Ascend';
   await switcher.newProjectFromFolder();
   assert.equal(switcher.title(), 'Audit-2026');
-  assert.deepEqual(toasts, [], 'switching to a known project through the dialog is not announced as new');
+  assert.deepEqual(toasts, ['Workspace is now Audit-2026. New chats start here.'], 'switching to a known project through the dialog is not announced as new');
 });
 
 test('F33: New project from folder is still announced when another surface re-reads the list between the commit and the post-commit sync', async (t) => {
@@ -321,26 +320,28 @@ test('F33: a post-commit sync without a loaded list never announces an existing 
   // ever read the list: Ascend already existed, so nothing is "new".
   await switcher.afterTransition({ committed: true, changed: true }, { announceNew: true });
   assert.equal(switcher.currentProject().id, 'project_ascend');
-  assert.deepEqual(toasts, []);
+  assert.deepEqual(toasts, ['Workspace is now Ascend. New chats start here.'], 'the switch is named, never announced as a new project');
 });
 
-test('the composer menu moves ONE chat: rows read "Move this chat to …", the busy chat gets no enabled row, a refusal surfaces the backend sentence', async (t) => {
+test('the composer menu moves THIS chat: plain project names, the busy chat gets no enabled row, a refusal surfaces the backend sentence', async (t) => {
   const state = { workspaceRoot: { path: 'D:\\Projects\\Ascend' }, sessions: [{ id: 's1', project_id: 'project_ascend' }], currentSessionId: 's1' };
   const { dom, switcher, calls, anchor } = makeSwitcher(t, { state });
   await switcher.refresh();
-  const busy = switcher.moveRows({ projectId: 'project_ascend', idle: false });
+  state.sessions[0].active_turn = { id: 'turn_1' };
+  const busy = switcher.moveRows(['s1']);
   assert.ok(busy.every((row) => row.disabled), 'busy chat: every row disabled');
-  assert.equal(busy[1].title, 'Wait for this chat to finish first.');
-  const rows = switcher.moveRows({ projectId: 'project_ascend', idle: true });
+  assert.equal(busy[1].reason, 'Wait for this chat to finish first.');
+  delete state.sessions[0].active_turn;
+  const rows = switcher.moveRows(['s1']);
   assert.equal(rows[0].label, 'Ascend');
   assert.equal(rows[0].selected, true);
   assert.equal(rows[0].disabled, true, 'the chat is already here');
-  assert.equal(rows[1].label, 'Move this chat to Budget FY27');
+  assert.equal(rows[1].label, 'Budget FY27');
   assert.equal(rows.at(-1).id, 'project_general');
-  assert.equal(rows.at(-1).label, 'Move this chat to General');
+  assert.equal(rows.at(-1).label, 'General');
 
   const moved = [];
-  await switcher.openMoveChatMenu({ anchor, sessionId: 's1', projectId: 'project_ascend', idle: true, onMoved: () => moved.push(1) });
+  await switcher.openMoveMenu(anchor, ['s1'], { onMoved: () => moved.push(1) });
   menuRows(dom)[1].click();
   await settle();
   assert.deepEqual(calls.assign, [{ session_id: 's1', project_id: 'project_budget' }]);
@@ -348,8 +349,8 @@ test('the composer menu moves ONE chat: rows read "Move this chat to …", the b
   assert.equal(calls.refreshed, 1);
   assert.deepEqual(moved, [1]);
 
-  const result = await switcher.moveChat('s1', 'project_refused');
-  assert.equal(result.ok, false);
+  const result = await switcher.moveSessionsToProject(['s1'], 'project_refused');
+  assert.deepEqual(result.moved, []);
   assert.deepEqual(calls.errors, ['Could not move this chat: A chat in this project is still working. Wait for it to finish.']);
   assert.equal(state.sessions[0].project_id, 'project_budget', 'a refusal leaves the chat where it was');
 });
@@ -403,10 +404,11 @@ test('a forced re-read supersedes an in-flight list request: a project deleted m
   assert.deepEqual(seenByFirst.map((project) => project.id).sort(), ['project_ascend', 'project_budget', 'project_general'], 'the older caller gets the newer list too');
 });
 
-test('overlapping switches: only the latest transition drives the Chats filter and the chat follow', async (t) => {
+test('overlapping switches: only the latest transition drives the Chats filter and the switch toast; nothing navigates (Fork 2 A)', async (t) => {
   const dom = makeDom();
   const refreshes = [];
   const opened = [];
+  const toasts = [];
   const state = {
     ui: {},
     workspaceRoot: { path: 'D:\\Projects\\Ascend' },
@@ -425,20 +427,51 @@ test('overlapping switches: only the latest transition drives the Chats filter a
     },
     refreshSessions: () => new Promise((resolve) => refreshes.push(resolve)),
     openSession: (id) => { opened.push(id); },
+    showToast: (message) => toasts.push(message),
   });
   switcher.bind();
   t.after(() => switcher.dispose());
   await switcher.refresh();
   const toBudget = switcher.switchToProject('project_budget');
   await settle();
-  const toGrants = switcher.switchToProject('project_grants');
+  // The later switch goes back to Ascend while Budget's sync is still pending.
+  const toAscend = switcher.switchToProject('project_ascend');
   await settle();
-  assert.equal(refreshes.length, 2);
-  refreshes[1]();
+  assert.ok(refreshes.length >= 1);
+  refreshes.forEach((resolve) => resolve());
   await settle();
-  refreshes[0]();
-  await Promise.all([toBudget, toGrants]);
+  refreshes.forEach((resolve) => resolve());
+  await Promise.all([toBudget, toAscend]);
   await settle();
-  assert.equal(state.ui.chatsProjectFilter, 'project_grants');
-  assert.deepEqual(opened, ['sg'], 'the superseded Budget continuation never navigates');
+  assert.equal(state.ui.chatsProjectFilter, 'project_ascend');
+  assert.deepEqual(toasts, ['Workspace is now Ascend. New chats start here.'], 'the superseded Budget continuation says nothing');
+  assert.deepEqual(opened, [], 'a switch never opens a chat by itself');
+});
+
+// Collapsed composer settings popover (owner-approved PO review 2026-09-26): opened from
+// the project row of the open settings list, the menu covers the list (bottom-end corner
+// on the list's, at least its size); from anywhere else it keeps today's placement.
+test('the menu opened from the collapsed composer settings list covers the list', () => {
+  const dom = new JSDOM('<!doctype html><html><body><div class="composer" data-toolbar-compact data-settings-open>'
+    + '<div class="composer-settings-group" id="group"><div class="composer-project-pill-slot"><button id="pill">Ascend</button></div></div></div>'
+    + '<button id="anchor">Ascend</button></body></html>', { pretendToBeVisual: true, url: 'http://localhost/' });
+  Object.defineProperty(dom.window, 'innerWidth', { configurable: true, value: 800 });
+  Object.defineProperty(dom.window, 'innerHeight', { configurable: true, value: 600 });
+  const doc = dom.window.document;
+  doc.getElementById('group').getBoundingClientRect = () => ({ left: 480, right: 760, top: 300, bottom: 560, width: 280, height: 260 });
+  const menu = menuUtils.createProjectMenu({ windowRef: dom.window, documentRef: doc, actionButton });
+  const rows = [{ id: 'project_ascend', label: 'Ascend', kind: 'project', selected: true }];
+  const element = menu.show({ anchor: doc.getElementById('pill'), rows });
+  assert.equal(element.dataset.settingsCover, '1');
+  assert.equal(element.style.minWidth, '280px');
+  assert.equal(element.style.minHeight, '260px');
+  assert.equal(element.style.left, '480px', 'right edges meet (a 0-wide jsdom menu is floored to the list width)');
+  assert.equal(element.style.top, '300px');
+  menu.close({ restoreFocus: false });
+
+  const plain = menu.show({ anchor: doc.getElementById('anchor'), rows });
+  assert.equal(plain.dataset.settingsCover, undefined, 'any other anchor: today\'s placement');
+  assert.equal(plain.style.minWidth, '');
+  menu.dispose();
+  dom.window.close();
 });

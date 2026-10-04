@@ -262,3 +262,21 @@ test('P2-3: an observation with contextLength 0 falls back to the estimate conte
   // being clobbered to 0.
   assert.ok(results[0].contextLength > 0);
 });
+
+
+test('catalog diagnostics publish catalog values with catalog provenance', async () => {
+  const [fit] = await buildModelFitEstimates({
+    configService: configOn(),
+    hardwareProfile: { gpu: { type: 'cuda', name: 'Small GPU', vram_mb: 4000 } },
+    memory: { totalMb: 8000, availableMb: 6000 },
+    installedModels: [{ id: 'private:model', size: 1024 * 1024 * 1024, parameterSize: '2B' }],
+    modelRecommendations: [{ pullTag: 'private:model', vramRequiredMb: 10000,
+      ramRequiredMb: 12000, contextLength: 16384, fits: false,
+      fitsInVram: false, fitsInAccelerator: false, fitsOnCpu: false }],
+  });
+  assert.equal(fit.vramRequiredMb, 10000);
+  assert.equal(fit.ramRequiredMb, 12000);
+  assert.equal(fit.fits, false);
+  assert.equal(fit.fitSource, 'catalog');
+  assert.equal(fit.fitConfidence, 'high');
+});

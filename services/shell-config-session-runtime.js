@@ -46,4 +46,4 @@ function applySessionRuntimePatch(current, patch) {
 }
 
 // Downstream sandbox capacity is deliberately not a configurable limit here.
-module.exports = { DEFAULT_SESSION_RUNTIME, normalizeSessionRuntime, applySessionRuntimePatch };
+module.exports = { DEFAULT_SESSION_RUNTIME, LIMIT_RANGES, normalizeSessionRuntime, applySessionRuntimePatch };

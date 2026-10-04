@@ -37,7 +37,6 @@ test('deferred visual startup logs first render once and runs visual startup onc
     },
     fwd: {
       initializeComposerHolo: () => calls.push('composer'),
-      initializeSpriteHolo: () => calls.push('sprite'),
       syncComposerVisualState: () => calls.push('composer-state'),
       initializeComposerLayoutObserver: () => calls.push('layout'),
       warmCodeHighlighting: () => calls.push('highlight'),
@@ -55,7 +54,7 @@ test('deferred visual startup logs first render once and runs visual startup onc
     'renderer.visual_startup_begin',
     'renderer.visual_startup_complete',
   ]);
-  assert.deepEqual(calls, ['composer', 'sprite', 'composer-state', 'layout', 'highlight']);
+  assert.deepEqual(calls, ['composer', 'composer-state', 'layout', 'highlight']);
 });
 
 test('deferred visual startup scheduler cancels pending timeout on dispose', () => {

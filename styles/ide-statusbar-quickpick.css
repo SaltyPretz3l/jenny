@@ -1,8 +1,7 @@
 /* styles/ide-statusbar-quickpick.css — Workspace IDE statusbar quick-pick popover
  * (tab size / EOL), anchored above the clicked statusbar chip. Split out of
  * ide-view.css to respect the file-size cap; loaded via @import in styles.css
- * right after ide-view.css and BEFORE ide-fim-picker.css, which layers a wider
- * variant on the .ide-chip-popover base defined here. */
+ * right after ide-view.css. */
 
 .ide-chip-popover {
   animation: palette-in var(--motion-duration-fast) var(--motion-ease-emphasis);
@@ -29,7 +28,7 @@
   background: transparent;
   color: inherit;
   font: inherit;
-  font-size: 12px;
+  font-size: var(--font-size-footnote);
   text-align: start;
   cursor: pointer;
 }
@@ -41,12 +40,12 @@
 }
 
 .ide-chip-option--active {
-  font-weight: 600;
+  font-weight: 500;
 }
 
 .ide-chip-option--active::before {
   content: "✓";
-  font-size: 11px;
+  font-size: var(--font-size-caption);
 }
 
 .ide-chip-option:not(.ide-chip-option--active)::before {

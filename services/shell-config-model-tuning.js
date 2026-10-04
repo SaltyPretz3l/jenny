@@ -202,6 +202,7 @@ const modelTuningMethods = Object.freeze({
     if (normalizedModelId && current.pendingLegacyStreamInactivitySeconds != null) {
       const claimed = current.pendingLegacyStreamInactivitySeconds;
       const next = normalizeModelTuning({
+        ...current,
         streamInactivitySecondsByModel: {
           ...current.streamInactivitySecondsByModel,
           [normalizedModelId]: claimed,

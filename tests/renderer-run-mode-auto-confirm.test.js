@@ -4,9 +4,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { JSDOM } = require('jsdom');
 
-const {
-  createSettingsEventBindings,
-} = require('../renderer/chat/renderer-chat-event-settings-bindings');
+const { createRunModeHarness, restoreGlobal } = require('./helpers/run-mode-harness');
 const {
   createComposerV2FlowController,
 } = require('../renderer/chat/renderer-composer-v2-flow');
@@ -17,128 +15,15 @@ const {
   buildPillMarkup,
   buildPopoverMarkup,
 } = require('../renderer/shell/renderer-health-pill-markup-utils');
+const { settingRow } = require('./helpers/settings-rows');
 const {
-  buildDefaultRunModeFieldMarkup,
-} = require('../renderer/shell/renderer-settings-support');
+  createRunModeSwitcherRenderer,
+} = require('../renderer/chat/renderer-composer-v2-render');
 
 function deferred() {
   let resolve;
   const promise = new Promise((settle) => { resolve = settle; });
   return { promise, resolve };
-}
-
-function restoreGlobal(key, previous) {
-  if (previous === undefined) {
-    delete globalThis[key];
-  } else {
-    globalThis[key] = previous;
-  }
-}
-
-function createRunModeHarness(t, options = {}) {
-  const dom = new JSDOM('<!doctype html><body></body>');
-  const doc = dom.window.document;
-  function appendElement(tagName, id, parent = doc.body) {
-    const element = doc.createElement(tagName);
-    element.id = id;
-    parent.appendChild(element);
-    return element;
-  }
-  appendElement('div', 'toastViewport');
-  appendElement('select', 'composerModelSelect');
-  appendElement('select', 'composerEffortSelect');
-  appendElement('button', 'composerSettingsButton');
-  appendElement('button', 'openComposerSettingsViewButton');
-  const runModeSlot = appendElement('div', 'composerRunModeSlot');
-  appendElement('button', 'composerRunModeChip', runModeSlot);
-  appendElement('div', 'composerModeChipsAnnouncer');
-  const previous = {
-    document: globalThis.document,
-    rendererIdeConfirmDialog: globalThis.rendererIdeConfirmDialog,
-    inventoryActionButton: globalThis.inventoryActionButton,
-    inventoryHelpOverlay: globalThis.inventoryHelpOverlay,
-    rendererHealthPillController: globalThis.rendererHealthPillController,
-    rendererRunModeControl: globalThis.rendererRunModeControl,
-  };
-  globalThis.document = dom.window.document;
-  globalThis.inventoryActionButton = function actionButton() { return ''; };
-  globalThis.inventoryHelpOverlay = { createHelpOverlay() {} };
-
-  const calls = { confirm: [], logs: [], persistence: [], toasts: [], refreshes: 0 };
-  const prefs = { runMode: options.runMode || 'ask' };
-  const confirmation = options.confirmation || (() => Promise.resolve(true));
-  if (options.withDialog !== false) {
-    globalThis.rendererIdeConfirmDialog = {
-      createIdeConfirmDialog(config) {
-        calls.dialogConfig = config;
-        return {
-          confirm(configure) {
-            calls.confirm.push(configure);
-            return confirmation();
-          },
-        };
-      },
-    };
-  } else {
-    delete globalThis.rendererIdeConfirmDialog;
-  }
-  globalThis.rendererHealthPillController = {
-    refreshRunModeFacet() { calls.refreshes += 1; },
-  };
-
-  const bindings = createSettingsEventBindings({
-    getAutoRunWarningStorage: () => options.storage,
-    toastViewport: doc.getElementById('toastViewport'),
-    composerModelSelect: doc.getElementById('composerModelSelect'),
-    composerEffortSelect: doc.getElementById('composerEffortSelect'),
-    composerSettingsButton: doc.getElementById('composerSettingsButton'),
-    openComposerSettingsViewButton: doc.getElementById('openComposerSettingsViewButton'),
-    state: { ui: {}, models: {}, modelList: {}, unattendedGuardMinutes: options.unattendedGuardMinutes ?? 0 },
-    TOAST_SOURCE: { memory: 'memory', composerAction: 'composer' },
-    ACTIVITY_SCOPE: {
-      composerPreferredModel: 'model',
-      composerReasoningEffort: 'effort',
-      composerRunMode: 'run-mode',
-    },
-    dismissToast() {},
-    appendClientLog(level, event, details) { calls.logs.push({ level, event, details }); },
-    showShellErrorToast() {},
-    showToastMessage(message) { calls.toasts.push(message); },
-    toErrorMessage(error) { return String(error); },
-    getRuntimePreferenceSnapshot() { return { ...prefs }; },
-    runRuntimePreferenceActivity(activity) {
-      calls.persistence.push(activity);
-      Object.assign(prefs, activity.patch);
-      return Promise.resolve({});
-    },
-    getCurrentRuntimePreferences() { return prefs; },
-    showComposerActionError() {},
-    closeComposerPopover() {},
-    openComposerPopover() {},
-    setActiveView() {},
-    setComposerStatusNotice() {},
-    clearComposerStatusNotice() {},
-    toastActionHandlers: new Map(),
-  });
-  bindings.bindSettingsEvents((element, type, handler) => {
-    element?.addEventListener?.(type, handler);
-  }, {});
-
-  let cleaned = false;
-  function cleanup() {
-    if (cleaned) return;
-    cleaned = true;
-    bindings.dispose();
-    restoreGlobal('document', previous.document);
-    restoreGlobal('rendererIdeConfirmDialog', previous.rendererIdeConfirmDialog);
-    restoreGlobal('inventoryActionButton', previous.inventoryActionButton);
-    restoreGlobal('inventoryHelpOverlay', previous.inventoryHelpOverlay);
-    restoreGlobal('rendererHealthPillController', previous.rendererHealthPillController);
-    restoreGlobal('rendererRunModeControl', previous.rendererRunModeControl);
-    dom.window.close();
-  }
-  t.after(cleanup);
-  return { bindings, calls, cleanup, prefs, control: globalThis.rendererRunModeControl };
 }
 
 function createSendHarness(prompt = 'hello') {
@@ -208,43 +93,80 @@ function readySnapshot() {
   };
 }
 
-test('Auto mode cancellation leaves the current mode and toast state unchanged', async (t) => {
+test('switching to Auto never asks; the send-time dialog keeps its copy (FG-003)', async (t) => {
   const harness = createRunModeHarness(t, { confirmation: () => Promise.resolve(false) });
+  const initialRefreshes = harness.calls.refreshes;
 
-  assert.equal(await harness.control.setRunMode('auto'), false);
-  assert.equal(harness.prefs.runMode, 'ask');
-  assert.equal(harness.calls.persistence.length, 0);
-  assert.equal(harness.calls.toasts.length, 0);
+  assert.equal(await harness.control.setRunMode('auto'), true);
+  assert.equal(await harness.control.setRunMode('plan'), true);
+  assert.equal(await harness.control.setRunMode('auto'), true);
+  assert.equal(harness.calls.confirm.length, 0, 'the chip and segments pass through Auto freely');
+  assert.equal(harness.prefs.runMode, 'auto');
+  assert.equal(initialRefreshes, 1, 'registration refreshes an already-mounted health pill');
+  assert.equal(harness.calls.refreshes, initialRefreshes + 3);
+
+  assert.equal(await harness.control.confirmAutoRun(), false);
   assert.equal(harness.calls.confirm.length, 1);
   assert.equal(harness.calls.confirm[0].title, 'Turn on Auto run?');
   assert.equal(harness.calls.confirm[0].confirmLabel, 'Turn on Auto');
   assert.equal(harness.calls.confirm[0].cancelLabel, 'Cancel');
   assert.equal(harness.calls.confirm[0].variant, 'danger');
+  assert.equal(harness.prefs.runMode, 'auto', 'a cancelled send leaves the mode alone');
 });
 
-test('confirmed Auto mode does not prompt again in the same renderer instance', async (t) => {
-  const harness = createRunModeHarness(t);
-  const initialRefreshes = harness.calls.refreshes;
-
-  assert.equal(await harness.control.setRunMode('auto'), true);
-  assert.equal(await harness.control.setRunMode('ask'), true);
-  assert.equal(await harness.control.setRunMode('auto'), true);
-  assert.equal(harness.calls.confirm.length, 1);
-  assert.equal(initialRefreshes, 1, 'registration refreshes an already-mounted health pill');
-  assert.equal(harness.calls.refreshes, initialRefreshes + 3);
-});
-
-test('overlapping Auto mode requests share one confirmation dialog', async (t) => {
+test('overlapping Auto sends in one project share one confirmation dialog', async (t) => {
   const gate = deferred();
   const harness = createRunModeHarness(t, { confirmation: () => gate.promise });
 
-  const first = harness.control.setRunMode('auto');
-  const second = harness.control.setRunMode('auto');
+  const first = harness.control.confirmAutoRun();
+  const second = harness.control.confirmAutoRun();
   assert.equal(harness.calls.confirm.length, 1);
   gate.resolve(true);
 
-  assert.deepEqual(await Promise.all([first, second]), [false, true]);
-  assert.equal(harness.calls.persistence.length, 1);
+  assert.deepEqual(await Promise.all([first, second]), [true, true]);
+  assert.equal(harness.calls.persistence.length, 0, 'the acknowledgement never writes the run mode');
+});
+
+test('the Auto acknowledgement is per project, shared by its sessions, and persists (FG-003)', async (t) => {
+  const saved = new Map([['jenny.auto-run-warning-ack.v1', '1']]);
+  const storage = { getItem: (key) => saved.get(key), setItem: (key, value) => saved.set(key, value) };
+  const sessions = [
+    { id: 'a1', project_id: 'project_alpha' },
+    { id: 'a2', project_id: 'project_alpha' },
+    { id: 'b1', project_id: 'project_beta' },
+    { id: 'g1' },
+  ];
+  const harness = createRunModeHarness(t, { storage, sessions, currentSessionId: 'a1' });
+
+  assert.equal(await harness.control.confirmAutoRun('a1'), true, 'the old global v1 key does not count');
+  assert.equal(await harness.control.confirmAutoRun('a2'), true);
+  assert.equal(await harness.control.confirmAutoRun(), true, 'no id reads the current session');
+  assert.equal(harness.calls.confirm.length, 1, 'one prompt for every session of a project');
+  assert.equal(await harness.control.confirmAutoRun('b1'), true);
+  assert.equal(await harness.control.confirmAutoRun('g1'), true);
+  assert.equal(harness.calls.confirm.length, 3, 'each other project (General too) asks once');
+  assert.equal(saved.get('jenny.auto-run-warning-ack.v2:project_alpha'), '1');
+  assert.equal(saved.get('jenny.auto-run-warning-ack.v2:project_beta'), '1');
+  assert.equal(saved.get('jenny.auto-run-warning-ack.v2:project_general'), '1');
+  harness.cleanup();
+
+  const restarted = createRunModeHarness(t, { storage, sessions, withDialog: false });
+  assert.equal(await restarted.control.confirmAutoRun('a2'), true, 'survives a restart');
+  assert.equal(restarted.calls.confirm.length, 0);
+});
+
+test('an Auto send in another project waits for the open prompt, then asks for its own', async (t) => {
+  const gate = deferred();
+  const answers = [() => gate.promise, () => Promise.resolve(true)];
+  const sessions = [{ id: 'a1', project_id: 'project_alpha' }, { id: 'b1', project_id: 'project_beta' }];
+  const harness = createRunModeHarness(t, { sessions, confirmation: () => answers.shift()() });
+
+  const alpha = harness.control.confirmAutoRun('a1');
+  const beta = harness.control.confirmAutoRun('b1');
+  assert.equal(harness.calls.confirm.length, 1, 'one dialog at a time');
+  gate.resolve(false);
+  assert.deepEqual(await Promise.all([alpha, beta]), [false, true]);
+  assert.equal(harness.calls.confirm.length, 2);
 });
 
 test('acknowledged Auto warning survives renderer restart and resumed conversation sends', async (t) => {
@@ -302,6 +224,16 @@ test('disposing an open Auto gate rejects it and a fresh instance prompts again'
   const secondHarness = createRunModeHarness(t);
   assert.equal(await secondHarness.control.confirmAutoRun(), true);
   assert.equal(secondHarness.calls.confirm.length, 1);
+});
+
+test('confirmAutoSend asks only for an Auto session, once per project (send boundary, FG-003)', async (t) => {
+  const harness = createRunModeHarness(t, { runMode: 'ask' });
+  assert.equal(await harness.control.confirmAutoSend(), true);
+  assert.equal(harness.calls.confirm.length, 0);
+  harness.prefs.runMode = 'auto';
+  assert.equal(await harness.control.confirmAutoSend(), true);
+  assert.equal(await harness.control.confirmAutoSend(), true);
+  assert.equal(harness.calls.confirm.length, 1);
 });
 
 test('first send in inherited Auto mode confirms once while Ask sends never confirm', async (t) => {
@@ -431,9 +363,9 @@ test('health-pill markup and controller project Auto and pause state', (t) => {
     { runMode: 'auto', pauseState: 'none' }
   );
   assert.match(autoPill, /class="workbench-health-pill-mode"/);
-  assert.match(autoPill, /data-run-mode="auto" data-pause-state="none">Auto<\/span>/);
-  assert.match(autoPill, /aria-label="[^"]*, Auto run on"/);
-  assert.match(autoPill, /title="[^"]*, Auto run on"/);
+  assert.match(autoPill, /data-run-mode="auto" data-pause-state="none" data-health-pill-action="open-run-mode">Auto<\/button>/);
+  assert.match(autoPill, /aria-label="Run mode: Auto"/);
+  assert.match(autoPill, /title="Run mode: Auto"/);
   assert.doesNotMatch(buildPillMarkup(
     { tone: 'success', label: 'Ready' },
     { runMode: 'ask' }
@@ -441,7 +373,7 @@ test('health-pill markup and controller project Auto and pause state', (t) => {
   assert.match(buildPillMarkup(
     { tone: 'success', label: 'Ready' },
     { runMode: 'auto', pauseState: 'paused' }
-  ), />Auto · Paused<\/span>/);
+  ), />Auto · Paused<\/button>/);
 
   const state = { error: '', toneLabel: { tone: 'success', label: 'Ready', summary: '' } };
   assert.match(buildPopoverMarkup(state, readySnapshot(), { runMode: 'auto' }), /Run mode/);
@@ -483,8 +415,10 @@ test('health-pill markup and controller project Auto and pause state', (t) => {
 });
 
 test('Auto settings help says blocked commands are refused', () => {
-  const markup = buildDefaultRunModeFieldMarkup({
-    selectField(options) { return options.hint; },
+  // The sentence rides on the settings-field row (shared binding), behind the row's "?" detail.
+  const markup = settingRow('defaultRunModeSelect', undefined, {
+    selectField() { return '<select></select>'; },
+    settingsField(options) { return options.detail; },
   });
   assert.match(markup, /blocked commands are refused\./);
   assert.doesNotMatch(markup, /blocked commands[^.]*prompt/i);
@@ -494,9 +428,80 @@ test('Auto settings help says blocked commands are refused', () => {
 for (const minutes of [0, 45]) {
   test(`Auto confirmation describes configured inactivity behavior (${minutes})`, async (t) => {
     const harness = createRunModeHarness(t, { unattendedGuardMinutes: minutes });
-    assert.equal(await harness.control.setRunMode('auto'), true);
+    assert.equal(await harness.control.confirmAutoRun(), true);
     const text = harness.calls.confirm[0].message;
     assert.match(text, minutes === 0 ? /Inactivity pause is off/ : /after 45 minutes/);
     assert.match(text, /Settings > Tools/);
   });
 }
+
+/* Collapsed settings popover (spec 2026-09-26 §4 step 4): a segment click in
+ * the run-mode slot sets that exact mode through setRunMode (an unchanged mode
+ * is a no-op; Auto asks at send time, not here); the chip click still cycles. */
+const segment = (harness, mode) => harness.runModeSlot.querySelector(`[data-run-mode-option="${mode}"]`);
+const settleRunMode = () => new Promise((resolve) => setImmediate(resolve));
+const clickInside = (harness, node) => node.dispatchEvent(new harness.doc.defaultView.MouseEvent('click', { bubbles: true }));
+
+test('a segment click (on its icon too) sets that exact mode, and the chip click still cycles', async (t) => {
+  const harness = createRunModeHarness(t, { switcher: true });
+  clickInside(harness, segment(harness, 'plan').querySelector('.composer-run-mode-segment-icon svg'));
+  await settleRunMode();
+  assert.equal(harness.prefs.runMode, 'plan', 'Plan from Ask, not the cycle step (Auto)');
+  assert.equal(harness.calls.confirm.length, 0);
+  assert.deepEqual(harness.calls.persistence.map((entry) => [entry.patch, entry.sessionId]), [[{ runMode: 'plan' }, undefined]]);
+  harness.switcher.sync();
+  assert.equal(segment(harness, 'plan').getAttribute('aria-pressed'), 'true');
+  assert.equal(segment(harness, 'ask').getAttribute('aria-pressed'), 'false');
+  harness.doc.getElementById('composerRunModeChip').click();
+  await settleRunMode();
+  assert.equal(harness.prefs.runMode, 'ask', 'Plan cycles to Ask');
+});
+
+test('an Auto segment click sets Auto without the confirmation dialog (FG-003)', async (t) => {
+  const harness = createRunModeHarness(t, { switcher: true, confirmation: () => Promise.resolve(false) });
+  segment(harness, 'auto').click();
+  await settleRunMode();
+  assert.equal(harness.calls.confirm.length, 0, 'switching never asks');
+  assert.equal(harness.prefs.runMode, 'auto');
+  assert.deepEqual(harness.calls.persistence.map((entry) => entry.patch), [{ runMode: 'auto' }]);
+});
+
+test('the pressed segment is a no-op and a disabled chip or segment ignores the click', async (t) => {
+  const harness = createRunModeHarness(t, { switcher: true, runMode: 'plan' });
+  segment(harness, 'plan').click();
+  await settleRunMode();
+  assert.equal(harness.calls.persistence.length, 0, 'unchanged mode writes nothing');
+  const chip = harness.doc.getElementById('composerRunModeChip');
+  chip.disabled = true; // plugin read-only session
+  segment(harness, 'ask').click();
+  await settleRunMode();
+  assert.equal(harness.calls.persistence.length, 0, 'a disabled chip blocks the segments');
+  chip.disabled = false;
+  segment(harness, 'ask').disabled = true;
+  clickInside(harness, segment(harness, 'ask'));
+  clickInside(harness, segment(harness, 'ask').querySelector('.composer-run-mode-segment-label'));
+  await settleRunMode();
+  assert.equal(harness.calls.persistence.length, 0, 'a disabled segment does nothing');
+  assert.equal(harness.prefs.runMode, 'plan');
+});
+
+test('a pane rail segment click targets that pane session with its own chip', async (t) => {
+  const harness = createRunModeHarness(t);
+  const paneSlot = harness.doc.body.appendChild(harness.doc.createElement('div'));
+  const paneSwitcher = createRunModeSwitcherRenderer({ slot: paneSlot, domId: '', getRunMode: () => 'ask' });
+  t.after(() => paneSwitcher.destroy());
+  harness.bindings.bindComposerRailEvents({
+    registerListener: (element, type, handler) => element?.addEventListener?.(type, handler),
+    listenerOptions: {},
+    dom: { composerRunModeSlot: paneSlot },
+    getSessionId: () => 'session-b',
+  });
+  paneSlot.querySelector('[data-run-mode-option="auto"]').click();
+  await settleRunMode();
+  assert.equal(harness.calls.confirm.length, 0, 'a pane rail switches to Auto without asking');
+  assert.deepEqual(harness.calls.persistence.map((entry) => [entry.patch, entry.sessionId]), [[{ runMode: 'auto' }, 'session-b']]);
+  paneSlot.querySelector('[data-inv-chip="composer-run-mode"]').disabled = true;
+  paneSlot.querySelector('[data-run-mode-option="plan"]').click();
+  await settleRunMode();
+  assert.equal(harness.calls.persistence.length, 1, 'the pane chip disabled state gates its segments');
+});

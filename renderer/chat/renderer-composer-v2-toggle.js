@@ -1,308 +1,206 @@
-/* renderer/chat/renderer-composer-v2-toggle.js - Composer V2 tool toggle controller. */
+/* Composer tool-family state and serialized current-chat preference writes. */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) {
-    module.exports = factory(
-      require('./renderer-composer-v2-state'),
-      require('./renderer-composer-v2-model')
-    );
+    module.exports = factory(require('./renderer-composer-v2-model'));
     return;
   }
-  root.rendererComposerV2Toggle = factory(root.rendererComposerV2State || {}, root.rendererComposerV2Model || {});
-})(typeof globalThis !== 'undefined' ? globalThis : this, function (composerV2State, composerV2Model) {
+  root.rendererComposerV2Toggle = factory(root.rendererComposerV2Model);
+})(typeof globalThis !== 'undefined' ? globalThis : this, function (model) {
   'use strict';
+  const { SURFACE_FAMILY_UI, normalizeToolEntry, familyLabel, familyDescription } = model;
+  const jt = (...args) => (globalThis.jennyI18n?.t || globalThis.jennyI18nFallback || ((key, fallback) => fallback))(...args);
+  const lockdownTooltip = () => jt('composer.toggle.offlineLockdown', 'Offline lockdown is on for this session');
+  const isMap = (value) => Boolean(value && typeof value === 'object' && !Array.isArray(value));
 
-  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
-  const { ensureComposerV2State } = composerV2State || {};
-  const {
-    TOOL_CATEGORY_CONFIG_KEYS = {},
-    TOOL_CATEGORY_SESSION_KEYS = {},
-    TOOL_TOGGLE_CATEGORIES = [],
-    escapeHtml = (value) => String(value || ''),
-    getToolCategoryId = () => '',
-    normalizeToolEntry = (entry) => ({ name: String(entry || '').trim(), available: true, reason: '' }),
-  } = composerV2Model || {};
-  const LOCKDOWN_TOOLTIP = jt('composer.toggle.offlineLockdown', 'Offline lockdown is on for this session');
-
-  function sessionToolOverrideEchoMatches(persisted, sessionId, requestedOverrides) {
-    const overrides = persisted?.tool_category_overrides;
+  function sessionToolOverrideEchoMatches(persisted, sessionId, requested = {}) {
+    const equalMap = (actual, expected = {}) => isMap(actual) && isMap(expected)
+      && Object.keys(actual).length === Object.keys(expected).length
+      && Object.keys(expected).every((key) => Object.hasOwn(actual, key) && actual[key] === expected[key]);
     return String(persisted?.id || '').trim() === String(sessionId || '').trim()
-      && overrides && typeof overrides === 'object' && !Array.isArray(overrides)
-      && Object.entries(requestedOverrides || {}).every(([key, value]) => overrides[key] === value);
+      && equalMap(persisted?.tool_category_overrides, requested.tool_category_overrides)
+      && equalMap(persisted?.tool_connection_overrides, requested.tool_connection_overrides);
   }
 
   function createComposerV2ToggleController(deps = {}) {
     const state = deps.state || {};
-    const persistToolPreference = typeof deps.persistSessionToolPreference === 'function'
-      ? deps.persistSessionToolPreference
-      : null;
-    const onPersistError = typeof deps.onPersistError === 'function'
-      ? deps.onPersistError
-      : null;
-    const getCurrentSessionId = typeof deps.getCurrentSessionId === 'function'
-      ? deps.getCurrentSessionId
-      : () => '';
-    const committedToggleState = new Map();
-    const committedOverrideCategories = new Set();
-    const persistenceRevisions = new Map();
+    const getSessionId = () => String(deps.getCurrentSessionId?.() || state.currentSessionId || '').trim();
+    const families = new Map();
+    const connections = new Map();
+    const defaults = new Map();
+    let generation = 0;
     let persistenceQueue = Promise.resolve(true);
-    let hydrationGeneration = 0;
-    if (typeof ensureComposerV2State !== 'function') {
-      throw new Error('createComposerV2ToggleController: composer-v2-state is incomplete');
-    }
-    ensureComposerV2State(state);
+    let context = makeContext(getSessionId());
 
-    function getComposerState() {
-      return ensureComposerV2State(state);
-    }
-
-    function isOfflineLockdownActive() {
-      if (state.features?.featureFlags?.session_offline_lockdown !== true) return false;
-      const sessionId = String(getCurrentSessionId() || state.currentSessionId || '').trim();
-      return Boolean(sessionId && (Array.isArray(state.sessions) ? state.sessions : [])
-        .find((session) => String(session?.id || '').trim() === sessionId)?.lockdown === true);
-    }
-
-    function noteCategory(categoryId, entry) {
-      if (!categoryId) return;
-      const composer = getComposerState();
-      const current = composer.toolCategoryMeta.get(categoryId) || { present: false, available: false, reason: '' };
-      const nextAvailable = current.available || entry.available === true;
-      const nextMeta = {
-        present: true,
-        available: nextAvailable,
-        reason: nextAvailable ? '' : (current.reason || entry.reason),
-      };
-      composer.toolCategoryMeta.set(categoryId, nextMeta);
-      if (nextAvailable) {
-        composer.availableToolCategories.set(categoryId, true);
+    function committedMaps(categoryOverrides, connectionOverrides) {
+      const categories = {};
+      const connected = {};
+      for (const family of SURFACE_FAMILY_UI) {
+        if (typeof categoryOverrides?.[family.id] === 'boolean') categories[family.id] = categoryOverrides[family.id];
       }
+      // Preserve the backend's legacy local_browser preference when writing a full map.
+      if (typeof categoryOverrides?.local_browser === 'boolean') categories.local_browser = categoryOverrides.local_browser;
+      for (const [id, value] of Object.entries(isMap(connectionOverrides) ? connectionOverrides : {})) {
+        if ((id.startsWith('mcp:') || id.startsWith('plugin:')) && typeof value === 'boolean') connected[id] = value;
+      }
+      return { tool_category_overrides: categories, tool_connection_overrides: connected };
     }
 
-    function setAvailableTools(availableToolNames) {
-      const tools = Array.isArray(availableToolNames) ? availableToolNames : [];
-      const composer = getComposerState();
-      composer.availableToolCategories.clear();
-      composer.toolCategoryMeta.clear();
-      for (const tool of tools) {
-        const entry = normalizeToolEntry(tool);
-        const categoryId = getToolCategoryId(entry.name);
-        if (categoryId) noteCategory(categoryId, entry);
-      }
-      for (const categoryId of composer.availableToolCategories.keys()) {
-        if (!composer.toolToggleState.has(categoryId)) {
-          composer.toolToggleState.set(categoryId, true);
+    function makeContext(sessionId, categoryOverrides, connectionOverrides) {
+      const committed = committedMaps(categoryOverrides, connectionOverrides);
+      return { sessionId, generation: ++generation, revision: 0, revisions: new Map(), pending: [], committed,
+        overrides: { tool_category_overrides: { ...committed.tool_category_overrides },
+          tool_connection_overrides: { ...committed.tool_connection_overrides } } };
+    }
+
+    function isLockdown() {
+      return state.features?.featureFlags?.session_offline_lockdown === true
+        && state.sessions?.find((session) => String(session?.id || '').trim() === getSessionId())?.lockdown === true;
+    }
+
+    function setAvailableTools(entries) {
+      families.clear();
+      connections.clear();
+      for (const raw of Array.isArray(entries) ? entries : []) {
+        const entry = normalizeToolEntry(raw);
+        if (!entry.name) continue;
+        const member = { name: entry.name, available: entry.available, reason: entry.reason,
+          approvalDefault: entry.approvalDefault, lockdownAvailable: entry.lockdownAvailable };
+        if (SURFACE_FAMILY_UI.some((family) => family.id === entry.surfaceFamily)) {
+          if (!families.has(entry.surfaceFamily)) families.set(entry.surfaceFamily, { members: [] });
+          families.get(entry.surfaceFamily).members.push(member);
+        }
+        if (entry.connectionId.startsWith('mcp:') || entry.connectionId.startsWith('plugin:')) {
+          const kind = entry.connectionId.startsWith('mcp:') ? 'mcp' : 'plugin';
+          if (!connections.has(entry.connectionId)) connections.set(entry.connectionId, {
+            label: kind === 'mcp' ? (entry.serverName || entry.connectionId.slice(4)) : entry.connectionId.split(':').at(-1),
+            kind, members: [],
+          });
+          connections.get(entry.connectionId).members.push(member);
         }
       }
     }
 
-    function setToggle(categoryId, enabled) {
-      const normalizedCategoryId = String(categoryId || '').trim();
-      if (!normalizedCategoryId) return Promise.resolve(false);
-      if (isOfflineLockdownActive()) return Promise.resolve(false);
-      const composer = getComposerState();
-      const nextEnabled = enabled === true;
-      composer.toolToggleState.set(normalizedCategoryId, nextEnabled);
-      const sessionKey = TOOL_CATEGORY_SESSION_KEYS[normalizedCategoryId];
-      if (!sessionKey || !persistToolPreference) {
-        return Promise.resolve(true);
+    function hydrateFromToolSettings(settings) {
+      for (const family of SURFACE_FAMILY_UI) {
+        defaults.set(family.id, family.configKey && typeof settings?.[family.configKey] === 'boolean' ? settings[family.configKey] : true);
       }
+    }
 
-      const sessionId = String(getCurrentSessionId() || '').trim();
-      const generation = hydrationGeneration;
-      const revision = (persistenceRevisions.get(normalizedCategoryId) || 0) + 1;
-      persistenceRevisions.set(normalizedCategoryId, revision);
+    function hydrateForSession(sessionId, categoryOverrides, connectionOverrides) {
+      const id = String(sessionId || '').trim();
+      if (id !== context.sessionId) {
+        context = makeContext(id, categoryOverrides, connectionOverrides);
+        return;
+      }
+      // Same chat: a summary refresh (our own save's echo included) must not drop queued
+      // writes; adopt the stored maps only once the queue has drained.
+      if (context.pending.length) return;
+      context.committed = committedMaps(categoryOverrides, connectionOverrides);
+      rebuildOptimistic(context);
+    }
 
+    function applyOperation(maps, operation) {
+      if (operation.id === 'reset') return { tool_category_overrides: {}, tool_connection_overrides: {} };
+      return { ...maps, [operation.map]: { ...maps[operation.map], [operation.id]: operation.enabled } };
+    }
+
+    function rebuildOptimistic(target) {
+      target.overrides = target.pending.reduce(applyOperation, target.committed);
+    }
+
+    function enqueue(operation) {
+      const target = context;
+      const sessionId = getSessionId();
+      const revision = ++target.revision;
+      target.revisions.set(operation.id, revision);
+      target.pending.push(operation);
+      rebuildOptimistic(target);
       const persist = async () => {
+        const requested = applyOperation(target.committed, operation);
+        let success = false;
+        let failure;
         try {
-          await persistToolPreference(sessionKey, nextEnabled, sessionId);
-          if (generation === hydrationGeneration && sessionId === String(getCurrentSessionId() || '').trim()) {
-            committedToggleState.set(normalizedCategoryId, nextEnabled);
-            committedOverrideCategories.add(normalizedCategoryId);
-            if (persistenceRevisions.get(normalizedCategoryId) === revision) {
-              composer.sessionOverrideCategories.add(normalizedCategoryId);
-            }
-          }
-          return true;
+          await deps.persistSessionToolPreference?.(requested, sessionId);
+          target.committed = requested;
+          success = true;
         } catch (error) {
-          const isCurrent = generation === hydrationGeneration
-            && sessionId === String(getCurrentSessionId() || '').trim();
-          if (isCurrent && persistenceRevisions.get(normalizedCategoryId) === revision) {
-            composer.toolToggleState.set(
-              normalizedCategoryId,
-              committedToggleState.get(normalizedCategoryId) !== false
-            );
-            if (committedOverrideCategories.has(normalizedCategoryId)) {
-              composer.sessionOverrideCategories.add(normalizedCategoryId);
-            } else {
-              composer.sessionOverrideCategories.delete(normalizedCategoryId);
-            }
-          }
-          if (onPersistError) onPersistError(error, normalizedCategoryId, { isCurrent });
-          return false;
+          failure = error;
         }
+        target.pending = target.pending.filter((item) => item !== operation);
+        // Replay newer revisions over the acknowledged maps, including after rollback.
+        rebuildOptimistic(target);
+        const isCurrent = target.generation === context.generation && sessionId === getSessionId();
+        if (failure) deps.onPersistError?.(failure, operation.id, { isCurrent,
+          revision: target.revisions.get(operation.id) });
+        return success;
       };
       const result = persistenceQueue.then(persist, persist);
       persistenceQueue = result;
       return result;
     }
 
-    /**
-     * Seed toggle state from the persisted tools.* settings map
-     * (features.getState().tools / state.features.tools). Categories whose
-     * config key is absent or non-boolean keep their current state.
-     */
-    function hydrateFromToolSettings(toolSettings) {
-      if (!toolSettings || typeof toolSettings !== 'object' || Array.isArray(toolSettings)) {
-        return;
-      }
-      const composer = getComposerState();
-      hydrationGeneration += 1;
-      committedToggleState.clear();
-      committedOverrideCategories.clear();
-      persistenceRevisions.clear();
-      composer.sessionOverrideCategories.clear();
-      for (const category of TOOL_TOGGLE_CATEGORIES) {
-        const configKey = TOOL_CATEGORY_CONFIG_KEYS[category.id];
-        if (!configKey || typeof toolSettings[configKey] !== 'boolean') continue;
-        composer.toolToggleState.set(category.id, toolSettings[configKey]);
-        committedToggleState.set(category.id, toolSettings[configKey]);
-      }
+    function setToggle(id, enabled) {
+      const group = families.get(id) || connections.get(id);
+      if (!group || (isLockdown() && !group.members.some((member) => member.lockdownAvailable))) return Promise.resolve(false);
+      return enqueue({ id, enabled: enabled === true,
+        map: families.has(id) ? 'tool_category_overrides' : 'tool_connection_overrides' });
     }
 
-    function hydrateFromSessionOverrides(overrides) {
-      if (!overrides || typeof overrides !== 'object' || Array.isArray(overrides)) return;
-      const composer = getComposerState();
-      for (const category of TOOL_TOGGLE_CATEGORIES) {
-        const sessionKey = TOOL_CATEGORY_SESSION_KEYS[category.id];
-        if (sessionKey && typeof overrides[sessionKey] === 'boolean') {
-          composer.toolToggleState.set(category.id, overrides[sessionKey]);
-          composer.sessionOverrideCategories.add(category.id);
-          committedToggleState.set(category.id, overrides[sessionKey]);
-          committedOverrideCategories.add(category.id);
-        }
-      }
+    function resetToDefaults() {
+      return enqueue({ id: 'reset' });
     }
 
+    function effective(id, connection = false) {
+      const overrides = context.overrides[connection ? 'tool_connection_overrides' : 'tool_category_overrides'];
+      if (connection) return overrides[id] ?? true;
+      // Legacy coverage: Files off also keeps Artifacts off unless the chat set Artifacts itself.
+      if (id === 'artifacts' && !Object.hasOwn(overrides, id) && overrides.files === false) return false;
+      return overrides[id] ?? defaults.get(id) ?? true;
+    }
+
+    // The send payload is this chat's stored overrides as they stand optimistically; the
+    // resolver owns defaults and legacy coverage, and config gates own Settings-off tools.
     function getToggleStates() {
-      const composer = getComposerState();
-      const states = {};
-      for (const category of TOOL_TOGGLE_CATEGORIES) {
-        if (composer.availableToolCategories.get(category.id) === true) {
-          states[category.id] = composer.toolToggleState.get(category.id) !== false;
-        }
-      }
-      return states;
+      return { families: { ...context.overrides.tool_category_overrides },
+        connections: { ...context.overrides.tool_connection_overrides } };
     }
 
-    /** Enabled-and-available vs present category counts for the Tools chip. */
+    function describe(id, group, connection, lockdown) {
+      const members = group.members.map((member) => ({ name: member.name,
+        usable: member.available && (!lockdown || member.lockdownAvailable),
+        reason: lockdown && !member.lockdownAvailable ? lockdownTooltip() : member.reason,
+        asksFirst: member.approvalDefault === 'ask' }));
+      const usable = members.filter((member) => member.usable).length;
+      const on = effective(id, connection);
+      return { id, on, overridden: Object.hasOwn(context.overrides[connection ? 'tool_connection_overrides' : 'tool_category_overrides'], id),
+        usable, total: members.length, state: usable === 0 ? 'blocked' : on ? 'on' : 'off',
+        reason: usable === 0 ? (members[0]?.reason || (lockdown ? lockdownTooltip() : '')) : '',
+        members, approval: members.some((member) => member.asksFirst) ? 'some' : 'none' };
+    }
+
+    function getViewModel() {
+      const lockdown = isLockdown();
+      return { lockdown, sections: ['project', 'create', 'reach'].map((id) => ({ id,
+        families: SURFACE_FAMILY_UI.filter((family) => family.section === id && families.has(family.id)).map((family) => ({
+          ...describe(family.id, families.get(family.id), false, lockdown),
+          label: familyLabel(family.id), description: familyDescription(family.id), icon: family.icon,
+        })),
+      })), connections: [...connections].map(([id, group]) => {
+        const { members, approval, ...row } = describe(id, group, true, lockdown);
+        return { ...row, label: group.label, kind: group.kind };
+      }), hasOverrides: Object.values(context.overrides).some((map) => Object.keys(map).length > 0) };
+    }
+
     function getToolsChipCount() {
-      const composer = getComposerState();
-      let present = 0;
-      let enabled = 0;
-      for (const category of TOOL_TOGGLE_CATEGORIES) {
-        const meta = composer.toolCategoryMeta.get(category.id) || {};
-        const isPresent = Boolean(meta.present || composer.availableToolCategories.get(category.id));
-        if (!isPresent) continue;
-        present += 1;
-        const available = composer.availableToolCategories.get(category.id) === true;
-        if (available && composer.toolToggleState.get(category.id) !== false) {
-          enabled += 1;
-        }
-      }
-      return { enabled, present, text: enabled + '/' + present };
+      const vm = getViewModel();
+      const rows = [...vm.sections.flatMap((section) => section.families), ...vm.connections];
+      const on = rows.filter((row) => row.on && row.usable > 0).length;
+      return { on, present: rows.length, text: String(on) };
     }
 
-    function renderToolToggles() {
-      const inv = typeof globalThis !== 'undefined' && globalThis.inventory ? globalThis.inventory : null;
-      const ts = inv && typeof inv.toggleSwitch === 'function' ? inv.toggleSwitch : null;
-      if (!ts) return '';
-
-      const composer = getComposerState();
-      const lockdown = isOfflineLockdownActive();
-      const toggles = [];
-      let hasPresentCategory = false;
-      for (const category of TOOL_TOGGLE_CATEGORIES) {
-        const meta = composer.toolCategoryMeta.get(category.id) || {};
-        const present = Boolean(meta.present || composer.availableToolCategories.get(category.id));
-        const available = composer.availableToolCategories.get(category.id) === true;
-        const enabled = composer.toolToggleState.get(category.id) !== false;
-        const source = composer.sessionOverrideCategories.has(category.id)
-          ? jt('composer.toggle.currentChatOverride', 'Current chat override')
-          : jt('composer.toggle.settingsDefault', 'Settings default');
-        const blocker = String(meta.reason || '').trim();
-        const reason = lockdown ? LOCKDOWN_TOOLTIP : (blocker ? `${source}. ${blocker}` : source);
-        const reasonId = reason ? `tool-toggle-${category.id}-reason` : '';
-        if (present) hasPresentCategory = true;
-
-        toggles.push(
-          '<div class="inv-composer-toggle-item"'
-          + (present ? '' : ' aria-hidden="true" style="display:none"')
-          + (reason ? ' title="' + escapeHtml(reason) + '"' : '')
-          + '>'
-          + (category.icon
-            ? '<span class="composer-tools-row-icon" aria-hidden="true">' + category.icon + '</span>'
-            : '')
-          + ts({
-            id: 'tool-toggle-' + category.id,
-            label: category.label,
-            checked: enabled && available,
-            disabled: lockdown || !available,
-            description: reason,
-            descriptionId: reasonId,
-          })
-          + '</div>'
-        );
-      }
-
-      if (!hasPresentCategory) {
-        return '';
-      }
-
-      const switchGroup = '<div class="inv-composer-toggles" role="group" aria-label="' + escapeHtml(jt('composer.toggle.toolToggles', 'Tool toggles')) + '">'
-        + toggles.join('')
-        + '</div>';
-
-      if (!inv.chip || !inv.popover) {
-        return '';
-      }
-      const count = getToolsChipCount();
-      return inv.chip({
-        id: 'composer-tools',
-        domId: 'composerToolsChip',
-        label: jt('composer.toggle.tools', 'Tools'),
-        count: count.text,
-        hasPopup: true,
-        ariaControls: 'composerToolsPopover',
-        ariaLabel: jt('composer.toggle.sessionToolsEnabled', 'Session tools: {count} enabled', { count: count.text }),
-        title: jt('composer.toggle.sessionToolsEnabled', 'Session tools: {count} enabled', { count: count.text }),
-        className: 'composer-tools-chip',
-      })
-      + inv.popover({
-        id: 'composer-tools',
-        domId: 'composerToolsPopover',
-        ariaLabel: jt('composer.toggle.sessionTools', 'Session tools'),
-        title: jt('composer.toggle.sessionTools', 'Session tools'),
-        className: 'composer-tools-popover',
-        trustedHtml: '<div class="composer-tools-popover-header">' + escapeHtml(jt('composer.toggle.workspaceTools', 'Workspace tools')) + '</div>'
-          + switchGroup
-          + '<div class="inv-popover-footer">' + escapeHtml(jt('composer.toggle.overrideExplanation', 'Overrides apply to this chat; Settings owns defaults.')) + '</div>',
-      });
-    }
-
-    return {
-      setAvailableTools,
-      setToggle,
-      getToggleStates,
-      getToolsChipCount,
-      hydrateFromToolSettings,
-      hydrateFromSessionOverrides,
-      renderToolToggles,
-    };
+    hydrateFromToolSettings({});
+    return { setAvailableTools, hydrateFromToolSettings, hydrateForSession, setToggle, resetToDefaults,
+      getToggleStates, getToolsChipCount, getViewModel };
   }
-
-  return {
-    createComposerV2ToggleController,
-    LOCKDOWN_TOOLTIP,
-    sessionToolOverrideEchoMatches,
-  };
+  return { createComposerV2ToggleController, sessionToolOverrideEchoMatches };
 });

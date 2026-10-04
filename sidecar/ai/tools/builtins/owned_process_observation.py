@@ -13,12 +13,23 @@ from sidecar.ai.tools.builtins.owned_process_settlement import (
 )
 
 MAX_OBSERVED_CHILDREN = 256
+# Tools whose every native process is spawned through the owned-process service
+# on the handler's own thread, which registers the child with this observation
+# BEFORE Popen (and publishes "no_child_started" if Popen fails). For them an
+# invocation with zero registrations provably started no process. run_command
+# (foreground and background) and run_temp_script (which delegates to it) are
+# inventoried since dogfood HB-014: a run_command whose cwd failed validation
+# returned an error with no cleanup verdict, its workspace lease settled
+# "uncertain", and every later workspace tool was refused for the rest of the
+# turn and blocked on capacity in the next one.
 _NO_CHILD_PROOF_TOOLS = frozenset(
     {
         "git_diff",
         "git_log",
         "git_show",
         "git_status",
+        "run_command",
+        "run_temp_script",
         "workspace_change_baseline",
         "workspace_change_delta",
         "workspace_manifest_read",

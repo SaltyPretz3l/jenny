@@ -43,10 +43,8 @@
   display: inline-flex;
   align-items: center;
   gap: var(--space-2);
-  font-size: calc(10px * var(--chat-zoom-factor, 1));
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+  font-size: var(--font-size-caption);
+  font-weight: 500;
   color: var(--widget-ask-card-header-color);
 }
 
@@ -67,13 +65,13 @@
 
 .ask-card-progress {
   flex: 0 0 auto;
-  font-size: 11px;
+  font-size: var(--font-size-caption);
   color: var(--widget-interactive-note-color);
 }
 
 .ask-card-intro {
   color: var(--widget-interactive-intro-color);
-  font-size: 14px;
+  font-size: var(--font-size-body);
   line-height: 1.6;
 }
 
@@ -107,7 +105,7 @@
 
 .interactive-question-prompt {
   color: var(--widget-interactive-prompt-color);
-  font-size: 14px;
+  font-size: var(--font-size-body);
   line-height: 1.5;
 }
 
@@ -123,7 +121,7 @@
   background: var(--widget-interactive-option-bg);
   color: var(--widget-interactive-option-color);
   font: inherit;
-  font-size: 13px;
+  font-size: var(--font-size-body);
   line-height: 1.35;
   cursor: pointer;
   transition:
@@ -165,7 +163,7 @@
   background: transparent;
   color: var(--widget-interactive-note-color);
   font: inherit;
-  font-size: 12px;
+  font-size: var(--font-size-footnote);
   cursor: pointer;
   padding: var(--space-1) var(--space-3);
   border-radius: var(--radius-sm);
@@ -186,7 +184,7 @@
 
 .interactive-question-skipped-note {
   flex: 0 0 auto;
-  font-size: 12px;
+  font-size: var(--font-size-caption);
   color: var(--widget-interactive-note-color);
 }
 
@@ -206,7 +204,7 @@
   color: var(--widget-interactive-input-color);
   padding: var(--space-5) var(--space-6);
   font: inherit;
-  font-size: 13px;
+  font-size: var(--font-size-body);
 }
 
 .interactive-other-input:focus-visible {
@@ -224,7 +222,7 @@
   background: var(--widget-interactive-option-bg);
   color: var(--widget-interactive-option-color);
   font: inherit;
-  font-size: 13px;
+  font-size: var(--font-size-body);
   cursor: pointer;
   transition:
     transform var(--motion-duration-fast) var(--motion-ease-standard),
@@ -295,7 +293,7 @@
 
 .interactive-card-note {
   color: var(--widget-interactive-note-color);
-  font-size: 12px;
+  font-size: var(--font-size-caption);
   line-height: 1.45;
 }
 
@@ -304,7 +302,7 @@
 .interactive-stalled-nudge {
   display: none;
   flex-basis: 100%;
-  font-size: 12px;
+  font-size: var(--font-size-caption);
   color: var(--widget-interactive-note-color);
   font-style: italic;
 }
@@ -322,8 +320,8 @@
 
 .plan-proposal-title {
   color: var(--widget-interactive-prompt-color);
-  font-size: 15px;
-  font-weight: 600;
+  font-size: var(--font-size-heading);
+  font-weight: 500;
   line-height: 1.4;
 }
 
@@ -337,13 +335,13 @@
 
 .plan-proposal-step {
   color: var(--widget-interactive-prompt-color);
-  font-size: 13px;
+  font-size: var(--font-size-body);
   line-height: 1.5;
 }
 
 .plan-proposal-step::marker {
   color: var(--widget-interactive-note-color);
-  font-size: 12px;
+  font-size: var(--font-size-caption);
 }
 
 .plan-proposal-step-label {
@@ -353,7 +351,7 @@
 .plan-proposal-step-detail {
   display: block;
   margin-top: var(--space-1);
-  font-size: 12px;
+  font-size: var(--font-size-caption);
   color: var(--widget-interactive-note-color);
 }
 
@@ -385,7 +383,7 @@
   margin: 0;
   padding-inline-start: var(--space-7);
   color: var(--widget-interactive-note-color);
-  font-size: 13px;
+  font-size: var(--font-size-body);
   line-height: 1.5;
 }
 

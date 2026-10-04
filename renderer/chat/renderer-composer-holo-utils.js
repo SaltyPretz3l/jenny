@@ -13,7 +13,6 @@
       composerHoloContext,
       composerHoloRuntime,
       reducedMotionQuery,
-      cssVarPrefix = 'composer-holo',
     } = deps;
 
     const windowObject = typeof window !== 'undefined' ? window : null;
@@ -34,12 +33,12 @@
     let frameGeneration = 0;
     let activeDrawConfig = null;
 
-    const drawEnabledVar = `--${cssVarPrefix}-draw-enabled`;
-    const strokeScaleVar = `--${cssVarPrefix}-draw-stroke-scale`;
-    const glowScaleVar = `--${cssVarPrefix}-draw-glow-scale`;
-    const alphaScaleVar = `--${cssVarPrefix}-draw-alpha-scale`;
-    const glowAlphaScaleVar = `--${cssVarPrefix}-draw-glow-alpha-scale`;
-    const borderWidthVar = `--${cssVarPrefix}-border-width`;
+    const drawEnabledVar = '--composer-holo-draw-enabled';
+    const strokeScaleVar = '--composer-holo-draw-stroke-scale';
+    const glowScaleVar = '--composer-holo-draw-glow-scale';
+    const alphaScaleVar = '--composer-holo-draw-alpha-scale';
+    const glowAlphaScaleVar = '--composer-holo-draw-glow-alpha-scale';
+    const borderWidthVar = '--composer-holo-border-width';
 
     function readCssNumber(computedStyle, propertyName, fallbackValue) {
       const numericValue = parseFloat(computedStyle?.getPropertyValue?.(propertyName));
@@ -189,6 +188,15 @@
       const bounds = composerHolo.getBoundingClientRect();
       const rawWidth = Number(bounds?.width);
       const rawHeight = Number(bounds?.height);
+      // Split view W3-3: a canvas with no box (its layer is display: none, e.g.
+      // a collapsed composer) runs no frame loop.
+      // The observer fires again when the box returns, and the loop resumes.
+      if (rawWidth === 0 && rawHeight === 0) {
+        composerHoloRuntime.hidden = true;
+        stopComposerHoloLoop();
+        return;
+      }
+      composerHoloRuntime.hidden = false;
       const rawPixelRatio = Number(windowObject?.devicePixelRatio);
       const width = Math.max(Math.round(Number.isFinite(rawWidth) ? rawWidth : 0), 1);
       const height = Math.max(Math.round(Number.isFinite(rawHeight) ? rawHeight : 0), 1);
@@ -208,11 +216,16 @@
       activeDrawConfig = getCurrentDrawConfig();
       if (
         composerHoloRuntime.active
-        && composerHoloRuntime.frameHandle
         && !reducedMotionQuery?.matches
         && isHoloAnimationEligible(activeDrawConfig)
       ) {
-        return;
+        if (composerHoloRuntime.frameHandle) return;
+        if (composerHoloRuntime.supported && typeof requestFrame === 'function') {
+          // Shown again while live: resume the loop the hidden box stopped.
+          frameGeneration += 1;
+          scheduleComposerHoloFrame(frameGeneration);
+          return;
+        }
       }
       drawComposerHolo(activeDrawConfig);
     }
@@ -289,7 +302,7 @@
         return;
       }
 
-      if (!nextActive || reducedMotionQuery?.matches || typeof requestFrame !== 'function') {
+      if (!nextActive || reducedMotionQuery?.matches || typeof requestFrame !== 'function' || composerHoloRuntime.hidden === true) {
         stopComposerHoloLoop();
         drawComposerHolo();
         return;

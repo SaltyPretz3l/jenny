@@ -236,18 +236,37 @@ def _names_and_schemas_from_payload(
     return frozenset(names), schemas
 
 
+# Engine classes whose capability probe already logged a WARNING; later
+# failures log at DEBUG. Bounded by the number of engine classes.
+_PROBE_FAILURE_WARNED: set[str] = set()
+
+
 def native_tools_active_for_kernel(kernel: Any) -> bool:
     """Return whether the engine has native tool-calling active.
 
-    Defensive: any exception yields ``True`` (do not constrain), so the
-    constrained in-band envelope format is applied only when the engine's
-    public capability contract reports no native support.
+    Defensive: any exception yields ``True`` (do not constrain). A throwing
+    probe is not a report of "no native support", and the two errors are not
+    symmetric: assuming native only skips the in-band envelope constraint and
+    the Trigger-A nudge (the retry still runs, unconstrained), while assuming
+    in-band would force a ``json_object`` response format onto an engine that
+    may be emitting native tool calls. The constraint is therefore applied only
+    when the engine's public capability contract positively reports no native
+    support.
     """
     try:
         engine = kernel._engine
         capability = engine.supports_tool_calling
         return bool(capability() if callable(capability) else capability)
     except Exception:  # noqa: BLE001 — defensive; default to unconstrained.
+        engine_class = type(getattr(kernel, "_engine", None)).__name__
+        first = engine_class not in _PROBE_FAILURE_WARNED
+        _PROBE_FAILURE_WARNED.add(engine_class)
+        logger.log(
+            logging.WARNING if first else logging.DEBUG,
+            "native tool-calling probe failed for %s; assuming native tools",
+            engine_class,
+            exc_info=True,
+        )
         return True
 
 

@@ -28,8 +28,14 @@ DIST_RUNNER = ROOT / "scripts" / "tests" / "run-dist-tests.js"
 NON_TEST_NAMES = {"conftest.py", "__init__.py"}
 
 
+def _strip_js_comments(source: str) -> str:
+    """Drop JS comments so a commented-out registry entry does not count (CHK-20)."""
+    source = re.sub(r"/\*.*?\*/", "", source, flags=re.DOTALL)
+    return re.sub(r"(?m)^\s*//.*$|\s//.*$", "", source)
+
+
 def _registered_paths() -> set[str]:
-    source = DIST_RUNNER.read_text(encoding="utf-8")
+    source = _strip_js_comments(DIST_RUNNER.read_text(encoding="utf-8"))
     return set(re.findall(r"'(tests/release-compat/[^']+)'", source))
 
 
@@ -47,9 +53,12 @@ def _expected_paths() -> list[str]:
 
 
 def main() -> int:
-    if not COMPAT_DIR.is_dir() or not DIST_RUNNER.is_file():
+    if not COMPAT_DIR.is_dir() or not _expected_paths():
         print("PASS: no release-compat suite to check")
         return 0
+    if not DIST_RUNNER.is_file():
+        print("FAIL: release-compat tests exist but scripts/tests/run-dist-tests.js is missing")
+        return 1
     registered = _registered_paths()
     missing = [item for item in _expected_paths() if item not in registered]
     if missing:

@@ -172,7 +172,7 @@ def test_background_wait_result_cannot_downgrade_observer_confirmation(
     # shell_background resolves the service through the owned_process module at call time.
     monkeypatch.setattr(owned_process_module, "get_owned_process_service", _Service)
 
-    assert shell_background_module._wait_for_background_exit(job, 1) == (  # noqa: SLF001
+    assert shell_background_module._wait_for_background_exit(job, 1) == (
         "done",
         "",
     )
@@ -193,7 +193,7 @@ def test_background_settled_event_requires_owner_cleanup_proof(
     job = shell_background_module.ManagedBackgroundProcess(
         process=SimpleNamespace(),  # type: ignore[arg-type]
     )
-    outcome = shell_background_module._BackgroundTerminalOutcome(  # noqa: SLF001
+    outcome = shell_background_module._BackgroundTerminalOutcome(
         state="failed",
         exit_code=-1,
         stdout="",
@@ -216,7 +216,7 @@ def test_background_settled_event_requires_owner_cleanup_proof(
     job.observe_cleanup(verdict)
     assert job.settled.is_set() is False
 
-    shell_background_module._settle_background_job(  # noqa: SLF001
+    shell_background_module._settle_background_job(
         job_id="0123456789ab",
         job=job,
         store=SimpleNamespace(),  # type: ignore[arg-type]

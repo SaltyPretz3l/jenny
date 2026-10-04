@@ -155,3 +155,24 @@ test('a diagnostics entry resolved from a measured observation carries fitSource
   assert.equal(card.fitConfidence, 'high');
   assert.equal(card.fitState, 'fits');
 });
+
+
+test('catalog cards prefer measured offload fit and retain catalog display metadata', () => {
+  const rec = recommendation(1, { recommended: true });
+  const result = mergeLibrary({
+    installed: [{ id: rec.pullTag, engine_type: 'ollama' }],
+    recommendations: [rec],
+    fitEstimates: [{
+      modelId: rec.pullTag, fitSource: 'observed', fitConfidence: 'high',
+      vramRequiredMb: 19000, ramRequiredMb: 22800, contextLength: 8192,
+      fits: true, fitsInVram: false, fitsInAccelerator: false, fitsOnCpu: true,
+    }],
+  });
+  const card = result.cards[0];
+  assert.equal(card.fitSource, 'observed');
+  assert.equal(card.fitState, 'cpu');
+  assert.equal(card.vramRequiredMb, 19000);
+  assert.equal(card.contextLength, 8192);
+  assert.equal(card.displayName, rec.displayName);
+  assert.equal(card.recommended, true);
+});

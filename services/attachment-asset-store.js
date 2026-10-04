@@ -13,6 +13,8 @@ const MAX_AUDIO_SIZE_BYTES = 25_000_000;
 const IMAGE_DIRECTORY = 'images';
 const AUDIO_DIRECTORY = 'audio';
 const DEFAULT_ORPHAN_ASSET_MIN_AGE_MS = 30 * 24 * 60 * 60 * 1000;
+const MAX_FAILED_CODES = 8;
+const MAX_FAILED_CODE_LENGTH = 32;
 
 const IMAGE_EXTENSION_TO_MIME = new Map([
   ['.png', 'image/png'],
@@ -88,6 +90,42 @@ function sanitizeDisplayName(value, fallbackBaseName = 'Attachment') {
 function inferMimeTypeFromPath(filePath) {
   const extension = path.extname(String(filePath || '')).toLowerCase();
   return IMAGE_EXTENSION_TO_MIME.get(extension) || AUDIO_EXTENSION_TO_MIME.get(extension) || '';
+}
+
+function imageMimeTypeFromBytes(buffer) {
+  if (buffer.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))) return 'image/png';
+  if (buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff) return 'image/jpeg';
+  const prefix = buffer.subarray(0, 6).toString('ascii');
+  if (prefix === 'GIF87a' || prefix === 'GIF89a') return 'image/gif';
+  if (buffer.subarray(0, 4).toString('ascii') === 'RIFF'
+    && buffer.subarray(8, 12).toString('ascii') === 'WEBP') return 'image/webp';
+  if (buffer.subarray(0, 2).toString('ascii') === 'BM') return 'image/bmp';
+  throw new Error('Attachment is not a supported image.');
+}
+
+function readImportedBytes(filePath, maxBytes, label) {
+  const readPath = realpathExisting(filePath);
+  const before = fs.statSync(readPath);
+  const descriptor = fs.openSync(readPath, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0));
+  try {
+    const opened = fs.fstatSync(descriptor);
+    if (!opened.isFile() || before.dev !== opened.dev || before.ino !== opened.ino
+      || realpathExisting(filePath) !== readPath) throw new Error('Attachment changed while reading.');
+    const buffer = Buffer.allocUnsafe(maxBytes + 1);
+    let used = 0;
+    while (used < buffer.length) {
+      const bytesRead = fs.readSync(descriptor, buffer, used, buffer.length - used, null);
+      if (!bytesRead) break;
+      used += bytesRead;
+    }
+    const after = fs.statSync(filePath);
+    if (after.dev !== opened.dev || after.ino !== opened.ino
+      || realpathExisting(filePath) !== readPath) throw new Error('Attachment changed while reading.');
+    if (used > maxBytes) throw new Error(`${label} buffer exceeds the ${maxBytes} byte limit.`);
+    return buffer.subarray(0, used);
+  } finally {
+    fs.closeSync(descriptor);
+  }
 }
 
 function inferImageExtension({ mimeType, displayName }) {
@@ -247,7 +285,7 @@ class AttachmentAssetStore {
 
   saveImportedImage(filePath, options = {}) {
     const absolutePath = path.resolve(String(filePath || ''));
-    const buffer = fs.readFileSync(absolutePath);
+    const buffer = readImportedBytes(absolutePath, MAX_IMAGE_SIZE_BYTES, 'Image');
     const displayName = options.displayName || path.basename(absolutePath);
     const mimeType = options.mimeType || inferMimeTypeFromPath(absolutePath);
     return this.saveImageBuffer(buffer, {
@@ -259,7 +297,7 @@ class AttachmentAssetStore {
 
   saveImportedAudio(filePath, options = {}) {
     const absolutePath = path.resolve(String(filePath || ''));
-    const buffer = fs.readFileSync(absolutePath);
+    const buffer = readImportedBytes(absolutePath, MAX_AUDIO_SIZE_BYTES, 'Audio');
     const displayName = options.displayName || path.basename(absolutePath);
     const mimeType = options.mimeType || inferMimeTypeFromPath(absolutePath);
     return this.saveAudioBuffer(buffer, {
@@ -289,8 +327,9 @@ class AttachmentAssetStore {
       );
     }
     const displayName = sanitizeDisplayName(options.displayName, 'Image');
+    const mimeType = imageMimeTypeFromBytes(buffer);
     const extension = inferImageExtension({
-      mimeType: options.mimeType,
+      mimeType,
       displayName,
     });
     const assetPath = path.join(
@@ -303,7 +342,7 @@ class AttachmentAssetStore {
       id: createAttachmentId('image'),
       kind: 'image',
       displayName,
-      mimeType: normalizeMimeType(options.mimeType) || inferMimeTypeFromPath(assetPath) || 'image/png',
+      mimeType,
       sizeBytes: buffer.length,
       width: dimensions.width,
       height: dimensions.height,
@@ -354,6 +393,8 @@ class AttachmentAssetStore {
 
   deleteAssets(assetPaths) {
     const deletedPaths = [];
+    const failedCodes = new Set();
+    let failedCount = 0;
     for (const rawPath of Array.isArray(assetPaths) ? assetPaths : []) {
       const assetPath = path.resolve(String(rawPath || ''));
       if (!assetPath || !this.isManagedAssetPath(assetPath)) {
@@ -362,13 +403,20 @@ class AttachmentAssetStore {
       try {
         fs.unlinkSync(assetPath);
         deletedPaths.push(assetPath);
-      } catch (_error) {
-        // Best effort cleanup - file may already be deleted.
+      } catch (error) {
+        // An already-absent file is the goal state, not a failure.
+        if (error?.code === 'ENOENT') continue;
+        failedCount += 1;
+        if (failedCodes.size < MAX_FAILED_CODES) {
+          failedCodes.add(String(error?.code || 'UNKNOWN').slice(0, MAX_FAILED_CODE_LENGTH));
+        }
       }
     }
     return {
       deletedCount: deletedPaths.length,
       deletedPaths,
+      failedCount,
+      failedCodes: [...failedCodes],
     };
   }
 

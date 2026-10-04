@@ -303,6 +303,27 @@ test('ide rail resizer arrow keys resize with side-aware direction', async (t) =
   assert.equal(harness.state.ui.ide.railWidth, 300);
 });
 
+test('ide rail tablist is horizontal: aria-orientation + ArrowRight/ArrowLeft switch panels', async (t) => {
+  const harness = createHarness({ bridgeOptions: { files: { 'README.md': 'r' }, persisted: ALL_PRIMARY_LAYOUT } });
+  t.after(() => harness.dispose());
+  await harness.controller.activateIde();
+  await settle();
+
+  const doc = harness.dom.window.document;
+  const bar = harness.getDom().ideActivityBar;
+  assert.equal(bar.querySelector('[role="tablist"]').getAttribute('aria-orientation'), 'horizontal');
+  pressKey(harness, bar.querySelector('[data-ide-rail-panel="explorer"]'), 'ArrowRight');
+  await settle();
+  assert.equal(harness.state.ui.ide.railPanel, 'search', 'ArrowRight activates the next panel');
+  assert.equal(doc.activeElement?.dataset?.ideRailPanel, 'search', 'focus follows');
+  pressKey(harness, doc.activeElement, 'ArrowLeft');
+  await settle();
+  assert.equal(harness.state.ui.ide.railPanel, 'explorer', 'ArrowLeft activates the previous panel');
+  pressKey(harness, doc.activeElement, 'ArrowLeft');
+  await settle();
+  assert.equal(harness.state.ui.ide.railPanel, 'source-control', 'ArrowLeft wraps to the last panel');
+});
+
 test('stage-surface button titles reflect active/inactive wording (re-click-to-return affordance)', (t) => {
   const dom = new JSDOM('<nav id="bar"></nav><div id="resizer"></div><div id="shell"></div>');
   const bar = dom.window.document.getElementById('bar');
@@ -336,4 +357,64 @@ test('stage-surface button titles reflect active/inactive wording (re-click-to-r
     'active Preview advertises the return-to-editor affordance'
   );
   assert.equal(mapButton().getAttribute('title'), 'Show File Map', 'File Map stays inactive wording while Preview is active');
+});
+
+test('a pointer move with no horizontal delta at the viewport ceiling keeps the saved rail width (Astra review)', async (t) => {
+  const harness = createHarness({ bridgeOptions: { files: { 'README.md': 'r' } } });
+  t.after(() => harness.dispose());
+  await harness.controller.activateIde();
+  await settle();
+  const win = harness.dom.window;
+  // 760 - 360 (editor floor) = a 400px rail ceiling for a saved 600.
+  Object.defineProperty(win, 'innerWidth', { value: 760, configurable: true });
+  harness.state.ui.ide.railWidth = 600;
+  harness.state.ui.ide.secondaryPanelOpen = false;
+  harness.state.ui.ide.chatDockOpen = false;
+  harness.controller.renderIde();
+  await settle();
+  const { ideRailResizer, ideShell } = harness.getDom();
+  assert.equal(ideShell.style.getPropertyValue('--ide-rail-width'), '400px', 'shown at the ceiling');
+  ideRailResizer.dispatchEvent(new win.MouseEvent('pointerdown', { clientX: 800, bubbles: true }));
+  win.dispatchEvent(new win.MouseEvent('pointermove', { clientX: 800, clientY: 40 }));
+  assert.equal(harness.state.ui.ide.railWidth, 600, 'a vertical-only move at the ceiling does not overwrite the saved 600');
+  assert.equal(ideShell.style.getPropertyValue('--ide-rail-width'), '400px');
+  win.dispatchEvent(new win.MouseEvent('pointermove', { clientX: 780 }));
+  assert.equal(harness.state.ui.ide.railWidth, 380, 'a shrink inside the ceiling is the new choice');
+  win.dispatchEvent(new win.MouseEvent('pointerup', { clientX: 780 }));
+});
+
+test('rail tabs name the rail panel host and the host is a tabpanel labelled by the active tab', (t) => {
+  const dom = new JSDOM('<nav id="bar"></nav><div id="ideRailPanel"></div><div id="resizer"></div><div id="shell"></div>');
+  const doc = dom.window.document;
+  const bar = doc.getElementById('bar');
+  const host = doc.getElementById('ideRailPanel');
+  const ide = realIdeState.createIdeUiState();
+  ide.panelLocations = { explorer: 'primary', search: 'primary', changes: 'primary', 'source-control': 'primary' };
+  ide.railPanel = 'explorer';
+  const rail = railUtils.createIdeRail({
+    getDom: () => ({
+      ideActivityBar: bar,
+      ideRailPanel: host,
+      ideRailResizer: doc.getElementById('resizer'),
+      ideShell: doc.getElementById('shell'),
+    }),
+    getIde: () => ide,
+  });
+  t.after(() => rail.dispose());
+
+  rail.renderActivityBar();
+  const tabs = [...bar.querySelectorAll('[role="tab"]')];
+  assert.equal(tabs.length, 4);
+  assert.equal(new Set(tabs.map((tab) => tab.id)).size, 4, 'every tab has a unique id');
+  assert.ok(tabs.every((tab) => tab.id && tab.getAttribute('aria-controls') === 'ideRailPanel'));
+  assert.equal(host.getAttribute('role'), 'tabpanel');
+  const activeTab = () => bar.querySelector('[role="tab"][aria-selected="true"]');
+  assert.equal(host.getAttribute('aria-labelledby'), activeTab().id);
+  assert.equal(activeTab().dataset.ideRailPanel, 'explorer');
+
+  ide.railPanel = 'search';
+  rail.renderActivityBar();
+  assert.equal(activeTab().dataset.ideRailPanel, 'search');
+  assert.equal(host.getAttribute('aria-labelledby'), activeTab().id, 'follows the tab switch');
+  assert.equal(doc.getElementById(activeTab().getAttribute('aria-controls')), host);
 });

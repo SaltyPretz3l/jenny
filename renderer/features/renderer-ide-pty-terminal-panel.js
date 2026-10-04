@@ -34,17 +34,29 @@
   // with oldest-entry eviction and a visible dropped-output counter — this
   // queue never grows unbounded even under a runaway producer.
   const WRITE_QUEUE_MAX_BYTES = 256 * 1024;
+  // Main truncates one write() at this many UTF-8 bytes (MAX_WRITE_BYTES in
+  // services/workspace-pty-service.js). A longer command would reach the shell
+  // cut off and without its newline, so it is refused before anything is typed.
+  const SEND_COMMAND_MAX_BYTES = 16 * 1024;
+  // Code role size: follows Text size (or the explicit editor font size) via
+  // the shared Monaco-utils resolver, like every other code surface.
+  const TERMINAL_FALLBACK_FONT_SIZE = 13;
+  const CODE_FONT_SIZE_EVENT = 'jenny:code-font-size';
+  // WCAG AA text contrast; xterm lifts any ANSI foreground below it.
+  const TERMINAL_MIN_CONTRAST_RATIO = 4.5;
+  // Root attributes whose change can swap the terminal's colour/font tokens;
+  // observed the same way renderer-ide-theme-bridge.js re-themes Monaco.
+  const APPEARANCE_ATTRIBUTES = ['data-palette', 'data-typography', 'data-font-scale'];
+  const ROOT_COMMITTED_EVENT = 'ide:workspace-root-committed';
 
   function resolveModule(globalName, requirePath) {
     if (globalRef[globalName]) {
       return globalRef[globalName];
     }
+    // Node/test path only; the required paths are fixed in-repo modules, so a
+    // load failure is a real defect and must surface.
     if (typeof require === 'function') {
-      try {
-        return require(requirePath);
-      } catch (_error) {
-        /* unavailable */
-      }
+      return require(requirePath);
     }
     return {};
   }
@@ -67,6 +79,10 @@
       ? deps.toErrorMessage
       : (error, fallback) => String(error?.message || error || fallback || '');
     const appendClientLog = typeof deps?.appendClientLog === 'function' ? deps.appendClientLog : noop;
+    // A best-effort host/xterm/bridge call failed: keep the panel alive, but leave a trace.
+    function logIgnoredError(site, error) {
+      appendClientLog('DEBUG', 'ide.pty_ignored_error', { site, error: String(error?.message || error || '') });
+    }
     // xterm + fit-addon come from the vendored UMD globals in the real app; tests
     // inject fakes (jsdom cannot host xterm). The fit-addon UMD global is
     // `FitAddon` carrying a `FitAddon` class property — guard both shapes.
@@ -101,7 +117,7 @@
     const terminalStreamUtils = resolveModule('rendererTerminalStreamUtils', '../shared/terminal-stream-utils');
     const markStartupAudit = typeof deps?.markStartupAudit === 'function'
       ? deps.markStartupAudit
-      : (name, details) => { try { globalRef.__jennyStartupAudit?.mark?.(name, details); } catch (_error) { /* best effort */ } };
+      : (name, details) => { try { globalRef.__jennyStartupAudit?.mark?.(name, details); } catch (error) { logIgnoredError('startup_audit_mark', error); } };
     let xtermFirstActivationMarked = false;
     // Synchronous fast-path check: true only when startSession() actually needs
     // to `await` a vendor-runtime load. Tests inject createTerminal/createFitAddon
@@ -166,6 +182,13 @@
     let writeFrame = null;
     let writeDroppedEvents = 0;
     let writeDroppedBytes = 0;
+    // Size tracking so a render only re-fits when the host actually changed and
+    // a PTY resize IPC goes out only when cols/rows actually changed.
+    let lastHostSize = '';
+    let lastSentCols = 0;
+    let lastSentRows = 0;
+    let appearanceObserver = null;
+    let lastAppearanceSignature = '';
 
     function isRunning() {
       return Boolean(sessionId);
@@ -256,13 +279,23 @@
       const mount = getMount();
       if (term && mount) {
         if (mountedEl !== mount) {
-          try { term.open(mount); } catch (_error) { /* jsdom/host quirk */ }
+          try { term.open(mount); } catch (error) { logIgnoredError('term_open', error); }
           mountedEl = mount;
+          lastHostSize = '';
           observeResize(mount);
         }
-        applyFitAndResize();
+        // Renders run on every IDE pass; only a real host size change re-fits.
+        const hostSize = measureHost(mount);
+        if (hostSize !== lastHostSize) {
+          lastHostSize = hostSize;
+          applyFitAndResize();
+        }
       }
       syncStatus();
+    }
+
+    function measureHost(mount) {
+      return (Number(mount?.clientWidth) || 0) + 'x' + (Number(mount?.clientHeight) || 0);
     }
 
     // Read the existing terminal CSS custom properties (bg/fg/cursor ONLY — v1
@@ -283,9 +316,77 @@
       return Object.keys(theme).length ? theme : null;
     }
 
+    function readMonoFontFamily() {
+      const host = mountedEl || getMount();
+      if (!windowRef || typeof windowRef.getComputedStyle !== 'function' || !host) {
+        return '';
+      }
+      try {
+        return String(windowRef.getComputedStyle(host).getPropertyValue('--font-family-mono') || '').trim();
+      } catch (_error) {
+        return '';
+      }
+    }
+
+    // Colours + app mono font onto the live xterm. Runs at Start and again on
+    // every palette/typography switch; a same-token pass is a no-op. A font
+    // change alters the cell size, so it re-fits (the resize IPC is deduped).
+    function applyAppearance() {
+      if (!term || !term.options || typeof term.options !== 'object') {
+        return;
+      }
+      const theme = buildTheme();
+      const fontFamily = readMonoFontFamily();
+      const monacoUtils = globalRef.rendererMonacoEditorUtils;
+      const fontSize = typeof monacoUtils?.resolveCodeFontPx === 'function'
+        ? monacoUtils.resolveCodeFontPx(getMount()?.ownerDocument)
+        : TERMINAL_FALLBACK_FONT_SIZE;
+      const signature = JSON.stringify({ theme, fontFamily, fontSize });
+      if (signature === lastAppearanceSignature) {
+        return;
+      }
+      const refit = Boolean(lastAppearanceSignature);
+      lastAppearanceSignature = signature;
+      try {
+        if (theme) { term.options.theme = theme; }
+        if (fontFamily) { term.options.fontFamily = fontFamily; }
+        term.options.fontSize = fontSize;
+      } catch (error) { logIgnoredError('theme', error); } // readonly options
+      if (!refit) return;
+      // A palette change while the Workspace is hidden measures a 0x0 host and
+      // would fit xterm to two columns; the next visible render re-fits instead.
+      const host = mountedEl || getMount();
+      if (!host || measureHost(host) === '0x0') {
+        lastHostSize = '';
+        return;
+      }
+      applyFitAndResize();
+    }
+
+    function startAppearanceObserver() {
+      const rootEl = windowRef?.document?.documentElement || null;
+      if (appearanceObserver || !rootEl) {
+        return;
+      }
+      const ObserverCtor = deps?.mutationObserverCtor || windowRef.MutationObserver || globalRef.MutationObserver || null;
+      if (typeof ObserverCtor !== 'function') {
+        return;
+      }
+      try {
+        appearanceObserver = new ObserverCtor(() => applyAppearance());
+        appearanceObserver.observe(rootEl, { attributes: true, attributeFilter: APPEARANCE_ATTRIBUTES });
+        // The editor font-size preference is not a root attribute; it arrives
+        // as an event from renderer-monaco-editor-utils.
+        windowRef.document.addEventListener?.(CODE_FONT_SIZE_EVENT, applyAppearance);
+      } catch (error) {
+        appearanceObserver = null;
+        logIgnoredError('appearance_observer', error);
+      }
+    }
+
     function applyFit() {
       if (fitAddon && typeof fitAddon.fit === 'function') {
-        try { fitAddon.fit(); } catch (_error) { /* host not measurable yet */ }
+        try { fitAddon.fit(); } catch (error) { logIgnoredError('fit', error); } // host not measurable yet
       }
     }
 
@@ -293,9 +394,21 @@
       applyFit();
       const api = getApi();
       if (isRunning() && api && typeof api.resize === 'function' && term) {
+        if (term.cols === lastSentCols && term.rows === lastSentRows) {
+          return; // the PTY already has this size
+        }
+        lastSentCols = term.cols;
+        lastSentRows = term.rows;
+        // A refused/failed resize leaves the PTY at its old size: forget the
+        // cached size so the next resize notification retries it.
+        const sentFor = sessionId;
+        const forgetSentSize = () => {
+          if (sessionId === sentFor) { lastSentCols = 0; lastSentRows = 0; }
+        };
         try {
-          Promise.resolve(api.resize({ sessionId, cols: term.cols, rows: term.rows })).catch(() => {});
-        } catch (_error) { /* a resize call must never derail render */ }
+          Promise.resolve(api.resize({ sessionId, cols: term.cols, rows: term.rows }))
+            .then((result) => { if (result && result.ok === false) forgetSentSize(); }, forgetSentSize);
+        } catch (error) { forgetSentSize(); logIgnoredError('resize', error); } // a resize call must never derail render
       }
     }
 
@@ -304,7 +417,11 @@
         return;
       }
       const set = (windowRef && windowRef.setTimeout) || setTimeout;
-      resizeTimer = set(() => { resizeTimer = null; applyFitAndResize(); }, RESIZE_DEBOUNCE_MS);
+      resizeTimer = set(() => {
+        resizeTimer = null;
+        lastHostSize = measureHost(mountedEl);
+        applyFitAndResize();
+      }, RESIZE_DEBOUNCE_MS);
     }
 
     // UIUX-011: always follow the LIVE mount. The prior guard (`|| resizeObserver`)
@@ -318,7 +435,7 @@
         return;
       }
       if (resizeObserver) {
-        try { resizeObserver.disconnect(); } catch (_error) { /* already gone */ }
+        resizeObserver.disconnect();
       } else {
         try {
           resizeObserver = new RO(() => scheduleResize());
@@ -327,7 +444,7 @@
           return;
         }
       }
-      try { resizeObserver.observe(mount); } catch (_error) { /* host not observable */ }
+      resizeObserver.observe(mount);
     }
 
     // Buffering while a spawn is in flight and we don't yet know our own session
@@ -346,7 +463,7 @@
 
     function discardWriteQueue() {
       if (writeFrame !== null) {
-        try { cancelFrame(writeFrame); } catch (_error) { /* already gone */ }
+        cancelFrame(writeFrame);
       }
       writeFrame = null;
       writeQueue = [];
@@ -394,7 +511,7 @@
     // frame renders BEFORE "[terminal] session ended", never after it.
     function flushPendingWrites() {
       if (writeFrame !== null) {
-        try { cancelFrame(writeFrame); } catch (_error) { /* already gone */ }
+        cancelFrame(writeFrame);
         writeFrame = null;
       }
       flushWriteQueue();
@@ -445,7 +562,7 @@
       sessionId = '';
       const code = payload?.exitCode == null ? '' : jt('ide.ptyTerminal.exitCode', ' (code {code})', { code: payload.exitCode });
       if (term) {
-        try { term.writeln('\r\n' + jt('ide.ptyTerminal.sessionEnded', '[terminal] session ended{code}', { code })); } catch (_error) { /* term gone */ }
+        try { term.writeln('\r\n' + jt('ide.ptyTerminal.sessionEnded', '[terminal] session ended{code}', { code })); } catch (error) { logIgnoredError('exit_banner', error); }
       }
       setStatusMessage('');
     }
@@ -491,17 +608,21 @@
         return term;
       }
       // theme is applied after the host exists (buildTheme, in startSession).
-      term = createTerminal({ convertEol: false, cursorBlink: true, scrollback: 1000 });
+      // buildTheme maps no ANSI palette, so shells' ANSI colours are xterm's
+      // dark-background defaults (yellow #e5e510 is 1.0:1 on Day's --bg-base).
+      // The WCAG AA floor makes xterm adjust any such foreground against the
+      // live background on every palette (VS Code's terminal default).
+      term = createTerminal({ convertEol: false, cursorBlink: true, scrollback: 1000, minimumContrastRatio: TERMINAL_MIN_CONTRAST_RATIO });
       fitAddon = createFitAddon();
       if (fitAddon && typeof term.loadAddon === 'function') {
-        try { term.loadAddon(fitAddon); } catch (_error) { /* addon optional */ }
+        try { term.loadAddon(fitAddon); } catch (error) { logIgnoredError('load_fit_addon', error); } // addon optional
       }
       if (typeof term.onData === 'function') {
         // USER KEYSTROKES and sendCommand() are the only sanctioned api.write callers.
         term.onData((data) => {
           const api = getApi();
           if (sessionId && api && typeof api.write === 'function') {
-            try { Promise.resolve(api.write({ sessionId, data })).catch(() => {}); } catch (_error) { /* noop */ }
+            try { Promise.resolve(api.write({ sessionId, data })).catch(() => {}); } catch (error) { logIgnoredError('write', error); }
           }
         });
       }
@@ -556,28 +677,24 @@
         ensureTerminal();
         const mount = getMount();
         if (mount && mountedEl !== mount) {
-          try { term.open(mount); } catch (_error) { /* host quirk */ }
+          try { term.open(mount); } catch (error) { logIgnoredError('term_open', error); }
           mountedEl = mount;
           observeResize(mount);
         }
-        // A theme built now (host exists) applies via term.options in xterm >=4;
-        // guard the setter so a fake/older term never throws.
-        const theme = buildTheme();
-        if (theme && term && term.options && typeof term.options === 'object') {
-          try { term.options.theme = theme; } catch (_error) { /* readonly options */ }
-        }
+        // Theme + mono font apply via term.options now that the host exists,
+        // then track palette/typography switches for the terminal's lifetime.
+        applyAppearance();
+        startAppearanceObserver();
         applyFit(); // fit-then-spawn: measure before we ask the pty for a size
-        const result = await api.spawn({ cols: term.cols, rows: term.rows });
+        const spawnCols = term.cols;
+        const spawnRows = term.rows;
+        const result = await api.spawn({ cols: spawnCols, rows: spawnRows });
         if (disposed || epoch !== lifecycleEpoch) {
           const lateSessionId = String(result?.sessionId || '');
           if (lateSessionId && typeof api.kill === 'function') {
-            try { await api.kill({ sessionId: lateSessionId }); } catch (_error) { /* main owns refusal logging */ }
+            try { await api.kill({ sessionId: lateSessionId }); } catch (error) { logIgnoredError('kill_late', error); } // main owns refusal logging
           }
           return false;
-        }
-        if (result && result.available === false) {
-          return failStart(jt('ide.ptyTerminal.notEnabledStatus', 'not enabled'), 'ide.pty_not_enabled',
-            jt('ide.ptyTerminal.notEnabled', 'The PTY terminal is not enabled. Enable workspace_pty_terminal to use it.'));
         }
         if (!result || result.ok === false) {
           const message = toErrorMessage(result?.message, result?.code || jt('ide.ptyTerminal.startFailed', 'The terminal could not be started.'));
@@ -590,6 +707,11 @@
         }
         sessionShell = String(result.shell || '');
         sessionCwd = String(result.cwd || '');
+        // A fresh spawn used this size; an attach to an already-running PTY did
+        // not resize it, so leave the cache empty and let the resize below correct it.
+        const spawnedAtSize = result.alreadyRunning !== true;
+        lastSentCols = spawnedAtSize ? spawnCols : 0;
+        lastSentRows = spawnedAtSize ? spawnRows : 0;
         replayPreReadyBuffer();
         if (!sessionId) {
           // A buffered exit for this session replayed above (it ended before we
@@ -626,8 +748,21 @@
         const command = typeof commandOrBuilder === 'function'
           ? commandOrBuilder(sessionShell, sessionCwd)
           : commandOrBuilder;
-        await api.write({ sessionId, data: `${String(command || '')}\r\n` });
-        return true;
+        const data = `${String(command || '')}\r\n`;
+        const dataBytes = new TextEncoder().encode(data).length;
+        if (dataBytes > SEND_COMMAND_MAX_BYTES) {
+          appendClientLog('WARN', 'ide.pty_send_command_refused', { code: 'too_long' });
+          return false;
+        }
+        const result = await api.write({ sessionId, data });
+        // main answers { ok, written } or { ok: false, code }; only a complete,
+        // accepted write counts as sent.
+        const accepted = Boolean(result) && typeof result === 'object' && result.ok === true
+          && !(Number.isFinite(result.written) && result.written < dataBytes);
+        if (!accepted) {
+          appendClientLog('WARN', 'ide.pty_send_command_refused', { code: String(result?.code || '') });
+        }
+        return accepted;
       } catch (_error) {
         return false;
       }
@@ -638,7 +773,7 @@
       if (!isRunning() || !api || typeof api.write !== 'function') {
         return;
       }
-      try { Promise.resolve(api.write({ sessionId, data: INTERRUPT_BYTE })).catch(() => {}); } catch (_error) { /* noop */ }
+      try { Promise.resolve(api.write({ sessionId, data: INTERRUPT_BYTE })).catch(() => {}); } catch (error) { logIgnoredError('interrupt', error); }
     }
 
     function clearTerminal() {
@@ -648,7 +783,7 @@
       discardWriteQueue();
       resetWriteDropCounters();
       if (term && typeof term.clear === 'function') {
-        try { term.clear(); } catch (_error) { /* noop */ }
+        try { term.clear(); } catch (error) { logIgnoredError('clear', error); }
       }
       syncStatus();
     }
@@ -662,11 +797,11 @@
         if (isRunning() && api && typeof api.kill === 'function') {
           const dyingId = sessionId;
           sessionId = '';
-          try { await api.kill({ sessionId: dyingId }); } catch (_error) { /* exit event settles state */ }
+          try { await api.kill({ sessionId: dyingId }); } catch (error) { logIgnoredError('kill_restart', error); } // exit event settles state
         }
         clearTerminal();
         setStatusMessage('');
-        await startSession();
+        return startSession();
       })();
       const release = () => { restartPromise = null; };
       restartPromise.then(release, release);
@@ -682,15 +817,61 @@
         return;
       }
       const kind = action.dataset.ideTerminalAction;
+      const focusWhenStarted = (started) => { if (started === true) focusTerminal(); };
       if (kind === 'start') {
-        startSession();
+        startSession().then(focusWhenStarted, noop);
       } else if (kind === 'signal') {
         sendInterrupt();
       } else if (kind === 'clear') {
         clearTerminal();
       } else if (kind === 'restart') {
-        restartSession();
+        restartSession().then(focusWhenStarted, noop);
       }
+    }
+
+    // Focus the live xterm, else (no session yet) the Start button. Returns
+    // true when focus landed; the bottom panel calls this on Ctrl+` / tab click.
+    function focusTerminal() {
+      if (term && mountedEl && typeof term.focus === 'function') {
+        try { term.focus(); return true; } catch (error) { logIgnoredError('focus', error); }
+      }
+      const start = getPanelEl()?.querySelector?.('[data-ide-terminal-action="start"]') || null;
+      if (!start || typeof start.focus !== 'function') {
+        return false;
+      }
+      start.focus();
+      return start.ownerDocument?.activeElement === start;
+    }
+
+    // Main kills the PTY on a workspace-root switch; drop the old workspace's
+    // scrollback and return to the pre-Start state so the new root starts clean.
+    function resetForRoot() {
+      if (disposed) {
+        return;
+      }
+      lifecycleEpoch += 1; // an in-flight spawn from the old root is killed on arrival
+      const dyingId = sessionId;
+      sessionId = '';
+      lastSentCols = 0;
+      lastSentRows = 0;
+      discardPreReadyBuffer();
+      const api = getApi();
+      if (dyingId && typeof api?.kill === 'function') {
+        // Main normally killed it already (then this is a no-op there).
+        try { Promise.resolve(api.kill({ sessionId: dyingId })).catch(() => {}); } catch (error) { logIgnoredError('kill_root_switch', error); }
+      }
+      discardWriteQueue();
+      resetWriteDropCounters();
+      if (term) {
+        try {
+          if (typeof term.reset === 'function') { term.reset(); } else { term.clear(); }
+        } catch (error) { logIgnoredError('reset_root_switch', error); }
+      }
+      setStatusMessage('');
+    }
+
+    if (typeof windowRef?.addEventListener === 'function') {
+      windowRef.addEventListener(ROOT_COMMITTED_EVENT, resetForRoot);
     }
 
     function bindEvents() {
@@ -706,26 +887,30 @@
       if (disposed) return;
       disposed = true;
       lifecycleEpoch += 1;
+      try { windowRef?.removeEventListener?.(ROOT_COMMITTED_EVENT, resetForRoot); } catch (error) { logIgnoredError('unbind_root_committed', error); }
+      appearanceObserver?.disconnect?.();
+      appearanceObserver = null;
+      windowRef?.document?.removeEventListener?.(CODE_FONT_SIZE_EVENT, applyAppearance);
       discardPreReadyBuffer();
       discardWriteQueue();
       if (boundPanel) {
         boundPanel.removeEventListener('click', handleClick);
         boundPanel = null;
       }
-      try { unsubscribeData?.(); } catch (_error) { /* already gone */ }
+      try { unsubscribeData?.(); } catch (error) { logIgnoredError('unsubscribe_data', error); }
       unsubscribeData = null;
-      try { unsubscribeExit?.(); } catch (_error) { /* already gone */ }
+      try { unsubscribeExit?.(); } catch (error) { logIgnoredError('unsubscribe_exit', error); }
       unsubscribeExit = null;
       if (resizeObserver) {
-        try { resizeObserver.disconnect(); } catch (_error) { /* already gone */ }
+        resizeObserver.disconnect();
         resizeObserver = null;
       }
       if (resizeTimer) {
-        try { ((windowRef && windowRef.clearTimeout) || clearTimeout)(resizeTimer); } catch (_error) { /* noop */ }
+        ((windowRef && windowRef.clearTimeout) || clearTimeout)(resizeTimer);
         resizeTimer = null;
       }
       if (term) {
-        try { term.dispose(); } catch (_error) { /* already gone */ }
+        try { term.dispose(); } catch (error) { logIgnoredError('dispose', error); }
       }
       term = null;
       fitAddon = null;
@@ -734,21 +919,24 @@
       sessionId = '';
       const api = getApi();
       if (dyingId && typeof api?.kill === 'function') {
-        try { Promise.resolve(api.kill({ sessionId: dyingId })).catch(() => {}); } catch (_error) { /* main owns refusal logging */ }
+        try { Promise.resolve(api.kill({ sessionId: dyingId })).catch(() => {}); } catch (error) { logIgnoredError('kill_dispose', error); } // main owns refusal logging
       }
     }
 
     return {
       bindEvents,
       dispose,
+      focusTerminal,
       isRunning,
       renderTerminalPanel,
+      resetForRoot,
       sendCommand,
       startSession,
     };
   }
 
   return {
+    SEND_COMMAND_MAX_BYTES,
     createIdePtyTerminalPanel,
   };
 });

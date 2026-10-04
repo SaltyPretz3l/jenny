@@ -18,7 +18,7 @@ JSONRPC_CANCEL_REQUEST_METHOD = "$/cancelRequest"
 
 def inspect_server(params: Any, **kwargs: Any) -> dict[str, Any]:
     # Keep the replaceable dispatch seam without loading transports at startup.
-    from sidecar.ai.mcp.inspection import inspect_server as inspect  # noqa: PLC0415
+    from sidecar.ai.mcp.inspection import inspect_server as inspect
 
     return inspect(params, **kwargs)
 
@@ -60,7 +60,7 @@ def process_mcp_cancel_notification(message: dict[str, Any]) -> bool:
     return True
 
 
-def process_mcp_method(  # noqa: PLR0913, PLR0917 - matches the shared dispatcher seam
+def process_mcp_method(  # noqa: PLR0913 - matches the shared dispatcher seam
     method: str,
     message_id: Any,
     params: Any,

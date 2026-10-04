@@ -24,7 +24,6 @@ import sidecar.runtime.worker_payload as worker_payload_module
 from sidecar.runtime.subprocess_manager import (
     ContainmentPolicy,
     SubprocessManager,
-    TaskAlreadyRunningError,
     _build_background_env,
     _write_worker_payload,
     process_exists,
@@ -248,7 +247,7 @@ def test_spawn_module_reserves_task_key_before_popen_returns() -> None:
     def spawn_first() -> None:
         try:
             manager.spawn_module("sidecar.runtime.background_worker", task_key="same-key")
-        except BaseException as exc:  # pragma: no cover - assertion reports the value
+        except BaseException as exc:  # noqa: BLE001  # pragma: no cover - assertion reports the value
             first_errors.append(exc)
 
     first = threading.Thread(target=spawn_first)
@@ -290,7 +289,7 @@ def test_spawn_module_waiter_start_failure_rolls_back_child_and_payload(
     assert process.terminated is True
     assert process.poll() is not None
     assert list(tmp_path.glob("*.json")) == []
-    assert manager._children == {}  # noqa: SLF001
+    assert manager._children == {}
     manager.close()
 
 
@@ -304,7 +303,7 @@ def test_spawn_rejects_reuse_while_posix_descendant_group_is_alive(
         task_key="retained-group",
         process=process,
     )
-    manager._children[child.task_key] = child  # noqa: SLF001
+    manager._children[child.task_key] = child
     group_alive = True
 
     def process_group_exists(_pid: int) -> bool:
@@ -322,7 +321,7 @@ def test_spawn_rejects_reuse_while_posix_descendant_group_is_alive(
             task_key=child.task_key,
         )
 
-    assert manager._children[child.task_key] is child  # noqa: SLF001
+    assert manager._children[child.task_key] is child
     group_alive = False
     manager.close()
 
@@ -350,7 +349,7 @@ def test_close_waits_for_starting_spawn_then_reaps_and_cleans_payload(
                 payload_dir=tmp_path,
                 task_key="closing-key",
             )
-        except BaseException as exc:
+        except BaseException as exc:  # noqa: BLE001  # report
             spawn_errors.append(exc)
 
     spawn_thread = threading.Thread(target=spawn_worker)
@@ -379,7 +378,7 @@ def test_close_waits_for_starting_spawn_then_reaps_and_cleans_payload(
     assert process.terminated is True
     assert process.poll() is not None
     assert payload_files[0].exists() is False
-    assert manager._children == {}  # noqa: SLF001
+    assert manager._children == {}
 
 
 def test_close_timeout_cleans_starting_payload_before_popen_returns(
@@ -405,7 +404,7 @@ def test_close_timeout_cleans_starting_payload_before_popen_returns(
                 payload_dir=tmp_path,
                 task_key="slow-start",
             )
-        except BaseException as exc:
+        except BaseException as exc:  # noqa: BLE001  # report
             spawn_errors.append(exc)
 
     spawn_thread = threading.Thread(target=spawn_worker)
@@ -428,7 +427,7 @@ def test_close_timeout_cleans_starting_payload_before_popen_returns(
     assert len(spawn_errors) == 1
     assert isinstance(spawn_errors[0], RuntimeError)
     assert process.terminated is True
-    assert manager._children == {}  # noqa: SLF001
+    assert manager._children == {}
 
 
 def test_old_waiter_cannot_finalize_replacement_with_same_task_key() -> None:
@@ -438,8 +437,8 @@ def test_old_waiter_cannot_finalize_replacement_with_same_task_key() -> None:
     waiter_gate = threading.Event()
     cleanup_calls: list[int] = []
     manager = SubprocessManager(popen_factory=lambda *_args, **_kwargs: next(processes))
-    original_wait_for_exit = manager._wait_for_exit  # noqa: SLF001
-    original_cleanup_payload = manager._cleanup_payload  # noqa: SLF001
+    original_wait_for_exit = manager._wait_for_exit
+    original_cleanup_payload = manager._cleanup_payload
 
     def delayed_wait(child) -> None:
         assert waiter_gate.wait(1.0)
@@ -449,8 +448,8 @@ def test_old_waiter_cannot_finalize_replacement_with_same_task_key() -> None:
         cleanup_calls.append(child.process.pid)
         original_cleanup_payload(child)
 
-    manager._wait_for_exit = delayed_wait  # type: ignore[method-assign]  # noqa: SLF001
-    manager._cleanup_payload = tracked_cleanup  # type: ignore[method-assign]  # noqa: SLF001
+    manager._wait_for_exit = delayed_wait  # type: ignore[method-assign]
+    manager._cleanup_payload = tracked_cleanup  # type: ignore[method-assign]
 
     manager.spawn_module("sidecar.runtime.background_worker", task_key="reused")
     first_process.finish()
@@ -460,7 +459,7 @@ def test_old_waiter_cannot_finalize_replacement_with_same_task_key() -> None:
     _wait_until(lambda: cleanup_calls.count(first_process.pid) == 1)
 
     assert manager.is_task_running("reused") is True
-    assert manager._children["reused"].process is second_process  # type: ignore[union-attr]  # noqa: SLF001
+    assert manager._children["reused"].process is second_process  # type: ignore[union-attr]
     second_process.finish()
     manager.close()
 
@@ -670,7 +669,7 @@ def test_process_exists_windows_open_process_returns_zero_means_not_found(
 
     fake_kernel32_ns = types.SimpleNamespace(
         OpenProcess=lambda access, inherit, pid: (open_calls.append((access, inherit, pid)) or 0),
-        CloseHandle=lambda h: close_calls.append(h),
+        CloseHandle=lambda h: close_calls.append(h),  # noqa: PLW0108  # argtypes
     )
     fake_windll = types.SimpleNamespace(kernel32=fake_kernel32_ns)
     monkeypatch.setattr(subprocess_manager_module.ctypes, "windll", fake_windll, raising=False)
@@ -691,7 +690,7 @@ def test_process_exists_windows_open_process_success(monkeypatch: pytest.MonkeyP
 
     fake_kernel32_ns = types.SimpleNamespace(
         OpenProcess=lambda access, inherit, pid: (open_calls.append((access, inherit, pid)) or 42),
-        CloseHandle=lambda h: close_calls.append(h),
+        CloseHandle=lambda h: close_calls.append(h),  # noqa: PLW0108  # argtypes
     )
     fake_windll = types.SimpleNamespace(kernel32=fake_kernel32_ns)
     monkeypatch.setattr(subprocess_manager_module.ctypes, "windll", fake_windll, raising=False)
@@ -912,7 +911,7 @@ def test_terminate_child_signals_owned_posix_process_group(
     def fake_killpg(group_id: int, group_signal: int) -> None:
         nonlocal group_alive
         signals.append((group_id, group_signal))
-        if group_signal == subprocess_manager_module._POSIX_SIGKILL:  # noqa: SLF001
+        if group_signal == subprocess_manager_module._POSIX_SIGKILL:
             group_alive = False
             process.kill()
 
@@ -933,11 +932,11 @@ def test_terminate_child_signals_owned_posix_process_group(
         process=process,
     )
 
-    receipt = manager._terminate_child(child, timeout_seconds=0.01)  # noqa: SLF001
+    receipt = manager._terminate_child(child, timeout_seconds=0.01)
 
     assert signals == [
-        (process.pid, subprocess_manager_module._POSIX_SIGTERM),  # noqa: SLF001
-        (process.pid, subprocess_manager_module._POSIX_SIGKILL),  # noqa: SLF001
+        (process.pid, subprocess_manager_module._POSIX_SIGTERM),
+        (process.pid, subprocess_manager_module._POSIX_SIGKILL),
     ]
     assert process.terminated is False
     assert process.killed is True
@@ -971,7 +970,7 @@ def test_terminate_child_falls_back_when_posix_group_signal_fails(
         process=process,
     )
 
-    receipt = manager._terminate_child(child, timeout_seconds=0.01)  # noqa: SLF001
+    receipt = manager._terminate_child(child, timeout_seconds=0.01)
 
     assert process.terminated is True
     assert receipt.terminated is True
@@ -1163,17 +1162,17 @@ def test_finalize_child_is_idempotent() -> None:
     manager.spawn_module("sidecar.runtime.background_worker", task_key="idem_task")
 
     cleanup_calls: list[str] = []
-    manager._cleanup_payload = lambda child: cleanup_calls.append(child.task_key)  # type: ignore[assignment]  # noqa: SLF001
+    manager._cleanup_payload = lambda child: cleanup_calls.append(child.task_key)  # type: ignore[assignment]
 
-    assert "idem_task" in manager._children  # noqa: SLF001
+    assert "idem_task" in manager._children
 
     # First finalize — pops the child and cleans its payload exactly once.
-    manager._finalize_child("idem_task")  # noqa: SLF001
-    assert "idem_task" not in manager._children, "child must be removed after finalize"  # noqa: SLF001
+    manager._finalize_child("idem_task")
+    assert "idem_task" not in manager._children, "child must be removed after finalize"
     assert cleanup_calls == ["idem_task"], "payload cleanup must run once on first finalize"
 
     # Second call must be a no-op: no further cleanup, no error.
-    manager._finalize_child("idem_task")  # noqa: SLF001
+    manager._finalize_child("idem_task")
     assert cleanup_calls == ["idem_task"], "second finalize must NOT re-clean the payload"
     manager.close()
 
@@ -1200,12 +1199,12 @@ def test_cleanup_payload_is_noop_when_payload_path_is_none() -> None:
     with_payload = ManagedSubprocess(
         task_key="withpayload", process=process, payload_path=_SpyPath()  # type: ignore[arg-type]
     )
-    manager._cleanup_payload(with_payload)  # noqa: SLF001
+    manager._cleanup_payload(with_payload)
     assert len(unlink_calls) == 1, "non-None payload_path must trigger unlink()"
 
     # Target: payload_path=None must NOT trigger any unlink.
     none_child = ManagedSubprocess(task_key="nopayload", process=process, payload_path=None)
-    manager._cleanup_payload(none_child)  # noqa: SLF001 — must not raise
+    manager._cleanup_payload(none_child)  # must not raise
     assert len(unlink_calls) == 1, "payload_path=None must NOT trigger unlink()"
     manager.close()
 
@@ -1250,7 +1249,7 @@ def test_terminate_child_skips_terminate_when_process_already_exited() -> None:
 
     child = ManagedSubprocess(task_key="already_exited", process=process, payload_path=None)
     manager = SubprocessManager(popen_factory=lambda *_a, **_kw: _BlockingProcess())
-    manager._terminate_child(child, timeout_seconds=0.1)  # noqa: SLF001
+    manager._terminate_child(child, timeout_seconds=0.1)
 
     assert process.terminated is False, "terminate must not be called on an already-exited process"
     manager.close()
@@ -1282,7 +1281,7 @@ def test_terminate_child_catches_unexpected_exception() -> None:
     manager = SubprocessManager(popen_factory=lambda *_a, **_kw: _BlockingProcess())
 
     # Must not propagate (the broad except in _terminate_child swallows it).
-    receipt = manager._terminate_child(child, timeout_seconds=0.05)  # noqa: SLF001
+    receipt = manager._terminate_child(child, timeout_seconds=0.05)
 
     assert process.terminate_attempts == 1, "terminate() must have been attempted exactly once"
     assert process.killed is True
@@ -1303,7 +1302,7 @@ def test_terminate_child_retains_unreaped_state_after_post_kill_wait_timeout(
     child = ManagedSubprocess(task_key="unreaped", process=process, payload_path=None)
     manager = SubprocessManager(popen_factory=lambda *_args, **_kwargs: _BlockingProcess())
 
-    receipt = manager._terminate_child(child, timeout_seconds=0.01)  # noqa: SLF001
+    receipt = manager._terminate_child(child, timeout_seconds=0.01)
 
     assert process.terminated is True
     assert process.killed is True
@@ -1324,20 +1323,20 @@ def test_rejected_start_keeps_identity_and_payload_owned_when_child_is_unreaped(
     payload_path.write_text("{}", encoding="utf-8")
     process = _PostKillWaitTimeoutProcess()
     manager = SubprocessManager(popen_factory=lambda *_args, **_kwargs: process)
-    reservation = manager._reserve_start("unreaped-start", payload_path)  # noqa: SLF001
+    reservation = manager._reserve_start("unreaped-start", payload_path)
     child = ManagedSubprocess(
         task_key="unreaped-start",
         process=process,
         payload_path=payload_path,
     )
 
-    manager._settle_rejected_start(reservation, child)  # noqa: SLF001
+    manager._settle_rejected_start(reservation, child)
 
-    assert manager._children["unreaped-start"] is child  # noqa: SLF001
+    assert manager._children["unreaped-start"] is child
     assert payload_path.exists() is True
 
     process.finish()
-    manager._finalize_child("unreaped-start", expected_child=child)  # noqa: SLF001
+    manager._finalize_child("unreaped-start", expected_child=child)
     assert payload_path.exists() is False
     manager.close()
 

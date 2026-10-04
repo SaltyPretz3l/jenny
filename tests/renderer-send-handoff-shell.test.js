@@ -136,6 +136,10 @@ test('renderer shows immediate preflight UI before startStream resolves', async 
 });
 
 test('renderer creates and rekeys an optimistic session shell for the first send in a new chat', async (t) => {
+  // The backend accepts the turn only when the test releases it, so the
+  // optimistic phase cannot end before it is observed on a loaded lane.
+  let acceptTurn = null;
+  const turnAccepted = new Promise((resolve) => { acceptTurn = resolve; });
   const { window, shell, dispose } = await loadRendererApp({
     shell: {
       sessions: {
@@ -146,7 +150,7 @@ test('renderer creates and rekeys an optimistic session shell for the first send
       chat: {
         persistAcceptedUserTurn: true,
         async startStream(_payload, { state }) {
-          await new Promise((resolve) => setTimeout(resolve, 40));
+          await turnAccepted;
           state.sessions = [{
             id: 'session-real',
             title: 'Fresh optimistic chat',
@@ -177,7 +181,10 @@ test('renderer creates and rekeys an optimistic session shell for the first send
   input.value = 'Fresh optimistic chat';
   input.dispatchEvent(new window.Event('input', { bubbles: true }));
   sendButton.click();
-  await waitForUi(window, 10);
+  await waitForUiState(window, () => /1/.test(conversationCount.textContent), {
+    timeoutMs: 5000,
+    message: 'the optimistic session shell did not reach the chat list',
+  });
 
   assert.equal(window.__rendererState.currentSessionId.startsWith('session_local_'), true);
   assert.match(conversationCount.textContent, /1/);
@@ -185,7 +192,11 @@ test('renderer creates and rekeys an optimistic session shell for the first send
   assert.equal(window.document.querySelectorAll('.chat-entry').length, 1);
   assert.equal(chatView.dataset.sendLifecycle, 'preflight');
 
-  await waitForUi(window, 80);
+  acceptTurn();
+  await waitForUiState(window, () => chatView.dataset.sendLifecycle === 'streaming', {
+    timeoutMs: 5000,
+    message: 'the accepted turn did not rekey to the real session',
+  });
 
   assert.equal(window.__rendererState.currentSessionId, 'session-real');
   assert.match(window.document.querySelector('.conversation-item')?.textContent || '', /Fresh optimistic chat/);
@@ -461,6 +472,41 @@ test('renderer creates a local draft session during a background stream and comp
   await waitForUi(window, 40);
 
   assert.equal(window.__rendererState.currentSessionId, localDraftSessionId);
+});
+
+test('New chat here for another project gets a real chat record even while another session streams', async (t) => {
+  // A local draft has no record to assign, so it would land in the Workspace project on its first send.
+  const creates = [];
+  const { window, dispose } = await loadRendererApp({
+    shell: {
+      chat: {
+        async startStream(payload, { state }) {
+          const sessionId = payload.sessionId || 'session-streaming';
+          if (!state.sessions.find((session) => session.id === sessionId)) {
+            state.sessions = [{ id: sessionId, title: 'Streaming Session', conversation_mode: 'chat', preferred_model: 'gpt-test',
+              reasoning_effort: 'default', interactive_round_count: 0, interactive_sequence_state: 'idle', pending_question_batch: null,
+              updated_at: new Date().toISOString() }];
+          }
+          state.messagesBySession.set(sessionId, []);
+          return { sessionId, streamId: 'stream-background' };
+        },
+      },
+    },
+  });
+  t.after(async () => { await dispose(); });
+  const create = window.jennyShell.sessions.create;
+  window.jennyShell.sessions.create = async (payload) => { creates.push(payload); return create(payload); };
+  const input = window.document.getElementById('chatInput');
+  input.value = 'Keep streaming in the background';
+  input.dispatchEvent(new window.Event('input', { bubbles: true }));
+  window.document.getElementById('sendButton').click();
+  await waitForUi(window, 40);
+  assert.equal(window.__rendererState.currentSessionId, 'session-streaming');
+
+  const created = await window.rendererTaskSessionActions.start({ projectId: 'project_budget', requireRecord: true });
+  assert.equal(creates.length, 1, 'the backend creates the chat');
+  assert.equal(String(created).startsWith('session_local_'), false, 'not a local draft');
+  assert.equal(window.__rendererState.sessions.some((session) => session.id === created && session.local_draft === true), false);
 });
 
 test('renderer keeps the active draft stable while a hidden background stream updates badges and chrome', async (t) => {

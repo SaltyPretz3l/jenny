@@ -74,3 +74,45 @@ test('replaceAll fails closed without versioned file operations and reports ever
     ]
   );
 });
+
+// IDE-007: undo compares exact bytes. An external CRLF<->LF-only rewrite after the
+// replace must read as "changed since" and never be overwritten.
+function makeUndoHarness(diskContent) {
+  const writes = [];
+  const search = {
+    query: 'x',
+    results: [],
+    canUndo: true,
+    lastReplace: {
+      records: [{ path: 'eol.txt', beforeContent: 'a\r\nb\r\n', afterContent: 'A\r\nb\r\n' }],
+    },
+  };
+  const controller = createIdeReplaceController({
+    getIde: () => ({ search }),
+    getFileOperations: () => ({
+      readForMutation: async () => ({ content: diskContent, mtimeMs: 1 }),
+      writeMutation: async (snapshot, content) => { writes.push(content); return { mtimeMs: 2 }; },
+    }),
+  });
+  return { controller, writes };
+}
+
+test('undoLastReplace reports an EOL-only external rewrite as a conflict and does not write it', async () => {
+  const { controller, writes } = makeUndoHarness('A\nb\n');
+
+  const result = await controller.undoLastReplace();
+
+  assert.equal(result.restored, 0);
+  assert.equal(result.conflicts, 1);
+  assert.deepEqual(writes, []);
+});
+
+test('undoLastReplace still restores a file that holds exactly what the replace wrote', async () => {
+  const { controller, writes } = makeUndoHarness('A\r\nb\r\n');
+
+  const result = await controller.undoLastReplace();
+
+  assert.equal(result.restored, 1);
+  assert.equal(result.conflicts, 0);
+  assert.deepEqual(writes, ['a\r\nb\r\n']);
+});

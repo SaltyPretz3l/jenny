@@ -26,12 +26,11 @@ const {
 const { buildFeatureFlagDefaults } = require('./feature-flags');
 
 const MAX_ARCHIVED_BOARD_ITEMS = 50;
+const RESUMABLE_SESSION_STATES = new Set(['current', 'open', 'saved']);
 
-// Reminders are manual Home nudges: no executor ever fires them on a
-// schedule, so the persisted scheduleType/dailyAt/intervalMinutes/lastFiredAt
-// fields are ignored here and no scheduleLabel/firedToday is emitted
-// (UIUX-017). Do not resurface schedule or fired state without wiring a
-// real scheduler first.
+// Reminders fire automatically while Jenny is running. Delivery and persisted
+// schedule/fire state belong to the reminder notifier; this Home projection
+// carries the reminder's content and actions.
 function normalizeReminder(reminder) {
   return {
     id: normalizeString(reminder?.id),
@@ -86,29 +85,44 @@ function formatBoardTimingDateTime(parsed) {
   return `${formatBoardTimingDate(parsed)}, ${time}`;
 }
 
-function buildFollowUpTimingLabel(followUp) {
-  const deferredUntil = normalizeString(followUp?.deferredUntil);
-  if (!deferredUntil) {
-    return '';
+function parseBoardTimestamp(value) {
+  const raw = normalizeString(value);
+  if (!raw) {
+    return null;
   }
-  const parsed = new Date(deferredUntil);
-  if (Number.isNaN(parsed.valueOf())) {
-    return '';
-  }
-  return `Deferred until ${formatBoardTimingDateTime(parsed)}`;
+  const parsed = new Date(raw);
+  return Number.isNaN(parsed.valueOf()) ? null : parsed;
 }
 
-function buildResolvedFollowUpTimingLabel(followUp) {
-  const resolvedAt = normalizeString(followUp?.resolvedAt);
-  if (!resolvedAt) {
-    return '';
+/* English fallback only: the renderer localizes from the raw timestamps, but
+ * Home focus (companion-home-focus.js) still reads timingLabel. Every branch
+ * is NaN-guarded so a malformed timestamp never renders "Invalid Date". */
+function buildBoardTimingLabel(status, followUp) {
+  if (status === 'active') {
+    return followUp?.dueNow ? 'Due now' : '';
   }
-  const parsed = new Date(resolvedAt);
-  if (Number.isNaN(parsed.valueOf())) {
-    return '';
+  if (status === 'deferred') {
+    const parsed = parseBoardTimestamp(followUp?.deferredUntil);
+    return parsed ? `Deferred until ${formatBoardTimingDateTime(parsed)}` : '';
   }
-  return `Completed ${formatBoardTimingDate(parsed)}`;
+  if (status === 'resolved') {
+    const parsed = parseBoardTimestamp(followUp?.resolvedAt);
+    return parsed ? `Completed ${formatBoardTimingDate(parsed)}` : '';
+  }
+  if (status === 'archived') {
+    const parsed = parseBoardTimestamp(followUp?.archivedAt);
+    return parsed ? `Archived ${formatBoardTimingDate(parsed)}` : 'Archived';
+  }
+  return '';
 }
+
+const SOURCE_KIND_BADGES = Object.freeze({
+  agent_task: 'Agent task',
+  assistant_reply: 'Assistant reply',
+  proactive_suggestion: 'Proactive suggestion',
+  reminder: 'Reminder',
+  manual: 'Manual',
+});
 
 function firstBoardAction(loop, type) {
   return (Array.isArray(loop?.actions) ? loop.actions : []).find((action) =>
@@ -192,7 +206,7 @@ class CompanionService {
     this.personalityWorkspace = personalityWorkspace || null;
     this.listSessionSummaries = typeof listSessionSummaries === 'function'
       ? listSessionSummaries
-      : () => [];
+      : () => null;
     this.listSessionRecords = typeof listSessionRecords === 'function'
       ? listSessionRecords
       : () => [];
@@ -220,9 +234,13 @@ class CompanionService {
     return normalizeCompanion(state.companion);
   }
 
-  _listSessions() {
+  /* The provider returns null while no session store is attached; an array,
+   * even an empty one, is authoritative. `known` travels with the list (never
+   * on the instance) so overlapping getState calls cannot trade flags. */
+  _readSessionList() {
     const sessions = this.listSessionSummaries();
-    return Array.isArray(sessions) ? sessions.slice() : [];
+    const known = Array.isArray(sessions);
+    return { sessions: known ? sessions.slice() : [], known };
   }
 
   _listSessionRecords() {
@@ -287,47 +305,6 @@ class CompanionService {
     };
   }
 
-  _buildFollowUpSourceLabel(followUp, sessionTitle) {
-    if (sessionTitle) {
-      return `Linked to ${sessionTitle}`;
-    }
-    if (followUp.sourceKind === 'agent_task') {
-      return 'Tracked from an agent task';
-    }
-    if (followUp.sourceKind === 'assistant_reply') {
-      return 'Saved from an assistant reply';
-    }
-    if (followUp.sourceKind === 'proactive_suggestion') {
-      return 'Saved from a proactive suggestion';
-    }
-    if (followUp.sourceKind === 'reminder') {
-      return 'Promoted from a reminder';
-    }
-    if (followUp.sourceKind === 'manual') {
-      return 'Saved manually';
-    }
-    return '';
-  }
-
-  _buildFollowUpSourceBadge(followUp) {
-    if (followUp.sourceKind === 'agent_task') {
-      return 'Agent task';
-    }
-    if (followUp.sourceKind === 'assistant_reply') {
-      return 'Assistant reply';
-    }
-    if (followUp.sourceKind === 'proactive_suggestion') {
-      return 'Proactive suggestion';
-    }
-    if (followUp.sourceKind === 'reminder') {
-      return 'Reminder';
-    }
-    if (followUp.sourceKind === 'manual') {
-      return 'Manual';
-    }
-    return '';
-  }
-
   _resolveFollowUpSessionTitle(followUp, sessionById) {
     const session = sessionById.get(normalizeString(followUp.sessionId)) || null;
     const sourceMeta = followUp?.sourceMeta && typeof followUp.sourceMeta === 'object'
@@ -339,127 +316,81 @@ class CompanionService {
       || '';
   }
 
-  _buildFollowUpSessionMeta(followUp, sessionById, workspaceState) {
+  /* sessionState is the machine-readable twin of sessionBadge (the English
+   * fallback): '' | 'current' | 'open' | 'missing' | 'saved'. 'missing' only
+   * applies when the session list is known (an attached store's list, even an
+   * empty one, lacks the id); an unknown list (null) never marks missing. */
+  _buildFollowUpSessionMeta(followUp, sessionById, sessionContext) {
     const sessionId = normalizeString(followUp.sessionId);
     if (!sessionId) {
-      return {
-        sessionTitle: '',
-        sessionBadge: '',
-        contextLine: '',
-      };
+      return { sessionState: '', sessionTitle: '', sessionBadge: '', contextLine: '' };
     }
-    const activeSessionId = normalizeString(workspaceState?.activeSessionId);
-    const openSessionIds = new Set(
-      Array.isArray(workspaceState?.openSessionIds)
-        ? workspaceState.openSessionIds.map((entry) => normalizeString(entry)).filter(Boolean)
-        : []
-    );
     const sessionTitle = this._resolveFollowUpSessionTitle(followUp, sessionById);
-    if (sessionId && sessionId === activeSessionId) {
-      return {
-        sessionTitle,
-        sessionBadge: 'Current session',
-        contextLine: '',
-      };
+    if (sessionId === sessionContext.activeSessionId) {
+      return { sessionState: 'current', sessionTitle, sessionBadge: 'Current session', contextLine: '' };
     }
-    if (openSessionIds.has(sessionId)) {
-      return {
-        sessionTitle,
-        sessionBadge: 'Open session',
-        contextLine: sessionTitle,
-      };
+    if (sessionContext.openSessionIds.has(sessionId)) {
+      return { sessionState: 'open', sessionTitle, sessionBadge: 'Open session', contextLine: sessionTitle };
     }
-    return {
-      sessionTitle,
-      sessionBadge: 'Saved from session',
-      contextLine: sessionTitle,
-    };
+    if (sessionContext.sessionsLoaded && !sessionById.has(sessionId)) {
+      return { sessionState: 'missing', sessionTitle, sessionBadge: '', contextLine: '' };
+    }
+    return { sessionState: 'saved', sessionTitle, sessionBadge: 'Saved from session', contextLine: sessionTitle };
   }
 
-  _buildFollowUpActions(followUp, {
-    primaryAction,
-    afterPrimaryActions = [],
-    includeEdit = false,
-    includeDefer = false,
-    includeContinue = false,
-    includeArchive = false,
-    includeUnarchive = false,
-    includeDelete = true,
-    continueLabel = '',
-  } = {}) {
+  /* One slot-per-status builder. Array order is display order: primary, then
+   * inline, then overflow; each action type appears at most once per loop. */
+  _buildFollowUpActions(followUp, status, { canResume = false, canStartTask = false } = {}) {
+    const followUpId = normalizeString(followUp.id);
+    const action = (type, slot, label, labelKey, idPrefix = type) => ({
+      id: `${idPrefix}:${followUpId}`,
+      type,
+      label,
+      labelKey,
+      slot,
+      followUpId,
+    });
+    const resume = (slot) => ({
+      ...action('continue_session', slot, 'Resume thread', 'companion.actions.resumeThread', 'continue_follow_up'),
+      sessionId: normalizeString(followUp.sessionId),
+    });
+    const startTask = (slot) => (slot === 'primary'
+      ? action('start_task_session', slot, 'Start a session', 'companion.actions.startSession')
+      : action('start_task_session', slot, 'Start a new session', 'companion.actions.startNewSession'));
+    const done = (slot) => action('resolve_follow_up', slot, 'Done', 'companion.actions.done');
+
     const actions = [];
-    if (includeEdit) {
-      actions.push({
-        id: `edit_follow_up:${followUp.id}`,
-        type: 'edit_follow_up',
-        label: 'Edit',
-        followUpId: normalizeString(followUp.id),
-      });
-    }
-    if (followUp.sourceKind === 'agent_task' && this._isTaskBoardEnabled()) {
-      actions.push({
-        id: `start_task_session:${followUp.id}`,
-        type: 'start_task_session',
-        label: 'Start a session',
-        followUpId: normalizeString(followUp.id),
-      });
-    }
-    if (primaryAction) {
-      actions.push(primaryAction);
-    }
-    if (Array.isArray(afterPrimaryActions)) {
-      for (const action of afterPrimaryActions) {
-        if (action && typeof action === 'object') {
-          actions.push(action);
-        }
+    let primaryType = '';
+    if (status === 'active') {
+      const primary = canResume ? resume('primary') : canStartTask ? startTask('primary') : done('primary');
+      primaryType = primary.type;
+      actions.push(primary);
+      if (primaryType !== 'resolve_follow_up') {
+        actions.push(done('inline'));
       }
+      actions.push(action('defer_follow_up', 'inline', 'Later', 'companion.actions.later'));
+    } else if (status === 'deferred') {
+      actions.push(action('activate_follow_up', 'primary', 'Make active', 'companion.actions.makeActive'));
+    } else if (status === 'resolved') {
+      actions.push(action('activate_follow_up', 'inline', 'Reopen', 'companion.actions.reopen'));
+    } else if (status === 'archived') {
+      actions.push(action('unarchive_follow_up', 'inline', 'Restore', 'companion.actions.restore'));
     }
-    if (includeDefer) {
-      actions.push({
-        id: `defer_follow_up:${followUp.id}`,
-        type: 'defer_follow_up',
-        label: 'Later',
-        followUpId: normalizeString(followUp.id),
-      });
+    if (canResume && status !== 'active') {
+      actions.push(resume('inline'));
     }
-    const hasContinueAction = actions.some((action) => action?.type === 'continue_session');
-    if (includeContinue && normalizeString(followUp.sessionId) && !hasContinueAction) {
-      actions.push({
-        id: `continue_follow_up:${followUp.id}`,
-        type: 'continue_session',
-        label: continueLabel || `Continue ${normalizeString(followUp.sessionId) || 'Session'}`,
-        sessionId: normalizeString(followUp.sessionId),
-        followUpId: normalizeString(followUp.id),
-      });
+    if (canStartTask && status !== 'archived' && primaryType !== 'start_task_session') {
+      actions.push(startTask('overflow'));
     }
-    if (includeArchive) {
-      actions.push({
-        id: `archive_follow_up:${followUp.id}`,
-        type: 'archive_follow_up',
-        label: 'Archive',
-        followUpId: normalizeString(followUp.id),
-      });
+    actions.push(action('edit_follow_up', 'overflow', 'Edit', 'companion.actions.edit'));
+    if (status === 'resolved') {
+      actions.push(action('archive_follow_up', 'overflow', 'Archive', 'companion.actions.archive'));
     }
-    if (includeUnarchive) {
-      actions.push({
-        id: `unarchive_follow_up:${followUp.id}`,
-        type: 'unarchive_follow_up',
-        label: 'Restore',
-        followUpId: normalizeString(followUp.id),
-      });
-    }
-    if (includeDelete) {
-      actions.push({
-        id: `delete_follow_up:${followUp.id}`,
-        type: 'delete_follow_up',
-        label: 'Delete',
-        followUpId: normalizeString(followUp.id),
-      });
-    }
+    actions.push(action('delete_follow_up', 'overflow', 'Delete', 'companion.actions.delete'));
     return actions;
   }
 
-  _buildFollowUpBoard(configState, sessions, workspaceState) {
+  _buildFollowUpBoard(configState, sessions, workspaceState, sessionsLoaded = Array.isArray(sessions)) {
     const now = this.nowProvider();
     const normalizedNow = now instanceof Date && !Number.isNaN(now.valueOf()) ? now : new Date();
     const sessionById = new Map(
@@ -533,109 +464,70 @@ class CompanionService {
       )
     );
 
-    const toBoardItem = (
-      followUp,
-      { status, timingLabel = '', primaryAction, afterPrimaryActions = [], includeDefer = false } = {}
-    ) => {
+    // Built once per board, not per follow-up. Without a session list (no
+    // store attached, provider returned null) nothing is marked missing and
+    // Resume stays available; an empty list from a store is authoritative.
+    const sessionContext = {
+      activeSessionId: normalizeString(workspaceState?.activeSessionId),
+      openSessionIds: new Set(
+        Array.isArray(workspaceState?.openSessionIds)
+          ? workspaceState.openSessionIds.map((entry) => normalizeString(entry)).filter(Boolean)
+          : []
+      ),
+      sessionsLoaded: Boolean(sessionsLoaded),
+    };
+    const taskBoardEnabled = this._isTaskBoardEnabled();
+
+    // normalizeFollowUp already trimmed every string field, defaulted the
+    // label and bounded history, so the item reads them directly.
+    const toBoardItem = (followUp, status) => {
       const {
+        sessionState,
         sessionTitle,
         sessionBadge,
         contextLine,
-      } = this._buildFollowUpSessionMeta(followUp, sessionById, workspaceState);
-      const sourceBadge = this._buildFollowUpSourceBadge(followUp);
-      const sessionLabel = sessionTitle || 'Session';
+      } = this._buildFollowUpSessionMeta(followUp, sessionById, sessionContext);
+      // Resume follows the badge, so the two can never disagree.
+      const canResume = RESUMABLE_SESSION_STATES.has(sessionState);
       return {
         id: `followup:${followUp.id}`,
         kind: 'follow_up',
         status,
-        title: normalizeString(followUp.label) || 'Follow-up',
-        body: normalizeString(followUp.body),
-        followUpId: normalizeString(followUp.id),
-        sessionId: normalizeString(followUp.sessionId),
+        title: followUp.label,
+        body: followUp.body,
+        followUpId: followUp.id,
+        sessionId: followUp.sessionId,
         sessionTitle,
+        sessionState,
         sessionBadge,
-        sourceBadge,
+        sourceBadge: SOURCE_KIND_BADGES[followUp.sourceKind] || '',
         contextLine,
-        sourceKind: normalizeString(followUp.sourceKind),
-        sourceId: normalizeString(followUp.sourceId),
-        sourceLabel: this._buildFollowUpSourceLabel(followUp, sessionTitle || (normalizeString(followUp.sessionId) ? sessionLabel : '')),
-        deferredUntil: normalizeString(followUp.deferredUntil),
-        deferPreset: normalizeString(followUp.deferPreset),
-        archivedAt: normalizeString(followUp.archivedAt),
+        sourceKind: followUp.sourceKind,
+        sourceId: followUp.sourceId,
+        resolvedAt: followUp.resolvedAt,
+        deferredUntil: followUp.deferredUntil,
+        deferPreset: followUp.deferPreset,
+        archivedAt: followUp.archivedAt,
         isDue: followUp.dueNow === true,
-        timingLabel,
-        actions: this._buildFollowUpActions(followUp, {
-          includeEdit: true,
-          primaryAction,
-          afterPrimaryActions,
-          includeDefer,
-          includeContinue: Boolean(normalizeString(followUp.sessionId)),
-          continueLabel: normalizeString(followUp.sessionId) ? 'Resume this thread' : '',
-          includeArchive: status === 'resolved',
-          includeUnarchive: status === 'archived',
-          includeDelete: true,
+        timingLabel: buildBoardTimingLabel(status, followUp),
+        actions: this._buildFollowUpActions(followUp, status, {
+          canResume,
+          canStartTask: followUp.sourceKind === 'agent_task' && taskBoardEnabled,
         }),
-        history: Array.isArray(followUp.history) ? followUp.history.slice(0, 12) : [],
+        history: followUp.history.slice(),
       };
     };
 
-    const active = activeFollowUps.map((followUp) => {
-      const followUpId = normalizeString(followUp.id);
-      const sessionId = normalizeString(followUp.sessionId);
-      const resolveAction = {
-        id: `resolve_follow_up:${followUp.id}`,
-        type: 'resolve_follow_up',
-        label: 'Done',
-        followUpId,
-      };
-      return toBoardItem(followUp, {
-        status: 'active',
-        timingLabel: followUp.dueNow ? 'Due now' : '',
-        includeDefer: true,
-        primaryAction: sessionId
-          ? {
-              id: `continue_follow_up:${followUp.id}`,
-              type: 'continue_session',
-              label: 'Resume this thread',
-              sessionId,
-              followUpId,
-            }
-          : resolveAction,
-        afterPrimaryActions: sessionId ? [resolveAction] : [],
-      });
-    });
-    const deferred = deferredFollowUps.map((followUp) => toBoardItem(followUp, {
-      status: 'deferred',
-      timingLabel: buildFollowUpTimingLabel(followUp),
-      primaryAction: {
-        id: `activate_follow_up:${followUp.id}`,
-        type: 'activate_follow_up',
-        label: 'Make Active',
-        followUpId: normalizeString(followUp.id),
-      },
-    }));
-    const recentResolved = resolvedFollowUps.slice(0, 5).map((followUp) => toBoardItem(followUp, {
-      status: 'resolved',
-      timingLabel: buildResolvedFollowUpTimingLabel(followUp),
-      primaryAction: {
-        id: `activate_follow_up:${followUp.id}`,
-        type: 'activate_follow_up',
-        label: 'Reopen',
-        followUpId: normalizeString(followUp.id),
-      },
-    }));
-    const archived = archivedFollowUps.slice(0, MAX_ARCHIVED_BOARD_ITEMS).map((followUp) => toBoardItem(followUp, {
-      status: 'archived',
-      timingLabel: normalizeString(followUp.archivedAt)
-        ? `Archived ${formatBoardTimingDate(new Date(followUp.archivedAt))}`
-        : 'Archived',
-      primaryAction: {
-        id: `unarchive_follow_up:${followUp.id}`,
-        type: 'unarchive_follow_up',
-        label: 'Restore',
-        followUpId: normalizeString(followUp.id),
-      },
-    }));
+    const active = activeFollowUps.map((followUp) => toBoardItem(followUp, 'active'));
+    const deferred = deferredFollowUps.map((followUp) => toBoardItem(followUp, 'deferred'));
+    // Every resolved loop (bounded like the archive); the renderer shows the
+    // newest few and offers "Show all".
+    const recentResolved = resolvedFollowUps
+      .slice(0, MAX_ARCHIVED_BOARD_ITEMS)
+      .map((followUp) => toBoardItem(followUp, 'resolved'));
+    const archived = archivedFollowUps
+      .slice(0, MAX_ARCHIVED_BOARD_ITEMS)
+      .map((followUp) => toBoardItem(followUp, 'archived'));
 
     return {
       active,
@@ -645,7 +537,7 @@ class CompanionService {
       counts: {
         active: active.length,
         deferred: deferred.length,
-        recentResolved: recentResolved.length,
+        recentResolved: resolvedFollowUps.length,
         archived: archivedFollowUps.length,
       },
     };
@@ -711,6 +603,8 @@ class CompanionService {
     );
     const loopItems = activeLoops
       .filter((loop) => loop.isDue || normalizeString(loop.sessionId))
+      // A loop whose session was deleted has nothing to resume.
+      .filter((loop) => loop.sessionState !== 'missing')
       .filter((loop) => {
         const sessionId = normalizeString(loop.sessionId);
         return !sessionId || !sessionIdsWithActiveTurns.has(sessionId);
@@ -855,8 +749,8 @@ class CompanionService {
     const modeMeta = this._getModeMeta(mode);
     const workspaceStatus = this.configService.getWorkspaceRootStatus();
     const workspaceState = this.getWorkspaceState();
-    const sessions = this._listSessions()
-      .sort(compareSessionActivityDesc);
+    const sessionList = this._readSessionList();
+    const sessions = sessionList.sessions.sort(compareSessionActivityDesc);
     const sessionRecords = this._listSessionRecords()
       .sort(compareSessionActivityDesc);
     const briefingSnapshot = await this.briefingCache.getSnapshot({
@@ -867,7 +761,7 @@ class CompanionService {
       execFileImpl: this.execFileImpl,
     });
     const reminders = this._buildReminders(configState);
-    const openLoopsBoard = this._buildFollowUpBoard(configState, sessions, workspaceState);
+    const openLoopsBoard = this._buildFollowUpBoard(configState, sessions, workspaceState, sessionList.known);
     const recentSessionLoop = this._buildRecentSessionOpenLoop(sessions, workspaceState);
     const todayCards = this._buildTodayCards({
       sessions,

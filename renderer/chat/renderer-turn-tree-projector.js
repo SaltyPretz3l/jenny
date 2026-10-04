@@ -446,10 +446,9 @@
     }
 
     if (kind === 'tool_result') {
-      const toolResult = message && message.tool_result && typeof message.tool_result === 'object'
-        ? message.tool_result
-        : {};
-      const approvalState = normalizeToolLifecycleStatus(toolResult.approval_state || toolResult.approvalState || '');
+      const toolResult = message && message.tool_result && typeof message.tool_result === 'object' ? message.tool_result : {};
+      const orphanState = toolResult.metadata?.recovery === 'orphaned_tool_call' ? toolResult.metadata.terminal_state : ''; // pre-F3 rows
+      const approvalState = normalizeToolLifecycleStatus(toolResult.approval_state || toolResult.approvalState || orphanState || '');
       const resultStatus = approvalState === 'denied' || approvalState === 'timed_out' || approvalState === 'cancelled'
         ? approvalState
         : (toolResult.is_error ? 'errored' : 'completed');
@@ -467,8 +466,9 @@
           is_error: toolResult.is_error === true,
           error_code: normalizeId(toolResult.error_code),
           parent_stream_id: normalizeId(toolResult.parent_stream_id),
+          ...(Number(toolResult.duration_ms) > 0 ? { duration_ms: Number(toolResult.duration_ms) } : {}),
           ...(() => {
-            const metadata = cloneSubagentReportMetadata(toolResult.metadata);
+            const metadata = cloneSubagentReportMetadata(toolResult.metadata, toolResult);
             return metadata ? { metadata } : {};
           })(),
           ...(approvalState ? { approval_state: approvalState } : {}),

@@ -84,7 +84,7 @@ def test_decode_still_works_with_pil():
 
 
 def test_base64_encoding_is_memoized():
-    from sidecar.ai.engines.vision_input import VisionImage  # noqa: PLC0415
+    from sidecar.ai.engines.vision_input import VisionImage
 
     image = VisionImage("image/png", 1, 1, 1, b"memoized image")
     first = image.as_base64()

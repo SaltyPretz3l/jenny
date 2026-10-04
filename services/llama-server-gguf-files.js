@@ -10,6 +10,31 @@ const fs = require('fs');
 const path = require('path');
 
 const { stripLatestTag } = require('./llama-server-readiness');
+const { readGgufArchitecture } = require('./gguf-header');
+
+const DIFFUSION_ARCHITECTURES = Object.freeze(new Set([
+  'qwen_image', 'qwen_image21', 'flux', 'flux2', 'sd1', 'sd2', 'sd3', 'sdxl', 'chroma', 'z_image',
+  'wan', 'wan2', 'hunyuan_video', 'hidream', 'lumina2', 'cosmos',
+]));
+
+// Unknown or unreadable headers remain eligible for chat discovery.
+function chatModelRefusal(filePath, { readArchitecture = readGgufArchitecture } = {}) {
+  try {
+    return DIFFUSION_ARCHITECTURES.has(readArchitecture(filePath)) ? 'gguf_not_a_chat_model' : '';
+  } catch (_error) {
+    return '';
+  }
+}
+
+async function filterDiffusionGgufs(dir, names, { readArchitecture = readGgufArchitecture } = {}) {
+  const chat = [];
+  const diffusion = [];
+  for (const name of names) {
+    const bucket = chatModelRefusal(path.join(dir, name), { readArchitecture }) ? diffusion : chat;
+    bucket.push(name);
+  }
+  return { chat, diffusion };
+}
 
 function isUnsafeFilenameCharacter(character) {
   return character.charCodeAt(0) < 32 || '<>:"/\\|?*'.includes(character);
@@ -276,6 +301,9 @@ function resolveProjectorPath({ modelPath, fsImpl = fs } = {}) {
 }
 
 module.exports = {
+  DIFFUSION_ARCHITECTURES,
+  chatModelRefusal,
+  filterDiffusionGgufs,
   normalizeModelTagForFilename,
   pairProjector,
   resolveGgufPath,

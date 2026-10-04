@@ -41,9 +41,8 @@ test('auxiliary requests reserve capacity before dispatch and carry no project a
   assert.equal(setup.calls[0].options.requestKey, context.request_id);
   assert.equal(setup.service.sessionRuntime.lanes.snapshot().active_leases, 0);
   assert.equal(setup.client.runtimeOperationHandlers.size, 0);
-  // OFF still uses shared scoped/resource admission for explicit auxiliary calls.
-  await setup.request('inline.complete');
-  assert.equal(setup.calls[1].params.inference_context.engine_type, 'ollama');
+  // The removed inline-completion method is not an auxiliary method any more.
+  await assert.rejects(setup.request('inline.complete'), /runtime_auxiliary_method_invalid/);
 });
 
 test('busy auxiliary inference allocates no second sidecar request', async () => {

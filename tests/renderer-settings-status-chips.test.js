@@ -111,17 +111,16 @@ test.after(() => {
   delete global.document;
 });
 
-test('offline surface renders a loading chip before the first payload, then live/error once resolved', () => {
+test('offline posture renders loading then live/error without a header badge', () => {
   const document = offlineDom.window.document;
   document.body.innerHTML = `
-    <span id="offlineBadge" class="settings-badge">Optional</span>
     <div id="offlineSummary"></div>
     <div id="offlineStatus"></div>
     <div id="offlineLocalOnlyList"></div>
     <div id="offlineModelStatus"></div>
     <div id="offlineModelActions"></div>
-    <span class="composer-gear-dot status-dot" id="composerGearPostureDot" data-posture="local" aria-hidden="true"></span>
-    <button id="composerSettingsButton"></button>
+    <span class="status-dot" id="composerChatPostureDot" data-posture="local" aria-hidden="true"></span>
+    <div id="composerChatPosture" hidden></div><span id="composerChatPostureText"></span>
   `;
 
   // Mirrors the bootstrap seed in renderer-bootstrap-utils.js: resolved: false,
@@ -149,7 +148,6 @@ test('offline surface renders a loading chip before the first payload, then live
     state,
     dom: {},
     getDom: () => ({
-      offlineBadge: document.getElementById('offlineBadge'),
       offlineSummary: document.getElementById('offlineSummary'),
       offlineStatus: document.getElementById('offlineStatus'),
       offlineLocalOnlyList: document.getElementById('offlineLocalOnlyList'),
@@ -163,13 +161,10 @@ test('offline surface renders a loading chip before the first payload, then live
     },
   });
 
-  const badge = document.getElementById('offlineBadge');
-  const dot = document.getElementById('composerGearPostureDot');
+  assert.equal(document.getElementById('offlineBadge'), null);
+  const dot = document.getElementById('composerChatPostureDot');
 
   manager.renderOfflineManager();
-  assert.equal(badge.getAttribute('data-state'), 'loading');
-  assert.equal(badge.textContent, 'Checking...');
-  assert.equal(badge.classList.contains(STATUS_CHIP_CLASS), true);
   assert.equal(dot.getAttribute('data-state'), 'loading');
   // Pre-resolution, the flash-stale bug this ticket fixes was the dot silently
   // reading as "off" (no --active/--error class) instead of loading.
@@ -189,8 +184,6 @@ test('offline surface renders a loading chip before the first payload, then live
   manager.renderOfflineManager();
 
   assert.equal(state.offline.resolved, true);
-  assert.equal(badge.getAttribute('data-state'), 'live');
-  assert.equal(badge.textContent, 'Forced');
   assert.equal(dot.getAttribute('data-state'), 'live');
 
   manager.applyOfflinePayload({
@@ -205,8 +198,6 @@ test('offline surface renders a loading chip before the first payload, then live
   });
   manager.renderOfflineManager();
 
-  assert.equal(badge.getAttribute('data-state'), 'error');
-  assert.equal(badge.textContent, 'Blocked');
   assert.equal(dot.getAttribute('data-state'), 'error');
 });
 
@@ -242,4 +233,48 @@ test('a late offline refresh cannot overwrite a newer acknowledged settings upda
   await pendingRefresh;
 
   assert.equal(state.offline.mode, 'local_only');
+});
+
+test('model badge keeps the tag, shortens paths and exposes the full id; idle status lines stay hidden', async (t) => {
+  const { loadRendererApp } = require('./helpers/renderer-shell-harness');
+  for (const model of ['organization/path/model:tag', 'model:tag']) {
+    const app = await loadRendererApp({ shell: { status: { async get() { return { model, model_loaded: true }; } } } });
+    t.after(() => app.dispose());
+    const doc = app.window.document;
+    assert.equal(doc.getElementById('modelBadge').textContent, 'model:tag');
+    assert.equal(doc.getElementById('modelBadge').title, model);
+    for (const id of ['contextStatus', 'editorStatus', 'homeStatus']) {
+      assert.equal(doc.getElementById(id).textContent, '', id);
+      assert.equal(doc.getElementById(id).hidden, true, id);
+    }
+    await app.dispose();
+  }
+});
+
+test('data lifecycle status is hidden when idle and visible when the summary is unavailable', async () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const code = fs.readFileSync(path.join(__dirname, '../renderer/features/renderer-data-lifecycle.js'), 'utf8');
+  for (const ok of [true, false]) {
+    const dom = new JSDOM('<div id="dataLifecycleSettingsMount"></div>', { runScripts: 'outside-only', url: 'http://localhost/' });
+    const window = dom.window;
+    window.inventoryActionButton = require('../renderer/inventory/action-button');
+    window.inventoryTextField = require('../renderer/inventory/text-field');
+    window.inventoryToggleSwitch = require('../renderer/inventory/toggle-switch');
+    window.inventoryProgressBar = require('../renderer/inventory/progress-bar');
+    window.stringUtils = require('../renderer/shared/string-utils');
+    window.dataLifecycleUtils = require('../renderer/features/renderer-data-lifecycle-utils');
+    window.jennyShell = { dataLifecycle: {
+      async getOverview() { return { ok }; }, async findRestoreCandidates() { return { ok: true }; },
+      async syncPortablePreferences() {}, onProgress() { return () => {}; },
+    } };
+    try {
+      window.eval(code);
+      await new Promise(resolve => window.setTimeout(resolve, 0));
+      const status = window.document.getElementById('dataLifecycleSettingsStatus');
+      assert.ok(status);
+      assert.equal(status.hidden, ok);
+      assert.equal(status.textContent, ok ? '' : 'Data summary is temporarily unavailable.');
+    } finally { window.close(); }
+  }
 });

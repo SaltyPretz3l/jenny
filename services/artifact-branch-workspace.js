@@ -136,7 +136,10 @@ async function cloneSessionArtifactsForBranch(
   let createdTargetDir = false;
   try {
     assertCurrent();
+    await service._assertRealPathInside(artifactsRoot, workspaceRoot);
+    assertCurrent();
     const realSourceDir = await service._assertRealPathInside(sourceDir, artifactsRoot);
+    await service._assertRealPathInside(realSourceDir, workspaceRoot);
     assertCurrent();
     const plan = await collectScratchCopyPlan(service, realSourceDir, { byteCap, entryCap });
     assertCurrent();
@@ -144,6 +147,7 @@ async function cloneSessionArtifactsForBranch(
     createdTargetDir = true;
     assertCurrent();
     const realTargetDir = await service._assertRealPathInside(targetDir, artifactsRoot);
+    await service._assertRealPathInside(realTargetDir, workspaceRoot);
     for (const relativePath of plan.files) {
       const destination = service._path.join(realTargetDir, relativePath);
       assertCurrent();

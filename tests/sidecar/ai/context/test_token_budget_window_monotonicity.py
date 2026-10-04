@@ -50,5 +50,5 @@ def test_thresholds_are_monotonic_in_the_window() -> None:
 
     assert thresholds == sorted(thresholds), (
         "auto-compact thresholds must increase with the window, so lowering a "
-        f"catalog entry can only compact earlier: {list(zip(windows, thresholds))}"
+        f"catalog entry can only compact earlier: {list(zip(windows, thresholds, strict=True))}"
     )

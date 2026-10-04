@@ -78,7 +78,7 @@ def test_list_dir_isolates_per_entry_is_dir_failures(
     class _BrokenEntry:
         name = "broken-entry"
 
-        def is_dir(self, follow_symlinks: bool = False) -> bool:  # noqa: FBT001, FBT002
+        def is_dir(self, follow_symlinks: bool = False) -> bool:
             raise OSError("stat failed for broken-entry")
 
     real_scandir = listing_module.os.scandir
@@ -170,10 +170,10 @@ def test_list_dir_keeps_file_when_stat_fails(
             self._entry = entry
             self.name = entry.name
 
-        def is_dir(self, follow_symlinks: bool = False) -> bool:  # noqa: FBT001, FBT002
+        def is_dir(self, follow_symlinks: bool = False) -> bool:
             return self._entry.is_dir(follow_symlinks=follow_symlinks)
 
-        def stat(self, follow_symlinks: bool = False) -> object:  # noqa: FBT001, FBT002
+        def stat(self, follow_symlinks: bool = False) -> object:
             raise OSError("size unavailable")
 
     real_scandir = listing_module.os.scandir

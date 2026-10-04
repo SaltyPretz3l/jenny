@@ -61,7 +61,17 @@
   // same precedent as RAIL_PANELS above. Defaults MUST match the service side.
   const FONT_SIZE_MIN = 8;
   const FONT_SIZE_MAX = 40;
-  const FONT_SIZE_DEFAULT = 13;
+  // 0 = "Match text size" (code role, 13px x --font-scale). The pre-rebase
+  // default 13 was persisted for everyone, so it also reads as Match.
+  const FONT_SIZE_DEFAULT = 0;
+  const FONT_SIZE_LEGACY_DEFAULT = 13;
+  function normalizeEditorFontSize(value) {
+    const size = Math.trunc(Number(value));
+    if (!Number.isFinite(size) || size <= 0 || size === FONT_SIZE_LEGACY_DEFAULT) {
+      return FONT_SIZE_DEFAULT;
+    }
+    return Math.min(FONT_SIZE_MAX, Math.max(FONT_SIZE_MIN, size));
+  }
   const TAB_SIZES = [2, 4, 8];
   const TAB_SIZE_DEFAULT = 2;
   const LINE_NUMBERS = ['on', 'off'];
@@ -70,18 +80,6 @@
   const EXPLORER_SORT_MODES = ['name', 'type', 'modified'];
   const REPLACE_JOURNAL_MAX_APPLIED = 200;
   const REPLACE_JOURNAL_QUERY_MAX = 500;
-  // Inline autocomplete (CONFIG_VERSION 29). Mirrors
-  // services/workspace-ide-config-schema.js (UMD can't import services, same
-  // precedent as RAIL_PANELS). The model tag is whitelisted so no control chars /
-  // shell metacharacters survive into a generate request.
-  const MODEL_TAG_MAX = 200;
-  function sanitizeInlineSuggestModel(value) {
-    const raw = String(value || '').trim();
-    if (!raw || raw.length > MODEL_TAG_MAX) {
-      return '';
-    }
-    return /^[A-Za-z0-9][A-Za-z0-9._:/-]*$/.test(raw) ? raw : '';
-  }
   // Editor column rulers (CONFIG_VERSION 34). Mirrors the service bounds in
   // services/workspace-ide-config-schema.js (this UMD module cannot import
   // services, same precedent as RAIL_PANELS). [] = off (default).
@@ -156,8 +154,9 @@
   // Mirror of the main-process lexical path gate: workspace-relative POSIX
   // paths only. Returns '' for anything absolute / drive-lettered / escaping.
   function normalizeIdeRelativePath(value) {
-    const raw = String(value || '').trim().replace(/\\/g, '/');
-    if (!raw || raw.includes('\0') || raw.startsWith('/') || /^[A-Za-z]:/.test(raw)) {
+    const raw = String(value || '').replace(/\\/g, '/');
+    const lead = raw.trimStart();
+    if (!lead || raw.includes('\0') || lead.startsWith('/') || /^[A-Za-z]:/.test(lead)) {
       return '';
     }
     const segments = raw.split('/').filter((segment) => segment.length > 0 && segment !== '.');
@@ -259,6 +258,25 @@
       return ide.secondaryPanelOpen === true && ide.secondaryPanel === id;
     }
     return ide.railPanel === id;
+  }
+
+  // "Show panel X" routed to the side that hosts it: a secondary-located panel
+  // opens the secondary sidebar on its tab (hooks.openSecondary persists +
+  // renders); a primary one becomes the active rail panel. Setting railPanel to
+  // a secondary-located id would paint nothing and strand stale rail markup.
+  // Returns the resolved location so callers can find the panel's host.
+  function showPanel(ide, id, hooks) {
+    const { openSecondary, schedulePersist, requestRender } = hooks || {};
+    if (getPanelLocation(ide, id) === 'secondary') {
+      openSecondary?.(id);
+      return 'secondary';
+    }
+    if (ide.railPanel !== id) {
+      ide.railPanel = id;
+      schedulePersist?.();
+    }
+    requestRender?.();
+    return 'primary';
   }
 
   // Re-home a panel to the other side, fixing the active-panel invariants. Keeps
@@ -363,12 +381,6 @@
       lineNumbers: 'on',
       renderWhitespace: 'selection',
       eol: '',
-      // Inline autocomplete: enabled default-on (only literal false disables);
-      // the whole feature is gated by the (now default-on) workspace_inline_suggest
-      // flag, so this is the in-feature quick toggle. Model = selected Ollama FIM
-      // tag ('' = none); compute placement is selected by the live runtime.
-      inlineSuggestEnabled: true,
-      inlineSuggestModel: '',
       // Debounced auto-save (the in-feature toggle). DEFAULT-OFF: this writes the
       // user's files, so only a literal true enables it. This is the sole gate.
       autoSaveEnabled: false,
@@ -669,16 +681,12 @@
       explorerSortMode: EXPLORER_SORT_MODES.includes(ide.explorerSortMode) ? ide.explorerSortMode : 'name',
       wordWrap: ide.wordWrap === 'on' ? 'on' : 'off',
       // Editor prefs (validated here too so a corrupt in-memory value never persists).
-      fontSize: Number.isFinite(Number(ide.fontSize))
-        ? Math.min(FONT_SIZE_MAX, Math.max(FONT_SIZE_MIN, Math.trunc(Number(ide.fontSize))))
-        : FONT_SIZE_DEFAULT,
+      fontSize: normalizeEditorFontSize(ide.fontSize),
       tabSize: TAB_SIZES.includes(Number(ide.tabSize)) ? Number(ide.tabSize) : TAB_SIZE_DEFAULT,
       minimap: ide.minimap === false ? false : true,
       lineNumbers: LINE_NUMBERS.includes(ide.lineNumbers) ? ide.lineNumbers : 'on',
       renderWhitespace: RENDER_WHITESPACE.includes(ide.renderWhitespace) ? ide.renderWhitespace : 'selection',
       eol: EOL_VALUES.includes(ide.eol) ? ide.eol : '',
-      inlineSuggestEnabled: ide.inlineSuggestEnabled === false ? false : true,
-      inlineSuggestModel: sanitizeInlineSuggestModel(ide.inlineSuggestModel),
       // Auto-save is DEFAULT-OFF, so only a literal true persists as enabled.
       autoSaveEnabled: ide.autoSaveEnabled === true,
       formatOnSave: ide.formatOnSave === true,
@@ -749,17 +757,12 @@
     // (and force the secondary closed when it ends up empty).
     normalizePanelLocations(ide);
     ide.wordWrap = source.wordWrap === 'on' ? 'on' : 'off';
-    const fontSize = Number(source.fontSize);
-    ide.fontSize = Number.isFinite(fontSize)
-      ? Math.min(FONT_SIZE_MAX, Math.max(FONT_SIZE_MIN, Math.trunc(fontSize)))
-      : FONT_SIZE_DEFAULT;
+    ide.fontSize = normalizeEditorFontSize(source.fontSize);
     ide.tabSize = TAB_SIZES.includes(Number(source.tabSize)) ? Number(source.tabSize) : TAB_SIZE_DEFAULT;
     ide.minimap = source.minimap === false ? false : true;
     ide.lineNumbers = LINE_NUMBERS.includes(source.lineNumbers) ? source.lineNumbers : 'on';
     ide.renderWhitespace = RENDER_WHITESPACE.includes(source.renderWhitespace) ? source.renderWhitespace : 'selection';
     ide.eol = EOL_VALUES.includes(source.eol) ? source.eol : '';
-    ide.inlineSuggestEnabled = source.inlineSuggestEnabled === false ? false : true;
-    ide.inlineSuggestModel = sanitizeInlineSuggestModel(source.inlineSuggestModel);
     ide.autoSaveEnabled = source.autoSaveEnabled === true;
     ide.formatOnSave = source.formatOnSave === true;
     ide.trimTrailingWhitespace = source.trimTrailingWhitespace === true;
@@ -789,6 +792,7 @@
     MAP_TAB_PREFIX,
     FONT_SIZE_MAX,
     FONT_SIZE_MIN,
+    normalizeEditorFontSize,
     MAX_OPEN_TABS,
     PANEL_LOCATIONS,
     PREVIEW_TAB_PREFIX,
@@ -833,7 +837,6 @@
     openTab,
     primaryPanels,
     resetIdeRootState,
-    sanitizeInlineSuggestModel,
     secondaryPanels,
     setActiveTab,
     setPreviewPath,
@@ -841,6 +844,7 @@
     setTabDirty,
     setTabStale,
     setTabViewMode,
+    showPanel,
     sortTabsPinnedFirst,
     toPersistedState,
     toggleTabPinned,

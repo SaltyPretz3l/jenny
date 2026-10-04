@@ -25,6 +25,8 @@
     edit_file: 'Edit',
     write_file: 'Write',
     move_file: 'Move',
+    glob_files: 'Glob',
+    grep_search: 'Grep',
     run_command: 'Bash',
     mermaid_generate: 'Mermaid',
   };
@@ -36,6 +38,37 @@
     'CMP-TOOL-0039',
     'CMP-APPROVAL-REJECTED',
   ]);
+
+  const COMMAND_BLOCKED_CODE = 'CMP-TOOL-0007';
+  // Calls that never failed on their own: the user's Stop ("aborted by user
+  // cancellation", F3) and a batched call the approval window dropped before it
+  // ran, which the model re-issues (F16). Both read Cancelled, not Error.
+  const NOT_RUN_TOOL_CODES = new Set(['CMP-TOOL-0041', 'CMP-TOOL-0042']);
+
+  // The sidecar's shell tool reports exit_code (wire casing); exitCode is the
+  // older Electron-run shape. Either names the command's own exit status.
+  function readToolExitCode(metadata) {
+    const m = metadata && typeof metadata === 'object' && !Array.isArray(metadata) ? metadata : {};
+    const raw = m.exitCode != null ? m.exitCode : (m.exit_code != null ? m.exit_code : readSandboxExitCode(m.execution));
+    const code = raw != null ? Number(raw) : NaN;
+    return Number.isInteger(code) ? code : null;
+  }
+
+  // A Docker sandbox receipt carries the command's exit status under
+  // execution; a run the sandbox itself stopped has no exit status to show.
+  const SANDBOX_NO_EXIT_STATUSES = new Set(['timed_out', 'cancelled', 'interrupted', 'output_limit', 'running', 'preparing']);
+  function readSandboxExitCode(execution) {
+    if (!execution || typeof execution !== 'object' || Array.isArray(execution)) return null;
+    if (SANDBOX_NO_EXIT_STATUSES.has(normalizeString(execution.status).toLowerCase())) return null;
+    return execution.exit_code ?? execution.exitCode ?? null;
+  }
+
+  // The shell tool stopped the command at its time limit (sidecar timed_out,
+  // older Electron-run timedOut); the row reads Timed out, not Errored.
+  function readToolTimedOut(metadata) {
+    const m = metadata && typeof metadata === 'object' && !Array.isArray(metadata) ? metadata : {};
+    return m.timed_out === true || m.timedOut === true;
+  }
 
   const GRANULAR_TOOL_STATUSES = new Set([
     'denied', 'cancelled', 'blocked', 'timed_out', 'interrupted', 'abandoned',
@@ -130,6 +163,9 @@
    */
   function getToolDisplayName(toolName, catalogDisplayName) {
     const normalizedName = normalizeString(toolName);
+    // The per-conversation todo list is "Jenny's checklist" everywhere the
+    // user sees it; the catalog's "Todo Write" is an implementation name.
+    if (normalizedName === 'todo_write') return jt('chat.toolCall.checklistName', 'Checklist');
     const normalizedKind = normalizeToolKind(toolName);
     if (!normalizedKind) {
       return 'Tool';
@@ -182,7 +218,8 @@
         const cmd = normalizeString(input.command);
         const desc = input.description ? normalizeString(input.description) : '';
         let label = desc || (cmd ? 'Run ' + (cmd.length <= 56 ? cmd : cmd.slice(0, 53) + '...') : jt('chat.toolCall.runCommand', 'Run command'));
-        if (meta.exitCode != null) label += ' (exit ' + meta.exitCode + ')';
+        const exitCode = readToolExitCode(meta);
+        if (exitCode != null) label += ' (exit ' + exitCode + ')';
         return label;
       }
       case 'monitor': {
@@ -205,6 +242,16 @@
       case 'fetch_url': {
         const url = normalizeString(input.url);
         return url ? 'Fetch ' + (url.length <= 50 ? url : url.slice(0, 47) + '...') : jt('chat.toolCall.fetchUrl', 'Fetch URL');
+      }
+      case 'todo_write': {
+        const todos = Array.isArray(input.todos) ? input.todos : [];
+        if (!todos.length) return getToolDisplayName(toolName);
+        const done = todos.filter((todo) => normalizeString(todo?.status) === 'completed').length;
+        const current = todos.find((todo) => normalizeString(todo?.status) === 'in_progress')
+          || todos.find((todo) => normalizeString(todo?.status) !== 'completed');
+        const progress = jt('chat.toolCall.checklistProgress', '{done} of {total} done', { done, total: todos.length });
+        const item = normalizeString(current?.content);
+        return item ? progress + ' · ' + item : progress;
       }
       case 'Mermaid': {
         const diagramType = normalizeString(input.diagram_type) || 'flowchart';
@@ -391,6 +438,21 @@
     }
   }
 
+  // A command that ran and exited non-zero reports its own result: the row
+  // reads "exit N", not Error (dogfood HB-035). `result` is the tool_result
+  // payload or its metadata; either may carry the exit code.
+  function getResultStatusLabel(status, result) {
+    const normalized = normalizeToolStatus(status);
+    if (normalized === 'errored') {
+      const r = result && typeof result === 'object' && !Array.isArray(result) ? result : {};
+      const exitCode = readToolExitCode(r.metadata) ?? readToolExitCode(r);
+      if (exitCode != null && exitCode !== 0) {
+        return jt('chat.toolShell.exitCode', 'exit {code}', { code: exitCode });
+      }
+    }
+    return getStatusLabel(normalized === 'errored' ? 'errored' : status);
+  }
+
   function normalizeToolStatus(value) {
     const status = normalizeString(value).toLowerCase();
     if (!status) return 'requested';
@@ -409,7 +471,8 @@
     const p = payload && typeof payload === 'object' ? payload : {};
     const code = normalizeString(p.error_code).toUpperCase();
     const status = normalizeToolStatus(p.status || p.state || p.terminal_status || p.approval_state);
-    if (DENIED_TOOL_CODES.has(code) || status === 'denied' || status === 'cancelled' || status === 'blocked') {
+    if (DENIED_TOOL_CODES.has(code) || NOT_RUN_TOOL_CODES.has(code)
+      || status === 'denied' || status === 'cancelled' || status === 'blocked') {
       return 'stopped';
     }
     if (status === 'timed_out' || status === 'interrupted' || status === 'abandoned') {
@@ -419,6 +482,40 @@
   }
 
   const TOOL_FAILURE_SUMMARY_MAX_CHARS = 160;
+  // The sidecar's per-chat budget guidance (tool_loop._quota_block_guidance);
+  // "session's" is the wording rows persisted before TR-008 carry.
+  const SESSION_TOOL_BUDGET_TEXT_RE = /(?:chat|session)'s tool budget \(\d+/u;
+
+  /* TR-008: a call the per-chat tool budget refused (CMP-TOOL-0013 is shared
+   * with the per-turn caps, so the quota scope or the guidance text decides). */
+  function isSessionToolBudgetBlock(result) {
+    const r = result && typeof result === 'object' ? result : {};
+    if (normalizeString(r.errorCode).toUpperCase() !== 'CMP-TOOL-0013') return false;
+    const metadata = r.metadata && typeof r.metadata === 'object' ? r.metadata : {};
+    return metadata.quota_scope === 'session_tool_budget'
+      || SESSION_TOOL_BUDGET_TEXT_RE.test(String(r.outputText || ''));
+  }
+
+  const JSON_OPENER_RE = /^[{[]$/u;
+  // "...[truncated]" and the capture-limit note are the tool's markers, not output.
+  const TRUNCATION_MARKER_RE = /^\.\.\.\[[^\]]*\]$/u;
+
+  // The shell tool's output is a JSON object, so its first line is "{". The
+  // line worth showing is the command's own last word: the tool's message,
+  // else the last line of stderr, else of stdout (dogfood HB-035).
+  function commandFailureLine(outputText) {
+    const text = String(outputText || '').trim();
+    if (!text.startsWith('{')) return '';
+    let parsed;
+    try { parsed = JSON.parse(text); } catch (_error) { return ''; }
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed) || !('command' in parsed)) return '';
+    for (const key of ['message', 'stderr', 'stdout']) {
+      const lines = String(typeof parsed[key] === 'string' ? parsed[key] : '').split(/\r?\n/u)
+        .map((line) => line.trim()).filter((line) => line && !TRUNCATION_MARKER_RE.test(line));
+      if (lines.length) return lines[lines.length - 1];
+    }
+    return '';
+  }
 
   /**
    * One bounded line of a failed call's own failure text for the collapsed
@@ -439,8 +536,11 @@
         ? jt('chat.toolCall.pdfAddonLoadFailed', 'PDF reading add-on could not be loaded')
         : jt('chat.toolCall.pdfAddonMissing', 'PDF reading add-on not installed');
     }
-    const firstOutputLine = String(r.outputText || '').split(/\r?\n/u)
-      .map((line) => line.trim()).find(Boolean) || '';
+    if (isSessionToolBudgetBlock(r)) {
+      return jt('chat.toolCall.sessionToolBudgetUsed', 'This chat used its tool budget. Start a new chat to keep working.');
+    }
+    const firstOutputLine = commandFailureLine(r.outputText) || String(r.outputText || '').split(/\r?\n/u)
+      .map((line) => line.trim()).find((line) => line && !JSON_OPENER_RE.test(line)) || '';
     const text = (firstOutputLine || normalizeString(r.resultSummary) || jt('chat.toolCall.toolFailed', 'Tool failed'))
       .replace(/[\p{Cc}\p{Cf}]/gu, ' ').replace(/\s+/gu, ' ').trim();
     const characters = Array.from(text);
@@ -455,6 +555,10 @@
     if (GRANULAR_TOOL_STATUSES.has(status)) return status;
     if (p.is_error !== true && p.result_is_error !== true) return 'completed';
     const outcome = classifyToolResultOutcome(p);
+    // A guard refused the command before it ran; nobody denied anything.
+    if (normalizeString(p.error_code).toUpperCase() === COMMAND_BLOCKED_CODE) return 'blocked';
+    if (outcome === 'failure' && readToolTimedOut(p.metadata)) return 'timed_out';
+    if (NOT_RUN_TOOL_CODES.has(normalizeString(p.error_code).toUpperCase())) return 'cancelled';
     if (outcome === 'stopped') return 'denied';
     if (outcome === 'interrupted') return 'interrupted';
     return 'errored';
@@ -464,7 +568,10 @@
     return TOOL_STATUS_SEVERITY[normalizeToolStatus(status)] || '';
   }
 
-  function shouldAutoExpandToolDetails(status) {
+  // Transcript view 'everything' opens every tool card by default; the other
+  // views keep the status rule (approval rows still open in 'answers').
+  function shouldAutoExpandToolDetails(status, { transcriptView = '' } = {}) {
+    if (transcriptView === 'everything') return true;
     return TOOL_AUTO_EXPAND_STATUSES.has(normalizeToolStatus(status));
   }
 
@@ -482,6 +589,11 @@
       'row=' + encodePart(rowId || messageId),
       'call=' + encodePart(callId),
     ].join('|');
+  }
+
+  // Prefix every buildToolRowKey key of one session starts with.
+  function toolRowKeySessionPrefix(sessionId) {
+    return 'session=' + encodeURIComponent(normalizeString(sessionId)) + '|';
   }
 
   function buildToolRowDomToken(rowKey) {
@@ -570,6 +682,244 @@
       + '</span>';
   }
 
+  // ── Tool runs (Answers transcript view, NEXT_STEPS row 21) ──
+  // Two or more consecutive tool steps fold into one summary row. The row-list
+  // builder (render) and the live patch lane (DOM refresh) both reduce the same
+  // member descriptors through summarizeToolRun, so a patched summary and a
+  // fully rendered one cannot disagree.
+  const TOOL_RUN_VERB_BY_KIND = Object.freeze({
+    Read: 'read',
+    list_dir: 'list',
+    Glob: 'search',
+    Grep: 'search',
+    knowledge_search: 'search',
+    Edit: 'edit',
+    Write: 'edit',
+    Move: 'edit',
+    delete_file: 'edit',
+    Bash: 'run',
+    python_execute: 'run',
+    run_temp_script: 'run',
+    web_search: 'web',
+    fetch_url: 'fetch',
+    git_status: 'git',
+    git_log: 'git',
+    git_diff: 'git',
+    git_show: 'git',
+    todo_write: 'checklist',
+  });
+  function toolRunVerb(name) {
+    return TOOL_RUN_VERB_BY_KIND[normalizeToolKind(name)] || '';
+  }
+  // Rows that carry their own content (questions, plans, images, diagrams,
+  // artifacts, spawned tasks, calendar blocks) never fold into a run.
+  const TOOL_RUN_UNFOLDABLE_TOOLS = new Set([
+    'ask_user', 'exit_plan_mode', 'image_generate', 'mermaid_generate', 'create_artifact',
+    'workspace_present', 'preview_test', 'session_spawn', 'delegate', 'home',
+  ]);
+  // A step waiting on the user ends the run and stays its own open card.
+  const TOOL_RUN_BREAK_STATUSES = new Set(['awaiting_approval', 'pending_user_input']);
+  const TOOL_RUN_LIVE_STATUSES = new Set(['pending', 'queued', 'requested', 'approved', 'running', 'executing']);
+  // Run statuses use the one-liner vocabulary (normalizeToolStatus) so the
+  // render and patch lanes agree; an empty status is settled, not requested.
+  function toolRunStatus(status) {
+    return normalizeString(status) ? normalizeToolStatus(status) : '';
+  }
+  // "Failed" is the one-liner's error tone: a timeout, stop or denial reads
+  // amber or muted on its own row, so it does not turn the run red either.
+  function isToolRunMemberFailed(member, status) {
+    // isError decides only for a member with no status word of its own.
+    return statusToneFor(status) === 'error' || (member.isError === true && !status);
+  }
+  const jtn = (globalThis.jennyI18n && globalThis.jennyI18n.tn)
+    || function (k, count, params, one, other) { return jt.call(null, k, count === 1 ? one : other, Object.assign({ count: count }, params || {})); };
+
+  /**
+   * Whether a tool step may join a run. `approvalRequested` covers a step that
+   * was ever gated: once approved it stays a single row instead of merging back
+   * into the run above it (no jump when the approval resolves).
+   */
+  function isToolRunFoldable({ toolName, status, approvalRequested, hasOwnContent } = {}) {
+    if (approvalRequested || hasOwnContent) return false;
+    if (TOOL_RUN_UNFOLDABLE_TOOLS.has(normalizeString(toolName))) return false;
+    return !TOOL_RUN_BREAK_STATUSES.has(toolRunStatus(status));
+  }
+
+  /**
+   * Group row roles into runs. entries: [{ role: 'member' | 'transparent' |
+   * 'break', breakBefore?: boolean }]. Transparent rows (reasoning, visually
+   * empty rows) neither start nor break a run; the ones between two members
+   * belong to it (`interior`). Returns runs of two or more members only.
+   */
+  function groupToolRuns(entries) {
+    const runs = [];
+    let current = null;
+    let pendingTransparent = [];
+    const close = () => {
+      if (current && current.members.length >= 2) runs.push(current);
+      current = null;
+      pendingTransparent = [];
+    };
+    (Array.isArray(entries) ? entries : []).forEach((entry, index) => {
+      if (entry && entry.breakBefore) close();
+      const role = entry && entry.role;
+      if (role === 'member') {
+        if (current) current.interior.push(...pendingTransparent);
+        else current = { members: [], interior: [] };
+        pendingTransparent = [];
+        current.members.push(index);
+      } else if (role === 'transparent') {
+        if (current) pendingTransparent.push(index);
+      } else {
+        close();
+      }
+    });
+    close();
+    return runs;
+  }
+
+  function toolRunVerbPhrase(verb, count, toolLabel) {
+    switch (verb) {
+      case 'read': return jtn('chat.toolRun.read', count, null, 'read a file', 'read {count} files');
+      case 'list': return jtn('chat.toolRun.list', count, null, 'listed a folder', 'listed {count} folders');
+      case 'search': return jtn('chat.toolRun.search', count, null, 'searched once', 'searched {count} times');
+      case 'edit': return jtn('chat.toolRun.edit', count, null, 'edited a file', 'edited {count} files');
+      case 'run': return jtn('chat.toolRun.run', count, null, 'ran a command', 'ran {count} commands');
+      case 'web': return jtn('chat.toolRun.web', count, null, 'searched the web', 'searched the web {count} times');
+      case 'fetch': return jtn('chat.toolRun.fetch', count, null, 'fetched a page', 'fetched {count} pages');
+      case 'git': return jtn('chat.toolRun.git', count, null, 'checked Git', 'checked Git {count} times');
+      case 'checklist': return jtn('chat.toolRun.checklist', count, null, 'updated the checklist', 'updated the checklist {count} times');
+      default: return jtn('chat.toolRun.used', count, { tool: toolLabel }, 'used {tool}', 'used {tool} {count} times');
+    }
+  }
+
+  /**
+   * Reduce run members to the summary model. members: [{ tool, toolLabel,
+   * status, isError, durationMs, label, startedAtMs }].
+   */
+  function summarizeToolRun(members) {
+    const list = Array.isArray(members) ? members.filter(Boolean) : [];
+    const verbs = new Map();
+    let failedCount = 0;
+    let durationMs = 0;
+    let liveMember = null;
+    let doneCount = 0;
+    list.forEach((member) => {
+      const verb = toolRunVerb(member.tool);
+      const toolLabel = normalizeString(member.toolLabel) || getToolDisplayName(member.tool);
+      const key = verb || `used:${toolLabel}`;
+      const entry = verbs.get(key) || { verb, toolLabel, count: 0 };
+      entry.count += 1;
+      verbs.set(key, entry);
+      const status = toolRunStatus(member.status);
+      // A step a patch moved to an approval wait is not done: the next
+      // structural render splits it out of the run.
+      if (isToolRunLiveStatus(status) || TOOL_RUN_BREAK_STATUSES.has(status)) {
+        liveMember = member;
+      } else {
+        doneCount += 1;
+      }
+      if (isToolRunMemberFailed(member, status)) failedCount += 1;
+      const ms = Number(member.durationMs);
+      if (Number.isFinite(ms) && ms > 0) durationMs += ms;
+    });
+    const last = list[list.length - 1];
+    const phrases = Array.from(verbs.values()).map((entry) => toolRunVerbPhrase(entry.verb, entry.count, entry.toolLabel));
+    const joined = phrases.join(jt('chat.toolRun.separator', ', '));
+    return {
+      memberCount: list.length,
+      sentence: joined ? joined.charAt(0).toLocaleUpperCase() + joined.slice(1) : '',
+      failedCount,
+      lastFailed: !liveMember && Boolean(last) && isToolRunMemberFailed(last, toolRunStatus(last.status)),
+      live: Boolean(liveMember),
+      liveLabel: liveMember ? (normalizeString(liveMember.label) || normalizeString(liveMember.toolLabel)) : '',
+      liveStartedAtMs: liveMember ? Number(liveMember.startedAtMs) || 0 : 0,
+      doneCount,
+      durationMs,
+    };
+  }
+
+  function toolRunState(summary) {
+    if (summary && summary.live) return 'live';
+    return summary && summary.lastFailed ? 'failed' : 'ok';
+  }
+
+  function formatToolRunDuration(ms) {
+    const value = Number(ms);
+    if (!Number.isFinite(value) || value <= 0) return '';
+    if (value < 1000) return `${Math.round(value)}ms`;
+    if (value < 60000) return `${(value / 1000).toFixed(value < 10000 ? 1 : 0)}s`;
+    const totalSeconds = Math.round(value / 1000);
+    return `${Math.floor(totalSeconds / 60)}m ${String(totalSeconds % 60).padStart(2, '0')}s`;
+  }
+
+  /**
+   * Inner markup of the summary row's toggle, in the one-liner grammar:
+   * dot · sentence (or the live step, shimmering) · failed count · meta · caret.
+   * While live, the meta carries a ticking elapsed node for the running step
+   * (renderer-turn-elapsed-clock scans [data-turn-elapsed]).
+   */
+  function buildToolRunToggleInner(summary, helpers) {
+    const esc = helpers && typeof helpers.escapeHtml === 'function' ? helpers.escapeHtml : _stringUtils.escapeHtml;
+    const model = summary || {};
+    const state = toolRunState(model);
+    const tone = state === 'live' ? 'active' : (state === 'failed' ? 'error' : 'ok');
+    const text = model.live && model.liveLabel ? model.liveLabel : model.sentence;
+    const textClass = `tool-run-summary${model.live ? ' shimmer-active' : ''}`;
+    let metaMarkup;
+    if (model.live) {
+      const clock = globalThis.rendererTurnElapsedClock
+        || (typeof require === 'function' ? require('./renderer-turn-elapsed-clock') : null);
+      const now = helpers && typeof helpers.now === 'function' ? helpers.now() : Date.now();
+      const done = model.doneCount > 0
+        ? `<span class="tool-call-meta">${esc(jt('chat.toolRun.done', '{count} done', { count: model.doneCount }))}</span>`
+        : '';
+      const elapsed = model.liveStartedAtMs > 0 && clock && typeof clock.formatElapsedLabel === 'function'
+        ? `<span class="tool-result-duration" data-turn-elapsed="true" data-elapsed-started-at="${esc(model.liveStartedAtMs)}" data-elapsed-running="true">${esc(clock.formatElapsedLabel(Math.max(0, now - model.liveStartedAtMs)))}</span>`
+        : '';
+      metaMarkup = done + elapsed;
+    } else {
+      const duration = formatToolRunDuration(model.durationMs);
+      metaMarkup = duration ? `<span class="tool-result-duration">${esc(duration)}</span>` : '';
+    }
+    const failedMarkup = model.failedCount > 0
+      ? `<span class="tool-run-failed">${esc(jt('chat.toolRun.failed', '{count} failed', { count: model.failedCount }))}</span>`
+      : '';
+    return `<span class="status-dot status-dot--${tone}" aria-hidden="true"></span>`
+      + `<span class="${textClass}">${esc(text)}</span>`
+      + failedMarkup
+      + `<span class="tool-call-status-cluster">${metaMarkup}<span class="tool-call-disclosure" aria-hidden="true"></span></span>`;
+  }
+
+  // Member rows carry their descriptor as data-run-* attributes: the row-list
+  // builder writes them and the live patch lane reads them back.
+  function buildToolRunMemberAttributes(member, escapeHtml) {
+    const esc = typeof escapeHtml === 'function' ? escapeHtml : _stringUtils.escapeHtml;
+    const model = member || {};
+    return `data-run-member="step" data-run-tool="${esc(model.tool)}" data-run-tool-label="${esc(model.toolLabel)}"`
+      + ` data-run-label="${esc(model.label)}" data-run-duration-ms="${esc(String(Number(model.durationMs) || 0))}"`;
+  }
+
+  function readToolRunMemberAttributes(node) {
+    return {
+      tool: node.getAttribute('data-run-tool') || '',
+      toolLabel: node.getAttribute('data-run-tool-label') || '',
+      label: node.getAttribute('data-run-label') || '',
+      durationMs: Number(node.getAttribute('data-run-duration-ms')) || 0,
+    };
+  }
+
+  // The summary row and member rows of one run inside a .turn-row-list.
+  function getToolRunRows(scope, runId) {
+    if (!runId || typeof scope?.querySelectorAll !== 'function') return [];
+    return Array.from(scope.querySelectorAll('.chat-row[data-run-id]'))
+      .filter((node) => node.getAttribute('data-run-id') === runId);
+  }
+
+  function isToolRunLiveStatus(status) {
+    return TOOL_RUN_LIVE_STATUSES.has(toolRunStatus(status));
+  }
+
   function getTrustedToolResultImageUrls(resultMeta) {
     const refs = resultMeta && Array.isArray(resultMeta.trusted_attachment_refs)
       ? resultMeta.trusted_attachment_refs
@@ -617,14 +967,30 @@
     getToolTargetBasename,
     formatToolElapsedLabel,
     getStatusLabel,
+    getResultStatusLabel,
     normalizeToolStatus,
     isFileOperationSettledStatus,
     classifyToolResultOutcome,
     statusForToolResult,
+    readToolExitCode,
+    readToolTimedOut,
     summarizeToolFailure,
+    isSessionToolBudgetBlock,
     getToolStatusSeverity,
     shouldAutoExpandToolDetails,
     buildToolRowKey,
+    toolRowKeySessionPrefix,
+    isToolRunFoldable,
+    groupToolRuns,
+    summarizeToolRun,
+    toolRunState,
+    toolRunVerb,
+    formatToolRunDuration,
+    buildToolRunToggleInner,
+    buildToolRunMemberAttributes,
+    readToolRunMemberAttributes,
+    getToolRunRows,
+    isToolRunLiveStatus,
     buildToolRowDomToken,
     statusToneFor,
     buildToolHeaderInner,

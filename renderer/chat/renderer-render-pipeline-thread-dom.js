@@ -111,6 +111,7 @@ root.rendererRenderPipelineThreadDomUtils = factory();
         // when the split review panel is visible; fold the bool so a toggle
         // busts the key (false in the common case -> no key perturbation).
         sessionGlobals.artifactReviewVisible ? 'ar1' : 'ar0',
+        String(sessionGlobals.transcriptView || ''),
       ];
       return globalParts.join('|') + '|' + parts.join('|');
     }
@@ -242,7 +243,7 @@ root.rendererRenderPipelineThreadDomUtils = factory();
           data-thread-parent="${escapeHtml(parentId)}"
           data-thread-message-id="${escapeHtml(node.id)}"
           data-thread-collapsed="${canToggle && !expanded ? 'true' : 'false'}"
-          data-thread-node-kind="${nodeKind}"
+          data-thread-node-kind="${nodeKind}"${compatOnlySubtree ? ' data-thread-compat-only="true"' : ''}
         >
           <div class="chat-thread-node-row">
             ${compatOnlySubtree ? '' : buildThreadToggleMarkup(node, expanded, childContainerId)}
@@ -301,7 +302,25 @@ root.rendererRenderPipelineThreadDomUtils = factory();
      * so the CSS rail line spans from the first dot to the last.
      */
     const _dotLandmarkSelector =
-      '.reasoning-row-block, .reasoning-row-header, .tool-call-header, .chat-bubble, .interactive-card, .proactive-suggestion-block, .slash-command-output';
+      '.reasoning-row-block, .reasoning-row-header, .tool-call-header, .tool-run-toggle, .chat-bubble, .interactive-card, .proactive-suggestion-block, .slash-command-output';
+
+    // First landmark with a box. The transcript-view stylesheet hides settled
+    // reasoning rows (display:none), whose zero rect would park the dot at the
+    // article top. Falls back to the first match when none reports a box
+    // (no layout, as in jsdom).
+    function _hasBox(node) {
+      return node.offsetParent !== null
+        || (typeof node.getClientRects === 'function' && node.getClientRects().length > 0);
+    }
+    function _firstVisibleLandmark(article) {
+      const first = article.querySelector(_dotLandmarkSelector);
+      if (!first || _hasBox(first) || typeof article.querySelectorAll !== 'function') return first;
+      const candidates = article.querySelectorAll(_dotLandmarkSelector);
+      for (let i = 0; i < candidates.length; i++) {
+        if (_hasBox(candidates[i])) return candidates[i];
+      }
+      return first;
+    }
 
     // B2: small timer-based debounce around the ResizeObserver-driven rail
     // measurement. Streaming + expand/collapse oscillation can fire the
@@ -476,9 +495,7 @@ root.rendererRenderPipelineThreadDomUtils = factory();
           const row = dot.closest('.chat-thread-node-row');
           if (!row) continue;
           const article = row.querySelector('.chat-thread-node-article');
-          const landmark = article
-            ? article.querySelector(_dotLandmarkSelector)
-            : null;
+          const landmark = article ? _firstVisibleLandmark(article) : null;
 
           if (landmark) {
             const threadNode = dot.closest('.chat-thread-node');

@@ -104,6 +104,9 @@
     // Per-pointer tracking: live = last event landed in an unblocked region;
     // captured = a press acquired pointer capture on the surface element.
     const pointerStates = new Map();
+    // pointerId -> isPrimary of its last press, kept through capture loss
+    // (which clears pointerStates) until that pointer's click consumes it.
+    const pressPrimary = new Map();
     const pendingMoves = new Map();
     let flushRafId = 0;
     let routerDisposed = false;
@@ -170,7 +173,7 @@
 
     // S10 snapshot authority: scene coordinates use the manager-published
     // shared scene; local coordinates use the parallel role host rectangle.
-    function buildPayload(type, event, descriptor, generation, target) {
+    function buildPayload(type, event, descriptor, generation, target, isPrimary) {
       const surfaceRole = resolveSurfaceRole(descriptor.surface);
       const hostRect = snapshotHostRect(target, surfaceRole) || toRect(hostElementForRole(surfaceRole));
       const sceneRect = (target && target.layout && target.layout.sceneRect) || toRect(descriptor.element);
@@ -178,7 +181,7 @@
         type,
         pointerId: Number.isFinite(event.pointerId) ? event.pointerId : 1,
         pointerType: event.pointerType || 'mouse',
-        isPrimary: event.isPrimary !== false,
+        isPrimary: typeof isPrimary === 'boolean' ? isPrimary : event.isPrimary !== false,
         buttons: event.buttons || 0,
         pressure: Number.isFinite(event.pressure) ? event.pressure : 0,
         timeStamp: Number.isFinite(event.timeStamp) ? event.timeStamp : 0,
@@ -281,6 +284,21 @@
       const generation = target ? target.generation : 0;
       const pointerId = Number.isFinite(event.pointerId) ? event.pointerId : 1;
       let pointerState = pointerStates.get(pointerId);
+      // Chromium dispatches click as a PointerEvent whose isPrimary is false
+      // even for the main mouse button: a click takes the flag of the pointer
+      // that pressed, so effects' non-primary guards don't swallow every click.
+      let isPrimary = event.isPrimary !== false;
+      if (type === 'click') {
+        isPrimary = pressPrimary.has(pointerId)
+          ? pressPrimary.get(pointerId)
+          : !(pointerState && pointerState.isPrimary === false);
+        pressPrimary.delete(pointerId);
+      } else if (type === 'press') {
+        if (pressPrimary.size >= MAX_POINTER_STATES) { pressPrimary.clear(); }
+        pressPrimary.set(pointerId, isPrimary);
+      } else if (event.type === 'pointercancel') {
+        pressPrimary.delete(pointerId);
+      }
       const chatAmbientHoverTarget = descriptor.surface === 'chat'
         && eventMatchesSelector(event, descriptor.element, CHAT_AMBIENT_HOVER_SELECTOR);
 
@@ -301,7 +319,7 @@
           pointerState.live = false;
           flushPendingMove(pointerId);
           releaseCapture(pointerId);
-          dispatchPayload(buildPayload('leave', event, descriptor, generation, target));
+          dispatchPayload(buildPayload('leave', event, descriptor, generation, target, isPrimary));
           pointerStates.delete(pointerId);
         }
         return;
@@ -313,19 +331,19 @@
       if (pointerState && type !== 'leave' && type !== 'cancel') {
         pointerState.surfaceRole = resolveSurfaceRole(descriptor.surface);
         pointerState.pointerType = event.pointerType || 'mouse';
-        pointerState.isPrimary = event.isPrimary !== false;
+        pointerState.isPrimary = isPrimary;
       }
       if (pointerState && !pointerState.live && type !== 'leave' && type !== 'cancel') {
         // Blocked → live re-entry never refires pointerenter (the pointer
         // never left the surface element), so the router synthesizes it.
         pointerState.live = true;
         if (type !== 'enter') {
-          dispatchPayload(buildPayload('enter', event, descriptor, generation, target));
+          dispatchPayload(buildPayload('enter', event, descriptor, generation, target, isPrimary));
         }
       }
 
       if (type === 'move') {
-        pendingMoves.set(pointerId, buildPayload('move', event, descriptor, generation, target));
+        pendingMoves.set(pointerId, buildPayload('move', event, descriptor, generation, target, isPrimary));
         scheduleMoveFlush();
         return;
       }
@@ -343,7 +361,7 @@
         if (pointerState) pointerState.live = false;
         pointerStates.delete(pointerId);
       }
-      dispatchPayload(buildPayload(type, event, descriptor, generation, target));
+      dispatchPayload(buildPayload(type, event, descriptor, generation, target, isPrimary));
     }
 
     function clearPointerState(reason) {
@@ -379,6 +397,7 @@
         }
       }
       pointerStates.clear();
+      pressPrimary.clear();
     }
 
     function dispose() {

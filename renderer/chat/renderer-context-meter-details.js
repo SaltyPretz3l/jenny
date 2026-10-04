@@ -15,6 +15,12 @@
   var positionedTrigger = null;
   var positionedWindow = null;
 
+  // Resolved per call: the pane composer rail's tag loads after this module's.
+  function paneComposerRail() {
+    if (root?.rendererPaneComposerRail) return root.rendererPaneComposerRail;
+    try { return typeof require === 'function' ? require('./renderer-pane-composer-rail') : null; } catch (_error) { return null; }
+  }
+
   function positiveNumber(value, fallback) {
     var parsed = Number(value);
     return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
@@ -73,6 +79,20 @@
     if (!windowRef) return false;
     popover.style.maxHeight = '';
     popover.style.overflowY = '';
+    // Opened from the collapsed composer's settings list: it covers the list
+    // (bottom-end corner on the list's, at least its size; offsetParent-relative).
+    var rail = paneComposerRail();
+    var anchorGroup = rail?.resolveSettingsPopoverAnchor?.(trigger);
+    var cover = anchorGroup ? rail.placePopoverOverAnchor(popover, anchorGroup, { margin: POPOVER_MARGIN_PX }) : null;
+    if (cover) {
+      popover.style.right = 'auto';
+      popover.style.bottom = 'auto';
+      if (cover.maxHeight > 0) popover.style.maxHeight = cover.maxHeight + 'px';
+      popover.style.overflowY = 'auto';
+      trackPositionTarget(popover, trigger);
+      return true;
+    }
+    rail?.clearPopoverCover?.(popover);
     var visualViewport = windowRef.visualViewport;
     var viewport = {
       left: positiveNumber(visualViewport?.offsetLeft, 0),

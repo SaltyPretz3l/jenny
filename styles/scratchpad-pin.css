@@ -48,7 +48,7 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: var(--font-size-sm);
+  font-size: var(--font-size-body);
   font-weight: 500;
 }
 
@@ -93,7 +93,7 @@
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--text-primary);
-  font-size: var(--font-size-sm);
+  font-size: var(--font-size-body);
   font-weight: 500;
 }
 
@@ -154,7 +154,7 @@
   width: 100%;
   min-height: 88px;
   resize: vertical;
-  font-size: var(--font-size-sm);
+  font-size: var(--font-size-body);
 }
 
 .scratchpad-pin__footer {

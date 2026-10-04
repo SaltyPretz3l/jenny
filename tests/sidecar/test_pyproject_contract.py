@@ -108,7 +108,7 @@ def test_requirements_lock_uses_hash_pinned_install_contract() -> None:
     checker = _load_script_module("scripts/checks/check_python_runtime_bundle.py")
     lock_lines = (ROOT / "requirements-lock.txt").read_text(encoding="utf-8").splitlines()
 
-    pins, errors = checker._parse_hashed_lock(  # noqa: SLF001
+    pins, errors = checker._parse_hashed_lock(
         ROOT / "requirements-lock.txt"
     )
 

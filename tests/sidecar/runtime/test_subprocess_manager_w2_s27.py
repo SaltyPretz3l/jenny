@@ -68,13 +68,13 @@ def test_reaped_same_key_replacement_closes_stale_containment_once() -> None:
         popen_factory=lambda *_args, **_kwargs: next(processes),
         containment_factory=containment_factory,
     )
-    original_wait_for_exit = manager._wait_for_exit  # noqa: SLF001
+    original_wait_for_exit = manager._wait_for_exit
 
     def delayed_wait(child: Any) -> None:
         assert waiter_gate.wait(1.0)
         original_wait_for_exit(child)
 
-    manager._wait_for_exit = delayed_wait  # type: ignore[method-assign]  # noqa: SLF001
+    manager._wait_for_exit = delayed_wait  # type: ignore[method-assign]
 
     try:
         manager.spawn_module("sidecar.runtime.background_worker", task_key="reused")

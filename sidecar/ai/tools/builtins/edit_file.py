@@ -291,6 +291,7 @@ def _edit_locked(  # noqa: PLR0913
         path=relative_path,
         bytes_written=len(encoded),
         checkpoint=checkpoint,
+        written=(resolved, encoded),
     )
     metadata.update(
         {

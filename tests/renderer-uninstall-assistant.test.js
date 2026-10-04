@@ -8,7 +8,7 @@ const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
 
 // The assistant is a self-initializing IIFE reading its deps from globals, so
 // the harness stages the globals, requires the file fresh, and restores after.
-async function bootAssistant({ previewWorkspaceArchive, i18n = null }) {
+async function bootAssistant({ previewWorkspaceArchive, prepareRemoval = null, i18n = null }) {
   const dom = new JSDOM('<!doctype html><body><div id="dataLifecycleAssistant"></div></body>');
   const previous = {};
   const globals = {
@@ -24,6 +24,7 @@ async function bootAssistant({ previewWorkspaceArchive, i18n = null }) {
       getOverview: async () => ({ ok: true }),
       onProgress: () => () => {},
       previewWorkspaceArchive,
+      ...(prepareRemoval ? { prepareRemoval } : {}),
     },
   };
   for (const key of Object.keys(globals)) {
@@ -113,4 +114,35 @@ test('translated uninstall copy is escaped and the permanent confirmation token 
   assert.equal(confirmation.placeholder, 'REMOVE JENNY');
   assert.match(host.textContent, /Type REMOVE JENNY to continue/);
   assert.equal(calls.find((call) => call.key === 'uninstall.permanent.confirmationInstruction').params.phrase, 'REMOVE JENNY');
+});
+
+test('a failed archive that left an unfinished copy names the folder in the error view', async (t) => {
+  const partialPath = 'D:\\Archives\\Jenny-2026-10-02.partial';
+  const results = [
+    { ok: false, error: { reason: 'archive_write_failed' }, retainedPartial: { path: `${partialPath}<b>` } },
+    { ok: false, error: { reason: 'archive_write_failed' } },
+  ];
+  const { dom, host, restore } = await bootAssistant({
+    previewWorkspaceArchive: async () => ({ ok: true }),
+    prepareRemoval: async () => results.shift(),
+  });
+  t.after(restore);
+
+  click(host, dom, 'review-archive');
+  click(host, dom, 'plain');
+  click(host, dom, 'archive-remove');
+  await settle();
+
+  const warning = host.querySelector('.data-lifecycle-result--error .data-lifecycle-warning');
+  assert.ok(warning, 'the error view carries the unfinished-copy notice');
+  assert.ok(warning.textContent.includes(partialPath));
+  assert.equal(warning.querySelector('b'), null, 'the path is rendered as text');
+
+  click(host, dom, 'retry-archive');
+  click(host, dom, 'archive-remove');
+  await settle();
+
+  assert.ok(host.querySelector('.data-lifecycle-result--error'));
+  assert.equal(host.querySelector('.data-lifecycle-result--error .data-lifecycle-warning'), null,
+    'a later failure without a leftover copy does not repeat the notice');
 });

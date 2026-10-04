@@ -216,6 +216,83 @@ class TestRestartDetection:
         assert ledger.pending_from_other_generations("gen_live") == []
 
 
+class TestPendingScanCost:
+    """P3-PERF-A: every chat turn asks for dead-generation pendings, and the
+    ledger keeps up to 4,096 terminal receipts. Re-reading and re-validating
+    every terminal receipt per turn cost ~390 ms on a 1,909-receipt ledger, so
+    a terminal receipt is only re-read when its directory stat changes."""
+
+    @staticmethod
+    def _count_reads(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+        reads: list[str] = []
+        original = OperationLedger._get_receipt
+
+        def counting(self: OperationLedger, operation_id: str) -> dict[str, object]:
+            reads.append(operation_id)
+            return original(self, operation_id)
+
+        monkeypatch.setattr(OperationLedger, "_get_receipt", counting)
+        return reads
+
+    @staticmethod
+    def _settled(ledger: OperationLedger, count: int) -> None:
+        for index in range(count):
+            _create(ledger, op_id=f"idem_done{index}", generation_id="gen_dead")
+            ledger.settle(operation_id=f"idem_done{index}", status="committed", now_iso=NOW)
+
+    def test_terminal_receipts_are_not_reread_on_a_later_scan(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        self._settled(_ledger(tmp_path), 5)
+        _create(_ledger(tmp_path), op_id="idem_dead", generation_id="gen_dead")
+        first = _ledger(tmp_path).pending_from_other_generations("gen_live")
+        reads = self._count_reads(monkeypatch)
+
+        # A fresh instance, as each turn's overlay builds one.
+        second = _ledger(tmp_path).pending_from_other_generations("gen_live")
+
+        assert [r["operation_id"] for r in first] == ["idem_dead"]
+        assert second == first
+        assert reads == ["idem_dead"]
+
+    def test_scan_still_sees_new_settled_and_deleted_receipts(self, tmp_path: Path) -> None:
+        ledger = _ledger(tmp_path)
+        self._settled(ledger, 2)
+        _create(ledger, op_id="idem_dead_a", generation_id="gen_dead")
+        assert [r["operation_id"] for r in ledger.pending_from_other_generations("gen_live")] == [
+            "idem_dead_a"
+        ]
+
+        _create(ledger, op_id="idem_dead_b", generation_id="gen_dead")
+        ledger.settle(operation_id="idem_dead_a", status="failed", now_iso=LATER)
+        (ledger.root / LEDGER_OPERATIONS_DIR / "idem_done0.json").unlink()
+
+        assert [r["operation_id"] for r in _ledger(tmp_path).pending_from_other_generations("gen_live")] == [
+            "idem_dead_b"
+        ]
+
+    def test_a_rewritten_terminal_receipt_is_read_again(self, tmp_path: Path) -> None:
+        ledger = _ledger(tmp_path)
+        self._settled(ledger, 1)
+        assert ledger.pending_from_other_generations("gen_live") == []
+        receipt_path = ledger.root / LEDGER_OPERATIONS_DIR / "idem_done0.json"
+        stored = json.loads(receipt_path.read_text(encoding="utf-8"))
+        stored.update(status="pending", retain_until=PENDING_RETAIN_UNTIL, updated_at=LATER)
+        receipt_path.write_text(json.dumps(stored), encoding="utf-8")
+
+        assert [r["operation_id"] for r in _ledger(tmp_path).pending_from_other_generations("gen_live")] == [
+            "idem_done0"
+        ]
+
+    def test_a_corrupted_terminal_receipt_is_counted_again(self, tmp_path: Path) -> None:
+        ledger = _ledger(tmp_path)
+        self._settled(ledger, 1)
+        assert ledger.pending_receipts() == ([], 0)
+        (ledger.root / LEDGER_OPERATIONS_DIR / "idem_done0.json").write_text("{broken", encoding="utf-8")
+
+        assert _ledger(tmp_path).pending_receipts() == ([], 1)
+
+
 class TestCompaction:
     def test_compaction_never_destroys_pending_or_corrupt(self, tmp_path: Path) -> None:
         ledger = _ledger(tmp_path)

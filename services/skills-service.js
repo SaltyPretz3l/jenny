@@ -2,7 +2,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { EventEmitter } = require('events');
-const { normalizeString } = require('../renderer/shared/string-utils');
+const { normalizeString } = require('./shared/normalize');
 const { t } = require('./i18n-main');
 
 const {
@@ -10,7 +10,7 @@ const {
   normalizeSkillSettings,
 } = require('./shell-config-service');
 const { isWorkspaceRootChangeReason } = require('./workspace-root-change-reasons');
-const { normalizeProjectId } = require('./projects/project-schema');
+const { authorityProjectRoot } = require('./skills-project-scope');
 
 const SKILL_FILENAME = 'SKILL.md';
 const SCOPE_BUNDLED = 'bundled';
@@ -18,8 +18,10 @@ const SCOPE_USER = 'user';
 const SCOPE_PROJECT = 'project';
 const DEFAULT_WATCH_INTERVAL_MS = 5000;
 const MAX_DISCOVERED_SKILLS_PER_SCOPE = 128;
-const MAX_SKILL_SCAN_DEPTH = 4;
-const MAX_SKILL_METADATA_BYTES = 64 * 1024;
+const MAX_SKILL_SCAN_DEPTH = 8;
+const MAX_SKILL_SCAN_ENTRIES = 2048;
+const MAX_SKILL_SCAN_MS = 500;
+const MAX_SKILL_METADATA_BYTES = 15 * 1024;
 const SKILL_COMMAND_PATTERN = /^[a-z][a-z0-9-]{0,31}$/;
 const TOOL_NAME_ALIASES = Object.freeze({
   bash: 'run_command',
@@ -205,14 +207,17 @@ function buildEntryFromFile(
   if (readFileImpl === fs.readFileSync) {
     const fd = fs.openSync(skillPath, 'r');
     try {
-      const buffer = Buffer.alloc(MAX_SKILL_METADATA_BYTES);
+      const buffer = Buffer.alloc(MAX_SKILL_METADATA_BYTES + 1);
       const bytesRead = fs.readSync(fd, buffer, 0, buffer.length, 0);
       content = buffer.subarray(0, bytesRead).toString('utf8');
     } finally {
       fs.closeSync(fd);
     }
   } else {
-    content = String(readFileImpl(skillPath, 'utf8') || '').slice(0, MAX_SKILL_METADATA_BYTES);
+    content = String(readFileImpl(skillPath, 'utf8') || '');
+  }
+  if (Buffer.byteLength(content, 'utf8') > MAX_SKILL_METADATA_BYTES) {
+    throw new SkillParseError('Skill exceeds the 15 KiB size limit.');
   }
   const { frontmatter } = splitFrontmatter(content);
   const metadata = parseFrontmatter(frontmatter);
@@ -248,9 +253,6 @@ function listSkillFiles(rootPath, options = {}) {
   const files = [];
   const fsImpl = options.fsImpl || fs;
   const includeStats = options.includeStats === true;
-  if (!rootPath || !fsImpl.existsSync(rootPath)) {
-    return files;
-  }
   const normalizeBound = (value, fallback, minimum, maximum) => {
     if (value === null || value === undefined || String(value).trim() === '') return fallback;
     const numeric = Number(value);
@@ -265,42 +267,58 @@ function listSkillFiles(rootPath, options = {}) {
   );
   const maxDepth = normalizeBound(options.maxDepth, MAX_SKILL_SCAN_DEPTH, 0, MAX_SKILL_SCAN_DEPTH);
   const stack = [{ currentPath: rootPath, depth: 0 }];
+  const deadline = performance.now() + MAX_SKILL_SCAN_MS;
+  let visited = 0;
+  Object.defineProperty(files, 'partial', { value: false, writable: true });
   while (stack.length) {
-    const { currentPath, depth } = stack.pop();
-    let entries;
+    const { currentPath, depth } = stack.shift();
+    const entries = [];
+    let directory;
     try {
-      entries = fsImpl.readdirSync(currentPath, { withFileTypes: true });
+      // Electron 43 has no ASAR opendir; bundled archive contents are immutable.
+      const archiveEntries = options.bundled && /\.asar[\\/]/i.test(currentPath)
+        ? fsImpl.readdirSync(currentPath, { withFileTypes: true }) : null;
+      directory = archiveEntries ? null : fsImpl.opendirSync(currentPath);
+      while (visited < MAX_SKILL_SCAN_ENTRIES && performance.now() < deadline) {
+        const entry = archiveEntries ? archiveEntries.shift() : directory.readSync();
+        if (!entry) break;
+        visited += 1;
+        entries.push(entry);
+      }
     } catch (_error) {
-      continue;
+      files.partial = true;
+    } finally {
+      directory?.closeSync();
     }
-    const sortedEntries = entries.slice().sort((left, right) => left.name.localeCompare(right.name));
+    const sortedEntries = entries.sort((left, right) => left.name.localeCompare(right.name));
     for (const entry of sortedEntries) {
       if (entry.isFile() && entry.name === SKILL_FILENAME) {
         const skillPath = path.join(currentPath, entry.name);
-        if (!includeStats) {
-          files.push(skillPath);
-        } else {
+        let signatureEntry;
+        if (includeStats) {
           try {
             const stats = fsImpl.statSync(skillPath);
-            files.push({
-              skillPath,
-              signatureEntry: [skillPath, Number(stats.mtimeMs || 0), Number(stats.size || 0)],
-            });
+            signatureEntry = [skillPath, Number(stats.mtimeMs || 0), Number(stats.size || 0)];
           } catch (error) {
-            files.push({
-              skillPath,
-              signatureEntry: [skillPath, 'error', String(error.code || error.message || 'unknown')],
-            });
+            signatureEntry = [skillPath, 'error', String(error.code || error.message || 'unknown')];
           }
         }
-        if (files.length >= maxFiles) return files;
+        files.push(includeStats ? { skillPath, signatureEntry } : skillPath);
+        if (files.length >= maxFiles) {
+          files.partial = true;
+          return files;
+        }
       }
     }
     if (depth < maxDepth) {
-      const directories = sortedEntries.filter((entry) => entry.isDirectory()).reverse();
+      const directories = sortedEntries.filter((entry) => entry.isDirectory());
       for (const entry of directories) {
         stack.push({ currentPath: path.join(currentPath, entry.name), depth: depth + 1 });
       }
+    }
+    if (visited >= MAX_SKILL_SCAN_ENTRIES || performance.now() >= deadline) {
+      files.partial = true;
+      break;
     }
   }
   return files.sort((left, right) => {
@@ -533,29 +551,7 @@ class SkillsService extends EventEmitter {
       if (scopeDef.scope === SCOPE_BUNDLED && scopeDef.enabled && this._bundledScan) {
         return { ...this._bundledScan, scopeDef };
       }
-      const normalizedPath = normalizeString(scopeDef.root);
-      let rootExists = false;
-      let rootStats = null;
-      let files = [];
-      if (scopeDef.enabled && !scopeDef.blocked && normalizedPath) {
-        try {
-          rootExists = this.fsImpl.existsSync(normalizedPath);
-        } catch (_error) {
-          rootExists = false;
-        }
-        try {
-          rootStats = this.fsImpl.statSync(normalizedPath);
-        } catch (_error) {
-          rootStats = null;
-        }
-        if (rootStats?.isDirectory()) {
-          files = listSkillFiles(normalizedPath, {
-            fsImpl: this.fsImpl,
-            includeStats: true,
-          });
-        }
-      }
-      const scopeScan = { scopeDef, normalizedPath, rootExists, rootStats, files };
+      const scopeScan = this._scanScope(scopeDef);
       if (scopeDef.scope === SCOPE_BUNDLED && scopeDef.enabled) {
         this._bundledScan = scopeScan;
       }
@@ -598,6 +594,7 @@ class SkillsService extends EventEmitter {
         path: normalizedPath,
         status: 'ready',
         entries: files.map((file) => file.signatureEntry),
+        partial: files.partial === true,
       };
     });
     // Fold the settings into the signature, not just the file stats. _buildState
@@ -606,6 +603,33 @@ class SkillsService extends EventEmitter {
     // skill was disabled. Scope toggles already reach scopeDef.enabled above;
     // this covers the rest of the settings surface.
     return JSON.stringify({ settings, scopes: snapshot });
+  }
+
+  _scanScope(scopeDef) {
+    const normalizedPath = normalizeString(scopeDef.root);
+    let rootExists = false;
+    let rootStats = null;
+    let files = [];
+    if (scopeDef.enabled && !scopeDef.blocked && normalizedPath) {
+      try {
+        rootExists = this.fsImpl.existsSync(normalizedPath);
+      } catch (_error) {
+        rootExists = false;
+      }
+      try {
+        rootStats = this.fsImpl.statSync(normalizedPath);
+      } catch (_error) {
+        rootStats = null;
+      }
+      if (rootStats?.isDirectory()) {
+        files = listSkillFiles(normalizedPath, {
+          fsImpl: this.fsImpl,
+          includeStats: true,
+          bundled: scopeDef.scope === SCOPE_BUNDLED,
+        });
+      }
+    }
+    return { scopeDef, normalizedPath, rootExists, rootStats, files };
   }
 
   _pollForChanges() {
@@ -731,7 +755,8 @@ class SkillsService extends EventEmitter {
       };
     }
     const entries = [];
-    const warnings = [];
+    const warnings = files.partial ? [{ scope: scopeDef.scope, path: normalizedPath,
+      code: 'skill_load_failed', message: 'Skill discovery is partial: scan limit reached or directory unreadable.' }] : [];
     for (const { skillPath } of files) {
       let entry;
       try {
@@ -817,6 +842,10 @@ class SkillsService extends EventEmitter {
       }
       return scope;
     });
+    return this._summarizeState(scopes, settings, disabledSkillIds);
+  }
+
+  _summarizeState(scopes, settings, disabledSkillIds) {
     for (const scope of scopes) {
       for (const entry of scope.entries) {
         const relPath = entry.relPath.replace(/\\/g, '/');
@@ -876,8 +905,29 @@ class SkillsService extends EventEmitter {
     return snapshot;
   }
 
-  getState() {
-    return this.refreshState();
+  // No authority: the open Workspace's catalog (Settings, the watcher). With a
+  // captured project authority: the same catalog with the project scope read
+  // from THAT project's root (a null root lists no project skills). The scoped
+  // read is request-local: it never touches the watch signature or lastState.
+  getState({ authority } = {}) {
+    const state = this.refreshState();
+    if (authority === undefined) return state;
+    const projectRoot = authorityProjectRoot(authority);
+    const scopeDef = {
+      scope: SCOPE_PROJECT,
+      label: 'Project',
+      root: projectRoot,
+      enabled: resolveScopeEnabled(SCOPE_PROJECT, state.settings),
+      blocked: !projectRoot,
+      workspaceRoot: authority.root_path || '',
+    };
+    const seenRealPaths = new Set(state.scopes
+      .filter((scope) => scope.scope !== SCOPE_PROJECT)
+      .flatMap((scope) => scope.entries.map((entry) => entry.realPath)));
+    const projectScope = this._readScope(this._scanScope(scopeDef), seenRealPaths);
+    const scopes = state.scopes.map((scope) => (scope.scope === SCOPE_PROJECT ? projectScope : scope));
+    return cloneSkillsState(this._summarizeState(scopes, state.settings,
+      new Set(state.settings.disabledSkillIds)));
   }
 
   setFeatureEnabled(enabled) {
@@ -935,13 +985,8 @@ class SkillsService extends EventEmitter {
   }
 
   getSidecarConfig({ authority } = {}) {
-    if (authority !== undefined && (!normalizeProjectId(authority?.project_id)
-      || (authority.root_path !== null && (typeof authority.root_path !== 'string'
-        || !path.isAbsolute(authority.root_path))))) {
-      throw new TypeError('Invalid project authority for skills.');
-    }
     const projectRoot = authority === undefined ? this.getProjectRoot()
-      : authority.root_path ? path.join(authority.root_path, '.jenny', 'skills') : '';
+      : authorityProjectRoot(authority);
     const settings = this._getSettings();
     return {
       skills_bundled_root: this.getBundledRoot() || null,

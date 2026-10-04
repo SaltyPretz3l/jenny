@@ -78,6 +78,50 @@ function response(payload, status = 200, json = async () => payload) {
   return { ok: status >= 200 && status < 300, status, json };
 }
 
+for (const reason of ['operation_indeterminate', 'receipt_store_unavailable']) {
+  test(`structured ${reason} keeps the original mutation blocked`, async () => {
+    let calls = 0;
+    const original = command('chat.send', 'request_structured');
+    const bridge = {
+      clientId: 'client_a', dispose() {},
+      async command() {
+        calls += 1;
+        const error = ambiguous(original, 'CMP-HOST-0006');
+        error.payload = { ok: false, error: { reason, retryable: true } };
+        throw error;
+      },
+      async requestStatus() { return { ok: true, state: 'indeterminate' }; },
+    };
+    const { app, instance } = appWithBridge(bridge);
+    try {
+      await app.send();
+      assert.equal(app.state.mutationPending, true, 'ambiguous structured outcome must retain the guard');
+      assert.equal(app.mutationRecovery.pending.command, original);
+      await app.createSession();
+      assert.equal(calls, 1);
+    } finally { close(app, instance); }
+  });
+}
+
+test('an ambiguous receipt failure during exact retry retains the mutation guard', async () => {
+  const original = command('chat.send', 'request_retry_receipt');
+  const bridge = {
+    clientId: 'client_a', dispose() {},
+    async command() { throw ambiguous(original); },
+    async requestStatus() { return { ok: true, state: 'unknown' }; },
+    async retryCommand() {
+      const error = ambiguous(original, 'CMP-HOST-0006');
+      error.payload = { ok: false, error: { reason: 'receipt_store_unavailable', retryable: true } };
+      throw error;
+    },
+  };
+  const { app, instance } = appWithBridge(bridge);
+  try {
+    await app.send();
+    assert.equal(app.state.mutationPending, true, 'receipt persistence failure is not a definitive rejection');
+  } finally { close(app, instance); }
+});
+
 test('a committed chat whose response is lost settles by receipt without a second backend effect', async () => {
   let effects = 0;
   let committedId = '';

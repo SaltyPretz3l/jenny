@@ -12,7 +12,7 @@ from sidecar.ai.config import (
     resolve_background_runtime_root,
     resolve_effective_max_tokens,
 )
-from sidecar.ai.config_models import SYSTEM_PROMPT_PROFILE_COMPANION
+from sidecar.ai.config_models import SYSTEM_PROMPT_PROFILE_COMPANION, RuntimeConfig
 from sidecar.ai.error_codes import CMP_MCP_CONFIG_INVALID
 from sidecar.ai.tools.contracts import ToolExecutionFailure
 
@@ -361,7 +361,7 @@ def test_parse_runtime_config_defaults_phase10_tool_budget_caps() -> None:
     config = parse_runtime_config({})
 
     assert config.max_web_tool_calls_per_turn == 10
-    assert config.max_tool_calls_per_session == 200
+    assert config.max_tool_calls_per_session == 2_000
 
 
 def test_parse_runtime_config_defaults_cloud_loop_profile_caps() -> None:
@@ -440,10 +440,18 @@ def test_parse_runtime_config_clamps_cloud_loop_profile_caps() -> None:
     )
 
 
+def test_parse_runtime_config_local_working_time_default_and_ceiling() -> None:
+    # Out-of-range values fall back to the default; a stored old default stays.
+    assert RuntimeConfig().max_loop_wall_seconds == 3_600.0
+    assert parse_runtime_config({"max_loop_wall_seconds": 7_200.0}).max_loop_wall_seconds == 7_200.0
+    assert parse_runtime_config({"max_loop_wall_seconds": 1_800.0}).max_loop_wall_seconds == 1_800.0
+    assert parse_runtime_config({"max_loop_wall_seconds": 7_230.0}).max_loop_wall_seconds == 3_600.0
+    assert parse_runtime_config({"max_loop_wall_seconds": 29.0}).max_loop_wall_seconds == 3_600.0
+
+
 def test_parse_runtime_config_cloud_bounds_admit_values_the_local_bounds_reject() -> None:
-    # The local keys cap wall clock at 3600s / tool timeout at 600s / tools per
-    # turn at 500 / session calls at 1000; cloud wall/session keys accept more.
-    # 2026-08-30: local wall-clock default raised to 1800s, ceiling to 3600s.
+    # The local keys cap wall clock at 7200s / tool timeout at 600s / tools per
+    # turn at 500; cloud wall keys accept more. Session calls share 2000 (TR-008).
     config = parse_runtime_config(
         {
             "max_loop_wall_seconds": 28_800.0,
@@ -457,10 +465,11 @@ def test_parse_runtime_config_cloud_bounds_admit_values_the_local_bounds_reject(
         }
     )
 
-    assert config.max_loop_wall_seconds == 1_800.0
+    assert config.max_loop_wall_seconds == 3_600.0
     assert config.tools_execution_timeout_seconds == 120.0
     assert config.max_tools_per_turn == 200
-    assert config.max_tool_calls_per_session == 200
+    # TR-008: the local per-chat budget now shares the cloud ceiling.
+    assert config.max_tool_calls_per_session == 2_000
     assert config.cloud_max_loop_wall_seconds == 28_800.0
     assert config.cloud_tools_execution_timeout_seconds == 1_800.0
     assert config.cloud_max_tools_per_turn == 200
@@ -557,7 +566,6 @@ def test_parse_runtime_config_reads_search_tool_fields() -> None:
     assert config.tools_mermaid_enabled is True
     assert config.electron_tool_bridge_enabled is True
     assert config.tools_subagents_enabled is True
-    assert config.tools_subagent_batch_enabled is True
     assert config.tools_mcp_resources_enabled is True
     assert config.tools_automations_enabled is True
     assert config.tools_workspace_present_enabled is True
@@ -583,7 +591,6 @@ def test_parse_runtime_config_defaults_search_tool_fields() -> None:
     assert config.tools_mermaid_enabled is True
     assert config.electron_tool_bridge_enabled is False
     assert config.tools_subagents_enabled is True
-    assert config.tools_subagent_batch_enabled is False
     assert config.tools_mcp_resources_enabled is False
     assert config.tools_automations_enabled is False
     assert config.tools_workspace_present_enabled is False
@@ -596,16 +603,16 @@ def test_parse_runtime_config_defaults_search_tool_fields() -> None:
     assert config.tools_max_edit_file_bytes == 2_097_152
 
 
-def test_parse_runtime_config_batch_gate_cannot_bypass_subagent_permission() -> None:
-    config = parse_runtime_config(
-        {
-            "tools_subagents_enabled": False,
-            "tools_subagent_batch_enabled": True,
-        }
-    )
+def test_parse_runtime_config_tolerates_retired_subagent_batch_key_silently(caplog) -> None:
+    """The retired batch gate is no longer a field, and old payloads load quietly."""
+    with caplog.at_level(logging.WARNING, logger="sidecar.ai.config"):
+        config = parse_runtime_config(
+            {"tools_subagents_enabled": False, "tools_subagent_batch_enabled": True}
+        )
 
     assert config.tools_subagents_enabled is False
-    assert config.tools_subagent_batch_enabled is False
+    assert not hasattr(config, "tools_subagent_batch_enabled")
+    assert not [r for r in caplog.records if getattr(r, "event", "") == "ai.config.unknown_keys"]
 
 
 def test_parse_runtime_config_reads_knowledge_fields() -> None:
@@ -955,6 +962,31 @@ def test_resolve_background_runtime_root_defaults_to_companion_directory(
     assert resolved == tmp_path / ".companion" / "background-memory"
 
 
+def test_operation_ledger_root_defaults_to_the_app_profile(monkeypatch, tmp_path) -> None:
+    # HB-003: the durable ledger lives in the profile (Electron userData), not
+    # the machine-global ~/.companion, so profiles and test runs never share
+    # pending receipts.
+    from sidecar.ai.config import resolve_operation_ledger_root
+
+    monkeypatch.delenv("JENNY_OPERATION_LEDGER_ROOT", raising=False)
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path / "home"))
+    profile = tmp_path / "profile"
+    config = parse_runtime_config({"electron_state_root": str(profile)})
+
+    assert resolve_operation_ledger_root(config) == profile / "operation-ledger"
+    explicit = parse_runtime_config(
+        {"electron_state_root": str(profile), "operation_ledger_root": str(tmp_path / "x")}
+    )
+    assert resolve_operation_ledger_root(explicit) == tmp_path / "x"
+    # No profile (standalone sidecar / builtin server without an argument):
+    # the legacy location stays the fallback; it is ignored, never deleted.
+    legacy = tmp_path / "home" / ".companion" / "operation-ledger"
+    assert resolve_operation_ledger_root(parse_runtime_config({})) == legacy
+    assert resolve_operation_ledger_root(None) == legacy
+    monkeypatch.setenv("JENNY_OPERATION_LEDGER_ROOT", str(tmp_path / "env"))
+    assert resolve_operation_ledger_root(config) == tmp_path / "env"
+
+
 # ---------------------------------------------------------------------------
 # Codex CLI engine config parsing
 # ---------------------------------------------------------------------------
@@ -1100,3 +1132,17 @@ def test_parse_runtime_config_normalizes_auto_approve_streak_cap() -> None:
     assert parse_runtime_config({"auto_approve_streak_cap": 900}).auto_approve_streak_cap == 500
     for value in (None, "50", "", float("nan"), {}):
         assert parse_runtime_config({"auto_approve_streak_cap": value}).auto_approve_streak_cap == 50
+
+
+
+def test_parse_runtime_config_accepts_only_bounded_chatgpt_metadata() -> None:
+    row = {"id": "gpt-6.1-sol", "label": "GPT-6.1 Sol", "context_length": 128_000,
+           "reasoning_efforts": ["low", "medium"],
+           "default_reasoning_effort": "medium", "vision": True}
+    assert parse_runtime_config({"chatgpt_model_catalog": [row]}).chatgpt_model_catalog == (row,)
+    assert parse_runtime_config({"chatgpt_model_catalog": [{**row, "context_length": 999999}]}).chatgpt_model_catalog == ()
+
+
+def test_chatgpt_config_preserves_supported_max_reasoning() -> None:
+    assert parse_runtime_config({"engine_type": "chatgpt", "reasoning_effort": "max"}).reasoning_effort == "max"
+    assert parse_runtime_config({"engine_type": "ollama", "reasoning_effort": "max"}).reasoning_effort == ""

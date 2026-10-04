@@ -176,7 +176,7 @@
 .dashboard-hidden-strip__label {
   color: var(--text-secondary);
   font-size: var(--font-size-sm);
-  font-weight: 700;
+  font-weight: 500;
 }
 
 /* Scratchpad widget */
@@ -212,7 +212,7 @@
   background: var(--bg-surface);
   color: var(--text-primary);
   font: inherit;
-  font-size: var(--font-size-base);
+  font-size: var(--font-size-body);
   line-height: 1.5;
   /* Match the app's slim dark scrollbar instead of the default OS chrome. */
   scrollbar-width: thin;
@@ -282,7 +282,7 @@
   background: transparent;
   color: var(--text-secondary);
   font: inherit;
-  font-size: var(--font-size-sm);
+  font-size: var(--font-size-body);
   cursor: pointer;
   transition: color var(--transition-fast), box-shadow var(--transition-fast);
 }
@@ -294,7 +294,7 @@
 .dashboard-scratchpad__tab[aria-selected="true"] {
   color: var(--text-primary);
   box-shadow: inset 0 -2px 0 var(--accent);
-  font-weight: 600;
+  font-weight: 500;
 }
 
 .dashboard-scratchpad__tab:focus-visible,
@@ -319,7 +319,7 @@
   background: transparent;
   color: var(--text-secondary);
   font: inherit;
-  font-size: var(--font-size-sm);
+  font-size: var(--font-size-body);
   cursor: pointer;
   transition: color var(--transition-fast), background var(--transition-fast);
 }
@@ -453,7 +453,7 @@
   resize: none;
   padding: var(--space-2) var(--space-4);
   font: inherit;
-  font-size: var(--font-size-sm);
+  font-size: var(--font-size-body);
   line-height: 1.4;
   border-radius: var(--radius-base);
   border: 1px solid var(--border-default);
@@ -560,12 +560,12 @@
 }
 
 .dashboard-scratchpad__preview-heading {
-  font-weight: 600;
+  font-weight: 500;
   color: var(--text-primary);
 }
 
 .dashboard-scratchpad__preview-heading[data-level="1"] {
-  font-size: var(--font-size-md, 1.05em);
+  font-size: var(--font-size-body);
 }
 
 .dashboard-scratchpad__preview-bullet {
@@ -688,10 +688,8 @@
 .dashboard-card__title {
   margin: 0;
   color: color-mix(in srgb, var(--text-secondary) 75%, var(--text-primary));
-  font-size: var(--font-size-lg);
-  font-weight: 700;
-  letter-spacing: var(--tracking-kicker-lg);
-  text-transform: uppercase;
+  font-size: var(--font-size-caption);
+  font-weight: 500;
 }
 
 .dashboard-card__body {

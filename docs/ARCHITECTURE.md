@@ -1,274 +1,145 @@
 # Jenny Architecture Overview
 
-This is the top-level architecture map for new contributors. It explains what
-Jenny is, how the two processes fit together, and where each subsystem lives.
-For deep dives, follow the links in "Where to go next."
+This is the contributor map for the current desktop and hosted runtime. Start
+with WORKSPACE_MANIFEST.md for domain ownership and
+NEXT_STEPS.md for status and release gates.
 
 ## 1. What Jenny is
 
-Jenny is a local-first desktop AI coding companion: a native Electron app
-that runs entirely against local models — [Ollama](https://ollama.com/) by
-default, [vLLM](https://docs.vllm.ai/) optionally — with no cloud API key and
-no cloud round-trip. Conversation history is persisted on-device and
-encrypted at rest via Electron's `safeStorage`. Jenny is tuned for what
-small-to-mid local models (roughly 12B–35B) can drive reliably: coding
-workflows, data-visualization artifacts, and well-scoped, approval-gated tool
-calls, wrapped in a light, persistent companion personality ("Comet"). See
-[README.md](../README.md) for full product positioning and how Jenny compares
-to cloud tools.
+Jenny is a local-first AI coding harness with an Electron companion shell.
+Ollama and the local OpenAI-compatible engine (including managed llama-server)
+run coding workflows, visualizations, and bounded tools. vLLM is another local
+engine. ChatGPT sign-in and the Codex CLI engine are explicit optional cloud
+routes; selecting them changes where inference runs.
 
-## 2. Two-process architecture
+Application services own canonical history, persistence, project authority,
+and consent. Conversation files are JSON under the profile's `sessions/`
+directory; they are not encrypted by `safeStorage`. Desktop credential storage
+uses `safeStorage` through `services/backend/secure-store.js`.
 
-Jenny is two processes joined by JSON-RPC:
+## 2. Application host and Python sidecar
 
-- **Electron shell** — a thin JS process (`main.js`, `preload.js`,
-  `services/`, `renderer/`) that owns the window, IPC, persistence, and UI.
-- **Python sidecar** — a stateless-per-request process (`sidecar/`) that owns
-  engine routing, prompt assembly, tool execution, and memory. Launched as
-  `python -m sidecar`.
+The desktop application uses two cooperating processes:
 
-The two communicate over **stdio** using **JSON-RPC 2.0** with
-**`Content-Length`-prefixed framing** (see
-[`sidecar/runtime/framing.py`](../sidecar/runtime/framing.py)) — the same
-header-plus-body wire shape used by the Language Server Protocol. Requests,
-responses, and one-way notifications (streamed tokens, tool events, etc.) all
-travel this single channel.
+- **Electron host** — `main.js`, `preload.js`, and `services/` own windows,
+  the trusted renderer bridge, canonical conversations, scheduling, approvals,
+  and application resources. `renderer/` presents those services.
+- **Python sidecar** — launched as `python -m sidecar`, owns engine requests,
+  prompt assembly, the bounded tool loop, and documented memory/diagnostic
+  subsystems. Turn execution is request-local; it does not own conversation
+  history.
 
-```
- ┌─────────────────────────┐        JSON-RPC 2.0 over stdio       ┌───────────────────────────┐
- │      Electron shell      │  ───────────────────────────────►   │      Python sidecar        │
- │  main.js / preload.js /  │      Content-Length: <n>\r\n\r\n     │  sidecar/runtime (framing, │
- │  services/ / renderer/   │      {"jsonrpc":"2.0", ...}          │  dispatch, approval) +     │
- │                          │  ◄───────────────────────────────    │  sidecar/ai (engines,      │
- │  (window, IPC, storage)  │   requests / responses / notifies    │  routing, tools, memory)   │
- └─────────────────────────┘                                       └───────────────────────────┘
-```
+The host and sidecar communicate through JSON-RPC 2.0 over stdio with
+`Content-Length` framing. `sidecar/protocol.py` owns the vocabulary and
+`API_VERSION = "2026-08-17"`; `services/backend/sidecar-client.js` pins the
+paired version and adds `accept_version` to versioned requests.
+`sidecar/runtime/framing.py` bounds frames before dispatch.
 
-The wire contract is **versioned**. Both sides pin the same string:
+The headless Node host under `server/` composes the same application services
+and `ElectronSessionStore` for browser/Docker deployments. HTTP/SSE endpoints
+are authenticated service operations. The browser and sidecar do not become
+history owners. Hosted secrets and tool isolation follow the approved boundary
+in AGENTS.md and the hosted runtime
+manifest.
 
-- Sidecar: `API_VERSION = "2026-08-17"` in
-  [`sidecar/protocol.py`](../sidecar/protocol.py), alongside every JSON-RPC
-  method name (`chat.send`, `chat.token`, `tool.request_approval`, etc.) and
-  the canonical set of notification methods the sidecar is allowed to emit.
-- Electron: the matching `API_VERSION = '2026-08-17'` constant in
-  [`services/backend/sidecar-client.js`](../services/backend/sidecar-client.js),
-  sent as `accept_version` on every request.
+## 3. Application services and renderer
 
-`sidecar/protocol.py` is the single source of truth for method names and
-notification shapes; `sidecar-client.js` is the Electron-side client that
-speaks it. See
-`docs/architecture/BACKEND_SEAM_LANE.md`
-for how opt-in backend modules (diagnostics, the Codex CLI product engine)
-compose behind `services/backend/backend-service.js` without becoming direct
-dependents of the sidecar wire contract.
+- `main.js` composes the desktop lifecycle through `services/main/` and creates
+  context-isolated windows. `preload.js` delegates to `services/ipc-contract.js`
+  to expose the typed `window.jennyShell` bridge.
+- `services/backend/backend-service.js` composes managed sidecar transport,
+  engines, canonical chat streaming, persistence, and diagnostics. The optional
+  Codex CLI composition fence is documented in
+  Backend Composition-Seam Lane.
+- `services/projects/` and `services/session-runtime/` own project authority,
+  durable work, scheduling, resource admission, continuation, and recovery.
+  Transport cancellation requests cleanup; it does not prove that a producer
+  stopped or release uncertain capacity.
+- `services/tools/` owns the tool manifest, permission store, and Electron
+  executors. Workspace, artifact, preview, image-generation, update, and
+  scheduler services remain at their existing service boundaries.
+- `renderer/app.js` and `renderer/app/` compose the renderer. `renderer/chat/`
+  owns chat presentation; `renderer/shell/` owns shell/controllers;
+  `renderer/features/` owns feature views; `renderer/shared/` owns UI utilities;
+  `renderer/inventory/` owns reusable raw HTML primitives.
 
-## 3. Electron shell
+For per-surface routes use Electron Wiring and
+UI / UX. Read the Chat UI map
+before broad chat markup/style searches.
 
-The shell is intentionally thin — a window manager, an IPC/persistence layer,
-and a renderer — with all model/tool intelligence delegated to the sidecar.
+## 4. Python ownership
 
-- **`main.js`** — app/window lifecycle: creates the `BrowserWindow` with
-  `contextIsolation: true`, wires the sidecar subprocess, and owns top-level
-  startup/shutdown sequencing.
-- **`preload.js`** — the context-isolated bridge. It uses
-  `contextBridge.exposeInMainWorld` to expose a single `window.jennyShell`
-  object (built by `services/ipc-contract.js`) to the renderer; the renderer
-  never gets raw Node/Electron APIs.
-- **`services/`** — the backend seam, organized by concern: `services/backend/`
-  (sidecar client `sidecar-client.js`, composition root `backend-service.js`,
-  secure storage `secure-store.js`, and the opt-in diagnostic/Codex-CLI lane);
-  `services/main/` (window composition, IPC handler registration, the Comet
-  overlay controller); `services/tools/` (Electron-side tool-result helpers,
-  e.g. structured diffs); `services/proactive/` and `services/dev/`
-  (proactive-agent support and dev tooling). Persistence (session store),
-  auto-update, and scheduled tasks are also services-owned.
-- **`renderer/`** — the UI, organized by feature: `renderer/chat/` (transcript,
-  streaming, tool-call rendering, tool-approval prompts), `renderer/features/`
-  (artifacts panel, code-review rail, Comet personality/presence, dashboard
-  surfaces), `renderer/shell/` (window chrome, bridge wiring), `renderer/app/`
-  (bootstrap), `renderer/services/` and `renderer/shared/` (renderer-local
-  utilities), `renderer/overlay/` and `renderer/frames/` (the Comet overlay
-  window and sandboxed iframe surfaces), `renderer/inventory/`.
+Dependency direction is `sidecar/server.py` → `sidecar/ai/container.py` →
+`sidecar/ai/routing/router.py` → subsystems. `sidecar/ai/` never imports Electron
+(`main.js`, `services/`) or renderer modules.
 
-See `docs/architecture/BACKEND_SEAM_LANE.md`
-for the seam boundary between product runtime code and the opt-in backend
-lane, and `docs/manifests/electron-wiring.md` / `docs/manifests/ui-ux.md` for
-per-surface ownership.
+| Area | Canonical starts | Responsibility |
+|---|---|---|
+| Process and wire | `sidecar/runtime/request_dispatch.py`, `multiplexer.py`, `chat.py` | Framed dispatch, bounded workers, cancellation, reverse requests, terminal notifications |
+| Engines | `sidecar/ai/engines/factory.py`, `provider_registry.py`, `catalog.py` | Lazy engine selection, model discovery, normalized provider streaming, fail-closed fallback |
+| Routing | `sidecar/ai/routing/router.py`, `tool_loop.py`, `loop_runtime.py` | Request context, bounded generation/tool execution, quotas, cancellation/deadlines |
+| Context | `sidecar/ai/context/builder.py`, `messages.py`, `token_budget.py`, `compaction.py`, `turn_context.py` | Trusted prompt assembly, history admission, budgets/compaction, prefix-stable local turn context |
+| Tools and MCP | `sidecar/ai/tools/catalog.py`, `registry.py`, `policy.py`, `sidecar/ai/mcp/` | Manifest-derived schemas, lazy builtins, approval policy, sanitization, bounded MCP transports |
+| Memory | `sidecar/ai/memory/`, `sidecar/runtime/memory.py` | Versioned SQLite memory, bounded recall, approved suggestions and management |
+| Diagnostics | `sidecar/runtime/diagnostics.py`, `turn_diagnostics.py`, `resource_monitor.py` | Redacted logs, bounded request/provider evidence and resource supervision |
 
-## 4. Python sidecar
+Process-global or durable sidecar state requires an explicit bounded owner.
+Container generations, provider caches, memory, MCP transports and diagnostic
+stores are examples; cancellation handles and message buffers remain
+request-local. See Concurrency Model.
 
-The sidecar is organized into `runtime/` (process- and protocol-level
-concerns) and `ai/` (model, tool, and knowledge concerns). `sidecar/ai/` must
-not import from `electron/` or `renderer/` — it only knows JSON in, JSON/
-notifications out.
+## 5. Tool authority and approval
 
-**`sidecar/runtime/`** — framing, request dispatch, approval, and turn
-lifecycle: `framing.py` / `message_reader.py` / `rpc.py` (wire I/O);
-`request_dispatch*.py` (per-method-family dispatch); `approval.py` /
-`approval_plan.py` (runtime side of per-tool approval, paired with
-`sidecar/ai/tools/policy.py`); `turn_processor.py`, `turn_state.py`,
-`turn_retry.py`, `multiplexer.py`, `cooldowns.py`
-(request-local event processing, result vocabulary, approval-resume retry,
-and cancellation); `chat*.py` (streaming chat pipeline); Electron
-owns live active-turn state and crash reconciliation rather than duplicating
-it in the sidecar;
-`diagnostics.py`, `telemetry.py`, `harness_snapshot.py`,
-`turn_diagnostics.py`, `resource_monitor.py` (diagnostics); plus
-`subprocess_manager.py`, `parent_watchdog.py` (dies with the Electron
-parent), and `electron_tool_bridge.py` (routes tool calls that must execute
-Electron-side back across the wire).
+`services/tools/tool-manifest.json` is the canonical descriptor/schema source.
+Availability depends on configuration, platform, project/workspace authority,
+run mode, host policy, and request-level tool switches. Workspace-required tools
+are unavailable without an explicitly bound root; workspace-independent chat,
+interaction and status tools may remain available.
 
-**`sidecar/ai/`** subpackages:
+`sidecar/ai/tools/policy.py` and the application approval owner apply deny/auto/ask
+policy. `tool.request_approval` is a blocking reverse JSON-RPC request.
+`tool.execute_electron` executes application-owned tools; `runtime.operation`
+performs internal application admission and settlement, never a model tool.
+Actual IO rechecks captured authority and physical path containment. Tool results
+are bounded and sanitized before model-visible admission.
 
-- **`engines/`** — `BaseEngine` (`base.py`) plus concrete engines selected
-  through `factory.py`'s `create_engine()`: `ollama.py` (default),
-  `vllm_engine.py`, `codex_cli.py` (opt-in cloud product engine, gated
-  behind explicit configuration), `mock.py`, `replay.py` (fixture-driven,
-  used in tests/eval), `openai_compatible.py`. The factory **fails closed to
-  `MockEngine`** on any initialization error or unknown `engine_type`, and
-  enforces a local-only host policy for the OpenAI-compatible engine
-  (loopback/private/link-local resolution only).
-- **`routing/`** — the bounded tool loop (`tool_loop.py`, `tool_execution.py`,
-  `tool_resolution.py`, `tool_quotas.py`), the generation runtime
-  (`generation_runtime.py`), route policy (`route_policy.py`, `router.py`),
-  and stuck-loop detection (`stuck_loop_detector.py`), plus iteration
-  limits, sequential tool execution, retry, and sub-agent delegation.
-- **`context/`** — workspace-aware prompt assembly (`builder.py`, which
-  assembles the `BOOTSTRAP` identity/system-prompt block), token budgeting
-  and compaction (`token_budget.py`, `compaction.py`), prompt caching, and
-  tokenizers.
-- **`tools/`** — the tool catalog and contract (`catalog.py`, `registry.py`,
-  `policy.py`, `sanitization.py`, `workspace.py`), plus `builtins/`:
-  filesystem (`filesystem.py`, `edit_file.py`, `delete_file.py`,
-  `glob_files.py`, `grep_search.py`), `shell.py` (+ `shell_security.py`),
-  git (`git_ops.py`, `git_tracking.py`), web (`web.py`, `web_http.py`,
-  `web_extract.py`), `python_runtime/`, `lsp/`, `rich_files/`.
-- **`memory/`** — SQLite-backed store (`store.py`, `store_migrations.py`),
-  recall scoring (`recall_scoring.py`), extraction, embeddings, session notes.
-- **`personality/`** — profile and sanitized-identity overlay support
-  (`sanitization.py`) consumed by prompt assembly.
-- **`mcp/`** — the MCP client (`client.py`) and transports
-  (`transport_stdio.py`, `transport_sse.py`), plus namespacing and retry
-  policy.
+`delegate` provides synchronous bounded read-only research. Approved durable
+runs may expose `session_spawn`, `session_wait`, and `session_result` through the
+application-owned child-work contract. Both preserve parent authority and budget;
+see Sub-Agent Runtime Design and
+[Session runtime operations](operations/session-runtime.md).
 
-Also present: `agents/` (sub-agent/delegation support), `app_profiles/`,
-`tasks/`, `utils/`, and `sidecar/audio/` (audio runtime support).
+## 6. Streaming and persistence
 
-## 5. Tool system & approval
+`sidecar/protocol.py` lists allowed notifications. Core examples are `chat.token`,
+`chat.thinking`, phase events, `tool.executing`, `tool.result`, `agent.progress`,
+`chat.done`, `chat.error`, and canonical `turn.event`. `chat.stream_reset` is a
+transport signal with explicit segment-preservation rules. `tool.output_chunk`
+and `context.usage` are ephemeral and never canonical history.
 
-Every tool call goes through a **per-tool, fail-closed approval decision**
-(`sidecar/ai/tools/policy.py`, backed by `sidecar/runtime/approval.py`).
-Rules are evaluated in a fixed precedence: a matching **deny** rule wins
-immediately; otherwise the first matching **auto** rule wins; otherwise the
-first matching **ask** rule applies. If nothing matches, the tool falls back
-to asking rather than running silently — approval is opt-in, not opt-out.
+Electron correlates stream events, finalizes canonical turn events, and settles
+messages through its existing terminal/persistence owners. Split session store
+schema is **v22**; turn-event log version is **4**. Forward-version guards
+preserve newer files and refuse writes. Durable Send acknowledges saved work
+before an actual stream starts; explicit resume and cleanup confirmation are
+separate transitions.
 
-Tool execution is also bounded by **workspace-root enforcement**
-(`sidecar/ai/tools/workspace.py`): file and shell operations that resolve
-outside the configured workspace root are rejected with the
-`CMP_TOOL_OUTSIDE_WORKSPACE` error code (`CMP-TOOL-0003`, defined in
-`sidecar/ai/error_codes.py`). Jenny's tools are blocked entirely until a
-workspace root is explicitly chosen.
+Managed startup is ready for chat only after sidecar attachment and `model_ready`.
+One initialization flight per process uses bounded inactivity/absolute deadlines;
+model-acquisition failure remains observable and retryable as `model_unavailable`.
 
-Tool **results** are sanitized before they reach the model or the transcript
-— `sidecar/ai/tools/sanitization.py` bounds and redacts tool-result metadata
-so oversized output, secrets, or unexpected shapes don't leak into context or
-storage unfiltered.
+## 7. Security and further reading
 
-## 6. Streaming
+Desktop windows use CSP and context isolation. Workspace IO validates real paths
+and handles, approval fingerprints bind the execution context, web tools enforce
+outbound destination/size/deadline limits, and logs exclude raw secrets and tool
+arguments. Credential encryption does not imply transcript encryption or command
+isolation. Hosted command policy uses its separately gated offline worker.
 
-The sidecar streams a turn as a sequence of typed notifications rather than
-one blocking response. Distinct notification types (all enumerated in
-`sidecar/protocol.py`'s `ALLOWED_NOTIFICATION_METHODS`) include:
-
-- **`runtime.progress`** — initialize-request-correlated model acquisition and
-  loading progress. Electron validates monotonic stage/byte/percent movement
-  before it refreshes the inactivity watchdog or exposes lifecycle status.
-
-- **`chat.token`** — streamed assistant text deltas.
-- **`chat.thinking`** — streamed reasoning/status deltas (`kind`: `reasoning`
-  or `status`).
-- **`chat.phase_started` / `chat.phase_completed`** — semantic phase-boundary
-  events (reasoning / text / tool_use / tool_result / approval_wait
-  transitions).
-- **`tool.executing` / `tool.result`** — a tool call starting and finishing.
-- **`tool.request_approval`** — the turn pauses for an approval decision
-  (an approval-wait boundary).
-- **`turn.event`** — an additive canonical turn-event stream layered
-  alongside the notifications above during migration.
-
-Orthogonal to all of these is **`chat.stream_reset`** — a transport-level
-notification the sidecar emits when a retry/nudge discards accumulated text
-mid-stream, telling the renderer to discard its buffer and start fresh. It is
-a physical transport concern, not a semantic phase signal, and is handled
-independently by the renderer.
-
-Managed startup is ready for chat only after the attached sidecar has spawned
-and the configured model has reached `model_ready`. Electron owns one
-initialization flight per sidecar process, with a 15-second inactivity timeout
-and a 615-second absolute ceiling. Acquisition failure clears the selected
-model and leaves the shell in a retryable, observable `model_unavailable`
-state; it is not reported as a dead sidecar.
-
-## 7. Other subsystems
-
-- **Skills** (`skills/`) — self-contained capability modules, each with a
-  `SKILL.md` (the seven bundled skills: `verification-specialist`, `po-review`,
-  `deep_research`, `claude_code_delegation`, `humanizer`, `meeting_notes`, `insight`).
-  `/insight` returns an evidence-based retrospective on harness friction and workflow
-  from the visible conversation; it does not initiate diagnostics or fixes.
-- **Memory approval queue** — suggested memories are queued and require
-  explicit save/dismiss, not auto-written (`memory.suggest`,
-  `memory.pending.list`, `memory.pending.delete`; `sidecar/ai/memory/`).
-- **Personality profiles** — built-in profiles (balanced, concise, creative,
-  mentor) plus a free-form field, sanitized before entering the system
-  prompt (`sidecar/ai/personality/sanitization.py`).
-- **MCP external tools** — MCP client with stdio and SSE transports
-  (`sidecar/ai/mcp/`), namespaced alongside built-in tools in the same
-  catalog and approval pipeline.
-- **Artifacts** — Monaco-based code/file artifacts and Mermaid diagrams,
-  the latter sandboxed in an iframe (`renderer-mermaid-utils.js`,
-  `mermaid-frame.html`).
-- **Comet companion** — the persistent visual companion (`comet/`,
-  `renderer/features/renderer-comet*.js`,
-  `services/main/comet-overlay-controller.js`), a thin presence layer over
-  the same chat/personality state.
-
-## 8. Security posture
-
-- **Workspace-root gating** — tools are inert until a workspace root is
-  explicitly chosen; all file/shell paths are validated against it.
-- **Per-tool approval** — fail-closed deny/auto/ask policy evaluated on
-  every tool call (Section 5).
-- **Realpath / symlink boundary checks** — workspace enforcement resolves
-  real paths so symlinks can't be used to escape the workspace root, raising
-  `CMP_TOOL_OUTSIDE_WORKSPACE` on escape.
-- **Tool-result metadata sanitization** — bounds and redacts tool output
-  before it reaches model context, transcript, or storage.
-- **CSP + context isolation** — `index.html` sets a `Content-Security-Policy`
-  meta tag; `main.js` creates the `BrowserWindow` with
-  `contextIsolation: true` and a `preload.js` bridge instead of direct
-  Node/Electron access from the renderer.
-- **SSRF checks on web tools** — the OpenAI-compatible engine factory
-  enforces a local-only host policy (loopback/private/link-local only); web
-  tool builtins (`sidecar/ai/tools/builtins/web.py`, `web_http.py`) apply
-  their own outbound-request checks.
-- **`safeStorage`-encrypted history** — conversation/session data and
-  secrets are encrypted at rest via Electron's `safeStorage`
-  (`services/backend/secure-store.js`), not stored in plaintext.
-
-## 9. Where to go next
-
-- [README.md](../README.md) — product positioning, setup, and how Jenny
-  compares to cloud tools.
-- [CONTRIBUTING.md](../CONTRIBUTING.md) — dev environment setup and gates to
-  run before opening a PR.
-- INVENTORY.md — fast subsystem map and current
-  surface-by-surface coverage notes.
-- docs/INDEX.md — central docs discovery page.
-- [docs/adr/](adr/) — accepted Architecture Decision Records for frozen
-  design choices.
-- [docs/operations/](operations/) — versioning/migration policy, error-code
-  registry, policy checks, and other operational references.
-- docs/process/TESTING_STRATEGY.md — canonical
-  reference for what each test/CI gate covers.
+- Project Contract Details — vocabulary and ownership contracts.
+- [Built-in Tools](TOOLS.md) — tool surfaces and approval behavior.
+- [Security Model](SECURITY_MODEL.md) — sanitization and Python execution threat model.
+- Structured Logging Contract — retained diagnostic evidence.
+- [Versioning and Migration](operations/versioning-and-migration.md) — schema and compatibility policy.
+- WORKFLOW.md — focused checks and owner-run qualification gates.
+- docs/INDEX.md — detailed documentation routes.

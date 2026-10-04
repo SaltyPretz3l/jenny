@@ -1,8 +1,9 @@
 # Security Policy
 
-Jenny is a local-first desktop companion. The active runtime is Electron plus a
-Python sidecar connected by JSON-RPC over stdio; cloud engine integrations are
-archived unless a new integration plan restores them.
+Jenny is a local-first AI harness. Desktop uses Electron plus a Python sidecar
+connected by JSON-RPC over stdio. Optional ChatGPT sign-in and Codex CLI routes
+send inference requests to cloud providers. Experimental browser hosting uses
+an authenticated headless Node host and the same application-service owners.
 
 ## Supported Versions
 
@@ -33,15 +34,31 @@ prioritized over ordinary issues. There is no bug bounty.
 
 ## Runtime Boundaries
 
-- Electron owns persistence and secrets; API keys must not be stored in sidecar
-  config or environment variables.
-- Electron and Python communicate only through JSON-RPC over stdio.
+- Electron owns desktop persistence, consent and safeStorage-backed secrets;
+  API keys must not be stored in sidecar config or environment variables.
+  Conversation JSON files are not encrypted by safeStorage.
+- ChatGPT uses Jenny's own OAuth flow. Tokens stay in the secure store and pass
+  only to the sidecar and ChatGPT backend, never the renderer or logs. Codex CLI
+  uses its own login; Jenny never reads or copies the CLI's credential file.
+- Hosted profiles have one exclusive writer. Hosted credentials come from
+  explicitly mounted secret files outside profile/workspace roots; see
+  [hosting boundaries](docs/operations/HOSTED_EXECUTION.md).
+- Application host and sidecar communicate through JSON-RPC over stdio. Browser
+  access uses authenticated, schema-validated HTTP/SSE service operations.
 - Sidecar code under `sidecar/ai/` must not import Electron or renderer code.
 - MCP stdio servers run with minimal environment/cwd containment, bounded
   process/memory/file limits, and process-tree cleanup.
 - External MCP tool names are namespaced as `mcp__<server>__<tool>`; Jenny
   builtins and synthetic tools keep their existing names and win reserved-name
-  collisions.
+  collisions. Third-party MCP is unavailable in hosted and desktop command
+  sandbox modes.
+- Wasm and native/privileged plugin tiers, plugin MCP, workflows, hooks, engine adapters,
+  catalogs and privileged hosts have been retired in current source. New
+  packages declaring retired kinds are refused; installed leftovers remain
+  listed with those contributions inert. Unsigned package intake/loading is
+  disabled unless `JENNY_ENABLE_PLUGIN_DEVELOPER_PROFILE=1` is set. Retained
+  panel/artifact views run HTML/JS/CSS in a sandboxed WebContentsView with a
+  bounded host bridge; signing does not grant unrestricted host execution.
 
 ## Tool Safety
 
@@ -49,7 +66,7 @@ prioritized over ordinary issues. There is no bug bounty.
   package managers, compilers, fetchers, `patch`, `tee`, and ambiguous Git
   subcommands require approval.
 - `safety_mode` supports `normal`, `strict`, and `paranoid`. `strict` disables
-  web/network tool families; `paranoid` requires approval for model-visible
+  web search and browsing; `paranoid` requires approval for model-visible
   tool calls.
 - Tool outputs and pre-dispatch tool arguments are scanned for prompt-injection
   directives and common credential shapes before model reuse or diagnostics;
@@ -65,14 +82,18 @@ Targeted policy checks live under `scripts/checks/`, including
 `check_no_os_getenv.py`, `check_no_secrets.py`, and `check_import_fanout.py`.
 Full local CI remains a manual maintainer gate.
 
-## Known Follow-Up Areas
+## Qualification and follow-up
 
-Planned hardening that extends the current posture (tracked, not yet done):
+NEXT_STEPS.md owns current release gates and priorities.
+Source integration does not establish installed-app, real-device or live-provider
+qualification. The following limits are not security guarantees:
 
 - Server-binary signature verification for external MCP runtimes
   (sigstore / cosign / Authenticode).
-- Broader fuzzing for sanitizer and shell-classifier inputs.
-- Per-surface threat-model documents (shell, web, filesystem, MCP, approval)
-  to complement the existing Python-runtime threat model.
+- Sanitizer and shell-classifier checks have bounded test coverage; they do
+  not establish exhaustive fuzzing or prevent every prompt-injection attempt.
+- Native desktop commands and third-party MCP subprocess containment is not
+  filesystem/network isolation. Optional Docker commands run offline in a
+  disposable workspace copy; their file changes are discarded.
 - Authenticode code signing for the Windows installer (releases currently
   ship unsigned with SHA-256 asset manifests published per release).

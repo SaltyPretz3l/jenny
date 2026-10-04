@@ -253,7 +253,8 @@
       const isEphemeralOutputChunk = payload.type === 'tool_output_chunk'
         || payload.type === 'context_usage'
         || payload.type === 'context_compacting'
-        || payload.type === 'tool_input_delta';
+        || payload.type === 'tool_input_delta'
+        || payload.type === 'runtime_waiting';
       if (callOptions.allowBuffer !== false && payloadStreamId && flushingStreamIds.has(payloadStreamId)) {
         if (isEphemeralOutputChunk) {
           return { buffered: false, terminal: false };
@@ -328,6 +329,7 @@
         // A runtime pause suspended the approval main-side (no presence or
         // activity: nothing new is happening on the turn).
         if (payload.type === 'tool_approval_withdrawn') return await handlers.handleApprovalNeeded(payload);
+        if (payload.type === 'user_questions_withdrawn') return await handlers.handleUserQuestionsRequested(payload);
         if (payload.type === 'user_questions_requested') {
           const result = await handlers.handleUserQuestionsRequested(payload);
           notifyPresence(payload);
@@ -352,6 +354,13 @@
         if (payload.type === 'context_compacted') return await handlers.handleContextCompacted(payload);
         if (payload.type === 'context_compacting' || payload.type === 'tool_input_delta') {
           return { buffered: false, terminal: false };
+        }
+        if (payload.type === 'runtime_waiting') {
+          // A reply paused itself behind another chat (or stopped waiting):
+          // the activity row already took it; the composer chrome follows.
+          return typeof handlers.handleRuntimeWaiting === 'function'
+            ? await handlers.handleRuntimeWaiting(payload)
+            : { buffered: false, terminal: false };
         }
         if (payload.type === 'context_usage') {
           // Ephemeral meter snapshot: chrome-only, no presence/activity

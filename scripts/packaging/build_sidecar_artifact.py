@@ -40,6 +40,7 @@ def python_runtime_bundle_contract(sys_platform: str = sys.platform) -> Path:
     return Path("config/python-runtime-bundle-lock.json")
 
 BUNDLED_DATA_FILES: tuple[tuple[Path, str], ...] = (
+    (ROOT / "config" / "model-recommendation-catalog.json", "config"),
     (ROOT / "services" / "tools" / "tool-manifest.json", "services/tools"),
     # prompt_modes.py reads the plan-mode prompt contract through sys._MEIPASS
     # exactly like catalog.py reads the manifest; the packaged sidecar failed
@@ -252,7 +253,7 @@ def _pyinstaller_exclude_args() -> list[str]:
 
 
 def _pyinstaller_tool_import_args() -> list[str]:
-    from sidecar.ai.tools.registry import lazy_tool_handlers  # noqa: PLC0415 - build-only metadata
+    from sidecar.ai.tools.registry import lazy_tool_handlers
 
     modules = sorted({handler.lazy_target[0] for handler in lazy_tool_handlers()})
     return [arg for module in modules for arg in ("--hidden-import", module)]

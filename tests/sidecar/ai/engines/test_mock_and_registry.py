@@ -9,16 +9,13 @@ No source files are modified. All fakes/stubs live here.
 from __future__ import annotations
 
 import json
-from typing import Any, Dict, List, Optional
+from typing import Any, List, Optional
 from unittest.mock import MagicMock
 
-import pytest
-
-from sidecar.ai.engines.mock import MockEngine
 from sidecar.ai.engines.base import ModelModality
+from sidecar.ai.engines.mock import MockEngine
 from sidecar.ai.engines.response_format import ResponseFormat
 from sidecar.ai.tools.models import GenerationResult
-
 
 # ---------------------------------------------------------------------------
 # Helpers

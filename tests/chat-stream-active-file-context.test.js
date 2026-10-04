@@ -238,9 +238,10 @@ test('trims oversized stacked blocks to fit a small effective budget (no overflo
     featureFlags: { workspace_active_file_context: true },
     _memoryRecallCache: {},
     _emitServiceLog() {},
-    // 6K window => effective budget 3000 tokens (sidecar quarter-cap math); after
-    // history + the system reserve only ~1.5K is left for the stacked blocks.
-    currentStatus: { effective_context_length: 6000 },
+    // 4K window => effective budget 2976 tokens (the window less the larger
+    // generation reservation, as the sidecar); after history + the system
+    // reserve only ~1.5K is left for the stacked blocks.
+    currentStatus: { effective_context_length: 4000 },
     personalityWorkspace: {
       getCompiledContext: async () => hugePersonality,
     },
@@ -274,8 +275,8 @@ test('trims oversized stacked blocks to fit a small effective budget (no overflo
 
   // The assembled context fits within the effective budget — no "Conversation
   // too long" would be tripped on turn 1.
-  const effective = computeEffectiveContextBudget(6000);
-  assert.equal(effective, 3000);
+  const effective = computeEffectiveContextBudget(4000);
+  assert.equal(effective, 2976);
   const totalTokens = estimateAssembledTokens(options.preparedMessages, result.contextBlocks);
   assert.ok(totalTokens <= effective, `assembled ${totalTokens} tokens <= ${effective}`);
 

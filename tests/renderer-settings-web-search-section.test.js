@@ -14,6 +14,7 @@ const { createSettingsEventBindings } = require('../renderer/shell/renderer-sett
 const selectField = require('../renderer/inventory/select-field');
 const textField = require('../renderer/inventory/text-field');
 const actionButton = require('../renderer/inventory/action-button');
+const settingsField = require('../renderer/inventory/settings-field');
 const { WEB_SEARCH_PROVIDER_IDS } = require('../services/shell-config-web-search');
 const { WEB_SEARCH_PROVIDER_KEY_IDS } = require('../services/backend/secure-store');
 
@@ -34,7 +35,7 @@ function withGlobals(run) {
   globalThis.inventorySelectField = selectField;
   globalThis.inventoryTextField = textField;
   globalThis.inventoryActionButton = actionButton;
-  globalThis.inventory = { selectField, textField, actionButton };
+  globalThis.inventory = { selectField, textField, actionButton, settingsField };
   try {
     return run();
   } finally {
@@ -105,7 +106,7 @@ test('buildWebSearchSectionMarkup renders the provider select with the current v
     assert.equal(doc.querySelector('#webSearchSearxngUrlField'), null);
     assert.equal(doc.querySelector('[data-web-search-key-field]'), null);
     // Help text is present.
-    assert.match(doc.body.textContent, /DuckDuckGo needs no configuration/);
+    assert.match(doc.body.textContent, /DuckDuckGo needs no setup/);
   });
 });
 
@@ -181,7 +182,7 @@ function createHarness(markup) {
   global.window = dom.window;
   global.document = dom.window.document;
   global.AbortController = dom.window.AbortController;
-  global.window.jennyShell = { comet: {}, models: {} };
+  global.window.jennyShell = { models: {} };
   return {
     window: dom.window,
     document: dom.window.document,
@@ -548,4 +549,46 @@ test('applyWebSearchSecret configRefreshed:false shows a success note, not a fai
   assert.equal(toastCalls.length, 1);
   assert.match(toastCalls[0].message, /sidecar|restart/i);
   assert.notEqual(toastCalls[0].options?.tone, 'danger');
+});
+
+
+test('Web provider and credential rows retain their values and disable every control with Web tools off', () => {
+  withGlobals(() => {
+    for (const provider of ['searxng', 'google_pse']) {
+      const doc = renderToDom(buildWebSearchSectionMarkup({ visible: true, parentOff: true, webSearch: { provider, searxngUrl: 'https://example.com' } }));
+      const rows = doc.querySelectorAll('.settings-field--row');
+      assert.ok(rows.length >= 2);
+      for (const row of rows) {
+        assert.equal(row.dataset.settingParentOff, 'true');
+        assert.ok(row.classList.contains('settings-field--sub'));
+        for (const control of row.querySelectorAll('input, select, button')) assert.equal(control.disabled, true);
+        assert.equal(row.querySelectorAll('label.settings-field-title').length, 1);
+        assert.equal(row.querySelectorAll('.inv-select-field-label, .inv-text-field-label').length, 0, 'no second visible label');
+      }
+      assert.equal(doc.getElementById('webSearchProviderSelect').value, provider);
+      assert.equal(rows[0].nextElementSibling.matches('p.settings-field-note[data-web-search-test-status]'), true);
+    }
+  });
+});
+
+test('a refused provider save shows its reason on the provider row', async (t) => {
+  const harness = createHarness('<div id="toolsConfigFieldList"></div>');
+  t.after(() => harness.cleanup());
+  const toolsConfigFieldList = harness.document.getElementById('toolsConfigFieldList');
+  withGlobals(() => {
+    toolsConfigFieldList.innerHTML = buildWebSearchSectionMarkup({ visible: true, webSearch: { provider: 'duckduckgo' }, escapeHtml });
+  });
+  createSettingsEventBindings(createBaseDeps({
+    state: { features: { featureFlags: { web_search_providers: true }, webSearch: { provider: 'duckduckgo' } } },
+    dom: { toolsConfigFieldList },
+    callbacks: { async refreshFeatureState() { throw new Error('provider refused'); } },
+  })).bind();
+  const select = toolsConfigFieldList.querySelector('#webSearchProviderSelect');
+  select.value = 'searxng';
+  select.dispatchEvent(new harness.window.Event('change', { bubbles: true }));
+  await new Promise((resolve) => setImmediate(resolve));
+  await new Promise((resolve) => setImmediate(resolve));
+  const row = toolsConfigFieldList.querySelector('[data-settings-field="webSearchProviderSelect"]');
+  assert.equal(row.getAttribute('data-state'), 'error');
+  assert.equal(row.querySelector('.settings-field-error').hidden, false);
 });

@@ -30,17 +30,12 @@ from sidecar.ai.plugins.runtime_publication import (
 )
 from sidecar.ai.plugins.runtime_registry import (
     PluginDeclarativeContribution,
-    PluginEngineBinding,
-    PluginNativeToolDescriptor,
-    PluginProviderDescriptor,
     PluginRemoteToolDescriptor,
     PluginRuntimeAuthority,
     PluginRuntimeGeneration,
     PluginRuntimeRegistry,
     PluginSettingsRecord,
-    PluginWorkflowToolBinding,
 )
-from sidecar.ai.tools.catalog import manifest_tool_entry
 
 RESOURCE_KINDS: Final[tuple[str, ...]] = (
     "engine",
@@ -58,8 +53,6 @@ _V2_ARRAYS: Final[dict[str, str]] = {
     **_SUPPORTED_ARRAYS,
     "themes": "theme",
     "settings_schemas": "settings_schema",
-    "commands": "command",
-    "workflows": "workflow",
 }
 _INERT_ARRAYS: Final[tuple[str, ...]] = (
     "themes",
@@ -76,27 +69,6 @@ def _expected_content(
 ) -> dict[str, tuple[tuple[str, str, str], str, int]]:
     arrays = _V2_ARRAYS if runtime_version == STAGE4B_SCHEMA_VERSION else _SUPPORTED_ARRAYS
     return expected_content(declarative, arrays=arrays)
-
-
-def _tool_descriptor_digest(tool_id: str) -> str | None:
-    entry = manifest_tool_entry(tool_id)
-    if entry is None or entry.get("workflow_eligible") is not True:
-        return None
-    payload: dict[str, Any] = {
-        "manifest_version": 2,
-        "name": entry.get("name"),
-        "parameters": entry.get("parameters"),
-        "side_effecting": entry.get("side_effecting") is True,
-        "read_only": entry.get("read_only") is True,
-        "workflow_eligible": entry.get("workflow_eligible") is True,
-        "source_kind": entry.get("source_kind") or "",
-        "tool_family": entry.get("tool_family") or "",
-        "owner": entry.get("owner") or "",
-        "surfaces": entry.get("surfaces") if isinstance(entry.get("surfaces"), list) else [],
-        "availability": entry.get("availability") or {},
-    }
-    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
-    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
 def _context_item(
@@ -124,16 +96,13 @@ def _context_item(
     )
 
 
-def _generation_id(  # noqa: PLR0913
+def _generation_id(
     authority: PluginRuntimeAuthority,
     contributions: list[PluginContextItem],
     declarative: tuple[PluginDeclarativeContribution, ...],
     settings: tuple[PluginSettingsRecord, ...],
-    tool_bindings: tuple[PluginWorkflowToolBinding, ...],
+    _retired_workflow_tool_bindings: tuple[()],
     remote_tools: tuple[PluginRemoteToolDescriptor, ...] = (),
-    providers: tuple[PluginProviderDescriptor, ...] = (),
-    native_tools: tuple[PluginNativeToolDescriptor, ...] = (),
-    engine_bindings: tuple[PluginEngineBinding, ...] = (),
 ) -> str:
     identity = {
         "registry_revision": authority.registry_revision,
@@ -152,27 +121,13 @@ def _generation_id(  # noqa: PLR0913
              item.schema_digest, item.revision]
             for item in settings
         ],
-        "workflow_tool_bindings": [
-            [item.publisher_id, item.plugin_id, item.workflow_id, item.node_id,
-             item.tool_id, item.manifest_version, item.descriptor_sha256]
-            for item in tool_bindings
-        ],
+        # Plugin workflows are retired; the frozen fingerprint keeps this empty key.
+        "workflow_tool_bindings": [],
         "remote_tools": [item.name for item in remote_tools],
-        "providers": [[item.provider_id, item.descriptor_digest] for item in providers],
+        # Plugin provider descriptors are retired (ChatGPT runs from core); the
+        # frozen fingerprint keeps this empty key.
+        "providers": [],
     }
-    # Preserve the frozen V1-V5 generation fingerprint byte-for-byte. These
-    # keys exist only for a V6 generation that actually carries privileged
-    # descriptors.
-    if native_tools:
-        payload["native_tools"] = [
-            [item.name, item.binding_digest, item.publisher_id,
-             item.plugin_id, item.contribution_id]
-            for item in native_tools
-        ]
-    if engine_bindings:
-        payload["engine_bindings"] = [
-            [item.adapter_id, item.binding_digest] for item in engine_bindings
-        ]
     fingerprint = hashlib.sha256(
         json.dumps(
             payload,
@@ -193,6 +148,14 @@ def _build_generation(
         raise _contract_rejection("runtime_surface_not_supported")
     if declarative["mcp_descriptors"]:
         raise _contract_rejection("runtime_mcp_activation_forbidden")
+    # Plugin commands and workflows are retired: a snapshot may still carry the
+    # frozen (empty) arrays but never any content in them.
+    if (
+        declarative["commands"]
+        or declarative["workflows"]
+        or snapshot_value.get("workflow_tool_bindings")
+    ):
+        raise _contract_rejection("runtime_surface_not_supported")
     expected = _expected_content(declarative, runtime_version=runtime_version)
     parsed, settings = _parsed_content(content_envelope, expected)
     if set(parsed) != set(expected):
@@ -241,24 +204,16 @@ def _build_generation(
             schema_digest=state["schema_digest"], revision=state["revision"],
             values=tuple((row["key"], row["type"], row["value"]) for row in state["values"]),
         ))
-    tool_bindings: list[PluginWorkflowToolBinding] = []
-    for item in cast(list[dict[str, Any]], snapshot_value.get("workflow_tool_bindings", [])):
-        recomputed = _tool_descriptor_digest(cast(str, item["tool_id"]))
-        if recomputed is None or recomputed != item["descriptor_sha256"]:
-            raise _contract_rejection("runtime_workflow_tool_descriptor_stale")
-        tool_bindings.append(PluginWorkflowToolBinding(**item))
     declarative_tuple = tuple(declarative_records)
     settings_tuple = tuple(settings_records)
-    bindings_tuple = tuple(tool_bindings)
     return PluginRuntimeGeneration(
         authority=authority,
         sidecar_plugin_generation=_generation_id(
-            authority, contributions, declarative_tuple, settings_tuple, bindings_tuple,
+            authority, contributions, declarative_tuple, settings_tuple, (),
         ),
         contributions=tuple(contributions),
         declarative=declarative_tuple,
         settings=settings_tuple,
-        workflow_tool_bindings=bindings_tuple,
     )
 
 
@@ -316,6 +271,7 @@ def _build_generation_v3(  # noqa: C901, PLR0912
                 description=cast(str, row["description"]),
                 input_schema=cast(dict[str, Any], schema),
                 server_tool_name=cast(str, row["namespaced_name"]),
+                connection_id=f"plugin:{binding['publisher_id']}:{binding['plugin_id']}",
             ))
     if len({item.name for item in remote_tools}) != len(remote_tools):
         raise _contract_rejection("runtime_remote_tool_duplicate")
@@ -343,7 +299,7 @@ def _build_generation_v3(  # noqa: C901, PLR0912
     )
 
 
-def _build_generation_v4(  # noqa: C901, PLR0912, PLR0915
+def _build_generation_v4(  # noqa: C901, PLR0912
     snapshot_value: dict[str, Any],
     content_envelope: object,
 ) -> PluginRuntimeGeneration:
@@ -358,13 +314,11 @@ def _build_generation_v4(  # noqa: C901, PLR0912, PLR0915
             _descriptor_identity(descriptor), "declarative",
             cast(int, descriptor["content_schema_version"]),
         )
-    for descriptor in restricted:
-        digest = cast(str, descriptor["content_digest"])
-        if digest in expected:
-            raise _contract_rejection("runtime_content_digest_duplicate")
-        expected[digest] = (
-            _descriptor_identity(descriptor), cast(str, descriptor["kind"]),
-            STAGE6_SCHEMA_VERSION,
+    if restricted:
+        # The restricted (Wasm) tier is retired: the snapshot field stays for
+        # the frozen contract, but a non-empty one has no surface to apply to.
+        raise _contract_rejection(
+            "runtime_surface_not_supported", _descriptor_identity(restricted[0])[2]
         )
     parsed, settings = _parsed_content(content_envelope, expected)
     if settings or set(parsed) != set(expected):
@@ -409,41 +363,8 @@ def _build_generation_v4(  # noqa: C901, PLR0912, PLR0915
                 description=cast(str, row["description"]),
                 input_schema=schema,
                 server_tool_name=cast(str, row["namespaced_name"]),
+                connection_id=f"plugin:{binding['publisher_id']}:{binding['plugin_id']}",
             ))
-
-    for descriptor in restricted:
-        digest = cast(str, descriptor["content_digest"])
-        identity = _descriptor_identity(descriptor)
-        content = parsed[digest]
-        payload = cast(dict[str, Any], content["payload"])
-        if ((content.get("publisher_id"), content.get("plugin_id"),
-             content.get("contribution_id")) != identity
-                or payload.get("kind") != descriptor["kind"]
-                or payload.get("timeout_ms") != descriptor["timeout_ms"]):
-            raise _contract_rejection("runtime_restricted_content_mismatch", identity[2])
-        try:
-            input_schema = json.loads(
-                cast(str, payload["input_schema_json"]),
-                object_pairs_hook=_reject_duplicate_keys,
-                parse_constant=_reject_json_constant,
-            )
-            output_schema = json.loads(
-                cast(str, payload["output_schema_json"]),
-                object_pairs_hook=_reject_duplicate_keys,
-                parse_constant=_reject_json_constant,
-            )
-        except (TypeError, ValueError) as error:
-            raise _contract_rejection("runtime_restricted_schema_invalid", identity[2]) from error
-        if not isinstance(input_schema, dict) or not isinstance(output_schema, dict):
-            raise _contract_rejection("runtime_restricted_schema_invalid", identity[2])
-        namespaced = f"plugin:{identity[0]}:{identity[1]}:{identity[2]}"
-        remote_tools.append(PluginRemoteToolDescriptor(
-            name=namespaced,
-            description=cast(str, payload["description"]),
-            input_schema=input_schema,
-            server_tool_name=namespaced,
-            source_kind="restricted",
-        ))
 
     if len({item.name for item in remote_tools}) != len(remote_tools):
         raise _contract_rejection("runtime_remote_tool_duplicate")
@@ -468,6 +389,22 @@ def _build_generation_v4(  # noqa: C901, PLR0912, PLR0915
         contributions=contribution_tuple,
         declarative=declarative_tuple,
         remote_tools=remote_tuple,
+    )
+
+
+def build_generation_v5(
+    snapshot_value: dict[str, Any],
+    content_envelope: object,
+) -> PluginRuntimeGeneration:
+    """Build V5 as V4: plugin provider descriptors are retired.
+
+    ChatGPT runs from core, so the only V5 provider list the host still emits is
+    the frozen empty array. A non-empty list is refused rather than ignored.
+    """
+    if snapshot_value["provider_descriptors"]:
+        raise _contract_rejection("runtime_provider_descriptor_unsupported")
+    return _build_generation_v4(
+        {**snapshot_value, "runtime_schema_version": STAGE6_SCHEMA_VERSION}, content_envelope
     )
 
 
@@ -522,14 +459,12 @@ def build_plugin_runtime(
         snapshot,
         "runtime_snapshot_invalid",
     )
-    if runtime_version in {STAGE7_SCHEMA_VERSION, STAGE8_SCHEMA_VERSION}:
-        from sidecar.ai.plugins import runtime_apply_stage7, runtime_apply_stage8  # noqa: PLC0415
     if runtime_version == STAGE8_SCHEMA_VERSION:
-        generation = runtime_apply_stage8.build_generation_v6(
-            snapshot_value, declarative_content
-        )
+        from sidecar.ai.plugins import runtime_apply_stage8
+
+        generation = runtime_apply_stage8.build_generation_v6(snapshot_value, declarative_content)
     else:
-        generation = (runtime_apply_stage7.build_generation_v5(snapshot_value, declarative_content)
+        generation = (build_generation_v5(snapshot_value, declarative_content)
                   if runtime_version == STAGE7_SCHEMA_VERSION
                   else (_build_generation_v4(snapshot_value, declarative_content)
                   if runtime_version == STAGE6_SCHEMA_VERSION

@@ -16,6 +16,11 @@ const EXPECTED_TRUE_SPELLCHECK_IDENTITIES = Object.freeze({
     'html:id:homeOpenLoopNotesInput',
     'html:id:chatInput',
   ],
+  // Split view W1-4c: pane 1's composer input, cloned from #chatPaneTemplate, is the same prose
+  // field as #chatInput, so it keeps the chat composer's delegated spell-correction eligibility.
+  'renderer/app/renderer-app-pane-composition.js': [
+    'runtime:chatInput.setAttribute(spellcheck,true)',
+  ],
   'renderer/browser/browser-view.js': [
     "textField:id:'composer-prompt'",
   ],
@@ -259,9 +264,12 @@ test('explicit true spellcheck fields match the delegated-menu eligibility allow
 test('command, editor fallback, search, and URL fields remain explicitly ineligible', () => {
   const sources = sourceInventory();
   const indexHtml = sources.get('index.html');
-  for (const id of ['commandPaletteInput', 'ideEditorFallback', 'artifactReviewEditorFallback']) {
-    const control = findHtmlControlById(indexHtml, id);
-    assert.ok(control, `Expected #${id} in index.html. ${ELIGIBILITY_FAILURE_MESSAGE}`);
+  // The artifact editor fallback is built by the panel chrome at install
+  // (its static index.html copy was removed 2026-09-29).
+  const chromeRender = sources.get('renderer/features/renderer-artifact-panel-chrome-render.js');
+  for (const [id, source, where] of [['commandPaletteInput', indexHtml, 'index.html'], ['ideEditorFallback', indexHtml, 'index.html'], ['artifactReviewEditorFallback', chromeRender, 'the artifact panel chrome']]) {
+    const control = findHtmlControlById(source, id);
+    assert.ok(control, `Expected #${id} in ${where}. ${ELIGIBILITY_FAILURE_MESSAGE}`);
     assert.match(
       control,
       /\bspellcheck="false"/,

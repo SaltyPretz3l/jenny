@@ -1,6 +1,6 @@
 'use strict';
 
-const { isSequentialTestPath } = require('./run-node-tests-safe-support');
+const path = require('path');
 
 const SLOWEST_FILES_REPORTED = 5;
 const SLOWEST_FILE_FLOOR_MS = 10_000;
@@ -58,17 +58,32 @@ function reportFileResult(record, verbose) {
 // spec even when piped (U+2714/U+2716 result lines, a U+2139 "tests N"
 // summary), so a real assertion failure must not read as "Electron/Chromium
 // startup produced nothing". TAP (`# Subtest:`, `ok N`, `not ok N`) still counts.
-function hasTestEvents(output) {
-  return /^(?:# Subtest:|(?:ok|not ok)\s+\d+|\s*[\u2714\u2716] |\u2139 tests \d+)/m.test(String(output || ''));
+function hasTestEvents(output, file) {
+  let text = String(output || '');
+  if (file && !/AssertionError|ERR_ASSERTION/.test(text)) {
+    // Node reports a failed file wrapper even when it exits before any tests.
+    const wrapper = path.resolve(file).replace(/\\/g, '/');
+    const withoutWrapper = text.replace(
+      /^(?:# Subtest: |(?:ok|not ok)\s+\d+ - |[ \t]*[\u2714\u2716] )(.+)$/gm,
+      (line, title) => {
+        const name = title.replace(/\s+\([\d.]+ms\)\r?$/, '').replace(/\\/g, '/');
+        return path.resolve(name).replace(/\\/g, '/') === wrapper ? '' : line;
+      }
+    );
+    if (withoutWrapper !== text) {
+      text = withoutWrapper.replace(/^\u2139 tests \d+\r?$/gm, '');
+    }
+  }
+  return /^(?:# Subtest:|(?:ok|not ok)\s+\d+|[ \t]*[\u2714\u2716] (?!failing tests:\r?$)|\u2139 tests \d+)/m.test(text);
 }
 
-function isInfrastructureFailure(file, result, platform = process.platform) {
-  if (!result || result.timedOut || result.collateralKilled || result.code === 0) return false;
+function isInfrastructureFailure(file, result) {
+  if (!result || result.timedOut || result.terminationFailed || result.collateralKilled || result.code === 0) return false;
   const output = String(result.output || '');
-  const crashpad = /crashpad|0xffffffff|crashpad[^\n]*not connected/i.test(output);
+  if (hasTestEvents(output, file) || /AssertionError|ERR_ASSERTION/.test(output)) return false;
+  const crashpad = /(?:^crashpad\s+not connected(?::[^\r\n]*)?\r?$|^\[[^\r\n]*ERROR:crashpad[^\r\n]*\]\s*not connected\b)/im.test(output);
   const minusOne = result.code === -1 || result.code === 0xFFFFFFFF;
-  const electronBacked = isSequentialTestPath(file, { platform });
-  return minusOne || crashpad || (electronBacked && !hasTestEvents(output));
+  return minusOne || crashpad;
 }
 
 async function retryInfrastructureFailures(parsed, state, runCapturedChild) {

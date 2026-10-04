@@ -2,8 +2,7 @@
 
 /* Stage-surface controller — the single owner of editor-stage visibility
  * (renderer/features/renderer-ide-stage-surface-controller.js). Covers the
- * four-way mutual exclusivity (including workspace_exploded_view ON, handoff
- * §B.1), display-level flag gating (late-hydrating flags never wipe persisted
+ * four-way mutual exclusivity (including the exploded view, handoff §B.1), display-level flag gating (late-hydrating flags never wipe persisted
  * state), the editor-activation reset + its one-shot bootstrap suppression
  * (handoff §C.2), and the sync() fan-out contract to the map/exploded stage
  * siblings. Pure factory tests with hand-rolled stubs. */
@@ -71,7 +70,6 @@ function makeHarness({ flags = {}, windowRef } = {}) {
 const ALL_ON = {
   workspace_preview_surface: true,
   workspace_file_map: true,
-  workspace_exploded_view: true,
 };
 
 test('default surface is editor; sync hides every overlay host', (t) => {
@@ -186,15 +184,6 @@ test('exploded (flag ON) derives from the active tab viewMode and excludes the o
   // A non-TS/JS active tab can never derive exploded.
   ideState.openTab(h.ide, 'docs/readme.md');
   assert.equal(h.controller.getEffectiveSurface(), 'editor');
-});
-
-test('exploded flag OFF: viewMode never surfaces the exploded host', (t) => {
-  const h = makeHarness({ flags: { ...ALL_ON, workspace_exploded_view: false } });
-  t.after(() => h.controller.dispose());
-  ideState.openTab(h.ide, 'src/app.ts');
-  ideState.setTabViewMode(h.ide, 'src/app.ts', 'exploded');
-  assert.equal(h.controller.getEffectiveSurface(), 'editor');
-  assert.equal(h.controller.activate('exploded'), 'editor', 'explicit activation is rejected too');
 });
 
 test('noteEditorActivation resets preview/file_map to the editor cluster; suppression is one-shot', (t) => {

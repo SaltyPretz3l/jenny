@@ -217,3 +217,158 @@ test('the keyed morph reuses the untouched rows instead of rebuilding the turn',
     'the streaming row must carry the grown text after the morph'
   );
 });
+
+// HB-005: the reducer reuses a reasoning row across a tool boundary when the
+// phase/thinking id repeats, so the row keeps segment 0 as its primary id and
+// names the live segment only in data-source-message-ids. The live lookup
+// missed it, scoped the patch to the LAST stack (another phase), failed the
+// block-key check and rebuilt the whole row list -- big diff row included --
+// on every reasoning delta.
+test('a reused reasoning row named only in data-source-message-ids is patched surgically', () => {
+  const html = `<html><body><div id="timeline">
+    <article class="chat-entry assistant" data-message-id="seg0">
+      <div class="turn-row-list" data-turn-row-list="true">
+        <div class="chat-row" data-row-id="row_reasoning_a" data-row-kind="reasoning" data-source-message-id="seg0" data-source-message-ids="seg0 seg2">
+          ${reasoningStackMarkup('planning the edit', { messageId: 'seg0', thinkingId: 'think_a' })}
+        </div>
+        <div class="chat-row" data-row-id="row_edit" data-row-kind="tool_call" data-tool-call-id="call_edit">
+          <pre class="diff">${'+ line<br>'.repeat(200)}</pre>
+        </div>
+        <div class="chat-row" data-row-id="row_reasoning_b" data-row-kind="reasoning" data-source-message-id="seg1" data-source-message-ids="seg1">
+          ${reasoningStackMarkup('checked the result', { messageId: 'seg1', thinkingId: 'think_b' })}
+        </div>
+      </div>
+    </article>
+  </div></body></html>`;
+  const { timeline, controller } = createImmediateRevealController(html);
+  const streamingMessage = { id: 'seg2', role: 'assistant', status: 'streaming', content: '' };
+  controller.commitFullRender({
+    currentSessionId: 'session-1',
+    structureSignature: 7,
+    streamingMessage,
+    streamingArticleMessageId: 'seg0',
+  });
+  let rowListRebuilds = 0;
+  const fallbacks = [];
+  controller.queuePatch({
+    currentSessionId: 'session-1',
+    structureSignature: 7,
+    latestAssistantMessageId: 'seg2',
+    streamingMessage,
+    messages: [streamingMessage],
+    buildMessageNodeState: () => ({
+      bubbleInnerHtml: null,
+      thinkingMarkup: reasoningStackMarkup('planning the edit, then more', { messageId: 'seg2', thinkingId: 'think_a' }),
+      innerHtml: '',
+      pending: true,
+      entryReveal: false,
+      status: 'streaming',
+      finalizedAt: '',
+    }),
+    buildTurnRowListMarkup: () => { rowListRebuilds += 1; return ''; },
+    onFallback: (cause) => { fallbacks.push(cause); },
+  });
+
+  assert.deepEqual(fallbacks, []);
+  assert.equal(rowListRebuilds, 0, 'a reasoning delta must not rebuild the turn row list');
+  assert.match(
+    timeline.querySelector('[data-row-id="row_reasoning_a"]').textContent,
+    /then more/,
+    'the delta lands in the reused row that names the live segment'
+  );
+  assert.doesNotMatch(timeline.querySelector('[data-row-id="row_reasoning_b"]').textContent, /then more/);
+});
+
+// HB-010: a live segment message carries EVERY reasoning phase of the stream
+// (reasoning_phases is stream-scoped), so the message-level widget renders
+// "Step N" blocks for the earlier phases with empty bodies. Their settled
+// fingerprints never match the rows those phases really render in, so the
+// sibling check failed and every reasoning delta rebuilt the whole turn row
+// list. The patch now takes the live row's own render.
+function phaseBlockMarkup(messageId, iteration, { name, status, fp = '', body = '' }) {
+  const key = `think_${iteration}`;
+  return `
+    <div class="reasoning-row-block" data-reasoning-status="${status}" data-thinking-id="${key}" data-phase-key="${key}"${fp ? ` data-reasoning-fp="${fp}"` : ''}>
+      <button class="reasoning-row-header" type="button" data-reasoning-toggle="true" data-message-id="${messageId}" data-thinking-id="${key}" data-phase-key="${key}">
+        <span class="reasoning-row-name">${name}</span>
+      </button>
+      <div class="reasoning-row-panel${body ? ' expanded' : ' empty'}" data-thinking-id="${key}" data-phase-key="${key}"${body ? '' : ' hidden'}>
+        ${body ? `<div class="reasoning-row-panel-body chat-bubble-markdown"><p>${body}</p></div>` : ''}
+      </div>
+    </div>`;
+}
+
+function reasoningRowMarkup(segment, iteration, options) {
+  return `<div class="chat-row" data-row-id="turn:reasoning:phase_${iteration}" data-row-kind="reasoning" data-source-message-id="seg${segment}" data-source-message-ids="seg${segment}">
+    <div class="reasoning-row-stack" data-reasoning-row-version="2">${phaseBlockMarkup(`seg${segment}`, iteration, options)}</div>
+  </div>`;
+}
+
+function patchLiveReasoningOnLongTurn({ withRowRenderer }) {
+  const priorSegments = 12;
+  let rows = '';
+  for (let segment = 0; segment < priorSegments; segment += 1) {
+    rows += reasoningRowMarkup(segment, segment + 1, { name: 'Thought', status: 'complete', fp: `own${segment}`, body: `settled ${segment}` });
+    rows += `<div class="chat-row" data-row-id="turn:tool_call:call_${segment}" data-row-kind="tool_call" data-tool-call-id="call_${segment}"><div class="tool-card">read_file ${segment}</div></div>`;
+  }
+  const live = priorSegments;
+  rows += reasoningRowMarkup(live, live + 1, { name: 'Thinking', status: 'streaming', body: 'draft' });
+  const { timeline, controller } = createImmediateRevealController(`<html><body><div id="timeline">
+    <article class="chat-entry assistant" data-message-id="seg0">
+      <div class="turn-row-list" data-turn-row-list="true">${rows}</div>
+    </article>
+  </div></body></html>`);
+  const streamingMessage = { id: `seg${live}`, role: 'assistant', status: 'streaming', content: '' };
+  controller.commitFullRender({ currentSessionId: 'session-1', structureSignature: 3, streamingMessage, streamingArticleMessageId: 'seg0' });
+  const liveRowId = `turn:reasoning:phase_${live + 1}`;
+  const settledRow = timeline.querySelector('[data-row-id="turn:reasoning:phase_1"]');
+  const toolRow = timeline.querySelector('[data-row-id="turn:tool_call:call_0"]');
+  // The message-level widget: every phase of the stream, earlier ones as empty
+  // metadata-only "Step N" blocks with a fingerprint of their own.
+  let messageStack = '<div class="reasoning-row-stack" data-reasoning-row-version="2">';
+  for (let iteration = 1; iteration <= live; iteration += 1) {
+    messageStack += phaseBlockMarkup(`seg${live}`, iteration, { name: `Step ${iteration}`, status: 'complete', fp: 'meta' });
+  }
+  messageStack += `${phaseBlockMarkup(`seg${live}`, live + 1, { name: `Step ${live + 1}`, status: 'streaming', body: 'draft and more' })}</div>`;
+  const calls = { rowList: 0, rowRender: [] };
+  const fallbacks = [];
+  controller.queuePatch({
+    currentSessionId: 'session-1',
+    structureSignature: 3,
+    latestAssistantMessageId: streamingMessage.id,
+    streamingMessage,
+    messages: [streamingMessage],
+    buildMessageNodeState: () => ({
+      bubbleInnerHtml: null, thinkingMarkup: messageStack, innerHtml: '', pending: true, entryReveal: false, status: 'streaming', finalizedAt: '',
+    }),
+    buildLiveReasoningRowsMarkup: withRowRenderer
+      ? () => {
+        calls.rowRender.push(streamingMessage.id);
+        return reasoningRowMarkup(live, live + 1, { name: 'Thinking', status: 'streaming', body: 'draft and more' });
+      }
+      : undefined,
+    buildTurnRowListMarkup: () => { calls.rowList += 1; return ''; },
+    onFallback: (cause) => { fallbacks.push(cause); },
+  });
+  return { timeline, calls, fallbacks, liveRowId, settledRow, toolRow };
+}
+
+test('HB-010: a reasoning delta on a long row-model turn patches the live row without a whole-turn build', () => {
+  const { timeline, calls, fallbacks, liveRowId, settledRow, toolRow } = patchLiveReasoningOnLongTurn({ withRowRenderer: true });
+
+  assert.equal(calls.rowList, 0, 'a reasoning-only delta must not build the whole turn row list');
+  assert.deepEqual(fallbacks, []);
+  assert.deepEqual(calls.rowRender, ['seg12'], 'only the live segment\'s rows are rendered, once');
+  const liveRow = timeline.querySelector(`[data-row-id="${liveRowId}"]`);
+  assert.match(liveRow.textContent, /draft and more/, 'the delta is painted in the live row');
+  assert.equal(liveRow.querySelector('.reasoning-row-name').textContent.trim(), 'Thinking', 'the row keeps its own header, never the message-level "Step N"');
+  assert.equal(timeline.querySelectorAll('.reasoning-row-block').length, 13, 'no phase block is added or dropped');
+  assert.strictEqual(timeline.querySelector('[data-row-id="turn:reasoning:phase_1"]'), settledRow, 'earlier rows are untouched');
+  assert.strictEqual(timeline.querySelector('[data-row-id="turn:tool_call:call_0"]'), toolRow);
+  assert.match(settledRow.textContent, /settled 0/);
+});
+
+test('HB-010: without the live row render, the stream-scoped message stack forces a whole-turn build (the defect)', () => {
+  const { calls } = patchLiveReasoningOnLongTurn({ withRowRenderer: false });
+  assert.equal(calls.rowList, 1, 'the message-level stack never lines up with a one-phase row');
+});

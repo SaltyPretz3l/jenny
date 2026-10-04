@@ -15,19 +15,26 @@
   margin: 0;
 }
 
+.settings-control-tower-capabilities {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-4);
+}
+
 .settings-control-tower-list {
   display: flex;
   flex-direction: column;
   margin: 0;
   padding: 0;
   list-style: none;
+  max-width: 72ch;
 }
 
 .settings-control-tower-row {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-7);
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--space-4);
   min-height: 52px;
   padding: var(--space-4) var(--space-2);
   border-radius: var(--radius-sm);
@@ -52,28 +59,26 @@
   flex-direction: column;
   gap: var(--space-1);
   color: var(--text-secondary);
-  font-size: var(--font-size-base);
+  font-size: var(--font-size-footnote);
   line-height: 1.45;
 }
 
+/* The label is a title over its message, the same size and weight as a
+   settings row title; the inline em dash belongs to one-line status rows. */
 .settings-control-tower-status .inv-status-row-label {
   color: var(--text-primary);
-  font-size: var(--font-size-card-title);
-  font-weight: 500;
+  font-size: var(--font-size-body);
+  font-weight: 600;
   line-height: 1.4;
+}
+
+.settings-control-tower-status .inv-status-row-label::after {
+  content: none;
 }
 
 .settings-control-tower-action {
   flex: none;
-}
-
-@media (max-width: 700px) {
-  .settings-control-tower-row {
-    flex-direction: column;
-    align-items: stretch;
-  }
-
-  .settings-control-tower-action {
-    width: 100%;
-  }
+  align-self: flex-start;
+  /* Match the status row's 7px tone dot and its existing text gap. */
+  margin-inline-start: calc(7px + var(--space-3));
 }

@@ -11,6 +11,26 @@ from sidecar.ai.tools.catalog import build_tool_catalog, tool_manifest_path
 from sidecar.ai.tools.tool_families import KNOWN_TOOL_FAMILIES
 
 
+@pytest.mark.parametrize(
+    ("source_kind", "server_name", "explicit", "expected"),
+    [
+        ("mcp", "github", None, "mcp:github"),
+        ("mcp", "electron_tool_bridge", None, None),
+        ("mcp", "jenny_local_tools", None, None),
+        ("builtin", "github", None, None),
+        ("mcp", "github", "plugin:pub:tools", "plugin:pub:tools"),
+        ("restricted", "electron_tool_bridge", "plugin:pub:tools", "plugin:pub:tools"),
+    ],
+)
+def test_runtime_descriptor_connection_identity(source_kind, server_name, explicit, expected):
+    descriptor = SimpleNamespace(
+        name="external_tool", description="Tool", input_schema={}, side_effecting=True,
+        source_kind=source_kind, server_name=server_name, connection_id=explicit,
+    )
+    normalized = catalog_module.normalize_runtime_descriptor(descriptor)
+    assert normalized.connection_id == expected
+
+
 def test_tool_manifest_v2_excludes_removed_runtime_and_includes_synthetic_entries() -> None:
     manifest = json.loads(tool_manifest_path().read_text(encoding="utf-8"))
     tools = {tool["name"]: tool for tool in manifest["tools"]}
@@ -315,7 +335,7 @@ def _minimal_manifest_entry(name: str, **overrides: object) -> dict[str, object]
 
 
 def _validate_manifest_with_entries(*entries: dict[str, object]) -> None:
-    catalog_module._validate_manifest_payload(  # noqa: SLF001
+    catalog_module._validate_manifest_payload(
         {"manifest_version": 2, "tools": list(entries)}
     )
 
@@ -325,7 +345,7 @@ def test_manifest_validation_rejects_malformed_manifest_version(
     manifest_version: object,
 ) -> None:
     with pytest.raises(ValueError, match="manifest_version 2"):
-        catalog_module._validate_manifest_payload(  # noqa: SLF001
+        catalog_module._validate_manifest_payload(
             {"manifest_version": manifest_version, "tools": []}
         )
 
