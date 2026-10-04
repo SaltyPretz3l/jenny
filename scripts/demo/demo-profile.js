@@ -29,6 +29,7 @@ const { RECORDING, replayScriptPath: resolveReplayScriptPath } = require('./demo
 const { WORKING_TREE_EDIT, materialize } = require('./demo-fixture');
 const { DEMO_MODEL, buildSeededSessions, buildSeededCalendarEvents } = require('./demo-sessions');
 const { resolveDateTokens, localDateStamp } = require('./demo-dates');
+const { DISCLOSURE_VERSION } = require('../../renderer/features/setup-scenes/scene-utils');
 
 const CALENDAR_STORE_FILE = 'home-calendar.json';
 const CALENDAR_STORE_VERSION = 1;
@@ -189,6 +190,14 @@ function populateDemoProfile(scene, { base, profile, workspace, recording, now }
   const shellConfig = normalizeState(readJson(shellConfigPath));
   shellConfig.windowUi = { ...shellConfig.windowUi, appZoomPercent: recording.appZoomPercent };
   shellConfig.toolsWorkspaceRoot = workspace;
+  // The one-time "How Jenny works" disclosure is acknowledged up front; it is
+  // modal and would otherwise cover the first frames (or block the pre-roll).
+  shellConfig.setup = {
+    ...shellConfig.setup,
+    acknowledgedVersion: DISCLOSURE_VERSION,
+    acknowledgedAt: new Date(now).toISOString(),
+    steps: { ...shellConfig.setup?.steps, acknowledgement: 'done' },
+  };
   writeJson(shellConfigPath, shellConfig);
 
   const projectAuthority = seedDemoToolPolicy(profile, workspace);

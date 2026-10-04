@@ -70,6 +70,18 @@ test('pinned telemetry and model label survive the app rewriting their hosts', a
   assert.equal(label(), 'ornith15 · 9b · Med');
   assert.ok(doc.querySelector('#composerModelPill .composer-model-pill-dot'), 'dot restored after the app removes it');
 
+  // A split-view pane mounts its own cloned slot later; it is pinned too.
+  doc.body.insertAdjacentHTML('beforeend', '<div class="chat-pane" data-pane-id="1">'
+    + '<div data-chat-node="composerModelPillSlot"><button data-inv-chip="composer-model" data-chat-node="composerModelPill">'
+    + '<span class="inv-chip-label">Default · mock</span></button></div></div>');
+  const paneLabel = () => doc.querySelector('[data-pane-id="1"] .inv-chip-label').textContent;
+  await new Promise((resolve) => setTimeout(resolve, 400));
+  assert.equal(paneLabel(), 'ornith15 · 9b · Med', 'a later pane pill is relabelled');
+  doc.querySelector('[data-pane-id="1"] .inv-chip-label').textContent = 'Default · mock';
+  await nextTick();
+  assert.equal(paneLabel(), 'ornith15 · 9b · Med', 'and stays relabelled');
+  assert.ok(doc.querySelector('[data-pane-id="1"] .composer-model-pill-dot'), 'with its loaded dot');
+
   assert.equal(api.pinModelLabel(''), false, 'an empty label pins nothing');
   dom.window.close();
 });

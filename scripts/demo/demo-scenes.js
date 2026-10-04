@@ -110,6 +110,8 @@ const APPROVE_ONCE_BUTTON = '#chatTimeline .tool-approval-block .tool-approve-bt
 const EDIT_ROW_COMPLETED = ':nth-match(#chatTimeline .tool-call-row[data-tool-status="completed"], 2)';
 const EDIT_ROW_TOGGLE = ':nth-match(#chatTimeline .tool-call-row, 2) >> [data-tool-row-toggle]';
 const EXPANDED_ROW = '#chatTimeline .tool-call-row[data-expanded="true"]';
+// Split view's second pane (pane 0 keeps the live #chatInput / #chatTimeline).
+const SECOND_PANE = '#chatView > .chat-pane[data-pane-id="1"]';
 
 // The seeded profile boots into its most recent chat, so every scene starts a
 // fresh one first (pre-roll): the timeline is empty and the replay engine's
@@ -339,9 +341,13 @@ const DEMO_SCENES = Object.freeze([
       // The diagram must actually render (in-page SVG), not fall back to source.
       { type: 'wait-selector', selector: '#chatTimeline .markdown-mermaid-block[data-mermaid-rendered="true"] svg', timeoutMs: UI_TIMEOUT_MS },
       { type: 'assert-absent', selector: '#chatTimeline .markdown-mermaid-preview-note' },
-      // Frame the turn from the Mermaid tool row down: diagram, title, and the
-      // start of the answer all in view at every recording height.
-      { type: 'scroll-to', selector: '#chatTimeline .tool-call-row', block: 'start' },
+      // Frame the assistant turn from its top: thinking, the Mermaid row, the
+      // diagram, and the start of the answer. The pause lets the live-follow
+      // animator finish trailing the diagram's growth first; scrolling while
+      // it runs is pulled back to the bottom, and the first palette re-render
+      // then jumps the frame mid-clip.
+      { type: 'pause', ms: 1500 },
+      { type: 'scroll-to', selector: '#chatTimeline article.assistant[data-turn-id]', block: 'start' },
       { type: 'pause', ms: 600 },
       { type: 'record-start' },
       { type: 'pause', ms: 400 },
@@ -370,6 +376,39 @@ const DEMO_SCENES = Object.freeze([
       { type: 'pause', ms: 1900 },
       { type: 'caption', text: '' },
       { type: 'pause', ms: 400 },
+    ]),
+  }),
+
+  Object.freeze({
+    id: 'split-view',
+    title: 'Two chats side by side',
+    outputBasename: 'demo-split-view',
+    view: 'chat',
+    replayScript: 'split-view.json',
+    replayDelayMs: 34,
+    targetSeconds: [12, 24],
+    leadInMs: 200,
+    tailHoldMs: TAIL_HOLD_MS,
+    env: REPLAY_ENV_PINS,
+    presentation: Object.freeze({ crossfade: false }),
+    // The split chord opens the most recent other tab (the pinned Q3 chat)
+    // beside the fresh one; the left pane then asks a follow-up and streams
+    // its answer with a real read_file while the right pane keeps its chat.
+    steps: Object.freeze([
+      ...FRESH_CHAT_PREROLL,
+      { type: 'record-start' },
+      { type: 'pause', ms: 600 },
+      { type: 'caption', text: 'Split view · Ctrl+Shift+\\' },
+      { type: 'pause', ms: 500 },
+      { type: 'press', key: 'Control+Shift+Backslash' },
+      { type: 'wait-selector', selector: SECOND_PANE, timeoutMs: UI_TIMEOUT_MS },
+      { type: 'pause', ms: 1400 },
+      { type: 'caption', text: 'Two chats side by side' },
+      ...composerPromptSteps('Credit-tagged amounts come in positive. Where should ledger-cli flip their sign?', 31),
+      { type: 'wait-count', selector: '#chatTimeline .tool-call-row', count: 1, timeoutMs: SETTLE_TIMEOUT_MS },
+      { type: 'wait-idle', timeoutMs: SETTLE_TIMEOUT_MS },
+      { type: 'caption', text: '' },
+      { type: 'pause', ms: 2000 },
     ]),
   }),
 ]);

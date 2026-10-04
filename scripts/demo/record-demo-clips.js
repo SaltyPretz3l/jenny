@@ -318,6 +318,14 @@ async function runScene(scene, {
               await page.waitForTimeout(delays[index]);
             }
           }
+          // A composer that re-renders mid-type drops keystrokes silently;
+          // fail the scene rather than record a mangled prompt.
+          const composerValue = await page.evaluate(() => (
+            document.activeElement?.id === 'chatInput' ? document.activeElement.value : null
+          ));
+          if (composerValue !== null && !composerValue.endsWith(text)) {
+            throw new Error(`scene ${scene.id}: composer reads ${JSON.stringify(composerValue)} after typing ${JSON.stringify(text)}`);
+          }
           break;
         }
         case 'move':

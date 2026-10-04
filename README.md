@@ -18,8 +18,8 @@ Workspace PDF/DOCX editor, the optional PDF reading add-on, 19 interface
 languages, Arabic RTL, and explicit update controls. See the [release notes](RELEASE_NOTES.md).
 
 Windows is the supported desktop platform. This release also provides
-experimental Linux x64 AppImage/deb packages; macOS remains source-only pending
-hardware qualification. Translations are model-authored and newer copy may fall
+experimental Linux x64 AppImage/deb packages and an experimental Apple Silicon
+DMG that has not been tested on real hardware. Translations are model-authored and newer copy may fall
 back to English.
 
 ## Demo
@@ -43,6 +43,10 @@ back to English.
 ![Palettes and background effects switched live](docs/media/demo-palette-reel.gif)
 
 *Built-in palettes and animated background effects, switched live.*
+
+![Two chats side by side in split view](docs/media/demo-split-view.gif)
+
+*Split view: two chats side by side, each with its own timeline and composer.*
 
 The clips are recorded from the real app driving a scripted replay engine (no live model); the history, calendar, and titlebar figures in frame are seeded for the recording. MP4 versions sit next to the GIFs in `docs/media/`; see `docs/media/README.md` for how they are made.
 
@@ -68,9 +72,9 @@ Choose a project folder and one model route: **Use Ollama on this computer** or 
 
 The setup tiles disappear when you're done. You can run setup again from **Settings → Account**.
 
-### macOS: experimental; installer not yet available
+### macOS: experimental; installer untested
 
-The current public release has no macOS installer. The Apple Silicon build pipeline targets `Jenny-arm64.dmg` and `Jenny-arm64.zip`, but build repair does not establish download availability or real-hardware testing. Use source setup for now and check the [release assets](https://github.com/SaltyPretz3l/jenny/releases) for future availability. **Windows is the supported platform; macOS remains experimental and has not been tested by the maintainer on real hardware.**
+The 1.3.0 release attaches `Jenny-arm64.dmg` and `Jenny-arm64.zip` for Apple Silicon. They are built by CI and have not been installed or launched on a real Mac; source setup remains the tested route. **Windows is the supported platform; macOS remains experimental and has not been tested by the maintainer on real hardware.**
 
 - Future experimental installers may be unsigned; check the signing status in that release's notes and follow macOS's standard **Privacy & Security → Open Anyway** flow if you trust the download.
 - **Automatic updates are disabled on macOS** because they require a signed and notarized build. Download the new dmg from the [releases page](https://github.com/SaltyPretz3l/jenny/releases) to update.

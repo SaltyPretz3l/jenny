@@ -1,6 +1,6 @@
 ---
 kind: operations-doc
-last_reviewed: 2026-09-07
+last_reviewed: 2026-10-04
 ---
 
 # Demo clips
@@ -18,6 +18,7 @@ autonomous agents (it opens a real window).
 | `demo-calendar-week.gif` / `.mp4` | `calendar-week` | The Home tool from chat: an event and a reminder are written, the week is read back, the reply summarizes it, and the clip ends on the Home agenda with the new entries beside the seeded week. |
 | `demo-ide-tour.gif` / `.mp4` | `ide-tour` | Switching to the IDE, opening a file from the explorer with the git gutter on an uncommitted edit, the terminal panel running the sample project's tests, then the chat dock opened beside the editor and a question about the open file answered in place. |
 | `demo-palette-reel.gif` / `.mp4` | `palette-reel` | A settled chat with a rendered Mermaid diagram, then six of the twelve built-in palettes (dark, light, and the Jenny XJ-9 pair) switched live, with a caption naming each one and the Reactive Grid and Circuit Trace background effects running. |
+| `demo-split-view.gif` / `.mp4` | `split-view` | Split view: Ctrl+Shift+\ opens the pinned Q3 chat beside a fresh one, then the left pane asks a follow-up, runs `read_file`, and streams its answer while the right pane keeps its own conversation. |
 
 ## Honesty note
 
@@ -36,7 +37,8 @@ so the frame is not empty: eight past chats for the sidebar, written through
 the app's own session store from `scripts/demo/demo-sessions.js`; four
 calendar events for the recording week; and an always-allow policy for the
 `home` tool so the calendar clip's writes do not stop for approval (the edit
-clip keeps the default policy, which is why `edit_file` waits).
+clip keeps the default policy, which is why `edit_file` waits). The one-time
+"How Jenny works" disclosure is marked acknowledged so it never covers a clip.
 
 A demo-only presentation layer (`scripts/demo/demo-presentation.js`) is injected
 for the recording and is not part of the app: the visible cursor and its click
@@ -44,8 +46,10 @@ pulse, the caption chips, the palette crossfade, the engine lifecycle pill
 hidden (it only means something with a live model), and two pins for chrome
 the scripted engine cannot drive itself: the titlebar CPU / GPU / VRAM figures
 are painted to representative in-use values (the replay engine never touches
-the GPU, so the real figures would read idle), and the composer model pill is
-relabelled `ornith15 · 9b · Med`, the local model the clips stand in for.
+the GPU, so the real figures would read idle), and the composer model pill (in
+each split-view pane) is relabelled `ornith15 · 9b · Med`, the local model the
+clips stand in for. The turn footer that appears on hover still names the
+scripted engine's own model.
 Nothing else in the frame is altered.
 
 ## Regenerating (owner-run)
@@ -54,7 +58,7 @@ From the repo root, with `npm install` done so `playwright-core` is present and
 `ffmpeg` / `ffprobe` on `PATH`:
 
 ```bash
-npm run demo:record   # five real launches on throwaway profiles; window opens inactive
+npm run demo:record   # six real launches on throwaway profiles; window opens inactive
 npm run demo:encode   # frozen-frame check, then GIF (two-pass palette) + MP4 into docs/media/
 ```
 
@@ -77,8 +81,9 @@ is documented in `docs/captures/README.md`.
 
 | Clip | Recorded from commit | Date |
 |---|---|---|
-| `demo-streaming-tools` | working tree of the landing commit (parent `e82c0939`): seeded history, pinned telemetry and model label, device scale 1.75 | 2026-09-07 |
-| `demo-assistant-edit` | same tree | 2026-09-07 |
-| `demo-calendar-week` | same tree | 2026-09-07 |
-| `demo-ide-tour` | same tree | 2026-09-07 |
-| `demo-palette-reel` | same tree | 2026-09-07 |
+| `demo-streaming-tools` | 1.3.0 tree (`c642f25ee` plus the scene fixes in `scripts/demo/`): seeded history, pinned telemetry and model label, device scale 1.75 | 2026-10-04 |
+| `demo-assistant-edit` | same tree | 2026-10-04 |
+| `demo-calendar-week` | same tree | 2026-10-04 |
+| `demo-ide-tour` | same tree | 2026-10-04 |
+| `demo-palette-reel` | same tree | 2026-10-04 |
+| `demo-split-view` | same tree | 2026-10-04 |

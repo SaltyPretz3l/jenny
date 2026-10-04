@@ -158,15 +158,18 @@ const OVERLAY_INSTALL_SCRIPT = `(() => {
     setInterval(paint, Math.max(250, Number(spec.intervalMs) || 1500));
     return true;
   }
-  // Relabel the composer model pill (and show its loaded dot). The app
-  // re-syncs the label whenever its inputs change, so a subtree observer
-  // reapplies the pinned text the moment it is overwritten.
+  // Relabel every composer model pill (and show its loaded dot): pane 0's,
+  // and a split-view pane's cloned slot once it mounts. The app re-syncs the
+  // label whenever its inputs change, so a subtree observer per slot
+  // reapplies the pinned text the moment it is overwritten; a light poll
+  // picks up slots that mount later.
+  const PILL_SLOT_SELECTOR = '#composerModelPillSlot, [data-chat-node="composerModelPillSlot"]';
   function pinModelLabel(text) {
-    const slot = doc.getElementById('composerModelPillSlot');
     const value = String(text || '');
-    if (!slot || !value) return false;
-    const apply = () => {
-      const pill = doc.getElementById('composerModelPill');
+    if (!doc.getElementById('composerModelPillSlot') || !value) return false;
+    const watched = new WeakSet();
+    const apply = (slot) => {
+      const pill = slot.querySelector('[data-inv-chip="composer-model"], #composerModelPill');
       const label = pill && pill.querySelector('.inv-chip-label');
       if (!label) return;
       if (label.textContent !== value) label.textContent = value;
@@ -177,8 +180,16 @@ const OVERLAY_INSTALL_SCRIPT = `(() => {
         pill.insertBefore(dot, pill.firstChild);
       }
     };
-    apply();
-    new MutationObserver(apply).observe(slot, { childList: true, characterData: true, subtree: true });
+    const scan = () => {
+      doc.querySelectorAll(PILL_SLOT_SELECTOR).forEach((slot) => {
+        if (watched.has(slot)) return;
+        watched.add(slot);
+        apply(slot);
+        new MutationObserver(() => apply(slot)).observe(slot, { childList: true, characterData: true, subtree: true });
+      });
+    };
+    scan();
+    setInterval(scan, 250);
     return true;
   }
   window.__demoPresentation = {

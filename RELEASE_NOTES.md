@@ -127,13 +127,36 @@ drafted as 1.2.1 ships here; there was no 1.2.1 release.
 - Shell configuration is schema 59; canonical sessions remain schema 22 and the
   shadow store remains schema 9. Sidecar memory is schema 8. The sidecar API is
   still `2026-08-17`.
-- Windows remains unsigned. Linux packages remain experimental and macOS is
-  source-only.
+- Windows remains unsigned. Linux packages remain experimental. The release is the
+  first to attach an Apple Silicon DMG and zip; they are experimental and have not
+  been installed or launched on a real Mac.
 - The release gate (`python scripts/checks/run_ci.py`: policy, lint, type checks,
   12,969 sidecar tests, 2,224 Node test files and the packaged Windows smoke)
   passed on the release source. Not every change since 1.2.0 has had a manual
   real-app, live-model or installed-upgrade pass; the per-program records list
   what was and was not checked by hand.
+
+### 1.3.0 download checksums
+
+Published 2026-10-04 from public `6befb7d` (private `fe1b2cf21`): Windows installer,
+experimental Linux AppImage and deb, and an experimental Apple Silicon DMG and zip.
+
+<!-- JENNY_RELEASE_SHA256_MANIFEST_START -->
+| File | SHA256 |
+| --- | --- |
+| dist/Jenny-Setup-x64.exe | db96103cef2e647f65dda8643c572d25dfd282b7c3959ed964f5b86a635b9c5d |
+| dist/Jenny-Setup-x64.exe.blockmap | 8dae3b663835e43c848db36a633f71aa65b62117ebdb743c92148f66df1c0183 |
+| dist/Jenny-amd64.deb | 35c31d5efd1435337b8a8ba3baaa2a288a30875531d0255a2e0ffa00859de8a7 |
+| dist/Jenny-arm64.dmg | ae68e80d82298ecde044161418d95afc4b233b59a2a6497ec2cf0f945a03ccd4 |
+| dist/Jenny-arm64.zip | 46dc649e7798fc766935f1bd7f7addedd7f391db086361324b976cb1a7c5a697 |
+| dist/Jenny-x86_64.AppImage | cbbebe08141df4d0cc5463ddd6641ccf5e118a2da5b6ea0519bc52d43ce11a02 |
+| dist/SHA256SUMS-linux.txt | e4f9e68070161377fcbf57005106b7c8186aa818aa91cc691ca33183b47e6b9e |
+| dist/SHA256SUMS-mac.txt | ea0b68963c4215a97ba835e0d9a1d18ed560c4ee4bb3658d6eea1528b2ae2431 |
+| dist/SHA256SUMS-windows.txt | 6d2520f9acdf8c25d7c24b95ae18e90cfc9f5e70f5178001ef45b89dd4694c3f |
+| dist/latest-linux.yml | 869046dbedaa1dc2f6a8a9552f4b3ebaf5f19ab8ca53a48f5b9c17f1ea6a2fc6 |
+| dist/latest-mac.yml | 6d6c0c68058b7a40237bc2e5e5157d621770aeadc7fc3bbdcd7a21fe1b63122c |
+| dist/latest.yml | f35780f825ef1754896b35447e2f10f2db208093c849331fe8c8ebd8f3a2db47 |
+<!-- JENNY_RELEASE_SHA256_MANIFEST_END -->
 
 ## 1.2.0 - 2026-09-25
 
@@ -201,7 +224,6 @@ Remote Control's row was waived because the relay is not deployed.
 Published 2026-09-25 from public `029e9f2` (private `da5410a2a`): Windows installer and
 experimental Linux AppImage and deb. No macOS installer.
 
-<!-- JENNY_RELEASE_SHA256_MANIFEST_START -->
 | File | SHA256 |
 | --- | --- |
 | dist/Jenny-Setup-x64.exe | 35cc3fe32940d5f8a65badea1663e579dcca6a9f1416a28e3eebcd89b2fdae99 |
@@ -212,7 +234,6 @@ experimental Linux AppImage and deb. No macOS installer.
 | dist/SHA256SUMS-windows.txt | f8edf267b7459dee1015e014c95339bf8daceea426388e0559cc61958c09662a |
 | dist/latest-linux.yml | e6dac8c7c1320fc6002731d247b72cdaff3de32cd74150f244e2866c9a8bf694 |
 | dist/latest.yml | 768220512484b76da9891b0d4d7cef155e9b37b5ccf3fa8f9a712ac7142a8dba |
-<!-- JENNY_RELEASE_SHA256_MANIFEST_END -->
 
 ## 1.1.1 - 2026-09-11
 

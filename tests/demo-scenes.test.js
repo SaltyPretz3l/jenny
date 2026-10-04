@@ -23,7 +23,7 @@ test('the shipped demo scene table is valid and complete', () => {
   assert.strictEqual(assertScenesValid(DEMO_SCENES), true);
   assert.deepStrictEqual(
     DEMO_SCENES.map((scene) => scene.id),
-    ['streaming-tools', 'assistant-edit', 'calendar-week', 'ide-tour', 'palette-reel']
+    ['streaming-tools', 'assistant-edit', 'calendar-week', 'ide-tour', 'palette-reel', 'split-view']
   );
   assert.strictEqual(new Set(DEMO_SCENES.map((scene) => scene.id)).size, DEMO_SCENES.length);
 });
