@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 from typing import Any, Mapping
 
 from sidecar.ai.error_codes import CMP_TOOL_COERCED_ARGS_REJECTED
+from sidecar.ai.execution_policy import BUILTIN_MCP_SERVER_NAME
 from sidecar.exceptions import CompanionError
 
 _TOOL_ARGUMENT_ALIASES: dict[str, tuple[tuple[str, str], ...]] = {
@@ -67,6 +68,7 @@ def validate_tool_arguments(
     tool_name: str,
     arguments: object,
     input_schema: dict[str, Any] | None,
+    prune_empty_optional_arrays: bool = False,
 ) -> dict[str, object]:
     if not isinstance(arguments, dict):
         raise _validation_error(tool_name, "arguments must be an object")
@@ -75,8 +77,66 @@ def validate_tool_arguments(
         arguments=arguments,
     )
     schema = input_schema if isinstance(input_schema, dict) else {}
+    if prune_empty_optional_arrays:
+        arguments = _prune_empty_optional_arrays(arguments, schema)
     _validate_value(tool_name, arguments, schema or {"type": "object"}, path="")
     return arguments
+
+
+def executor_prunes_empty_optional_arrays(descriptor: object) -> bool:
+    """Whether the tool's executor revalidates and runs the pruned arguments.
+
+    Only the builtin server does; a caller that merely checks arguments may
+    tolerate `[]` for those tools alone, or the executor receives it unpruned.
+    """
+
+    return getattr(descriptor, "server_name", "") == BUILTIN_MCP_SERVER_NAME
+
+
+def validate_descriptor_arguments(
+    tool_name: str, arguments: object, descriptor: Any
+) -> dict[str, object]:
+    """Validate against a descriptor's schema, as tolerant as its executor is."""
+
+    return validate_tool_arguments(
+        tool_name=tool_name,
+        arguments=arguments,
+        input_schema=descriptor.input_schema,
+        prune_empty_optional_arrays=executor_prunes_empty_optional_arrays(descriptor),
+    )
+
+
+def _prune_empty_optional_arrays(
+    arguments: dict[str, object],
+    schema: dict[str, Any],
+) -> dict[str, object]:
+    """Drop `[]` for optional array keys whose schema demands minItems >= 1.
+
+    Models often send an empty list to mean "not provided"; the handler should
+    see the key absent. Required keys (including those required by an anyOf
+    branch) and arrays that accept empty lists are left untouched.
+    """
+
+    properties = schema.get("properties")
+    if not isinstance(properties, dict):
+        return arguments
+    required: set[object] = set(schema.get("required") or ())
+    for option in schema.get("anyOf") or ():
+        if isinstance(option, dict):
+            required.update(option.get("required") or ())
+    pruned = dict(arguments)
+    for key, child_schema in properties.items():
+        if key in required or pruned.get(key) != [] or not isinstance(child_schema, dict):
+            continue
+        minimum = child_schema.get("minItems")
+        if (
+            child_schema.get("type") == "array"
+            and isinstance(minimum, int)
+            and not isinstance(minimum, bool)
+            and minimum >= 1
+        ):
+            del pruned[key]
+    return pruned
 
 
 def canonicalize_tool_arguments(

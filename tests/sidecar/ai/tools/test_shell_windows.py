@@ -166,6 +166,8 @@ def test_windows_refuses_multiline_command_before_any_process_starts(
     assert "first line" in message
     assert "one command per call" in message
     assert "run_temp_script" in message
+    # HB-039: an argument problem with a one-line fix, not a permission denial.
+    assert caught.value.to_error_data()["failure_class"] == "bad_arguments"
     assert started == []
 
 

@@ -72,7 +72,11 @@
       const resultApprovalStatus = normalizeToolLifecycleStatus(resultPayload && resultPayload.approval_state);
       let toolUseStatus = '';
       let hasExecuting = false;
-      for (const event of events) {
+      // A receipt row owns the call's approval events, but the call row still
+      // records them (as it did before the receipt) so folding and state agree.
+      const receiptEvents = Array.isArray(context && context.receiptApprovalEvents)
+        ? context.receiptApprovalEvents : [];
+      for (const event of events.concat(receiptEvents)) {
         if (event.kind === 'tool_use') {
           toolUseStatus = normalizeToolLifecycleStatus(event.status);
           payload.tool_name = payload.tool_name || normalizeId(event.payload && event.payload.tool_name);
@@ -108,9 +112,11 @@
               })
             : [];
         } else if (event.kind === 'approval_resolved') {
+          const approvalScope = normalizeId(event.payload && event.payload.approval_scope);
           payload.approval_resolutions.push({
             status: normalizeToolLifecycleStatus(event.status),
             approval_state: normalizeToolLifecycleStatus(event.payload && event.payload.approval_state),
+            ...(approvalScope ? { approval_scope: approvalScope } : {}),
           });
         } else if (event.kind === 'tool_executing') {
           hasExecuting = true;
@@ -180,9 +186,10 @@
 
     // SHARED INVARIANT (kept in lockstep with renderer-turn-reducer-approval-gap.js
     // ::createApprovalGapRow / syncApprovalGapRow): an `approval_gap` row exists
-    // IFF the call is awaiting approval and unresolved. The streaming reducer
-    // mirrors this payload shape so live and hydrated rows reconcile cleanly; the
-    // `22-approval-pending` corpus scenario enforces presence parity.
+    // while the call awaits approval, and stays as a one-line receipt once it
+    // resolves (HB-038 H2). The streaming reducer mirrors this payload shape so
+    // live and hydrated rows reconcile cleanly; the `22-approval-pending` corpus
+    // scenario enforces presence parity.
     // A turn sealed by sealTurnRows keeps its gap row as a settled `interrupted` receipt.
     function buildApprovalGapRow(turnId, events, toolCallId, context) {
       const row = createBaseRow('approval_gap', turnId, events);

@@ -477,6 +477,37 @@ function resolveManagedContextMetadata(service, overrides = {}, snapshot = {}) {
   };
 }
 
+// An explicit model_loaded:false (failed load, unload) must beat the readiness
+// and model.loaded the previous snapshot carried, e.g. the mock the sidecar
+// fell back to reported itself loaded. Fallback and capability fields stay so
+// the UI can still explain the failure.
+function withoutStaleLoadedState(localRuntime) {
+  if (!localRuntime || typeof localRuntime !== 'object' || Array.isArray(localRuntime)) {
+    return localRuntime;
+  }
+  const readiness = localRuntime.readiness && typeof localRuntime.readiness === 'object'
+    ? localRuntime.readiness
+    : {};
+  const model = localRuntime.model && typeof localRuntime.model === 'object'
+    ? localRuntime.model
+    : {};
+  const status = String(readiness.status || '').trim().toLowerCase();
+  const next = { ...localRuntime };
+  if (localRuntime.readiness) {
+    next.readiness = {
+      ...readiness,
+      status: status === 'ready' ? 'idle' : readiness.status,
+      ready: false,
+      model_loaded: false,
+      modelLoaded: false,
+    };
+  }
+  if (localRuntime.model) {
+    next.model = { ...model, loaded: false };
+  }
+  return next;
+}
+
 function buildManagedStatusSnapshot(service, overrides = {}) {
   const engine = String(overrides.engine || service.currentEngineType || 'mock');
   const existingSnapshot =
@@ -497,8 +528,11 @@ function buildManagedStatusSnapshot(service, overrides = {}) {
   const activeModelCapabilities = normalizeModelCapabilities(
     pick('active_model_capabilities')
   );
+  const pickedLocalRuntime = overrides.model_loaded === false
+    ? withoutStaleLoadedState(pick('local_runtime'))
+    : pick('local_runtime');
   const synthesizedLocalRuntime = normalizeLocalRuntime(
-    pick('local_runtime'),
+    pickedLocalRuntime,
     {
       engine,
       model,

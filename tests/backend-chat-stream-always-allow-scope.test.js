@@ -76,7 +76,8 @@ test('backend one-off-only approval ignores a forged always-allow action', () =>
   };
 
   assert.equal(approveToolCall(service, 'approval-streak-cap', { alwaysAllow: true }), true);
-  assert.deepEqual(resolutions, [[true, 'approved', '', undefined]]);
+  // The receipt records what was granted: a forged Always on a one-off is once.
+  assert.deepEqual(resolutions, [[true, 'approved', '', undefined, 'once']]);
   assert.deepEqual(grants, []);
 });
 

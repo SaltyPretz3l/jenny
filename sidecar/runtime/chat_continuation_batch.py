@@ -10,7 +10,11 @@ from sidecar.ai.routing.loop_runtime import LoopRuntime
 from sidecar.ai.routing.route_policy_runtime import apply_route_policy_pre_dispatch
 from sidecar.ai.routing.tool_call_execution import pre_filter_tool_calls
 from sidecar.ai.routing.tool_execution_snapshots import split_visible_execution_arguments
-from sidecar.ai.tools.contracts import ToolExecutionFailure, validate_tool_arguments
+from sidecar.ai.tools.contracts import (
+    ToolExecutionFailure,
+    executor_prunes_empty_optional_arrays,
+    validate_tool_arguments,
+)
 from sidecar.ai.tools.models import GenerationResult
 from sidecar.runtime.turn_state import current_live_run_mode_state
 
@@ -126,6 +130,7 @@ def preflight_pending_batch(
                 tool_name=call.tool_id,
                 arguments=visible_arguments,
                 input_schema=descriptor.input_schema,
+                prune_empty_optional_arrays=executor_prunes_empty_optional_arrays(descriptor),
             )
         except ToolExecutionFailure:
             attention("tool_schema_changed")

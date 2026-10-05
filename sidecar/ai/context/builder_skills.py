@@ -174,8 +174,13 @@ class _BuilderSkillsMixin:
         for entry in self._load_skills(skill_authority):
             if self._skill_id(entry) != skill_id:
                 continue
+            command = entry.command or self._skill_id(entry).removeprefix(f"{entry.scope}/")
             message = _sanitize_bootstrap_content(
-                f"## Invoked Skill: {entry.name}\n{entry.body}", source_name="invoked_skill"
+                f"## Invoked Skill: {entry.name}\n"
+                f"The user invoked this skill with /{command} for their current message. "
+                "Apply it to this turn even if their message text is brief.\n"
+                f"{entry.body}",
+                source_name="invoked_skill",
             )
             return truncate_utf8(message, MAX_SKILL_FILE_BYTES)[0]
         import sidecar.ai.context.builder as _builder_hub

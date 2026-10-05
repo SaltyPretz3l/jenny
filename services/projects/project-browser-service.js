@@ -1,6 +1,6 @@
 'use strict';
 
-function createProjectBrowserService(owner, execution, { signal = null } = {}) {
+function createProjectBrowserService(owner, execution, { signal = null, allowEval = false } = {}) {
   if (!owner || !execution || typeof owner.reserveSlot !== 'function') return null;
   const authority = Object.freeze({ ...execution.authority });
   let ownedId = null;
@@ -32,6 +32,9 @@ function createProjectBrowserService(owner, execution, { signal = null } = {}) {
     }
   };
   return Object.freeze({
+    // preview_test's tool-owned read-only observation scripts only: dispatch
+    // grants allowEval to that tool alone, and never with caller script.
+    ...(allowEval ? { eval: (id, options) => run('eval', id, options) } : {}),
     async open(options = {}) {
       assertCurrent();
       if (ownedId) throw new Error('Preview operation already owns a browser session.');

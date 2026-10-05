@@ -194,9 +194,14 @@ drops the pending attachment. It applies to one accepted turn: after the send
 returns a `streamId`, the pending attachment and chip are cleared. Queued sends
 capture their own attachment so a later composer selection cannot replace it.
 
-The sidecar inserts the selected body as a request-time system message headed
-`## Invoked Skill: <name>`. This direct route is independent of whether the
-automatic skill index is visible for the current engine.
+The sidecar inserts the selected body as a request-time section headed
+`## Invoked Skill: <name>`. Cloud engines get it as a system message. Local
+template engines carry it in the trailing `## Turn Context` row before the
+user's message, so a skill use does not invalidate the cached conversation
+prefix (`JENNY_ENABLE_TRAILING_TURN_CONTEXT=0` restores the system message).
+The model sees the message, then and in later turns, as `/<command> <text>`.
+This direct route is independent of whether the automatic skill index is
+visible for the current engine.
 
 ### 2. Attach from the command palette
 

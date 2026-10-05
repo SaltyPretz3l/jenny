@@ -156,7 +156,7 @@ function createWorkspacePresentTool({
   ));
   return {
   name: 'workspace_present',
-  description: 'Request that the user\'s workspace IDE presents a workspace surface: view="preview" renders a supported file, view="file_map" opens the dependency map, and view="change_diff" opens a recorded Jenny change for review. This is a presentation request, so the UI may defer it while the user is actively working.',
+  description: 'Request that the user\'s workspace IDE presents a workspace surface: view="preview" renders a supported file, view="file_map" opens the dependency map, and view="change_diff" opens a recorded Jenny change for review. This is a presentation request, so the UI may defer it while the user is actively working; what the IDE actually did (shown, prompted, dismissed, rendered or failed) is reported at the start of your next request. The in-app Preview renders HTML self-contained: external scripts, stylesheets and images are not loaded.',
   category: 'builtin',
   readOnly: true,
   workspaceRequired: true,
@@ -413,8 +413,11 @@ function createWorkspacePresentTool({
       view,
       path: relPath,
       source: 'tool',
+      // Identify the originating tool row so the IDE's later outcome report
+      // lands on it (late-event audit) and in this session's next request.
+      session_id: sessionId,
+      call_id: normalizeString(context.callId),
       ...(view === 'change_diff' ? {
-        session_id: sessionId,
         workspace_id: workspaceId,
         ...(rawChangeId ? { change_id: rawChangeId } : {}),
       } : {}),
@@ -428,7 +431,8 @@ function createWorkspacePresentTool({
     }
 
     // 8. Honest request-not-outcome wording: the renderer may
-    // coalesce this request or hold it behind a non-stealing affordance.
+    // coalesce this request or hold it behind a non-stealing affordance, and
+    // its outcome report arrives after this result returns.
     const what = view === 'preview'
       ? `a preview of "${relPath}"`
       : view === 'change_diff'
@@ -437,7 +441,7 @@ function createWorkspacePresentTool({
         ? `the File Map highlighting "${relPath}"`
         : 'the File Map';
     return {
-      content: `Requested ${what} in the workspace IDE. If the user is actively working, the IDE shows a non-intrusive prompt instead of switching immediately.`,
+      content: `Requested ${what} in the workspace IDE. This does not confirm the user sees it: if the user is actively working, the IDE shows a non-intrusive prompt instead of switching. The IDE reports what it did (shown, prompted, dismissed${view === 'preview' ? ', and whether the document rendered' : ''}) at the start of your next request; until then, do not tell the user it is displayed.${view === 'preview' && /\.html?$/i.test(relPath) ? ' The in-app Preview is self-contained: external scripts, stylesheets and images are not loaded there, so inline them if the user should see a working page.' : ''}`,
       summary: view === 'preview'
         ? `Requested preview of ${relPath}`
         : view === 'change_diff'
@@ -446,11 +450,11 @@ function createWorkspacePresentTool({
       isError: false,
       metadata: {
         result_kind: 'workspace_present',
-        // Honest state: the renderer holds tool-initiated requests behind a
-        // non-stealing chip and never acknowledges back across the bridge, so
-        // deferred/not_started is everything this process can truthfully
-        // claim. 'shown'/'dismissed' and 'loaded'/'failed' are reserved for a
-        // future renderer-ack channel.
+        // Honest state at return time: the renderer may hold the request
+        // behind a non-stealing chip, and its outcome (shown/prompted/
+        // dismissed, loaded/failed) arrives later on
+        // workspacePresentation.reportOutcome as a late event on this row.
+        // deferred/not_started is everything this result can truthfully claim.
         presentation_state: 'deferred',
         render_state: 'not_started',
         view,

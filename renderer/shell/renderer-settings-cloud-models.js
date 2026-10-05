@@ -85,6 +85,7 @@
     let bound = false;
     let unsubscribe = null;
     let visibilityKey = '';
+    let codexSeeded = false;
     const listeners = [];
 
     function fieldBinding() {
@@ -187,6 +188,19 @@
       }
     }
 
+    // Codex CLI models are listed only while its login is ready, and no push
+    // exists for that route: the first read seeds the status, a later change
+    // refreshes Composer once.
+    function adoptCodex(raw) {
+      const next = normalizeCodexState(raw);
+      const changed = codexSeeded && next.status !== codex.status;
+      codexSeeded = true;
+      codex = next;
+      if (changed && !disposed) {
+        Promise.resolve().then(refreshComposerModels).catch(() => {});
+      }
+    }
+
     async function refresh() {
       const bridge = getBridge();
       const ticket = ++generation;
@@ -198,7 +212,7 @@
       }
       try {
         const codexState = await getCodexBridge()?.getState?.();
-        if (!disposed) codex = normalizeCodexState(codexState);
+        if (!disposed) adoptCodex(codexState);
       } catch (_error) { /* the row keeps "Unavailable" */ }
       render();
     }
@@ -241,7 +255,7 @@
       } else if (action === 'cloudModelsChatgptSignOut') {
         void run('sign-out', async () => adopt(await bridge.chatgptSignOut()));
       } else if (action === 'cloudModelsCodexRefresh') {
-        void run('codex', async () => { codex = normalizeCodexState(await getCodexBridge()?.refresh?.()); });
+        void run('codex', async () => { adoptCodex(await getCodexBridge()?.refresh?.()); });
       }
     }
 

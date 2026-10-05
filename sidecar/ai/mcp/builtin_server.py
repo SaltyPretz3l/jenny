@@ -385,6 +385,7 @@ def _prepare_call_arguments(
         tool_name=tool.name,
         arguments=schema_arguments,
         input_schema=tool.input_schema,
+        prune_empty_optional_arrays=True,
     )
     validated.update(transport_arguments)
     raw_operation_id = validated.get("_jenny_operation_id")

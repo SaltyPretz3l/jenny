@@ -156,6 +156,7 @@
       requestViewportFrame,
       cancelViewportFrame,
       noteProgrammaticWrite: (reason) => scrollCoordinator?.noteProgrammaticWrite?.(reason),
+      onFollowWrite: (scrollTop) => schedulingController?.tailCushion?.noteScrollPosition(scrollTop),
     });
     const {
       liveFollowRuntime,
@@ -235,6 +236,7 @@
         cancelLiveStreamingFollow,
         updateComposerSafeOffset,
         updateAssistantSpritePosition,
+        getSessionId, isReaderReleaseHeld, getComposerSafeOffset,
         appendClientLog,
       },
     });
@@ -321,6 +323,7 @@
 
     function noteScrollInputIntent() {
       if (viewportDisposed) return;
+      schedulingController?.tailCushion?.noteReaderIntent();
       noteUserScrollIntent?.();
     }
 
@@ -401,6 +404,7 @@
       if (viewportDisposed || !chatThreadScroll) {
         return;
       }
+      schedulingController?.tailCushion?.drop('force_bottom');
       snapThreadToBottom({ behavior });
       if (forceFollowLatest) {
         thinkingController.resumeAutoScroll(READER_AWAY_PAUSE_REASON);

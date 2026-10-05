@@ -168,6 +168,8 @@ def build_turn_context_row_for_statuses(
         root_kwargs=request_workspace_root_kwargs(
             kernel._config, getattr(context.request_context, "execution_context", None)
         ),
+        skill_invocation=getattr(context.request_context, "skill_invocation", None),
+        execution_context=getattr(context.request_context, "execution_context", None),
     )
 
 

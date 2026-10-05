@@ -214,6 +214,16 @@ test('Runtime Inventory tone is styled, not merely attributed', () => {
   assert.doesNotMatch(css, /\.diagnostics-inventory-list > div \{[^}]*border: 1px solid/s);
 });
 
+test('Recent issues restacks on its own width, not the window width', () => {
+  // The table sits in a column of the two-column overview, so at a 1188px
+  // window it has about 640px while a viewport query still reads "wide" and
+  // the fixed-minimum grid spills over the sidebar cards (Linux QA 2026-10-04).
+  const css = readFileSync(join(__dirname, '..', 'styles', 'diagnostics-health.css'), 'utf8');
+  assert.match(css, /\.diagnostics-issue-list\s*\{[^}]*container:\s*diagnostics-issues\s*\/\s*inline-size/s);
+  assert.match(css, /@container diagnostics-issues \(max-width: 800px\)\s*\{[\s\S]*?\.diagnostics-issue\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\) auto/);
+  assert.doesNotMatch(css, /@media \(max-width: 720px\)\s*\{\s*\.diagnostics-issue-header/);
+});
+
 test('Runtime Inventory reads shell values instead of listing section keys', async (t) => {
   const app = await loadRendererApp({
     shell: {

@@ -45,5 +45,26 @@
     return markedPlain;
   }
 
-  return { escapeHtmlText, RAW_TEXT_TAG_RE, answerHtmlRenderer, plainHtmlRenderer, createPlainMarked };
+  // User messages show what was typed. CommonMark reads a backslash before
+  // ASCII punctuation as an escape, which ate the "\" of Windows paths such as
+  // C:\repo\.venv in the user bubble (dogfood HB-041). This answer-policy
+  // instance keeps an inline escape as its two typed characters at the
+  // tokenizer, so code spans, fences, table pipes and HTML blocks still follow
+  // the parser's own rules.
+  const LITERAL_ESCAPE_RE = /^\\[!"#$%&'()*+,\-./:;<=>?@[\]\\^_`{|}~]/;
+  function createUserMarked(markedModule, sharedUseOptions) {
+    if (typeof markedModule?.Marked !== 'function') return null;
+    const markedUser = new markedModule.Marked();
+    markedUser.setOptions({ gfm: true, breaks: false });
+    markedUser.use(sharedUseOptions);
+    markedUser.use({ renderer: { html: answerHtmlRenderer } });
+    markedUser.use({ tokenizer: { escape(src) {
+      const match = LITERAL_ESCAPE_RE.exec(src);
+      return match ? { type: 'text', raw: match[0], text: match[0], escaped: false } : false;
+    } } });
+    return markedUser;
+  }
+
+  return { escapeHtmlText, RAW_TEXT_TAG_RE, answerHtmlRenderer, plainHtmlRenderer, createPlainMarked,
+    createUserMarked };
 });

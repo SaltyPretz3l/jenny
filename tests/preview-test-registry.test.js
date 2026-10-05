@@ -50,11 +50,15 @@ test('preview_test carries the manifest input schema', () => {
 
   assert.ok(schema, 'manifest schema is attached via withManifestSchema');
   assert.equal(tool.toolFamily, 'workspace');
+  assert.equal(schema.additionalProperties, false);
+  assert.equal(schema.properties.events.items.additionalProperties, false);
   assert.equal(schema.properties.path.type, 'string');
   assert.deepEqual(schema.properties.viewport.enum, ['desktop', 'mobile', 'tablet']);
   assert.equal(schema.properties.wait_ms.type, 'integer');
   assert.equal(schema.properties.events.type, 'array');
   assert.deepEqual(schema.properties.events.items.properties.action.enum, ['click', 'type']);
+  assert.equal(schema.properties.observe.type, 'array');
+  assert.equal(schema.properties.observe.items.type, 'string');
   assert.deepEqual(schema.required, ['path']);
 });
 

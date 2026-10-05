@@ -25,6 +25,9 @@ if typing.TYPE_CHECKING:
     import argparse
 
 _GREP_SEARCH_WORKER_FLAG = "--grep-search-worker"
+# Mirrors `sidecar._owned_process_supervisor.SUPERVISOR_FLAG`; kept literal so
+# the Windows bootstrap path never imports the POSIX supervisor module.
+_OWNED_PROCESS_SUPERVISOR_FLAG = "--owned-process-supervisor"
 _WORKSPACE_TEST_HELPER_FLAG = "--workspace-test-runner-helper"
 
 
@@ -114,6 +117,13 @@ def _run_builtin_mcp_server(argv: Sequence[str]) -> int:
 
 def _run_owned_process_bootstrap() -> int:
     return _owned_process_bootstrap.run_windows_owned_process_bootstrap()
+
+
+def _run_owned_process_supervisor() -> int:
+    # Stdlib-only like the bootstrap, and re-entered once per POSIX spawn.
+    from sidecar._owned_process_supervisor import run_owned_process_supervisor
+
+    return run_owned_process_supervisor()
 
 
 def _run_grep_search_worker() -> int:
@@ -229,6 +239,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     raw_args = list(argv) if argv is not None else list(sys.argv[1:])
     if raw_args == [_owned_process_bootstrap.BOOTSTRAP_FLAG]:
         return _run_owned_process_bootstrap()
+    if raw_args == [_OWNED_PROCESS_SUPERVISOR_FLAG]:
+        return _run_owned_process_supervisor()
     if raw_args == [_WORKSPACE_TEST_HELPER_FLAG]:
         return _run_workspace_test_helper()
     if raw_args == [_GREP_SEARCH_WORKER_FLAG]:

@@ -437,7 +437,9 @@ def test_brain_container_applies_final_context_length_to_ollama_engine(
         raw_config["context_length_override"] = context_length_override
     stack = container.configure(raw_config)
 
-    assert captured_configs[0].context_length == 4096
+    # The engine is built with the final window, not the pre-profile clamp:
+    # load_model warms the runner up at once, and Ollama keys it on n_ctx.
+    assert captured_configs[0].context_length == expected_context_length
     assert stack.config.context_length == expected_context_length
     engine.set_configured_context_length.assert_called_once_with(expected_context_length)
 

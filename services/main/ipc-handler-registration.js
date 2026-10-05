@@ -551,6 +551,11 @@ function registerMainIpcHandlers({
     respondExternalTransition: (payload) => workspaceRootExternalTransitionBroker.respond(payload),
     authorization: workspaceAuthorization,
   });
+  // The IDE's workspace_present outcome (services/workspace-presentation-service.js).
+  registerIpcInvokeHandlers(ipcMain, {
+    'workspacePresentation.reportOutcome': (_event, payload) => backendService.workspacePresentationService
+      ?.recordOutcome?.(payload) ?? { ok: false, reason: 'unavailable' },
+  }, workspaceAuthorization);
   // displayMediaPicker.respond: renderer's answer to a pending
   // session.setDisplayMediaRequestHandler request (see
   // services/main/display-media-source-handler.js). Guarded against a missing

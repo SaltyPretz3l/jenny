@@ -249,9 +249,10 @@ CONTEXT_BLOCK_KINDS = frozenset(
         "personality",
         "codebase",
         "linked_session",
+        "workspace_presentation",
     }
 )
-MAX_CONTEXT_BLOCKS = 5
+MAX_CONTEXT_BLOCKS = 6
 # Generous by design: Electron already trims these blocks to the model's
 # MEASURED effective window (context-budget-trimmer.js), so these ceilings are a
 # transport-integrity backstop against a runaway block, not a context policy. A

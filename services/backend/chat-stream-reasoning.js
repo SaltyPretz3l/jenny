@@ -12,6 +12,7 @@ const {
   sanitizeGrowingReasoningTail,
   sanitizePersistedReasoningText,
 } = require('./chat-stream-reasoning-sanitize');
+const { projectUserSkillInvocation, withSkillCommand } = require('./chat-skill-command-projection');
 
 const RECENT_TURN_GROUP_LIMIT = 6;
 const MAX_PERSISTED_REASONING_ENTRIES = 40;
@@ -489,7 +490,7 @@ function buildPreparedContextHistory(messages, contextPreferences) {
       }
       return {
         role: message.role,
-        content: serializeMessageContent(message.content),
+        content: projectUserSkillInvocation(message, serializeMessageContent(message.content)),
       };
     })
     .filter((message) => {
@@ -528,7 +529,10 @@ function buildPreparedMessages(messages, prompt, options = {}) {
   const folded = buildPreparedContextHistory(messages, options.contextPreferences);
   folded.push({
     role: 'user',
-    content: buildPromptWithAttachments(prompt, options.attachments),
+    content: buildPromptWithAttachments(
+      withSkillCommand(serializeMessageContent(prompt), options.skillInvocation),
+      options.attachments,
+    ),
   });
 
   return folded;

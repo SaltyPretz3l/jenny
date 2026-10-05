@@ -8,9 +8,11 @@ With a local model, Jenny processes your prompts locally; no cloud account is ne
 
 Jenny is built around smaller models, roughly 9B–35B parameters. How well she handles a task depends on the model you choose and the hardware you have. Expect mistakes, especially on complicated tasks, and review code and commands before relying on them.
 
-## Jenny 1.3.0
+## Jenny 1.3.1
 
-**[Jenny 1.3.0 is available](https://github.com/SaltyPretz3l/jenny/releases/tag/v1.3.0)**
+**[Jenny 1.3.1 is available](https://github.com/SaltyPretz3l/jenny/releases/tag/v1.3.1)**,
+a fix release: on Linux and macOS, shell commands no longer block later tools,
+and the chat no longer jumps when an approval is answered. It follows 1.3.0,
 with two chats side by side, a per-chat choice of how much of a turn to show,
 ChatGPT sign-in as a core connection, bring-your-own image models, reorganized
 Settings and Diagnostics, and faster long tool-heavy turns. It retains the
@@ -74,7 +76,7 @@ The setup tiles disappear when you're done. You can run setup again from **Setti
 
 ### macOS: experimental; installer untested
 
-The 1.3.0 release attaches `Jenny-arm64.dmg` and `Jenny-arm64.zip` for Apple Silicon. They are built by CI and have not been installed or launched on a real Mac; source setup remains the tested route. **Windows is the supported platform; macOS remains experimental and has not been tested by the maintainer on real hardware.**
+The 1.3.1 release attaches `Jenny-arm64.dmg` and `Jenny-arm64.zip` for Apple Silicon. They are built by CI and have not been installed or launched on a real Mac; source setup remains the tested route. **Windows is the supported platform; macOS remains experimental and has not been tested by the maintainer on real hardware.**
 
 - Future experimental installers may be unsigned; check the signing status in that release's notes and follow macOS's standard **Privacy & Security → Open Anyway** flow if you trust the download.
 - **Automatic updates are disabled on macOS** because they require a signed and notarized build. Download the new dmg from the [releases page](https://github.com/SaltyPretz3l/jenny/releases) to update.
@@ -82,9 +84,9 @@ The 1.3.0 release attaches `Jenny-arm64.dmg` and `Jenny-arm64.zip` for Apple Sil
 
 ### Linux (experimental)
 
-Jenny 1.3.0 includes experimental **`Jenny-x86_64.AppImage`** and
+Jenny 1.3.1 includes experimental **`Jenny-x86_64.AppImage`** and
 **`Jenny-amd64.deb`** packages on the
-[release page](https://github.com/SaltyPretz3l/jenny/releases/tag/v1.3.0).
+[release page](https://github.com/SaltyPretz3l/jenny/releases/tag/v1.3.1).
 Native CI verified the glibc floor and packaged-app startup. Installed-format,
 upgrade and bare-metal qualification remain outstanding.
 These x64 packages target Ubuntu 22.04+, Debian 12+, and compatible
@@ -285,7 +287,7 @@ Development happens in a private repository. Accepted changes are copied there b
 
 Jenny is a hobby project maintained by one person. Bug reports are read, but replies, reviews, and releases happen as time allows. Security reports take priority through the [private advisory process](SECURITY.md).
 
-### Source version 1.3.0
+### Source version 1.3.1
 
 This source tree includes guided setup, local coding tools with live command output, experimental platform and Docker workflows, and the plugin host. Downloadable installers are listed separately on the [releases page](https://github.com/SaltyPretz3l/jenny/releases); a source version does not establish that its installers have been published. No plugins are bundled. Crash reporting is optional and off by default.
 

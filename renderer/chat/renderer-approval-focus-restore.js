@@ -34,7 +34,7 @@
       // focus; keep them out of the fallback pool (lockstep with the batch
       // selector in renderer-approval-batch-utils.js).
       const pendingRows = Array.from(
-        chatTimeline.querySelectorAll('.approval-gap-row:not([data-approval-variant="plan"]), .tool-approval-block, .user-questions-block')
+        chatTimeline.querySelectorAll('.approval-gap-row:not([data-approval-variant="plan"]):not([data-approval-status="resolved"]), .tool-approval-block:not([data-approval-status="resolved"]), .user-questions-block')
       );
       const nextRow = pendingRows.find((candidate) => candidate !== currentRow
         && !currentRow.contains(candidate)
@@ -112,7 +112,9 @@
         if (settled) {
           return;
         }
-        if (!approvalRow.isConnected) {
+        // Gone, or morphed in place into its resolved receipt (HB-038 H2):
+        // either way the buttons that held focus are gone.
+        if (!approvalRow.isConnected || approvalRow.getAttribute('data-approval-status') === 'resolved') {
           watcher.disconnect();
           // Only restore focus if the row held it at click time AND focus is
           // still orphaned by the removal (nothing else claimed it in the

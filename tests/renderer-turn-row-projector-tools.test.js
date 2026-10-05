@@ -630,11 +630,13 @@ test('projectTurnRows splits tool_call and tool_result rows with stable ids orde
     [
       ['user_bubble', 'row:turn_trace:user_prompt:0'],
       ['tool_call', 'row:turn_trace:tool_use:0'],
+      ['approval_gap', 'row:turn_trace:approval_requested:0'],
       ['tool_result', 'row:turn_trace:tool_result:0'],
     ]
   );
   assert.equal(rows[1].tool_call_id, 'call_trace');
   assert.equal(rows[2].tool_call_id, 'call_trace');
+  assert.equal(rows[3].tool_call_id, 'call_trace');
 });
 
 test('projectTurnRows emits a compatibility row for a persisted plan_object payload', () => {

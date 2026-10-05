@@ -47,6 +47,28 @@ function fenceMatchesWork(fence, work) {
     && fence.streamId === work.attempt.stream_id);
 }
 
+// Work parked in needs_attention with a stop or pause intent waits for the
+// checkpoint it may have published before the restart. When it published none,
+// nothing else settles it, and the process tree that left its outcome unproven
+// is gone (the store's HB-009 restart proof), so it retires rather than reading
+// "stop requested, cleaning up" for days (dogfood HB-040). A stop retires as
+// cancelled; a pause has no checkpoint to resume from and retires as failed.
+// The control request stays on the record for mutation-journal recovery.
+function retireUnpublishedInterruption(runtimeStore, sessionStore, work, log) {
+  if (work.status !== 'needs_attention' || typeof runtimeStore.transition !== 'function') return;
+  const active = sessionStore.getActiveTurn(work.session_id);
+  if (active && (active.turn_id === work.turn_id || active.stream_id === work.attempt?.stream_id)) return;
+  try {
+    runtimeStore.transition(work.work_id, { expectedRevision: work.revision, expectedAttempt: work.attempt,
+      to: work.control_request?.kind === 'cancel' ? 'cancelled' : 'failed', reason: 'restart_retired' });
+  } catch (error) {
+    try {
+      log?.('WARN', 'runtime_continuation.retire_failed', { workId: work.work_id,
+        reason: String(error?.code || error?.message || error).slice(0, 120) });
+    } catch (_error) { /* Diagnostics must not change recovery state. */ }
+  }
+}
+
 function listRestartCandidates(runtimeStore) {
   const ids = [];
   let cursor = null;
@@ -104,6 +126,7 @@ function recoverPublishedRuntimeContinuations({ runtimeStore, checkpointStore,
     if (!isRecoverableCheckpointWork(work)) continue;
     const discovered = checkpointStore.findCommittedForWork(work);
     if (discovered.status === 'none') {
+      retireUnpublishedInterruption(runtimeStore, sessionStore, work, log);
       counts.ordinary += 1;
       continue;
     }

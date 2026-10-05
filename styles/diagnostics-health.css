@@ -1,3 +1,10 @@
+/* The issue table needs about 770px of its own width, and its column shrinks
+ * with the overview's two-column layout, not with the window: the restack
+ * below is a container query for that reason. */
+.diagnostics-issue-list {
+  container: diagnostics-issues / inline-size;
+}
+
 .diagnostics-issue-header,
 .diagnostics-issue {
   display: grid;
@@ -777,7 +784,7 @@
   border-bottom: 0;
 }
 
-@media (max-width: 720px) {
+@container diagnostics-issues (max-width: 800px) {
   .diagnostics-issue-header {
     display: none;
   }
@@ -810,7 +817,9 @@
     grid-column: 2;
     grid-row: 1;
   }
+}
 
+@media (max-width: 720px) {
   .diagnostics-integrity-summary {
     align-items: flex-start;
     flex-direction: column;

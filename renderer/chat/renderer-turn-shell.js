@@ -41,10 +41,10 @@
 
   // Ht-D: content-visibility exemption contract. An article is exempt from
   // paint-skip (never content-visibility:auto-deferred) while pending
-  // (streaming) or while it holds an unresolved approval-gap row — the
-  // approval_gap row kind exists IFF the call is awaiting approval and
-  // unresolved (renderer-turn-reducer-approval-gap.js), so its mere presence
-  // in the DOM is the unresolved-gate signal. Bottom-2 is a separate pure-CSS
+  // (streaming) or while it holds an unresolved approval-gap row. A resolved
+  // call keeps its gap row as a receipt (data-approval-status="resolved",
+  // renderer-turn-reducer-approval-gap.js), so only a gap row without one is
+  // the unresolved-gate signal. Bottom-2 is a separate pure-CSS
   // structural selector (styles/chat-thread.css) and needs no JS.
   function isChatContentVisibilityFlagOn() {
     return typeof document !== 'undefined'
@@ -53,11 +53,9 @@
   }
 
   function hasUnresolvedApprovalGapRow(article) {
-    return Boolean(
-      article
-      && typeof article.querySelector === 'function'
-      && article.querySelector('[data-row-kind="approval_gap"]')
-    );
+    if (!article || typeof article.querySelectorAll !== 'function') return false;
+    return Array.from(article.querySelectorAll('[data-row-kind="approval_gap"]'))
+      .some((row) => !row.querySelector('[data-approval-status="resolved"]'));
   }
 
   // Called by the streaming patch paths (renderer-render-pipeline-message-

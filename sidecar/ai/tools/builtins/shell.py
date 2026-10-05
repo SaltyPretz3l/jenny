@@ -40,6 +40,9 @@ from sidecar.ai.tools.builtins.shell_background import (
     start_background_job,
     stop_background_job,
 )
+from sidecar.ai.tools.builtins.shell_background_status import (
+    BACKGROUND_JOB_CANCELLED_ERROR,
+)
 from sidecar.ai.tools.builtins.shell_command_split import (
     cmd_exe_multiline_refusal,
     split_compound_command,
@@ -489,6 +492,7 @@ def run_command_tool(  # noqa: PLR0915 - linear tool-result assembly is intentio
             code=CMP_TOOL_COMMAND_BLOCKED,
             message=multiline_refusal,
             retryable=False,
+            error_details={"failure_class": "bad_arguments", "effects": "none"},
         )
     cwd = _resolve_cwd(arguments, workspace)
     display_cwd = _display_cwd(cwd, workspace)
@@ -823,9 +827,12 @@ def check_background_job_tool(
             message=f"no background job found with id: {job_id}",
             retryable=False,
         )
+    # A job that ended because a stop was requested is a state the poll read
+    # successfully; reporting it as a tool error reads as a failed poll.
+    cancelled = status.get("error") == BACKGROUND_JOB_CANCELLED_ERROR
     return ToolHandlerResult(
         output=json.dumps(status, ensure_ascii=False, indent=2),
-        success=status.get("state") in ("completed", "running"),
+        success=cancelled or status.get("state") in ("completed", "running"),
     )
 
 

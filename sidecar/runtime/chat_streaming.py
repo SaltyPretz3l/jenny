@@ -181,7 +181,8 @@ def _build_live_stream_messages(
         config=stack.config,
         tool_statuses=None,
         personality_rendered=personality_rendered,
-        skill_invocation=skill_invocation,
+        # A trailing turn-context row carries the invoked skill instead.
+        skill_invocation=None if trailing_turn_context_enabled(stack.config) else skill_invocation,
         execution_context=execution_context,
     )
     runtime_system_messages = [
@@ -270,6 +271,7 @@ def _build_live_stream_messages(
         stack.context_builder, stack.config, tool_statuses=None,
         latest_user_content=latest_user_content,
         trailing_context_blocks=trailing_context_blocks, root_kwargs=prompt_kwargs,
+        skill_invocation=skill_invocation, execution_context=execution_context,
     ))
     stream_messages_with_runtime = stack.context_builder.insert_runtime_system_messages(
         stream_messages,

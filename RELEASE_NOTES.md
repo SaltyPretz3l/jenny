@@ -1,5 +1,44 @@
 # Release Notes
 
+## 1.3.1 - 2026-10-05
+
+A fix release on 1.3.0. Most of it comes from a week of Linux testing in the
+packaged app and from building real projects through Jenny.
+
+### Changelog
+
+**Features**
+
+- Thinking levels are detected per model on llama-server: a model whose template only has a thinking on/off switch now offers None, Low, Medium and High.
+- A resolved approval stays in the chat as a one-line receipt ("Allowed once", "Denied" and so on) instead of disappearing.
+- `preview_test` can read back named elements after its clicks, and warns when a page loads files the in-app Preview will not.
+- `workspace_present` tells the model what the Workspace actually did with its request: shown, prompted, dismissed or failed.
+
+**Reworks**
+
+- Linux and macOS: every shell command runs under a small supervisor process that confirms nothing is left running before the next tool starts. This adds about 0.1 seconds per command on Linux.
+- Codex CLI (experimental): tool requests travel as a structured reply instead of text markers, and Jenny's approvals still gate every tool.
+
+**Fixes**
+
+- Linux and macOS: after any shell command, later tools were refused until Jenny was restarted. They keep working now.
+- Setup no longer reports a local model as ready when none is reachable, and the first Ollama load uses the context size saved for that model.
+- The chat no longer jumps when an approval is answered, a reasoning panel closes or the end of a live reply gets shorter.
+- Text written before a tool call stays above the tool's card after the turn ends and when the chat is reopened.
+- `preview_test` rejects misspelled arguments instead of reporting a test with no interactions as a success, and its result says which clicks and typing landed.
+- `edit_file` and `workspace_present` examples include the fields their handlers require.
+- Typed backslashes are kept in your own messages.
+- Work left at "stop requested" from an earlier run is retired at restart.
+- A turn that times out before any output no longer says a model was loading when the route is remote.
+- Diagnostics issue details no longer overlap at the default window size.
+- Polling a background job that was stopped is no longer reported as a tool error.
+
+### Migration and qualification
+
+- No schema or API changes: shell configuration stays at schema 59, canonical sessions at 22, sidecar memory at 8, and the sidecar API at `2026-08-17`.
+- Windows remains unsigned. Linux packages remain experimental; the process fix was retested by hand in a packaged Linux build on Debian 13.
+- macOS remains experimental and has still not been run on a real Mac. No unprivileged mechanism on macOS can prove that a command left nothing running, so cleanup there is best effort and labelled as such in the command's result. A process that detaches itself and also clears its environment can be missed.
+
 ## 1.3.0 - 2026-10-04
 
 Everything landed since 1.2.0, through private `main` on 2026-10-04. The work

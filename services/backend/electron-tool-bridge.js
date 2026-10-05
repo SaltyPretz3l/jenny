@@ -576,6 +576,19 @@ function buildManagedSidecarChatSendOptions({
       const resumeTransportTimeout = suspendTransportTimeout();
       let freshBudget = false;
       try {
+        // The approval wait appends the tool_use row at once, but the text the
+        // model wrote before the call is otherwise cut only when the tool
+        // starts, after the decision. Stored in that order the commentary is
+        // replayed to the model after the tool result it introduced.
+        try {
+          runtime.persistToolBoundarySegment?.();
+        } catch (segmentError) {
+          service._emitServiceLog?.('WARN', 'chat.approval_segment_persist_failed', {
+            sessionId: resolvedSessionId,
+            streamId,
+            message: segmentError?.message || String(segmentError),
+          });
+        }
         const result = await waitForAuthorizedToolApproval(params);
         freshBudget = isPlanBuildApproval(params, result);
         return result;

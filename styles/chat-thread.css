@@ -144,7 +144,9 @@
 }
 
 .chat-thread-scroll-sentinel {
-  height: 1px;
+  /* --chat-tail-cushion: blank room a shrink left at the end of a followed live
+     reply (renderer-viewport-tail-cushion-utils.js). */
+  height: calc(1px + var(--chat-tail-cushion, 0px));
   pointer-events: none;
   flex-shrink: 0;
 }

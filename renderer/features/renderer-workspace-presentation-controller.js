@@ -13,7 +13,15 @@
  *     switches immediately.
  *
  * Rapid requests COALESCE to the newest within a short window instead of
- * thrashing the stage. All timings are injectable for tests. */
+ * thrashing the stage. All timings are injectable for tests.
+ *
+ * Every decision is reported back to main on
+ * `workspacePresentation.reportOutcome` (shown / shown_by_user / prompted /
+ * dismissed / superseded / rejected / dropped, plus the preview stage's
+ * render result), keyed by the request id main issued, so the model learns on
+ * its next request what the user actually saw. A chip still pending when the
+ * chat or workspace changes (or the controller is disposed) reports
+ * `dropped`, so no request is left without a terminal decision. */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) {
     module.exports = factory();
@@ -50,6 +58,8 @@
   const OSCILLATION_MAX = 3;
   const OSCILLATION_WINDOW_MS = 10_000;
   const PENDING_APPROVAL_SELECTOR = '.approval-gap-row[data-approval-status="pending"]:not([data-approval-resolved="true"])';
+  // Raised by the pane composition when the focused chat or its project moved.
+  const FOCUSED_CHAT_CHANGED_EVENT = 'jenny:focused-chat-changed';
 
   function normalizeRelativePath(value) {
     if (typeof value !== 'string') return '';
@@ -115,6 +125,17 @@
       return windowRef.jennyShell?.workspacePresentation || null;
     }
 
+    // Fire-and-forget; a request without a main-issued id reports nothing.
+    function report(request, fields) {
+      const reportOutcome = requestApi()?.reportOutcome;
+      if (!request?.requestId || typeof reportOutcome !== 'function') {
+        return;
+      }
+      try {
+        Promise.resolve(reportOutcome({ request_id: request.requestId, ...fields })).catch(() => {});
+      } catch (_error) { /* bridge gone */ }
+    }
+
     function isOscillating() {
       const cutoff = now() - OSCILLATION_WINDOW_MS;
       appliedTimestamps = appliedTimestamps.filter((ts) => ts > cutoff);
@@ -166,18 +187,18 @@
         appendClientLog('WARN', 'workspace_presentation.change_context_rejected', {
           reason: 'identity_mismatch',
         });
-        return;
+        return false;
       }
       if (!openChangeDiff) {
         warnUnavailableIntegration();
-        return;
+        return false;
       }
       let ledger;
       try {
         ledger = getChangeLedger() || {};
       } catch (_error) {
         warnMissingChange();
-        return;
+        return false;
       }
       const matches = (Array.isArray(ledger.changes) ? ledger.changes : []).filter((change) => (
         String(change?.workspaceId || '').toLowerCase() === request.workspaceId
@@ -187,13 +208,14 @@
       const change = matches[matches.length - 1] || null;
       if (!change) {
         warnMissingChange();
-        return;
+        return false;
       }
       Promise.resolve(openChangeDiff(change)).catch((error) => {
         appendClientLog('WARN', 'workspace_presentation.change_open_failed', {
           code: String(error?.code || error?.error_code || 'open_failed').slice(0, 64),
         });
       });
+      return true;
     }
 
     function apply(request, { userInitiated = false } = {}) {
@@ -204,18 +226,27 @@
         appendClientLog('WARN', 'workspace_presentation.change_context_rejected', {
           reason: 'identity_mismatch',
         });
+        report(request, { decision: 'dropped' });
         removeChip();
         return;
       }
       if (!userInitiated) {
         appliedTimestamps.push(now());
       }
+      if (pendingChipRequest && pendingChipRequest !== request) {
+        report(pendingChipRequest, { decision: 'superseded' });
+      }
       removeChip();
+      const decision = userInitiated ? 'shown_by_user' : 'shown';
       if (request.view === 'preview') {
-        openPreview(request.path || '');
+        report(request, { decision });
+        openPreview(request.path || '', {
+          onRendered: (outcome) => report(request, outcome),
+        });
       } else if (request.view === 'change_diff') {
-        applyChangeDiff(request);
+        report(request, { decision: applyChangeDiff(request) ? decision : 'rejected' });
       } else {
+        report(request, { decision });
         openFileMap();
         if (request.path) {
           Promise.resolve(revealInMap(request.path)).catch(() => {});
@@ -249,6 +280,7 @@
         appendClientLog('INFO', 'workspace_presentation.dismissed', {
           view: pendingChipRequest?.view || '',
         });
+        report(pendingChipRequest, { decision: 'dismissed' });
         removeChip();
       }
     }
@@ -257,7 +289,11 @@
       const host = getDom().ideMain || null;
       if (!host || !host.ownerDocument || typeof actionButton !== 'function') {
         appendClientLog('WARN', 'workspace_presentation.chip_unavailable', { view: request.view });
+        report(request, { decision: 'rejected' });
         return;
+      }
+      if (pendingChipRequest) {
+        report(pendingChipRequest, { decision: 'superseded' });
       }
       removeChip();
       pendingChipRequest = request;
@@ -289,6 +325,21 @@
         });
       chipEl.addEventListener('click', handleChipClick);
       host.appendChild(chipEl);
+      report(request, { decision: 'prompted' });
+    }
+
+    // Session or workspace switch: a chip raised for the old chat can no longer
+    // apply (apply() would drop it on Show), so drop it now and say so. A
+    // coalesced request is checked when its window settles.
+    function handleContextChange() {
+      if (disposed || !pendingChipRequest || matchesCurrentContext(pendingChipRequest)) {
+        return;
+      }
+      appendClientLog('INFO', 'workspace_presentation.change_dropped', {
+        reason: 'context_changed',
+      });
+      report(pendingChipRequest, { decision: 'dropped' });
+      removeChip();
     }
 
     // ── Request intake: coalesce → policy → apply or chip ───────────────────
@@ -303,6 +354,7 @@
         appendClientLog('INFO', 'workspace_presentation.change_dropped', {
           reason: 'context_changed',
         });
+        report(request, { decision: 'dropped' });
         return;
       }
       if (isSafeToSwitch()) {
@@ -317,6 +369,7 @@
       if (disposed || !payload || typeof payload !== 'object') {
         return;
       }
+      const requestId = normalizeOpaqueId(payload.request_id);
       const view = payload.view === 'preview'
         ? 'preview'
         : payload.view === 'file_map'
@@ -326,6 +379,7 @@
         appendClientLog('WARN', 'workspace_presentation.request_rejected', {
           view: String(payload.view || ''),
         });
+        report({ requestId }, { decision: 'rejected' });
         return;
       }
       const rawPath = typeof payload.path === 'string' ? payload.path : '';
@@ -343,16 +397,21 @@
           view,
           reason: view === 'change_diff' ? 'invalid_change_diff' : 'invalid_context',
         });
+        report({ requestId }, { decision: 'rejected' });
         return;
       }
-      const request = { view, path, sessionId, workspaceId, changeId, scoped };
+      const request = { view, path, sessionId, workspaceId, changeId, scoped, requestId };
       if (!matchesCurrentContext(request)) {
         appendClientLog('INFO', 'workspace_presentation.change_dropped', {
           reason: 'context_changed',
         });
+        report(request, { decision: 'dropped' });
         return;
       }
       // Newest-request-wins coalescing within the window.
+      if (coalescedRequest) {
+        report(coalescedRequest, { decision: 'superseded' });
+      }
       coalescedRequest = request;
       if (!coalesceTimer) {
         coalesceTimer = windowRef.setTimeout(settle, COALESCE_MS);
@@ -368,6 +427,7 @@
         return; // preload surface absent (older shell) — feature degrades off
       }
       unsubscribe = api.onRequest((payload) => handleRequest(payload)) || null;
+      windowRef.addEventListener?.(FOCUSED_CHAT_CHANGED_EVENT, handleContextChange);
     }
 
     function dispose() {
@@ -383,6 +443,10 @@
         try { unsubscribe(); } catch (_error) { /* already gone */ }
       }
       unsubscribe = null;
+      windowRef.removeEventListener?.(FOCUSED_CHAT_CHANGED_EVENT, handleContextChange);
+      report(coalescedRequest, { decision: 'dropped' });
+      coalescedRequest = null;
+      report(pendingChipRequest, { decision: 'dropped' });
       removeChip();
     }
 
@@ -391,6 +455,7 @@
       TYPING_GUARD_MS,
       bindEvents,
       dispose,
+      handleContextChange,
       handleRequest,
       noteEdit,
     };

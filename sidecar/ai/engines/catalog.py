@@ -9,7 +9,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from sidecar.ai.engines.local_server_props import probe_server_modalities, vision_from_props
+from sidecar.ai.engines.local_server_props import (
+    ThinkingControl,
+    probe_server_modalities,
+    thinking_control_from_props,
+    thinking_ladder,
+    vision_from_props,
+)
 from sidecar.ai.engines.model_name import (
     THINKING_MODEL_PREFIXES,
     VISION_MODEL_PREFIXES,
@@ -692,13 +698,12 @@ def discover_openai_compatible_models(
             provider="openai_compatible",
             base_url=base_url,
         )
-    props_vision = vision_from_props(
-        probe_server_modalities(
-            base_url=base_url,
-            headers=headers,
-            timeout_seconds=timeout_seconds,
-        )
+    props = probe_server_modalities(
+        base_url=base_url,
+        headers=headers,
+        timeout_seconds=timeout_seconds,
     )
+    props_vision = vision_from_props(props)
     # /props answers for the one model the server holds: stamp its verdict on
     # every row, false included — an absent flag reads as "unknown" downstream
     # (renderer soft notice), a False flag as evidence (Send blocked).
@@ -712,6 +717,7 @@ def discover_openai_compatible_models(
                 capabilities = {}
                 model["capabilities"] = capabilities
             capabilities["vision"] = props_vision
+    _stamp_thinking_ladder(models, thinking_control_from_props(props))
     log_event(
         logger,
         logging.INFO,
@@ -726,6 +732,39 @@ def discover_openai_compatible_models(
         available=True,
         trained_context_lengths=_trained_context_lengths(payload),
     )
+
+
+def _stamp_thinking_ladder(
+    models: list[ModelCatalogEntry], control: ThinkingControl | None
+) -> None:
+    """Offer the levels the served template takes (FG-010, automatic per model).
+
+    /props answers for the one model the server holds, as with vision. A
+    family with a tuned ladder (the Qwen3.8 contract, Bonsai 2 included) keeps
+    it. A template that takes no level drops a name-based ladder (Ornith's
+    fallback included), so the picker never offers a level that sends nothing;
+    an unknown verdict leaves the name-based row as it is.
+    """
+    if control is None:
+        return
+    ladder = thinking_ladder(control)
+    for index, model in enumerate(models):
+        model_id = model if isinstance(model, str) else str(model.get("id") or "")
+        if uses_qwen38_chat_contract(model_id):
+            continue
+        if ladder is None:
+            capabilities = model.get("capabilities") if isinstance(model, dict) else None
+            if isinstance(capabilities, dict):
+                for key in ("reasoning_effort", "reasoning_efforts", "default_reasoning_effort"):
+                    capabilities.pop(key, None)
+            continue
+        row = {"id": model, "capabilities": {}} if isinstance(model, str) else model
+        models[index] = row
+        capabilities = row.get("capabilities")
+        if not isinstance(capabilities, dict):
+            capabilities = {}
+            row["capabilities"] = capabilities
+        capabilities.update({"thinking": True, **ladder})
 
 
 def _trained_context_lengths(payload: Any) -> dict[str, int]:
@@ -784,12 +823,13 @@ def _parse_vllm_models_payload(
     Unmanaged OpenAI-compatible servers may be llama-server. Qwen3.8 GGUF chat
     templates accept the native ``low``, ``medium``, and ``xhigh`` effort
     values; Bonsai 2 shares that template but not ``low``; other recognized
-    thinking models retain the conservative boolean control. Only these
+    thinking models retain the conservative boolean control until /props
+    names the template's control (``_stamp_thinking_ladder``). Only these
     OpenAI-compatible controls add the Qwen3.8 contract's separator variants
     (``Ternary_Bonsai_2_27B``) and Ornith 1.5 (whose template takes
-    ``enable_thinking`` but no effort level, so None is its one choice) to
-    prefix-based thinking detection, matching that engine. Leave vLLM's
-    existing catalog contract unchanged.
+    ``enable_thinking`` but no effort level, so its levels are thinking token
+    budgets) to prefix-based thinking detection, matching that engine. Leave
+    vLLM's existing catalog contract unchanged.
     """
     if not isinstance(payload, dict):
         return None
@@ -833,6 +873,12 @@ def _openai_compatible_thinking_capabilities(model_name: str) -> dict[str, Any]:
             "reasoning_efforts": ["none", "low", "medium", "xhigh"],
             "default_reasoning_effort": "medium",
         }
+    if is_ornith15_model(model_name):
+        # Name fallback for when /props does not answer: the template reads
+        # enable_thinking and no effort level (FG-010).
+        ladder = thinking_ladder(ThinkingControl(native_effort=False, toggle=True))
+        if ladder is not None:
+            return ladder
     return {
         "reasoning_effort": True,
         "reasoning_efforts": ["none"],

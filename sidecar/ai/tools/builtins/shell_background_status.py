@@ -16,6 +16,8 @@ JOB_STATUS_SCHEMA_VERSION = 1
 LEGACY_JOB_STATUS_SCHEMA_VERSION = 0
 MAX_STATUS_OUTPUT_CHARS = MAX_INLINE_OUTPUT_CHARS + len("\n...[truncated]")
 MAX_STATUS_ERROR_CHARS = 2_048
+# Status error of a job that ended because a stop was requested.
+BACKGROUND_JOB_CANCELLED_ERROR = "background job was cancelled"
 MAX_STATUS_PATH_CHARS = 4_096
 MAX_REPORTED_SCHEMA_VERSION = (2**31) - 1
 MAX_STATUS_PID = (2**32) - 1

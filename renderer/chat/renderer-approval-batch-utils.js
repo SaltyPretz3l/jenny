@@ -167,9 +167,14 @@
       }
     }
 
+    // A settled row is gone or has become its resolved receipt (HB-038 H2).
+    function isRowSettled(row) {
+      return !row?.isConnected || row.getAttribute?.('data-approval-status') === 'resolved';
+    }
+
     function sweepSettledRows() {
       for (const [key, entry] of pending) {
-        if (!entry.row?.isConnected) release(key, 'settled');
+        if (isRowSettled(entry.row)) release(key, 'settled');
         else if (normalizeIdentity(getCurrentSessionId()) !== entry.sessionId) release(key, 'session_changed', true);
       }
     }
@@ -215,7 +220,7 @@
           message: bounded(error?.message || error, 160),
         });
       }
-      if (pending.get(key) !== entry || disposed || !entry.row?.isConnected) {
+      if (pending.get(key) !== entry || disposed || isRowSettled(entry.row)) {
         release(key, 'settled');
         return;
       }

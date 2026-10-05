@@ -131,6 +131,8 @@ function hydrateRuntimeContinuation({ work, checkpointStore, conversationStore, 
     const messages = buildPreparedMessages(history, request.prompt, {
       attachments: (request.attachments || []).filter(isTextAttachment),
       contextPreferences: { history_scope: captured.historySelector.history_scope },
+      // The persisted user row holds the resolved skill, as the live send did.
+      skillInvocation: users[0].skill_invocation,
     });
     messages.push(...(decision || continuation.completed_effect_refs ? buildDecisionPrefix(copy(captured.turnEvents), continuation.completed_effect_refs, copy(captured.turnMessages)) : dependency ? buildDependencyPrefix(copy(prefix), copy(captured.turnEvents.filter(event => !pending.has(event.tool_call_id))))
       : buildPreparedContinuationPrefix(copy(prefix), copy(captured.turnEvents))));

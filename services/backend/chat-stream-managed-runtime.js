@@ -973,6 +973,7 @@ function createManagedChatStreamRuntime({
     handleNotification(notification, deps) {
       return handleNotificationImpl(ctx, notification, deps);
     },
+    persistToolBoundarySegment: () => persistCurrentTextSegment({ allowReasoningOnly: true, atToolBoundary: true }),
     emitDeterministicCompletion: (content) => emitDeterministicCompletionImpl(ctx, content),
     settleTerminalResult,
     emitQuestionBatchEvent(batch) {

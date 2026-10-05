@@ -513,3 +513,74 @@ test('preview state card and markdown body stay selectable and highlight on sele
   const selectionRule = css.match(/\.ide-preview-stage-state::selection[^{]*\{([^}]*)\}/)?.[1] || '';
   assert.match(selectionRule, /background:\s*color-mix\(/, 'selection carries an explicit highlight');
 });
+
+// ── workspace_present render reports (open(path, { onRendered })) ──────────
+
+test('open(onRendered) reports loaded after a forced fresh render, even for an already-rendered path', async (t) => {
+  cleanupGlobals(t);
+  const h = makeStage({ files: { 'docs/readme.md': '# Title' } });
+  t.after(() => h.stage.dispose());
+  h.stage.open('docs/readme.md');
+  h.stage.sync(true);
+  await settle();
+  const rendersBefore = h.calls.markdownRenders.length;
+  assert.equal(rendersBefore, 1);
+
+  const outcomes = [];
+  h.stage.open('docs/readme.md', { onRendered: (outcome) => outcomes.push(outcome) });
+  h.stage.sync(true);
+  await settle();
+  assert.equal(h.calls.markdownRenders.length, rendersBefore + 1, 'a presentation open re-renders');
+  assert.deepEqual(outcomes, [{ render: 'loaded' }]);
+  h.stage.sync(true);
+  await settle();
+  assert.equal(outcomes.length, 1, 'a report settles once');
+});
+
+test('open(onRendered) reports failed states, unsupported targets, and replacement', async (t) => {
+  cleanupGlobals(t);
+  const h = makeStage({ files: { 'docs/readme.md': '# Title' } });
+  t.after(() => h.stage.dispose());
+
+  const missing = [];
+  h.stage.open('docs/gone.md', { onRendered: (outcome) => missing.push(outcome) });
+  h.stage.sync(true);
+  await settle();
+  assert.deepEqual(missing, [{ render: 'failed', detail: 'missing' }]);
+
+  const unsupported = [];
+  h.stage.open('src/app.js', { onRendered: (outcome) => unsupported.push(outcome) });
+  assert.deepEqual(unsupported, [{ render: 'failed', detail: 'unsupported' }]);
+
+  const first = [];
+  const second = [];
+  h.stage.open('docs/readme.md', { onRendered: (outcome) => first.push(outcome) });
+  h.stage.open('docs/readme.md', { onRendered: (outcome) => second.push(outcome) });
+  h.stage.sync(true);
+  await settle();
+  assert.deepEqual(first, [{ render: 'replaced' }]);
+  assert.deepEqual(second, [{ render: 'loaded' }]);
+});
+
+test('open(onRendered) reports cancelled when the Preview moves on, the root changes, or the stage closes', async (t) => {
+  cleanupGlobals(t);
+  const h = makeStage({ files: { 'docs/readme.md': '# Title', 'docs/other.md': '# Other' } });
+  t.after(() => h.stage.dispose());
+
+  const navigated = [];
+  h.stage.open('docs/readme.md', { onRendered: (outcome) => navigated.push(outcome) });
+  ideState.setPreviewPath(h.ide, 'docs/other.md');
+  h.stage.sync(true);
+  await settle();
+  assert.deepEqual(navigated, [{ render: 'cancelled' }]);
+
+  const rootChanged = [];
+  h.stage.open('docs/readme.md', { onRendered: (outcome) => rootChanged.push(outcome) });
+  h.stage.handleWorkspaceRootCommitted();
+  assert.deepEqual(rootChanged, [{ render: 'cancelled' }]);
+
+  const closed = [];
+  h.stage.open('docs/readme.md', { onRendered: (outcome) => closed.push(outcome) });
+  h.stage.dispose();
+  assert.deepEqual(closed, [{ render: 'cancelled' }]);
+});

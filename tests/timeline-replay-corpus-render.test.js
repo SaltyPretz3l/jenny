@@ -203,6 +203,14 @@ const DIVERGENCE_LEDGER = [
   'data-chat-row-v2-tone @ 22-approval-pending/approval_gap',
   'data-source-message-ids @ 07-tool-use-error-invalid-args/tool_result',
   'data-source-message-ids @ 18-stream-events-tool-call-trace/tool_result',
+  // HB-038 H2: scenario 24's denied approval now keeps its receipt row, and
+  // the receipt carries the same live-only v2 chrome as scenario 22's card.
+  'data-chat-row-v2-kind @ 24-settled-tool-no-assistant-text/approval_gap',
+  'data-chat-row-v2-state @ 24-settled-tool-no-assistant-text/approval_gap',
+  'data-chat-row-v2-summary-kind @ 24-settled-tool-no-assistant-text/approval_gap',
+  'data-chat-row-v2-summary-text @ 24-settled-tool-no-assistant-text/approval_gap',
+  'data-chat-row-v2-target-kind @ 24-settled-tool-no-assistant-text/approval_gap',
+  'data-chat-row-v2-tone @ 24-settled-tool-no-assistant-text/approval_gap',
   // Scenario 29 exhibits the same half-closed tool_result family as 07/18 —
   // the plan_document row itself renders in lockstep.
   'data-source-message-ids @ 29-plan-approval-document/tool_result',

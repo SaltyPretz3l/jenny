@@ -381,6 +381,15 @@ async function assembleContextForChat(service, options) {
     appendContextBlock('active_file', activeFileKept.content);
     promptContributions.active_file_block = summarizeTextBlock(activeFileKept.content);
   }
+  // What the IDE did with earlier workspace_present requests. Small and
+  // self-bounded (services/workspace-presentation-service.js), so it bypasses
+  // the budget trimmer; consumed here because this is the one per-request
+  // assembly point.
+  const presentationNote = service.workspacePresentationService?.consumeOutcomeNote?.(resolvedSessionId) || '';
+  if (presentationNote) {
+    appendContextBlock('workspace_presentation', presentationNote);
+    promptContributions.workspace_presentation_block = summarizeTextBlock(presentationNote);
+  }
   const normalizedContextBlocks = normalizeContextBlocksForSend(contextBlocks, {
     onDrop: (info) => {
       service._emitServiceLog('WARN', 'chat.context_block_dropped', {

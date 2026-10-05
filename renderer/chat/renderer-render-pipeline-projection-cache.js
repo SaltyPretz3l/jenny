@@ -45,7 +45,7 @@
     const kind = String(row.kind || '').trim();
     const payload = row.payload && typeof row.payload === 'object' ? row.payload : {};
     const rowState = String(payload.state || payload.status || '').trim().toLowerCase();
-    return kind === 'approval_gap'
+    return (kind === 'approval_gap' && rowState !== 'resolved')
       || ['pending_approval', 'awaiting_approval', 'requested', 'running', 'streaming'].includes(rowState);
   }
 

@@ -461,6 +461,12 @@ function handleNotification(ctx, notification, {
     ) {
       turnMetrics.recordDroppedCanonicalEvent();
     }
+    // The approval event names its tool call, so the text written before the
+    // call must enter the turn log first; captured after it, a reload draws
+    // the tool row above the commentary that introduced it.
+    if (validation.status === 'accepted' && identityStampedParams.type === 'tool_approval_requested') {
+      persistCurrentTextSegment({ allowReasoningOnly: true, atToolBoundary: true });
+    }
     const captured = turnEventCollector && typeof turnEventCollector.noteEvent === 'function'
       ? turnEventCollector.noteEvent(identityStampedParams, { validation })
       : null;

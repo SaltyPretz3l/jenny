@@ -355,8 +355,8 @@ test('plan decisions preserve decision and feedback without creating an always-a
   assert.equal(approveToolCall(service, 'approval-plan', {
     decision: 'approved_auto', feedback: 'Looks good', alwaysAllow: true,
   }), true);
-  // The 4th resolve slot carries the W3a edited plan; undefined when no edits rode the approval.
-  assert.deepEqual(resolved, [[true, 'approved_auto', 'Looks good', undefined]]);
+  // 4th slot: the W3a edited plan (undefined with no edits). 5th: the reader's scope, never `always` for a plan.
+  assert.deepEqual(resolved, [[true, 'approved_auto', 'Looks good', undefined, 'once']]);
   assert.deepEqual(policies, []);
 });
 

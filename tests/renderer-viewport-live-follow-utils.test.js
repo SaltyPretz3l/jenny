@@ -189,3 +189,26 @@ test('live-follow writes report a live_follow programmatic write before moving t
   assert.ok(writes.length > writesBeforeSnap, 'snap-to-bottom is a live-follow write too');
   assert.ok(writes.every((reason) => reason === 'live_follow'), JSON.stringify(writes));
 });
+
+test('each live-follow write reports the position it set (tail cushion input)', () => {
+  const frames = [];
+  const reported = [];
+  const scrollContainer = {
+    scrollTop: 100,
+    scrollHeight: 600,
+    clientHeight: 300,
+    querySelector() { return null; },
+  };
+  const liveFollow = createViewportLiveFollowUtils({
+    state: { ui: { followLatest: true } },
+    chatThreadScroll: scrollContainer,
+    requestViewportFrame(callback) { frames.push(callback); return frames.length; },
+    cancelViewportFrame() {},
+    onFollowWrite: (scrollTop) => reported.push(scrollTop),
+  });
+
+  liveFollow.startLiveStreamingFollow();
+
+  assert.equal(reported.length, 1);
+  assert.equal(reported[0], scrollContainer.scrollTop);
+});

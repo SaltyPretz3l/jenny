@@ -12,7 +12,7 @@ import pytest
 
 from sidecar.ai.config import RuntimeConfig
 from sidecar.ai.context import turn_context as tc
-from sidecar.ai.context.builder import ContextBuilder
+from sidecar.ai.context.builder import ContextBuilder, SkillScope
 from sidecar.ai.routing.router import ChatRouter
 from sidecar.ai.tools.models import GenerationResult
 from sidecar.runtime.chat_models import ChatRequestContext
@@ -68,14 +68,25 @@ def _turns() -> list[list[dict[str, object]]]:
     return [first, second]
 
 
-def _router_turn(engine: _CapturingEngine, messages: list[dict[str, object]], index: int) -> None:
+def _router_turn(
+    engine: _CapturingEngine,
+    messages: list[dict[str, object]],
+    index: int,
+    *,
+    builder: ContextBuilder | None = None,
+    skill_invocation: dict[str, str] | None = None,
+) -> None:
     config = replace(
         RuntimeConfig(engine_type="openai-compatible", model="ornith"),
         tools_workspace_root="C:/workspace",
         mode="assist",
+        skills_auto_index="off",
     )
     router = ChatRouter(
-        config=config, engine=engine, mcp_client=_NoTools(), context_builder=ContextBuilder(None)
+        config=config,
+        engine=engine,
+        mcp_client=_NoTools(),
+        context_builder=builder or ContextBuilder(None),
     )
     router.build_chat_decision(
         request_context=ChatRequestContext(
@@ -85,6 +96,7 @@ def _router_turn(engine: _CapturingEngine, messages: list[dict[str, object]], in
             mode="assist",
             approvals_pre_granted=True,
             context_blocks=(_PERSONALITY, _ACTIVE_FILE),
+            skill_invocation=skill_invocation,
         ),
         request_id=f"req-{index}",
         messages=messages,
@@ -94,7 +106,14 @@ def _router_turn(engine: _CapturingEngine, messages: list[dict[str, object]], in
     )
 
 
-def _live_turn(engine: _CapturingEngine, messages: list[dict[str, object]], index: int) -> None:
+def _live_turn(
+    engine: _CapturingEngine,
+    messages: list[dict[str, object]],
+    index: int,
+    *,
+    builder: ContextBuilder | None = None,
+    skill_invocation: dict[str, str] | None = None,
+) -> None:
     config = SimpleNamespace(
         mode="chat",
         engine_type="openai-compatible",
@@ -104,11 +123,12 @@ def _live_turn(engine: _CapturingEngine, messages: list[dict[str, object]], inde
         max_tokens=4096,
         tools_workspace_manifest_enabled=False,
         tools_task_capsule_enabled=False,
+        skills_auto_index="off",
     )
     stack = SimpleNamespace(
         config=config,
         engine=engine,
-        context_builder=ContextBuilder(None),
+        context_builder=builder or ContextBuilder(None),
         memory_store=None,
         turn_diagnostics=None,
     )
@@ -123,6 +143,7 @@ def _live_turn(engine: _CapturingEngine, messages: list[dict[str, object]], inde
         learned_lessons=None,
         max_tokens=256,
         context_blocks=(_PERSONALITY, _ACTIVE_FILE),
+        skill_invocation=skill_invocation,
     )
 
 
@@ -165,3 +186,50 @@ def test_leading_prompt_is_stable_across_turns(flag: bool, lane: Any) -> None:
     assert tc.TURN_CONTEXT_BASE_KEY not in context_row
     # The previous turn's row is not replayed; history is untouched otherwise.
     assert sum(str(row).startswith(tc.TURN_CONTEXT_HEADER) for row in rows) == 1
+
+
+def _skill_builder(tmp_path: Any) -> ContextBuilder:
+    skill_dir = tmp_path / "bundled" / "insight"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text(
+        "---\nname: Harness Insight\ncommand: insight\n---\nReview the harness.",
+        encoding="utf-8",
+    )
+    return ContextBuilder(
+        None,
+        skill_scopes=(SkillScope(scope="bundled", root=tmp_path / "bundled", enabled=True),),
+        skills_system_enabled=True,
+    )
+
+
+@pytest.mark.parametrize("lane", [_router_turn, _live_turn], ids=["tool-loop", "live-chat"])
+def test_invoked_skill_rides_the_turn_row_so_the_leading_prompt_survives_it(
+    flag: bool, lane: Any, tmp_path: Any
+) -> None:
+    """A /skill turn and the plain turn after it share one leading run; the
+    skill text sits in the skill turn's trailing row, right before its prompt."""
+    builder = _skill_builder(tmp_path)
+    engine = _CapturingEngine()
+    first: list[dict[str, object]] = [{"role": "user", "content": "/insight please"}]
+    second = [*first, {"role": "assistant", "content": "done"}, {"role": "user", "content": "thanks"}]
+    lane(engine, first, 0, builder=builder, skill_invocation={"id": "bundled/insight"})
+    lane(engine, second, 1, builder=builder)
+
+    skill_call, next_call = engine.calls[0], engine.calls[-1]
+    leading_skill, leading_next = _leading(skill_call), _leading(next_call)
+    in_leading = any(
+        "## Invoked Skill: Harness Insight" in text
+        for text in [leading_skill[0], *leading_skill[1]]
+    )
+    if not flag:
+        assert in_leading
+        return
+    assert not in_leading
+    assert leading_skill == leading_next
+    rows = [str(message["content"]) for message in skill_call["messages"]]
+    row_index = next(i for i, row in enumerate(rows) if row.startswith(tc.TURN_CONTEXT_HEADER))
+    assert "## Invoked Skill: Harness Insight" in rows[row_index]
+    assert rows[row_index + 1] == "/insight please"
+    assert all(
+        "## Invoked Skill" not in str(message["content"]) for message in next_call["messages"]
+    )

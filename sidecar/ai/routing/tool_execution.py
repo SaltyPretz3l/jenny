@@ -72,7 +72,7 @@ from sidecar.runtime.tool_execution_support import (
     classify_command,
     is_feature_flag_enabled,
     scan_tool_arguments,
-    validate_tool_arguments,
+    validate_descriptor_arguments,
 )
 from sidecar.runtime.turn_state import current_live_run_mode_state
 
@@ -253,11 +253,7 @@ def _descriptor_validation_outcome(
     ):
         return None
     try:
-        validate_tool_arguments(
-            tool_name=call.tool_id,
-            arguments=visible_tool_arguments,
-            input_schema=descriptor.input_schema,
-        )
+        validate_descriptor_arguments(call.tool_id, visible_tool_arguments, descriptor)
     except ToolExecutionFailure as error:
         repair_hints = tool_schema_repair_hints(descriptor.input_schema)
         hint_text = tool_schema_hint_text(repair_hints)

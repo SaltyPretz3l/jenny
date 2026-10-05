@@ -5,9 +5,9 @@
  * (`chat.send params.context_blocks`).
  *
  * ── Why a separate channel exists ──
- * Electron assembles five per-turn context overlays (the open file / @-mentions,
- * git status, the personality workspace, codebase grounding and
- * linked-session recall). These used to be spliced into `params.messages` as
+ * Electron assembles per-turn context overlays (the open file / @-mentions,
+ * git status, the personality workspace, codebase grounding, linked-session
+ * recall and the IDE's workspace_present outcomes). These used to be spliced into `params.messages` as
  * `{role:'system'}` rows. Request history is UNTRUSTED on the sidecar: the
  * semantic admission gate (sidecar/ai/context/messages.py) drops every system
  * row it carries except our own compaction summary — so all five overlays were
@@ -35,9 +35,10 @@ const CONTEXT_BLOCK_KINDS = Object.freeze([
   'personality',
   'codebase',
   'linked_session',
+  'workspace_presentation',
 ]);
 const CONTEXT_BLOCK_KIND_SET = new Set(CONTEXT_BLOCK_KINDS);
-const MAX_CONTEXT_BLOCKS = 5;
+const MAX_CONTEXT_BLOCKS = 6;
 // Generous by design: context-budget-trimmer.js already trims these blocks to
 // the model's MEASURED effective window, so these ceilings are a
 // transport-integrity backstop against a runaway block, not a context policy. A

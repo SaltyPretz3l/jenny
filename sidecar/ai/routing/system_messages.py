@@ -6,7 +6,11 @@ from collections.abc import Mapping, Sequence
 from typing import Any
 
 from sidecar.ai.context.messages import build_context_block_system_messages
-from sidecar.ai.context.runtime_overlays import build_dynamic_system_messages, runtime_clock_line
+from sidecar.ai.context.runtime_overlays import (
+    build_dynamic_system_messages,
+    build_invoked_skill_message,
+    runtime_clock_line,
+)
 from sidecar.ai.context.turn_context import (
     build_turn_context_row,
     fold_runtime_messages,
@@ -41,7 +45,8 @@ def build_request_system_messages(  # noqa: PLR0913
 
     With a trailing *turn_context_row* (``turn_context.py``) the per-turn
     runtime overlays fold into that row, which goes before the latest user
-    message; the caller has already moved the per-turn context kinds into it.
+    message; the caller has already moved the per-turn context kinds and the
+    invoked skill (``render_turn_context_row``) into it.
     """
     messages: list[dict[str, object]] = [{"role": "system", "content": base_system_prompt}]
     messages.extend(
@@ -50,7 +55,7 @@ def build_request_system_messages(  # noqa: PLR0913
             config=kernel._config,
             tool_statuses=tool_statuses,
             personality_rendered=personality_rendered,
-            skill_invocation=skill_invocation,
+            skill_invocation=skill_invocation if turn_context_row is None else None,
             execution_context=execution_context,
         )
     )
@@ -76,10 +81,17 @@ def render_turn_context_row(  # noqa: PLR0913
     latest_user_content: str,
     trailing_context_blocks: Any,
     root_kwargs: dict[str, Any],
+    skill_invocation: dict[str, str] | None = None,
+    execution_context: Any | None = None,
 ) -> dict[str, object] | None:
     """The row's base parts, in order: per-turn prompt sections, the per-turn
-    Electron context blocks, the clock line. Runtime overlays fold in later
-    through ``insert_runtime_system_messages``. ``None`` when the flag is off.
+    Electron context blocks, the invoked skill, the clock line. Runtime
+    overlays fold in later through ``insert_runtime_system_messages``. ``None``
+    when the flag is off.
+
+    The invoked skill changes with every invocation; in the leading run it
+    would re-prefill the whole conversation on the turn that uses it and again
+    on the next. Here it is read as user-role context the user asked for.
     """
     if not trailing_turn_context_enabled(config):
         return None
@@ -101,9 +113,15 @@ def render_turn_context_row(  # noqa: PLR0913
     blocks = build_context_block_system_messages(
         tuple(trailing_context_blocks or ()), include_personality=False
     )
+    invoked_skill = build_invoked_skill_message(
+        context_builder=context_builder,
+        config=config,
+        skill_invocation=skill_invocation,
+        execution_context=execution_context,
+    )
     clock = runtime_clock_line() if getattr(config, "use_24_hour_time", False) is True else ""
     return build_turn_context_row(
-        [*sections, *(str(block.get("content") or "") for block in blocks), clock]
+        [*sections, *(str(block.get("content") or "") for block in blocks), invoked_skill, clock]
     )
 
 

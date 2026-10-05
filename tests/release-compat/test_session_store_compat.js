@@ -29,7 +29,7 @@ const {
 
 const FIXTURE_ROOT = path.join(__dirname, 'fixtures');
 const APP_VERSION = require('../../package.json').version;
-const EXPECTED_APP_VERSION = '1.3.0';
+const EXPECTED_APP_VERSION = '1.3.1';
 const EXPECTED_SCHEMA_VERSION = 22;
 const FIXTURE_DIRS = [
   'userdata-v3',

@@ -152,7 +152,7 @@
     const presentation = resolveModule('rendererWorkspacePresentationController', './renderer-workspace-presentation-controller')
       .createWorkspacePresentationController?.({
         getDom, windowRef, escapeHtml, appendClientLog, getActiveView,
-        openPreview: (path) => previewStage?.open(path),
+        openPreview: (path, options) => previewStage?.open(path, options),
         openFileMap: () => mapController?.openFileMap(),
         revealInMap: (path) => mapController?.revealInMap?.(path),
         getSessionId: getActiveSessionId,
@@ -220,6 +220,8 @@
       // switch invalidates every one of them (see activity-bus clearAll doc).
       activityBus?.clearAll?.();
       previewStage?.handleWorkspaceRootCommitted?.();
+      // A "Jenny wants to show…" chip for the old root can no longer apply.
+      presentation?.handleContextChange?.();
       // UIUX-013: the exploded-view graph cache is keyed only by
       // path@altVersion, which a new root can collide with at the identical
       // key; drop it on every root commit (see explode-controller.resetForRoot).

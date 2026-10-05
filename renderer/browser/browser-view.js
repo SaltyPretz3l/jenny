@@ -343,6 +343,8 @@
       const output = text(payload.output_text);
        return `<article class="${rowClass} browser-tool browser-tool--result" data-row-id="${escapeHtml(text(row.row_id))}"><div class="browser-tool-head"><span class="browser-tool-name">${escapeHtml(text(payload.tool_name, jt("browserView.toolResult", "Tool result")))}</span><span class="browser-tool-state">${escapeHtml(text(payload.state, payload.is_error ? 'error' : 'complete'))}</span></div>${payload.result_summary ? `<p>${escapeHtml(text(payload.result_summary))}</p>` : ''}${output ? `<div class="browser-tool-output markdown-body">${markdown(output, { mermaid: 'plain' })}</div>` : ''}${renderArtifactList(payload.generated_artifacts)}</article>`;
     }
+    // A resolved approval's receipt: the tool row already shows the outcome here.
+    if (kind === 'approval_gap' && payload.state === 'resolved') return '';
     if (kind === 'approval_gap') return `<aside class="${rowClass} browser-inline-notice" data-row-id="${escapeHtml(text(row.row_id))}"><strong>${escapeHtml(jt("browserView.approvalRequired", "Approval required"))}</strong><span>${escapeHtml(text(payload.tool_name || payload.prompt, jt("browserView.aOneOffToolApprovalIsWaiting", "A one-off tool approval is waiting.")))}</span></aside>`;
     if (kind === 'batch') return `<article class="${rowClass} browser-inline-notice" data-row-id="${escapeHtml(text(row.row_id))}"><strong>${escapeHtml(jt("browserView.jennyHasAQuestion", "Jenny has a question"))}</strong><div class="markdown-body">${markdown(payload.content)}</div></article>`;
     if (kind === 'attachment') return `<div class="${rowClass}" data-row-id="${escapeHtml(text(row.row_id))}">${renderAttachmentList(payload.attachments)}</div>`;

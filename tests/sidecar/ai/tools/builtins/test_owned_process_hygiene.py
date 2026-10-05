@@ -70,15 +70,12 @@ def test_posix_spawn_restores_frozen_library_path(
 ) -> None:
     captured_kwargs: dict[str, object] = {}
 
-    class _Process:
-        pid = 42_000
-        stdin = None
-        stdout = None
-        stderr = None
+    class _PayloadCaptured(Exception):
+        pass
 
-    def _popen(*_args: object, **kwargs: object) -> _Process:
+    def _encode(*_args: object, **kwargs: object) -> bytes:
         captured_kwargs.update(kwargs)
-        return _Process()
+        raise _PayloadCaptured
 
     service = OwnedProcessService()
     with monkeypatch.context() as spawn_patch:
@@ -89,21 +86,27 @@ def test_posix_spawn_restores_frozen_library_path(
             SimpleNamespace(name="posix", environ={}),
         )
         spawn_patch.setattr(external_child_env, "sys", SimpleNamespace(frozen=True))
-        spawn_patch.setattr(owned_process_module.subprocess, "Popen", _popen)
-        service.spawn(
-            ["fake"],
-            cwd=tmp_path,
-            env={
-                "KEEP": "yes",
-                "LD_LIBRARY_PATH": "/tmp/_MEI",
-                "LD_LIBRARY_PATH_ORIG": "/opt/lib",
-            },
+        # The supervisor starts in the sidecar's own environment, so the
+        # target's restored environment travels in the launch payload.
+        spawn_patch.setattr(
+            owned_process_module, "encode_windows_bootstrap_payload", _encode
         )
+        with pytest.raises(_PayloadCaptured):
+            service.spawn(
+                ["fake"],
+                cwd=tmp_path,
+                env={
+                    "KEEP": "yes",
+                    "LD_LIBRARY_PATH": "/tmp/_MEI",
+                    "LD_LIBRARY_PATH_ORIG": "/opt/lib",
+                },
+            )
 
     assert captured_kwargs["env"] == {
         "KEEP": "yes",
         "LD_LIBRARY_PATH": "/opt/lib",
     }
+    assert service.snapshot().active == 0
 
 
 def test_posix_spawn_shutdown_race_terminates_but_quarantines_without_tree_proof(
@@ -162,7 +165,8 @@ def test_posix_spawn_shutdown_race_terminates_but_quarantines_without_tree_proof
         "signal",
         SimpleNamespace(SIGTERM=sigterm, SIGKILL=sigkill),
     )
-    monkeypatch.setattr(owned_process_module.subprocess, "Popen", _popen)
+    monkeypatch.setattr(service, "_start_transport", lambda _job: (_popen(), None))
+    monkeypatch.setattr(service, "_preflight_posix_target", lambda *_args: None)
 
     with pytest.raises(OwnedProcessShutdownError):
         service.spawn(["fake"], cwd=tmp_path, allow_queue=False)

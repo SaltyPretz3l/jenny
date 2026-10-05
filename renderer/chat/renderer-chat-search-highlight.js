@@ -202,7 +202,7 @@
         return cached.text;
       }
       var template = doc.createElement('template');
-      template.innerHTML = String(isUser ? render(source, { breaks: true }) : render(strip ? strip(source) : source));
+      template.innerHTML = String(isUser ? render(source, { breaks: true, literalBackslashes: true }) : render(strip ? strip(source) : source));
       var text = collectSearchableText(template.content).text;
       if (messageId) {
         cache.delete(messageId);

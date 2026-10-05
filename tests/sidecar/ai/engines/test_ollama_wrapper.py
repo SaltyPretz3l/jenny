@@ -2260,3 +2260,32 @@ def test_generate_with_tools_records_tool_payload_bytes(monkeypatch) -> None:
     snapshot = store.snapshot()
     assert snapshot["provider_tool_payload_bytes"] > 0
     engine.clear_request_context(request_id="req_payload_bytes")
+
+
+def test_warmup_failure_is_a_warning_unless_a_swap_aborted_it(monkeypatch, caplog) -> None:
+    # A model that fails to load during warmup used to leave only a DEBUG line,
+    # so the app looked healthy until the first message failed.
+    engine = _build_engine()
+
+    def failing_post(_endpoint, _data, timeout=0):
+        raise RuntimeError("model requires more system memory")
+
+    monkeypatch.setattr(engine, "_post", failing_post)
+    with caplog.at_level("DEBUG"):
+        thread = engine._warmup_model_async("test-model")
+        thread.join(timeout=5)
+    failed = [r for r in caplog.records if "warmup failed" in r.getMessage()]
+    assert [r.levelname for r in failed] == ["WARNING"]
+
+    caplog.clear()
+
+    def aborted_post(_endpoint, _data, timeout=0):
+        engine._warmup_stop.set()
+        raise RuntimeError("aborted")
+
+    monkeypatch.setattr(engine, "_post", aborted_post)
+    with caplog.at_level("DEBUG"):
+        thread = engine._warmup_model_async("test-model")
+        thread.join(timeout=5)
+    failed = [r for r in caplog.records if "warmup failed" in r.getMessage()]
+    assert [r.levelname for r in failed] == ["DEBUG"]

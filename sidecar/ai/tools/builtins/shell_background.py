@@ -27,6 +27,7 @@ from sidecar.ai.error_codes import (
 from sidecar.ai.tools.builtins import owned_process as _owned_process
 from sidecar.ai.tools.builtins import owned_process_settlement as _owned_process_settlement
 from sidecar.ai.tools.builtins.shell_background_status import (
+    BACKGROUND_JOB_CANCELLED_ERROR,
     MAX_INLINE_OUTPUT_CHARS,
     MAX_STATUS_ERROR_CHARS,
     MAX_STATUS_FILE_BYTES,
@@ -706,7 +707,7 @@ def _capture_background_terminal(
                 -1,
                 stdout,
                 stderr,
-                error="background job was cancelled",
+                error=BACKGROUND_JOB_CANCELLED_ERROR,
                 output_truncated=result.output.truncated or result.drain_incomplete,
                 output_counters=result.output.counters(),
                 cleanup_verdict=result.cleanup_verdict,

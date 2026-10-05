@@ -765,7 +765,7 @@ def _stream_generate_with_tools(
                         f"Model load stalled (no output for {current_timeout:.0f}s "
                         "while loading the model)"
                     )
-                    synthetic = "Generation timed out while loading the model."
+                    synthetic = "Generation timed out before the model produced any output."
                 else:
                     stall_reason = f"Engine stalled (no output for {current_timeout:.0f}s)"
                     synthetic = "Generation timed out due to engine inactivity."

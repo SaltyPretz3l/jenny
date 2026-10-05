@@ -14,12 +14,32 @@ import signal
 import subprocess
 import threading
 import time
+import uuid
 from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, BinaryIO, Callable, Generator, Sequence, cast
 
 from sidecar.ai.engines.base import BaseEngine, EngineMessage, clamp_timeout_to_deadline
+from sidecar.ai.engines.codex_cli_transport import (
+    _CMD_METACHARACTERS,
+    _JENNY_STRUCTURED_TRANSPORT_INSTRUCTIONS,
+    _JENNY_TRANSPORT_INSTRUCTIONS,
+    _TOOL_EVENT_REJECTION_MESSAGE,
+    _agent_message_parts,
+    _assemble_prompt,
+    _catalog_tool_names,
+    _cli_tool_event_marker,
+    _discard_output_schema,
+    _jsonl_event_counts,
+    _output_schema,
+    _output_schema_flag_rejected,
+    _parse_jsonl_output,
+    _resolves_to_batch_shim,
+    _structured_result,
+    _structured_tools_enabled,
+    _warn_batch_shim_once,
+)
 from sidecar.ai.engines.http_utils import (
     raise_if_cancelled as _raise_if_cancelled_shared,
 )
@@ -46,19 +66,6 @@ _DEFAULT_COMMAND = "codex"
 _DEFAULT_MODEL = "codex-cli/default"
 _MODEL_PREFIX = "codex-cli/"
 _CODEX_REASONING_EFFORTS = frozenset({"none", "minimal", "low", "medium", "high", "xhigh"})
-_TOOL_EVENT_MARKERS = (
-    "tool",
-    "command",
-    "exec",
-    "shell",
-    "file",
-    "mcp",
-    "browser",
-    "web",
-)
-_AGENT_MESSAGE_TYPES = frozenset({"agent_message", "assistant_message"})
-_TEXT_EVENT_MARKERS = ("agent_message", "assistant_message", "message")
-_TEXT_FIELDS = ("message", "content", "text", "delta", "output_text")
 _MAX_CODEX_OUTPUT_BYTES = 16 * 1024 * 1024
 _PIPE_READ_CHUNK_BYTES = 64 * 1024
 _PROCESS_POLL_INTERVAL_SECONDS = 0.05
@@ -66,9 +73,7 @@ _PROCESS_POLL_INTERVAL_SECONDS = 0.05
 # are small; anything past this is not a line we will ever parse, and holding it
 # would reintroduce an unbounded accumulator next to the bounded capture.
 _MAX_TRIPWIRE_LINE_BYTES = 1024 * 1024
-_TOOL_EVENT_REJECTION_MESSAGE = (
-    "Codex CLI attempted to use its own tool; Jenny tools are required"
-)
+
 
 logger = logging.getLogger(__name__)
 
@@ -174,6 +179,8 @@ class CodexCliEngine(BaseEngine):
         self._run_process = run_process or _run_codex_process
         self._loaded_model = _DEFAULT_MODEL
         self._turn_diagnostics_store: Any = None
+        # Set once a CLI too old for --output-schema rejects the flag.
+        self._structured_tools_unsupported = False
 
     @property
     def model_name(self) -> str:
@@ -241,11 +248,34 @@ class CodexCliEngine(BaseEngine):
         cancel_handle: Any = None,
         wall_clock_deadline: float | None = None,
         tools: list[dict[str, Any]] | None = None,
+        structured_out: list[GenerationResult] | None = None,
     ) -> str:
         _ = max_tokens, temperature, prompt_cache_enabled, response_format
         runtime_root = self._ensure_runtime_root()
-        args = self._build_args(runtime_root, reasoning_effort=reasoning_effort)
-        input_text = _assemble_prompt(prompt=prompt, system=system, messages=messages)
+        schema_path: Path | None = None
+
+        def run_cli() -> CodexCliProcessResult:
+            return self._run_process(
+                command=self.command,
+                args=self._build_args(
+                    runtime_root,
+                    reasoning_effort=reasoning_effort,
+                    output_schema_path=schema_path,
+                ),
+                input_text=_assemble_prompt(
+                    prompt=prompt,
+                    system=system,
+                    messages=messages,
+                    structured=schema_path is not None,
+                ),
+                cwd=runtime_root,
+                timeout_seconds=clamp_timeout_to_deadline(
+                    self.request_timeout_seconds,
+                    wall_clock_deadline,
+                ),
+                cancel_handle=cancel_handle,
+            )
+
         _raise_if_cancelled(cancel_handle)
         store = current_diagnostics_store(self)
         request_id = active_request_id(self)
@@ -271,27 +301,39 @@ class CodexCliEngine(BaseEngine):
             provider_reasoning_effort=reasoning_effort,
         )
         try:
-            result = self._run_process(
-                command=self.command,
-                args=args,
-                input_text=input_text,
-                cwd=runtime_root,
-                timeout_seconds=clamp_timeout_to_deadline(
-                    self.request_timeout_seconds,
-                    wall_clock_deadline,
-                ),
-                cancel_handle=cancel_handle,
-            )
+            schema_path = self._write_output_schema(runtime_root, tools)
+            result = run_cli()
+            if schema_path is not None and _output_schema_flag_rejected(result):
+                # clap refused the flag before any model call; retry this turn
+                # on the text bridge and stop offering the schema.
+                self._structured_tools_unsupported = True
+                _discard_output_schema(schema_path)
+                schema_path = None
+                logger.warning(
+                    "Codex CLI rejected --output-schema; using the text tool bridge.",
+                    extra={"event": "ai.engines.codex_cli.structured_tools_unsupported"},
+                )
+                result = run_cli()
             _raise_if_cancelled(cancel_handle)
             if result.exit_code != 0:
                 with suppress(RuntimeError):
                     _parse_jsonl_output(result.stdout, on_event=record_event)
                 raise RuntimeError(f"Codex CLI exited with status {result.exit_code}.")
-            content = _parse_jsonl_output(result.stdout, on_event=record_event)
+            parts = _agent_message_parts(result.stdout, on_event=record_event)
+            # A reply that is not the schema object (a CLI that ignored the
+            # schema) falls through to the text bridge below.
+            structured = (
+                _structured_result(parts, _catalog_tool_names(tools), structured_out)
+                if schema_path is not None
+                else None
+            )
+            content = structured.content if structured is not None else "".join(parts).strip()
             if content:
                 self._record_diagnostic(store, request_id, "record_first_chunk")
             # In-band tool-call markup is not visible output; count only what the user sees.
-            parsed = self._tool_result(content, tools) if tools is not None else None
+            parsed = structured or (
+                self._tool_result(content, tools) if tools is not None else None
+            )
             visible = parsed.content if parsed is not None else content
             self._record_diagnostic(
                 store, request_id, "record_buffered_visible_output",
@@ -303,6 +345,7 @@ class CodexCliEngine(BaseEngine):
             finish_reason = parsed.finish_reason if parsed is not None else "stop"
             return content
         finally:
+            _discard_output_schema(schema_path)
             if getattr(cancel_handle, "cancelled", False) is True:
                 outcome = "cancelled"
                 finish_reason = None
@@ -347,6 +390,7 @@ class CodexCliEngine(BaseEngine):
         messages: list[EngineMessage] | None = None,
         response_format: ResponseFormat | None = None,
     ) -> GenerationResult:
+        structured: list[GenerationResult] = []
         content = self._generate(
             prompt=prompt,
             max_tokens=max_tokens,
@@ -358,8 +402,9 @@ class CodexCliEngine(BaseEngine):
             response_format=response_format,
             cancel_handle=None,
             tools=tools,
+            structured_out=structured,
         )
-        return self._tool_result(content, tools)
+        return structured[0] if structured else self._tool_result(content, tools)
 
     @staticmethod
     def _tool_result(content: str, tools: list[dict[str, Any]]) -> GenerationResult:
@@ -395,6 +440,7 @@ class CodexCliEngine(BaseEngine):
         cancel_handle: Any = None,
         wall_clock_deadline: float | None = None,
     ) -> Generator[StreamChunk, None, GenerationResult]:
+        structured: list[GenerationResult] = []
         content = self._generate(
             prompt=prompt,
             max_tokens=max_tokens,
@@ -407,8 +453,9 @@ class CodexCliEngine(BaseEngine):
             cancel_handle=cancel_handle,
             wall_clock_deadline=wall_clock_deadline,
             tools=tools,
+            structured_out=structured,
         )
-        result = self._tool_result(content, tools)
+        result = structured[0] if structured else self._tool_result(content, tools)
         if result.content:
             yield result.content
         return result
@@ -418,6 +465,7 @@ class CodexCliEngine(BaseEngine):
         runtime_root: Path,
         *,
         reasoning_effort: str | None = None,
+        output_schema_path: Path | None = None,
     ) -> list[str]:
         # Pinned containment profile. Every flag here is a Jenny decision the
         # user's ~/.codex/config.toml must not be able to reopen: the CLI reads
@@ -456,6 +504,13 @@ class CodexCliEngine(BaseEngine):
             "-c",
             "tools.web_search=false",
             "-c",
+            "features.shell_tool=false",
+            "-c",
+            "features.view_image=false",
+            # features.unified_exec=false is deliberately absent: CLI 0.159.2
+            # and 0.160.0 ignore it (still reports true), so pinning it would
+            # falsely imply native exec is off. The sandbox and tripwire hold.
+            "-c",
             'sandbox_mode="read-only"',
         ]
         normalized_effort = str(reasoning_effort or "").strip().lower()
@@ -464,8 +519,46 @@ class CodexCliEngine(BaseEngine):
         custom_model = _custom_model_override(self._loaded_model)
         if custom_model:
             args.extend(["--model", custom_model])
+        if output_schema_path is not None:
+            args.extend(["--output-schema", str(output_schema_path)])
+            args.extend(
+                [
+                    "-c",
+                    "developer_instructions="
+                    + json.dumps(_JENNY_STRUCTURED_TRANSPORT_INSTRUCTIONS),
+                ]
+            )
+        elif _resolves_to_batch_shim(self.command):
+            # cmd.exe re-parses a .cmd/.bat shim's arguments and treats the
+            # angle brackets in the instructions as redirection, failing every
+            # turn. The desktop app hands over the native executable; a bare
+            # npm shim keeps working without the instruction layer.
+            _warn_batch_shim_once(self.command)
+        else:
+            args.extend(
+                ["-c", "developer_instructions=" + json.dumps(_JENNY_TRANSPORT_INSTRUCTIONS)]
+            )
         args.append("-")
         return args
+
+    def _write_output_schema(
+        self, runtime_root: Path, tools: list[dict[str, Any]] | None
+    ) -> Path | None:
+        if self._structured_tools_unsupported or not _structured_tools_enabled():
+            return None
+        names = _catalog_tool_names(tools)
+        if not names:
+            return None
+        # One file per request: concurrent turns share the runtime root.
+        path = runtime_root / f"jenny-output-schema-{uuid.uuid4().hex}.json"
+        if _resolves_to_batch_shim(self.command) and set(str(path)) & _CMD_METACHARACTERS:
+            # cmd.exe would split the path argument; keep the text bridge.
+            return None
+        try:
+            path.write_text(json.dumps(_output_schema(names)), encoding="utf-8")
+        except OSError:
+            return None
+        return path
 
     def _ensure_runtime_root(self) -> Path:
         if self.runtime_root is None:
@@ -554,19 +647,38 @@ class _CodexProcessSession:
         self._join_io(timeout=0.2)
 
     def _wait(self, timeout_seconds: float) -> None:
-        deadline = time.monotonic() + max(0.0, float(timeout_seconds))
+        started = time.monotonic()
+        deadline = started + max(0.0, float(timeout_seconds))
         while self.process.poll() is None:
             try:
                 _raise_if_cancelled(self.cancel_handle)
             except Exception:
+                self._log_interrupted("cancelled", time.monotonic() - started)
                 self.terminate()
                 raise
             self._raise_if_output_exceeded(terminate=True)
             self._raise_if_tool_event(terminate=True)
             if time.monotonic() >= deadline:
+                self._log_interrupted("request_timeout", time.monotonic() - started)
                 self.terminate()
                 raise RuntimeError("Codex CLI request timed out")
             time.sleep(_PROCESS_POLL_INTERVAL_SECONDS)
+
+    def _log_interrupted(self, reason: str, elapsed_seconds: float) -> None:
+        # The CLI streams no text, so what it had emitted when a turn was cut
+        # short is the only evidence of where it stalled. Kinds and counts only.
+        stdout = bytes(self.stdout_capture.data).decode("utf-8", errors="replace")
+        logger.info(
+            "Codex CLI turn interrupted (%s) after %.0fs",
+            reason,
+            elapsed_seconds,
+            extra={
+                "event": "ai.engines.codex_cli.interrupted",
+                "reason": reason,
+                "elapsed_seconds": round(elapsed_seconds, 1),
+                "event_counts": _jsonl_event_counts(stdout),
+            },
+        )
 
     def _raise_if_output_exceeded(self, *, terminate: bool = False) -> None:
         if not (self.stdout_capture.exceeded or self.stderr_capture.exceeded):
@@ -850,137 +962,6 @@ def _custom_model_override(model_id: str) -> str:
     if token.lower().startswith(_MODEL_PREFIX):
         token = token[len(_MODEL_PREFIX) :].strip()
     return "" if token.lower() == "default" else token
-
-
-def _assemble_prompt(
-    *,
-    prompt: str,
-    system: str,
-    messages: list[EngineMessage] | None,
-) -> str:
-    sections: list[str] = []
-    if system.strip():
-        sections.append(f"System:\n{system.strip()}")
-    if messages:
-        for message in messages:
-            role = str(message.get("role") or "user").strip() or "user"
-            content = _message_content_to_text(message.get("content"))
-            if content:
-                sections.append(f"{role}:\n{content}")
-    elif str(prompt or "").strip():
-        sections.append(f"User:\n{str(prompt).strip()}")
-    return "\n\n".join(sections)
-
-
-def _message_content_to_text(content: Any) -> str:
-    if isinstance(content, str):
-        return content.strip()
-    if isinstance(content, list):
-        parts: list[str] = []
-        for item in content:
-            if isinstance(item, dict):
-                value = item.get("text") or item.get("content")
-                if isinstance(value, str) and value.strip():
-                    parts.append(value.strip())
-            elif isinstance(item, str) and item.strip():
-                parts.append(item.strip())
-        return "\n".join(parts)
-    return "" if content is None else str(content).strip()
-
-
-def _parse_jsonl_output(
-    stdout: str, *, on_event: Callable[[dict[str, Any]], None] | None = None,
-) -> str:
-    parts: list[str] = []
-    saw_json = False
-    for raw_line in str(stdout or "").splitlines():
-        line = raw_line.strip()
-        if not line:
-            continue
-        try:
-            event = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        saw_json = True
-        if not isinstance(event, dict):
-            continue
-        if on_event is not None:
-            on_event(event)
-        _reject_cli_tool_event(event)
-        text = _extract_text(event)
-        if text:
-            parts.append(text)
-    if parts:
-        return "".join(parts).strip()
-    if saw_json:
-        raise RuntimeError("Codex CLI JSONL output did not contain an assistant message")
-    return str(stdout or "").strip()
-
-
-def _reject_cli_tool_event(event: dict[str, Any]) -> None:
-    if _cli_tool_event_marker(event):
-        raise RuntimeError(_TOOL_EVENT_REJECTION_MESSAGE)
-
-
-def _cli_tool_event_marker(event: dict[str, Any]) -> str:
-    """Return the marker that makes ``event`` a CLI-owned tool event, or ""."""
-
-    tokens = [
-        str(event.get("type") or ""),
-        str(event.get("name") or ""),
-        str(event.get("tool") or ""),
-        str(event.get("tool_name") or ""),
-        str(event.get("subtype") or ""),
-        str(event.get("event") or ""),
-    ]
-    item = event.get("item")
-    if isinstance(item, dict):
-        tokens.extend(
-            [
-                str(item.get("type") or ""),
-                str(item.get("name") or ""),
-                str(item.get("tool") or ""),
-                str(item.get("tool_name") or ""),
-                str(item.get("subtype") or ""),
-                str(item.get("command") or ""),
-            ]
-        )
-    normalized = " ".join(token.lower() for token in tokens if token)
-    for marker in _TOOL_EVENT_MARKERS:
-        if marker in normalized:
-            return marker
-    return ""
-
-
-def _extract_text(event: dict[str, Any]) -> str:
-    event_type = str(event.get("type") or "").strip().lower()
-    item = event.get("item")
-    if isinstance(item, dict):
-        item_type = str(item.get("type") or "").strip().lower()
-        if item_type in _AGENT_MESSAGE_TYPES:
-            return _first_text_value(item, ("message", "content", "text"))
-        return ""
-    if event_type and not _is_text_event_type(event_type):
-        return ""
-    text = _first_text_value(event, _TEXT_FIELDS)
-    if text:
-        return text
-    response = event.get("response")
-    return _first_text_value(response, ("output_text",)) if isinstance(response, dict) else ""
-
-
-def _is_text_event_type(event_type: str) -> bool:
-    return any(marker in event_type for marker in _TEXT_EVENT_MARKERS) or event_type.startswith(
-        "response"
-    )
-
-
-def _first_text_value(source: dict[str, Any], keys: Sequence[str]) -> str:
-    for key in keys:
-        value = source.get(key)
-        if isinstance(value, str) and value:
-            return value
-    return ""
 
 
 def _bounded_text(value: str, *, limit: int = 500) -> str:

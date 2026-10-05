@@ -78,7 +78,11 @@ const REQUIRED_SCENARIOS = Object.freeze([
 // the 29-plan-approval-document scenario only (fixture + its notes.md
 // harness-artifact documentation); every pre-existing fixture is
 // byte-identical. Rationale in docs/history/timeline-corpus-sha-ledger.md.
-const EXPECTED_CORPUS_SHA256 = '29d6a38f35db5d08d18a088b19ecf87aa1aef4feccb9c1ff1e1002021778ebb2';
+// SHA bump #8 (approval receipts, HB-038 H2, 2026-10-05): deliberate — a
+// resolved approval keeps its approval_gap row as a one-line receipt, so the
+// expected rows of scenarios 03, 04, 05 and 24 gain that row; every other
+// fixture is byte-identical.
+const EXPECTED_CORPUS_SHA256 = '3d2154835b8ee424e62ee0c4d8fe7b921957d1f101e352879fc156a5e9b17861';
 
 function readJson(filePath) {
   return JSON.parse(fs.readFileSync(filePath, 'utf8'));

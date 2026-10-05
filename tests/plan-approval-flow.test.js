@@ -177,7 +177,7 @@ test('approveToolCall passes the renderer plan object to the waiter untouched', 
   assert.equal(approveToolCall(service, 'approval', {
     decision: 'approved', feedback: 'ok', plan,
   }), true);
-  assert.deepEqual(resolved, [[true, 'approved', 'ok', plan]]);
+  assert.deepEqual(resolved, [[true, 'approved', 'ok', plan, 'once']]);
 });
 
 test('approveToolCall denies an unrecognized decision instead of approving it', () => {

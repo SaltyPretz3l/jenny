@@ -279,7 +279,7 @@ test('legacy user articles render Markdown with breaks while editing keeps raw s
     ui: { editingMessageId: 'user_markdown', editingDraftText: '**raw**\nline' },
   }).buildMessageArticleMarkup(message, [message], '', '', '', null, null);
 
-  assert.deepEqual(calls, [{ text: '**raw**\nline', options: { breaks: true } }]);
+  assert.deepEqual(calls, [{ text: '**raw**\nline', options: { breaks: true, literalBackslashes: true } }]);
   assert.match(normal, /chat-bubble chat-bubble-markdown/);
   assert.match(normal, /<strong>rendered<\/strong><br>line/);
   assert.match(editing, /\*\*raw\*\*/);

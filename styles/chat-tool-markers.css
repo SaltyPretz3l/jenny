@@ -180,6 +180,39 @@
   padding-inline-start: var(--space-5);
 }
 
+/* HB-038 H2: a resolved approval stays as one quiet line naming the decision
+   and what it covered; only the mark carries the outcome's colour. */
+.tool-approval-receipt--resolved {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.tool-approval-receipt-mark {
+  flex: 0 0 auto;
+}
+
+.approval-gap-row[data-approval-decision="allowed"] .tool-approval-receipt-mark {
+  color: var(--tl-status-ok);
+}
+
+.approval-gap-row[data-approval-decision="denied"] .tool-approval-receipt-mark {
+  color: var(--tl-status-error);
+}
+
+.tool-approval-receipt-label {
+  flex: 0 0 auto;
+  color: var(--text-secondary);
+}
+
+.tool-approval-receipt-subject {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* ── Approval batch banner (P.7) ── */
 
 .approval-batch-banner {

@@ -24,11 +24,17 @@ function makeController(overrides = {}) {
   const calls = {
     previews: [], maps: 0, reveals: [], logs: [],
     diffs: [], panels: 0, toasts: [], subscribed: 0, unsubscribed: 0,
+    reports: [], previewOptions: [],
   };
   let clock = 100_000;
   const timers = [];
   let pushRequest = null;
+  const listeners = new Map();
   const windowRef = {
+    addEventListener: (type, fn) => listeners.set(type, fn),
+    removeEventListener: (type, fn) => {
+      if (listeners.get(type) === fn) listeners.delete(type);
+    },
     setTimeout: (fn) => timers.push(fn),
     clearTimeout: (handle) => {
       const index = timers.indexOf(handle && handle.fn ? handle.fn : handle);
@@ -42,6 +48,10 @@ function makeController(overrides = {}) {
           pushRequest = listener;
           return () => { calls.unsubscribed += 1; };
         },
+        reportOutcome(payload) {
+          calls.reports.push(payload);
+          return Promise.resolve({ ok: true });
+        },
       },
     },
   };
@@ -51,7 +61,10 @@ function makeController(overrides = {}) {
     escapeHtml: (v) => String(v == null ? '' : v).replace(/[<>&"]/g, ''),
     appendClientLog: (level, event, meta) => calls.logs.push({ level, event, meta }),
     getActiveView: overrides.getActiveView || (() => 'ide'),
-    openPreview: (path) => calls.previews.push(path),
+    openPreview: (path, options) => {
+      calls.previews.push(path);
+      calls.previewOptions.push(options);
+    },
     openFileMap: () => { calls.maps += 1; },
     revealInMap: (path) => calls.reveals.push(path),
     getSessionId: overrides.getSessionId || (() => 'session-1'),
@@ -72,6 +85,8 @@ function makeController(overrides = {}) {
     controller, calls, ideMain, fireTimers,
     advance: (ms) => { clock += ms; },
     push: (payload) => pushRequest && pushRequest(payload),
+    emit: (type) => listeners.get(type)?.(),
+    listening: (type) => listeners.has(type),
     chip: () => ideMain.querySelector('.ide-presentation-chip'),
   };
 }
@@ -438,4 +453,108 @@ test('dispose unsubscribes, clears pending work, removes the chip, and blocks la
   h.controller.handleRequest({ view: 'preview', path: 'c.md' });
   h.fireTimers();
   assert.deepEqual(h.calls.previews, [], 'post-dispose requests are ignored');
+});
+
+// ── Outcome reports (workspacePresentation.reportOutcome) ──────────────────
+
+test('outcome reports: superseded coalesced request, shown, then the stage render result', (t) => {
+  const h = makeController();
+  t.after(() => h.controller.dispose());
+
+  h.controller.handleRequest({ view: 'preview', path: 'docs/a.md', request_id: 'wsp-1' });
+  h.controller.handleRequest({ view: 'preview', path: 'docs/b.md', request_id: 'wsp-2' });
+  h.fireTimers();
+  assert.deepEqual(h.calls.reports, [
+    { request_id: 'wsp-1', decision: 'superseded' },
+    { request_id: 'wsp-2', decision: 'shown' },
+  ]);
+  h.calls.previewOptions[0].onRendered({ render: 'loaded', external_scripts: 1 });
+  assert.deepEqual(h.calls.reports[2], { request_id: 'wsp-2', render: 'loaded', external_scripts: 1 });
+});
+
+test('outcome reports: prompted, Show, dismissed, and a newer chip superseding an older one', (t) => {
+  const h = makeController({ getActiveView: () => 'chat' });
+  t.after(() => h.controller.dispose());
+
+  h.controller.handleRequest({ view: 'file_map', request_id: 'wsp-1' });
+  h.fireTimers();
+  h.controller.handleRequest({ view: 'file_map', path: 'src/x.js', request_id: 'wsp-2' });
+  h.fireTimers();
+  assert.deepEqual(h.calls.reports.map((r) => `${r.request_id}:${r.decision}`), [
+    'wsp-1:prompted', 'wsp-1:superseded', 'wsp-2:prompted',
+  ]);
+
+  click(h.chip().querySelector('[data-presentation-show]'));
+  assert.deepEqual(h.calls.reports.at(-1), { request_id: 'wsp-2', decision: 'shown_by_user' });
+
+  h.controller.handleRequest({ view: 'file_map', request_id: 'wsp-3' });
+  h.fireTimers();
+  click(h.chip().querySelector('[data-presentation-dismiss]'));
+  assert.deepEqual(h.calls.reports.at(-1), { request_id: 'wsp-3', decision: 'dismissed' });
+});
+
+test('outcome reports: rejected surfaces, dropped context, and no report without a request id', (t) => {
+  let sessionId = 'session-1';
+  const h = makeController({
+    isSurfaceEnabled: (view) => view !== 'file_map',
+    getSessionId: () => sessionId,
+  });
+  t.after(() => h.controller.dispose());
+
+  h.controller.handleRequest({ view: 'file_map', request_id: 'wsp-1' });
+  assert.deepEqual(h.calls.reports, [{ request_id: 'wsp-1', decision: 'rejected' }]);
+
+  h.controller.handleRequest({
+    view: 'preview', path: 'a.md', request_id: 'wsp-2', session_id: 'session-1', workspace_id: WORKSPACE_ID,
+  });
+  sessionId = 'session-2';
+  h.fireTimers();
+  assert.deepEqual(h.calls.reports.at(-1), { request_id: 'wsp-2', decision: 'dropped' });
+
+  const before = h.calls.reports.length;
+  h.controller.handleRequest({ view: 'preview', path: 'a.md' });
+  h.fireTimers();
+  assert.equal(h.calls.reports.length, before, 'a request without a main-issued id reports nothing');
+});
+
+test('outcome reports: a chip left pending across a chat or root switch is dropped, and dispose drops the rest', (t) => {
+  let sessionId = 'session-1';
+  let workspaceId = WORKSPACE_ID;
+  const h = makeController({
+    getActiveView: () => 'chat',
+    getSessionId: () => sessionId,
+    getWorkspaceId: () => workspaceId,
+  });
+  t.after(() => h.controller.dispose());
+  h.controller.bindEvents();
+  const scoped = { session_id: 'session-1', workspace_id: WORKSPACE_ID };
+
+  h.controller.handleRequest({ view: 'preview', path: 'a.html', request_id: 'wsp-1', ...scoped });
+  h.fireTimers();
+  h.emit('jenny:focused-chat-changed');
+  assert.ok(h.chip(), 'a focus event that keeps the same chat leaves the chip');
+  sessionId = 'session-2';
+  h.emit('jenny:focused-chat-changed');
+  assert.equal(h.chip(), null);
+  assert.deepEqual(h.calls.reports.map((r) => `${r.request_id}:${r.decision}`), [
+    'wsp-1:prompted', 'wsp-1:dropped',
+  ]);
+
+  sessionId = 'session-1';
+  h.controller.handleRequest({ view: 'file_map', request_id: 'wsp-2', ...scoped });
+  h.fireTimers();
+  workspaceId = `root_${'b'.repeat(24)}`;
+  h.controller.handleContextChange();
+  assert.equal(h.chip(), null, 'the root-commit hook drops it too');
+  assert.deepEqual(h.calls.reports.at(-1), { request_id: 'wsp-2', decision: 'dropped' });
+
+  workspaceId = WORKSPACE_ID;
+  h.controller.handleRequest({ view: 'file_map', request_id: 'wsp-3', ...scoped });
+  h.fireTimers();
+  h.controller.handleRequest({ view: 'preview', path: 'b.md', request_id: 'wsp-4', ...scoped });
+  h.controller.dispose();
+  assert.equal(h.listening('jenny:focused-chat-changed'), false);
+  assert.deepEqual(h.calls.reports.slice(-3).map((r) => `${r.request_id}:${r.decision}`), [
+    'wsp-3:prompted', 'wsp-4:dropped', 'wsp-3:dropped',
+  ]);
 });

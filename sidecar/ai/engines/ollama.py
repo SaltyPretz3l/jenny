@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import http.client
 import json
+import logging
 import math
 import socket
 import threading
@@ -415,8 +416,8 @@ class OllamaEngine(_OllamaGenerationMixin, _OllamaTelemetryMixin, BaseEngine):
     def _warmup_model_async(self, name: str) -> threading.Thread:
         """Fire a minimal generate request in a background thread to force
         Ollama to load the model weights into memory immediately, in
-        parallel with the rest of sidecar boot. Fire-and-forget; failures
-        are logged at DEBUG since they are not user-facing. Returns the
+        parallel with the rest of sidecar boot. Fire-and-forget; a failure
+        is logged as a warning unless a model swap aborted it. Returns the
         thread so tests can join it.
         """
 
@@ -490,7 +491,11 @@ class OllamaEngine(_OllamaGenerationMixin, _OllamaTelemetryMixin, BaseEngine):
                 )
             except Exception as error:  # noqa: BLE001
                 duration_ms = int((time.monotonic() - started_at) * 1000)
-                logger.debug(
+                # A warmup aborted by a model swap is routine; one that failed
+                # on its own means the model did not load and belongs in the
+                # log the user can read.
+                logger.log(
+                    logging.DEBUG if stop.is_set() else logging.WARNING,
                     "OllamaEngine: warmup failed (model=%s, duration_ms=%d): %s",
                     name,
                     duration_ms,

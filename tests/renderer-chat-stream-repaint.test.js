@@ -280,7 +280,7 @@ test('live multi-tool stream: post-tool deltas keep painting, no mid-stream inte
     toolName: 'write_file',
     summary: 'Write a.md',
     input: { path: 'a.md' },
-    status: 'pending_approval',
+    status: 'requested',
   });
   await emit({
     type: 'tool_use',

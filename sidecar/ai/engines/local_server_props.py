@@ -5,6 +5,8 @@ Strip ``/v1`` because llama-server exposes that endpoint at the server root.
 from __future__ import annotations
 
 import logging
+import re
+from dataclasses import dataclass
 from typing import Any
 
 from sidecar.ai.engines.provider_http import ProviderHttpService
@@ -144,9 +146,77 @@ def context_length_from_props(props: dict[str, Any] | None) -> int | None:
     return None
 
 
+@dataclass(frozen=True)
+class ThinkingControl:
+    """How the served chat template takes a thinking level (FG-010).
+
+    ``native_effort``: the template reads ``reasoning_effort`` itself
+    (``chat_template_caps.supports_reasoning_effort``). ``toggle``: it reads
+    ``enable_thinking``, so None can turn thinking off and, without a native
+    effort, a level becomes a per-request thinking token budget.
+    """
+
+    native_effort: bool
+    toggle: bool
+
+    @property
+    def offers_levels(self) -> bool:
+        return self.native_effort or self.toggle
+
+
+def thinking_control_from_props(props: dict[str, Any] | None) -> ThinkingControl | None:
+    """Read the template's thinking control from ``/props``; None when it did not say."""
+    if not isinstance(props, dict):
+        return None
+    caps = props.get("chat_template_caps")
+    template = props.get("chat_template")
+    if not isinstance(caps, dict) and not isinstance(template, str):
+        return None
+    native_effort = isinstance(caps, dict) and caps.get("supports_reasoning_effort") is True
+    toggle = isinstance(template, str) and _template_reads_variable(template, "enable_thinking")
+    return ThinkingControl(native_effort=native_effort, toggle=toggle)
+
+
+_TEMPLATE_COMMENT_RE = re.compile(r"\{#.*?#\}", re.DOTALL)
+_TEMPLATE_TAG_RE = re.compile(r"\{\{.*?\}\}|\{%.*?%\}", re.DOTALL)
+_TEMPLATE_STRING_RE = re.compile(r"'(?:\\.|[^'\\])*'|\"(?:\\.|[^\"\\])*\"")
+
+
+def _template_reads_variable(template: str, name: str) -> bool:
+    """True when a Jinja expression or statement names ``name`` as a variable.
+
+    Comments, string literals and plain template text do not count: a
+    template that only mentions the word cannot be switched by it.
+    """
+    pattern = re.compile(rf"\b{re.escape(name)}\b")
+    body = _TEMPLATE_COMMENT_RE.sub("", template)
+    return any(
+        pattern.search(_TEMPLATE_STRING_RE.sub("", tag.group(0)))
+        for tag in _TEMPLATE_TAG_RE.finditer(body)
+    )
+
+
+def thinking_ladder(control: ThinkingControl) -> dict[str, Any] | None:
+    """The effort ladder a detected control offers, or None when it offers none.
+
+    Automatic stays the template's own default; Low, Medium and High are the
+    graded levels (native efforts, or token budgets for a toggle-only template).
+    """
+    if not control.offers_levels:
+        return None
+    return {
+        "reasoning_effort": True,
+        "reasoning_efforts": (["none"] if control.toggle else []) + ["low", "medium", "high"],
+        "default_reasoning_effort": "default",
+    }
+
+
 __all__ = [
+    "ThinkingControl",
     "context_length_from_props",
     "probe_server_modalities",
     "props_base_url",
+    "thinking_control_from_props",
+    "thinking_ladder",
     "vision_from_props",
 ]

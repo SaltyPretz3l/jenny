@@ -159,6 +159,33 @@ test('probeSetupReadiness: model_loaded=true makes runtime_ready true even witho
     'runtime_ready must be true when model_loaded===true');
 });
 
+test('probeSetupReadiness: mock-fallback readiness never counts as a loaded local model', async () => {
+  // Status shape after a failed Ollama load: the failure branch clears
+  // model_loaded, but local_runtime still carries the MockEngine's readiness.
+  const backendService = {
+    currentStatus: {
+      engine: 'ollama',
+      model: '',
+      model_loaded: false,
+      local_runtime: {
+        engine: { type: 'mock' },
+        readiness: { status: 'ready', ready: true, model_loaded: true },
+        fallback: { active: true, requested_engine: 'ollama', reason: 'connection refused' },
+      },
+    },
+    getBackendStatus: () => ({ phase: 'model_unavailable' }),
+    listModels: async () => ({ engine_type: 'ollama', available: false, data: [] }),
+  };
+
+  const probe = createSetupReadinessProbe({ getBackendService: () => backendService });
+  const result = await probe.probeSetupReadiness();
+
+  assert.equal(result.runtime_model_loaded, false);
+  assert.equal(result.runtime_ready, false);
+  assert.equal(result.local_model_available, false);
+  assert.equal(result.local_endpoint_available, false);
+});
+
 test('probeSetupReadiness: phase=starting and model_loaded=false -> runtime_ready false', async (t) => {
   let listCalls = 0;
   const backendService = {

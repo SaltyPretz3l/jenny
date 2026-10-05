@@ -16,6 +16,7 @@ function fixture() {
     async open(options) { calls.push(['open', options]); return { status: 'open' }; },
     async inspect(id) { calls.push(['inspect', id]); return { console_messages: [] }; },
     async screenshot(id, options) { calls.push(['screenshot', id, options]); return { pixels: 'transient' }; },
+    async eval(id, options) { calls.push(['eval', id, options.script]); return { status: 'evaluated', result: 1 }; },
     async close(id) { calls.push(['close', id]); return { closed: sessions.delete(id) }; },
   };
   const execution = { authority: { root_path: 'G:/captured' },
@@ -76,4 +77,18 @@ test('null roots allocate no browser and unknown cleanup retains local capacity'
   await facade.close('a');
   await assert.rejects(facade.open({ sessionId: 'b' }), /already owns/);
   assert.equal(h.sessions.size, 1);
+});
+
+test('preview observation eval is granted explicitly, runs only on the owned session, and stops on lost authority', async () => {
+  const h = fixture();
+  assert.equal(createProjectBrowserService(h.owner, h.execution).eval, undefined, 'no eval unless granted');
+  const facade = createProjectBrowserService(h.owner, h.execution, { allowEval: true });
+  const other = createProjectBrowserService(h.owner, h.execution, { allowEval: true });
+  await facade.open({ sessionId: 'a' });
+  assert.deepEqual(await facade.eval('a', { script: 'return 1;' }), { status: 'evaluated', result: 1 });
+  await assert.rejects(other.eval('a', { script: 'return 2;' }), /does not belong/);
+  h.invalidate();
+  await assert.rejects(facade.eval('a', { script: 'return 3;' }), /stale/);
+  assert.deepEqual(h.calls.filter((call) => call[0] === 'eval').map((call) => call[2]), ['return 1;']);
+  assert.equal(h.sessions.size, 0, 'lost authority closes the owned producer');
 });

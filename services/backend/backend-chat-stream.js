@@ -264,15 +264,20 @@ function resolvePendingApprovalEntry(service, approvalRef) {
   return matches.length === 1 ? matches[0] : null;
 }
 
-function maybeApplyAlwaysAllowPolicy(service, pending, options = {}) {
+function alwaysAllowApplies(pending, options = {}) {
   if (options?.alwaysAllow !== true
     || pending?.oneOffOnly === true || pending?.one_off_only === true) {
+    return false;
+  }
+  const toolName = String(pending?.toolName || '').trim();
+  return Boolean(toolName) && !NEVER_PERSIST_ALWAYS_ALLOW.has(toolName);
+}
+
+function maybeApplyAlwaysAllowPolicy(service, pending, options = {}) {
+  if (!alwaysAllowApplies(pending, options)) {
     return;
   }
   const toolName = String(pending?.toolName || '').trim();
-  if (!toolName || NEVER_PERSIST_ALWAYS_ALLOW.has(toolName)) {
-    return;
-  }
   const permissionStore = service?.toolPermissionStore || service?.toolExecutor?._permissionStore || null;
   let policyUpdated = false;
   if (permissionStore && (
@@ -413,7 +418,10 @@ function approveToolCall(service, approvalRef, options = {}) {
   }
   const decision = requestedDecision;
   const feedback = String(options?.feedback || '').trim().slice(0, 800);
-  entry.pending.resolve(true, decision, feedback, options?.plan);
+  // Recorded on the resolution so the chat's receipt can say "Always allowed"
+  // (HB-038 H2); the policy write below stays a side effect of this decision.
+  const scope = alwaysAllowApplies(entry.pending, options) ? 'always' : 'once';
+  entry.pending.resolve(true, decision, feedback, options?.plan, scope);
   service.pendingToolApprovals.delete(entry.key);
   try {
     maybeApplyAlwaysAllowPolicy(service, entry.pending, options);

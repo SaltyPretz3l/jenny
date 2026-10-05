@@ -7,113 +7,22 @@
  * ALWAYS close, all inside a single call. Workspace files only, network off
  * (strict workspace-only URL posture), no caller-script evaluation ever. */
 
-const fs = require('node:fs');
-const os = require('node:os');
 const path = require('node:path');
 const { describe, test } = require('node:test');
 const assert = require('node:assert/strict');
 
-const { createPreviewTestTool } = require('../services/tools/builtin/preview-test-tool');
+const { cleanupTrackedResources } = require('./helpers/resource-cleanup');
 const {
-  cleanupTrackedResources,
-  trackDirectory,
-} = require('./helpers/resource-cleanup');
+  callsOf,
+  makeContext,
+  makeTool,
+  makeWorkspace,
+  stubService,
+} = require('./helpers/preview-test-tool-fixture');
 
 test.afterEach(async () => {
   await cleanupTrackedResources();
 });
-
-function makeWorkspace() {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-preview-test-'));
-  trackDirectory(root);
-  fs.writeFileSync(path.join(root, 'index.html'), '<!doctype html><title>t</title>', 'utf8');
-  fs.writeFileSync(path.join(root, 'notes.md'), '# nope', 'utf8');
-  return fs.realpathSync(root);
-}
-
-function stubService(overrides = {}) {
-  const calls = [];
-  const service = {
-    calls,
-    async open(options) {
-      calls.push(['open', options]);
-      if (overrides.openError) {
-        throw overrides.openError;
-      }
-      return overrides.openResult || {
-        session_id: options.sessionId,
-        console_messages: [],
-        page_errors: [],
-      };
-    },
-    async click(sessionId, options) {
-      calls.push(['click', sessionId, options]);
-      return overrides.clickResult || { status: 'clicked' };
-    },
-    async type(sessionId, options) {
-      calls.push(['type', sessionId, options]);
-      return overrides.typeResult || { status: 'typed' };
-    },
-    async inspect(sessionId) {
-      calls.push(['inspect', sessionId]);
-      if (overrides.inspectError) {
-        throw overrides.inspectError;
-      }
-      return overrides.inspectResult || { console_messages: [], page_errors: [] };
-    },
-    async screenshot(sessionId) {
-      calls.push(['screenshot', sessionId]);
-      if (overrides.screenshotError) {
-        throw overrides.screenshotError;
-      }
-      return overrides.screenshotResult || {
-        buffer: Buffer.from('png'),
-        width: 2,
-        height: 2,
-        thumbnail: null,
-      };
-    },
-    async eval(sessionId, options) {
-      calls.push(['eval', sessionId, options]);
-      throw new Error('preview_test must never evaluate caller scripts');
-    },
-    async close(sessionId) {
-      calls.push(['close', sessionId]);
-      return { closed: true };
-    },
-  };
-  return service;
-}
-
-function makeContext(root, service, overrides = {}) {
-  return {
-    browserSessionService: service,
-    workingDirectory: root,
-    pathPolicy: {
-      resolvePath(relPath) {
-        return path.resolve(root, relPath);
-      },
-      async assertInsideRoot(resolved) {
-        const real = fs.realpathSync(resolved);
-        const relative = path.relative(root, real);
-        if (relative.startsWith('..') || path.isAbsolute(relative)) {
-          throw new Error('outside root');
-        }
-        return real;
-      },
-    },
-    logger: () => {},
-    ...overrides,
-  };
-}
-
-function makeTool(overrides = {}) {
-  return createPreviewTestTool(overrides);
-}
-
-function callsOf(service, kind) {
-  return service.calls.filter(([name]) => name === kind);
-}
 
 describe('preview_test / one-shot lifecycle', () => {
   test('happy path: opens contained file url with strict posture, inspects, closes', async () => {
@@ -142,7 +51,8 @@ describe('preview_test / one-shot lifecycle', () => {
     assert.ok(order.indexOf('inspect') >= 0, 'final state is read via inspect');
     assert.equal(order[order.length - 1], 'close', 'the window is closed last');
     assert.equal(callsOf(service, 'close').length, 1);
-    assert.equal(callsOf(service, 'eval').length, 0, 'eval is never called');
+    assert.equal(callsOf(service, 'eval').length, 1, 'only the tool-owned external-resource read evaluates');
+    assert.ok(!result.content.includes('In-app preview parity'), 'no external refs, no parity line');
   });
 
   test('viewport presets map to fixed bounds', async () => {
@@ -481,6 +391,11 @@ describe('preview_test / bounded events', () => {
       result.metadata.events.map((entry) => entry.status),
       ['selector_miss', 'typed']
     );
+    // A text-only provider reads this, not the metadata: a miss must not
+    // read as a successful interaction.
+    assert.match(result.content, /applied 1 of 2 event\(s\)/);
+    assert.match(result.content, /1\. click "#go" → selector_miss/);
+    assert.match(result.content, /2\. type "#name" → typed/);
   });
 
   test('more than 10 events fails closed before any window opens', async () => {

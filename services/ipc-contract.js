@@ -113,6 +113,11 @@ const JENNY_SHELL_BRIDGE_DESCRIPTORS = Object.freeze({
   // never receive it). Payload: { view, path, request_id, source } —
   // snake_case wire keys, workspace-relative path only.
   'workspacePresentation.onRequest': subscribeMethod('workspace-presentation:request'),
+  // workspacePresentation.reportOutcome: renderer→main report of what the IDE
+  // did with one onRequest push ({ request_id, decision?, render?, detail?,
+  // external_scripts?, external_stylesheets? }). Main accepts it only for
+  // request ids it issued, behind the trusted-sender authorizer.
+  'workspacePresentation.reportOutcome': invokeMethod('workspace-presentation:report-outcome'),
   'logs.list': invokeMethod('logs:list'),
   'logs.onAppend': subscribeMethod('logs:append'),
   // Fire-and-forget renderer→main log batches mirrored into shell.log.

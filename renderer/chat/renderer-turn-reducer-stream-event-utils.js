@@ -260,6 +260,8 @@
             payload: {
               ...(approvalId ? { approval_id: approvalId } : {}),
               approval_state: normalizeToolStatus(payload && payload.approvalState) || status,
+              ...(normalizeId(payload && payload.approvalScope)
+                ? { approval_scope: normalizeId(payload.approvalScope) } : {}),
             },
           });
         } else if (status === 'running') {

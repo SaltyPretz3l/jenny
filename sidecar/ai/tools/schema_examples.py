@@ -82,7 +82,22 @@ def _select_schema_variant(schema: dict[str, Any]) -> dict[str, Any]:
     base = {key: value for key, value in schema.items() if key != "anyOf"}
     for option in any_of:
         if isinstance(option, dict):
-            return {**base, **option}
+            selected = {**base, **option}
+            # anyOf narrows the enclosing schema; a branch's required keys must
+            # add to the shared ones, not replace them.
+            required = [
+                key
+                for source in (base, option)
+                for key in (source.get("required") or [])
+                if isinstance(key, str)
+            ]
+            if required:
+                selected["required"] = list(dict.fromkeys(required))
+            base_properties = base.get("properties")
+            option_properties = option.get("properties")
+            if isinstance(base_properties, dict) and isinstance(option_properties, dict):
+                selected["properties"] = {**base_properties, **option_properties}
+            return selected
     return base
 
 

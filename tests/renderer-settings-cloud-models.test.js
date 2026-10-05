@@ -203,6 +203,32 @@ test('a change in ChatGPT visibility refreshes the Composer model list once', as
   dom.window.close();
 });
 
+// The Codex CLI login happens in a terminal and nothing pushes it: the row's
+// own re-check is the only moment the app learns its models became available.
+test('a change in Codex CLI status refreshes the Composer model list once', async () => {
+  let status = { status: 'unavailable', code: 'chatgpt_auth_required' };
+  const codexBridge = {
+    async getState() { return status; },
+    async refresh() { return status; },
+  };
+  const { dom, host, controller } = harness({ async getState() { return cloudState(); } }, codexBridge);
+  const refreshes = [];
+  dom.window.rendererSnapshotRefresh = { instance: { refreshSnapshots: async (options) => { refreshes.push(options); } } };
+  controller.bind();
+  await settle();
+  assert.equal(refreshes.length, 0, 'the first read only seeds the status');
+  click(dom, host, 'cloudModelsCodexRefresh');
+  await settle();
+  assert.equal(refreshes.length, 0, 'an unchanged re-check does not refresh');
+  status = { status: 'ready', code: 'ready' };
+  click(dom, host, 'cloudModelsCodexRefresh');
+  await settle();
+  assert.equal(host.querySelector('[data-settings-field="cloudModelsCodexCli"]').dataset.cloudCodexState, 'ready');
+  assert.equal(refreshes.length, 1, 'the login becoming ready refreshes');
+  controller.dispose();
+  dom.window.close();
+});
+
 test('Codex CLI states map to ready, signed out and unavailable', () => {
   assert.equal(normalizeCodexState({ status: 'ready', code: 'ready' }).status, 'ready');
   assert.equal(normalizeCodexState({ status: 'unavailable', code: 'chatgpt_auth_required' }).status, 'signed_out');

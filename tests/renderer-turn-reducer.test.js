@@ -378,10 +378,12 @@ test('reducer tracks approval state transitions on the tool_call row', () => {
     tool_result_message_id: 'tool_result_call-approval',
   });
 
+  // HB-038 H2: the resolved approval stays as its receipt; a call that ran was allowed.
   assert.deepEqual(
     turn.rows.map((row) => row.kind),
-    ['tool_call', 'tool_result']
+    ['tool_call', 'approval_gap', 'tool_result']
   );
+  assert.equal(turn.rows[1].payload.decision, 'allowed');
   const toolCallRow = turn.rows.find((row) => row.kind === 'tool_call');
   assert.equal(toolCallRow.payload.state, 'completed');
   // Two entries: the pending_approval tool_use and the tool_approval_needed
@@ -489,7 +491,7 @@ test('reducer emits a single standalone approval_gap row while a tool awaits app
   );
 });
 
-test('reducer removes the approval_gap row when the approval resolves, with intact index repair', () => {
+test('reducer keeps the approval_gap row as a receipt when the approval resolves (HB-038 H2)', () => {
   const state = createTurnReducerState();
 
   applyPayload(state, { type: 'started', streamId: 'stream-batch5' });
@@ -503,8 +505,7 @@ test('reducer removes the approval_gap row when the approval resolves, with inta
     approvalId: 'appr-A',
     summary: 'Edit file A',
   }, { primary_tool_message_id: 'tool_use_call-A' });
-  // A second, unrelated tool starts running AFTER the gap row, so call-B's
-  // row-index sits past the gap and must be repaired when the gap is spliced.
+  // An unrelated call-B starts AFTER the gap row; its row index must survive the settle.
   applyPayload(state, {
     type: 'tool_use',
     streamId: 'stream-batch5',
@@ -521,7 +522,7 @@ test('reducer removes the approval_gap row when the approval resolves, with inta
     'gap row sits between the two tool_call rows before resolution'
   );
 
-  // Resolve call A (approved → running): the gap row is spliced out.
+  // Resolve call A (approved → running): the gap row becomes its receipt.
   applyPayload(state, {
     type: 'tool_use',
     streamId: 'stream-batch5',
@@ -532,11 +533,10 @@ test('reducer removes the approval_gap row when the approval resolves, with inta
   }, { primary_tool_message_id: 'tool_use_call-A' });
 
   turn = state.turns_by_id['stream-batch5'];
-  assert.equal(turn.rows.filter((row) => row.kind === 'approval_gap').length, 0, 'gap row removed once the call leaves awaiting_approval');
-  assert.deepEqual(turn.rows.map((row) => row.kind), ['tool_call', 'tool_call']);
+  assert.deepEqual(turn.rows.map((row) => row.kind), ['tool_call', 'approval_gap', 'tool_call']);
+  assert.deepEqual([turn.rows[1].payload.state, turn.rows[1].payload.decision], ['resolved', 'allowed']);
 
-  // Index repair check: call-B's tool_result must still reconcile to its existing
-  // row (not create a duplicate) after the gap splice shifted indices.
+  // call-B's tool_result must still reconcile to its existing row.
   turn = applyPayload(state, {
     type: 'tool_result',
     streamId: 'stream-batch5',
@@ -548,12 +548,12 @@ test('reducer removes the approval_gap row when the approval resolves, with inta
     primary_tool_message_id: 'tool_use_call-B',
     tool_result_message_id: 'tool_result_call-B',
   });
-  assert.equal(turn.rows.filter((row) => row.kind === 'tool_call').length, 2, 'no duplicate tool_call row for B after the splice');
+  assert.equal(turn.rows.filter((row) => row.kind === 'tool_call').length, 2, 'no duplicate tool_call row for B after the settle');
   const callBRow = turn.rows.find((row) => row.kind === 'tool_call' && row.tool_call_id === 'call-B');
   assert.equal(callBRow.payload.state, 'completed', 'call-B reconciled to completed via the repaired index');
 });
 
-test('reducer removes the approval_gap row when an approval is denied', () => {
+test('reducer settles the approval_gap row as a Denied receipt when an approval is denied', () => {
   const state = createTurnReducerState();
 
   applyPayload(state, { type: 'started', streamId: 'stream-batch5' });
@@ -580,7 +580,8 @@ test('reducer removes the approval_gap row when an approval is denied', () => {
     summary: 'Edit file',
   }, { primary_tool_message_id: 'tool_use_call-deny' });
 
-  assert.equal(turn.rows.filter((row) => row.kind === 'approval_gap').length, 0, 'denied resolution retracts the gap row');
+  const gapRows = turn.rows.filter((row) => row.kind === 'approval_gap');
+  assert.deepEqual(gapRows.map((row) => [row.payload.state, row.payload.decision]), [['resolved', 'denied']]);
   const toolCallRow = turn.rows.find((row) => row.kind === 'tool_call');
   assert.equal(toolCallRow.payload.state, 'denied');
 });
@@ -648,10 +649,10 @@ test('reducer abandons approved tool rows when later assistant text proves execu
 
   assert.deepEqual(
     turn.rows.map((row) => row.kind),
-    ['tool_call', 'assistant_text']
+    ['tool_call', 'approval_gap', 'assistant_text'] // an approved answer keeps its receipt
   );
   assert.equal(turn.rows[0].payload.state, 'abandoned');
-  assert.equal(turn.rows[1].payload.text, 'That path did not finish, so I am continuing another way.');
+  assert.equal(turn.rows[2].payload.text, 'That path did not finish, so I am continuing another way.');
 });
 
 test('reducer keeps approved tool rows queued when phase lifecycle events add no reasoning entries', () => {
@@ -681,7 +682,7 @@ test('reducer keeps approved tool rows queued when phase lifecycle events add no
 
   assert.deepEqual(
     turn.rows.map((row) => row.kind),
-    ['tool_call']
+    ['tool_call', 'approval_gap'] // an approved answer keeps its receipt
   );
   assert.equal(turn.rows[0].payload.state, 'approved');
 });

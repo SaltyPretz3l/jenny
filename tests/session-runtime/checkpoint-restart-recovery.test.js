@@ -147,6 +147,75 @@ function reconcile(restarted) {
   return recoverPublishedRuntimeContinuations({ ...restarted });
 }
 
+// HB-040: needs_attention work with a stop or pause intent and no published
+// checkpoint used to stay "stop requested, cleaning up" across every restart.
+function interruptedWithoutCheckpoint(t, kind) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-interrupted-retire-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const route = captureRuntimeRoute({ engine_type: 'chatgpt', provider_id: 'chatgpt',
+    configuration_revision: 'config:1', resource_class: 'cloud', requires_gpu: false });
+  const store = new RuntimeStore(path.join(root, 'runtime'));
+  const submitted = store.submit({ idempotencyKey: `submit_${kind}`, projectId: 'general',
+    sessionId: 'session_1', purpose: 'chat_turn', input: { route,
+      request: { prompt: 'Run the suite.', attachments: [] } },
+    authority: { project_id: 'general', root_path: null, root_id: null, root_revision: 0,
+      device_id: null, inode: null }, workId: `work_${kind}`, turnId: 'turn_1' }).record;
+  const attempt = { attempt_id: 'attempt_1', stream_id: 'stream_1',
+    incarnation: 'runtime_incarnation_1', authority_revision: 'authority_1' };
+  const running = store.transition(submitted.work_id, { expectedRevision: submitted.revision,
+    to: 'running', reason: 'dispatch', attempt }).record;
+  // A pause is requested while running; shutdown records its stop on the
+  // already-parked work (the shape of the dogfood record).
+  let current = running;
+  if (kind === 'pause') {
+    current = store.requestPause(current.work_id, { expectedRevision: current.revision,
+      expectedAttempt: attempt, reason: 'user' }).record;
+  }
+  const parked = store.transition(current.work_id, { expectedRevision: current.revision,
+    expectedAttempt: attempt, to: 'needs_attention', reason: 'settlement_unconfirmed' }).record;
+  if (kind === 'cancel') {
+    store.requestCancellation(parked.work_id, { expectedRevision: parked.revision,
+      expectedAttempt: attempt, reason: 'app_shutdown' });
+  }
+  store.dispose?.();
+  return { root, workId: parked.work_id };
+}
+
+function restartWithoutCheckpoint(root, activeTurn = null) {
+  const runtimeStore = new RuntimeStore(path.join(root, 'runtime'));
+  const counts = recoverPublishedRuntimeContinuations({ runtimeStore,
+    checkpointStore: { findCommittedForWork: () => ({ status: 'none' }) },
+    conversationStore: { resolvePendingContinuation: () => null },
+    sessionStore: { getSession: () => null, getActiveTurn: () => activeTurn },
+    journal: { list: () => [] },
+    actorRegistry: { blockCheckpointOrphan() {}, pauseRecoveredCheckpoint() {}, settleCheckpointOrphan() {} },
+    activeStreams: new Map() });
+  return { runtimeStore, counts };
+}
+
+for (const [kind, expected] of [['cancel', 'cancelled'], ['pause', 'failed']]) {
+  test(`restart retires needs_attention work with a ${kind} intent and no checkpoint as ${expected}`, t => {
+    const { root, workId } = interruptedWithoutCheckpoint(t, kind);
+    const before = new RuntimeStore(path.join(root, 'runtime'));
+    assert.equal(before.get(workId).status, 'needs_attention');
+    before.dispose?.();
+
+    const { runtimeStore, counts } = restartWithoutCheckpoint(root);
+    assert.deepEqual(counts, { recovered: 0, blocked: 0, ordinary: 1 });
+    const retired = runtimeStore.get(workId);
+    assert.equal(retired.status, expected);
+    assert.equal(retired.transition.reason, 'restart_retired');
+    // Mutation-journal recovery still finds the intent on the terminal record.
+    assert.equal(retired.control_request.kind, kind);
+  });
+}
+
+test('an active turn for the parked attempt keeps needs_attention work in place', t => {
+  const { root, workId } = interruptedWithoutCheckpoint(t, 'cancel');
+  const { runtimeStore } = restartWithoutCheckpoint(root, { turn_id: 'turn_1', stream_id: 'stream_1' });
+  assert.equal(runtimeStore.get(workId).status, 'needs_attention');
+});
+
 test('restart converts a committed checkpoint orphan into a resumable paused record', async t => {
   const f = await publishedCrashFixture(t);
   assert.equal(f.sessionStore.getActiveTurn(f.sessionId).stream_id, f.attempt.stream_id);

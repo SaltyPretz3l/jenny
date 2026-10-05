@@ -8,8 +8,10 @@ from typing import Any
 
 from sidecar.ai.engines.base import BaseEngine, ModelModality
 from sidecar.ai.engines.local_server_props import (
+    ThinkingControl,
     context_length_from_props,
     probe_server_modalities,
+    thinking_control_from_props,
     vision_from_props,
 )
 from sidecar.ai.engines.model_name import (
@@ -138,6 +140,7 @@ class VLLMEngine(_VLLMGenerationMixin, _VLLMTelemetryMixin, BaseEngine):
         self.model_name: str | None = None
         self._context_length: int | None = None
         self._served_context_length: int | None = None
+        self._served_thinking_control: ThinkingControl | None = None
         self._thinking = False
         self._vision = False
         self._turn_diagnostics_store: Any | None = None
@@ -220,17 +223,24 @@ class VLLMEngine(_VLLMGenerationMixin, _VLLMTelemetryMixin, BaseEngine):
 
             self.model_name = matched
             self._context_length = self._extract_context_length(models, matched)
-            self._thinking = self._detect_thinking(matched)
             props = probe_server_modalities(base_url=self._base_url, headers=self._headers)
             props_vision = vision_from_props(props)
             self._served_context_length = context_length_from_props(props)
+            self._served_thinking_control = thinking_control_from_props(props)
+            served_thinking = bool(
+                self._served_thinking_control and self._served_thinking_control.offers_levels
+            )
+            self._thinking = self._detect_thinking(matched) or served_thinking
             self._vision = (
                 props_vision if props_vision is not None else self._detect_vision(matched)
             )
             self._local_runtime_capability_sources = {
                 "text": "engine_default",
                 "tool_calling": "engine_default",
-                "thinking": "model_name" if self._thinking else "unsupported",
+                "thinking": (
+                    "model_name" if self._detect_thinking(matched)
+                    else "server_props" if served_thinking else "unsupported"
+                ),
                 "vision": "server_props" if props_vision is not None else "model_name",
             }
             self._ready = True
@@ -293,6 +303,7 @@ class VLLMEngine(_VLLMGenerationMixin, _VLLMTelemetryMixin, BaseEngine):
         self._ready = False
         self._context_length = None
         self._served_context_length = None
+        self._served_thinking_control = None
         self._thinking = False
         self._vision = False
         self._local_runtime_capability_sources = {

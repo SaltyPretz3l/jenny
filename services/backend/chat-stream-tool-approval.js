@@ -142,7 +142,7 @@ async function waitForApproval(service, streamId, sessionId, requestId, params, 
     let timeoutId;
     let detachDecision = null;
     const handleAbort = () => finish(false, approvalStateFromAbortSignal(controller));
-    const finish = (approved, approvalState = 'denied', feedback = '', plan = null) => {
+    const finish = (approved, approvalState = 'denied', feedback = '', plan = null, scope = '') => {
       if (settled) {
         return;
       }
@@ -159,6 +159,7 @@ async function waitForApproval(service, streamId, sessionId, requestId, params, 
       const resolvedState = planDocuments.resolvePlanApprovalState(Boolean(approved), approvalState);
       // An approval whose decision resolved to 'denied' (unknown decision) fails closed.
       const normalizedApproved = Boolean(approved) && resolvedState !== 'denied';
+      const approvalScope = normalizedApproved && (scope === 'always' || scope === 'once') ? scope : '';
       // Everything above is unconditional teardown, so the waiter can never
       // be re-entered. Everything below is fallible bookkeeping; a throw here
       // is logged and swallowed, and resolve() always runs in `finally`
@@ -176,11 +177,13 @@ async function waitForApproval(service, streamId, sessionId, requestId, params, 
           turnId: turnEventCollector?.turnId || streamId,
           callId, approvalId, ...(policyDecisionId ? { policyDecisionId } : {}),
           toolName, input: persistedInputSnapshot.input, summary, status: resolvedState,
+          ...(approvalScope ? { approvalScope } : {}),
         });
         noteTurnEvent(null, () => buildApprovalCanonicalEvent({
           streamId, sessionId, callId, type: 'tool_approval_resolved',
           payload: {
             approval_id: approvalId, approval_state: resolvedState, approved: normalizedApproved,
+            ...(approvalScope ? { approval_scope: approvalScope } : {}),
             ...(policyDecisionId ? { policy_decision_id: policyDecisionId } : {}), tool_name: toolName,
           },
         }));

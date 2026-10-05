@@ -751,6 +751,7 @@
       captureReaderAnchor: captureReaderAnchor,
       dispose: dispose,
       handleNativeScroll: handleNativeScroll,
+      isStreaming: readStreamingState,
       markUserIntent: markUserIntent,
       noteExplicitNavigation: noteExplicitNavigation,
       noteProgrammaticWrite: noteProgrammaticWrite,

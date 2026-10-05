@@ -61,6 +61,8 @@
   // from what kindOf() actually accepts.
   const SUPPORTED_LABEL = jt('ide.previewStage.supportedFormats', 'Markdown ({markdownExtensions}) and self-contained HTML ({htmlExtensions})', { markdownExtensions: [...MARKDOWN_EXTENSIONS].map((ext) => `.${ext}`).join(', '), htmlExtensions: [...HTML_EXTENSIONS].map((ext) => `.${ext}`).join(', ') });
   const MAX_PREVIEW_BYTES = 1_500_000;
+  // Render-outcome wire codes for workspacePresentation.reportOutcome (not UI copy).
+  const RENDER_DETAIL = Object.freeze({ frameFailed: 'frame_failed', unsupported: 'unsupported' });
   const previewUtf8Encoder = new globalRef.TextEncoder();
   const MARKDOWN_DEBOUNCE_MS = 200;
   // HTML rebuilds replace the sandboxed iframe (its handshake is async), so
@@ -97,6 +99,38 @@
     let debounceTimer = null;
     let diskRevisionPath = '';
     let diskRevision = 0;
+    // One pending render report for a workspace_present open(): settled by the
+    // next render of that exact path (or replaced by a newer open()).
+    let renderReport = null;
+
+    function settleRenderReport(path, outcome) {
+      if (!renderReport || renderReport.path !== path) {
+        return;
+      }
+      const { callback } = renderReport;
+      renderReport = null;
+      try {
+        callback(outcome);
+      } catch (_error) { /* reporter owns its failures */ }
+    }
+
+    // External references the sandboxed frame never loads. DOMParser builds an
+    // inert document (no script runs, nothing fetches), so counting is safe.
+    function countExternalResources(text) {
+      const Parser = windowRef.DOMParser || globalRef.DOMParser;
+      if (typeof Parser !== 'function') {
+        return {};
+      }
+      try {
+        const doc = new Parser().parseFromString(text, 'text/html');
+        return {
+          external_scripts: doc.querySelectorAll('script[src]').length,
+          external_stylesheets: doc.querySelectorAll('link[rel~="stylesheet" i][href]').length,
+        };
+      } catch (_error) {
+        return {};
+      }
+    }
 
     function extensionOf(path) {
       return typeof ideStateUtils.fileExtensionOf === 'function'
@@ -176,6 +210,7 @@
     // Bounded state card. Every non-render outcome routes here — nothing
     // unsupported/binary/oversized is ever injected into a renderer.
     function renderState(path, stateKind, message) {
+      settleRenderReport(path, { render: 'failed', detail: stateKind });
       renderBar(path, '', '');
       if (!bodyEl) {
         return;
@@ -269,6 +304,9 @@
     }
 
     async function renderPath(path) {
+      if (renderReport && renderReport.path !== path) {
+        settleRenderReport(renderReport.path, { render: 'cancelled' });
+      }
       const token = ++renderToken;
       const requestSignature = path ? signatureFor(path) : 'empty';
       pendingRequestSignature = requestSignature;
@@ -329,6 +367,7 @@
         bodyEl.innerHTML = `<div class="ide-preview-content">${buildMarkdownHtml(path, text)}</div>`;
         // The chat's lazy mermaid pass (single shared runtime).
         markdownUtils.renderInlineMermaidBlocks?.(bodyEl.firstElementChild, { isStreaming: false });
+        settleRenderReport(path, { render: 'loaded' });
         return;
       }
       // kind === 'html': strict sandboxed iframe only. The frame factory owns
@@ -341,13 +380,24 @@
         renderState(path, 'unavailable', jt('ide.previewStage.frameUnavailable', 'The sandboxed HTML preview frame is unavailable in this build.'));
         return;
       }
+      const externalResources = renderReport?.path === path ? countExternalResources(text) : {};
       frameHandle = frameUtils.createHtmlArtifactFrame(frameHost, text, {
         requestKey: path,
         sizing: 'fill',
+        onSuccess: () => {
+          if (!disposed && token === renderToken) {
+            settleRenderReport(path, { render: 'loaded', ...externalResources });
+          }
+        },
         onFailure: (payload) => {
           if (disposed || token !== renderToken) {
             return;
           }
+          settleRenderReport(path, {
+            render: 'failed',
+            detail: typeof payload?.error === 'string' ? payload.error.trim().slice(0, 200) : RENDER_DETAIL.frameFailed,
+            ...externalResources,
+          });
           // Relay the frame's own error text (script exceptions, staging
           // failures) so a broken artifact names its defect instead of the
           // generic card. renderState escapes the whole message — the text is
@@ -362,13 +412,30 @@
 
     // Explicit open (context menu, workspace_present): pin the target and
     // bring the Preview surface on stage. Returns the normalized target.
-    function open(path) {
+    // options.onRendered (workspace_present) receives the render outcome of
+    // this open — { render: 'loaded'|'failed'|'replaced', detail?,
+    // external_scripts?, external_stylesheets? } — and forces a fresh render
+    // so the report describes the content on disk now, not a cached frame.
+    function open(path, options = {}) {
       if (disposed) {
         return '';
       }
       const applied = typeof ideStateUtils.setPreviewPath === 'function'
         ? ideStateUtils.setPreviewPath(getIde(), path)
         : '';
+      if (typeof options?.onRendered === 'function') {
+        if (renderReport) {
+          const { callback } = renderReport;
+          renderReport = null;
+          try { callback({ render: 'replaced' }); } catch (_error) { /* reporter owns its failures */ }
+        }
+        if (applied && isPreviewablePath(applied)) {
+          renderReport = { path: applied, callback: options.onRendered };
+          lastRequestedSignature = '';
+        } else {
+          try { options.onRendered({ render: 'failed', detail: RENDER_DETAIL.unsupported }); } catch (_error) { /* reporter owns its failures */ }
+        }
+      }
       schedulePersist();
       activateStage('preview');
       return applied;
@@ -435,6 +502,7 @@
     }
 
     function handleWorkspaceRootCommitted() {
+      if (renderReport) settleRenderReport(renderReport.path, { render: 'cancelled' });
       renderToken += 1;
       getFileOperations()?.cancelPreviewIntents?.();
       lastRenderedSignature = '';
@@ -450,6 +518,7 @@
         return;
       }
       disposed = true;
+      if (renderReport) settleRenderReport(renderReport.path, { render: 'cancelled' });
       renderToken += 1;
       getFileOperations()?.cancelPreviewIntents?.();
       if (debounceTimer) {

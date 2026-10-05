@@ -19,7 +19,11 @@ from sidecar.ai.tools.builtins.file_state import (
 )
 from sidecar.ai.tools.builtins.shell_command_split import cmd_exe_multiline_refusal
 from sidecar.ai.tools.builtins.shell_security import CommandVerdict, classify_command
-from sidecar.ai.tools.contracts import ToolExecutionFailure, validate_tool_arguments
+from sidecar.ai.tools.contracts import (
+    ToolExecutionFailure,
+    validate_descriptor_arguments,
+    validate_tool_arguments,
+)
 from sidecar.ai.tools.models import GenerationResult, ToolCallRequest
 from sidecar.ai.tools.sanitization import (
     sanitize_tool_output,
@@ -55,6 +59,7 @@ __all__ = [
     "read_snapshot_from_metadata",
     "sanitize_tool_output",
     "scan_tool_arguments",
+    "validate_descriptor_arguments",
     "validate_tool_arguments",
     "wrap_untrusted_tool_output",
 ]

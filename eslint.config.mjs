@@ -21,6 +21,9 @@ export default [
       // Owner-gate evidence (gitignored): captured profiles, venvs and sample
       // projects from real-app gate runs, not Jenny source.
       "build/gate-evidence/**",
+      // Runtime diagnostics and QA evidence bundles (gitignored), which can
+      // hold apps a tester built through Jenny; not Jenny source.
+      ".jenny-diagnostics/**",
       "locales/**",
       "node_modules/**",
       // Generated sandboxed preload bundle (gitignored; rebuilt by

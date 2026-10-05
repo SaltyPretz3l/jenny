@@ -81,3 +81,29 @@ test('the collector degrades to safe no-ops when a module factory yields nothing
     }
   );
 });
+
+test('a workspace root commit lets the presentation controller drop a stale chip', () => {
+  const prev = globalThis.rendererWorkspacePresentationController;
+  let contextChanges = 0;
+  globalThis.rendererWorkspacePresentationController = {
+    createWorkspacePresentationController: () => ({
+      bindEvents() {},
+      dispose() {},
+      handleContextChange: () => { contextChanges += 1; },
+    }),
+  };
+  try {
+    withStubbedModules(
+      { breadcrumbs: () => null, mru: () => null, saveHygiene: () => null },
+      () => {
+        const qol = createIdeQolWiring({ getDom: () => ({}), getIde: () => ({}) });
+        qol.handleWorkspaceRootCommitted({ context: { rootId: 'root_x' } });
+        assert.equal(contextChanges, 1);
+        qol.disposeAll();
+      }
+    );
+  } finally {
+    if (prev === undefined) delete globalThis.rendererWorkspacePresentationController;
+    else globalThis.rendererWorkspacePresentationController = prev;
+  }
+});

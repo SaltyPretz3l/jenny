@@ -1,7 +1,7 @@
 """Bounded, contained ownership for sidecar tool subprocesses.
 
-Every process started here owns a concurrency lease, a POSIX process group or
-Windows Job Object, and concurrent bounded drains for stdout and stderr.  The
+Every process started here owns a concurrency lease, a supervised POSIX process
+group or Windows Job Object, and concurrent bounded drains for stdout and stderr.  The
 service never calls ``communicate()`` and never retains more than the configured
 aggregate capture budget, while still counting all drained bytes.
 """
@@ -9,16 +9,30 @@ aggregate capture budget, while still counting all drained bytes.
 from __future__ import annotations
 
 import atexit
+import errno
 import logging
 import os
+import select
+import shutil
 import signal
 import subprocess
+import sys
 import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import IO, Callable, Mapping, Sequence
 
+from sidecar._owned_process_supervisor import (
+    LINEAGE_CONTAINMENT,
+    PROOF_BYTE,
+    READY_FD_ENVIRONMENT_VARIABLE,
+    SAMPLED_PROOF_BYTE,
+    SUBREAPER_CONTAINMENT,
+    SUPERVISOR_TEARDOWN_MARGIN_SECONDS,
+    supervisor_command,
+    supervisor_containment,
+)
 from sidecar.ai.tools.builtins.owned_process_observation import (
     create_process_cleanup_observer,
 )
@@ -42,6 +56,10 @@ DEFAULT_MAX_QUEUED_PROCESSES = 8
 DEFAULT_QUEUE_WAIT_SECONDS = 5.0
 DEFAULT_MAX_CAPTURE_BYTES = 4 * 1024 * 1024
 DEFAULT_TERMINATION_GRACE_SECONDS = 0.5
+SUPERVISOR_READY_WAIT_SECONDS = 5.0
+_MAX_SUPERVISOR_REPORT_BYTES = 64
+# Carried on a confirmed verdict whose sweep was sampled, not kernel-proven.
+SAMPLED_LINEAGE_REASON = "sampled_lineage_best_effort"
 MIN_CAPTURE_BYTES = 2
 PIPE_READ_CHUNK_BYTES = 64 * 1024
 PIPE_DRAIN_GRACE_SECONDS = 1.0
@@ -196,11 +214,12 @@ class OwnedProcess:
     _service: OwnedProcessService
     _lease: _CapacityLease
     _cleanup_observation: CleanupObservation = field(default_factory=CleanupObservation)
-    _input_data: bytes | None = None
-    _input_writer: threading.Thread | None = None
     _output_readers: tuple[threading.Thread, ...] = ()
     _finalized: bool = False
     _finalize_lock: threading.Lock = field(default_factory=threading.Lock)
+    _supervisor_ready_fd: int | None = None
+    _supervisor_report: bytes = b""
+    _supervisor_ready_lock: threading.Lock = field(default_factory=threading.Lock)
 
 
 class OwnedProcessService:
@@ -250,17 +269,18 @@ class OwnedProcessService:
         if input_data is not None and not isinstance(input_data, bytes):
             raise TypeError("owned process input_data must be bytes or None")
         normalized_argv = tuple(str(argument) for argument in argv)
-        bootstrap_payload = None
-        if os.name == "nt" or input_data is not None:
-            # The bootstrap encoder owns the single 1 MiB launch-envelope bound.
-            # Reuse it on POSIX when input is present so the public input contract
-            # has the same explicit limit on every platform.
-            bootstrap_payload = encode_windows_bootstrap_payload(
-                normalized_argv,
-                cwd=cwd,
-                env=env,
-                input_data=input_data,
-            )
+        # The bootstrap encoder owns the single 1 MiB launch-envelope bound on
+        # every platform. On POSIX the supervisor inherits the sidecar's own
+        # environment to start, so the target's environment travels in the
+        # payload instead.
+        bootstrap_payload = encode_windows_bootstrap_payload(
+            normalized_argv,
+            cwd=cwd,
+            env=env if os.name == "nt" else external_child_environment(env),
+            input_data=input_data,
+        )
+        if os.name != "nt":
+            self._preflight_posix_target(normalized_argv, cwd, env)
         lease = self._acquire_capacity(
             allow_queue=allow_queue,
             timeout_seconds=max(0.0, float(queue_timeout_seconds)),
@@ -271,39 +291,13 @@ class OwnedProcessService:
         job_object: WindowsJobObject | None = None
         process_group_id: int | None = None
         owned: OwnedProcess | None = None
+        ready_fd: int | None = None
         try:
-            creationflags = 0
-            start_new_session = False
-            containment = "posix_process_group"
+            containment = supervisor_containment()
             if os.name == "nt":
                 job_object = WindowsJobObject()
-                creationflags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
                 containment = "windows_job_object_bootstrap"
-            else:
-                start_new_session = True
-
-            process = subprocess.Popen(
-                (
-                    windows_bootstrap_command()
-                    if job_object is not None
-                    else list(normalized_argv)
-                ),
-                cwd=None if job_object is not None else str(cwd),
-                env=(
-                    None if job_object is not None else external_child_environment(env)
-                ),
-                stdin=(
-                    subprocess.PIPE
-                    if job_object is not None or input_data is not None
-                    else subprocess.DEVNULL
-                ),
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=False,
-                bufsize=0,
-                creationflags=creationflags,
-                start_new_session=start_new_session,
-            )
+            process, ready_fd = self._start_transport(job_object)
             process_group_id = int(process.pid) if os.name != "nt" else None
             owned = OwnedProcess(
                 process=process,
@@ -314,21 +308,23 @@ class OwnedProcessService:
                 _service=self,
                 _lease=lease,
                 _cleanup_observation=cleanup_observation,
-                _input_data=input_data if job_object is None else None,
+                _supervisor_ready_fd=ready_fd,
             )
+            ready_fd = None
             with self._condition:
                 self._active[id(owned)] = owned
                 if self._shutting_down:
                     raise OwnedProcessShutdownError(
                         "owned process service is shutting down"
                     )
-            if job_object is not None:
-                self._release_bootstrap(job_object, process, bootstrap_payload)
+            self._release_bootstrap(job_object, process, bootstrap_payload)
             return owned
         except BaseException:
             if owned is not None:
                 self.cancel(owned)
             else:
+                if ready_fd is not None:
+                    os.close(ready_fd)
                 if job_object is not None:
                     try:
                         job_object.close()
@@ -346,10 +342,54 @@ class OwnedProcessService:
             raise
 
     @staticmethod
+    def _start_transport(
+        job_object: WindowsJobObject | None,
+    ) -> tuple[subprocess.Popen[bytes], int | None]:
+        """Start the trusted child that will receive the target over stdin.
+
+        Both transports run it in the sidecar's own environment. The POSIX
+        supervisor also gets the write end of a pipe on which it reports that
+        its termination handlers are installed; the read end is returned.
+        """
+        if job_object is not None:
+            return (
+                subprocess.Popen(
+                    windows_bootstrap_command(),
+                    stdin=subprocess.PIPE,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=False,
+                    bufsize=0,
+                    creationflags=getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0),
+                ),
+                None,
+            )
+        ready_fd, ready_write_fd = os.pipe()
+        try:
+            process = subprocess.Popen(
+                supervisor_command(),
+                env={**os.environ, READY_FD_ENVIRONMENT_VARIABLE: str(ready_write_fd)},
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=False,
+                bufsize=0,
+                start_new_session=True,
+                pass_fds=(ready_write_fd,),
+            )
+        except BaseException:
+            os.close(ready_fd)
+            raise
+        finally:
+            os.close(ready_write_fd)
+        return process, ready_fd
+
+    @staticmethod
     def _release_bootstrap(
-        job_object: WindowsJobObject, process: subprocess.Popen, payload: bytes | None,
+        job_object: WindowsJobObject | None, process: subprocess.Popen, payload: bytes | None,
     ) -> None:
-        job_object.assign_pid(int(process.pid))
+        if job_object is not None:
+            job_object.assign_pid(int(process.pid))
         if process.stdin is None:
             raise OwnedProcessError("owned process bootstrap pipe is unavailable")
         if payload is None:
@@ -395,11 +435,7 @@ class OwnedProcessService:
         on_output_chunk: Callable[[str, bytes], None] | None = None,
     ) -> OwnedProcessResult:
         process = owned.process
-        if (
-            process.stdout is None
-            or process.stderr is None
-            or (owned._input_data is not None and process.stdin is None)
-        ):
+        if process.stdout is None or process.stderr is None:
             self.cancel(owned)
             raise OwnedProcessError("owned process pipes are unavailable")
 
@@ -425,13 +461,6 @@ class OwnedProcessService:
                 )
             )
             owned._output_readers = tuple(readers)
-            if owned._input_data is not None:
-                if process.stdin is None:
-                    raise RuntimeError("Owned process input pipe is unavailable")
-                owned._input_writer = self._start_input_writer(
-                    process.stdin,
-                    owned._input_data,
-                )
             deadline = started_at + max(0.0, float(timeout_seconds))
             while True:
                 if abort_event is not None and abort_event.is_set():
@@ -523,6 +552,7 @@ class OwnedProcessService:
                 if not callable(terminate_tree) or not terminate_tree():
                     self._kill_windows_process_tree(int(process.pid))
             elif os.name != "nt" and owned.process_group_id is not None:
+                self._await_supervisor_ready(owned, SUPERVISOR_READY_WAIT_SECONDS)
                 self._terminate_posix_group(
                     owned.process_group_id,
                     process,
@@ -686,6 +716,8 @@ class OwnedProcessService:
                 reason_parts.append("process_tree_termination_unconfirmed")
             if not output_readers_terminated:
                 reason_parts.append("output_reader_termination_unconfirmed")
+            if confirmed and owned.containment == LINEAGE_CONTAINMENT:
+                reason_parts.append(SAMPLED_LINEAGE_REASON)
             verdict = OwnedProcessCleanupVerdict(
                 cleanup="confirmed" if confirmed else "uncertain",
                 process_tree_terminated=process_tree_terminated,
@@ -734,10 +766,81 @@ class OwnedProcessService:
             if self._posix_process_group_is_alive(process_group_id):
                 return False
             # A process group is observable, not a descendant-containment
-            # boundary: a child can call setsid() and outlive the group. An
-            # empty original group therefore cannot prove full-tree cleanup.
-            return False
+            # boundary: a child can call setsid() and outlive the group. The
+            # proof is the byte the supervisor writes only after it has seen
+            # no descendant alive; its exit status alone proves nothing.
+            return process.poll() is not None and self._supervisor_proved_cleanup(owned)
         return process.poll() is not None
+
+    @staticmethod
+    def _preflight_posix_target(
+        argv: Sequence[str], cwd: Path, env: Mapping[str, str] | None,
+    ) -> None:
+        """Raise the launch errors Popen raised before the supervisor existed.
+
+        The supervisor reports a failed launch only as an exit status, and
+        callers turn a missing program or directory into their own message.
+        """
+        if not Path(cwd).is_dir():
+            raise FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT), str(cwd))
+        program = argv[0]
+        if os.sep in program and not os.path.isabs(program):
+            program = str(Path(cwd) / program)
+        search_path = external_child_environment(env).get("PATH", os.defpath)
+        if shutil.which(program, path=search_path) is None:
+            raise FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT), argv[0])
+
+    @staticmethod
+    def _read_supervisor_report(owned: OwnedProcess, timeout_seconds: float) -> None:
+        """Collect what the supervisor has written; caller holds the lock."""
+        ready_fd = owned._supervisor_ready_fd
+        if ready_fd is None or sys.platform == "win32":
+            return
+        try:
+            if timeout_seconds > 0:
+                # poll, not select: a descriptor above 1023 breaks select.
+                poller = select.poll()
+                poller.register(ready_fd, select.POLLIN)
+                poller.poll(timeout_seconds * 1000)
+            os.set_blocking(ready_fd, False)
+            while len(owned._supervisor_report) < _MAX_SUPERVISOR_REPORT_BYTES:
+                chunk = os.read(ready_fd, 16)
+                if not chunk:
+                    os.close(ready_fd)
+                    owned._supervisor_ready_fd = None
+                    return
+                owned._supervisor_report += chunk
+        except BlockingIOError:
+            return
+        except (OSError, ValueError):
+            try:
+                os.close(ready_fd)
+            except OSError:
+                pass
+            owned._supervisor_ready_fd = None
+
+    @classmethod
+    def _await_supervisor_ready(cls, owned: OwnedProcess, timeout_seconds: float) -> None:
+        """Hold the first signal until the supervisor can turn it into a sweep."""
+        with owned._supervisor_ready_lock:
+            if not owned._supervisor_report:
+                cls._read_supervisor_report(owned, timeout_seconds)
+
+    @classmethod
+    def _supervisor_proved_cleanup(cls, owned: OwnedProcess) -> bool:
+        """True once the exited supervisor's report carries its proof byte."""
+        with owned._supervisor_ready_lock:
+            cls._read_supervisor_report(owned, 0.0)
+            report = owned._supervisor_report
+        # Name the mechanism the supervisor actually used: a sampled sweep
+        # releases the slot but is never presented as the kernel-backed proof.
+        if PROOF_BYTE in report:
+            owned.containment = SUBREAPER_CONTAINMENT
+            return True
+        if SAMPLED_PROOF_BYTE in report:
+            owned.containment = LINEAGE_CONTAINMENT
+            return True
+        return False
 
     @staticmethod
     def _posix_process_group_is_alive(process_group_id: int) -> bool:
@@ -765,7 +868,11 @@ class OwnedProcessService:
         except ProcessLookupError:
             return
         try:
-            process.wait(timeout=max(0.1, timeout_seconds))
+            # The supervisor gives the tree the same grace and then sweeps it;
+            # killing it early would discard the cleanup proof.
+            process.wait(
+                timeout=max(0.1, timeout_seconds) + SUPERVISOR_TEARDOWN_MARGIN_SECONDS
+            )
             return
         except subprocess.TimeoutExpired:
             pass
@@ -795,27 +902,7 @@ class OwnedProcessService:
 
     @staticmethod
     def _io_threads(owned: OwnedProcess) -> tuple[threading.Thread, ...]:
-        input_writer = owned._input_writer
-        return owned._output_readers + ((input_writer,) if input_writer else ())
-
-    @staticmethod
-    def _start_input_writer(pipe: IO[bytes], input_data: bytes) -> threading.Thread:
-        def _write() -> None:
-            try:
-                pipe.write(input_data)
-                pipe.flush()
-            except (BrokenPipeError, OSError, ValueError):
-                pass
-            finally:
-                OwnedProcessService._close_pipe(pipe)
-
-        thread = threading.Thread(
-            target=_write,
-            daemon=True,
-            name="owned-process-stdin",
-        )
-        thread.start()
-        return thread
+        return owned._output_readers
 
     @staticmethod
     def _start_reader(

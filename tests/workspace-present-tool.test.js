@@ -44,6 +44,7 @@ function makeContext(t, { root, ideRoot, delivered = true, presentationService }
     context: {
       workingDirectory: workspaceRoot,
       sessionId: 'session-1',
+      callId: 'call-1',
       pathPolicy,
       workspacePresentationService: service,
       configService: { getToolsWorkspaceRoot: () => (ideRoot === undefined ? workspaceRoot : ideRoot) },
@@ -66,9 +67,15 @@ test('valid preview request emits ONE event and reports a request, not an outcom
   const result = await tool.execute({ view: 'preview', path: 'docs\\readme.md' }, context);
   assert.equal(result.isError, false);
   assert.equal(events.length, 1, 'exactly one presentation event');
-  assert.deepEqual(events[0], { view: 'preview', path: 'docs/readme.md', source: 'tool' });
+  // session/call identity lets the IDE's later outcome report find this row.
+  assert.deepEqual(events[0], {
+    view: 'preview', path: 'docs/readme.md', source: 'tool', session_id: 'session-1', call_id: 'call-1',
+  });
   assert.match(result.summary, /^Requested preview of docs\/readme\.md$/);
   assert.match(result.content, /^Requested a preview/, 'request-not-outcome wording');
+  assert.match(result.content, /does not confirm the user sees it/);
+  assert.match(result.content, /at the start of your next request/);
+  assert.doesNotMatch(result.content, /self-contained/, 'the HTML caveat is for HTML previews only');
   assert.equal(result.metadata.request_id, 'req-1');
 });
 
@@ -361,4 +368,12 @@ test('the tool result is computed synchronously from dispatch (never awaits a re
   }
   assert.notEqual(result, 'TIMED_OUT');
   assert.equal(result.metadata.request_id, 'sync-1');
+});
+
+test('an HTML preview request names the self-contained in-app Preview caveat', async (t) => {
+  const { context } = makeContext(t, {});
+  const result = await tool.execute({ view: 'preview', path: 'site.html' }, context);
+  assert.equal(result.isError, false);
+  assert.match(result.content, /external scripts, stylesheets and images are not loaded there/);
+  assert.match(result.content, /whether the document rendered/);
 });

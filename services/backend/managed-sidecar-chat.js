@@ -459,7 +459,7 @@ async function startManagedSidecarChatStream(service, {
       if (checkpointHistory) contextPreferences.history_scope = checkpointHistory.historySelector.history_scope;
 
       const preparedMessages = checkpointHistory?.preparedMessages || buildPreparedMessages(preparedHistoryMessages, prompt, {
-        attachments: textAttachments,
+        attachments: textAttachments, skillInvocation,
         contextPreferences,
       });
       const promptContributions = {
@@ -687,7 +687,7 @@ async function startManagedSidecarChatStream(service, {
       // Frame fitting trims canonical history first, then whole history rounds.
       const frameFit = fitChatSendParamsToFrameBudgetWithOutcome(chatSendParams, {
         rebuildMessages: checkpointHistory ? undefined : (historyScope) => buildPreparedMessages(preparedHistoryMessages, prompt, {
-          attachments: textAttachments,
+          attachments: textAttachments, skillInvocation,
           contextPreferences: { ...contextPreferences, history_scope: historyScope },
         }),
         // The helper reports an irreducible frame at ERROR.

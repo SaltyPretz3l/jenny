@@ -14,7 +14,7 @@ from sidecar.ai.error_codes import CMP_TOOL_BACKGROUND_NOT_FOUND
 from sidecar.ai.tools.builtins import owned_process as owned_process_module
 from sidecar.ai.tools.builtins import shell_background as shell_background_module
 from sidecar.ai.tools.builtins.owned_process_settlement import OwnedProcessCleanupVerdict
-from sidecar.ai.tools.builtins.shell import stop_background_job_tool
+from sidecar.ai.tools.builtins.shell import check_background_job_tool, stop_background_job_tool
 from sidecar.ai.tools.builtins.shell_background import read_background_job, start_background_job
 from sidecar.ai.tools.contracts import ToolExecutionFailure
 from sidecar.ai.tools.workspace import WorkspaceGuard
@@ -90,6 +90,10 @@ def test_stop_background_job_terminates_owned_tree_and_is_idempotent(tmp_path: P
     assert stopped_body["state"] == "failed"
     assert stopped_body["error"] == "background job was cancelled"
     assert stopped_body["stop_requested"] is True
+    # Polling the stopped job reads its state; that is not a failed poll.
+    polled = check_background_job_tool({"job_id": job_id}, _guard(tmp_path))
+    assert polled.success is True
+    assert json.loads(polled.output)["error"] == "background job was cancelled"
     # The contract is that stopping the job kills the whole owned tree, so assert
     # the CHILD process is gone. Polling for that is both deterministic and fast --
     # no fixed sleep that has to outlast whatever the child was doing.

@@ -34,6 +34,11 @@
   var VIRT_WEIGHT_THRESHOLD_CHARS = 400000;
   var DEFAULT_ROOT_MARGIN = '2000px 0px';
   var MAX_UNMOUNTS_PER_FRAME = 64;
+  // An entry holding a live approval is never unmounted. A resolved approval's
+  // receipt (HB-038 H2) is settled history and windows like any other row.
+  var PINNED_APPROVAL_SELECTOR = '.approval-gap-row:not([data-approval-status="resolved"]), '
+    + '.tool-approval-block:not([data-approval-status="resolved"]), '
+    + '[data-approval-id]:not([data-approval-status="resolved"]), [data-approval-state="pending"]';
   var MAX_UNMOUNT_WORK_MS = 8;
   // The count cap protects clocks that do not advance during a work chunk.
   var MAX_INTERSECTION_LEAVES_PER_FRAME = 8192;
@@ -189,7 +194,7 @@
       var activeEl = doc && doc.activeElement;
       if (activeEl && (activeEl === entryEl || entryEl.contains?.(activeEl))) return 'focused';
       if (entryEl.querySelector?.(
-        '.approval-gap-row, .tool-approval-block, [data-approval-id], [data-approval-state="pending"]'
+        PINNED_APPROVAL_SELECTOR
       )) return 'approval';
       if (entryStore?.hasLiveState?.(entryEl)) return 'liveState';
       return '';
@@ -662,7 +667,7 @@
       var fallbackEntries = collectOwningEntries('.chat-entry[data-virtualizer-fallback="true"]');
       var streamingEntries = collectOwningEntries('.chat-bubble-streaming');
       var approvalEntries = collectOwningEntries(
-        '.approval-gap-row, .tool-approval-block, [data-approval-id], [data-approval-state="pending"]'
+        PINNED_APPROVAL_SELECTOR
       );
       var liveStateEntries = collectOwningEntries(entryStoreUtils?.LIVE_STATE_SELECTOR || '[data-virtualizer-pin-live]');
       var activeEntry = doc?.activeElement?.closest?.('.chat-entry') || null;

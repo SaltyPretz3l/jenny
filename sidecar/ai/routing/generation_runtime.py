@@ -327,6 +327,7 @@ def generate_step(
     prompt_messages, max_tokens = _preview_vision.prepare_preview_messages(
         kernel, runtime, prompt_messages,
         system=str(system_prompt), tools=tool_schemas, max_tokens=max_tokens,
+        anchor_text=latest_user_content,
     )
     if cache_break_detector is not None:
         cache_break_detector.record_prompt_state(
@@ -635,6 +636,7 @@ def attempt_fallback_generation(
                 SimpleNamespace(_engine=fallback_engine, _config=fallback_config),
                 runtime, prompt_messages,
                 system=str(system_prompt), tools=tool_schemas, max_tokens=max_tokens,
+                anchor_text=latest_user_content,
             )
 
             fallback_runtime = LoopRuntime(

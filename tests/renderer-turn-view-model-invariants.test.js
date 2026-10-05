@@ -234,10 +234,10 @@ test('invariant/row-identity: source_message_ids is de-duplicated while preservi
   ];
   const toolRow = projectTurnRows(events).find((row) => row.kind === 'tool_call');
   assert.ok(toolRow);
-  // In trace mode the tool_call row collects the tool_use + approval events; the
-  // tool_result event becomes its own row, so its message ids live there. The
-  // dedup-while-preserving-encounter-order invariant still holds on the call row.
-  assert.deepEqual(toolRow.source_message_ids, ['msg_tool_use', 'msg_shared', 'msg_late']);
+  // The tool_call row collects the tool_use + resolution events. The request
+  // belongs to the approval receipt row, and the tool_result is its own row.
+  // The dedup-while-preserving-encounter-order invariant still holds on the call row.
+  assert.deepEqual(toolRow.source_message_ids, ['msg_tool_use', 'msg_shared']);
 });
 
 test('invariant/row-identity: tool_call_id is exposed at row-level AND in payload for tool_call and tool_result rows', () => {

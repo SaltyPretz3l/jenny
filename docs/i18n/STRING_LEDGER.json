@@ -2,8 +2,8 @@
   "schema": 1,
   "totals": {
     "pending": 104,
-    "migrated": 8209,
-    "excluded": 9526,
+    "migrated": 8219,
+    "excluded": 9544,
     "by_kind": {
       "config_copy": {
         "pending": 5,
@@ -13,7 +13,7 @@
       "diagnostic": {
         "pending": 0,
         "migrated": 0,
-        "excluded": 1809
+        "excluded": 1812
       },
       "dom_attr": {
         "pending": 1,
@@ -23,7 +23,7 @@
       "dom_identity": {
         "pending": 0,
         "migrated": 0,
-        "excluded": 3731
+        "excluded": 3734
       },
       "dom_text": {
         "pending": 2,
@@ -43,7 +43,7 @@
       "ipc_message": {
         "pending": 0,
         "migrated": 0,
-        "excluded": 880
+        "excluded": 890
       },
       "prose": {
         "pending": 96,
@@ -53,11 +53,11 @@
       "structural": {
         "pending": 0,
         "migrated": 0,
-        "excluded": 2370
+        "excluded": 2372
       },
       "translation": {
         "pending": 0,
-        "migrated": 7914,
+        "migrated": 7924,
         "excluded": 0
       }
     },
@@ -70,12 +70,12 @@
       "renderer/shell": {
         "pending": 9,
         "migrated": 2603,
-        "excluded": 2484
+        "excluded": 2485
       },
       "renderer/chat": {
         "pending": 19,
-        "migrated": 1324,
-        "excluded": 2201
+        "migrated": 1334,
+        "excluded": 2202
       },
       "renderer/features/setup-scenes": {
         "pending": 0,
@@ -85,12 +85,12 @@
       "renderer/features": {
         "pending": 65,
         "migrated": 2647,
-        "excluded": 2761
+        "excluded": 2766
       },
       "renderer/shared": {
         "pending": 4,
         "migrated": 437,
-        "excluded": 224
+        "excluded": 225
       },
       "renderer/inventory": {
         "pending": 3,
@@ -105,7 +105,7 @@
       "services": {
         "pending": 0,
         "migrated": 196,
-        "excluded": 881
+        "excluded": 891
       }
     }
   },
@@ -9096,6 +9096,22 @@
       "disposition": "migrated"
     },
     {
+      "id": "renderer/chat/renderer-approval-block.js|translation|166bad4281ef|1",
+      "file": "renderer/chat/renderer-approval-block.js",
+      "kind": "translation",
+      "via": "literal",
+      "text": "Approval cancelled",
+      "disposition": "migrated"
+    },
+    {
+      "id": "renderer/chat/renderer-approval-block.js|translation|1b24bcc52940|1",
+      "file": "renderer/chat/renderer-approval-block.js",
+      "kind": "translation",
+      "via": "literal",
+      "text": "Allowed once",
+      "disposition": "migrated"
+    },
+    {
       "id": "renderer/chat/renderer-approval-block.js|translation|22463fcf7e70|1",
       "file": "renderer/chat/renderer-approval-block.js",
       "kind": "translation",
@@ -9112,6 +9128,14 @@
       "disposition": "migrated"
     },
     {
+      "id": "renderer/chat/renderer-approval-block.js|translation|297470ed3758|1",
+      "file": "renderer/chat/renderer-approval-block.js",
+      "kind": "translation",
+      "via": "literal",
+      "text": "Always allowed",
+      "disposition": "migrated"
+    },
+    {
       "id": "renderer/chat/renderer-approval-block.js|translation|309d93bb34bf|1",
       "file": "renderer/chat/renderer-approval-block.js",
       "kind": "translation",
@@ -9125,6 +9149,14 @@
       "kind": "translation",
       "via": "literal",
       "text": "Always allow",
+      "disposition": "migrated"
+    },
+    {
+      "id": "renderer/chat/renderer-approval-block.js|translation|48d6585c6691|1",
+      "file": "renderer/chat/renderer-approval-block.js",
+      "kind": "translation",
+      "via": "literal",
+      "text": "Approval closed",
       "disposition": "migrated"
     },
     {
@@ -9152,11 +9184,27 @@
       "disposition": "migrated"
     },
     {
+      "id": "renderer/chat/renderer-approval-block.js|translation|5514aa6d6f1f|1",
+      "file": "renderer/chat/renderer-approval-block.js",
+      "kind": "translation",
+      "via": "literal",
+      "text": "Not answered in time",
+      "disposition": "migrated"
+    },
+    {
       "id": "renderer/chat/renderer-approval-block.js|translation|5910cb3af3cd|1",
       "file": "renderer/chat/renderer-approval-block.js",
       "kind": "translation",
       "via": "literal",
       "text": "{command}… (+{count} more chars)",
+      "disposition": "migrated"
+    },
+    {
+      "id": "renderer/chat/renderer-approval-block.js|translation|63b16bd41e56|1",
+      "file": "renderer/chat/renderer-approval-block.js",
+      "kind": "translation",
+      "via": "literal",
+      "text": "Denied",
       "disposition": "migrated"
     },
     {
@@ -9181,6 +9229,14 @@
       "kind": "translation",
       "via": "literal",
       "text": "Deny {tool}",
+      "disposition": "migrated"
+    },
+    {
+      "id": "renderer/chat/renderer-approval-block.js|translation|77c7b4909d39|1",
+      "file": "renderer/chat/renderer-approval-block.js",
+      "kind": "translation",
+      "via": "literal",
+      "text": "Allowed",
       "disposition": "migrated"
     },
     {
@@ -9280,19 +9336,19 @@
       "disposition": "migrated"
     },
     {
+      "id": "renderer/chat/renderer-approval-focus-restore.js|dom_identity|53a248f3d129|1",
+      "file": "renderer/chat/renderer-approval-focus-restore.js",
+      "kind": "dom_identity",
+      "via": "literal",
+      "text": ".approval-gap-row:not([data-approval-variant=\"plan\"]):not([data-approval-status=\"resolved\"]), .tool-approval-block:not([data-approval-status=\"resolved\"]), .user-questions-block",
+      "disposition": "excluded:dom_identity"
+    },
+    {
       "id": "renderer/chat/renderer-approval-focus-restore.js|dom_identity|5446b88e263c|1",
       "file": "renderer/chat/renderer-approval-focus-restore.js",
       "kind": "dom_identity",
       "via": "literal",
       "text": ".tool-approve-btn, .tool-deny-btn",
-      "disposition": "excluded:dom_identity"
-    },
-    {
-      "id": "renderer/chat/renderer-approval-focus-restore.js|dom_identity|6a57af2628b7|1",
-      "file": "renderer/chat/renderer-approval-focus-restore.js",
-      "kind": "dom_identity",
-      "via": "literal",
-      "text": ".approval-gap-row:not([data-approval-variant=\"plan\"]), .tool-approval-block, .user-questions-block",
       "disposition": "excluded:dom_identity"
     },
     {
@@ -15245,14 +15301,6 @@
       "kind": "dom_identity",
       "via": "literal",
       "text": ".chat-bubble-streaming",
-      "disposition": "excluded:dom_identity"
-    },
-    {
-      "id": "renderer/chat/renderer-chat-timeline-virtualizer.js|dom_identity|fae18bab4f92|1",
-      "file": "renderer/chat/renderer-chat-timeline-virtualizer.js",
-      "kind": "dom_identity",
-      "via": "literal",
-      "text": ".approval-gap-row, .tool-approval-block, [data-approval-id], [data-approval-state=\"pending\"]",
       "disposition": "excluded:dom_identity"
     },
     {
@@ -31944,6 +31992,22 @@
       "disposition": "migrated"
     },
     {
+      "id": "renderer/chat/renderer-timeline-v2-presentation.js|translation|48d6585c6691|1",
+      "file": "renderer/chat/renderer-timeline-v2-presentation.js",
+      "kind": "translation",
+      "via": "literal",
+      "text": "Approval closed",
+      "disposition": "migrated"
+    },
+    {
+      "id": "renderer/chat/renderer-timeline-v2-presentation.js|translation|91c77a1267ba|1",
+      "file": "renderer/chat/renderer-timeline-v2-presentation.js",
+      "kind": "translation",
+      "via": "literal",
+      "text": "Approval denied",
+      "disposition": "migrated"
+    },
+    {
       "id": "renderer/chat/renderer-timeline-v2-presentation.js|translation|95952cbea700|1",
       "file": "renderer/chat/renderer-timeline-v2-presentation.js",
       "kind": "translation",
@@ -31973,6 +32037,14 @@
       "kind": "translation",
       "via": "literal",
       "text": "Approval Needed",
+      "disposition": "migrated"
+    },
+    {
+      "id": "renderer/chat/renderer-timeline-v2-presentation.js|translation|e8579692e7e7|1",
+      "file": "renderer/chat/renderer-timeline-v2-presentation.js",
+      "kind": "translation",
+      "via": "literal",
+      "text": "Approval allowed",
       "disposition": "migrated"
     },
     {
@@ -34440,6 +34512,14 @@
       "disposition": "migrated"
     },
     {
+      "id": "renderer/chat/renderer-turn-row-tool-render-utils.js|structural|026ab2fab046|1",
+      "file": "renderer/chat/renderer-turn-row-tool-render-utils.js",
+      "kind": "structural",
+      "via": "literal",
+      "text": "resolved",
+      "disposition": "excluded:wire"
+    },
+    {
       "id": "renderer/chat/renderer-turn-row-tool-render-utils.js|structural|1f4dcd35de6c|1",
       "file": "renderer/chat/renderer-turn-row-tool-render-utils.js",
       "kind": "structural",
@@ -34589,6 +34669,14 @@
       "kind": "dom_identity",
       "via": "literal",
       "text": "[data-row-kind=\"approval_gap\"]",
+      "disposition": "excluded:dom_identity"
+    },
+    {
+      "id": "renderer/chat/renderer-turn-shell.js|dom_identity|9ee6efefacc3|1",
+      "file": "renderer/chat/renderer-turn-shell.js",
+      "kind": "dom_identity",
+      "via": "literal",
+      "text": "[data-approval-status=\"resolved\"]",
       "disposition": "excluded:dom_identity"
     },
     {
@@ -63248,6 +63336,22 @@
       "disposition": "excluded:dom_identity"
     },
     {
+      "id": "renderer/features/renderer-ide-preview-stage.js|dom_identity|aab4791d005e|1",
+      "file": "renderer/features/renderer-ide-preview-stage.js",
+      "kind": "dom_identity",
+      "via": "literal",
+      "text": "script[src]",
+      "disposition": "excluded:dom_identity"
+    },
+    {
+      "id": "renderer/features/renderer-ide-preview-stage.js|dom_identity|cb3d3dc7cb8e|1",
+      "file": "renderer/features/renderer-ide-preview-stage.js",
+      "kind": "dom_identity",
+      "via": "literal",
+      "text": "link[rel~=\"stylesheet\" i][href]",
+      "disposition": "excluded:dom_identity"
+    },
+    {
       "id": "renderer/features/renderer-ide-preview-stage.js|dom_identity|dae027ce8ac3|1",
       "file": "renderer/features/renderer-ide-preview-stage.js",
       "kind": "dom_identity",
@@ -79672,6 +79776,14 @@
       "disposition": "excluded:log"
     },
     {
+      "id": "renderer/features/renderer-workspace-presentation-controller.js|diagnostic|17d3ea4cf5f4|3",
+      "file": "renderer/features/renderer-workspace-presentation-controller.js",
+      "kind": "diagnostic",
+      "via": "literal",
+      "text": "context_changed",
+      "disposition": "excluded:log"
+    },
+    {
       "id": "renderer/features/renderer-workspace-presentation-controller.js|diagnostic|2e548d494104|1",
       "file": "renderer/features/renderer-workspace-presentation-controller.js",
       "kind": "diagnostic",
@@ -79697,6 +79809,14 @@
     },
     {
       "id": "renderer/features/renderer-workspace-presentation-controller.js|diagnostic|477f2046bd2d|2",
+      "file": "renderer/features/renderer-workspace-presentation-controller.js",
+      "kind": "diagnostic",
+      "via": "literal",
+      "text": "workspace_presentation.change_dropped",
+      "disposition": "excluded:log"
+    },
+    {
+      "id": "renderer/features/renderer-workspace-presentation-controller.js|diagnostic|477f2046bd2d|3",
       "file": "renderer/features/renderer-workspace-presentation-controller.js",
       "kind": "diagnostic",
       "via": "literal",
@@ -79761,6 +79881,14 @@
     },
     {
       "id": "renderer/features/renderer-workspace-presentation-controller.js|diagnostic|9c9cf9998291|5",
+      "file": "renderer/features/renderer-workspace-presentation-controller.js",
+      "kind": "diagnostic",
+      "via": "literal",
+      "text": "INFO",
+      "disposition": "excluded:log"
+    },
+    {
+      "id": "renderer/features/renderer-workspace-presentation-controller.js|diagnostic|9c9cf9998291|6",
       "file": "renderer/features/renderer-workspace-presentation-controller.js",
       "kind": "diagnostic",
       "via": "literal",
@@ -91526,6 +91654,14 @@
       "via": "literal",
       "text": ".markdown-math[data-math-tex]:not([data-math-rendered])",
       "disposition": "excluded:dom_identity"
+    },
+    {
+      "id": "renderer/shared/markdown-raw-html-policy.js|structural|372ea08cab33|1",
+      "file": "renderer/shared/markdown-raw-html-policy.js",
+      "kind": "structural",
+      "via": "literal",
+      "text": "text",
+      "disposition": "excluded:wire"
     },
     {
       "id": "renderer/shared/markdown-sanitize-policy.js|dom_identity|57018890029a|1",
@@ -131968,6 +132104,14 @@
       "disposition": "excluded:log"
     },
     {
+      "id": "renderer/shell/renderer-viewport-tail-cushion-utils.js|dom_identity|6263daecafa1|1",
+      "file": "renderer/shell/renderer-viewport-tail-cushion-utils.js",
+      "kind": "dom_identity",
+      "via": "literal",
+      "text": "turn-activity-row",
+      "disposition": "excluded:dom_identity"
+    },
+    {
       "id": "renderer/shell/renderer-viewport-thinking-panel-utils.js|diagnostic|0b99cebe5658|1",
       "file": "renderer/shell/renderer-viewport-thinking-panel-utils.js",
       "kind": "diagnostic",
@@ -141896,6 +142040,62 @@
       "disposition": "excluded:model"
     },
     {
+      "id": "services/tools/builtin/preview-test-arguments.js|ipc_message|44f79f8490a3|1",
+      "file": "services/tools/builtin/preview-test-arguments.js",
+      "kind": "ipc_message",
+      "via": "literal",
+      "text": "Unsupported preview_test argument. Supported arguments: path, viewport, wait_ms, screenshot, events, observe. Use events for click/type interactions.",
+      "disposition": "excluded:model"
+    },
+    {
+      "id": "services/tools/builtin/preview-test-arguments.js|ipc_message|525bda9f40c4|1",
+      "file": "services/tools/builtin/preview-test-arguments.js",
+      "kind": "ipc_message",
+      "via": "literal",
+      "text": "Unsupported preview argument",
+      "disposition": "excluded:model"
+    },
+    {
+      "id": "services/tools/builtin/preview-test-arguments.js|ipc_message|77eec894142b|1",
+      "file": "services/tools/builtin/preview-test-arguments.js",
+      "kind": "ipc_message",
+      "via": "literal",
+      "text": "Unsupported preview event argument",
+      "disposition": "excluded:model"
+    },
+    {
+      "id": "services/tools/builtin/preview-test-arguments.js|ipc_message|b1098fc1edfe|1",
+      "file": "services/tools/builtin/preview-test-arguments.js",
+      "kind": "ipc_message",
+      "via": "literal",
+      "text": "unknown_argument",
+      "disposition": "excluded:model"
+    },
+    {
+      "id": "services/tools/builtin/preview-test-arguments.js|ipc_message|eec9dde0d193|1",
+      "file": "services/tools/builtin/preview-test-arguments.js",
+      "kind": "ipc_message",
+      "via": "literal",
+      "text": "Unsupported preview event argument. Supported event arguments: action, selector, text, press_enter.",
+      "disposition": "excluded:model"
+    },
+    {
+      "id": "services/tools/builtin/preview-test-arguments.js|ipc_message|f046ff2730d9|1",
+      "file": "services/tools/builtin/preview-test-arguments.js",
+      "kind": "ipc_message",
+      "via": "literal",
+      "text": "unknown_event_argument",
+      "disposition": "excluded:model"
+    },
+    {
+      "id": "services/tools/builtin/preview-test-evidence.js|ipc_message|d8b31c8305c6|1",
+      "file": "services/tools/builtin/preview-test-evidence.js",
+      "kind": "ipc_message",
+      "via": "literal",
+      "text": "Page observation is unavailable.",
+      "disposition": "excluded:model"
+    },
+    {
       "id": "services/tools/builtin/preview-test-tool.js|ipc_message|88bd3fa03a2b|1",
       "file": "services/tools/builtin/preview-test-tool.js",
       "kind": "ipc_message",
@@ -142000,11 +142200,11 @@
       "disposition": "excluded:model"
     },
     {
-      "id": "services/tools/builtin/workspace-present-tool.js|ipc_message|ec8d04c1189f|1",
+      "id": "services/tools/builtin/workspace-present-tool.js|ipc_message|9ef75b97864e|1",
       "file": "services/tools/builtin/workspace-present-tool.js",
       "kind": "ipc_message",
       "via": "template",
-      "text": "Requested {expr} in the workspace IDE. If the user is actively working, the IDE shows a non-intrusive prompt instead of switching immediately.",
+      "text": "Requested {expr} in the workspace IDE. This does not confirm the user sees it: if the user is actively working, the IDE shows a non-intrusive prompt instead of switching. The IDE reports what it did (shown, prompted, dismissed{expr}) at the start of your next request; until then, do not tell the user it is displayed.{expr}",
       "disposition": "excluded:model"
     },
     {
@@ -142648,11 +142848,27 @@
       "disposition": "excluded:wire"
     },
     {
+      "id": "services/workspace-presentation-service.js|ipc_message|4b0161d73ad2|1",
+      "file": "services/workspace-presentation-service.js",
+      "kind": "ipc_message",
+      "via": "literal",
+      "text": "invalid_outcome",
+      "disposition": "excluded:wire"
+    },
+    {
       "id": "services/workspace-presentation-service.js|ipc_message|4ccf14e8a79c|1",
       "file": "services/workspace-presentation-service.js",
       "kind": "ipc_message",
       "via": "literal",
       "text": "unsupported_view",
+      "disposition": "excluded:wire"
+    },
+    {
+      "id": "services/workspace-presentation-service.js|ipc_message|66b8055eb255|1",
+      "file": "services/workspace-presentation-service.js",
+      "kind": "ipc_message",
+      "via": "literal",
+      "text": "unknown_request",
       "disposition": "excluded:wire"
     },
     {
@@ -142693,6 +142909,14 @@
       "kind": "ipc_message",
       "via": "literal",
       "text": "dispatch_failed",
+      "disposition": "excluded:wire"
+    },
+    {
+      "id": "services/workspace-presentation-service.js|ipc_message|f5f7a6f0b9e0|1",
+      "file": "services/workspace-presentation-service.js",
+      "kind": "ipc_message",
+      "via": "literal",
+      "text": "invalid_payload",
       "disposition": "excluded:wire"
     },
     {

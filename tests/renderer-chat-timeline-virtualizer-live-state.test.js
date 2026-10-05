@@ -353,6 +353,24 @@ test('R2: approval rows remain mounted when they leave the virtualizer window', 
   assert.equal(approvalEntry.getAttribute('data-virtualized'), null);
 });
 
+test('R2: a resolved approval receipt does not pin its entry (HB-038 H2)', (t) => {
+  let receiptEntry;
+  const env = buildTimeline(THRESHOLD + 5, (doc, timeline) => {
+    receiptEntry = timeline.querySelectorAll('.chat-entry')[15];
+    const receipt = doc.createElement('div');
+    receipt.className = 'approval-gap-row';
+    receipt.setAttribute('data-approval-status', 'resolved');
+    receipt.setAttribute('data-approval-id', 'appr-15');
+    receiptEntry.appendChild(receipt);
+  });
+  const v = createVirtualizer(env);
+  t.after(() => v.dispose());
+  v.rebuild();
+  assert.equal(v._internals.isPinned(receiptEntry), false, 'settled history windows like any other row');
+  fireLeave(env, receiptEntry);
+  assert.equal(receiptEntry.getAttribute('data-virtualized'), 'true');
+});
+
 test('R2 rollback: bounds disabled degrades to a fully mounted timeline', (t) => {
   const env = buildTimeline(THRESHOLD + 200);
   let rebuildCalls = 0;

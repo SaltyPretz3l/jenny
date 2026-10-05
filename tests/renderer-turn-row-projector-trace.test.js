@@ -40,7 +40,7 @@ test('projectTurnRows emits approval_gap only for unresolved approval waits', ()
   assert.equal(traceRows[1].payload.prompt, 'Approve file read?');
 });
 
-test('projectTurnRows suppresses approval_gap after approval resolves and surfaces normalized tool_result payloads', () => {
+test('projectTurnRows keeps a resolved approval as its receipt row and surfaces normalized tool_result payloads', () => {
   const turnEvents = [
     createTraceEvent({
       event_id: 'event-tool-use',
@@ -91,11 +91,18 @@ test('projectTurnRows suppresses approval_gap after approval resolves and surfac
   ];
 
   const rows = projectTurnRows(turnEvents);
-  assert.deepEqual(rows.map((row) => row.kind), ['tool_call', 'tool_result']);
-  assert.equal(rows[1].payload.duration_ms, 2150);
-  assert.equal(rows[1].payload.is_error, false);
-  assert.equal(rows[1].payload.result_summary, 'Wrote notes.txt');
-  assert.equal(rows[1].payload.generated_artifacts[0].artifact_id, 'artifact_trace');
+  // HB-038 H2: the gap row stays as a one-line receipt that owns the request;
+  // the call row still records the request, as it did before the receipt.
+  assert.deepEqual(rows.map((row) => row.kind), ['tool_call', 'approval_gap', 'tool_result']);
+  assert.deepEqual(rows[1].source_events, ['event-approval-requested']);
+  assert.equal(rows[1].payload.state, 'resolved');
+  assert.equal(rows[1].payload.decision, 'allowed');
+  assert.equal(rows[0].payload.approval_requests.length, 1);
+  assert.equal(rows[0].payload.state, 'completed');
+  assert.equal(rows[2].payload.duration_ms, 2150);
+  assert.equal(rows[2].payload.is_error, false);
+  assert.equal(rows[2].payload.result_summary, 'Wrote notes.txt');
+  assert.equal(rows[2].payload.generated_artifacts[0].artifact_id, 'artifact_trace');
 });
 
 test('projectTurn splits tool_call/tool_result rows and resolves tool_call terminal states (raw and enriched agree)', () => {
@@ -229,13 +236,12 @@ test('projectTurnRows keeps the approved tool_call row distinct from the later a
   assert.ok(toolRow);
   assert.ok(assistantRow);
   assert.equal(toolRow.payload.state, 'approved');
-  assert.deepEqual(
-    toolRow.source_events,
-    [
-      'stream_approved_gap:tool_use:0',
-      'stream_approved_gap:approval_resolved:0',
-    ]
-  );
+  // A message-built chat keeps only the resolution; its receipt row owns it
+  // (HB-038 H2) while the call row still reads it for its state.
+  assert.deepEqual(toolRow.source_events, ['stream_approved_gap:tool_use:0']);
+  const receiptRow = rows.find((row) => row.kind === 'approval_gap');
+  assert.deepEqual(receiptRow.source_events, ['stream_approved_gap:approval_resolved:0']);
+  assert.equal(receiptRow.payload.decision, 'allowed');
 });
 
 test('projectTurnRows keeps approved tool rows queued when later empty reasoning lifecycle events add no visible continuation', () => {

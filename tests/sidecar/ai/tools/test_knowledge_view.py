@@ -15,7 +15,7 @@ from tests.sidecar.ai.tools.test_knowledge import (
 )
 
 
-def test_knowledge_pdf_pages_and_cursor_reach_real_adapter(corpus):  # noqa: F811
+def test_knowledge_pdf_pages_and_cursor_reach_real_adapter(corpus):
     fitz = pytest.importorskip("fitz")
     from sidecar.ai.tools.builtins.rich_files.pdf import pdf_inspect_tool
     path = corpus["root_a"] / "report.pdf"
@@ -47,7 +47,7 @@ def test_knowledge_pdf_pages_and_cursor_reach_real_adapter(corpus):  # noqa: F81
     {"pages": 4}, {"cursor": 123}, {"cursor": "bad"},
     {"pages": "1", "cursor": "pdf:0123456789abcdef:1:1"},
 ])
-def test_knowledge_pdf_validates_pagination_controls(corpus, controls):  # noqa: F811
+def test_knowledge_pdf_validates_pagination_controls(corpus, controls):
     from sidecar.ai.tools.builtins.rich_files.pdf import pdf_inspect_tool
     from sidecar.ai.tools.contracts import ToolExecutionFailure
 

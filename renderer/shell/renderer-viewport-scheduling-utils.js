@@ -1,7 +1,8 @@
 /* renderer/shell/renderer-viewport-scheduling-utils.js – viewport sync
    scheduling cluster extracted from renderer-viewport-utils.js (UMD).
    Owns the coalesced message-sync frame, the post-layout sync timer, the
-   transient rAF/timeout registries, and the approval-gap live-follow brake. */
+   transient rAF/timeout registries, the approval-gap live-follow brake, and
+   the pane's tail cushion (renderer-viewport-tail-cushion-utils.js). */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) {
     module.exports = factory();
@@ -9,6 +10,12 @@
   }
   root.rendererViewportSchedulingUtils = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  // Resolved per call: index.html loads the cushion after this script.
+  function getTailCushionUtils() {
+    return (typeof globalThis !== 'undefined' && globalThis.rendererViewportTailCushionUtils)
+      || (typeof require === 'function' ? require('./renderer-viewport-tail-cushion-utils') : null) || {};
+  }
+
   function createViewportSchedulingUtils(deps) {
     const { state, readerAwayPauseReason } = deps;
     // The pane's own follow intent; default is the single-pane state.ui.followLatest.
@@ -33,6 +40,9 @@
       cancelLiveStreamingFollow,
       updateComposerSafeOffset,
       updateAssistantSpritePosition,
+      getSessionId = () => state.currentSessionId,
+      isReaderReleaseHeld = () => false,
+      getComposerSafeOffset = () => 0,
       appendClientLog = () => {},
     } = deps.callbacks || {};
 
@@ -45,6 +55,21 @@
     let pendingPostLayoutViewportSync = null;
     const transientViewportFrames = new Set();
     const transientViewportTimers = new Set();
+    // HB-038: a shrink at the end of a followed live reply leaves blank room
+    // instead of dropping the view (inert without a ResizeObserver, as in jsdom).
+    const tailCushion = getTailCushionUtils().createViewportTailCushion?.({
+      dom: { chatThreadScroll, chatTimeline },
+      followState,
+      getSessionId,
+      isReaderReleaseHeld,
+      getComposerSafeOffset,
+      reducedMotionQuery,
+      isStreaming: () => getScrollCoordinator()?.isStreaming?.() === true,
+      noteProgrammaticWrite: (reason) => getScrollCoordinator()?.noteProgrammaticWrite?.(reason),
+      requestFrame: requestViewportFrame,
+      cancelFrame: cancelViewportFrame,
+    }) || null;
+    tailCushion?.attach();
 
     // The scroll container runs behind the floating composer (the thread pads
     // its tail by --composer-safe-offset), so the reader-visible band ends at
@@ -149,6 +174,8 @@
           if (followState.get() === false) {
             getScrollCoordinator()?.restoreReaderAnchor?.();
           }
+          if (nextOptions.forceBottom) tailCushion?.drop('force_bottom');
+          else tailCushion?.noteViewportSync();
           if (shouldAutoScrollThread({
             forceBottom: nextOptions.forceBottom,
             followLatest: followState.get(),
@@ -237,6 +264,7 @@
     }
 
     function disposeViewportScheduling() {
+      tailCushion?.dispose();
       cancelViewportFrame(viewportSyncFrameHandle);
       viewportSyncFrameHandle = 0;
       pendingViewportSync = null;
@@ -257,6 +285,7 @@
       scheduleMessageViewportSync,
       schedulePostLayoutViewportSync,
       disposeViewportScheduling,
+      tailCushion,
     };
   }
 

@@ -182,6 +182,13 @@ function createBackendServiceWithDeps({
     resolveSidecarExtraEnv: () => pdfAddon.sidecarEnv(),
   });
   backendService.pdfAddon = pdfAddon;
+  // workspace_present outcomes: the IDE's reports reach the originating tool
+  // row (late-event audit) and the session's next context assembly.
+  const workspacePresentationService = toolExecutor?.workspacePresentationService || null;
+  backendService.workspacePresentationService = workspacePresentationService;
+  workspacePresentationService?.setOutcomeListener?.((sessionId, callId, lateEvent) => {
+    backendService._appendLateEventAudit(sessionId, callId, lateEvent);
+  });
   pdfAddon.on('changed', (state) => sendBridgeEvent('pdfAddon.onChanged', state));
   void pdfAddon.start().catch(() => {});
   const { ExclusiveGpuCoordinator } = require('../backend/exclusive-gpu-coordinator');

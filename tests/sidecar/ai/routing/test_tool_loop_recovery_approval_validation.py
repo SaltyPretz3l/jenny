@@ -177,6 +177,9 @@ def test_windows_multiline_run_command_is_refused_before_admission_and_dispatch(
     assert "first line" in refused[0].output
     assert "run_temp_script" in refused[0].output
     assert refused[0].metadata.get("pre_dispatch_blocked") is True
+    # HB-039: a one-line rewrite fixes it, so it is not a permission denial.
+    assert refused[0].metadata.get("failure_class") == "bad_arguments"
+    assert refused[0].metadata.get("effects") == "none"
     ran = [outcome for outcome in decision.tool_results if outcome.call_id == "call-single-line"]
     assert len(ran) == 1 and ran[0].success is True
 

@@ -76,6 +76,7 @@ async function executeResolvedTool(executor, call, context, {
       browserSessionService: scopedServices
         ? createProjectBrowserService(executor._browserSessionService, trustedExecution, {
           signal: context.abortSignal,
+          allowEval: toolName === 'preview_test',
         })
         : executor._browserSessionService,
       workspaceTestRunnerService: scopedServices

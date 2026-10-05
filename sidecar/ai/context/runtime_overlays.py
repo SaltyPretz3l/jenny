@@ -99,9 +99,11 @@ def build_dynamic_system_messages(  # noqa: PLR0913
     )
     if skills_message:
         messages.append({"role": "system", "content": skills_message})
-    invoked_builder = getattr(context_builder, "build_invoked_skill_system_message", None)
-    invoked_skill_message = (
-        invoked_builder(skill_invocation, **skill_kwargs) if callable(invoked_builder) else ""
+    invoked_skill_message = build_invoked_skill_message(
+        context_builder=context_builder,
+        config=config,
+        skill_invocation=skill_invocation,
+        execution_context=execution_context,
     )
     if invoked_skill_message:
         messages.append({"role": "system", "content": invoked_skill_message})
@@ -114,6 +116,29 @@ def build_dynamic_system_messages(  # noqa: PLR0913
         for content in delegated_overlay_builder():
             messages.append({"role": "system", "content": content})
     return messages
+
+
+def build_invoked_skill_message(
+    *,
+    context_builder: Any,
+    config: Any,
+    skill_invocation: dict[str, str] | None,
+    execution_context: Any | None = None,
+) -> str:
+    """The ``## Invoked Skill`` section for this request, or ``""``.
+
+    It changes with every invocation, so with a trailing turn-context row it
+    rides that row (``render_turn_context_row``) instead of the leading run.
+    """
+    if not skill_invocation:
+        return ""
+    invoked_builder = getattr(context_builder, "build_invoked_skill_system_message", None)
+    if not callable(invoked_builder):
+        return ""
+    authority = request_skill_authority(config, execution_context)
+    # Duck-typed builders in tests do not accept the keyword; pass it only when set.
+    skill_kwargs: dict[str, Any] = {} if authority is None else {"skill_authority": authority}
+    return str(invoked_builder(skill_invocation, **skill_kwargs) or "")
 
 
 def build_prompt_memory_recall_system_message(
@@ -413,7 +438,8 @@ def _render_session_environment_block(
             "",
             "Every relative path in tool arguments and output is relative to "
             "workspace_root.",
-            "There is no /workspace, /repo, or /app on this machine.",
+            "Use workspace_root as the project root; do not assume /workspace, "
+            "/repo, or /app is an alias for it.",
         ]
     )
     return "\n".join(lines)

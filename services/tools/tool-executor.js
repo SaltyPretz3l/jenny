@@ -103,6 +103,12 @@ class ToolExecutor {
     });
   }
 
+  // The unscoped presentation owner; backend wiring routes the IDE's
+  // workspace_present outcome reports through it.
+  get workspacePresentationService() {
+    return this._workspacePresentationService;
+  }
+
   // Late-bind the Test Runner the `verify` tool reads off the execution
   // context; ipc-handler-registration.js owns its construction order.
   attachWorkspaceTestRunnerService(service) {

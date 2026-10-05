@@ -15,13 +15,26 @@ from sidecar.ai.engines.vision_input import (
     MAX_VISION_ATTACHMENTS,
     VisionImage,
 )
-from sidecar.ai.routing.vision_turn import engine_supports_vision, vision_token_surcharge
+from sidecar.ai.routing.vision_turn import (
+    current_turn_anchor_index,
+    engine_supports_vision,
+    vision_token_surcharge,
+)
 from sidecar.ai.tools.preview_image import native_preview_image
 
 # A model that cannot see its picture must not describe it from the prompt.
 _UNSEEN_GENERATED_IMAGE = (
     "You cannot see this image. Tell the user only what you asked for (the prompt); "
     "do not describe details you have not seen."
+)
+
+
+_NO_PIXELS_THIS_REQUEST = (
+    "\nNo screenshot pixels accompany this result in the current model request."
+)
+_EARLIER_REQUEST_RESULT = (
+    "\nThis result is from an earlier request. Any screenshot it captured is not resent now, "
+    "so it cannot be re-inspected; whether it was viewed then is not recorded here."
 )
 
 
@@ -105,11 +118,24 @@ def preview_token_cost(runtime: Any) -> int:
     )
 
 
-def _with_observations(messages: list[Any], cache: dict[str, PreviewObservation]) -> list[Any]:
+def _with_observations(
+    messages: list[Any],
+    cache: dict[str, PreviewObservation],
+    anchor_text: str = "",
+) -> list[Any]:
     output: list[Any] = []
     pending: set[str] = set()
     observations: list[Any] = []
-    for row in messages:
+    # The cache is request-local, so a row before the current turn's prompt was
+    # never resent here. Only the turn's real prompt anchors: tool-loop nudges
+    # are user rows too, so the last-user-row fallback would date a fresh
+    # current-turn result. Without a found anchor, claim nothing about age.
+    anchor = (
+        current_turn_anchor_index(messages, anchor_text=anchor_text)
+        if anchor_text.strip()
+        else None
+    )
+    for index, row in enumerate(messages):
         output.append(dict(row))
         if row.get("role") == "assistant" and row.get("tool_calls"):
             pending = {call.get("id") for call in row["tool_calls"]}
@@ -136,7 +162,9 @@ def _with_observations(messages: list[Any], cache: dict[str, PreviewObservation]
             )
         elif row.get("name") == "preview_test":
             output[-1]["content"] = str(row.get("content", "")) + (
-                "\nNo screenshot pixels accompany this result in the current model request."
+                _EARLIER_REQUEST_RESULT
+                if anchor is not None and index < anchor
+                else _NO_PIXELS_THIS_REQUEST
             )
         if not pending:
             output.extend(observations)
@@ -152,18 +180,24 @@ def prepare_preview_messages(  # noqa: PLR0913 - explicit generation boundary.
     system: str,
     tools: list[Any],
     max_tokens: int,
+    anchor_text: str = "",
 ) -> tuple[list[Any], int]:
-    """Share one path between streamed and non-streamed generation, before retry."""
+    """Share one path between streamed and non-streamed generation, before retry.
+
+    ``anchor_text`` is the turn's prompt; it dates preview rows from earlier
+    requests (see ``_with_observations``).
+    """
     prune_previews(runtime, messages)
     cache = getattr(runtime, "preview_images", {})
+    anchor_text = str(anchor_text or "")
     if not cache:
-        return _with_observations(messages, {}), max_tokens
+        return _with_observations(messages, {}, anchor_text), max_tokens
     if not engine_supports_vision(kernel._engine):
         cache.clear()
     window = resolve_effective_context_window(kernel._engine, kernel._config)
     overhead = estimate_messages_tokens([{"content": system}, {"content": json.dumps(tools)}]) + 256
     while True:
-        output = _with_observations(messages, cache)
+        output = _with_observations(messages, cache, anchor_text)
         images = [image for row in output for image in row.get("images", [])]
         used = estimate_messages_tokens(output) + vision_token_surcharge(images) + overhead
         if used + max_tokens <= window or not cache:

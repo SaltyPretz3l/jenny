@@ -759,6 +759,7 @@ def test_normalize_context_blocks_keeps_every_allowlisted_kind_in_order() -> Non
         {"kind": "codebase", "content": "grounding"},
         {"kind": "linked_session", "content": "recall"},
         {"kind": "active_file", "content": "open file"},
+        {"kind": "workspace_presentation", "content": "## Workspace Presentation Updates"},
     ]
     assert normalize_context_blocks(blocks) == blocks
 

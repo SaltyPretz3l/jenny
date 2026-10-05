@@ -104,6 +104,9 @@ from sidecar.runtime.local_engine.request_context import current_diagnostics_sto
 
 logger = logging.getLogger(__name__)
 _SYNTHETIC_TOOL_IDS = frozenset({"tool_search"})
+# Engines whose tool calls arrive as <tool_call> text, so a model that narrates
+# a tool instead of calling it can be re-prompted with the same text nudge.
+_TEXT_TOOL_CALL_ENGINES = frozenset({"ollama", "codex-cli"})
 _UNKNOWN_TOOL_LOG_PREVIEW_LIMIT = 20
 _TOOL_BURST_SUMMARY_THRESHOLD = 4
 _TOOL_BURST_CALL_ID_PREVIEW_LIMIT = 8
@@ -721,7 +724,7 @@ def _should_issue_tool_nudge(
 ) -> bool:
     return (
         response_looks_like_fake_tool_use
-        and str(kernel._config.engine_type or "").strip().lower() == "ollama"
+        and str(kernel._config.engine_type or "").strip().lower() in _TEXT_TOOL_CALL_ENGINES
         and str(getattr(mode_policy, "mode", "") or "").strip().lower() == "assist"
         and not outcomes
     )

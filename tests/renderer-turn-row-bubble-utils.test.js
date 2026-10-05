@@ -41,7 +41,7 @@ test('projected user bubbles render Markdown breaks while preserving failure and
 
   const html = bubbles.buildUserBubbleRowMarkup(row, [message]);
 
-  assert.deepEqual(calls, [{ text: message.content, options: { breaks: true } }]);
+  assert.deepEqual(calls, [{ text: message.content, options: { breaks: true, literalBackslashes: true } }]);
   assert.match(html, /class="chat-bubble chat-bubble-markdown"/);
   assert.match(html, /line one<br>line two/);
   assert.match(html, /Failed to send/);

@@ -268,7 +268,7 @@
           ? '<span class="chat-bubble-send-status" role="status">' + escapeHtml(jt('chat.article.failedToSend', 'Failed to send')) + '</span>'
             : '';
           const sendStateAttr = sendFailureActive ? ' data-send-state="failed"' : '';
-          messageMarkup = `<div class="chat-bubble chat-bubble-markdown" dir="auto" data-pin-fade-trigger="user"${sendStateAttr}>${renderMarkdown(message.content, { breaks: true })}${failureChip}</div>`;
+          messageMarkup = `<div class="chat-bubble chat-bubble-markdown" dir="auto" data-pin-fade-trigger="user"${sendStateAttr}>${renderMarkdown(message.content, { breaks: true, literalBackslashes: true })}${failureChip}</div>`;
         }
       } else {
         messageMarkup = `<div class="chat-bubble" dir="auto">${escapeHtml(message.content)}</div>`;
@@ -543,11 +543,10 @@
       const selectionStateProjected = resolveSelectionState(articleMessageId);
       // Ht-D: exempt the active/pending turn and any turn holding an
       // unresolved approval gate from content-visibility paint-skip. An
-      // approval_gap row exists IFF its call is awaiting approval and
-      // unresolved (renderer-turn-reducer-approval-gap.js), so presence in
-      // sourceRows is the unresolved-gate signal.
+      // approval_gap row that is not a `resolved` receipt is the
+      // unresolved-gate signal (renderer-turn-reducer-approval-gap.js).
       const hasUnresolvedApprovalGap = sourceRows.some(function hasApprovalGapRow(row) {
-        return String(row?.kind || '').trim() === 'approval_gap';
+        return String(row?.kind || '').trim() === 'approval_gap' && row?.payload?.state !== 'resolved';
       });
       return buildMessageShellArticle({
         className: `assistant${isStreaming ? ' pending' : ''}`,

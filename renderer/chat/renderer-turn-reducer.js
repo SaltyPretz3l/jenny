@@ -195,7 +195,7 @@
   // row/normalization helpers above through closure and operates on the turn passed
   // in; see the file header for the shared invariant with the trace projector.
   const {
-    removeApprovalGapRow,
+    settleApprovalGapRow,
     syncApprovalGapRow,
   } = (approvalGapUtilsFactory
     && typeof approvalGapUtilsFactory.createTurnReducerApprovalGapUtils === 'function'
@@ -208,7 +208,7 @@
         stampRowIdentity,
       })
     : {});
-  if (typeof syncApprovalGapRow !== 'function' || typeof removeApprovalGapRow !== 'function') {
+  if (typeof syncApprovalGapRow !== 'function' || typeof settleApprovalGapRow !== 'function') {
     throw new Error('renderer-turn-reducer: approval-gap factory wire-up failed');
   }
 
@@ -921,8 +921,8 @@
         ensureRowEvent(resultRow, event);
         populateToolResultRow(resultRow, event);
         pushDistinct(turn.source_message_ids, resultRow.primary_message_id);
-        // A result settles the call — the approval prompt (if any) is moot.
-        removeApprovalGapRow(turn, toolRowCallId);
+        // A result settles the call: the approval card (if any) becomes its receipt.
+        settleApprovalGapRow(turn, toolRowCallId, Number.isInteger(callRowIndex) ? turn.rows[callRowIndex] : null);
         return state;
       }
       const row = getToolCallRow(turn, event);

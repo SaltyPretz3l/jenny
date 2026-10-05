@@ -432,6 +432,19 @@
       };
     }
 
+    // HB-038 H1: when the thinking guard cuts a think off, its phase completes
+    // and the same think continues in a new phase; collapsing the finished one
+    // at once dropped the pinned tail by about 2K px. While the turn is live
+    // and nothing but reasoning follows, the phase stays open; it collapses
+    // once a tool row, the answer or the turn's end arrives.
+    const STILL_THINKING_ROW_KINDS = new Set(['reasoning', 'agent_progress']);
+    function onlyReasoningFollows(options) {
+      const siblings = Array.isArray(options?.siblingRows) ? options.siblingRows : null;
+      const index = Number(options?.rowIndex);
+      if (!siblings || !Number.isInteger(index) || index < 0) return false;
+      return siblings.slice(index + 1).every((row) => STILL_THINKING_ROW_KINDS.has(normalizeId(row && row.kind)));
+    }
+
     function buildReasoningRowMarkup(row, messages, options) {
       const payload = row && row.payload && typeof row.payload === 'object' ? row.payload : {};
       // A terminal turn can still carry stale streaming render options (a
@@ -449,7 +462,10 @@
       const widgetHtml = renderThinkingWidget(
         renderMessage,
         reasoningStreaming ? renderMessage.id : '',
-        { transcriptView: options && options.transcriptView }
+        {
+          transcriptView: options && options.transcriptView,
+          holdOpen: !turnSettled && options?.turnLive === true && onlyReasoningFollows(options),
+        }
       );
       const truncationMarkup = buildTruncationMarkerMarkup(payload);
       if (String(widgetHtml || '').trim()) {

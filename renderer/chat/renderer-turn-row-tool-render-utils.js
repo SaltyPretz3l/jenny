@@ -872,7 +872,10 @@
     function buildApprovalGapMarkup(row, _messages, options) {
       const payload = row && row.payload && typeof row.payload === 'object' ? row.payload : {};
       const toolCallId = resolveProjectedRowCallId(row);
-      const cardState = readApprovalCardState(row, toolCallId, options) || {};
+      // A resolved row is a receipt of the decision; the live approval state
+      // has nothing left to say about it.
+      const resolved = payload.state === 'resolved';
+      const cardState = resolved ? { state: 'resolved' } : (readApprovalCardState(row, toolCallId, options) || {});
       const toolName = String(payload.tool_name || '').trim();
       // Same precedence as the tool row this card sits above (F16).
       const displayToolName = toolCallUtils && typeof toolCallUtils.getToolDisplayName === 'function'
@@ -924,6 +927,8 @@
         cardState: cardState.state,
         resumeKey: cardState.resumeKey,
         variant: normalizeId(payload.approval_variant),
+        decision: resolved ? normalizeId(payload.decision) : '',
+        approvalScope: resolved ? normalizeId(payload.approval_scope) : '',
       }, { escapeHtml });
     }
 

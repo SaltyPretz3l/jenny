@@ -11,11 +11,11 @@ import sys
 import threading
 import time
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 
 from sidecar import _owned_process_bootstrap as owned_process_bootstrap_module
+from sidecar._owned_process_supervisor import supervisor_containment
 from sidecar.ai.error_codes import CMP_TOOL_CAP_EXCEEDED, CMP_TOOL_IO_FAILED
 from sidecar.ai.tools.builtins import git_ops as git_ops_module
 from sidecar.ai.tools.builtins import git_process as git_process_module
@@ -667,27 +667,10 @@ def test_owned_process_drains_blocking_stdout_and_stderr_concurrently(
     assert service.snapshot().active == 0
 
 
-def test_posix_owned_process_stdin_is_closed_but_tree_cleanup_is_unproven(
-    monkeypatch: pytest.MonkeyPatch,
+@pytest.mark.skipif(os.name == "nt", reason="POSIX supervisor transport")
+def test_posix_owned_process_stdin_is_closed_and_cleanup_is_proven(
     tmp_path: Path,
 ) -> None:
-    real_popen = subprocess.Popen
-    observed_stdin: list[object] = []
-
-    def _popen(argv: list[str], **kwargs: object) -> subprocess.Popen[bytes]:
-        observed_stdin.append(kwargs.get("stdin"))
-        return real_popen(argv, **kwargs)
-
-    def _killpg(_process_group_id: int, signal_number: int) -> None:
-        if signal_number == 0:
-            raise ProcessLookupError
-
-    monkeypatch.setattr(
-        owned_process_module,
-        "os",
-        SimpleNamespace(name="posix", killpg=_killpg),
-    )
-    monkeypatch.setattr(owned_process_module.subprocess, "Popen", _popen)
     service = OwnedProcessService(max_active=1, max_queued=0)
 
     eof_result = service.run(
@@ -701,20 +684,23 @@ def test_posix_owned_process_stdin_is_closed_but_tree_cleanup_is_unproven(
     )
     assert eof_result.returncode == 0
     assert eof_result.stdout.strip() == "0"
-    assert eof_result.cleanup_verdict.cleanup == "uncertain"
-    assert eof_result.cleanup_verdict.process_tree_terminated is False
-    assert observed_stdin == [subprocess.DEVNULL]
-    assert service.snapshot().active == 1
-    with pytest.raises(OwnedProcessCapacityError):
-        service.run(
-            [sys.executable, "-c", "print('ready')"],
-            cwd=tmp_path,
-            timeout_seconds=5,
-        )
+    assert eof_result.containment == supervisor_containment()
+    assert eof_result.cleanup_verdict.cleanup == "confirmed"
+    assert eof_result.cleanup_verdict.process_tree_terminated is True
+    assert service.snapshot().active == 0
+
+    # The slot is free again: Linux QA of 1.3.0 found every native command
+    # leaving its slot quarantined, which blocked later tools until restart.
+    again = service.run(
+        [sys.executable, "-c", "print('ready')"],
+        cwd=tmp_path,
+        timeout_seconds=5,
+    )
+    assert again.stdout.strip() == "ready"
 
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX descendant escape regression")
-def test_posix_detached_child_prevents_full_tree_cleanup_proof(tmp_path: Path) -> None:
+def test_posix_detached_child_is_swept_before_cleanup_is_proven(tmp_path: Path) -> None:
     pid_file = tmp_path / "detached-child.pid"
     parent = tmp_path / "spawn-detached.py"
     parent.write_text(
@@ -728,8 +714,9 @@ def test_posix_detached_child_prevents_full_tree_cleanup_proof(tmp_path: Path) -
         encoding="utf-8",
     )
     child_pid = 0
+    service = OwnedProcessService(max_active=1, max_queued=0)
     try:
-        result = OwnedProcessService(max_active=1, max_queued=0).run(
+        result = service.run(
             [sys.executable, str(parent), str(pid_file)],
             cwd=tmp_path,
             timeout_seconds=10,
@@ -737,15 +724,44 @@ def test_posix_detached_child_prevents_full_tree_cleanup_proof(tmp_path: Path) -
         child_pid = int(pid_file.read_text(encoding="ascii"))
 
         assert child_pid > 0
-        os.kill(child_pid, 0)
-        assert result.cleanup_verdict.cleanup == "uncertain"
-        assert result.cleanup_verdict.process_tree_terminated is False
+        assert result.returncode == 0
+        # The child left the session, so the group sweep alone cannot reach it.
+        assert result.cleanup_verdict.cleanup == "confirmed"
+        assert result.cleanup_verdict.process_tree_terminated is True
+        assert service.snapshot().active == 0
+        with pytest.raises(ProcessLookupError):
+            os.kill(child_pid, 0)
     finally:
         if child_pid > 0:
             try:
-                os.kill(child_pid, signal.SIGTERM)
+                os.kill(child_pid, signal.SIGKILL)
             except ProcessLookupError:
                 pass
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX supervisor proof contract")
+def test_posix_killed_supervisor_leaves_the_slot_quarantined(tmp_path: Path) -> None:
+    service = OwnedProcessService(max_active=1, max_queued=0)
+    owned = service.spawn(
+        [sys.executable, "-c", "import time; time.sleep(60)"],
+        cwd=tmp_path,
+        allow_queue=False,
+    )
+    try:
+        # Without its normal exit the supervisor has proven nothing.
+        os.kill(owned.process.pid, signal.SIGKILL)
+        owned.process.wait(timeout=5)
+
+        verdict = service.release(owned)
+
+        assert verdict.cleanup == "uncertain"
+        assert verdict.process_tree_terminated is False
+        assert service.snapshot().active == 1
+    finally:
+        try:
+            os.killpg(owned.process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
 
 
 def test_git_adapter_routes_through_owned_process_service(

@@ -18,12 +18,14 @@ import json
 from typing import Any
 
 from sidecar.ai.engines.base import EngineMessage
+from sidecar.ai.engines.local_server_props import ThinkingControl
 from sidecar.ai.engines.model_name import (
     is_bonsai2_model,
     is_ornith15_model,
     uses_qwen38_chat_contract,
 )
 from sidecar.ai.engines.vllm_engine import VLLMEngine
+from sidecar.ai.thinking_guard import THINKING_BUDGET_NUM_PREDICT_FRACTION
 
 _OPENAI_COMPAT_DEFAULT_BASE_URL = "http://127.0.0.1:8033/v1"
 
@@ -55,6 +57,28 @@ _BONSAI2_LLAMA_EFFORT_MAP = {
     "xhigh": "xhigh",
     "max": "xhigh",
 }
+
+
+# Graded levels for a template that reads enable_thinking but no effort level
+# (FG-010): llama-server ends thinking at the per-request token budget and the
+# model answers in the same request. The owner-approved levels are 1k/4k/8k.
+_THINKING_LEVEL_ALIASES = {
+    "minimal": "low",
+    "low": "low",
+    "medium": "medium",
+    "high": "high",
+    "xhigh": "high",
+    "max": "high",
+}
+_THINKING_LEVEL_BUDGET_TOKENS = {"low": 1_024, "medium": 4_096, "high": 8_192}
+# The budget stays under Jenny's own char-counted guard (65% of max_tokens at
+# 3.2 chars per token), with room for denser text, so the server's clean close
+# comes first and the guard stays the backstop. Below a useful think the
+# request runs with thinking off (llama-server would read 0 as no budget).
+_THINKING_BUDGET_GUARD_SHARE = 0.75
+_MIN_THINKING_BUDGET_TOKENS = 128
+# When /props did not answer: Ornith 1.5's template reads only enable_thinking.
+_ORNITH15_THINKING_CONTROL = ThinkingControl(native_effort=False, toggle=True)
 
 
 class OpenAICompatibleEngine(VLLMEngine):
@@ -156,12 +180,7 @@ class OpenAICompatibleEngine(VLLMEngine):
         )
         requested = str(reasoning_effort or "default").strip().lower() or "default"
         if not uses_qwen38_chat_contract(self.model_name):
-            if requested == "none" and is_ornith15_model(self.model_name):
-                # Ornith 1.5's template reads no effort level, only
-                # enable_thinking; false renders an empty think block. The
-                # top-level effort alone left None (and the wind-down legs that
-                # send it) thinking at full length (dogfood FG-010).
-                payload["chat_template_kwargs"] = {"enable_thinking": False}
+            self._apply_thinking_control(payload, requested, max_tokens)
             return payload
 
         template_kwargs: dict[str, Any] = {}
@@ -197,6 +216,45 @@ class OpenAICompatibleEngine(VLLMEngine):
         payload["chat_template_kwargs"] = template_kwargs
         return payload
 
+    def _thinking_control(self) -> ThinkingControl | None:
+        control = self._served_thinking_control
+        if control is None and is_ornith15_model(self.model_name):
+            return _ORNITH15_THINKING_CONTROL
+        return control
+
+    def _apply_thinking_control(
+        self, payload: dict[str, Any], requested: str, max_tokens: int
+    ) -> None:
+        """Send the level the served template understands (FG-010).
+
+        None turns a toggle template's thinking off: the top-level effort alone
+        left Ornith 1.5 (and the wind-down legs that send None) thinking at full
+        length. Automatic keeps the template default.
+        """
+        control = self._thinking_control()
+        if control is None or requested == "default":
+            return
+        if requested == "none":
+            if control.toggle:
+                payload["chat_template_kwargs"] = {"enable_thinking": False}
+            elif control.native_effort:
+                # A native-only template takes no None: the wind-down and
+                # recovery legs that send it get the lowest level it has.
+                payload["reasoning_effort"] = "low"
+            return
+        level = _THINKING_LEVEL_ALIASES.get(requested)
+        if level is None:
+            return
+        if control.native_effort:
+            payload["reasoning_effort"] = level
+            if control.toggle:
+                payload["chat_template_kwargs"] = {"enable_thinking": True}
+            return
+        if control.toggle:
+            payload["chat_template_kwargs"] = {"enable_thinking": True}
+            payload["thinking_budget_tokens"] = _THINKING_LEVEL_BUDGET_TOKENS[level]
+            _cap_thinking_budget(payload, max_tokens)
+
     def _fit_output_to_window(self, payload: dict[str, Any]) -> int:
         """Clamp the wire ``max_tokens`` to the room the prompt leaves.
 
@@ -210,6 +268,8 @@ class OpenAICompatibleEngine(VLLMEngine):
         room = window - _estimate_prompt_tokens(payload) - _PROMPT_ESTIMATE_MARGIN_TOKENS
         fitted = min(requested, max(room, _MIN_OUTPUT_ROOM_TOKENS), window)
         payload["max_tokens"] = fitted
+        # The budget follows the fitted output, not the requested one.
+        _cap_thinking_budget(payload, fitted)
         return fitted
 
     def _build_not_reachable_message(self) -> str:
@@ -262,6 +322,28 @@ def _estimate_prompt_tokens(payload: dict[str, Any]) -> int:
                 else:
                     chars += len(json.dumps(block, ensure_ascii=False, default=str))
     return chars // 4 + images * _IMAGE_PROMPT_TOKENS_ESTIMATE
+
+
+def _cap_thinking_budget(payload: dict[str, Any], output_tokens: int) -> None:
+    """Keep a level's thinking budget under the guard share of ``output_tokens``.
+
+    When that leaves less than a useful think, thinking turns off for the
+    request instead of a budget larger than the guard or the output itself.
+    """
+    budget = payload.get("thinking_budget_tokens")
+    if not isinstance(budget, int) or isinstance(budget, bool):
+        return
+    ceiling = int(
+        max(int(output_tokens), 0)
+        * THINKING_BUDGET_NUM_PREDICT_FRACTION
+        * _THINKING_BUDGET_GUARD_SHARE
+    )
+    capped = min(budget, ceiling)
+    if capped >= _MIN_THINKING_BUDGET_TOKENS:
+        payload["thinking_budget_tokens"] = capped
+        return
+    payload.pop("thinking_budget_tokens", None)
+    payload["chat_template_kwargs"] = {"enable_thinking": False}
 
 
 def _positive_int(value: int | None) -> int | None:

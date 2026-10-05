@@ -292,6 +292,90 @@ def test_image_and_context_budgets_and_nonvision_refuse_honestly():
     )
 
 
+CURRENT_TURN_NOTE = "No screenshot pixels accompany this result in the current model request."
+EARLIER_TURN_NOTE = "This result is from an earlier request."
+
+
+def two_turn_history():
+    return [
+        {"role": "user", "content": "Review the preview."},
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [{"id": "old", "name": "preview_test", "arguments": {}}],
+        },
+        {"role": "tool", "name": "preview_test", "tool_call_id": "old", "content": "Loaded old"},
+        {"role": "assistant", "content": "Looks fine."},
+        {"role": "user", "content": "Now check the other page."},
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [{"id": "new", "name": "preview_test", "arguments": {}}],
+        },
+        {"role": "tool", "name": "preview_test", "tool_call_id": "new", "content": "Loaded new"},
+    ]
+
+
+PROMPT = "Now check the other page."
+
+
+def prepare(messages, *, anchor_text=PROMPT, runtime=None):
+    return prepare_preview_messages(
+        kernel(), runtime or LoopRuntime(), messages,
+        system="", tools=[], max_tokens=128, anchor_text=anchor_text,
+    )[0]
+
+
+def test_prior_turn_preview_row_is_marked_earlier_not_never_seen():
+    output = prepare(two_turn_history())
+    old, new = output[2]["content"], output[6]["content"]
+    assert old.startswith("Loaded old") and EARLIER_TURN_NOTE in old
+    assert "not resent now" in old and "whether it was viewed then is not recorded" in old
+    assert CURRENT_TURN_NOTE not in old
+    assert new == "Loaded new\n" + CURRENT_TURN_NOTE
+
+
+def test_tool_loop_nudge_rows_never_date_a_current_turn_result():
+    # Tool-loop nudges (recovery, verification feedback, demoted system rows)
+    # are user rows after the prompt; only the prompt itself may anchor.
+    history = [
+        *two_turn_history(),
+        {"role": "user", "content": "You have not finished the verification yet."},
+    ]
+    output = prepare(history)
+    assert EARLIER_TURN_NOTE in output[2]["content"]
+    assert output[6]["content"] == "Loaded new\n" + CURRENT_TURN_NOTE
+
+
+def test_without_the_prompt_no_row_is_dated():
+    history = [
+        *two_turn_history(),
+        {"role": "user", "content": "You have not finished the verification yet."},
+    ]
+    for anchor_text in ("", "   ", "not in history"):
+        output = prepare(history, anchor_text=anchor_text)
+        assert all(
+            row["content"].endswith(CURRENT_TURN_NOTE) for row in output if row["role"] == "tool"
+        ), anchor_text
+    no_user = [row for row in two_turn_history() if row["role"] != "user"]
+    assert all(
+        row["content"].endswith(CURRENT_TURN_NOTE)
+        for row in prepare(no_user)
+        if row["role"] == "tool"
+    )
+
+
+def test_prior_turn_note_is_deterministic_and_the_cached_current_image_still_attaches():
+    runtime = LoopRuntime()
+    assert admit(runtime, "new")[0] == "queued"
+    first = prepare(two_turn_history(), runtime=runtime)
+    second = prepare(two_turn_history(), runtime=runtime)
+    assert EARLIER_TURN_NOTE in first[2]["content"]
+    assert first[2] == second[2]
+    assert first[-1]["images"][0].data == PNG
+    assert first[6]["content"] == "Loaded new"
+
+
 @pytest.mark.parametrize(
     "descriptor",
     [

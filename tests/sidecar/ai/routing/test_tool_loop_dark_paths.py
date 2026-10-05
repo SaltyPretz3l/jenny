@@ -674,6 +674,33 @@ def test_should_issue_tool_nudge_returns_false_when_engine_not_ollama() -> None:
     assert result is False
 
 
+@pytest.mark.parametrize("engine_type", ["chatgpt", "vllm"])
+def test_should_issue_tool_nudge_still_excludes_other_engines(engine_type: str) -> None:
+    kernel = SimpleNamespace(_config=SimpleNamespace(engine_type=engine_type))
+
+    result = _should_issue_tool_nudge(
+        kernel=kernel,
+        mode_policy=SimpleNamespace(mode="assist"),
+        outcomes=[],
+        response_looks_like_fake_tool_use=True,
+    )
+
+    assert result is False
+
+
+def test_should_issue_tool_nudge_includes_codex_cli_text_protocol() -> None:
+    kernel = SimpleNamespace(_config=SimpleNamespace(engine_type="codex-cli"))
+
+    result = _should_issue_tool_nudge(
+        kernel=kernel,
+        mode_policy=SimpleNamespace(mode="assist"),
+        outcomes=[],
+        response_looks_like_fake_tool_use=True,
+    )
+
+    assert result is True
+
+
 def test_should_issue_tool_nudge_returns_true_when_all_conditions_met() -> None:
     """Lines 1418-1425: Returns True when ollama + assist + no outcomes + fake tool use."""
     kernel = SimpleNamespace(_config=SimpleNamespace(engine_type="ollama"))

@@ -3,11 +3,14 @@
  * standalone `approval_gap` row lifecycle (create / get / remove / sync).
  *
  * SHARED INVARIANT (kept in lockstep with renderer-turn-row-projector-tools.js
- * ::buildApprovalGapRow): an `approval_gap` row exists IFF the call is awaiting
- * approval and unresolved. The payload shape mirrors that builder — tool_call_id
+ * ::buildApprovalGapRow): an `approval_gap` row is created when the call starts
+ * awaiting approval. The payload shape mirrors that builder — tool_call_id
  * / prompt / status / state always; tool_name / tool_display_name only when known
  * — plus an additive `approval_id` so the live Allow/Deny buttons target the exact
  * approval. The `22-approval-pending` corpus scenario enforces presence parity.
+ * Once the call resolves the row stays as a one-line receipt (state `resolved`,
+ * HB-038 H2), settled by the same renderer-approval-block helpers the projector
+ * uses; a plan approval's row is still removed (the plan card owns its record).
  * A turn sealed by sealTurnRows keeps its gap row as a settled `interrupted` receipt.
  *
  * Pure factory — no module-scope mutable state. It consumes the parent reducer's
@@ -15,12 +18,22 @@
  */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) {
-    module.exports = factory();
+    module.exports = factory(require('./renderer-approval-block'));
     return;
   }
-  root.rendererTurnReducerApprovalGap = factory();
-})(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  root.rendererTurnReducerApprovalGap = factory(root.rendererApprovalBlock);
+})(typeof globalThis !== 'undefined' ? globalThis : this, function (approvalBlock) {
   'use strict';
+
+  const deriveApprovalReceipt = approvalBlock && typeof approvalBlock.deriveApprovalReceipt === 'function'
+    ? approvalBlock.deriveApprovalReceipt : function noReceipt() { return null; };
+  const applyApprovalReceipt = approvalBlock && typeof approvalBlock.applyApprovalReceipt === 'function'
+    ? approvalBlock.applyApprovalReceipt : function noop() {};
+  const approvalKeepsReceipt = approvalBlock && typeof approvalBlock.approvalKeepsReceipt === 'function'
+    ? approvalBlock.approvalKeepsReceipt : function keepsNone() { return false; };
+  // Lockstep with the projector's RECEIPT_RESOLUTION_STATES: with no request on
+  // record, only an approved or denied resolution proves the reader was asked.
+  const RECEIPT_RESOLUTION_STATES = new Set(['approved', 'denied']);
 
   function createTurnReducerApprovalGapUtils(deps) {
     const {
@@ -197,10 +210,31 @@
       shiftRowIndexMapsAfterRemoval(turn, rowIndex);
     }
 
-    // Drive the gap row off the tool_call row's resolved state: present while
-    // awaiting_approval, gone once the call resolves (approved / running / denied /
-    // timed_out / cancelled / completed / errored / abandoned) — matching the
-    // projector's suppression rule (!hasApprovalResolution && !hasToolResult).
+    // A resolved call keeps its gap row as a one-line receipt of the decision
+    // (HB-038 H2): splicing the card out dropped the pinned tail by the card's
+    // height. Idempotent -- every later tool event re-derives the same receipt
+    // from the call row. No gap row tracked (the common path): no work.
+    function settleApprovalGapRow(turn, callId, toolCallRow) {
+      const normalizedCallId = normalizeId(callId);
+      const rowIndex = normalizedCallId ? turn.approval_gap_row_index_by_call_id[normalizedCallId] : undefined;
+      if (!Number.isInteger(rowIndex)) {
+        return;
+      }
+      const gapRow = rowIndex >= 0 && rowIndex < turn.rows.length ? turn.rows[rowIndex] : null;
+      const receipt = gapRow && gapRow.kind === 'approval_gap' && gapRow.payload.approval_variant !== 'plan'
+        ? deriveApprovalReceipt(toolCallRow && toolCallRow.payload)
+        : null;
+      if (!receipt) {
+        removeApprovalGapRow(turn, normalizedCallId);
+        return;
+      }
+      applyApprovalReceipt(gapRow.payload, receipt);
+    }
+
+    // Drive the gap row off the tool_call row's resolved state: the card while
+    // awaiting_approval, a receipt once the call resolves (approved / running /
+    // denied / timed_out / cancelled / completed / errored) -- matching the
+    // projector, which keeps the row whenever the call had an approval request.
     function syncApprovalGapRow(turn, event, toolCallRow) {
       const callId = normalizeId(event && event.tool_call_id);
       if (!callId) {
@@ -208,11 +242,27 @@
       }
       const state = normalizeToolStatus(toolCallRow && toolCallRow.payload && toolCallRow.payload.state);
       if (state !== 'awaiting_approval') {
-        removeApprovalGapRow(turn, callId);
+        // A chat rebuilt from messages keeps only the resolution. The projector
+        // still mints a receipt from an approved or denied one, so the fold does too.
+        if (event.kind === 'approval_resolved'
+          && !Number.isInteger(turn.approval_gap_row_index_by_call_id[callId])
+          && RECEIPT_RESOLUTION_STATES.has(
+            normalizeId(event.payload && event.payload.approval_state) || normalizeId(event.status))
+          && approvalKeepsReceipt(toolCallRow && toolCallRow.payload && toolCallRow.payload.tool_name)) {
+          ensureRowEvent(createApprovalGapRow(turn, event), event);
+        }
+        settleApprovalGapRow(turn, callId, toolCallRow);
         return;
       }
       const gapRow = getApprovalGapRow(turn, event);
       ensureRowEvent(gapRow, event);
+      if (gapRow.payload.state === 'resolved') {
+        // The same call asked again: the receipt becomes a live card.
+        gapRow.payload.state = 'awaiting_approval';
+        gapRow.payload.status = 'pending';
+        delete gapRow.payload.decision;
+        delete gapRow.payload.approval_scope;
+      }
       const body = event && event.payload && typeof event.payload === 'object' ? event.payload : {};
       const approvalId = normalizeId(body.approval_id || body.approvalId);
       if (approvalId && !gapRow.payload.approval_id) {
@@ -267,6 +317,7 @@
     // getApprovalGapRow stay inner closures (no external callers).
     return {
       removeApprovalGapRow,
+      settleApprovalGapRow,
       syncApprovalGapRow,
     };
   }

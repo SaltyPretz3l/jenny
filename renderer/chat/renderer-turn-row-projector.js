@@ -5,7 +5,8 @@
       require('./renderer-turn-row-projector-tools'),
       require('./renderer-row-identity-utils'),
       require('./tool-call-utils'),
-      require('../features/renderer-plan-document')
+      require('../features/renderer-plan-document'),
+      require('./renderer-approval-block')
     );
     return;
   }
@@ -14,9 +15,10 @@
     root.rendererTurnRowProjectorTools,
     root.rendererRowIdentityUtils || {},
     root.toolCallUtils || {},
-    root.rendererPlanDocument || {}
+    root.rendererPlanDocument || {},
+    root.rendererApprovalBlock || {}
   );
-})(typeof globalThis !== 'undefined' ? globalThis : this, function (projectorUtils, toolRowFactory, rowIdentityUtils, toolCallUtils, planDocumentUtils) {
+})(typeof globalThis !== 'undefined' ? globalThis : this, function (projectorUtils, toolRowFactory, rowIdentityUtils, toolCallUtils, planDocumentUtils, approvalBlock) {
   'use strict';
 
   const {
@@ -28,6 +30,11 @@
     normalizeToolLifecycleStatus,
     clonePlainObject,
   } = projectorUtils || {};
+
+  // Resolutions a message-built chat records only for a reader's answer
+  // (HB-038 H2 receipts). Not `timed_out` or `cancelled`: a tool's own
+  // timeout and a stop's repair read the same there.
+  const RECEIPT_RESOLUTION_STATES = new Set(['approved', 'denied']);
 
   // DC1 flicker cure: the projector stamps the SAME deterministic identity-tuple
   // row_id as the live reducer (one shared definition) so a hydrated row and its
@@ -478,6 +485,7 @@
         const sourceEvents = [event];
         processedIndices.add(index);
         const approvalRequestEvents = [];
+        const approvalResolutionEvents = [];
         let hasApprovalResolution = false;
         let hasToolResult = false;
         let resultEvent = null;
@@ -511,11 +519,13 @@
               // onto the tool_call row only when no gap row is emitted (e.g. a
               // resolved call whose canonical stream still carries the request).
               approvalRequestEvents.push(next);
+            } else if (next.kind === 'approval_resolved') {
+              // Ownership decided after the loop as well: a receipt with no
+              // request to own (a chat rebuilt from messages) owns these.
+              approvalResolutionEvents.push(next);
+              hasApprovalResolution = true;
             } else {
               sourceEvents.push(next);
-              if (next.kind === 'approval_resolved') {
-                hasApprovalResolution = true;
-              }
             }
             continue;
           }
@@ -529,18 +539,42 @@
             }
           }
         }
-        const emitApprovalGapRow = approvalRequestEvents.length > 0 && !hasApprovalResolution && !hasToolResult;
-        if (!emitApprovalGapRow) {
-          // No gap row to own them — the tool_call row claims the request events
-          // so every turn event still maps back to exactly one row.
-          for (let requestIndex = 0; requestIndex < approvalRequestEvents.length; requestIndex += 1) {
-            sourceEvents.push(approvalRequestEvents[requestIndex]);
-          }
+        const awaitingApproval = approvalRequestEvents.length > 0 && !hasApprovalResolution && !hasToolResult;
+        // HB-038 H2: a resolved approval keeps its gap row as a one-line receipt,
+        // settled from the call row by the same helper the live reducer uses.
+        // The event log always pairs a resolution with its request; a chat
+        // rebuilt from messages keeps only the resolution, and only an
+        // approved or denied one proves the reader was asked.
+        const wasAsked = approvalRequestEvents.length > 0
+          || approvalResolutionEvents.some((resolution) => RECEIPT_RESOLUTION_STATES.has(
+            normalizeId(resolution.payload && resolution.payload.approval_state) || normalizeId(resolution.status)));
+        const keepsReceipt = wasAsked && !awaitingApproval
+          && typeof approvalBlock.approvalKeepsReceipt === 'function'
+          && approvalBlock.approvalKeepsReceipt(event.payload && event.payload.tool_name);
+        const emitApprovalGapRow = awaitingApproval || keepsReceipt;
+        // The gap row owns the requests; with none, a receipt owns the resolutions.
+        const gapRowEvents = approvalRequestEvents.length ? approvalRequestEvents : approvalResolutionEvents;
+        const callRowEvents = emitApprovalGapRow
+          ? (approvalRequestEvents.length ? approvalResolutionEvents : [])
+          // No gap row to own them — the tool_call row claims the approval
+          // events so every turn event still maps back to exactly one row.
+          : approvalRequestEvents.concat(approvalResolutionEvents);
+        for (let approvalIndex = 0; approvalIndex < callRowEvents.length; approvalIndex += 1) {
+          sourceEvents.push(callRowEvents[approvalIndex]);
         }
         sourceEvents.sort((left, right) => traceEventCompare(left, right));
-        rows.push(buildToolCallRow(turnId, sourceEvents, toolCallId, { resultEvent, awaitingApproval: emitApprovalGapRow }));
+        const toolCallRow = buildToolCallRow(turnId, sourceEvents, toolCallId, {
+          resultEvent,
+          awaitingApproval,
+          ...(keepsReceipt ? { receiptApprovalEvents: gapRowEvents } : {}),
+        });
+        rows.push(toolCallRow);
         if (emitApprovalGapRow) {
-          const approvalGapRow = buildApprovalGapRow(turnId, approvalRequestEvents, toolCallId, { toolUseEvent: event });
+          const approvalGapRow = buildApprovalGapRow(turnId, gapRowEvents, toolCallId, { toolUseEvent: event });
+          if (keepsReceipt) {
+            approvalBlock.applyApprovalReceipt(approvalGapRow.payload,
+              approvalBlock.deriveApprovalReceipt(toolCallRow.payload) || { decision: 'closed' });
+          }
           const approvalVariant = typeof toolCallUtils.deriveApprovalVariant === 'function'
             ? toolCallUtils.deriveApprovalVariant(
               event.payload && event.payload.tool_name,
@@ -678,8 +712,9 @@
       const kind = row.kind;
       if (kind === 'approval_gap') {
         // A card follows its call's verdict: a dead turn's gap row is sealed (A4 F7).
+        // A receipt already records the answer, which the interruption came after.
         const call = toolCallByCallId.get(normalizeId(row.tool_call_id || row.payload.tool_call_id));
-        if (call && call.state === 'interrupted') row.payload.state = 'interrupted';
+        if (call && call.state === 'interrupted' && row.payload.state !== 'resolved') row.payload.state = 'interrupted';
         continue;
       }
       if (kind !== 'tool_step' && kind !== 'tool_call' && kind !== 'tool_result') continue;

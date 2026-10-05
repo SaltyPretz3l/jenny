@@ -216,9 +216,11 @@
         // behind the guard. A tool_use that already arrived `denied` marks the row
         // terminal, so the resolution that followed was dropped entirely and the
         // row could not say HOW it resolved.
+        const approvalScope = normalizeId(event && event.payload && event.payload.approval_scope);
         payload.approval_resolutions.push({
           status,
           approval_state: normalizeToolStatus(event && event.payload && event.payload.approval_state),
+          ...(approvalScope ? { approval_scope: approvalScope } : {}),
         });
         if (isTerminalState) {
           return;

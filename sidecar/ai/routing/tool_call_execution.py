@@ -787,6 +787,9 @@ def prevalidate_call_arguments(
             tool_name=call.tool_id,
             arguments=call.arguments,
             input_schema=descriptor.input_schema,
+            prune_empty_optional_arrays=_tool_contracts.executor_prunes_empty_optional_arrays(
+                descriptor
+            ),
         )
     except _tool_contracts.ToolExecutionFailure as error:
         repair_hints = _tools_schema_examples.tool_schema_repair_hints(descriptor.input_schema)
@@ -827,6 +830,13 @@ def _launcher_refusal(descriptor: Any, arguments: Any) -> dict[str, Any] | None:
             f"Tool 'run_command' was not executed: {refusal} "
             "Adjust the arguments or choose a different approach, then continue."
         ),
-        "metadata": {"pre_dispatch_blocked": True, "refusal": "cmd_exe_multiline_command"},
+        # The fix is a one-line command, not a permission the user could grant,
+        # so the envelope must not read "denied: do not retry" (HB-039).
+        "metadata": {
+            "pre_dispatch_blocked": True,
+            "refusal": "cmd_exe_multiline_command",
+            "failure_class": "bad_arguments",
+            "effects": "none",
+        },
         "error_code": _tool_support.CMP_TOOL_COMMAND_BLOCKED,
     }

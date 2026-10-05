@@ -234,6 +234,33 @@ def _apply_context_length_override(
     return replace(config, context_length=override) if applies else config
 
 
+def _with_ollama_load_context_length(config: RuntimeConfig) -> RuntimeConfig:
+    """Resolve the context window an Ollama load must warm up with.
+
+    ``load_model`` starts the warmup at once, and Ollama keys the runner on
+    ``n_ctx``: an engine built with the default clamp loaded the model at 32K
+    even when the user had tuned it down, before the override below reached
+    it (an 8K choice OOM-killed the runner on an 8 GiB host, Linux QA
+    2026-10-05). Ollama loads the requested model as named, so the app profile
+    and the per-model override can be resolved before the engine exists.
+    """
+    model = str(config.model or "").strip()
+    if str(config.engine_type or "").strip().lower() != "ollama" or not model:
+        return config
+    from sidecar.ai.app_profiles import apply_overrides, resolve_profile, resolve_variant
+
+    resolved = config
+    profile = resolve_profile(model, config.app_profile or None)
+    if profile is not None:
+        resolved = apply_overrides(resolved, profile, resolve_variant(profile, model))
+    resolved = _apply_context_length_override(
+        resolved,
+        selected_engine_type="ollama",
+        selected_model=model,
+    )
+    return replace(config, context_length=resolved.context_length)
+
+
 def _canonical_model_id(value: str) -> str:
     normalized = str(value or "").strip().lower()
     if not normalized:
@@ -585,14 +612,15 @@ class BrainContainer:
         # and `provider_capability_profiles_payload` -- exposed through the
         # `initialize` response and `harness.inspect` -- always returned [].
         provider_capability_profiles = ProviderCapabilityProfileStore()
+        engine_config = _with_ollama_load_context_length(config)
         engine_selection = (
             create_engine(
-                config,
+                engine_config,
                 capability_profile_store=provider_capability_profiles,
             )
             if progress_callback is None
             else create_engine(
-                config,
+                engine_config,
                 progress_callback=progress_callback,
                 capability_profile_store=provider_capability_profiles,
             )

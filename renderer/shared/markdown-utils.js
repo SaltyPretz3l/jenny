@@ -79,7 +79,7 @@
     try { return require('./markdown-mermaid-text'); } catch (_e) { /* unavailable */ }
     return null;
   }
-  let _marked = null; let _markedPlain = null;
+  let _marked = null; let _markedPlain = null; let _markedUser = null;
   let _purify = null;
   let configured = false;
 
@@ -132,6 +132,8 @@
       markedObj.use(sharedUseOptions);
     }
     if (rawHtmlPolicy && typeof markedObj.use === 'function') { markedObj.use({ renderer: { html: rawHtmlPolicy.answerHtmlRenderer } }); _markedPlain = rawHtmlPolicy.createPlainMarked(_marked, sharedUseOptions); }
+    // User bubbles keep typed backslashes (HB-041); see createUserMarked.
+    _markedUser = rawHtmlPolicy?.createUserMarked?.(_marked, sharedUseOptions) || null;
     _marked = markedObj;
     configured = true;
   }
@@ -481,6 +483,7 @@
     const frontmatterMode = options && options.frontmatter === 'metadata' ? 'metadata' : 'content';
     const imagesMode = options && options.images === 'omit' ? 'omit' : 'allow';
     const breaksMode = options && options.breaks === true ? 'breaks' : 'no-breaks';
+    const escapesMode = options?.literalBackslashes === true && !escapeRawHtml ? 'literal-escapes' : 'escapes';
     const contentKey = typeof content === 'string' ? content : String(content);
     // Plain-mode surfaces opt out of math; feature state gates all other surfaces.
     const mathUtils = mermaidMode === 'plain' ? null : resolveMathUtils();
@@ -491,7 +494,7 @@
       && typeof mathUtils.restoreMathPlaceholders === 'function');
     // A math-mode render is keyed apart the same way (a katex_math flip
     // mid-session can never serve stale HTML from the other namespace).
-    const cacheParts = [1, mermaidMode, escapeRawHtml, mathEnabled ? 'math' : 'no-math', frontmatterMode, breaksMode, imagesMode, contentKey];
+    const cacheParts = [1, mermaidMode, escapeRawHtml, mathEnabled ? 'math' : 'no-math', frontmatterMode, breaksMode, imagesMode, escapesMode, contentKey];
 
     ensureConfigured();
 
@@ -532,7 +535,9 @@
     }
     let rawHtml;
     try {
-      rawHtml = (escapeRawHtml && _markedPlain ? _markedPlain : _marked).parse(parseSource, { breaks: breaksMode === 'breaks' });
+      const parser = escapeRawHtml && _markedPlain ? _markedPlain
+        : escapesMode === 'literal-escapes' && _markedUser ? _markedUser : _marked;
+      rawHtml = parser.parse(parseSource, { breaks: breaksMode === 'breaks' });
     } catch (_err) {
       return escapeHtmlFallback(renderSource);
     }
@@ -626,6 +631,7 @@
    * options.mermaid: 'rich' (default) renders mermaid fences as diagram
    * blocks; 'plain' leaves them as ordinary code blocks (reasoning surface).
    * options.rawHtml: 'sanitize' preserves allowed HTML in plain mode; otherwise plain mode escapes it.
+   * options.literalBackslashes: true keeps every typed backslash (user messages).
    */
   function renderMarkdown(content, options) {
     return renderSanitizedMarkdown(content, options);

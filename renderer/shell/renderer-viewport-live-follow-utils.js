@@ -25,6 +25,7 @@
     const chatThreadScroll = settings.chatThreadScroll || null;
     const noteProgrammaticWrite = typeof settings.noteProgrammaticWrite === 'function'
       ? settings.noteProgrammaticWrite : null;
+    const onFollowWrite = typeof settings.onFollowWrite === 'function' ? settings.onFollowWrite : null;
     const requestViewportFrame = typeof settings.requestViewportFrame === 'function'
       ? settings.requestViewportFrame
       : function fallbackRequestViewportFrame(callback) {
@@ -124,6 +125,7 @@
       chatThreadScroll.scrollTop = nextScrollTop;
       liveFollowRuntime.readerIntentPending = false;
       advanceProgrammaticScrollTop(chatThreadScroll.scrollTop);
+      onFollowWrite?.(chatThreadScroll.scrollTop);
     }
 
     // A real upward user scroll past the override tolerance releases follow

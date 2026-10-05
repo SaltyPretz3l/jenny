@@ -34,6 +34,10 @@ from sidecar.runtime.execution_context import ExecutionContext
 
 _SCHEMAS = [{"name": "read_file", "parameters": {"type": "object"}}]
 _OTHER_SCHEMAS = [{"name": "write_file", "parameters": {"type": "object"}}]
+_ROOT_ALIAS_SENTENCE = (
+    "Use workspace_root as the project root; do not assume /workspace, /repo, "
+    "or /app is an alias for it."
+)
 
 
 def _log_context() -> RuntimeOverlayLogContext:
@@ -93,7 +97,8 @@ def test_block_states_the_root_and_the_sourced_facts(tmp_path: Path) -> None:
     assert f"platform: {sys.platform}" in block
     assert f"shell: {_shell_name()}" in block
     assert "Do not guess or infer" in block
-    assert "There is no /workspace, /repo, or /app on this machine." in block
+    assert _ROOT_ALIAS_SENTENCE in block
+    assert "There is no /workspace" not in block
     assert "Every relative path in tool arguments and output is relative to workspace_root." in block
 
 
@@ -159,7 +164,7 @@ def test_missing_workspace_root_is_an_explicit_refusal() -> None:
     block = _render(workspace_root=None)[0]
     assert "workspace_root: <not set" in block
     assert "git_repo:" not in block
-    assert "There is no /workspace, /repo, or /app on this machine." in block
+    assert _ROOT_ALIAS_SENTENCE in block
 
 
 def test_flag_off_appends_nothing(tmp_path: Path) -> None:

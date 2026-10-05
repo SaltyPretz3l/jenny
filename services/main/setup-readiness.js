@@ -128,14 +128,21 @@ function createSetupReadinessProbe({
         || backendService?.defaultModel;
       statusEngine = normalizeSetupEngineType(engineSource);
       cloudEngine = normalizeSetupCloudEngineType(engineSource);
-      const readiness = status.local_runtime && typeof status.local_runtime === 'object'
-        ? status.local_runtime.readiness || status.local_runtime.status || {}
+      const localRuntime = status.local_runtime && typeof status.local_runtime === 'object'
+        ? status.local_runtime
         : {};
-      runtimeReady = status.model_loaded === true
+      const readiness = localRuntime.readiness || localRuntime.status || {};
+      // A failed engine init leaves the sidecar on its MockEngine fallback,
+      // which reports itself loaded and ready. That readiness belongs to the
+      // mock, never to the engine the user asked for (first-run setup claimed
+      // an unreachable Ollama was ready, Linux QA 2026-10-04).
+      const mockFallback = localRuntime.fallback?.active === true
+        || normalizeEngineToken(localRuntime.engine?.type) === 'mock';
+      runtimeReady = !mockFallback && (status.model_loaded === true
         || readiness.ready === true
-        || String(status.phase || '').trim().toLowerCase() === 'ready';
-      runtimeModelLoaded = status.model_loaded === true
-        || readiness.model_loaded === true;
+        || String(status.phase || '').trim().toLowerCase() === 'ready');
+      runtimeModelLoaded = !mockFallback && (status.model_loaded === true
+        || readiness.model_loaded === true);
     } catch (error) {
       warn('setup.readiness_backend_state_failed', error);
       return unavailableResult();

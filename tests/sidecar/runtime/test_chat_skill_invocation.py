@@ -52,9 +52,11 @@ def _config():
 
 
 def _invoked(messages):
+    # Leading row on cloud lanes; inside the trailing ``## Turn Context`` row on
+    # local template engines (test_trailing_turn_context_lanes.py pins where).
     return [
         message for message in messages
-        if str(message.get("content", "")).startswith("## Invoked Skill:")
+        if "## Invoked Skill:" in str(message.get("content", ""))
     ]
 
 
@@ -157,3 +159,46 @@ def test_invoked_skill_message_is_bounded_by_skill_file_limit(tmp_path):
 
     assert message.startswith("## Invoked Skill: Humanizer\n")
     assert len(message.encode("utf-8")) <= MAX_SKILL_FILE_BYTES
+
+
+def test_invoked_skill_message_names_the_user_command_after_the_heading(tmp_path):
+    builder = _builder(tmp_path)
+    lines = builder.build_invoked_skill_system_message({"id": SKILL_ID}).split("\n")
+
+    assert lines[0] == "## Invoked Skill: Humanizer"
+    assert "/humanize" in lines[1]
+    assert "current message" in lines[1]
+    assert lines[2] == "Keep facts intact."
+
+
+def test_invoked_skill_message_falls_back_to_the_slug_without_a_command(tmp_path):
+    root = tmp_path / "bundled"
+    skill_dir = root / "plain-skill"
+    skill_dir.mkdir(parents=True)
+    # An unusable explicit command leaves the directory name as the command.
+    (skill_dir / "SKILL.md").write_text(
+        "---\nname: Plain\ncommand: Not A Command!\n---\nBody text.", encoding="utf-8"
+    )
+    builder = ContextBuilder(
+        None,
+        skill_scopes=(SkillScope(scope="bundled", root=root, enabled=True),),
+        skills_system_enabled=True,
+    )
+    message = builder.build_invoked_skill_system_message({"id": "bundled/plain-skill"})
+    lines = message.split("\n")
+
+    assert lines[0] == "## Invoked Skill: Plain"
+    assert "/plain-skill " in lines[1]
+    assert lines[2] == "Body text."
+
+
+def test_current_turn_anchor_resolves_past_a_projected_history_invocation():
+    from sidecar.ai.routing.vision_turn import current_turn_anchor_index
+
+    messages = [
+        {"role": "user", "content": "/humanize please"},
+        {"role": "assistant", "content": "done"},
+        {"role": "user", "content": "please"},
+    ]
+
+    assert current_turn_anchor_index(messages, anchor_text="please") == 2

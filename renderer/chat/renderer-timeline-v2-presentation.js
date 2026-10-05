@@ -328,14 +328,23 @@
     return finalizePresentation(kind, label, summary, tone, state, target);
   }
 
+  // A resolved receipt presents as its decision, not as a waiting approval.
+  const RECEIPT_DECISION_STATES = Object.freeze({ allowed: 'approved', closed: 'completed' });
+
   function buildApprovalPresentation(input, payload, cap) {
-    const state = normalizeKey(payload.state || payload.status || input?.state || input?.status || 'awaiting_approval');
+    const rawState = normalizeKey(payload.state || payload.status || input?.state || input?.status || 'awaiting_approval');
+    const decision = normalizeKey(payload.decision);
+    const state = rawState === 'resolved' ? (RECEIPT_DECISION_STATES[decision] || decision || 'completed') : rawState;
     const callId = readToolCallId(input, payload);
     const toolName = readToolName(input, payload);
     const label = toolNameLabel(readFirstString(input?.label, toolName));
-    const summary = compactText(readFirstString(payload.prompt, payload.summary, input?.summary, jt('chat.timeline.waitingForApproval', 'Waiting for approval')), cap);
+    const fallbackSummary = rawState !== 'resolved'
+      ? jt('chat.timeline.waitingForApproval', 'Waiting for approval')
+      : (decision === 'allowed' ? jt('chat.timeline.approvalAllowed', 'Approval allowed')
+        : (decision === 'denied' ? jt('chat.timeline.approvalDenied', 'Approval denied') : jt('chat.timeline.approvalClosed', 'Approval closed')));
+    const summary = compactText(readFirstString(payload.prompt, payload.summary, input?.summary, fallbackSummary), cap);
     const resolvedTone = toneForState(state, 'warning');
-    const tone = resolvedTone === 'neutral' ? 'warning' : resolvedTone;
+    const tone = resolvedTone === 'neutral' && rawState !== 'resolved' ? 'warning' : resolvedTone;
     const kind = readKind(input);
     const target = makeTarget('approval', callId, '');
     return finalizePresentation(kind, label, summary, tone, state, target);

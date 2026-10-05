@@ -155,7 +155,7 @@
         const failureChip = buildSendFailureChipMarkup(sourceMessage);
         const sendStateAttr = failureChip ? ' data-send-state="failed"' : '';
         bubbleMarkup = text.trim()
-          ? `<div class="chat-bubble chat-bubble-markdown" dir="auto" data-pin-fade-trigger="user"${sendStateAttr}>${renderMarkdown(text, { breaks: true })}${failureChip}</div>`
+          ? `<div class="chat-bubble chat-bubble-markdown" dir="auto" data-pin-fade-trigger="user"${sendStateAttr}>${renderMarkdown(text, { breaks: true, literalBackslashes: true })}${failureChip}</div>`
           : '';
       }
       const attachmentsMarkup = shouldRenderMessageAttachments(row, options)

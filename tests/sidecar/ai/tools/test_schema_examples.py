@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import re
 
-from sidecar.ai.tools.contracts import validate_tool_arguments
+import pytest
+
+from sidecar.ai.tools.contracts import ToolExecutionFailure, validate_tool_arguments
 from sidecar.ai.tools.models import ToolSchema
 from sidecar.ai.tools.schema_examples import minimal_valid_arguments, schema_placeholder_value
 from sidecar.ai.tools.schema_roundtrip import schema_roundtrip_check
@@ -85,3 +87,69 @@ def test_minimal_arguments_select_first_any_of_branch() -> None:
 
     assert arguments == {"path": "<string>"}
     validate_tool_arguments(tool_name="example", arguments=arguments, input_schema=schema)
+
+
+def test_any_of_keeps_shared_required_fields_and_properties() -> None:
+    schema = {
+        "type": "object",
+        "properties": {"file_path": {"type": "string"}},
+        "required": ["file_path"],
+        "anyOf": [
+            {
+                "properties": {"old_string": {"type": "string"}, "new_string": {"type": "string"}},
+                "required": ["old_string", "new_string"],
+            }
+        ],
+    }
+
+    arguments = minimal_valid_arguments(schema)
+
+    assert arguments == {
+        "file_path": "<string>",
+        "old_string": "<string>",
+        "new_string": "<string>",
+    }
+    validate_tool_arguments(tool_name="edit_file", arguments=arguments, input_schema=schema)
+
+
+def test_edit_file_catalog_example_includes_path_and_validates() -> None:
+    from sidecar.ai.tools.catalog import manifest_descriptors
+
+    schema = next(item.input_schema for item in manifest_descriptors() if item.name == "edit_file")
+
+    arguments = minimal_valid_arguments(schema)
+
+    assert "file_path" in arguments
+    validate_tool_arguments(tool_name="edit_file", arguments=arguments, input_schema=schema)
+
+
+def test_workspace_present_catalog_example_includes_required_preview_path() -> None:
+    from sidecar.ai.tools.catalog import manifest_descriptors
+
+    schema = next(item.input_schema for item in manifest_descriptors() if item.name == "workspace_present")
+    arguments = minimal_valid_arguments(schema)
+
+    assert arguments == {"view": "preview", "path": "<string>"}
+    validate_tool_arguments(tool_name="workspace_present", arguments=arguments, input_schema=schema)
+
+
+@pytest.mark.parametrize("view", ["preview", "change_diff"])
+def test_workspace_present_requires_path_for_file_views(view: str) -> None:
+    from sidecar.ai.tools.catalog import manifest_descriptors
+
+    schema = next(item.input_schema for item in manifest_descriptors() if item.name == "workspace_present")
+    with pytest.raises(ToolExecutionFailure):
+        validate_tool_arguments(tool_name="workspace_present", arguments={"view": view}, input_schema=schema)
+    assert validate_tool_arguments(
+        tool_name="workspace_present", arguments={"view": view, "path": "index.html"}, input_schema=schema
+    ) == {"view": view, "path": "index.html"}
+
+
+def test_workspace_present_file_map_keeps_optional_path() -> None:
+    from sidecar.ai.tools.catalog import manifest_descriptors
+
+    schema = next(item.input_schema for item in manifest_descriptors() if item.name == "workspace_present")
+    for arguments in ({"view": "file_map"}, {"view": "file_map", "path": "app.js"}):
+        assert validate_tool_arguments(
+            tool_name="workspace_present", arguments=arguments, input_schema=schema
+        ) == arguments

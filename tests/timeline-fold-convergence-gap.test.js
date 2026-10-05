@@ -241,7 +241,7 @@ test('an unanswered approval outranks a tool_executing notice', () => {
 
   // The other half, and the reason the guard counts resolutions rather than
   // simply ignoring tool_executing: once the approval IS answered, execution
-  // proceeds normally and the block is retracted.
+  // proceeds normally and the block settles into its one-line receipt.
   const answered = fold(events([
     ['tool_use', 'pending_approval'],
     ['approval_requested', 'pending_approval'],
@@ -249,7 +249,9 @@ test('an unanswered approval outranks a tool_executing notice', () => {
     ['tool_executing', 'running'],
   ]));
   assert.equal(answered.find((row) => row.kind === 'tool_call').payload.state, 'running');
-  assert.ok(!answered.some((row) => row.kind === 'approval_gap'));
+  const receipt = answered.find((row) => row.kind === 'approval_gap');
+  assert.equal(receipt.payload.state, 'resolved');
+  assert.equal(receipt.payload.decision, 'allowed');
 });
 
 // Wave 3c's target. Kinds, identities and row order have converged; the payloads

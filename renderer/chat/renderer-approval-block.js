@@ -67,6 +67,85 @@
   // Paused work, and paused work being discarded: the runtime holds the turn.
   const HELD_STATUSES = new Set(['paused', 'withdrawing']);
 
+  // A resolved approval keeps its row as one receipt line (HB-038 H2, owner
+  // pick B 2026-10-05): the card's slot never vanishes and the chat keeps a
+  // record of what was allowed or denied. The live reducer and the hydrated
+  // projector both settle the row from the call's own record through these
+  // two helpers, so a live receipt and a reopened one say the same thing.
+  const RECEIPT_HARD_OUTCOMES = new Set(['denied', 'timed_out', 'cancelled']);
+  // A call that ran, or is running, was allowed even when the record of the
+  // answer itself is missing.
+  const RECEIPT_RAN_STATES = new Set(['approved', 'running', 'completed', 'errored', 'interrupted']);
+  const RECEIPT_SUBJECT_MAX_CHARS = 80;
+
+  // The plan card owns a plan approval's record.
+  function approvalKeepsReceipt(toolName) {
+    return normalizeText(toolName) !== 'exit_plan_mode';
+  }
+
+  function deriveApprovalReceipt(callPayload) {
+    const payload = callPayload && typeof callPayload === 'object' ? callPayload : {};
+    if (!approvalKeepsReceipt(payload.tool_name)) return null;
+    const state = normalizeText(payload.state).toLowerCase();
+    // The reader's recorded answer wins: an allowed command that later timed
+    // out or was stopped was still allowed. The call's own outcome only
+    // speaks when no answer was recorded.
+    const resolutions = Array.isArray(payload.approval_resolutions) ? payload.approval_resolutions : [];
+    const last = resolutions.length && resolutions[resolutions.length - 1] && typeof resolutions[resolutions.length - 1] === 'object'
+      ? resolutions[resolutions.length - 1] : {};
+    const resolved = normalizeText(last.approval_state || last.status).toLowerCase();
+    if (resolved === 'approved') {
+      const scope = normalizeText(last.approval_scope).toLowerCase();
+      return scope === 'always' || scope === 'once' ? { decision: 'allowed', scope } : { decision: 'allowed' };
+    }
+    if (RECEIPT_HARD_OUTCOMES.has(resolved)) return { decision: resolved };
+    if (RECEIPT_HARD_OUTCOMES.has(state)) return { decision: state };
+    if (state === 'awaiting_approval' || state === 'pending_approval') return null;
+    return RECEIPT_RAN_STATES.has(state) ? { decision: 'allowed' } : { decision: 'closed' };
+  }
+
+  function applyApprovalReceipt(rowPayload, receipt) {
+    if (!rowPayload || !receipt) return;
+    rowPayload.state = 'resolved';
+    rowPayload.status = 'resolved';
+    rowPayload.decision = receipt.decision;
+    if (receipt.scope) rowPayload.approval_scope = receipt.scope;
+    else delete rowPayload.approval_scope;
+  }
+
+  function receiptLabel(decision, scope) {
+    switch (decision) {
+      case 'allowed':
+        if (scope === 'always') return jt('approval.receipt.alwaysAllowed', 'Always allowed');
+        return scope === 'once' ? jt('approval.receipt.allowedOnce', 'Allowed once') : jt('approval.receipt.allowed', 'Allowed');
+      case 'denied': return jt('approval.receipt.denied', 'Denied');
+      case 'timed_out': return jt('approval.receipt.timedOut', 'Not answered in time');
+      case 'cancelled': return jt('approval.receipt.cancelled', 'Approval cancelled');
+      default: return jt('approval.receipt.closed', 'Approval closed');
+    }
+  }
+
+  function receiptDecision(value) {
+    const decision = normalizeText(value);
+    return decision === 'allowed' || decision === 'closed' || RECEIPT_HARD_OUTCOMES.has(decision) ? decision : 'closed';
+  }
+
+  // The receipt names what was decided: the command's first line when there
+  // is one, else the tool.
+  function renderResolvedReceipt(source, displayToolName, escapeHtml) {
+    const decision = receiptDecision(source.decision);
+    const mark = decision === 'allowed' ? '\u2713' : (decision === 'denied' ? '\u2715' : '');
+    const firstLine = String(source.commandText == null ? '' : source.commandText).trim().split('\n')[0];
+    const command = boundedText(firstLine, RECEIPT_SUBJECT_MAX_CHARS);
+    const subject = command
+      ? `<code class="tool-approval-receipt-subject">${escapeHtml(command)}</code>`
+      : `<span class="tool-approval-receipt-subject">${escapeHtml(displayToolName)}</span>`;
+    return `<p class="tool-approval-receipt tool-approval-receipt--resolved">`
+      + (mark ? `<span class="tool-approval-receipt-mark" aria-hidden="true">${mark}</span>` : '')
+      + `<span class="tool-approval-receipt-label">${escapeHtml(receiptLabel(decision, source.approvalScope))}</span>`
+      + `<span class="tool-approval-receipt-sep" aria-hidden="true">\u00b7</span>${subject}</p>`;
+  }
+
   // Which card a pending approval row shows (A4, owner-approved 2026-09-22).
   // Live wins: Allow and Deny resolve by call id, so any approval the runtime
   // holds for the call is answerable. A paused reply for the turn offers its
@@ -209,6 +288,13 @@
     const cardState = source.cardState === 'paused' || source.cardState === 'inactive'
       ? source.cardState : 'live';
     const rowIdentity = ` data-tool-call-id="${callIdAttr}" data-call-id="${callIdAttr}"${approvalAttrMarkup}`;
+    if (source.cardState === 'resolved') {
+      const receipt = renderResolvedReceipt(source, displayToolName, escapeHtml);
+      const decisionAttr = ` data-approval-status="resolved" data-approval-decision="${receiptDecision(source.decision)}"`;
+      return mode === 'inline'
+        ? `<div class="approval-gap-row" role="status" aria-live="polite"${rowIdentity}${decisionAttr}>${receipt}</div>`
+        : `<div class="tool-approval-block"${rowIdentity}${decisionAttr}>${receipt}</div>`;
+    }
     if (cardState === 'inactive') {
       const receipt = `<p class="tool-approval-receipt">${escapeHtml(jt('approval.block.noLongerActive', 'Approval no longer active'))}</p>`;
       return mode === 'inline'
@@ -334,7 +420,10 @@
   }
 
   return {
+    applyApprovalReceipt,
     approvalCardStateKey,
+    approvalKeepsReceipt,
+    deriveApprovalReceipt,
     renderApprovalBlock,
     resolveApprovalCardState,
   };

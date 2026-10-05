@@ -54,6 +54,8 @@ async function capture(root, options = {}) {
     open: async () => { calls.push('open'); return { status: 'open' }; },
     inspect: async () => ({ console_messages: [], page_errors: [] }),
     click: async () => { calls.push('click'); return { status: 'clicked' }; },
+    // preview_test's tool-owned parity scan; this page references no external files.
+    eval: async () => ({ status: 'evaluated', result: { scripts: [], stylesheets: [], media: [] } }),
     close: async () => { calls.push('close'); },
     screenshot: BrowserSessionService.prototype.screenshot.bind({
       _runSessionOperation: async (_id, _opts, operation) => operation(session, null),

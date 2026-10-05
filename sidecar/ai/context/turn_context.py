@@ -65,7 +65,7 @@ TRAILING_RUNTIME_HEADINGS: tuple[str, ...] = (
     CONTEXT_PRESSURE_ADVISORY_HEADING,
 )
 # Electron typed context blocks that stay in the leading run; every other kind
-# (active file, git, codebase, linked session) is per-turn.
+# (active file, git, codebase, linked session, workspace presentation) is per-turn.
 LEADING_CONTEXT_BLOCK_KINDS = frozenset({"personality"})
 
 _LOCAL_TEMPLATE_ENGINE_TYPES = frozenset({"ollama", "vllm", "openai-compatible"})

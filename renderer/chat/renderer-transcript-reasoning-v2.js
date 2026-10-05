@@ -194,6 +194,7 @@
       groupCount,
       transcriptView,
       controller,
+      holdOpen = false,
     }) {
       const thinkingId = String(group?.thinkingId || '');
       const phaseKey = String(group?.phaseKey || group?.phaseId || thinkingId || `legacy_phase_${iteration}`);
@@ -217,7 +218,9 @@
       const tone = reasoningStatusTone(status, { isStreaming: isPhaseStreaming });
       // A settled body-less phase has nothing to open: the view default (e.g.
       // everything) must not rotate its caret over a hidden empty panel.
-      const autoExpand = shouldAutoExpandReasoningV2(status, { isStreaming: isPhaseStreaming, transcriptView })
+      // holdOpen (HB-038 H1): a live turn's phase with only reasoning after it
+      // keeps the streaming default across a thinking cut-off.
+      const autoExpand = shouldAutoExpandReasoningV2(status, { isStreaming: isPhaseStreaming || holdOpen, transcriptView })
         && (isPhaseStreaming || Boolean(bodyMarkdown));
       const expanded = controller.isPhaseExpanded(message.id, phaseKey, autoExpand);
 
@@ -460,6 +463,7 @@
           groupCount: phaseGroups.length,
           transcriptView,
           controller,
+          holdOpen: options?.holdOpen === true,
         });
       }).join('');
 
